@@ -244,10 +244,23 @@ tbody tr:hover {
   color: #f7b980;
   margin-top: 6px;
   font-size: 12px;
+}
+
+.pending-note-preview {
   max-width: 380px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.pending-note-detail {
+  max-width: none;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.5;
 }
 
 .priority-badge,
@@ -444,6 +457,24 @@ tbody tr:hover {
   margin: 0;
   font-size: 13px;
   line-height: 1.45;
+}
+
+.detail-block-engineer-request {
+  border-color: color-mix(in srgb, var(--status-waiting), var(--line) 55%);
+  background: color-mix(in srgb, var(--status-waiting), transparent 88%);
+}
+
+.detail-block-engineer-request h3 {
+  color: #ffd8a8;
+}
+
+.engineer-request-body {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .detail-mode-row,

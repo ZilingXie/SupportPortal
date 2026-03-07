@@ -190,6 +190,133 @@ def build_ai_followup(solution: str) -> str:
     )
 
 
+def _engineer_request_fallback(ticket: dict[str, Any], customer_message: str) -> str:
+    issue = " ".join(str(customer_message or "").split()).strip()
+    if not issue:
+        issue = str(ticket.get("subject") or "").strip() or "Unknown customer issue"
+    if len(issue) > 220:
+        issue = issue[:220] + "..."
+    return (
+        "Engineer Request:\n"
+        f"Issue: {issue}\n"
+        "Action Needed: Please reproduce the issue, collect related logs/error traces, confirm recent release/config changes, and provide a workaround plus ETA."
+    )
+
+
+def _normalize_engineer_request_text(text: str, ticket: dict[str, Any], customer_message: str) -> str:
+    content = str(text or "").strip()
+    if not content:
+        return _engineer_request_fallback(ticket, customer_message)
+
+    lines = [line.strip() for line in content.splitlines() if line.strip()]
+    issue_parts: list[str] = []
+    action_parts: list[str] = []
+    current_section: str | None = None
+
+    for line in lines:
+        lowered = line.lower()
+        if lowered.startswith("engineer request"):
+            current_section = None
+            continue
+        if lowered.startswith("issue:"):
+            current_section = "issue"
+            issue_line = line.split(":", 1)[1].strip()
+            if issue_line:
+                issue_parts.append(issue_line)
+            continue
+        if lowered.startswith("action needed:"):
+            current_section = "action"
+            action_line = line.split(":", 1)[1].strip()
+            if action_line:
+                action_parts.append(action_line)
+            continue
+
+        # Support wrapped lines without repeating the "Issue:" / "Action Needed:" prefix.
+        if current_section == "issue":
+            issue_parts.append(line)
+        elif current_section == "action":
+            action_parts.append(line)
+
+    issue_value = " ".join(issue_parts).strip()
+    action_value = " ".join(action_parts).strip()
+
+    if not issue_value or not action_value:
+        return _engineer_request_fallback(ticket, customer_message)
+
+    return (
+        "Engineer Request:\n"
+        f"Issue: {issue_value}\n"
+        f"Action Needed: {action_value}"
+    )
+
+
+def build_engineer_followup_request(ticket: dict[str, Any], customer_message: str) -> str:
+    fallback = _engineer_request_fallback(ticket, customer_message)
+    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    if not api_key:
+        return fallback
+
+    try:
+        from langchain_openai import ChatOpenAI
+    except Exception:
+        return fallback
+
+    messages = ticket.get("messages", [])
+    context_lines: list[str] = []
+    total_chars = 0
+    for message in messages:
+        role = str(message.get("role", "system")).strip().upper() or "SYSTEM"
+        content = str(message.get("content", "")).strip()
+        if not content:
+            continue
+        line = f"{role}: {content[:700]}"
+        if total_chars + len(line) > 7500:
+            break
+        context_lines.append(line)
+        total_chars += len(line)
+    if not context_lines:
+        return fallback
+
+    prompt = (
+        "You are assisting support escalation handoff.\n"
+        "Based on the full ticket context, create a concise engineer request.\n"
+        "Output plain text only, exactly 3 lines in this exact format:\n"
+        "Engineer Request:\n"
+        "Issue: <one concise sentence>\n"
+        "Action Needed: <one concise sentence describing what engineer should do or provide>\n\n"
+        f"Ticket ID: {ticket.get('ticket_id')}\n"
+        f"Subject: {ticket.get('subject')}\n"
+        f"Status: {ticket.get('status')}\n"
+        f"Priority: {ticket.get('priority')}\n"
+        "Recent messages:\n"
+        + "\n".join(context_lines)
+    )
+
+    model_candidates: list[str] = []
+    configured_model = (os.getenv("OPENAI_CHAT_MODEL") or "gpt-4.1").strip()
+    for candidate in [configured_model, "gpt-4.1", "gpt-4o-mini"]:
+        if candidate and candidate not in model_candidates:
+            model_candidates.append(candidate)
+
+    for model_name in model_candidates:
+        try:
+            llm = ChatOpenAI(model=model_name, temperature=0, api_key=api_key)
+            response = llm.invoke(
+                [
+                    ("system", "You generate concise support escalation requests for engineers."),
+                    ("user", prompt),
+                ]
+            )
+            normalized = _normalize_engineer_request_text(
+                _llm_response_to_text(response), ticket, customer_message
+            )
+            if normalized:
+                return normalized
+        except Exception:
+            continue
+    return fallback
+
+
 def _summary_fallback(ticket: dict[str, Any]) -> str:
     subject = str(ticket.get("subject", "")).strip() or "General support request"
     status = str(ticket.get("status", "open")).strip()
@@ -418,15 +545,16 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
         )
         needs_engineer_input = True
     elif needs_engineer_guidance:
+        engineer_request = build_engineer_followup_request(ticket, customer_message)
         answer = (
-            "I could not find enough reliable information in the knowledge sources. "
-            "I have asked an engineer for guidance and will follow up here shortly."
+            "I could not find enough reliable information in the knowledge sources for this issue. "
+            "I have contacted an engineer to continue investigation and will follow up shortly."
         )
         confidence = min(confidence, 0.55)
         sources = []
         citations = []
         ticket["status"] = "waiting_for_engineer"
-        ticket["pending_engineer_question"] = customer_message
+        ticket["pending_engineer_question"] = engineer_request
         needs_engineer_input = True
     else:
         ticket["status"] = "open"
