@@ -823,7 +823,11 @@ async function handleSendMessage(text, options = {}) {
     };
     const nextMessages = [...(updated?.messages || messages), answerMessage];
     saveTicketMessages(ticketId, nextMessages);
-    updateTicketStatus(ticketId, "waiting_for_agent");
+    const nextStatus =
+      payload?.status === "waiting_for_engineer" || payload?.needs_engineer_input
+        ? "waiting_for_support"
+        : "waiting_for_agent";
+    updateTicketStatus(ticketId, nextStatus);
     await syncTicketsFromBackend({ silent: true });
     if (payload.sentiment?.is_alert) {
       toast("Urgent escalation triggered.", "error");

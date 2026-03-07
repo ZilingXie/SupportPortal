@@ -239,6 +239,61 @@ function roleClass(role) {
   return "msg-system";
 }
 
+function parseEngineerRequest(rawValue) {
+  const raw = String(rawValue || "").trim();
+  if (!raw) {
+    return { issue: "", action: "", formatted: "" };
+  }
+
+  const lines = raw
+    .split(/\r?\n/g)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const issueParts = [];
+  const actionParts = [];
+  let currentSection = null;
+
+  for (const line of lines) {
+    const lowered = line.toLowerCase();
+    if (lowered.startsWith("engineer request")) {
+      currentSection = null;
+      continue;
+    }
+    if (lowered.startsWith("issue:")) {
+      currentSection = "issue";
+      const issueLine = line.split(":", 2)[1]?.trim() || "";
+      if (issueLine) {
+        issueParts.push(issueLine);
+      }
+      continue;
+    }
+    if (lowered.startsWith("action needed:")) {
+      currentSection = "action";
+      const actionLine = line.split(":", 2)[1]?.trim() || "";
+      if (actionLine) {
+        actionParts.push(actionLine);
+      }
+      continue;
+    }
+    if (currentSection === "issue") {
+      issueParts.push(line);
+    } else if (currentSection === "action") {
+      actionParts.push(line);
+    }
+  }
+
+  const issue = issueParts.join(" ").trim();
+  const action = actionParts.join(" ").trim();
+  if (!issue && !action) {
+    return { issue: "", action: "", formatted: raw };
+  }
+  return {
+    issue,
+    action,
+    formatted: `Engineer Request:\nIssue: ${issue || "N/A"}\nAction Needed: ${action || "N/A"}`,
+  };
+}
+
 function setRealtimeStatus(text) {
   const suffix = storageMode === "unknown" ? "" : ` | Storage: ${storageMode}`;
   wsStatusEl.textContent = `${text}${suffix}`;
@@ -372,9 +427,13 @@ function renderTickets() {
       const subject = String(ticket.subject || "(No subject)");
       const requester = String(ticket.requester || ticket.customer_id || "Unknown");
       const pendingQuestion = String(ticket.pending_engineer_question || "").trim();
-      const showPendingQuestion = Boolean(
-        pendingQuestion && status !== "waiting_for_engineer"
-      );
+      const parsedEngineerRequest = parseEngineerRequest(pendingQuestion);
+      const showPendingQuestion = Boolean(pendingQuestion);
+      const previewSource = parsedEngineerRequest.issue
+        ? `Issue: ${parsedEngineerRequest.issue}`
+        : parsedEngineerRequest.formatted || pendingQuestion;
+      const pendingPreview =
+        previewSource.length > 140 ? `${previewSource.slice(0, 140)}...` : previewSource;
 
       const isSelected = selectedTicketId === ticketId;
 
@@ -398,7 +457,7 @@ function renderTickets() {
             <div class="subject-cell">${escapeHtml(subject)}</div>
             ${
               showPendingQuestion
-                ? `<div class="pending-note">AI question: ${escapeHtml(pendingQuestion)}</div>`
+                ? `<div class="pending-note pending-note-preview">${escapeHtml(pendingPreview)}</div>`
                 : ""
             }
           </td>
@@ -435,9 +494,15 @@ function renderTicketDetail() {
   const status = String(ticket.status || "open").toLowerCase();
   const mode = String(ticket.engineer_mode || "managed").toLowerCase();
   const pendingQuestion = String(ticket.pending_engineer_question || "").trim();
-  const showPendingQuestion = Boolean(
-    pendingQuestion && status !== "waiting_for_engineer"
-  );
+  const parsedEngineerRequest = parseEngineerRequest(pendingQuestion);
+  const showPendingQuestion = Boolean(pendingQuestion);
+  const pendingDetailText = parsedEngineerRequest.formatted || pendingQuestion;
+  const pendingDetailBodyText =
+    parsedEngineerRequest.issue || parsedEngineerRequest.action
+      ? `Issue: ${parsedEngineerRequest.issue || "N/A"}\nAction Needed: ${
+          parsedEngineerRequest.action || "N/A"
+        }`
+      : pendingDetailText;
   const messages = Array.isArray(ticket.messages) ? ticket.messages : [];
 
   const messageItems =
@@ -500,12 +565,18 @@ function renderTicketDetail() {
     <section class="detail-block">
       <h3>Subject</h3>
       <p>${escapeHtml(String(ticket.subject || "(No subject)"))}</p>
-      ${
-        showPendingQuestion
-          ? `<p class="pending-note"><strong>AI question:</strong> ${escapeHtml(pendingQuestion)}</p>`
-          : ""
-      }
     </section>
+
+    ${
+      showPendingQuestion
+        ? `
+    <section class="detail-block detail-block-engineer-request">
+      <h3>Engineer Request</h3>
+      <p class="engineer-request-body">${formatMultiline(pendingDetailBodyText)}</p>
+    </section>
+    `
+        : ""
+    }
 
     <section class="detail-block">
       <h3>Summary</h3>
