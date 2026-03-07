@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin Dashboard</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header class="page-header">
+        <h1>AI Ticket System - Admin Dashboard</h1>
+        <p id="ws-status">Realtime: connecting...</p>
+      </header>
+
+      <section class="kpi-grid">
+        <article class="card">
+          <h2>Today Ticket Volume</h2>
+          <p class="metric" id="ticket-volume">0</p>
+        </article>
+        <article class="card">
+          <h2>Resolution Rate</h2>
+          <p class="metric" id="resolution-rate">0%</p>
+        </article>
+        <article class="card">
+          <h2>Sentiment Alerts</h2>
+          <p class="metric" id="sentiment-alerts">0</p>
+        </article>
+      </section>
+
+      <section class="card">
+        <h2>Realtime event stream</h2>
+        <ul id="event-stream" class="event-stream"></ul>
+      </section>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>

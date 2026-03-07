@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Engineer Portal</title>
+    <link rel="stylesheet" href="./styles.css?v=20260307-7" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section id="login-screen" class="screen screen-login">
+        <div class="login-card">
+          <h1>Engineer Portal</h1>
+          <p>Sign in to review and handle customer tickets.</p>
+          <form id="login-form" class="login-form">
+            <label class="field">
+              <span>Username</span>
+              <input id="username" name="username" type="text" placeholder="eng" required />
+            </label>
+            <label class="field">
+              <span>Password</span>
+              <input id="password" name="password" type="password" placeholder="eng" required />
+            </label>
+            <button type="submit" class="btn btn-primary">Sign In</button>
+            <p id="login-error" class="login-error" role="alert"></p>
+            <p class="hint">Demo account: <strong>eng / eng</strong></p>
+          </form>
+        </div>
+      </section>
+
+      <section id="board-screen" class="screen screen-board hidden">
+        <header class="board-header">
+          <div>
+            <h1>Engineer Workbench</h1>
+            <p id="ws-status" class="subtle">Realtime: connecting...</p>
+          </div>
+          <div class="header-actions">
+            <label class="filter-wrap" for="status-filter">
+              <span>Filter</span>
+              <select id="status-filter">
+                <option value="open" selected>Open</option>
+                <option value="waiting_for_engineer">Waiting for Engineer</option>
+                <option value="resolved">Resolved</option>
+                <option value="all">All</option>
+              </select>
+            </label>
+            <button id="logout-btn" class="btn btn-outline" type="button">Log Out</button>
+          </div>
+        </header>
+
+        <section class="table-panel">
+          <div class="table-meta">
+            <p id="ticket-count">0 tickets</p>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Ticket ID</th>
+                  <th>Priority</th>
+                  <th>Mode</th>
+                  <th>Status</th>
+                  <th>Subject</th>
+                  <th>Requester</th>
+                  <th>Create Time</th>
+                  <th>Last Update</th>
+                </tr>
+              </thead>
+              <tbody id="ticket-table-body">
+                <tr>
+                  <td colspan="8" class="empty-row">No tickets yet.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="detail-modal" class="detail-modal hidden">
+          <div class="detail-dialog" role="dialog" aria-modal="true" aria-labelledby="detail-title">
+            <div class="detail-header">
+              <h2 id="detail-title">Ticket Detail</h2>
+              <button id="detail-close-btn" class="btn btn-ghost" type="button">Close</button>
+            </div>
+            <div id="detail-body" class="detail-body"></div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="./app.js?v=20260307-7"></script>
+  </body>
+</html>
