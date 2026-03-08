@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Engineer Portal</title>
-    <link rel="stylesheet" href="./styles.css?v=20260308-3" />
+    <link rel="stylesheet" href="./styles.css?v=20260308-7" />
   </head>
   <body>
     <main class="app-shell">
@@ -35,16 +35,8 @@
             <p id="ws-status" class="subtle">Realtime: connecting...</p>
           </div>
           <div class="header-actions">
-            <label class="filter-wrap" for="status-filter">
-              <span>Filter</span>
-              <select id="status-filter">
-                <option value="open" selected>Open</option>
-                <option value="waiting_for_engineer">Waiting for Engineer</option>
-                <option value="resolved">Resolved</option>
-                <option value="all">All</option>
-              </select>
-            </label>
-            <button id="logout-btn" class="btn btn-outline" type="button">Log Out</button>
+            <div id="filter-controls" class="filter-controls"></div>
+            <div id="header-user-controls" class="header-user-controls"></div>
           </div>
         </header>
 
@@ -87,6 +79,6 @@
       </section>
     </main>
 
-    <script src="./app.js?v=20260308-3"></script>
+    <script src="./app.js?v=20260308-7"></script>
   </body>
 </html>

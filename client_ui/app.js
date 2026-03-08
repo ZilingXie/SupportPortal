@@ -33,11 +33,15 @@ const state = {
   inputDraft: "",
   editingMessageId: null,
   pendingAbortController: null,
+  pendingTicketId: null,
   pendingUserMessageId: null,
+  pendingAsyncTicketId: null,
+  pendingAsyncMessageCreatedAt: null,
 };
 let clientSocket = null;
 let clientReconnectTimer = null;
 let clientHeartbeatTimer = null;
+let pendingStatusPollTimer = null;
 
 function escapeHtml(value) {
   return String(value)
@@ -176,6 +180,7 @@ function login(email, password) {
 }
 
 function logout() {
+  clearPendingRequestState();
   closeClientRealtimeConnection();
   localStorage.removeItem(AUTH_KEY);
   state.user = null;
@@ -195,6 +200,76 @@ function closeClientRealtimeConnection() {
     clientSocket.close();
     clientSocket = null;
   }
+}
+
+function stopPendingStatusPolling() {
+  if (!pendingStatusPollTimer) {
+    return;
+  }
+  clearInterval(pendingStatusPollTimer);
+  pendingStatusPollTimer = null;
+}
+
+function clearPendingRequestState() {
+  state.isSending = false;
+  state.pendingAbortController = null;
+  state.pendingTicketId = null;
+  state.pendingUserMessageId = null;
+  state.pendingAsyncTicketId = null;
+  state.pendingAsyncMessageCreatedAt = null;
+  stopPendingStatusPolling();
+}
+
+function isTicketSending(ticketId) {
+  return (
+    state.isSending &&
+    String(state.pendingTicketId || "").trim() === String(ticketId || "").trim()
+  );
+}
+
+function ticketHasAssistantReply(ticket) {
+  const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
+  if (messages.length === 0) {
+    return false;
+  }
+  const pendingUserId = String(state.pendingUserMessageId || "").trim();
+  if (pendingUserId) {
+    const index = messages.findIndex((message) => String(message?.id || "").trim() === pendingUserId);
+    if (index >= 0) {
+      return messages.slice(index + 1).some((message) => String(message?.role || "").toLowerCase() !== "user");
+    }
+  }
+  return String(messages[messages.length - 1]?.role || "").toLowerCase() !== "user";
+}
+
+function ensurePendingStatusPolling() {
+  if (
+    pendingStatusPollTimer ||
+    !state.user ||
+    !state.isSending ||
+    !String(state.pendingAsyncTicketId || "").trim()
+  ) {
+    return;
+  }
+
+  pendingStatusPollTimer = setInterval(() => {
+    if (!state.user || !state.isSending || !String(state.pendingAsyncTicketId || "").trim()) {
+      stopPendingStatusPolling();
+      return;
+    }
+
+    syncTicketsFromBackend({ silent: true })
+      .then(() => {
+        const pendingTicket = getTicketById(state.pendingAsyncTicketId);
+        if (!pendingTicket || ticketHasAssistantReply(pendingTicket)) {
+          clearPendingRequestState();
+        }
+        render();
+      })
+      .catch(() => {
+        // Keep waiting; websocket or next poll may recover.
+      });
+  }, 3000);
 }
 
 function scheduleClientRealtimeReconnect() {
@@ -246,6 +321,15 @@ function setupClientRealtimeConnection() {
     const customerId = String(payload?.customer_id || "").trim();
     if (customerId && customerId !== state.user.id) {
       return;
+    }
+    const eventName = String(payload?.event || "").trim().toLowerCase();
+    const eventTicketId = String(payload?.ticket_id || "").trim();
+    if (
+      state.pendingAsyncTicketId &&
+      eventTicketId === state.pendingAsyncTicketId &&
+      (eventName === "ticket_ai_response_ready" || eventName === "ticket_ai_generation_stopped")
+    ) {
+      clearPendingRequestState();
     }
     await syncTicketsFromBackend({ silent: true });
     if (state.user) {
@@ -633,12 +717,13 @@ function renderChatTicket() {
   if (!ticket || ticket.userId !== state.user.id) {
     return `<div class="empty-state">Session not found.</div>`;
   }
-  const canCompose = !state.isSending && ticket.status !== "resolved";
+  const sending = isTicketSending(ticket.id);
+  const canCompose = !sending && ticket.status !== "resolved";
   const isEditing = Boolean(state.editingMessageId);
 
   if (isEditing && !ticket.messages.some((message) => message.id === state.editingMessageId)) {
     state.editingMessageId = null;
-    if (!state.isSending) {
+    if (!sending) {
       state.inputDraft = "";
     }
   }
@@ -690,11 +775,11 @@ function renderChatTicket() {
                   .join("")
           }
           ${
-            state.isSending
+            sending
               ? `
             <div class="msg-row">
               <div class="avatar assistant">A</div>
-              <div class="bubble assistant"><span class="typing"><span></span><span></span><span></span></span></div>
+              <div class="bubble assistant"><span class="typing-wrap"><span class="typing"><span></span><span></span><span></span></span><span class="typing-label">checking the knowledge base</span></span></div>
             </div>
           `
               : ""
@@ -703,8 +788,8 @@ function renderChatTicket() {
       </main>
       <footer class="chat-input-wrap">
         ${
-          state.isSending
-            ? `<div class="composer-note">Generating answer... click stop to interrupt.</div>`
+          sending
+            ? `<div class="composer-note">checking the knowledge base... click stop to interrupt.</div>`
             : isEditing
             ? `<div class="composer-note">Editing your last message. Press Enter to resend, Shift+Enter for newline.</div>`
             : ""
@@ -718,7 +803,7 @@ function renderChatTicket() {
             ${canCompose ? "" : "disabled"}
           >${escapeHtml(state.inputDraft || "")}</textarea>
           ${
-            state.isSending
+            sending
               ? `<button class="send-btn send-btn-stop" type="button" data-action="stop-generation" title="Stop generation"><span class="stop-glyph" aria-hidden="true"></span></button>`
               : `<button class="send-btn" type="submit" ${canCompose ? "" : "disabled"}>${isEditing ? "Resend" : "Send"}</button>`
           }
@@ -805,6 +890,19 @@ function renderTicketsPage() {
   `;
 }
 
+function syncChatScrollToBottom() {
+  if (state.view !== "chat-ticket") {
+    return;
+  }
+  const chatMain = appRoot.querySelector(".chat-main");
+  if (!(chatMain instanceof HTMLElement)) {
+    return;
+  }
+  requestAnimationFrame(() => {
+    chatMain.scrollTop = chatMain.scrollHeight;
+  });
+}
+
 function renderAuthed() {
   appRoot.innerHTML = `
     <div class="app-shell">
@@ -841,8 +939,48 @@ async function syncBackendTicketAction(ticketId, action) {
   }
 }
 
-function stopGeneration() {
+async function stopGeneration() {
   if (!state.isSending || !state.pendingAbortController) {
+    const pendingTicketId = String(state.pendingTicketId || state.pendingAsyncTicketId || "").trim();
+    const pendingCreatedAt = String(state.pendingAsyncMessageCreatedAt || "").trim();
+    if (!state.isSending || !pendingTicketId || !pendingCreatedAt) {
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `/api/tickets/${encodeURIComponent(pendingTicketId)}/cancel-pending`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            customer_id: state.user?.id || "",
+            message_created_at: pendingCreatedAt,
+          }),
+        }
+      );
+      if (!response.ok) {
+        throw new Error(`Request failed with status ${response.status}`);
+      }
+
+      const activeTicket = getTicketById(pendingTicketId);
+      const pendingMessage = activeTicket?.messages?.find(
+        (message) => message.id === state.pendingUserMessageId && message.role === "user"
+      );
+      const userMessages = Array.isArray(activeTicket?.messages)
+        ? activeTicket.messages.filter((message) => message.role === "user")
+        : [];
+      const latestUserContent =
+        userMessages.length > 0 ? String(userMessages[userMessages.length - 1]?.content || "") : "";
+      state.editingMessageId = state.pendingUserMessageId;
+      state.inputDraft = pendingMessage?.content || latestUserContent || "";
+      clearPendingRequestState();
+      await syncTicketsFromBackend({ silent: true });
+      render();
+      toast("Generation stopped. Edit your message and resend.");
+    } catch (error) {
+      toast(`Failed to stop generation: ${error.message}`, "error");
+    }
     return;
   }
   state.pendingAbortController.abort();
@@ -851,13 +989,21 @@ function stopGeneration() {
 async function handleSendMessage(text, options = {}) {
   const ticketId = state.activeTicketId;
   const ticket = getTicketById(ticketId);
-  if (!ticket || ticket.status === "resolved" || state.isSending) {
+  if (!ticket || ticket.status === "resolved") {
+    return;
+  }
+  if (state.isSending && String(state.pendingTicketId || "").trim() !== String(ticketId || "").trim()) {
+    toast("Another session is still processing. Wait or stop it first.", "error");
+    return;
+  }
+  if (isTicketSending(ticketId)) {
     return;
   }
   const editMessageId = options.editMessageId || null;
   const now = new Date().toISOString();
   let userMessageId = editMessageId;
   let messages = [];
+  let keepWaitingForAsync = false;
 
   if (editMessageId) {
     messages = ticket.messages.map((message) => {
@@ -892,8 +1038,10 @@ async function handleSendMessage(text, options = {}) {
   state.editingMessageId = null;
   state.inputDraft = "";
   state.isSending = true;
+  state.pendingTicketId = ticketId;
   state.pendingUserMessageId = userMessageId;
   state.pendingAbortController = new AbortController();
+  stopPendingStatusPolling();
   render();
 
   try {
@@ -912,6 +1060,12 @@ async function handleSendMessage(text, options = {}) {
     }
     const payload = await response.json();
     const updated = getTicketById(ticketId);
+    const queuedForAi = Boolean(payload?.queued_for_ai);
+    if (queuedForAi) {
+      keepWaitingForAsync = true;
+      state.pendingAsyncTicketId = ticketId;
+      state.pendingAsyncMessageCreatedAt = String(payload?.queued_message_created_at || "").trim();
+    }
     const allowAssistantReply =
       payload?.ai_replied !== false && String(payload?.answer || "").trim().length > 0;
     const answerMessage = allowAssistantReply
@@ -928,7 +1082,9 @@ async function handleSendMessage(text, options = {}) {
       : [...(updated?.messages || messages)];
     saveTicketMessages(ticketId, nextMessages);
     const nextStatus =
-      payload?.status === "waiting_for_engineer" || payload?.needs_engineer_input
+      payload?.queued_for_ai
+        ? "waiting_for_support"
+        : payload?.status === "waiting_for_engineer" || payload?.needs_engineer_input
         ? "waiting_for_support"
         : "waiting_for_agent";
     updateTicketStatus(ticketId, nextStatus);
@@ -960,9 +1116,13 @@ async function handleSendMessage(text, options = {}) {
       toast("Failed to fetch assistant response.", "error");
     }
   } finally {
-    state.isSending = false;
     state.pendingAbortController = null;
-    state.pendingUserMessageId = null;
+    if (keepWaitingForAsync) {
+      state.isSending = true;
+      ensurePendingStatusPolling();
+    } else {
+      clearPendingRequestState();
+    }
     render();
   }
 }
@@ -1058,19 +1218,23 @@ function bindAuthedEvents() {
 
   const stopButton = appRoot.querySelector("[data-action='stop-generation']");
   stopButton?.addEventListener("click", () => {
-    stopGeneration();
+    stopGeneration().catch(() => {
+      // Stop action errors are already surfaced by toast.
+    });
   });
 }
 
 function render() {
   parseRoute();
   if (!state.user) {
+    clearPendingRequestState();
     closeClientRealtimeConnection();
     renderLogin();
     return;
   }
   setupClientRealtimeConnection();
   renderAuthed();
+  syncChatScrollToBottom();
 }
 
 window.addEventListener("hashchange", render);

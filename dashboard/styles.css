@@ -4,6 +4,9 @@
   --text-primary: #1f2937;
   --text-secondary: #6b7280;
   --border-default: #d1d5db;
+  --primary: #0b5fff;
+  --secondary: #eef2f7;
+  --foreground: #111827;
   --status-warning: #f59e0b;
   --status-danger: #d93025;
 }
@@ -32,9 +35,108 @@ body {
   font-size: 28px;
 }
 
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.page-header-left {
+  min-width: 0;
+}
+
 .page-header p {
   margin: 6px 0 0;
   color: var(--text-secondary);
+}
+
+.header-user-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.user-profile-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border-default);
+  background: color-mix(in srgb, var(--bg-card), #f8fafc 35%);
+  border-radius: 10px;
+  padding: 3px 8px 3px 5px;
+}
+
+.user-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--primary), transparent 85%);
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.user-meta {
+  display: none;
+  min-width: 0;
+}
+
+.user-name {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.1;
+  font-weight: 500;
+}
+
+.user-role {
+  margin: 2px 0 0;
+  font-size: 10px;
+  line-height: 1.1;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+}
+
+.user-role-admin {
+  color: var(--primary);
+}
+
+.user-role-operator {
+  color: var(--text-secondary);
+}
+
+.logout-icon-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.logout-icon-btn:hover:not(:disabled) {
+  background: var(--secondary);
+  color: var(--foreground);
+  border-color: color-mix(in srgb, var(--border-default), #9ca3af 25%);
+}
+
+.logout-icon-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.logout-icon {
+  width: 16px;
+  height: 16px;
+  display: inline-block;
 }
 
 .kpi-grid {
@@ -83,4 +185,10 @@ h2 {
 .event-meta {
   color: var(--text-secondary);
   font-size: 13px;
+}
+
+@media (min-width: 640px) {
+  .user-meta {
+    display: block;
+  }
 }

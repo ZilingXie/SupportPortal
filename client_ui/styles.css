@@ -658,6 +658,20 @@ textarea {
   align-items: center;
 }
 
+.typing-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: nowrap;
+  white-space: normal;
+}
+
+.typing-label {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--muted-foreground);
+}
+
 .typing span {
   width: 8px;
   height: 8px;
