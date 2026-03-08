@@ -4,13 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Admin Dashboard</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=20260308-1" />
   </head>
   <body>
     <main class="container">
       <header class="page-header">
-        <h1>AI Ticket System - Admin Dashboard</h1>
-        <p id="ws-status">Realtime: connecting...</p>
+        <div class="page-header-left">
+          <h1>AI Ticket System - Admin Dashboard</h1>
+          <p id="ws-status">Realtime: connecting...</p>
+        </div>
+        <div id="header-user-controls" class="header-user-controls"></div>
       </header>
 
       <section class="kpi-grid">
@@ -33,6 +36,6 @@
         <ul id="event-stream" class="event-stream"></ul>
       </section>
     </main>
-    <script src="./app.js"></script>
+    <script src="./app.js?v=20260308-1"></script>
   </body>
 </html>

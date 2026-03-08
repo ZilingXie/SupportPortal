@@ -1,160 +1,116 @@
-# SupportPortal Local POC
+# SupportPortal
 
-This repository contains a local Proof of Concept for an AI ticketing system.
-The project currently focuses on local validation only.
+SupportPortal 是一个技术支持工单系统，包含三端：
+1. 客户端（`/client/`）
+2. 工程师端（`/engineer/`）
+3. 管理员端（`/dashboard/`）
 
-## Single-Host Runtime (API + WS Gateway + Worker)
+当前仓库已落地单机可运行架构：
+1. `api`：FastAPI（REST + 静态页面托管）
+2. `ws_gateway`：独立 WebSocket 网关
+3. `worker`：异步任务处理（RAG/AI 查询）
+4. `redis`：任务队列 + 事件总线
+5. `postgres`：工单存储（可扩展 pgvector）
+6. `nginx`：统一入口反向代理
 
-The repository now includes a single-host production-style topology:
+## 本地运行（Podman）
 
-1. `api` (FastAPI REST + static UI hosting)
-2. `ws_gateway` (dedicated WebSocket fanout service)
-3. `worker` (async ticket query processing from Redis queue)
-4. `redis` (task queue + event bus)
-5. `postgres` (ticket store + optional pgvector table)
-6. `nginx` (front proxy for API and WebSocket routes)
+### 前置条件
+1. 已安装 Podman + `podman-compose`
+2. 已初始化并启动 podman machine
 
-Run locally with Podman Compose:
+### 启动步骤
 
 ```bash
+cd /Users/xieziling/Desktop/personal_proj/SupportPortal
+cp .env.example .env 2>/dev/null || true
+
+# 本地 rootless Podman 默认使用 8080
+# 确保 .env 中有：NGINX_HOST_PORT=8080
+
 podman machine start
 export PODMAN_COMPOSE_PROVIDER=podman-compose
-# Optional: avoid stale partial builds
-podman image rm -f localhost/supportportal-app:latest 2>/dev/null || true
-podman compose -f deployment/docker-compose.single-host.yml build api
-podman compose -f deployment/docker-compose.single-host.yml up -d
-```
 
-Stop:
-
-```bash
-podman compose -f deployment/docker-compose.single-host.yml down
-```
-
-Health checks:
-
-```bash
-curl http://localhost:8080/health
-curl http://localhost:8080/client
-```
-
-If `podman compose` is unavailable in your environment, use:
-
-```bash
+# 首次或镜像大改动时建议重建 api 镜像
 podman-compose -f deployment/docker-compose.single-host.yml build api
 podman-compose -f deployment/docker-compose.single-host.yml up -d
 ```
 
-## Project Structure
+### 访问地址
+1. 客户端: [http://localhost:8080/client/](http://localhost:8080/client/)
+2. 工程师端: [http://localhost:8080/engineer/](http://localhost:8080/engineer/)
+3. 管理端: [http://localhost:8080/dashboard/](http://localhost:8080/dashboard/)
+4. 健康检查: [http://localhost:8080/health](http://localhost:8080/health)
 
-```
-backend/       # FastAPI backend and API/WebSocket endpoints
-client_ui/     # Client-facing UI project (independent folder)
-engineer_ui/   # Engineer workbench UI project (independent folder)
-dashboard/     # Admin dashboard UI project (independent folder)
-docs/          # Plan, progress tracking, and UI standards
-```
-
-Each UI is developed in a separate folder as requested.
-
-## Quick Start
-
-1. Create and activate a virtual environment:
+### 常用命令
 
 ```bash
-python -m venv venv
-source venv/bin/activate
+# 状态
+podman-compose -f deployment/docker-compose.single-host.yml ps
+
+# 日志
+podman-compose -f deployment/docker-compose.single-host.yml logs -f api ws_gateway worker nginx
+
+# 停止
+podman-compose -f deployment/docker-compose.single-host.yml down
 ```
 
-2. Install dependencies:
+## 更新代码后如何生效
+
+1. 修改了 `backend/`、`client_ui/`、`engineer_ui/`、`dashboard/`：
 
 ```bash
-pip install -r requirements.txt
+podman-compose -f deployment/docker-compose.single-host.yml build api
+podman-compose -f deployment/docker-compose.single-host.yml up -d api ws_gateway worker
 ```
 
-3. Run the backend server:
+2. 只修改了 Nginx 配置（`deployment/nginx/supportportal.conf`）：
 
 ```bash
-uvicorn backend.main:app --reload --port 8000
+podman-compose -f deployment/docker-compose.single-host.yml restart nginx
 ```
 
-4. Open the three pages:
-
-- Client UI: [http://localhost:8000/client](http://localhost:8000/client)
-- Engineer UI: [http://localhost:8000/engineer](http://localhost:8000/engineer)
-- Admin Dashboard: [http://localhost:8000/dashboard](http://localhost:8000/dashboard)
-
-## Current API Endpoints
-
-- `GET /health`
-- `POST /api/tickets/query`
-- `GET /api/engineer/tickets`
-- `POST /api/tickets/{ticket_id}/action`
-- `GET /api/dashboard/metrics`
-- `GET /api/dashboard/events`
-- `WS /ws/engineer`
-- `WS /ws/dashboard`
-
-## RAG Integration (PostgreSQL + LangChain)
-
-Customer questions now try a RAG path before FAQ fallback:
-
-1. Retrieve top-k chunks from PostgreSQL pgvector table.
-2. Use LangChain (`ChatPromptTemplate` + `ChatOpenAI`) to answer with retrieved context.
-3. If RAG is unavailable/fails, fallback to local FAQ rules.
-
-Create a project-root `.env` file (auto-loaded on startup) with:
+3. 修改了 `.env`：
 
 ```bash
-OPENAI_API_KEY=your-openai-key
-PGVECTOR_DSN=postgresql://user:password@host:5432/dbname
-PGVECTOR_TABLE=docagent_chunks
-OPENAI_CHAT_MODEL=gpt-4.1
-OPENAI_EMBEDDING_MODEL=text-embedding-3-large
-RAG_TOP_K=5
+podman-compose -f deployment/docker-compose.single-host.yml up -d --force-recreate api ws_gateway worker nginx
 ```
 
-Then start normally:
+## 常见问题
 
-```bash
-uvicorn backend.main:app --reload --port 8000
+1. `localhost refused to connect` 但 `health` 正常：
+   - 通常是访问了 `http://localhost/client`（80端口）而不是 `8080`。
+   - 请使用带端口地址，如 `http://localhost:8080/client/`。
+
+2. `rootlessport cannot expose privileged port 80`：
+   - rootless Podman 不能绑定 80。
+   - 本地使用 `NGINX_HOST_PORT=8080`。
+
+3. `podman compose` 调到 `docker-compose`：
+   - 执行 `export PODMAN_COMPOSE_PROVIDER=podman-compose`。
+
+4. `pip` 相关 SSL/timeout 抖动：
+   - 重试 `podman-compose ... build api`。
+   - 当前 Dockerfile 已加入安装重试逻辑。
+
+## EC2 部署（Docker）
+
+EC2 上继续使用 Docker（不是 Podman）。
+详细步骤见：
+- [docs/deploy_single_host_ec2.md](/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/deploy_single_host_ec2.md)
+
+## 架构文档
+
+- 业务架构与三端交互：
+  [docs/support_system_architecture.md](/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/support_system_architecture.md)
+
+## 项目目录
+
+```text
+backend/       # FastAPI backend + worker + ws gateway
+client_ui/     # 客户端 UI
+engineer_ui/   # 工程师端 UI
+dashboard/     # 管理端 UI
+deployment/    # compose 与 nginx 配置
+docs/          # 文档
 ```
-
-If `OPENAI_API_KEY` or `PGVECTOR_DSN`/`DATABASE_URL` is missing, the system uses FAQ fallback only.
-
-## Ticket Persistence (AWS PostgreSQL)
-
-Ticket storage is now database-backed and auto-initialized on startup.
-
-Environment variables:
-
-```bash
-# Dedicated ticket DB DSN (recommended)
-TICKET_DB_DSN=postgresql://user:password@host:5432/dbname?sslmode=require
-
-# Optional: schema name for ticket tables (default: public)
-TICKET_DB_SCHEMA=public
-
-# Optional: DB connect timeout in seconds (default: 5)
-TICKET_DB_CONNECT_TIMEOUT=5
-```
-
-Behavior:
-
-- If `TICKET_DB_DSN` is set, backend writes tickets/messages/events to PostgreSQL.
-- If `TICKET_DB_DSN` is not set, backend falls back to in-memory ticket storage.
-- `GET /health` now includes `ticket_storage` to show current mode (`postgres` or `memory`).
-
-Tables created automatically:
-
-- `support_tickets`
-- `support_ticket_messages`
-- `support_ticket_events`
-
-Schema reference: `backend/sql/ticket_storage.sql`.
-
-## Notes
-
-- Ticket data uses PostgreSQL when `TICKET_DB_DSN` is configured; otherwise falls back to in-memory mode.
-- The sentiment logic is a lightweight local heuristic placeholder.
-- Phase-gate governance is defined in `docs/poc_plan.md` and `docs/poc_progress.md`.

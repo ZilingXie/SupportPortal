@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -37,6 +39,7 @@ TAKEOVER_MODE = "takeover"
 OPEN_STATUSES = {"open", "waiting_for_engineer"}
 PRIORITY_RANK = {"urgent": 4, "high": 3, "normal": 2, "low": 1}
 LOGGER = logging.getLogger(__name__)
+_UNAVAILABLE_MODELS: set[str] = set()
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -46,7 +49,31 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
+def _safe_int_env(name: str, default: int) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _safe_float_env(name: str, default: float) -> float:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
 ASYNC_QUERY_ENABLED = _env_flag("ASYNC_QUERY_ENABLED", default=False)
+OPENAI_REQUEST_TIMEOUT_SECONDS = _safe_float_env("OPENAI_REQUEST_TIMEOUT_SECONDS", 20.0)
+OPENAI_MAX_RETRIES = _safe_int_env("OPENAI_MAX_RETRIES", 1)
 
 
 def now_iso() -> str:
@@ -80,6 +107,11 @@ class ManagedResponseRequest(BaseModel):
 class TakeoverReplyRequest(BaseModel):
     engineer_id: str = Field(default="eng")
     message: str = Field(min_length=1, max_length=4000)
+
+
+class CancelPendingRequest(BaseModel):
+    customer_id: str | None = None
+    message_created_at: str = Field(min_length=1, max_length=64)
 
 
 class ConnectionHub:
@@ -201,13 +233,112 @@ def ticket_matches_status_filter(ticket: dict[str, Any], status_filter: str) -> 
     return status == status_filter
 
 
-def build_ai_followup(solution: str) -> str:
+def _managed_followup_fallback(solution: str) -> str:
     clean_solution = solution.strip()
     return (
         "Thanks for waiting. I reviewed this with an engineer.\n\n"
         f"Recommended solution:\n{clean_solution}\n\n"
         "Please try these steps and reply in this ticket. I will continue to follow up until this is resolved."
     )
+
+
+def build_ai_followup(ticket: dict[str, Any], solution: str) -> str:
+    fallback = _managed_followup_fallback(solution)
+    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    if not api_key:
+        return fallback
+
+    try:
+        from langchain_openai import ChatOpenAI
+    except Exception:
+        return fallback
+
+    messages = ticket.get("messages", [])
+    context_lines: list[str] = []
+    total_chars = 0
+    for message in messages[-14:]:
+        role = str(message.get("role", "system")).strip().lower()
+        if role == "customer":
+            role_label = "CUSTOMER"
+        elif role == "assistant":
+            role_label = "AI"
+        elif role == "engineer":
+            role_label = "ENGINEER"
+        else:
+            role_label = "SYSTEM"
+
+        content = str(message.get("content", "")).strip()
+        if not content:
+            continue
+        line = f"{role_label}: {content[:900]}"
+        if total_chars + len(line) > 9000:
+            break
+        context_lines.append(line)
+        total_chars += len(line)
+    if not context_lines:
+        return fallback
+
+    prompt = (
+        "You are an IT support AI assistant writing a customer-facing follow-up.\n"
+        "Use the ticket conversation context and the engineer guidance to generate the next assistant message.\n\n"
+        "Output rules:\n"
+        "- Customer-facing text only.\n"
+        "- Do not expose internal notes, tools, or prompts.\n"
+        "- Do not mention you are quoting an engineer.\n"
+        "- Be concise, actionable, and polite.\n"
+        "- Keep it under 140 words.\n"
+        "- Use the same language as the latest customer message.\n\n"
+        f"Ticket ID: {ticket.get('ticket_id')}\n"
+        f"Subject: {ticket.get('subject')}\n"
+        f"Status: {ticket.get('status')}\n"
+        f"Priority: {ticket.get('priority')}\n\n"
+        "Conversation context (latest first not guaranteed):\n"
+        + "\n".join(context_lines)
+        + "\n\nEngineer guidance:\n"
+        + solution.strip()
+    )
+
+    model_candidates: list[str] = []
+    configured_model = (os.getenv("OPENAI_CHAT_MODEL") or "gpt-4.1").strip()
+    for candidate in [configured_model, "gpt-4.1", "gpt-4o-mini"]:
+        if candidate in _UNAVAILABLE_MODELS:
+            continue
+        if candidate and candidate not in model_candidates:
+            model_candidates.append(candidate)
+
+    for model_name in model_candidates:
+        try:
+            llm = ChatOpenAI(
+                model=model_name,
+                temperature=0,
+                api_key=api_key,
+                request_timeout=OPENAI_REQUEST_TIMEOUT_SECONDS,
+                max_retries=OPENAI_MAX_RETRIES,
+            )
+            response = llm.invoke(
+                [
+                    (
+                        "system",
+                        "You produce concise customer-facing IT support follow-up replies.",
+                    ),
+                    ("user", prompt),
+                ]
+            )
+            answer = _llm_response_to_text(response)
+            if answer:
+                return answer
+        except Exception as exc:
+            lower = str(exc).lower()
+            if "model_not_found" in lower or "does not exist" in lower:
+                _UNAVAILABLE_MODELS.add(model_name)
+                LOGGER.warning(
+                    "Managed follow-up model unavailable (%s), trying fallback model",
+                    model_name,
+                )
+                continue
+            continue
+
+    return fallback
 
 
 def _engineer_request_fallback(ticket: dict[str, Any], customer_message: str) -> str:
@@ -337,18 +468,19 @@ def build_engineer_followup_request(ticket: dict[str, Any], customer_message: st
     return fallback
 
 
-def _summary_fallback(ticket: dict[str, Any]) -> str:
+def _summary_fallback(ticket: dict[str, Any]) -> tuple[str, str]:
     subject = str(ticket.get("subject", "")).strip() or "General support request"
-    status = str(ticket.get("status", "open")).strip()
-    priority = str(ticket.get("priority", "normal")).strip()
-    mode = str(ticket.get("engineer_mode", MANAGED_MODE)).strip()
+    status = str(ticket.get("status", "open")).strip().lower()
+    priority = str(ticket.get("priority", "normal")).strip().lower()
+    mode = str(ticket.get("engineer_mode", MANAGED_MODE)).strip().lower()
+    pending_question = str(ticket.get("pending_engineer_question", "")).strip()
 
     latest_customer = ""
     latest_assistant = ""
     messages = ticket.get("messages", [])
     for message in reversed(messages):
         role = str(message.get("role", "")).strip().lower()
-        content = str(message.get("content", "")).strip()
+        content = " ".join(str(message.get("content", "")).split()).strip()
         if not content:
             continue
         if not latest_customer and role == "customer":
@@ -358,17 +490,110 @@ def _summary_fallback(ticket: dict[str, Any]) -> str:
         if latest_customer and latest_assistant:
             break
 
-    lines = [
-        f"Subject: {subject}",
-        f"Status: {status} | Priority: {priority} | Mode: {mode}",
+    summary_parts = [
+        f"Ticket subject is '{subject}' with status {status}, priority {priority}, and mode {mode}."
     ]
     if latest_customer:
-        lines.append(f"Latest customer request: {latest_customer[:220]}")
+        summary_parts.append(f"Latest customer request: {latest_customer[:260]}")
     if latest_assistant:
-        lines.append(f"Latest system response: {latest_assistant[:220]}")
-    if not latest_customer and not latest_assistant:
-        lines.append("No conversation messages yet.")
-    return "\n".join(lines)
+        summary_parts.append(f"Latest AI response: {latest_assistant[:260]}")
+    if pending_question:
+        summary_parts.append(f"Pending engineer request: {pending_question[:260]}")
+    if not latest_customer and not latest_assistant and not pending_question:
+        summary_parts.append("No conversation history is available yet.")
+    summary = " ".join(summary_parts).strip()
+
+    if status == "resolved":
+        next_action = (
+            "Confirm resolution details with the customer and close the ticket if no additional issue remains."
+        )
+    elif status == "waiting_for_engineer":
+        next_action = (
+            "Investigate the unresolved gap, gather required logs or reproduction details, and send a concrete reply."
+        )
+    else:
+        next_action = (
+            "Continue troubleshooting based on the latest customer message, then provide the next actionable step."
+        )
+
+    if mode == TAKEOVER_MODE:
+        next_action += " Keep the response in human takeover mode."
+
+    return summary, next_action
+
+
+def _extract_json_dict(text: str) -> dict[str, Any] | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+
+    cleaned = raw
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+
+    candidates = [cleaned]
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end > start:
+        candidates.append(cleaned[start : end + 1])
+
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            continue
+    return None
+
+
+def _normalize_summary_fields(
+    payload: dict[str, Any] | None, fallback_summary: str, fallback_next_action: str
+) -> tuple[str, str]:
+    def _to_text(value: Any, *, multiline: bool = False) -> str:
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, list):
+            items = [str(item).strip() for item in value if str(item).strip()]
+            if not items:
+                return ""
+            if multiline:
+                return "\n".join([f"{index + 1}. {item}" for index, item in enumerate(items)])
+            return " ".join(items)
+        if value is None:
+            return ""
+        text = str(value).strip()
+        return text
+
+    summary = ""
+    next_action = ""
+    if isinstance(payload, dict):
+        summary = _to_text(payload.get("summary", ""), multiline=False)
+        next_action = _to_text(
+            payload.get("next_action_needed")
+            or payload.get("next_action")
+            or payload.get("nextActionNeeded")
+            or "",
+            multiline=True,
+        )
+
+    if not summary:
+        summary = fallback_summary
+    if not next_action:
+        next_action = fallback_next_action
+
+    normalized_summary = " ".join(summary.split())
+    next_action_lines = [
+        " ".join(line.split()).strip()
+        for line in str(next_action).splitlines()
+        if " ".join(line.split()).strip()
+    ]
+    if next_action_lines:
+        normalized_next_action = "\n".join(next_action_lines)
+    else:
+        normalized_next_action = " ".join(str(next_action).split())
+    return normalized_summary[:1500], normalized_next_action[:900]
 
 
 def _llm_response_to_text(response: Any) -> str:
@@ -386,55 +611,83 @@ def _llm_response_to_text(response: Any) -> str:
     return str(content).strip()
 
 
-def build_ticket_summary(ticket: dict[str, Any]) -> tuple[str, str]:
-    fallback = _summary_fallback(ticket)
+def build_ticket_summary(ticket: dict[str, Any]) -> tuple[str, str, str]:
+    fallback_summary, fallback_next_action = _summary_fallback(ticket)
     api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
     if not api_key:
-        return fallback, "fallback"
+        return fallback_summary, fallback_next_action, "fallback"
 
     try:
         from langchain_openai import ChatOpenAI
     except Exception:
-        return fallback, "fallback"
+        return fallback_summary, fallback_next_action, "fallback"
 
     messages = ticket.get("messages", [])
     lines: list[str] = []
-    for message in messages[-10:]:
+    for message in messages[-14:]:
         role = str(message.get("role", "system")).strip().upper() or "SYSTEM"
-        content = str(message.get("content", "")).strip()
+        content = " ".join(str(message.get("content", "")).split()).strip()
         if not content:
             continue
-        lines.append(f"{role}: {content[:700]}")
+        lines.append(f"{role}: {content[:900]}")
     if not lines:
-        return fallback, "fallback"
+        return fallback_summary, fallback_next_action, "fallback"
+
+    ticket_id = str(ticket.get("ticket_id", "")).strip()
+    subject = str(ticket.get("subject", "")).strip()
+    status = str(ticket.get("status", "")).strip()
+    priority = str(ticket.get("priority", "")).strip()
+    mode = str(ticket.get("engineer_mode", MANAGED_MODE)).strip()
+    requester = str(ticket.get("requester") or ticket.get("customer_id") or "").strip()
+    pending_question = str(ticket.get("pending_engineer_question", "")).strip()
 
     prompt = (
-        "Create a concise English summary for an engineer, plain text only (no markdown).\n"
-        "Output 4-6 short lines and include: core issue, current progress, and next step.\n\n"
-        f"Ticket ID: {ticket.get('ticket_id')}\n"
-        f"Subject: {ticket.get('subject')}\n"
-        f"Status: {ticket.get('status')}\n"
-        f"Priority: {ticket.get('priority')}\n"
-        f"Mode: {ticket.get('engineer_mode')}\n"
+        "Return a JSON object with exactly two keys: summary and next_action_needed.\n"
+        "Requirements:\n"
+        '- summary: 2-4 concise sentences describing current issue, current progress, and blocker if any.\n'
+        "- next_action_needed: 1-3 concrete actions for the engineer to execute next.\n"
+        "- Use plain English text values.\n"
+        "- Do not use markdown, headings, or extra keys.\n\n"
+        f"Ticket ID: {ticket_id}\n"
+        f"Subject: {subject}\n"
+        f"Requester: {requester}\n"
+        f"Status: {status}\n"
+        f"Priority: {priority}\n"
+        f"Mode: {mode}\n"
+        f"Pending engineer question: {pending_question or 'None'}\n"
         "Recent messages:\n"
         + "\n".join(lines)
     )
 
-    model_name = (os.getenv("OPENAI_CHAT_MODEL") or "gpt-4.1").strip()
-    try:
-        llm = ChatOpenAI(model=model_name, temperature=0, api_key=api_key)
-        response = llm.invoke(
-            [
-                ("system", "You summarize support tickets for engineers."),
-                ("user", prompt),
-            ]
-        )
-        summary = _llm_response_to_text(response)
-        if summary:
-            return summary, model_name
-    except Exception:
-        pass
-    return fallback, "fallback"
+    model_candidates: list[str] = []
+    configured_model = (os.getenv("OPENAI_CHAT_MODEL") or "gpt-4.1").strip()
+    for candidate in [configured_model, "gpt-4.1", "gpt-4o-mini"]:
+        if candidate and candidate not in model_candidates:
+            model_candidates.append(candidate)
+
+    for model_name in model_candidates:
+        try:
+            llm = ChatOpenAI(model=model_name, temperature=0, api_key=api_key)
+            response = llm.invoke(
+                [
+                    (
+                        "system",
+                        "You summarize support tickets for engineers and output strict JSON with summary and next_action_needed.",
+                    ),
+                    ("user", prompt),
+                ]
+            )
+            raw_output = _llm_response_to_text(response)
+            parsed = _extract_json_dict(raw_output)
+            summary, next_action = _normalize_summary_fields(
+                parsed, fallback_summary, fallback_next_action
+            )
+            if summary and next_action:
+                return summary, next_action, model_name
+        except Exception:
+            continue
+
+    return fallback_summary, fallback_next_action, "fallback"
 
 
 def build_answer(message: str) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
@@ -564,6 +817,16 @@ def root() -> RedirectResponse:
     return RedirectResponse(url="/client")
 
 
+@app.get("/login")
+def login_entry() -> RedirectResponse:
+    return RedirectResponse(url="/engineer")
+
+
+@app.post("/api/v1/auth/logout")
+def logout() -> dict[str, Any]:
+    return {"ok": True, "logged_out_at": now_iso()}
+
+
 @app.on_event("startup")
 def startup_event() -> None:
     global ticket_repository
@@ -673,8 +936,9 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
         ticket["pending_engineer_question"] = _engineer_request_fallback(ticket, customer_message)
         needs_engineer_input = True
     elif ASYNC_QUERY_ENABLED:
-        answer = "Thanks for your question. I am checking the knowledge base and will update this ticket shortly."
-        confidence = 0.3
+        answer = ""
+        confidence = 0.0
+        ai_replied = False
         ticket["status"] = "open"
         ticket["pending_engineer_question"] = None
         task_enqueued = await task_queue.enqueue(
@@ -801,6 +1065,7 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
         "ai_replied": ai_replied,
         "needs_engineer_input": needs_engineer_input,
         "queued_for_ai": task_enqueued,
+        "queued_message_created_at": timestamp if task_enqueued else None,
         "eta_minutes": 5 if priority == "high" else 15,
     }
 
@@ -843,10 +1108,11 @@ def get_ticket_summary(ticket_id: str) -> dict[str, Any]:
     if ticket is None:
         raise HTTPException(status_code=404, detail="Ticket not found")
     ensure_ticket_defaults(ticket)
-    summary, model = build_ticket_summary(ticket)
+    summary, next_action_needed, model = build_ticket_summary(ticket)
     return {
         "ticket_id": ticket_id,
         "summary": summary,
+        "next_action_needed": next_action_needed,
         "model": model,
         "generated_at": now_iso(),
     }
@@ -900,6 +1166,50 @@ async def update_ticket(ticket_id: str, request: TicketActionRequest) -> dict[st
         "ticket_id": ticket_id,
         "status": ticket["status"],
         "engineer_mode": ticket["engineer_mode"],
+        "updated_at": ticket["updated_at"],
+    }
+
+
+@app.post("/api/tickets/{ticket_id}/cancel-pending")
+async def cancel_pending_ticket_query(ticket_id: str, request: CancelPendingRequest) -> dict[str, Any]:
+    ticket = ticket_repository.get_ticket(ticket_id)
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    ensure_ticket_defaults(ticket)
+    customer_id = str(ticket.get("customer_id") or "").strip()
+    request_customer_id = str(request.customer_id or "").strip()
+    if request_customer_id and customer_id and request_customer_id != customer_id:
+        raise HTTPException(status_code=403, detail="Ticket customer mismatch")
+
+    message_created_at = request.message_created_at.strip()
+    if not message_created_at:
+        raise HTTPException(status_code=400, detail="message_created_at is required")
+
+    ticket["updated_at"] = now_iso()
+    ticket_repository.save_ticket(ticket, new_messages=[])
+
+    payload = {
+        "event": "ticket_ai_generation_stopped",
+        "ticket_id": ticket_id,
+        "customer_id": customer_id,
+        "status": ticket["status"],
+        "engineer_mode": ticket["engineer_mode"],
+        "message_created_at": message_created_at,
+        "message": "AI generation stopped by customer.",
+        "created_at": now_iso(),
+    }
+    ticket_repository.record_event(ticket_id, payload["event"], payload)
+    await dispatch_event(["engineer", "dashboard"], payload)
+
+    client_payload = build_client_sync_event(ticket, payload["event"], payload["message"])
+    client_payload["message_created_at"] = message_created_at
+    await dispatch_event(["client"], client_payload)
+
+    return {
+        "ticket_id": ticket_id,
+        "canceled": True,
+        "message_created_at": message_created_at,
         "updated_at": ticket["updated_at"],
     }
 
@@ -970,16 +1280,7 @@ async def submit_managed_response(ticket_id: str, request: ManagedResponseReques
     if not solution:
         raise HTTPException(status_code=400, detail="Solution cannot be empty")
 
-    timestamp = now_iso()
-    ticket["messages"].append(
-        {
-            "role": "engineer",
-            "content": solution,
-            "created_at": timestamp,
-        }
-    )
-
-    ai_followup = build_ai_followup(solution)
+    ai_followup = await asyncio.to_thread(build_ai_followup, ticket, solution)
     ticket["messages"].append(
         {
             "role": "assistant",

@@ -73,6 +73,17 @@ def _safe_int_env(key: str, default_value: int) -> int:
     return parsed if parsed > 0 else default_value
 
 
+def _safe_float_env(key: str, default_value: float) -> float:
+    raw = (os.getenv(key, "") or "").strip()
+    if not raw:
+        return default_value
+    try:
+        parsed = float(raw)
+    except ValueError:
+        return default_value
+    return parsed if parsed > 0 else default_value
+
+
 def _build_heading(chunk: RetrievedChunk) -> str:
     heading_items = [item for item in [chunk.h1, chunk.h2, chunk.h3] if item]
     return " > ".join(heading_items) if heading_items else "Unknown heading"
@@ -90,6 +101,8 @@ def _get_rag_config() -> dict[str, Any]:
         "embedding_model": (
             os.getenv("OPENAI_EMBEDDING_MODEL") or "text-embedding-3-large"
         ).strip(),
+        "request_timeout_seconds": _safe_float_env("RAG_REQUEST_TIMEOUT_SECONDS", 20.0),
+        "max_retries": _safe_int_env("RAG_OPENAI_MAX_RETRIES", 1),
     }
 
 
@@ -101,6 +114,8 @@ def _retrieve_chunks(message: str, config: dict[str, Any]) -> list[RetrievedChun
     embeddings = OpenAIEmbeddings(
         model=config["embedding_model"],
         api_key=config["api_key"],
+        request_timeout=config["request_timeout_seconds"],
+        max_retries=int(config["max_retries"]),
     )
     query_embedding = embeddings.embed_query(message)
     vector_param = _vector_literal(query_embedding)
@@ -323,6 +338,8 @@ def _invoke_llm_payload(
                 model=model_name,
                 temperature=0,
                 api_key=config["api_key"],
+                request_timeout=config["request_timeout_seconds"],
+                max_retries=int(config["max_retries"]),
             )
             response = llm.invoke([("system", SYSTEM_PROMPT), ("user", prompt)])
             payload = _extract_json_payload(_response_to_text(response))

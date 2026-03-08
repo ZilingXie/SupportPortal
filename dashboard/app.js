@@ -1,9 +1,19 @@
 const wsStatusEl = document.getElementById("ws-status");
+const headerUserControlsEl = document.getElementById("header-user-controls");
 const ticketVolumeEl = document.getElementById("ticket-volume");
 const resolutionRateEl = document.getElementById("resolution-rate");
 const sentimentAlertsEl = document.getElementById("sentiment-alerts");
 const eventStreamEl = document.getElementById("event-stream");
 let storageMode = "unknown";
+let logoutLoading = false;
+let socket = null;
+let heartbeatTimer = null;
+let reconnectTimer = null;
+
+const DASHBOARD_USER = {
+  username: "admin",
+  role: "ADMIN",
+};
 
 async function fetchJson(url, options = undefined) {
   const response = await fetch(url, options);
@@ -20,6 +30,63 @@ async function fetchJson(url, options = undefined) {
   return response.json();
 }
 
+function userInitial(username) {
+  const value = String(username || "").trim();
+  if (!value) {
+    return "U";
+  }
+  return value[0].toUpperCase();
+}
+
+function UserProfileChip({ username, role }) {
+  const roleLabel = String(role || "ADMIN").toUpperCase() === "ADMIN" ? "ADMIN" : "OPERATOR";
+  const roleClass = roleLabel === "ADMIN" ? "user-role-admin" : "user-role-operator";
+  return `
+    <div class="user-profile-chip" aria-label="Current user">
+      <span class="user-avatar" aria-hidden="true">${userInitial(username)}</span>
+      <div class="user-meta">
+        <p class="user-name">${username}</p>
+        <p class="user-role ${roleClass}">${roleLabel}</p>
+      </div>
+    </div>
+  `;
+}
+
+function LogoutButton({ loading = false } = {}) {
+  return `
+    <button
+      id="logout-btn"
+      class="logout-icon-btn"
+      type="button"
+      title="Logout"
+      aria-label="Logout"
+      ${loading ? "disabled" : ""}
+    >
+      <svg class="logout-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M14 8L18 12L14 16" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path>
+        <path d="M18 12H9" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path>
+        <path d="M10 4H7C5.9 4 5 4.9 5 6V18C5 19.1 5.9 20 7 20H10" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path>
+      </svg>
+    </button>
+  `;
+}
+
+function renderHeaderUserControls() {
+  if (!headerUserControlsEl) {
+    return;
+  }
+  headerUserControlsEl.innerHTML = [
+    UserProfileChip(DASHBOARD_USER),
+    LogoutButton({ loading: logoutLoading }),
+  ].join("");
+  const logoutBtn = document.getElementById("logout-btn");
+  logoutBtn?.addEventListener("click", () => {
+    handleLogoutClick().catch((error) => {
+      setRealtimeStatus(`Logout failed: ${error.message}`);
+    });
+  });
+}
+
 async function loadMetrics() {
   const data = await fetchJson("/api/dashboard/metrics");
   ticketVolumeEl.textContent = data.today_ticket_count;
@@ -30,6 +97,22 @@ async function loadMetrics() {
 function setRealtimeStatus(text) {
   const suffix = storageMode === "unknown" ? "" : ` | Storage: ${storageMode}`;
   wsStatusEl.textContent = `${text}${suffix}`;
+}
+
+function closeDashboardSocket() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+  if (socket) {
+    socket.onclose = null;
+    socket.close();
+    socket = null;
+  }
 }
 
 async function detectStorageMode() {
@@ -81,15 +164,16 @@ async function loadRecentEvents() {
 }
 
 function setupWebSocket() {
+  closeDashboardSocket();
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-  const socket = new WebSocket(`${protocol}://${window.location.host}/ws/dashboard`);
+  socket = new WebSocket(`${protocol}://${window.location.host}/ws/dashboard`);
 
   socket.onopen = () => {
     setRealtimeStatus("Realtime: connected");
   };
   socket.onclose = () => {
     setRealtimeStatus("Realtime: disconnected (reconnecting...)");
-    setTimeout(setupWebSocket, 1500);
+    reconnectTimer = setTimeout(setupWebSocket, 1500);
   };
   socket.onerror = () => {
     setRealtimeStatus("Realtime: error");
@@ -100,13 +184,31 @@ function setupWebSocket() {
     await loadMetrics();
   };
 
-  setInterval(() => {
+  heartbeatTimer = setInterval(() => {
     if (socket.readyState === WebSocket.OPEN) {
       socket.send("ping");
     }
   }, 10000);
 }
 
+async function handleLogoutClick() {
+  if (logoutLoading) {
+    return;
+  }
+  logoutLoading = true;
+  renderHeaderUserControls();
+  try {
+    await fetchJson("/api/v1/auth/logout", { method: "POST" });
+    closeDashboardSocket();
+    window.location.assign("/login");
+    window.location.reload();
+  } finally {
+    logoutLoading = false;
+    renderHeaderUserControls();
+  }
+}
+
+renderHeaderUserControls();
 detectStorageMode()
   .then(() => Promise.all([loadMetrics(), loadRecentEvents()]))
   .then(() => {

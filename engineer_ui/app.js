@@ -7,8 +7,8 @@ const loginScreenEl = document.getElementById("login-screen");
 const boardScreenEl = document.getElementById("board-screen");
 const loginFormEl = document.getElementById("login-form");
 const loginErrorEl = document.getElementById("login-error");
-const statusFilterEl = document.getElementById("status-filter");
-const logoutBtnEl = document.getElementById("logout-btn");
+const filterControlsEl = document.getElementById("filter-controls");
+const headerUserControlsEl = document.getElementById("header-user-controls");
 const wsStatusEl = document.getElementById("ws-status");
 const ticketCountEl = document.getElementById("ticket-count");
 const ticketTableBodyEl = document.getElementById("ticket-table-body");
@@ -21,7 +21,7 @@ let tickets = [];
 let selectedTicketId = null;
 let selectedTicket = null;
 let selectedTicketSummary = "";
-let selectedTicketSummaryMeta = "";
+let selectedTicketNextAction = "";
 let detailLoading = false;
 let showTellAiComposer = false;
 let tellAiDraft = "";
@@ -39,6 +39,7 @@ let socket = null;
 let heartbeatTimer = null;
 let reconnectTimer = null;
 let storageMode = "unknown";
+let logoutLoading = false;
 const ticketSummaryCache = new Map();
 
 const PRIORITY_RANK = {
@@ -46,6 +47,53 @@ const PRIORITY_RANK = {
   high: 3,
   normal: 2,
   low: 1,
+};
+const DEFAULT_FETCH_TIMEOUT_MS = 25000;
+const TELL_AI_FETCH_TIMEOUT_MS = 70000;
+
+const FILTER_KEYS = ["priority", "mode", "status"];
+const FILTER_BLUR_DELAY_MS = 140;
+const filterValues = {
+  priority: "all",
+  mode: "all",
+  status: "all",
+};
+const filterComboboxState = {
+  priority: { open: false, query: "", blurTimer: null },
+  mode: { open: false, query: "", blurTimer: null },
+  status: { open: false, query: "", blurTimer: null },
+};
+const filterComboboxConfig = {
+  priority: {
+    label: "Priority",
+    searchable: true,
+    strictSelection: true,
+    disabled: false,
+    autoSubmit: false,
+    onValueChange: () => {
+      renderTickets();
+    },
+  },
+  mode: {
+    label: "Mode",
+    searchable: true,
+    strictSelection: true,
+    disabled: false,
+    autoSubmit: false,
+    onValueChange: () => {
+      renderTickets();
+    },
+  },
+  status: {
+    label: "Status",
+    searchable: true,
+    strictSelection: true,
+    disabled: false,
+    autoSubmit: false,
+    onValueChange: () => {
+      renderTickets();
+    },
+  },
 };
 
 function escapeHtml(value) {
@@ -55,6 +103,63 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function userInitial(username) {
+  const value = String(username || "").trim();
+  if (!value) {
+    return "U";
+  }
+  return value[0].toUpperCase();
+}
+
+function UserProfileChip({ username, role }) {
+  const roleLabel = String(role || "OPERATOR").toUpperCase() === "ADMIN" ? "ADMIN" : "OPERATOR";
+  const roleClass = roleLabel === "ADMIN" ? "user-role-admin" : "user-role-operator";
+  return `
+    <div class="user-profile-chip" aria-label="Current user">
+      <span class="user-avatar" aria-hidden="true">${escapeHtml(userInitial(username))}</span>
+      <div class="user-meta">
+        <p class="user-name">${escapeHtml(username)}</p>
+        <p class="user-role ${roleClass}">${escapeHtml(roleLabel)}</p>
+      </div>
+    </div>
+  `;
+}
+
+function LogoutButton({ loading = false } = {}) {
+  return `
+    <button
+      id="logout-btn"
+      class="logout-icon-btn"
+      type="button"
+      title="Logout"
+      aria-label="Logout"
+      ${loading ? "disabled" : ""}
+    >
+      <svg class="logout-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M14 8L18 12L14 16" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path>
+        <path d="M18 12H9" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path>
+        <path d="M10 4H7C5.9 4 5 4.9 5 6V18C5 19.1 5.9 20 7 20H10" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path>
+      </svg>
+    </button>
+  `;
+}
+
+function renderHeaderUserControls() {
+  if (!headerUserControlsEl) {
+    return;
+  }
+  headerUserControlsEl.innerHTML = [
+    UserProfileChip({ username: LOGIN_USER, role: "OPERATOR" }),
+    LogoutButton({ loading: logoutLoading }),
+  ].join("");
+  const logoutBtn = document.getElementById("logout-btn");
+  logoutBtn?.addEventListener("click", () => {
+    handleLogoutClick().catch((error) => {
+      window.alert(`Logout failed: ${error.message}`);
+    });
+  });
 }
 
 function formatMultiline(value) {
@@ -372,6 +477,281 @@ function filterComboboxOptions(options, query) {
   return options.filter((option) => String(option.label || "").toLowerCase().includes(keyword));
 }
 
+function headerFilterOptions(key) {
+  if (key === "priority") {
+    return [
+      { value: "all", label: "All Priority" },
+      { value: "urgent", label: priorityLabel("urgent") },
+      { value: "high", label: priorityLabel("high") },
+      { value: "normal", label: priorityLabel("normal") },
+      { value: "low", label: priorityLabel("low") },
+    ];
+  }
+  if (key === "mode") {
+    return [
+      { value: "all", label: "All Mode" },
+      { value: "managed", label: modeLabel("managed") },
+      { value: "takeover", label: modeLabel("takeover") },
+    ];
+  }
+  if (key === "status") {
+    return [
+      { value: "all", label: "All Status" },
+      { value: "open", label: statusLabel("open") },
+      { value: "waiting_for_engineer", label: statusLabel("waiting_for_engineer") },
+      { value: "resolved", label: statusLabel("resolved") },
+    ];
+  }
+  return [];
+}
+
+function normalizeFilterValue(key, value) {
+  const normalized = String(value || "all").toLowerCase();
+  const options = headerFilterOptions(key);
+  if (options.some((option) => option.value === normalized)) {
+    return normalized;
+  }
+  return "all";
+}
+
+function selectedHeaderFilterOption(key) {
+  const options = headerFilterOptions(key);
+  const selected = options.find((option) => option.value === filterValues[key]);
+  return selected || options[0] || { value: "all", label: "All" };
+}
+
+function buildHeaderFilterComboboxHtml(key) {
+  const config = filterComboboxConfig[key];
+  if (!config) {
+    return "";
+  }
+
+  const state = filterComboboxState[key];
+  const options = headerFilterOptions(key);
+  const selected = selectedHeaderFilterOption(key);
+  const searchable = config.searchable !== false;
+  const query = String(state?.query || "");
+  const filteredOptions = searchable ? filterComboboxOptions(options, query) : options;
+  const isOpen = Boolean(state?.open);
+  const disabled = Boolean(config.disabled);
+  const displayValue = searchable && isOpen ? query : selected.label;
+  const panelId = `ticket-filter-options-${key}`;
+  const inputId = `ticket-filter-input-${key}`;
+  const classes = [
+    "filter-combobox",
+    isOpen ? "is-open" : "",
+    disabled ? "is-disabled" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return `
+    <div class="${escapeHtml(classes)}" data-filter-root="${escapeHtml(key)}">
+      <div class="filter-combobox-control">
+        <input
+          id="${escapeHtml(inputId)}"
+          class="filter-combobox-input"
+          data-filter-input="${escapeHtml(key)}"
+          type="text"
+          autocomplete="off"
+          role="combobox"
+          aria-expanded="${isOpen ? "true" : "false"}"
+          aria-controls="${escapeHtml(panelId)}"
+          value="${escapeHtml(displayValue)}"
+          aria-label="${escapeHtml(config.label)}"
+          ${searchable ? "" : "readonly"}
+          ${disabled ? "disabled" : ""}
+        />
+        <button
+          type="button"
+          class="filter-combobox-toggle"
+          data-filter-action="toggle"
+          data-filter-key="${escapeHtml(key)}"
+          aria-label="Toggle ${escapeHtml(config.label)} options"
+          ${disabled ? "disabled" : ""}
+        >
+          <span class="filter-combobox-caret" aria-hidden="true"></span>
+        </button>
+      </div>
+      <div
+        id="${escapeHtml(panelId)}"
+        class="filter-combobox-panel ${isOpen ? "" : "hidden"}"
+        role="listbox"
+      >
+        ${
+          filteredOptions.length === 0
+            ? '<p class="filter-combobox-empty">No matching options.</p>'
+            : filteredOptions
+                .map((option) => {
+                  const isSelected = option.value === selected.value;
+                  return `
+                    <button
+                      type="button"
+                      class="filter-combobox-option ${isSelected ? "is-selected" : ""}"
+                      data-filter-action="select"
+                      data-filter-key="${escapeHtml(key)}"
+                      data-value="${escapeHtml(option.value)}"
+                      role="option"
+                      aria-selected="${isSelected ? "true" : "false"}"
+                      ${disabled ? "disabled" : ""}
+                    >
+                      ${escapeHtml(option.label)}
+                    </button>
+                  `;
+                })
+                .join("")
+        }
+      </div>
+    </div>
+  `;
+}
+
+function renderFilterControls() {
+  if (!filterControlsEl) {
+    return;
+  }
+  filterControlsEl.innerHTML = FILTER_KEYS.map((key) => buildHeaderFilterComboboxHtml(key)).join("");
+}
+
+function clearFilterBlurTimer(key) {
+  const state = filterComboboxState[key];
+  if (!state?.blurTimer) {
+    return;
+  }
+  clearTimeout(state.blurTimer);
+  state.blurTimer = null;
+}
+
+function clearAllFilterBlurTimers() {
+  FILTER_KEYS.forEach((key) => {
+    clearFilterBlurTimer(key);
+  });
+}
+
+function isHeaderFilterOpen() {
+  return FILTER_KEYS.some((key) => Boolean(filterComboboxState[key]?.open));
+}
+
+function closeFilterCombobox(key, { clearQuery = true } = {}) {
+  const state = filterComboboxState[key];
+  if (!state) {
+    return false;
+  }
+  const changed = state.open || (clearQuery && state.query);
+  state.open = false;
+  if (clearQuery) {
+    state.query = "";
+  }
+  return Boolean(changed);
+}
+
+function closeAllHeaderFilterComboboxes({ render = true } = {}) {
+  clearAllFilterBlurTimers();
+  const changed = FILTER_KEYS.some((key) => closeFilterCombobox(key, { clearQuery: true }));
+  if (changed && render) {
+    renderFilterControls();
+  }
+}
+
+function openFilterCombobox(key) {
+  const state = filterComboboxState[key];
+  const config = filterComboboxConfig[key];
+  if (!state || !config || config.disabled) {
+    return false;
+  }
+
+  clearFilterBlurTimer(key);
+  let changed = false;
+  FILTER_KEYS.forEach((otherKey) => {
+    if (otherKey === key) {
+      if (!filterComboboxState[otherKey].open) {
+        filterComboboxState[otherKey].open = true;
+        changed = true;
+      }
+      return;
+    }
+    if (closeFilterCombobox(otherKey, { clearQuery: true })) {
+      changed = true;
+    }
+  });
+  return changed;
+}
+
+function focusHeaderFilterInput(key) {
+  setTimeout(() => {
+    const input = document.getElementById(`ticket-filter-input-${key}`);
+    if (!input) {
+      return;
+    }
+    input.focus();
+    const config = filterComboboxConfig[key];
+    if (config?.searchable === false) {
+      return;
+    }
+    const query = String(filterComboboxState[key]?.query || "");
+    const end = query.length;
+    input.setSelectionRange(end, end);
+  }, 0);
+}
+
+function closeFilterComboboxWithDelay(key) {
+  const state = filterComboboxState[key];
+  if (!state) {
+    return;
+  }
+  clearFilterBlurTimer(key);
+  state.blurTimer = setTimeout(() => {
+    state.blurTimer = null;
+    const root = filterControlsEl?.querySelector(`[data-filter-root="${key}"]`);
+    const active = document.activeElement;
+    if (root && active && root.contains(active)) {
+      return;
+    }
+    if (closeFilterCombobox(key, { clearQuery: true })) {
+      renderFilterControls();
+    }
+  }, FILTER_BLUR_DELAY_MS);
+}
+
+function applyHeaderFilterValue(key, value) {
+  const normalized = normalizeFilterValue(key, value);
+  if (filterValues[key] === normalized) {
+    return false;
+  }
+
+  filterValues[key] = normalized;
+  const config = filterComboboxConfig[key];
+  if (typeof config?.onValueChange === "function") {
+    config.onValueChange(normalized, { ...filterValues });
+  }
+  if (config?.autoSubmit) {
+    const form = filterControlsEl?.closest("form");
+    if (form && typeof form.requestSubmit === "function") {
+      form.requestSubmit();
+    }
+  }
+  return true;
+}
+
+function applyTicketFilters(items) {
+  return items.filter((ticket) => {
+    const priority = String(ticket?.priority || "normal").toLowerCase();
+    const mode = String(ticket?.engineer_mode || "managed").toLowerCase();
+    const status = String(ticket?.status || "open").toLowerCase();
+
+    if (filterValues.priority !== "all" && priority !== filterValues.priority) {
+      return false;
+    }
+    if (filterValues.mode !== "all" && mode !== filterValues.mode) {
+      return false;
+    }
+    if (filterValues.status !== "all" && status !== filterValues.status) {
+      return false;
+    }
+    return true;
+  });
+}
+
 function buildDetailComboboxHtml({
   kind,
   selectedValue,
@@ -492,16 +872,15 @@ function refreshSelectedSummaryPreview(ticketId) {
     return;
   }
 
-  selectedTicketSummary = buildLocalTicketSummary(selectedTicket);
-  selectedTicketSummaryMeta = "AI Summary (loading...)";
+  selectedTicketSummary = "Generating AI summary for this ticket...";
+  selectedTicketNextAction = "Determining next action needed...";
   ticketSummaryCache.delete(normalizedId);
 }
 
-function buildLocalTicketSummary(ticket) {
-  const subject = String(ticket?.subject || "").trim() || "General support request";
-  const status = String(ticket?.status || "open").toLowerCase();
-  const mode = String(ticket?.engineer_mode || "managed").toLowerCase();
-  const priority = String(ticket?.priority || "normal");
+function buildLocalSummaryFallback(ticket) {
+  const status = statusLabel(String(ticket?.status || "open").toLowerCase());
+  const mode = modeLabel(String(ticket?.engineer_mode || "managed").toLowerCase());
+  const priority = priorityLabel(String(ticket?.priority || "normal"));
   const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
 
   let latestCustomer = "";
@@ -524,17 +903,25 @@ function buildLocalTicketSummary(ticket) {
     }
   }
 
-  const lines = [
-    `Subject: ${subject}`,
-    `Status: ${statusLabel(status)}, Mode: ${modeLabel(mode)}, Priority: ${priorityLabel(priority)}`,
+  const summaryLines = [
+    `Ticket is currently ${status} in ${mode} mode with ${priority} priority.`,
   ];
   if (latestCustomer) {
-    lines.push(`Latest customer request: ${latestCustomer.slice(0, 140)}`);
+    summaryLines.push(`Latest customer request: ${latestCustomer.slice(0, 220)}`);
   }
   if (latestAssistant) {
-    lines.push(`Latest system response: ${latestAssistant.slice(0, 140)}`);
+    summaryLines.push(`Latest AI response: ${latestAssistant.slice(0, 220)}`);
   }
-  return lines.join("\n");
+
+  const nextAction =
+    latestCustomer || latestAssistant
+      ? "Review the latest messages, confirm missing technical details, and provide a concrete response or switch to takeover if manual handling is required."
+      : "Collect initial issue details from the customer and define the first troubleshooting step.";
+
+  return {
+    summary: summaryLines.join(" "),
+    nextAction,
+  };
 }
 
 function isAuthenticated() {
@@ -556,7 +943,47 @@ function toggleScreens() {
 }
 
 async function fetchJson(url, options = undefined) {
-  const response = await fetch(url, options);
+  const requestOptions = options ? { ...options } : {};
+  const timeoutMsCandidate = Number(requestOptions.timeoutMs);
+  const timeoutMs =
+    Number.isFinite(timeoutMsCandidate) && timeoutMsCandidate > 0
+      ? timeoutMsCandidate
+      : DEFAULT_FETCH_TIMEOUT_MS;
+  delete requestOptions.timeoutMs;
+
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => {
+    timeoutController.abort();
+  }, timeoutMs);
+
+  const externalSignal = requestOptions.signal;
+  const abortFromExternal = () => {
+    timeoutController.abort();
+  };
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      timeoutController.abort();
+    } else {
+      externalSignal.addEventListener("abort", abortFromExternal, { once: true });
+    }
+  }
+
+  requestOptions.signal = timeoutController.signal;
+  let response;
+  try {
+    response = await fetch(url, requestOptions);
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`Request timed out after ${Math.ceil(timeoutMs / 1000)}s`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+    if (externalSignal) {
+      externalSignal.removeEventListener("abort", abortFromExternal);
+    }
+  }
+
   if (!response.ok) {
     let reason = `HTTP ${response.status}`;
     try {
@@ -598,7 +1025,7 @@ function sortTicketsByPriority(items) {
 }
 
 function renderTickets() {
-  const rows = sortTicketsByPriority(tickets);
+  const rows = sortTicketsByPriority(applyTicketFilters(tickets));
   ticketCountEl.textContent = `${rows.length} tickets`;
 
   if (rows.length === 0) {
@@ -664,7 +1091,7 @@ function closeTicketDetail() {
   selectedTicketId = null;
   selectedTicket = null;
   selectedTicketSummary = "";
-  selectedTicketSummaryMeta = "";
+  selectedTicketNextAction = "";
   detailLoading = false;
   showTellAiComposer = false;
   tellAiDraft = "";
@@ -907,11 +1334,8 @@ function renderTicketDetail() {
     <section class="detail-block">
       <h3>Summary</h3>
       <p class="summary-text">${formatMultiline(selectedTicketSummary || "Generating summary...")}</p>
-      ${
-        selectedTicketSummaryMeta
-          ? `<p class="summary-meta">${escapeHtml(selectedTicketSummaryMeta)}</p>`
-          : ""
-      }
+      <p class="summary-next-title">Next Action Needed</p>
+      <p class="summary-text">${formatMultiline(selectedTicketNextAction || "Analyzing next action needed...")}</p>
     </section>
 
     <section class="detail-block">
@@ -960,7 +1384,7 @@ async function refreshSelectedSummary(options = {}) {
   const cached = ticketSummaryCache.get(selectedTicketId);
   if (cached && cached.cacheKey === cacheKey) {
     selectedTicketSummary = cached.summary;
-    selectedTicketSummaryMeta = cached.meta;
+    selectedTicketNextAction = cached.nextAction;
     renderTicketDetail();
     return;
   }
@@ -970,20 +1394,27 @@ async function refreshSelectedSummary(options = {}) {
       `/api/engineer/tickets/${encodeURIComponent(selectedTicketId)}/summary`
     );
     const summary = String(payload?.summary || "").trim();
-    if (!summary) {
+    const nextAction = String(payload?.next_action_needed || "").trim();
+    if (!summary || !nextAction) {
+      const fallback = buildLocalSummaryFallback(selectedTicket);
+      selectedTicketSummary = fallback.summary;
+      selectedTicketNextAction = fallback.nextAction;
+      renderTicketDetail();
       return;
     }
-    const model = String(payload?.model || "fallback").trim();
-    const meta = model === "fallback" ? "AI Summary (fallback)" : `AI Summary (${model})`;
     selectedTicketSummary = summary;
-    selectedTicketSummaryMeta = meta;
+    selectedTicketNextAction = nextAction;
     ticketSummaryCache.set(selectedTicketId, {
       cacheKey,
       summary,
-      meta,
+      nextAction,
     });
     renderTicketDetail();
   } catch (error) {
+    const fallback = buildLocalSummaryFallback(selectedTicket);
+    selectedTicketSummary = fallback.summary;
+    selectedTicketNextAction = fallback.nextAction;
+    renderTicketDetail();
     if (!silent) {
       window.alert(`Summary generation failed: ${error.message}`);
     }
@@ -995,7 +1426,7 @@ async function refreshSelectedTicket(options = {}) {
   if (!selectedTicketId) {
     selectedTicket = null;
     selectedTicketSummary = "";
-    selectedTicketSummaryMeta = "";
+    selectedTicketNextAction = "";
     detailLoading = false;
     renderTicketDetail();
     return;
@@ -1010,11 +1441,11 @@ async function refreshSelectedTicket(options = {}) {
     const payload = await fetchJson(`/api/engineer/tickets/${encodeURIComponent(selectedTicketId)}`);
     selectedTicket = payload.ticket || null;
     if (selectedTicket) {
-      selectedTicketSummary = buildLocalTicketSummary(selectedTicket);
-      selectedTicketSummaryMeta = "AI Summary (loading...)";
+      selectedTicketSummary = "Generating AI summary for this ticket...";
+      selectedTicketNextAction = "Determining next action needed...";
     } else {
       selectedTicketSummary = "";
-      selectedTicketSummaryMeta = "";
+      selectedTicketNextAction = "";
     }
     detailLoading = false;
     renderTicketDetail();
@@ -1056,8 +1487,7 @@ async function openTicketDetail(ticketId) {
 
 async function loadTickets(options = {}) {
   const { refreshDetail = true } = options;
-  const statusFilter = statusFilterEl.value || "open";
-  const params = new URLSearchParams({ status: statusFilter });
+  const params = new URLSearchParams({ status: "all" });
   const payload = await fetchJson(`/api/engineer/tickets?${params.toString()}`);
   tickets = Array.isArray(payload.tickets) ? payload.tickets : [];
   renderTickets();
@@ -1090,7 +1520,7 @@ async function switchTicketModeOptimistic(ticketId, nextMode) {
   const previousTickets = tickets.map((ticket) => ({ ...ticket }));
   const previousSelectedTicket = selectedTicket ? { ...selectedTicket } : null;
   const previousSummary = selectedTicketSummary;
-  const previousSummaryMeta = selectedTicketSummaryMeta;
+  const previousNextAction = selectedTicketNextAction;
   const previousShowTellAiComposer = showTellAiComposer;
   const previousTellAiDraft = tellAiDraft;
   const localPatch = {
@@ -1140,7 +1570,7 @@ async function switchTicketModeOptimistic(ticketId, nextMode) {
     tickets = previousTickets;
     selectedTicket = previousSelectedTicket;
     selectedTicketSummary = previousSummary;
-    selectedTicketSummaryMeta = previousSummaryMeta;
+    selectedTicketNextAction = previousNextAction;
     showTellAiComposer = previousShowTellAiComposer;
     tellAiDraft = previousTellAiDraft;
     renderTickets();
@@ -1180,6 +1610,7 @@ async function submitManagedResponse(ticketId, solutionText = null) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ solution: cleaned, engineer_id: ENGINEER_ID }),
+    timeoutMs: TELL_AI_FETCH_TIMEOUT_MS,
   });
 }
 
@@ -1656,6 +2087,166 @@ async function handleDetailChange(event) {
   }
 }
 
+function handleFilterControlsClick(event) {
+  const actionButton = event.target.closest("[data-filter-action]");
+  if (actionButton) {
+    const action = actionButton.dataset.filterAction;
+    const key = String(actionButton.dataset.filterKey || "").trim().toLowerCase();
+    if (!FILTER_KEYS.includes(key)) {
+      return;
+    }
+    const config = filterComboboxConfig[key];
+    if (!config || config.disabled) {
+      return;
+    }
+
+    if (action === "toggle") {
+      const isOpen = Boolean(filterComboboxState[key]?.open);
+      if (isOpen) {
+        closeFilterCombobox(key, { clearQuery: true });
+        renderFilterControls();
+      } else if (openFilterCombobox(key)) {
+        renderFilterControls();
+        focusHeaderFilterInput(key);
+      }
+      return;
+    }
+
+    if (action === "select") {
+      const nextValue = String(actionButton.dataset.value || "all").toLowerCase();
+      const normalizedValue = normalizeFilterValue(key, nextValue);
+      if (config.strictSelection && !headerFilterOptions(key).some((option) => option.value === normalizedValue)) {
+        return;
+      }
+      applyHeaderFilterValue(key, normalizedValue);
+      closeAllHeaderFilterComboboxes({ render: false });
+      renderFilterControls();
+    }
+    return;
+  }
+
+  const input = event.target.closest("[data-filter-input]");
+  if (!input) {
+    return;
+  }
+  const key = String(input.dataset.filterInput || "").trim().toLowerCase();
+  if (!FILTER_KEYS.includes(key)) {
+    return;
+  }
+  if (openFilterCombobox(key)) {
+    renderFilterControls();
+    focusHeaderFilterInput(key);
+  }
+}
+
+function handleFilterControlsInput(event) {
+  const input = event.target.closest("[data-filter-input]");
+  if (!input) {
+    return;
+  }
+  const key = String(input.dataset.filterInput || "").trim().toLowerCase();
+  if (!FILTER_KEYS.includes(key)) {
+    return;
+  }
+
+  const config = filterComboboxConfig[key];
+  if (!config || config.disabled || config.searchable === false) {
+    return;
+  }
+
+  filterComboboxState[key].query = String(input.value || "");
+  openFilterCombobox(key);
+  renderFilterControls();
+  focusHeaderFilterInput(key);
+}
+
+function handleFilterControlsFocusIn(event) {
+  const root = event.target.closest("[data-filter-root]");
+  if (root) {
+    const key = String(root.dataset.filterRoot || "").trim().toLowerCase();
+    if (FILTER_KEYS.includes(key)) {
+      clearFilterBlurTimer(key);
+    }
+  }
+
+  const input = event.target.closest("[data-filter-input]");
+  if (!input) {
+    return;
+  }
+  const key = String(input.dataset.filterInput || "").trim().toLowerCase();
+  if (!FILTER_KEYS.includes(key)) {
+    return;
+  }
+  if (openFilterCombobox(key)) {
+    renderFilterControls();
+    focusHeaderFilterInput(key);
+  }
+}
+
+function handleFilterControlsFocusOut(event) {
+  const root = event.target.closest("[data-filter-root]");
+  if (!root) {
+    return;
+  }
+  const key = String(root.dataset.filterRoot || "").trim().toLowerCase();
+  if (!FILTER_KEYS.includes(key)) {
+    return;
+  }
+  closeFilterComboboxWithDelay(key);
+}
+
+function handleFilterControlsKeydown(event) {
+  const input = event.target.closest("[data-filter-input]");
+  if (!input) {
+    return;
+  }
+  const key = String(input.dataset.filterInput || "").trim().toLowerCase();
+  if (!FILTER_KEYS.includes(key)) {
+    return;
+  }
+
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    closeAllHeaderFilterComboboxes({ render: true });
+    return;
+  }
+
+  if (event.key === "ArrowDown") {
+    if (openFilterCombobox(key)) {
+      event.preventDefault();
+      renderFilterControls();
+      focusHeaderFilterInput(key);
+    }
+    return;
+  }
+
+  if (event.key !== "Enter" || !filterComboboxState[key]?.open) {
+    return;
+  }
+
+  event.preventDefault();
+  const config = filterComboboxConfig[key];
+  const options = headerFilterOptions(key);
+  const filteredOptions =
+    config?.searchable === false ? options : filterComboboxOptions(options, filterComboboxState[key].query);
+  if (filteredOptions.length === 0) {
+    return;
+  }
+
+  const nextValue = normalizeFilterValue(key, filteredOptions[0].value);
+  applyHeaderFilterValue(key, nextValue);
+  closeAllHeaderFilterComboboxes({ render: false });
+  renderFilterControls();
+}
+
+function handleDocumentPointerDown(event) {
+  if (!filterControlsEl || filterControlsEl.contains(event.target) || !isHeaderFilterOpen()) {
+    return;
+  }
+  closeAllHeaderFilterComboboxes({ render: true });
+}
+
 function closeSocket() {
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
@@ -1751,14 +2342,36 @@ async function handleLoginSubmit(event) {
   await enterBoard();
 }
 
-function handleLogout() {
+function handleLocalLogout() {
   setAuthenticated(false);
   storageMode = "unknown";
   closeSocket();
   tickets = [];
+  filterValues.priority = "all";
+  filterValues.mode = "all";
+  filterValues.status = "all";
+  closeAllHeaderFilterComboboxes({ render: false });
   closeTicketDetail();
+  renderFilterControls();
   toggleScreens();
   resetLoginForm();
+}
+
+async function handleLogoutClick() {
+  if (logoutLoading) {
+    return;
+  }
+  logoutLoading = true;
+  renderHeaderUserControls();
+  try {
+    await fetchJson("/api/v1/auth/logout", { method: "POST" });
+    handleLocalLogout();
+    window.location.assign("/login");
+    window.location.reload();
+  } finally {
+    logoutLoading = false;
+    renderHeaderUserControls();
+  }
 }
 
 loginFormEl.addEventListener("submit", (event) => {
@@ -1767,12 +2380,11 @@ loginFormEl.addEventListener("submit", (event) => {
   });
 });
 
-logoutBtnEl.addEventListener("click", handleLogout);
-statusFilterEl.addEventListener("change", () => {
-  loadTickets({ refreshDetail: true }).catch((error) => {
-    showBoardError(`Failed to load tickets: ${error.message}`);
-  });
-});
+filterControlsEl?.addEventListener("click", handleFilterControlsClick);
+filterControlsEl?.addEventListener("input", handleFilterControlsInput);
+filterControlsEl?.addEventListener("focusin", handleFilterControlsFocusIn);
+filterControlsEl?.addEventListener("focusout", handleFilterControlsFocusOut);
+filterControlsEl?.addEventListener("keydown", handleFilterControlsKeydown);
 ticketTableBodyEl.addEventListener("click", (event) => {
   handleTableClick(event).catch((error) => {
     showBoardError(`Operation failed: ${error.message}`);
@@ -1804,6 +2416,10 @@ document.addEventListener("keydown", (event) => {
     closeTicketDetail();
   }
 });
+document.addEventListener("pointerdown", handleDocumentPointerDown);
+
+renderHeaderUserControls();
+renderFilterControls();
 
 if (isAuthenticated()) {
   enterBoard();
