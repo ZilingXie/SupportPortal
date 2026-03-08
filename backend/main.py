@@ -20,7 +20,9 @@ from backend.repositories.ticket_repository import (
     TicketRepository,
     create_ticket_repository,
 )
+from backend.services.event_bus import AsyncRedisEventBus
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, answer_with_rag
+from backend.services.task_queue import AsyncRedisTaskQueue
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 CLIENT_DIR = BASE_DIR / "client_ui"
@@ -35,6 +37,16 @@ TAKEOVER_MODE = "takeover"
 OPEN_STATUSES = {"open", "waiting_for_engineer"}
 PRIORITY_RANK = {"urgent": 4, "high": 3, "normal": 2, "low": 1}
 LOGGER = logging.getLogger(__name__)
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = (os.getenv(name) or "").strip().lower()
+    if not value:
+        return default
+    return value in {"1", "true", "yes", "on"}
+
+
+ASYNC_QUERY_ENABLED = _env_flag("ASYNC_QUERY_ENABLED", default=False)
 
 
 def now_iso() -> str:
@@ -65,9 +77,15 @@ class ManagedResponseRequest(BaseModel):
     solution: str = Field(min_length=1, max_length=4000)
 
 
+class TakeoverReplyRequest(BaseModel):
+    engineer_id: str = Field(default="eng")
+    message: str = Field(min_length=1, max_length=4000)
+
+
 class ConnectionHub:
     def __init__(self) -> None:
         self._channels: dict[str, set[WebSocket]] = {
+            "client": set(),
             "engineer": set(),
             "dashboard": set(),
         }
@@ -116,6 +134,8 @@ if DASHBOARD_DIR.exists():
 
 ticket_repository: TicketRepository = create_ticket_repository()
 hub = ConnectionHub()
+event_bus = AsyncRedisEventBus()
+task_queue = AsyncRedisTaskQueue()
 
 
 FAQ_ANSWERS = {
@@ -456,6 +476,89 @@ def compute_priority(is_alert: bool) -> str:
     return "high" if is_alert else "normal"
 
 
+async def dispatch_event(channels: list[str], payload: dict[str, Any]) -> None:
+    normalized_channels: list[str] = []
+    for channel in channels:
+        value = str(channel or "").strip().lower()
+        if value and value not in normalized_channels:
+            normalized_channels.append(value)
+
+    for channel in normalized_channels:
+        await hub.broadcast(channel, payload)
+
+    if normalized_channels:
+        bus_payload = dict(payload)
+        bus_payload["targets"] = normalized_channels
+        await event_bus.publish(bus_payload)
+
+
+def build_query_task(ticket_id: str, customer_message: str, message_created_at: str) -> dict[str, str]:
+    return {
+        "task_type": "ticket_query",
+        "ticket_id": ticket_id,
+        "customer_message": customer_message,
+        "message_created_at": message_created_at,
+        "created_at": now_iso(),
+    }
+
+
+def build_client_sync_event(ticket: dict[str, Any], event_name: str, message: str | None = None) -> dict[str, Any]:
+    event: dict[str, Any] = {
+        "event": event_name,
+        "ticket_id": str(ticket.get("ticket_id") or ""),
+        "customer_id": str(ticket.get("customer_id") or ""),
+        "status": str(ticket.get("status") or "open"),
+        "engineer_mode": str(ticket.get("engineer_mode") or MANAGED_MODE),
+        "updated_at": str(ticket.get("updated_at") or now_iso()),
+        "created_at": now_iso(),
+    }
+    if message:
+        event["message"] = message
+    return event
+
+
+def build_engineer_request_records(ticket_id: str) -> list[dict[str, Any]]:
+    rows = ticket_repository.list_ticket_events(ticket_id=ticket_id, limit=200)
+    records: list[dict[str, Any]] = []
+    for index, row in enumerate(rows):
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        event_type = str(row.get("event_type") or payload.get("event") or "").strip().lower()
+        created_at = str(payload.get("created_at") or row.get("created_at") or now_iso())
+        engineer_id = str(payload.get("engineer_id") or "").strip()
+        detail = str(payload.get("message") or "").strip()
+
+        status = ""
+        if event_type in {"ticket_takeover_reply", "ticket_direct_reply"}:
+            status = "engineer replied"
+            if not detail:
+                detail = "Engineer sent a direct reply to the customer."
+        elif event_type == "ticket_guidance_applied":
+            status = "received answer"
+            if not detail:
+                detail = "Engineer provided guidance for AI response."
+        elif event_type == "ticket_mode_changed":
+            target_mode = str(payload.get("engineer_mode") or payload.get("new_mode") or "").strip().lower()
+            if target_mode == TAKEOVER_MODE:
+                status = "engineer takeover"
+                if not detail:
+                    detail = "Engineer switched this case to Human Takeover mode."
+
+        if not status:
+            continue
+
+        records.append(
+            {
+                "id": f"{ticket_id}-{event_type}-{index}",
+                "status": status,
+                "detail": detail,
+                "engineer_id": engineer_id,
+                "created_at": created_at,
+                "event_type": event_type,
+            }
+        )
+    return records
+
+
 @app.get("/")
 def root() -> RedirectResponse:
     return RedirectResponse(url="/client")
@@ -478,12 +581,19 @@ def startup_event() -> None:
         LOGGER.warning("Ticket repository switched to memory mode.")
 
 
+@app.on_event("shutdown")
+async def shutdown_event() -> None:
+    await event_bus.close()
+    await task_queue.close()
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {
         "status": "ok",
         "time": now_iso(),
         "ticket_storage": ticket_repository.storage_mode(),
+        "async_query_enabled": "true" if ASYNC_QUERY_ENABLED else "false",
     }
 
 
@@ -531,20 +641,55 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
         }
     )
 
-    answer, confidence, sources, citations, needs_engineer_guidance = build_answer(customer_message)
+    answer = ""
+    confidence = 0.0
+    sources: list[str] = []
+    citations: list[dict[str, str]] = []
+    needs_engineer_guidance = False
     needs_engineer_input = False
+    ai_replied = True
+    task_enqueued = False
 
     if ticket.get("engineer_mode") == TAKEOVER_MODE:
-        answer = "This ticket is in takeover mode. An engineer will contact you directly."
+        answer = (
+            "I have forwarded your question to the assigned engineer. "
+            "The engineer will reply to you shortly."
+        )
         confidence = 0.0
         sources = []
         citations = []
+        ai_replied = True
         ticket["status"] = "open"
         ticket["pending_engineer_question"] = (
             "Customer sent a new message in takeover mode. Please contact the customer directly."
         )
         needs_engineer_input = True
-    elif needs_engineer_guidance:
+    elif is_alert:
+        answer = (
+            "I detected that this issue is urgent and have escalated it to an engineer for direct help."
+        )
+        confidence = 0.0
+        ticket["status"] = "waiting_for_engineer"
+        ticket["pending_engineer_question"] = _engineer_request_fallback(ticket, customer_message)
+        needs_engineer_input = True
+    elif ASYNC_QUERY_ENABLED:
+        answer = "Thanks for your question. I am checking the knowledge base and will update this ticket shortly."
+        confidence = 0.3
+        ticket["status"] = "open"
+        ticket["pending_engineer_question"] = None
+        task_enqueued = await task_queue.enqueue(
+            build_query_task(
+                ticket_id=ticket_id,
+                customer_message=customer_message,
+                message_created_at=timestamp,
+            )
+        )
+        if not task_enqueued:
+            answer, confidence, sources, citations, needs_engineer_guidance = build_answer(customer_message)
+    else:
+        answer, confidence, sources, citations, needs_engineer_guidance = build_answer(customer_message)
+
+    if not needs_engineer_input and needs_engineer_guidance:
         engineer_request = build_engineer_followup_request(ticket, customer_message)
         answer = (
             "I could not find enough reliable information in the knowledge sources for this issue. "
@@ -556,20 +701,22 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
         ticket["status"] = "waiting_for_engineer"
         ticket["pending_engineer_question"] = engineer_request
         needs_engineer_input = True
-    else:
+    elif not needs_engineer_input:
         ticket["status"] = "open"
-        ticket["pending_engineer_question"] = None
+        if not task_enqueued:
+            ticket["pending_engineer_question"] = None
 
-    assistant_message: dict[str, Any] = {
-        "role": "assistant",
-        "content": answer,
-        "created_at": now_iso(),
-    }
-    if sources:
-        assistant_message["sources"] = sources
-    if citations:
-        assistant_message["citations"] = citations
-    ticket["messages"].append(assistant_message)
+    if ai_replied and str(answer).strip():
+        assistant_message: dict[str, Any] = {
+            "role": "assistant",
+            "content": answer,
+            "created_at": now_iso(),
+        }
+        if sources:
+            assistant_message["sources"] = sources
+        if citations:
+            assistant_message["citations"] = citations
+        ticket["messages"].append(assistant_message)
 
     ticket["priority"] = priority
     ticket["updated_at"] = now_iso()
@@ -586,8 +733,28 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
         "created_at": now_iso(),
     }
     ticket_repository.record_event(ticket_id, event["event"], event)
-    await hub.broadcast("engineer", event)
-    await hub.broadcast("dashboard", event)
+    await dispatch_event(["engineer", "dashboard"], event)
+    await dispatch_event(
+        ["client"],
+        build_client_sync_event(ticket, event["event"], customer_message[:200]),
+    )
+
+    if task_enqueued:
+        processing_event = {
+            "event": "ticket_ai_processing",
+            "ticket_id": ticket_id,
+            "status": ticket["status"],
+            "priority": priority,
+            "engineer_mode": ticket["engineer_mode"],
+            "message": "AI is processing this request asynchronously.",
+            "created_at": now_iso(),
+        }
+        ticket_repository.record_event(ticket_id, processing_event["event"], processing_event)
+        await dispatch_event(["engineer", "dashboard"], processing_event)
+        await dispatch_event(
+            ["client"],
+            build_client_sync_event(ticket, processing_event["event"]),
+        )
 
     if needs_engineer_input:
         attention_event = {
@@ -600,8 +767,11 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
             "created_at": now_iso(),
         }
         ticket_repository.record_event(ticket_id, attention_event["event"], attention_event)
-        await hub.broadcast("engineer", attention_event)
-        await hub.broadcast("dashboard", attention_event)
+        await dispatch_event(["engineer", "dashboard"], attention_event)
+        await dispatch_event(
+            ["client"],
+            build_client_sync_event(ticket, attention_event["event"]),
+        )
 
     if is_alert:
         alert_event = {
@@ -612,8 +782,7 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
             "created_at": now_iso(),
         }
         ticket_repository.record_event(ticket_id, alert_event["event"], alert_event)
-        await hub.broadcast("engineer", alert_event)
-        await hub.broadcast("dashboard", alert_event)
+        await dispatch_event(["engineer", "dashboard"], alert_event)
 
     return {
         "ticket_id": ticket_id,
@@ -629,7 +798,9 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
         "priority": priority,
         "status": ticket["status"],
         "engineer_mode": ticket["engineer_mode"],
+        "ai_replied": ai_replied,
         "needs_engineer_input": needs_engineer_input,
+        "queued_for_ai": task_enqueued,
         "eta_minutes": 5 if priority == "high" else 15,
     }
 
@@ -662,6 +833,7 @@ def get_ticket_detail(ticket_id: str) -> dict[str, Any]:
     if ticket is None:
         raise HTTPException(status_code=404, detail="Ticket not found")
     ensure_ticket_defaults(ticket)
+    ticket["engineer_request_records"] = build_engineer_request_records(ticket_id)
     return {"ticket": ticket}
 
 
@@ -721,8 +893,8 @@ async def update_ticket(ticket_id: str, request: TicketActionRequest) -> dict[st
         "created_at": now_iso(),
     }
     ticket_repository.record_event(ticket_id, payload["event"], payload)
-    await hub.broadcast("engineer", payload)
-    await hub.broadcast("dashboard", payload)
+    await dispatch_event(["engineer", "dashboard"], payload)
+    await dispatch_event(["client"], build_client_sync_event(ticket, payload["event"]))
 
     return {
         "ticket_id": ticket_id,
@@ -764,11 +936,16 @@ async def update_ticket_mode(ticket_id: str, request: TicketModeRequest) -> dict
         "status": ticket["status"],
         "engineer_mode": request.mode,
         "engineer_id": request.engineer_id,
+        "message": (
+            "Engineer switched this case to Human Takeover mode."
+            if request.mode == TAKEOVER_MODE
+            else "Engineer switched this case to AI Managing mode."
+        ),
         "created_at": now_iso(),
     }
     ticket_repository.record_event(ticket_id, payload["event"], payload)
-    await hub.broadcast("engineer", payload)
-    await hub.broadcast("dashboard", payload)
+    await dispatch_event(["engineer", "dashboard"], payload)
+    await dispatch_event(["client"], build_client_sync_event(ticket, payload["event"]))
 
     return {
         "ticket_id": ticket_id,
@@ -829,17 +1006,76 @@ async def submit_managed_response(ticket_id: str, request: ManagedResponseReques
         "status": ticket["status"],
         "engineer_mode": ticket["engineer_mode"],
         "engineer_id": request.engineer_id,
+        "message": solution[:200],
         "created_at": now_iso(),
     }
     ticket_repository.record_event(ticket_id, payload["event"], payload)
-    await hub.broadcast("engineer", payload)
-    await hub.broadcast("dashboard", payload)
+    await dispatch_event(["engineer", "dashboard"], payload)
+    await dispatch_event(["client"], build_client_sync_event(ticket, payload["event"]))
 
     return {
         "ticket_id": ticket_id,
         "status": ticket["status"],
         "engineer_mode": ticket["engineer_mode"],
         "ai_followup": ai_followup,
+        "updated_at": ticket["updated_at"],
+    }
+
+
+@app.post("/api/engineer/tickets/{ticket_id}/takeover-reply")
+async def submit_takeover_reply(ticket_id: str, request: TakeoverReplyRequest) -> dict[str, Any]:
+    ticket = ticket_repository.get_ticket(ticket_id)
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    ensure_ticket_defaults(ticket)
+    initial_message_count = len(ticket.get("messages", []))
+    current_mode = str(ticket.get("engineer_mode") or MANAGED_MODE).strip().lower()
+
+    message = request.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    ticket["messages"].append(
+        {
+            "role": "engineer",
+            "content": message,
+            "created_at": now_iso(),
+        }
+    )
+
+    ticket["status"] = "open"
+    ticket["pending_engineer_question"] = None
+    ticket["updated_at"] = now_iso()
+    action_name = "takeover_reply" if current_mode == TAKEOVER_MODE else "direct_reply"
+    event_name = "ticket_takeover_reply" if current_mode == TAKEOVER_MODE else "ticket_direct_reply"
+    ticket["last_engineer_action"] = {
+        "action": action_name,
+        "engineer_id": request.engineer_id,
+        "note": message,
+        "created_at": now_iso(),
+    }
+    new_messages = ticket.get("messages", [])[initial_message_count:]
+    ticket_repository.save_ticket(ticket, new_messages=new_messages)
+
+    payload = {
+        "event": event_name,
+        "ticket_id": ticket_id,
+        "status": ticket["status"],
+        "engineer_mode": ticket["engineer_mode"],
+        "engineer_id": request.engineer_id,
+        "message": message[:200],
+        "created_at": now_iso(),
+    }
+    ticket_repository.record_event(ticket_id, payload["event"], payload)
+    await dispatch_event(["engineer", "dashboard"], payload)
+    await dispatch_event(["client"], build_client_sync_event(ticket, payload["event"], message[:200]))
+
+    return {
+        "ticket_id": ticket_id,
+        "status": ticket["status"],
+        "engineer_mode": ticket["engineer_mode"],
+        "sent_message": message,
         "updated_at": ticket["updated_at"],
     }
 
@@ -877,6 +1113,16 @@ def dashboard_events(limit: int = Query(default=20, ge=1, le=100)) -> dict[str, 
         }
         events.append(normalized)
     return {"events": events}
+
+
+@app.websocket("/ws/client")
+async def client_ws(websocket: WebSocket) -> None:
+    await hub.connect("client", websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        await hub.disconnect("client", websocket)
 
 
 @app.websocket("/ws/engineer")

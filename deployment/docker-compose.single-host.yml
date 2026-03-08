@@ -1,0 +1,120 @@
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    depends_on:
+      - api
+      - ws_gateway
+    ports:
+      - "${NGINX_HOST_PORT:-8080}:80"
+    volumes:
+      - ./nginx/supportportal.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped
+
+  api:
+    image: localhost/supportportal-app:latest
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    command:
+      - uvicorn
+      - backend.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --workers
+      - "${API_WORKERS:-2}"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4.1}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-large}
+      RAG_TOP_K: ${RAG_TOP_K:-5}
+      TICKET_DB_DSN: ${TICKET_DB_DSN:-postgresql://support:support@postgres:5432/support}
+      TICKET_DB_SCHEMA: ${TICKET_DB_SCHEMA:-public}
+      PGVECTOR_DSN: ${PGVECTOR_DSN:-postgresql://support:support@postgres:5432/support}
+      PGVECTOR_TABLE: ${PGVECTOR_TABLE:-docagent_chunks}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      EVENT_BUS_CHANNEL: ${EVENT_BUS_CHANNEL:-support.events}
+      TASK_QUEUE_NAME: ${TASK_QUEUE_NAME:-support.tasks}
+      ASYNC_QUERY_ENABLED: ${ASYNC_QUERY_ENABLED:-true}
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ws_gateway:
+    image: localhost/supportportal-app:latest
+    command:
+      - uvicorn
+      - backend.ws_gateway:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8010"
+      - --workers
+      - "1"
+    environment:
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      EVENT_BUS_CHANNEL: ${EVENT_BUS_CHANNEL:-support.events}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    image: localhost/supportportal-app:latest
+    command:
+      - python
+      - -m
+      - backend.worker
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4.1}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-large}
+      RAG_TOP_K: ${RAG_TOP_K:-5}
+      TICKET_DB_DSN: ${TICKET_DB_DSN:-postgresql://support:support@postgres:5432/support}
+      TICKET_DB_SCHEMA: ${TICKET_DB_SCHEMA:-public}
+      PGVECTOR_DSN: ${PGVECTOR_DSN:-postgresql://support:support@postgres:5432/support}
+      PGVECTOR_TABLE: ${PGVECTOR_TABLE:-docagent_chunks}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      EVENT_BUS_CHANNEL: ${EVENT_BUS_CHANNEL:-support.events}
+      TASK_QUEUE_NAME: ${TASK_QUEUE_NAME:-support.tasks}
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: support
+      POSTGRES_USER: support
+      POSTGRES_PASSWORD: support
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U support -d support"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  postgres_data:

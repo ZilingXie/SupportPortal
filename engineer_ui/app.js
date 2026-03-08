@@ -22,6 +22,19 @@ let selectedTicketId = null;
 let selectedTicket = null;
 let selectedTicketSummary = "";
 let selectedTicketSummaryMeta = "";
+let detailLoading = false;
+let showTellAiComposer = false;
+let tellAiDraft = "";
+let takeoverReplyDraft = "";
+let tellAiSubmitting = false;
+let takeoverSubmitting = false;
+let modeSwitching = false;
+let statusComboboxOpen = false;
+let modeComboboxOpen = false;
+let statusComboboxQuery = "";
+let modeComboboxQuery = "";
+let statusComboboxBlurTimer = null;
+let modeComboboxBlurTimer = null;
 let socket = null;
 let heartbeatTimer = null;
 let reconnectTimer = null;
@@ -294,6 +307,145 @@ function parseEngineerRequest(rawValue) {
   };
 }
 
+function engineerRequestStatusLabel(status) {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (normalized === "engineer replied") {
+    return "Engineer Replied";
+  }
+  if (normalized === "engineer takeover") {
+    return "Engineer Takeover";
+  }
+  if (normalized === "received answer") {
+    return "Received Answer";
+  }
+  return "Unknown";
+}
+
+function engineerRequestStatusClass(status) {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (normalized === "engineer replied") {
+    return "record-status-replied";
+  }
+  if (normalized === "engineer takeover") {
+    return "record-status-takeover";
+  }
+  if (normalized === "received answer") {
+    return "record-status-answer";
+  }
+  return "";
+}
+
+function clearStatusComboboxBlurTimer() {
+  if (statusComboboxBlurTimer) {
+    clearTimeout(statusComboboxBlurTimer);
+    statusComboboxBlurTimer = null;
+  }
+}
+
+function clearModeComboboxBlurTimer() {
+  if (modeComboboxBlurTimer) {
+    clearTimeout(modeComboboxBlurTimer);
+    modeComboboxBlurTimer = null;
+  }
+}
+
+function detailStatusOptions() {
+  return [
+    { value: "open", label: statusLabel("open") },
+    { value: "waiting_for_engineer", label: statusLabel("waiting_for_engineer") },
+    { value: "resolved", label: statusLabel("resolved") },
+  ];
+}
+
+function detailModeOptions() {
+  return [
+    { value: "managed", label: "AI Managing" },
+    { value: "takeover", label: "Human Takeover" },
+  ];
+}
+
+function filterComboboxOptions(options, query) {
+  const keyword = String(query || "").trim().toLowerCase();
+  if (!keyword) {
+    return options;
+  }
+  return options.filter((option) => String(option.label || "").toLowerCase().includes(keyword));
+}
+
+function buildDetailComboboxHtml({
+  kind,
+  selectedValue,
+  options,
+  isOpen,
+  query,
+  disabled = false,
+  placeholder = "",
+}) {
+  const filteredOptions = filterComboboxOptions(options, query);
+  const selectedOption = options.find((option) => option.value === selectedValue) || options[0];
+  const displayValue = isOpen ? String(query || "") : String(selectedOption?.label || "");
+  const panelId = `detail-${kind}-options`;
+  const inputId = `detail-${kind}-input`;
+
+  return `
+    <div
+      class="detail-combobox ${isOpen ? "is-open" : ""} ${disabled ? "is-disabled" : ""}"
+      data-combobox-root="${escapeHtml(kind)}"
+    >
+      <div class="detail-combobox-control">
+        <input
+          id="${escapeHtml(inputId)}"
+          class="detail-combobox-input"
+          type="text"
+          autocomplete="off"
+          role="combobox"
+          aria-expanded="${isOpen ? "true" : "false"}"
+          aria-controls="${escapeHtml(panelId)}"
+          value="${escapeHtml(displayValue)}"
+          placeholder="${escapeHtml(placeholder)}"
+          ${disabled ? "disabled" : ""}
+        />
+        <button
+          type="button"
+          class="detail-combobox-toggle"
+          data-detail-action="toggle-${escapeHtml(kind)}-combobox"
+          ${disabled ? "disabled" : ""}
+          aria-label="Toggle ${escapeHtml(kind)} options"
+        >
+          <span class="detail-combobox-caret" aria-hidden="true"></span>
+        </button>
+      </div>
+      <div
+        id="${escapeHtml(panelId)}"
+        class="detail-combobox-panel ${isOpen ? "" : "hidden"}"
+        role="listbox"
+      >
+        ${
+          filteredOptions.length === 0
+            ? '<p class="detail-combobox-empty">No matching options.</p>'
+            : filteredOptions
+                .map((option) => {
+                  const isSelected = option.value === selectedValue;
+                  return `
+                    <button
+                      type="button"
+                      class="detail-combobox-option ${isSelected ? "is-selected" : ""}"
+                      data-detail-action="select-${escapeHtml(kind)}-option"
+                      data-value="${escapeHtml(option.value)}"
+                      role="option"
+                      aria-selected="${isSelected ? "true" : "false"}"
+                    >
+                      ${escapeHtml(option.label)}
+                    </button>
+                  `;
+                })
+                .join("")
+        }
+      </div>
+    </div>
+  `;
+}
+
 function setRealtimeStatus(text) {
   const suffix = storageMode === "unknown" ? "" : ` | Storage: ${storageMode}`;
   wsStatusEl.textContent = `${text}${suffix}`;
@@ -307,6 +459,42 @@ function summaryCacheKey(ticket) {
     String(ticket?.engineer_mode || ""),
     String(messageCount),
   ].join("|");
+}
+
+function applyLocalTicketPatch(ticketId, patch) {
+  const normalizedId = String(ticketId || "").trim();
+  if (!normalizedId || !patch || typeof patch !== "object") {
+    return;
+  }
+
+  tickets = tickets.map((ticket) => {
+    if (String(ticket.ticket_id || "") !== normalizedId) {
+      return ticket;
+    }
+    return { ...ticket, ...patch };
+  });
+
+  if (
+    selectedTicket &&
+    String(selectedTicket.ticket_id || selectedTicketId || "").trim() === normalizedId
+  ) {
+    selectedTicket = { ...selectedTicket, ...patch };
+  }
+}
+
+function refreshSelectedSummaryPreview(ticketId) {
+  const normalizedId = String(ticketId || "").trim();
+  if (
+    !normalizedId ||
+    !selectedTicket ||
+    String(selectedTicket.ticket_id || selectedTicketId || "").trim() !== normalizedId
+  ) {
+    return;
+  }
+
+  selectedTicketSummary = buildLocalTicketSummary(selectedTicket);
+  selectedTicketSummaryMeta = "AI Summary (loading...)";
+  ticketSummaryCache.delete(normalizedId);
 }
 
 function buildLocalTicketSummary(ticket) {
@@ -471,10 +659,23 @@ function renderTickets() {
 }
 
 function closeTicketDetail() {
+  clearStatusComboboxBlurTimer();
+  clearModeComboboxBlurTimer();
   selectedTicketId = null;
   selectedTicket = null;
   selectedTicketSummary = "";
   selectedTicketSummaryMeta = "";
+  detailLoading = false;
+  showTellAiComposer = false;
+  tellAiDraft = "";
+  takeoverReplyDraft = "";
+  tellAiSubmitting = false;
+  takeoverSubmitting = false;
+  modeSwitching = false;
+  statusComboboxOpen = false;
+  modeComboboxOpen = false;
+  statusComboboxQuery = "";
+  modeComboboxQuery = "";
   detailModalEl.classList.add("hidden");
   detailTitleEl.textContent = "Ticket Detail";
   detailBodyEl.innerHTML = "";
@@ -482,7 +683,26 @@ function closeTicketDetail() {
 }
 
 function renderTicketDetail() {
-  if (!selectedTicketId || !selectedTicket) {
+  if (!selectedTicketId) {
+    detailModalEl.classList.add("hidden");
+    detailTitleEl.textContent = "Ticket Detail";
+    detailBodyEl.innerHTML = "";
+    return;
+  }
+
+  if (detailLoading) {
+    detailTitleEl.textContent = `Ticket ${selectedTicketId}`;
+    detailBodyEl.innerHTML = `
+      <section class="detail-loading" role="status" aria-live="polite" aria-busy="true">
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <p>Loading ticket detail...</p>
+      </section>
+    `;
+    detailModalEl.classList.remove("hidden");
+    return;
+  }
+
+  if (!selectedTicket) {
     detailModalEl.classList.add("hidden");
     detailTitleEl.textContent = "Ticket Detail";
     detailBodyEl.innerHTML = "";
@@ -503,7 +723,69 @@ function renderTicketDetail() {
           parsedEngineerRequest.action || "N/A"
         }`
       : pendingDetailText;
+  const isTakeoverMode = mode === "takeover";
+  const controlsDisabled = tellAiSubmitting || takeoverSubmitting || modeSwitching;
+  const takeoverComposerDisabled = takeoverSubmitting;
+  const statusComboboxDisabled = tellAiSubmitting || takeoverSubmitting || modeSwitching;
+  const modeComboboxDisabled = modeSwitching || tellAiSubmitting || takeoverSubmitting;
+  const takeoverButtonLabel = modeSwitching
+    ? `<span class="btn-spinner-inline loading-spinner loading-spinner-sm" aria-hidden="true"></span>Switching...`
+    : "Takeover";
+  const modeSwitchNotice = modeSwitching
+    ? `<p class="mode-switch-notice" role="status" aria-live="polite"><span class="loading-spinner loading-spinner-sm" aria-hidden="true"></span>Applying mode change...</p>`
+    : "";
+  const statusComboboxHtml = buildDetailComboboxHtml({
+    kind: "status",
+    selectedValue: status,
+    options: detailStatusOptions(),
+    isOpen: statusComboboxOpen,
+    query: statusComboboxQuery,
+    disabled: statusComboboxDisabled,
+    placeholder: "Search status",
+  });
+  const modeComboboxHtml = buildDetailComboboxHtml({
+    kind: "mode",
+    selectedValue: mode,
+    options: detailModeOptions(),
+    isOpen: modeComboboxOpen,
+    query: modeComboboxQuery,
+    disabled: modeComboboxDisabled,
+    placeholder: "Search mode",
+  });
   const messages = Array.isArray(ticket.messages) ? ticket.messages : [];
+  const engineerRequestRecords = Array.isArray(ticket.engineer_request_records)
+    ? ticket.engineer_request_records
+    : [];
+  const engineerRequestRecordsHtml =
+    engineerRequestRecords.length === 0
+      ? '<p class="request-record-empty">No completed engineer request records yet.</p>'
+      : `<div class="request-record-list">${engineerRequestRecords
+          .map((record) => {
+            const statusText = engineerRequestStatusLabel(record.status);
+            const statusClass = engineerRequestStatusClass(record.status);
+            const detailText = String(record.detail || "").trim();
+            const engineerText = String(record.engineer_id || "").trim();
+            const createdAt = formatDateTime(record.created_at);
+            return `
+              <article class="request-record-item">
+                <header>
+                  <span class="request-record-status ${statusClass}">${escapeHtml(statusText)}</span>
+                  <span class="request-record-time">${escapeHtml(createdAt)}</span>
+                </header>
+                ${
+                  detailText
+                    ? `<p class="request-record-detail">${formatMultiline(detailText)}</p>`
+                    : ""
+                }
+                ${
+                  engineerText
+                    ? `<p class="request-record-meta">Engineer: ${escapeHtml(engineerText)}</p>`
+                    : ""
+                }
+              </article>
+            `;
+          })
+          .join("")}</div>`;
 
   const messageItems =
     messages.length === 0
@@ -533,23 +815,13 @@ function renderTicketDetail() {
       <div class="detail-item detail-item-status">
         <span>Status</span>
         <div class="detail-status-row">
-          <select id="detail-status-select" class="detail-inline-select">
-            <option value="open" ${status === "open" ? "selected" : ""}>${escapeHtml(statusLabel("open"))}</option>
-            <option value="waiting_for_engineer" ${status === "waiting_for_engineer" ? "selected" : ""}>${escapeHtml(
-              statusLabel("waiting_for_engineer")
-            )}</option>
-            <option value="resolved" ${status === "resolved" ? "selected" : ""}>${escapeHtml(
-              statusLabel("resolved")
-            )}</option>
-          </select>
+          ${statusComboboxHtml}
         </div>
       </div>
       <div class="detail-item detail-item-mode">
         <span>Mode</span>
-        <select id="detail-mode-select" class="detail-inline-select">
-          <option value="managed" ${mode === "managed" ? "selected" : ""}>AI Managing</option>
-          <option value="takeover" ${mode === "takeover" ? "selected" : ""}>Human Takeover</option>
-        </select>
+        ${modeComboboxHtml}
+        ${modeSwitchNotice}
       </div>
       <div class="detail-item"><span>Requester</span><strong>${escapeHtml(
         String(ticket.requester || ticket.customer_id || "Unknown")
@@ -573,6 +845,60 @@ function renderTicketDetail() {
     <section class="detail-block detail-block-engineer-request">
       <h3>Engineer Request</h3>
       <p class="engineer-request-body">${formatMultiline(pendingDetailBodyText)}</p>
+      <div class="engineer-request-actions">
+        <button
+          type="button"
+          class="btn btn-outline"
+          data-detail-action="toggle-tell-ai"
+          ${isTakeoverMode ? "disabled" : ""}
+          ${controlsDisabled ? "disabled" : ""}
+        >
+          Tell AI
+        </button>
+        <button
+          type="button"
+          class="btn btn-outline"
+          data-detail-action="takeover-mode"
+          ${isTakeoverMode ? "disabled" : ""}
+          ${controlsDisabled ? "disabled" : ""}
+        >
+          ${takeoverButtonLabel}
+        </button>
+      </div>
+      ${
+        modeSwitching
+          ? `<p class="mode-switch-hint" role="status" aria-live="polite">Takeover mode is being enabled. Please wait...</p>`
+          : ""
+      }
+      ${
+        showTellAiComposer && !isTakeoverMode
+          ? `
+      <div class="tell-ai-composer">
+        <textarea
+          id="detail-tell-ai-input"
+          class="detail-textarea"
+          rows="4"
+          placeholder="Tell AI what to say or what guidance to provide..."
+          ${controlsDisabled ? "disabled" : ""}
+        >${escapeHtml(tellAiDraft)}</textarea>
+        <div class="detail-inline-actions">
+          <button
+            type="button"
+            class="btn btn-primary"
+            data-detail-action="send-tell-ai"
+            ${controlsDisabled ? "disabled" : ""}
+          >${tellAiSubmitting ? "Sending..." : "Send to AI"}</button>
+          <button
+            type="button"
+            class="btn btn-ghost"
+            data-detail-action="cancel-tell-ai"
+            ${controlsDisabled ? "disabled" : ""}
+          >Cancel</button>
+        </div>
+      </div>
+      `
+          : ""
+      }
     </section>
     `
         : ""
@@ -589,8 +915,35 @@ function renderTicketDetail() {
     </section>
 
     <section class="detail-block">
+      <h3>Engineer Request Records</h3>
+      ${engineerRequestRecordsHtml}
+    </section>
+
+    <section class="detail-block">
       <h3>Conversation</h3>
       ${messageItems}
+      <div class="takeover-composer">
+        <h4>Direct Reply to Customer</h4>
+        <textarea
+          id="detail-takeover-input"
+          class="detail-textarea"
+          rows="4"
+          placeholder="Type your direct reply to the customer..."
+          ${takeoverComposerDisabled ? "disabled" : ""}
+        >${escapeHtml(takeoverReplyDraft)}</textarea>
+        <div class="detail-inline-actions">
+          <button
+            type="button"
+            class="btn btn-primary"
+            data-detail-action="send-takeover-reply"
+            ${takeoverComposerDisabled ? "disabled" : ""}
+          >${
+            takeoverSubmitting
+              ? "Sending..."
+              : "Send to Customer"
+          }</button>
+        </div>
+      </div>
     </section>
   `;
 
@@ -638,13 +991,19 @@ async function refreshSelectedSummary(options = {}) {
 }
 
 async function refreshSelectedTicket(options = {}) {
-  const { silent = false } = options;
+  const { silent = false, showLoading = false } = options;
   if (!selectedTicketId) {
     selectedTicket = null;
     selectedTicketSummary = "";
     selectedTicketSummaryMeta = "";
+    detailLoading = false;
     renderTicketDetail();
     return;
+  }
+
+  if (showLoading) {
+    detailLoading = true;
+    renderTicketDetail();
   }
 
   try {
@@ -657,9 +1016,13 @@ async function refreshSelectedTicket(options = {}) {
       selectedTicketSummary = "";
       selectedTicketSummaryMeta = "";
     }
+    detailLoading = false;
     renderTicketDetail();
-    await refreshSelectedSummary({ silent: true });
+    refreshSelectedSummary({ silent: true }).catch(() => {
+      // Keep local summary if async summary fails.
+    });
   } catch (error) {
+    detailLoading = false;
     if (String(error.message || "").toLowerCase().includes("not found")) {
       closeTicketDetail();
       return;
@@ -667,13 +1030,28 @@ async function refreshSelectedTicket(options = {}) {
     if (!silent) {
       window.alert(`Failed to load ticket detail: ${error.message}`);
     }
+    renderTicketDetail();
   }
 }
 
 async function openTicketDetail(ticketId) {
+  if (selectedTicketId !== ticketId) {
+    clearStatusComboboxBlurTimer();
+    clearModeComboboxBlurTimer();
+    showTellAiComposer = false;
+    tellAiDraft = "";
+    takeoverReplyDraft = "";
+    tellAiSubmitting = false;
+    takeoverSubmitting = false;
+    modeSwitching = false;
+    statusComboboxOpen = false;
+    modeComboboxOpen = false;
+    statusComboboxQuery = "";
+    modeComboboxQuery = "";
+  }
   selectedTicketId = ticketId;
   renderTickets();
-  await refreshSelectedTicket();
+  await refreshSelectedTicket({ showLoading: true });
 }
 
 async function loadTickets(options = {}) {
@@ -695,11 +1073,83 @@ function showBoardError(message) {
 }
 
 async function updateTicketMode(ticketId, mode) {
-  await fetchJson(`/api/engineer/tickets/${encodeURIComponent(ticketId)}/mode`, {
+  return fetchJson(`/api/engineer/tickets/${encodeURIComponent(ticketId)}/mode`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ mode, engineer_id: ENGINEER_ID }),
   });
+}
+
+async function switchTicketModeOptimistic(ticketId, nextMode) {
+  const normalizedId = String(ticketId || "").trim();
+  const targetMode = String(nextMode || "managed").toLowerCase() === "takeover" ? "takeover" : "managed";
+  if (!normalizedId) {
+    return;
+  }
+
+  const previousTickets = tickets.map((ticket) => ({ ...ticket }));
+  const previousSelectedTicket = selectedTicket ? { ...selectedTicket } : null;
+  const previousSummary = selectedTicketSummary;
+  const previousSummaryMeta = selectedTicketSummaryMeta;
+  const previousShowTellAiComposer = showTellAiComposer;
+  const previousTellAiDraft = tellAiDraft;
+  const localPatch = {
+    engineer_mode: targetMode,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (targetMode === "takeover") {
+    showTellAiComposer = false;
+    tellAiDraft = "";
+    const currentStatus = String(selectedTicket?.status || "").toLowerCase();
+    if (currentStatus === "waiting_for_engineer") {
+      localPatch.status = "open";
+      localPatch.pending_engineer_question = null;
+    }
+  }
+
+  modeSwitching = true;
+  applyLocalTicketPatch(normalizedId, localPatch);
+  refreshSelectedSummaryPreview(normalizedId);
+  renderTickets();
+  renderTicketDetail();
+
+  try {
+    const payload = await updateTicketMode(normalizedId, targetMode);
+    const serverMode = String(payload?.engineer_mode || targetMode).toLowerCase();
+    const serverPatch = {
+      engineer_mode: serverMode,
+      status: String(payload?.status || localPatch.status || selectedTicket?.status || "open").toLowerCase(),
+      updated_at: String(payload?.updated_at || new Date().toISOString()),
+    };
+    if (serverMode === "takeover") {
+      serverPatch.pending_engineer_question = null;
+    }
+    applyLocalTicketPatch(normalizedId, serverPatch);
+    refreshSelectedSummaryPreview(normalizedId);
+    renderTickets();
+    renderTicketDetail();
+
+    loadTickets({ refreshDetail: false }).catch(() => {
+      // websocket or next poll will re-sync.
+    });
+    refreshSelectedSummary({ silent: true }).catch(() => {
+      // Keep local summary if async summary fails.
+    });
+  } catch (error) {
+    tickets = previousTickets;
+    selectedTicket = previousSelectedTicket;
+    selectedTicketSummary = previousSummary;
+    selectedTicketSummaryMeta = previousSummaryMeta;
+    showTellAiComposer = previousShowTellAiComposer;
+    tellAiDraft = previousTellAiDraft;
+    renderTickets();
+    renderTicketDetail();
+    throw error;
+  } finally {
+    modeSwitching = false;
+    renderTicketDetail();
+  }
 }
 
 async function updateTicketStatus(ticketId, action) {
@@ -710,12 +1160,18 @@ async function updateTicketStatus(ticketId, action) {
   });
 }
 
-async function submitManagedResponse(ticketId) {
-  const solution = window.prompt("请输入给 AI 的处理建议，AI 会总结后回复客户：");
-  if (solution === null) {
-    return;
+async function submitManagedResponse(ticketId, solutionText = null) {
+  let cleaned = "";
+  if (typeof solutionText === "string") {
+    cleaned = solutionText.trim();
+  } else {
+    const solution = window.prompt("请输入给 AI 的处理建议，AI 会总结后回复客户：");
+    if (solution === null) {
+      return;
+    }
+    cleaned = solution.trim();
   }
-  const cleaned = solution.trim();
+
   if (!cleaned) {
     window.alert("内容不能为空。");
     return;
@@ -724,6 +1180,19 @@ async function submitManagedResponse(ticketId) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ solution: cleaned, engineer_id: ENGINEER_ID }),
+  });
+}
+
+async function submitTakeoverReply(ticketId, messageText) {
+  const cleaned = String(messageText || "").trim();
+  if (!cleaned) {
+    window.alert("回复内容不能为空。");
+    return;
+  }
+  await fetchJson(`/api/engineer/tickets/${encodeURIComponent(ticketId)}/takeover-reply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message: cleaned, engineer_id: ENGINEER_ID }),
   });
 }
 
@@ -776,6 +1245,194 @@ async function handleDetailClick(event) {
     return;
   }
 
+  if (action === "toggle-status-combobox") {
+    if (tellAiSubmitting || takeoverSubmitting || modeSwitching) {
+      return;
+    }
+    clearStatusComboboxBlurTimer();
+    statusComboboxOpen = !statusComboboxOpen;
+    modeComboboxOpen = false;
+    modeComboboxQuery = "";
+    if (!statusComboboxOpen) {
+      statusComboboxQuery = "";
+    }
+    renderTicketDetail();
+    if (statusComboboxOpen) {
+      setTimeout(() => {
+        const input = document.getElementById("detail-status-input");
+        input?.focus();
+      }, 0);
+    }
+    return;
+  }
+
+  if (action === "toggle-mode-combobox") {
+    if (tellAiSubmitting || takeoverSubmitting || modeSwitching) {
+      return;
+    }
+    clearModeComboboxBlurTimer();
+    modeComboboxOpen = !modeComboboxOpen;
+    statusComboboxOpen = false;
+    statusComboboxQuery = "";
+    if (!modeComboboxOpen) {
+      modeComboboxQuery = "";
+    }
+    renderTicketDetail();
+    if (modeComboboxOpen) {
+      setTimeout(() => {
+        const input = document.getElementById("detail-mode-input");
+        input?.focus();
+      }, 0);
+    }
+    return;
+  }
+
+  if (action === "select-status-option") {
+    const nextStatus = String(button.dataset.value || "").trim().toLowerCase();
+    if (!nextStatus) {
+      return;
+    }
+    statusComboboxOpen = false;
+    statusComboboxQuery = "";
+    renderTicketDetail();
+
+    const currentStatus = String(selectedTicket?.status || "open");
+    if (nextStatus === currentStatus) {
+      return;
+    }
+
+    const statusAction = statusValueToAction(nextStatus);
+    try {
+      await updateTicketStatus(selectedTicketId, statusAction);
+      await loadTickets({ refreshDetail: false });
+      await refreshSelectedTicket({ silent: true });
+    } catch (error) {
+      window.alert(`Status update failed: ${error.message}`);
+      await refreshSelectedTicket({ silent: true });
+    }
+    return;
+  }
+
+  if (action === "select-mode-option") {
+    const nextMode = String(button.dataset.value || "managed");
+    modeComboboxOpen = false;
+    modeComboboxQuery = "";
+    renderTicketDetail();
+
+    if (modeSwitching || nextMode === String(selectedTicket?.engineer_mode || "managed")) {
+      return;
+    }
+    try {
+      await switchTicketModeOptimistic(selectedTicketId, nextMode);
+    } catch (error) {
+      window.alert(`Mode update failed: ${error.message}`);
+    }
+    return;
+  }
+
+  if (action === "toggle-tell-ai") {
+    if (modeSwitching) {
+      return;
+    }
+    if (String(selectedTicket?.engineer_mode || "managed") === "takeover") {
+      window.alert("Ticket is in Human Takeover mode. Switch back to AI Managing first.");
+      return;
+    }
+    showTellAiComposer = !showTellAiComposer;
+    if (!showTellAiComposer) {
+      tellAiDraft = "";
+    }
+    renderTicketDetail();
+    if (showTellAiComposer) {
+      setTimeout(() => {
+        const input = document.getElementById("detail-tell-ai-input");
+        input?.focus();
+      }, 0);
+    }
+    return;
+  }
+
+  if (action === "cancel-tell-ai") {
+    if (modeSwitching) {
+      return;
+    }
+    showTellAiComposer = false;
+    tellAiDraft = "";
+    renderTicketDetail();
+    return;
+  }
+
+  if (action === "takeover-mode") {
+    if (modeSwitching) {
+      return;
+    }
+    try {
+      await switchTicketModeOptimistic(selectedTicketId, "takeover");
+    } catch (error) {
+      window.alert(`Takeover failed: ${error.message}`);
+    }
+    return;
+  }
+
+  if (action === "send-tell-ai") {
+    if (modeSwitching) {
+      window.alert("Mode is switching. Please wait.");
+      return;
+    }
+    if (String(selectedTicket?.engineer_mode || "managed") === "takeover") {
+      window.alert("Ticket is in Human Takeover mode. Switch back to AI Managing first.");
+      return;
+    }
+    const cleaned = tellAiDraft.trim();
+    if (!cleaned) {
+      window.alert("Please input guidance for AI.");
+      return;
+    }
+    button.disabled = true;
+    tellAiSubmitting = true;
+    renderTicketDetail();
+    try {
+      await submitManagedResponse(selectedTicketId, cleaned);
+      showTellAiComposer = false;
+      tellAiDraft = "";
+      await loadTickets({ refreshDetail: false });
+      await refreshSelectedTicket({ silent: true });
+    } catch (error) {
+      window.alert(`Tell AI failed: ${error.message}`);
+      await refreshSelectedTicket({ silent: true });
+    } finally {
+      tellAiSubmitting = false;
+      renderTicketDetail();
+      button.disabled = false;
+    }
+    return;
+  }
+
+  if (action === "send-takeover-reply") {
+    const cleaned = takeoverReplyDraft.trim();
+    if (!cleaned) {
+      window.alert("Please input your reply to customer.");
+      return;
+    }
+    button.disabled = true;
+    takeoverSubmitting = true;
+    renderTicketDetail();
+    try {
+      await submitTakeoverReply(selectedTicketId, cleaned);
+      takeoverReplyDraft = "";
+      await loadTickets({ refreshDetail: false });
+      await refreshSelectedTicket({ silent: true });
+    } catch (error) {
+      window.alert(`Send reply failed: ${error.message}`);
+      await refreshSelectedTicket({ silent: true });
+    } finally {
+      takeoverSubmitting = false;
+      renderTicketDetail();
+      button.disabled = false;
+    }
+    return;
+  }
+
   if (action !== "managed-response") {
     return;
   }
@@ -793,6 +1450,160 @@ async function handleDetailClick(event) {
   } finally {
     button.disabled = false;
   }
+}
+
+function handleDetailInput(event) {
+  const statusInput = event.target.closest("#detail-status-input");
+  if (statusInput) {
+    clearStatusComboboxBlurTimer();
+    statusComboboxOpen = true;
+    modeComboboxOpen = false;
+    modeComboboxQuery = "";
+    statusComboboxQuery = String(statusInput.value || "");
+    renderTicketDetail();
+    setTimeout(() => {
+      const input = document.getElementById("detail-status-input");
+      if (!input) {
+        return;
+      }
+      input.focus();
+      const end = statusComboboxQuery.length;
+      input.setSelectionRange(end, end);
+    }, 0);
+    return;
+  }
+
+  const modeInput = event.target.closest("#detail-mode-input");
+  if (modeInput) {
+    clearModeComboboxBlurTimer();
+    modeComboboxOpen = true;
+    statusComboboxOpen = false;
+    statusComboboxQuery = "";
+    modeComboboxQuery = String(modeInput.value || "");
+    renderTicketDetail();
+    setTimeout(() => {
+      const input = document.getElementById("detail-mode-input");
+      if (!input) {
+        return;
+      }
+      input.focus();
+      const end = modeComboboxQuery.length;
+      input.setSelectionRange(end, end);
+    }, 0);
+    return;
+  }
+
+  const tellAiInput = event.target.closest("#detail-tell-ai-input");
+  if (tellAiInput) {
+    tellAiDraft = String(tellAiInput.value || "");
+    return;
+  }
+
+  const takeoverInput = event.target.closest("#detail-takeover-input");
+  if (takeoverInput) {
+    takeoverReplyDraft = String(takeoverInput.value || "");
+  }
+}
+
+function closeStatusComboboxWithDelay() {
+  clearStatusComboboxBlurTimer();
+  statusComboboxBlurTimer = setTimeout(() => {
+    statusComboboxBlurTimer = null;
+    const root = detailBodyEl.querySelector('[data-combobox-root="status"]');
+    const active = document.activeElement;
+    if (root && active && root.contains(active)) {
+      return;
+    }
+    if (!statusComboboxOpen && !statusComboboxQuery) {
+      return;
+    }
+    statusComboboxOpen = false;
+    statusComboboxQuery = "";
+    renderTicketDetail();
+  }, 140);
+}
+
+function closeModeComboboxWithDelay() {
+  clearModeComboboxBlurTimer();
+  modeComboboxBlurTimer = setTimeout(() => {
+    modeComboboxBlurTimer = null;
+    const root = detailBodyEl.querySelector('[data-combobox-root="mode"]');
+    const active = document.activeElement;
+    if (root && active && root.contains(active)) {
+      return;
+    }
+    if (!modeComboboxOpen && !modeComboboxQuery) {
+      return;
+    }
+    modeComboboxOpen = false;
+    modeComboboxQuery = "";
+    renderTicketDetail();
+  }, 140);
+}
+
+function handleDetailFocusIn(event) {
+  if (event.target.closest('[data-combobox-root="status"]')) {
+    clearStatusComboboxBlurTimer();
+  }
+  if (event.target.closest('[data-combobox-root="mode"]')) {
+    clearModeComboboxBlurTimer();
+  }
+
+  if (event.target.closest("#detail-status-input")) {
+    if (!statusComboboxOpen) {
+      statusComboboxOpen = true;
+      statusComboboxQuery = "";
+      modeComboboxOpen = false;
+      modeComboboxQuery = "";
+      renderTicketDetail();
+      setTimeout(() => {
+        const input = document.getElementById("detail-status-input");
+        input?.focus();
+      }, 0);
+    }
+    return;
+  }
+
+  if (event.target.closest("#detail-mode-input")) {
+    if (!modeComboboxOpen) {
+      modeComboboxOpen = true;
+      modeComboboxQuery = "";
+      statusComboboxOpen = false;
+      statusComboboxQuery = "";
+      renderTicketDetail();
+      setTimeout(() => {
+        const input = document.getElementById("detail-mode-input");
+        input?.focus();
+      }, 0);
+    }
+  }
+}
+
+function handleDetailFocusOut(event) {
+  if (event.target.closest('[data-combobox-root="status"]')) {
+    closeStatusComboboxWithDelay();
+  }
+  if (event.target.closest('[data-combobox-root="mode"]')) {
+    closeModeComboboxWithDelay();
+  }
+}
+
+function handleDetailKeydown(event) {
+  if (event.key !== "Escape") {
+    return;
+  }
+  if (!statusComboboxOpen && !modeComboboxOpen) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  statusComboboxOpen = false;
+  modeComboboxOpen = false;
+  statusComboboxQuery = "";
+  modeComboboxQuery = "";
+  clearStatusComboboxBlurTimer();
+  clearModeComboboxBlurTimer();
+  renderTicketDetail();
 }
 
 function statusValueToAction(status) {
@@ -835,16 +1646,13 @@ async function handleDetailChange(event) {
   }
 
   const mode = String(modeSelect.value || "managed");
-  modeSelect.disabled = true;
+  if (modeSwitching || mode === String(selectedTicket?.engineer_mode || "managed")) {
+    return;
+  }
   try {
-    await updateTicketMode(selectedTicketId, mode);
-    await loadTickets({ refreshDetail: false });
-    await refreshSelectedTicket({ silent: true });
+    await switchTicketModeOptimistic(selectedTicketId, mode);
   } catch (error) {
     window.alert(`Mode update failed: ${error.message}`);
-    await refreshSelectedTicket({ silent: true });
-  } finally {
-    modeSelect.disabled = false;
   }
 }
 
@@ -975,6 +1783,10 @@ detailBodyEl.addEventListener("click", (event) => {
     window.alert(`Operation failed: ${error.message}`);
   });
 });
+detailBodyEl.addEventListener("input", handleDetailInput);
+detailBodyEl.addEventListener("focusin", handleDetailFocusIn);
+detailBodyEl.addEventListener("focusout", handleDetailFocusOut);
+detailBodyEl.addEventListener("keydown", handleDetailKeydown);
 detailBodyEl.addEventListener("change", (event) => {
   handleDetailChange(event).catch((error) => {
     window.alert(`Operation failed: ${error.message}`);

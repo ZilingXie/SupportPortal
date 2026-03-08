@@ -590,6 +590,11 @@ textarea {
   color: var(--muted-foreground);
 }
 
+.avatar.engineer {
+  background: color-mix(in oklch, var(--warning), white 15%);
+  color: var(--warning-foreground);
+}
+
 .bubble {
   max-width: 75%;
   border-radius: 16px;
@@ -609,6 +614,12 @@ textarea {
   background: var(--card);
   color: var(--card-foreground);
   border: 1px solid var(--border);
+}
+
+.bubble.engineer {
+  background: color-mix(in oklch, var(--warning), white 84%);
+  color: var(--warning-foreground);
+  border: 1px solid color-mix(in oklch, var(--warning), var(--border) 45%);
 }
 
 .citations {

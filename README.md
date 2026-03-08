@@ -3,6 +3,48 @@
 This repository contains a local Proof of Concept for an AI ticketing system.
 The project currently focuses on local validation only.
 
+## Single-Host Runtime (API + WS Gateway + Worker)
+
+The repository now includes a single-host production-style topology:
+
+1. `api` (FastAPI REST + static UI hosting)
+2. `ws_gateway` (dedicated WebSocket fanout service)
+3. `worker` (async ticket query processing from Redis queue)
+4. `redis` (task queue + event bus)
+5. `postgres` (ticket store + optional pgvector table)
+6. `nginx` (front proxy for API and WebSocket routes)
+
+Run locally with Podman Compose:
+
+```bash
+podman machine start
+export PODMAN_COMPOSE_PROVIDER=podman-compose
+# Optional: avoid stale partial builds
+podman image rm -f localhost/supportportal-app:latest 2>/dev/null || true
+podman compose -f deployment/docker-compose.single-host.yml build api
+podman compose -f deployment/docker-compose.single-host.yml up -d
+```
+
+Stop:
+
+```bash
+podman compose -f deployment/docker-compose.single-host.yml down
+```
+
+Health checks:
+
+```bash
+curl http://localhost:8080/health
+curl http://localhost:8080/client
+```
+
+If `podman compose` is unavailable in your environment, use:
+
+```bash
+podman-compose -f deployment/docker-compose.single-host.yml build api
+podman-compose -f deployment/docker-compose.single-host.yml up -d
+```
+
 ## Project Structure
 
 ```

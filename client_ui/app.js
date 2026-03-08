@@ -35,6 +35,9 @@ const state = {
   pendingAbortController: null,
   pendingUserMessageId: null,
 };
+let clientSocket = null;
+let clientReconnectTimer = null;
+let clientHeartbeatTimer = null;
 
 function escapeHtml(value) {
   return String(value)
@@ -173,8 +176,95 @@ function login(email, password) {
 }
 
 function logout() {
+  closeClientRealtimeConnection();
   localStorage.removeItem(AUTH_KEY);
   state.user = null;
+}
+
+function closeClientRealtimeConnection() {
+  if (clientReconnectTimer) {
+    clearTimeout(clientReconnectTimer);
+    clientReconnectTimer = null;
+  }
+  if (clientHeartbeatTimer) {
+    clearInterval(clientHeartbeatTimer);
+    clientHeartbeatTimer = null;
+  }
+  if (clientSocket) {
+    clientSocket.onclose = null;
+    clientSocket.close();
+    clientSocket = null;
+  }
+}
+
+function scheduleClientRealtimeReconnect() {
+  if (!state.user || clientReconnectTimer) {
+    return;
+  }
+  clientReconnectTimer = setTimeout(() => {
+    clientReconnectTimer = null;
+    setupClientRealtimeConnection();
+  }, 1500);
+}
+
+function setupClientRealtimeConnection() {
+  if (!state.user) {
+    closeClientRealtimeConnection();
+    return;
+  }
+  if (
+    clientSocket &&
+    (clientSocket.readyState === WebSocket.OPEN || clientSocket.readyState === WebSocket.CONNECTING)
+  ) {
+    return;
+  }
+
+  const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+  clientSocket = new WebSocket(`${protocol}://${window.location.host}/ws/client`);
+
+  clientSocket.onopen = () => {
+    if (clientHeartbeatTimer) {
+      clearInterval(clientHeartbeatTimer);
+    }
+    clientHeartbeatTimer = setInterval(() => {
+      if (clientSocket && clientSocket.readyState === WebSocket.OPEN) {
+        clientSocket.send("ping");
+      }
+    }, 10000);
+  };
+
+  clientSocket.onmessage = async (event) => {
+    if (!state.user) {
+      return;
+    }
+    let payload = null;
+    try {
+      payload = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    const customerId = String(payload?.customer_id || "").trim();
+    if (customerId && customerId !== state.user.id) {
+      return;
+    }
+    await syncTicketsFromBackend({ silent: true });
+    if (state.user) {
+      render();
+    }
+  };
+
+  clientSocket.onclose = () => {
+    if (clientHeartbeatTimer) {
+      clearInterval(clientHeartbeatTimer);
+      clientHeartbeatTimer = null;
+    }
+    clientSocket = null;
+    scheduleClientRealtimeReconnect();
+  };
+
+  clientSocket.onerror = () => {
+    // Connection state handled by onclose.
+  };
 }
 
 function getCounter() {
@@ -203,6 +293,9 @@ function mapBackendRoleToClientRole(role) {
   const normalized = String(role || "").toLowerCase();
   if (normalized === "customer") {
     return "user";
+  }
+  if (normalized === "engineer") {
+    return "engineer";
   }
   return "assistant";
 }
@@ -578,16 +671,21 @@ function renderChatTicket() {
               `
               : ticket.messages
                   .map(
-                    (message) => `
-                <div class="msg-row ${message.role === "user" ? "user" : ""}">
-                  <div class="avatar ${message.role === "user" ? "user" : "assistant"}">
-                    ${message.role === "user" ? "U" : "A"}
+                    (message) => {
+                      const role = String(message.role || "assistant");
+                      const tone = role === "user" ? "user" : role === "engineer" ? "engineer" : "assistant";
+                      const avatar = role === "user" ? "U" : role === "engineer" ? "E" : "A";
+                      return `
+                <div class="msg-row ${tone === "user" ? "user" : ""}">
+                  <div class="avatar ${tone}">
+                    ${avatar}
                   </div>
-                  <div class="bubble ${message.role === "user" ? "user" : "assistant"}">${renderMessageBody(
+                  <div class="bubble ${tone}">${renderMessageBody(
                       message
                     )}</div>
                 </div>
-              `
+              `;
+                    }
                   )
                   .join("")
           }
@@ -814,14 +912,20 @@ async function handleSendMessage(text, options = {}) {
     }
     const payload = await response.json();
     const updated = getTicketById(ticketId);
-    const answerMessage = {
-      id: crypto.randomUUID(),
-      role: "assistant",
-      content: payload.answer,
-      createdAt: new Date().toISOString(),
-      citations: normalizeCitations(payload),
-    };
-    const nextMessages = [...(updated?.messages || messages), answerMessage];
+    const allowAssistantReply =
+      payload?.ai_replied !== false && String(payload?.answer || "").trim().length > 0;
+    const answerMessage = allowAssistantReply
+      ? {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: payload.answer,
+          createdAt: new Date().toISOString(),
+          citations: normalizeCitations(payload),
+        }
+      : null;
+    const nextMessages = allowAssistantReply
+      ? [...(updated?.messages || messages), answerMessage]
+      : [...(updated?.messages || messages)];
     saveTicketMessages(ticketId, nextMessages);
     const nextStatus =
       payload?.status === "waiting_for_engineer" || payload?.needs_engineer_input
@@ -829,6 +933,9 @@ async function handleSendMessage(text, options = {}) {
         : "waiting_for_agent";
     updateTicketStatus(ticketId, nextStatus);
     await syncTicketsFromBackend({ silent: true });
+    if (!allowAssistantReply && String(payload?.engineer_mode || "").toLowerCase() === "takeover") {
+      toast("This case is in Human Takeover mode. Engineer will reply directly.");
+    }
     if (payload.sentiment?.is_alert) {
       toast("Urgent escalation triggered.", "error");
     }
@@ -958,9 +1065,11 @@ function bindAuthedEvents() {
 function render() {
   parseRoute();
   if (!state.user) {
+    closeClientRealtimeConnection();
     renderLogin();
     return;
   }
+  setupClientRealtimeConnection();
   renderAuthed();
 }
 
@@ -968,6 +1077,7 @@ window.addEventListener("hashchange", render);
 
 async function bootstrap() {
   if (state.user) {
+    setupClientRealtimeConnection();
     await syncTicketsFromBackend({ silent: true });
   }
   render();
