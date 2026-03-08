@@ -87,6 +87,9 @@ class TicketRepository(Protocol):
     def list_events(self, limit: int = 20) -> list[dict[str, Any]]:
         ...
 
+    def list_ticket_events(self, ticket_id: str, limit: int = 100) -> list[dict[str, Any]]:
+        ...
+
 
 class InMemoryTicketRepository:
     def __init__(self) -> None:
@@ -141,6 +144,16 @@ class InMemoryTicketRepository:
         safe_limit = _safe_positive_int(limit, 20)
         ordered = list(reversed(self._events))
         return [copy.deepcopy(item) for item in ordered[:safe_limit]]
+
+    def list_ticket_events(self, ticket_id: str, limit: int = 100) -> list[dict[str, Any]]:
+        safe_limit = _safe_positive_int(limit, 100)
+        normalized_ticket_id = str(ticket_id).strip()
+        filtered = [
+            item
+            for item in reversed(self._events)
+            if str(item.get("ticket_id") or "").strip() == normalized_ticket_id
+        ]
+        return [copy.deepcopy(item) for item in filtered[:safe_limit]]
 
 
 class PostgresTicketRepository:
@@ -498,6 +511,35 @@ class PostgresTicketRepository:
                         """
                     ).format(self._table("support_ticket_events")),
                     (safe_limit,),
+                )
+                rows = cur.fetchall()
+        events: list[dict[str, Any]] = []
+        for row in rows:
+            events.append(
+                {
+                    "ticket_id": str(row[0]) if row[0] is not None else None,
+                    "event_type": str(row[1]),
+                    "payload": row[2] if isinstance(row[2], dict) else {},
+                    "created_at": _to_iso(row[3]),
+                }
+            )
+        return events
+
+    def list_ticket_events(self, ticket_id: str, limit: int = 100) -> list[dict[str, Any]]:
+        safe_limit = _safe_positive_int(limit, 100)
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT ticket_id, event_type, payload, created_at
+                        FROM {}
+                        WHERE ticket_id = %s
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT %s
+                        """
+                    ).format(self._table("support_ticket_events")),
+                    (ticket_id, safe_limit),
                 )
                 rows = cur.fetchall()
         events: list[dict[str, Any]] = []
