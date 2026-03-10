@@ -29,6 +29,7 @@ let takeoverReplyDraft = "";
 let tellAiSubmitting = false;
 let takeoverSubmitting = false;
 let modeSwitching = false;
+let pendingTakeoverComposerFocus = false;
 let statusComboboxOpen = false;
 let modeComboboxOpen = false;
 let statusComboboxQuery = "";
@@ -1272,12 +1273,15 @@ function renderTicketDetail() {
     <section class="detail-block detail-block-engineer-request">
       <h3>Engineer Request</h3>
       <p class="engineer-request-body">${formatMultiline(pendingDetailBodyText)}</p>
+      ${
+        isTakeoverMode
+          ? '<p class="mode-switch-hint" role="status" aria-live="polite">Human Takeover is active. Please reply to the customer directly in the composer below.</p>'
+          : `
       <div class="engineer-request-actions">
         <button
           type="button"
           class="btn btn-outline"
           data-detail-action="toggle-tell-ai"
-          ${isTakeoverMode ? "disabled" : ""}
           ${controlsDisabled ? "disabled" : ""}
         >
           Tell AI
@@ -1286,7 +1290,6 @@ function renderTicketDetail() {
           type="button"
           class="btn btn-outline"
           data-detail-action="takeover-mode"
-          ${isTakeoverMode ? "disabled" : ""}
           ${controlsDisabled ? "disabled" : ""}
         >
           ${takeoverButtonLabel}
@@ -1296,6 +1299,8 @@ function renderTicketDetail() {
         modeSwitching
           ? `<p class="mode-switch-hint" role="status" aria-live="polite">Takeover mode is being enabled. Please wait...</p>`
           : ""
+      }
+      `
       }
       ${
         showTellAiComposer && !isTakeoverMode
@@ -1372,6 +1377,37 @@ function renderTicketDetail() {
   `;
 
   detailModalEl.classList.remove("hidden");
+}
+
+function focusTakeoverComposerInput(retries = 8) {
+  if (!pendingTakeoverComposerFocus) {
+    return;
+  }
+
+  if (String(selectedTicket?.engineer_mode || "").toLowerCase() !== "takeover") {
+    pendingTakeoverComposerFocus = false;
+    return;
+  }
+
+  const input = document.getElementById("detail-takeover-input");
+  if (!(input instanceof HTMLTextAreaElement)) {
+    if (retries > 0) {
+      setTimeout(() => focusTakeoverComposerInput(retries - 1), 90);
+    } else {
+      pendingTakeoverComposerFocus = false;
+    }
+    return;
+  }
+
+  input.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+  try {
+    input.focus({ preventScroll: true });
+  } catch {
+    input.focus();
+  }
+  const end = input.value.length;
+  input.setSelectionRange(end, end);
+  pendingTakeoverComposerFocus = false;
 }
 
 async function refreshSelectedSummary(options = {}) {
@@ -1529,6 +1565,7 @@ async function switchTicketModeOptimistic(ticketId, nextMode) {
   };
 
   if (targetMode === "takeover") {
+    pendingTakeoverComposerFocus = true;
     showTellAiComposer = false;
     tellAiDraft = "";
     const currentStatus = String(selectedTicket?.status || "").toLowerCase();
@@ -1559,6 +1596,9 @@ async function switchTicketModeOptimistic(ticketId, nextMode) {
     refreshSelectedSummaryPreview(normalizedId);
     renderTickets();
     renderTicketDetail();
+    if (targetMode === "takeover") {
+      focusTakeoverComposerInput();
+    }
 
     loadTickets({ refreshDetail: false }).catch(() => {
       // websocket or next poll will re-sync.
@@ -1567,6 +1607,7 @@ async function switchTicketModeOptimistic(ticketId, nextMode) {
       // Keep local summary if async summary fails.
     });
   } catch (error) {
+    pendingTakeoverComposerFocus = false;
     tickets = previousTickets;
     selectedTicket = previousSelectedTicket;
     selectedTicketSummary = previousSummary;
@@ -1577,6 +1618,9 @@ async function switchTicketModeOptimistic(ticketId, nextMode) {
     renderTicketDetail();
     throw error;
   } finally {
+    if (targetMode !== "takeover") {
+      pendingTakeoverComposerFocus = false;
+    }
     modeSwitching = false;
     renderTicketDetail();
   }
