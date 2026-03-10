@@ -360,17 +360,66 @@ function setCounter(value) {
   localStorage.setItem(COUNTER_KEY, String(value));
 }
 
+function toTimestamp(value) {
+  const parsed = new Date(String(value || "")).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function pickPreferredTicket(current, candidate) {
+  const currentUpdated = toTimestamp(current?.updatedAt || current?.createdAt);
+  const candidateUpdated = toTimestamp(candidate?.updatedAt || candidate?.createdAt);
+  if (candidateUpdated !== currentUpdated) {
+    return candidateUpdated > currentUpdated ? candidate : current;
+  }
+
+  const currentMessageCount = Array.isArray(current?.messages) ? current.messages.length : 0;
+  const candidateMessageCount = Array.isArray(candidate?.messages) ? candidate.messages.length : 0;
+  if (candidateMessageCount !== currentMessageCount) {
+    return candidateMessageCount > currentMessageCount ? candidate : current;
+  }
+
+  const currentTitle = String(current?.title || "").trim();
+  const candidateTitle = String(candidate?.title || "").trim();
+  if (
+    currentTitle === "New Session" &&
+    candidateTitle.length > 0 &&
+    candidateTitle !== "New Session"
+  ) {
+    return candidate;
+  }
+
+  return current;
+}
+
+function dedupeTickets(tickets) {
+  const byId = new Map();
+  for (const ticket of Array.isArray(tickets) ? tickets : []) {
+    const ticketId = String(ticket?.id || "").trim();
+    if (!ticketId) {
+      continue;
+    }
+    const existing = byId.get(ticketId);
+    if (!existing) {
+      byId.set(ticketId, ticket);
+      continue;
+    }
+    byId.set(ticketId, pickPreferredTicket(existing, ticket));
+  }
+  return Array.from(byId.values());
+}
+
 function getAllTickets() {
   try {
     const raw = localStorage.getItem(TICKETS_KEY);
-    return raw ? JSON.parse(raw) : [];
+    const parsed = raw ? JSON.parse(raw) : [];
+    return dedupeTickets(parsed);
   } catch {
     return [];
   }
 }
 
 function saveAllTickets(tickets) {
-  localStorage.setItem(TICKETS_KEY, JSON.stringify(tickets));
+  localStorage.setItem(TICKETS_KEY, JSON.stringify(dedupeTickets(tickets)));
 }
 
 function mapBackendRoleToClientRole(role) {
@@ -467,15 +516,56 @@ function getTicketsByUser(userId) {
 }
 
 function getTicketById(ticketId) {
-  return getAllTickets().find((ticket) => ticket.id === ticketId) || null;
+  const normalizedId = String(ticketId || "").trim();
+  if (!normalizedId) {
+    return null;
+  }
+  const matches = getAllTickets().filter((ticket) => String(ticket?.id || "").trim() === normalizedId);
+  if (matches.length === 0) {
+    return null;
+  }
+  matches.sort(
+    (a, b) => toTimestamp(b?.updatedAt || b?.createdAt) - toTimestamp(a?.updatedAt || a?.createdAt)
+  );
+  return matches[0];
+}
+
+function createUniqueTicketId() {
+  const existingIds = new Set(
+    getAllTickets()
+      .map((ticket) => String(ticket?.id || "").trim())
+      .filter(Boolean)
+  );
+  const numericSeeds = Array.from(existingIds)
+    .map((id) => {
+      const match = id.match(/^TK-(\d+)$/i);
+      return match ? Number(match[1]) : 0;
+    })
+    .filter((value) => Number.isFinite(value));
+  let next = Math.max(getCounter(), ...numericSeeds, 0);
+
+  for (let attempt = 0; attempt < 10000; attempt += 1) {
+    next += 1;
+    const candidate = `TK-${String(next).padStart(3, "0")}`;
+    if (!existingIds.has(candidate)) {
+      setCounter(next);
+      return candidate;
+    }
+  }
+
+  // Fallback for extreme edge cases where incremental IDs are exhausted locally.
+  let randomId = "";
+  do {
+    randomId = `T-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
+  } while (existingIds.has(randomId));
+  return randomId;
 }
 
 function createTicket(userId) {
-  const next = getCounter() + 1;
-  setCounter(next);
   const now = new Date().toISOString();
+  const ticketId = createUniqueTicketId();
   const ticket = {
-    id: `TK-${String(next).padStart(3, "0")}`,
+    id: ticketId,
     title: "New Session",
     status: "new",
     createdAt: now,

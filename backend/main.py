@@ -22,8 +22,10 @@ from backend.repositories.ticket_repository import (
     TicketRepository,
     create_ticket_repository,
 )
+from backend.services.emotion_reply import generate_emotion_reply
 from backend.services.event_bus import AsyncRedisEventBus
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, answer_with_rag
+from backend.services.sentiment_classifier import SentimentResult, classify_sentiment
 from backend.services.task_queue import AsyncRedisTaskQueue
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -176,18 +178,6 @@ FAQ_ANSWERS = {
     "where is config file": "The default config lives in /etc/app/config.yaml or your project root .env file.",
     "database timeout": "Verify database host/network reachability and increase connection timeout if needed.",
 }
-
-NEGATIVE_KEYWORDS = {
-    "angry",
-    "frustrated",
-    "terrible",
-    "broken",
-    "crash",
-    "urgent",
-    "complaint",
-    "slow",
-}
-POSITIVE_KEYWORDS = {"thanks", "great", "awesome", "good", "perfect", "resolved"}
 
 
 def derive_subject(message: str) -> str:
@@ -713,16 +703,30 @@ def build_answer(message: str) -> tuple[str, float, list[str], list[dict[str, st
     return fallback, 0.68, ["kb:simulated"], [], True
 
 
-def detect_sentiment(message: str) -> tuple[str, float, bool]:
-    lowered = message.lower()
-    negative_hits = sum(word in lowered for word in NEGATIVE_KEYWORDS)
-    positive_hits = sum(word in lowered for word in POSITIVE_KEYWORDS)
-    score = min(0.99, 0.55 + 0.12 * negative_hits + 0.06 * positive_hits)
-    if negative_hits >= 2:
-        score = max(score, 0.86)
-    label = "negative" if negative_hits > positive_hits else "neutral"
-    is_alert = label == "negative" and score > 0.85
-    return label, score, is_alert
+def detect_sentiment(message: str) -> SentimentResult:
+    return classify_sentiment(message)
+
+
+def build_emotion_context(ticket: dict[str, Any], limit: int = 6, max_chars: int = 240) -> list[dict[str, str]]:
+    messages = ticket.get("messages", [])
+    context: list[dict[str, str]] = []
+    for item in messages[-max(1, int(limit)) :]:
+        role = str(item.get("role", "system")).strip().lower() or "system"
+        content = " ".join(str(item.get("content", "")).split()).strip()
+        if not content:
+            continue
+        if len(content) > max_chars:
+            content = content[:max_chars] + "..."
+        context.append({"role": role, "content": content})
+    return context
+
+
+def compose_emotion_and_answer(emotion_reply: str, answer: str) -> str:
+    emotional = str(emotion_reply or "").strip()
+    technical = str(answer or "").strip()
+    if emotional and technical:
+        return f"{emotional}\n\n{technical}"
+    return emotional or technical
 
 
 def compute_priority(is_alert: bool) -> str:
@@ -865,7 +869,8 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
     ticket_id = request.ticket_id or f"T-{uuid4().hex[:6].upper()}"
     existing_ticket = ticket_repository.get_ticket(ticket_id)
     is_new_ticket = existing_ticket is None
-    label, score, is_alert = detect_sentiment(request.message)
+    sentiment = detect_sentiment(request.message)
+    is_alert = sentiment.bucket == "negative"
     priority = compute_priority(is_alert)
 
     ticket = existing_ticket or {
@@ -903,8 +908,22 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
             "created_at": timestamp,
         }
     )
+    emotion_reply = generate_emotion_reply(
+        sentiment_bucket=sentiment.bucket,
+        raw_label=sentiment.raw_label,
+        sentiment_confidence=sentiment.confidence,
+        customer_message=customer_message,
+        ticket_context=build_emotion_context(ticket),
+    )
+    LOGGER.info(
+        "sentiment_decision sentiment_bucket=%s sentiment_raw_label=%s sentiment_confidence=%.3f emotion_reply_source=%s",
+        sentiment.bucket,
+        sentiment.raw_label,
+        sentiment.confidence,
+        emotion_reply.source,
+    )
 
-    answer = ""
+    answer = emotion_reply.text
     confidence = 0.0
     sources: list[str] = []
     citations: list[dict[str, str]] = []
@@ -914,9 +933,9 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
     task_enqueued = False
 
     if ticket.get("engineer_mode") == TAKEOVER_MODE:
-        answer = (
-            "I have forwarded your question to the assigned engineer. "
-            "The engineer will reply to you shortly."
+        answer = compose_emotion_and_answer(
+            emotion_reply.text,
+            "I have forwarded your question to the assigned engineer. The engineer will reply to you shortly.",
         )
         confidence = 0.0
         sources = []
@@ -928,17 +947,15 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
         )
         needs_engineer_input = True
     elif is_alert:
-        answer = (
-            "I detected that this issue is urgent and have escalated it to an engineer for direct help."
-        )
+        answer = emotion_reply.text
         confidence = 0.0
         ticket["status"] = "waiting_for_engineer"
         ticket["pending_engineer_question"] = _engineer_request_fallback(ticket, customer_message)
         needs_engineer_input = True
     elif ASYNC_QUERY_ENABLED:
-        answer = ""
+        answer = emotion_reply.text
         confidence = 0.0
-        ai_replied = False
+        ai_replied = True
         ticket["status"] = "open"
         ticket["pending_engineer_question"] = None
         task_enqueued = await task_queue.enqueue(
@@ -949,15 +966,24 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
             )
         )
         if not task_enqueued:
-            answer, confidence, sources, citations, needs_engineer_guidance = build_answer(customer_message)
+            technical_answer, confidence, sources, citations, needs_engineer_guidance = build_answer(
+                customer_message
+            )
+            answer = compose_emotion_and_answer(emotion_reply.text, technical_answer)
     else:
-        answer, confidence, sources, citations, needs_engineer_guidance = build_answer(customer_message)
+        technical_answer, confidence, sources, citations, needs_engineer_guidance = build_answer(
+            customer_message
+        )
+        answer = compose_emotion_and_answer(emotion_reply.text, technical_answer)
 
     if not needs_engineer_input and needs_engineer_guidance:
         engineer_request = build_engineer_followup_request(ticket, customer_message)
-        answer = (
-            "I could not find enough reliable information in the knowledge sources for this issue. "
-            "I have contacted an engineer to continue investigation and will follow up shortly."
+        answer = compose_emotion_and_answer(
+            emotion_reply.text,
+            (
+                "I could not find enough reliable information in the knowledge sources for this issue. "
+                "I have contacted an engineer to continue investigation and will follow up shortly."
+            ),
         )
         confidence = min(confidence, 0.55)
         sources = []
@@ -1042,7 +1068,7 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
             "event": "sentiment_alert",
             "ticket_id": ticket_id,
             "priority": "high",
-            "message": "Customer frustration detected",
+            "message": f"Customer frustration detected ({sentiment.raw_label})",
             "created_at": now_iso(),
         }
         ticket_repository.record_event(ticket_id, alert_event["event"], alert_event)
@@ -1055,9 +1081,12 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
         "sources": sources,
         "citations": citations,
         "sentiment": {
-            "label": label,
-            "score": round(score, 2),
+            "label": sentiment.bucket,
+            "raw_label": sentiment.raw_label,
+            "score": round(sentiment.confidence, 2),
             "is_alert": is_alert,
+            "provider": sentiment.provider,
+            "intent": emotion_reply.intent,
         },
         "priority": priority,
         "status": ticket["status"],
@@ -1225,8 +1254,10 @@ async def update_ticket_mode(ticket_id: str, request: TicketModeRequest) -> dict
     previous_mode = ticket.get("engineer_mode", MANAGED_MODE)
 
     ticket["engineer_mode"] = request.mode
-    if request.mode == TAKEOVER_MODE and ticket.get("status") == "waiting_for_engineer":
-        ticket["status"] = "open"
+    if request.mode == TAKEOVER_MODE:
+        if ticket.get("status") == "waiting_for_engineer":
+            ticket["status"] = "open"
+        # Clear stale pending engineer requests when a ticket enters takeover mode.
         ticket["pending_engineer_question"] = None
 
     ticket["updated_at"] = now_iso()
