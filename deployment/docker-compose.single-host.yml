@@ -15,6 +15,8 @@ services:
     build:
       context: ..
       dockerfile: backend/Dockerfile
+    env_file:
+      - ../.env
     command:
       - uvicorn
       - backend.main:app
@@ -71,19 +73,15 @@ services:
 
   worker:
     image: localhost/supportportal-app:latest
+    env_file:
+      - ../.env
     command:
       - python
       - -m
       - backend.worker
     environment:
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4.1}
-      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-large}
-      RAG_TOP_K: ${RAG_TOP_K:-5}
       TICKET_DB_DSN: ${TICKET_DB_DSN:-postgresql://support:support@postgres:5432/support}
       TICKET_DB_SCHEMA: ${TICKET_DB_SCHEMA:-public}
-      PGVECTOR_DSN: ${PGVECTOR_DSN:-postgresql://support:support@postgres:5432/support}
-      PGVECTOR_TABLE: ${PGVECTOR_TABLE:-docagent_chunks}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       EVENT_BUS_CHANNEL: ${EVENT_BUS_CHANNEL:-support.events}
       TASK_QUEUE_NAME: ${TASK_QUEUE_NAME:-support.tasks}
