@@ -9,6 +9,37 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 _UNAVAILABLE_MODELS: set[str] = set()
+_QUERY_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "any",
+    "are",
+    "be",
+    "by",
+    "can",
+    "do",
+    "for",
+    "from",
+    "how",
+    "i",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "this",
+    "to",
+    "what",
+    "where",
+    "which",
+    "with",
+    "you",
+    "your",
+}
 
 INSUFFICIENT_EVIDENCE_REPLY = (
     "I couldn't find enough information in the available support knowledge base to answer that question."
@@ -157,6 +188,127 @@ def _retrieve_chunks(message: str, config: dict[str, Any]) -> list[RetrievedChun
             )
         )
     return chunks
+
+
+def _extract_query_terms(message: str, max_terms: int = 6) -> list[str]:
+    terms: list[str] = []
+    for raw in re.findall(r"[a-z0-9][a-z0-9_-]{2,}", message.lower()):
+        term = raw.strip("_-")
+        if not term or term in _QUERY_STOPWORDS:
+            continue
+        if term in terms:
+            continue
+        terms.append(term)
+        if len(terms) >= max_terms:
+            break
+    return terms
+
+
+def _chunk_search_text(chunk: RetrievedChunk) -> str:
+    parts = [chunk.h1, chunk.h2, chunk.h3, chunk.text]
+    return " ".join(str(part).lower() for part in parts if part)
+
+
+def _keyword_hit_count(search_text: str, terms: list[str]) -> int:
+    return sum(1 for term in terms if term in search_text)
+
+
+def _retrieve_keyword_chunks(message: str, config: dict[str, Any]) -> list[RetrievedChunk]:
+    terms = _extract_query_terms(message)
+    if not terms:
+        return []
+
+    psycopg = _import_psycopg()
+    sql = psycopg.sql
+    patterns = [f"%{term}%" for term in terms]
+    candidate_limit = max(int(config["top_k"]) * 25, 50)
+
+    query = sql.SQL(
+        """
+        SELECT
+            id,
+            content,
+            source_path,
+            h1,
+            h2,
+            h3,
+            source_url
+        FROM {}
+        WHERE
+            lower(content) LIKE ANY(%s)
+            OR lower(coalesce(h1, '')) LIKE ANY(%s)
+            OR lower(coalesce(h2, '')) LIKE ANY(%s)
+            OR lower(coalesce(h3, '')) LIKE ANY(%s)
+        LIMIT %s
+        """
+    ).format(sql.Identifier(config["table"]))
+
+    with psycopg.connect(config["dsn"]) as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, (patterns, patterns, patterns, patterns, candidate_limit))
+            rows = cur.fetchall()
+
+    scored_chunks: list[tuple[int, RetrievedChunk]] = []
+    for row in rows:
+        chunk = RetrievedChunk(
+            chunk_id=str(row[0]),
+            text=str(row[1]),
+            source_path=str(row[2]),
+            h1=(str(row[3]).strip() or None) if row[3] is not None else None,
+            h2=(str(row[4]).strip() or None) if row[4] is not None else None,
+            h3=(str(row[5]).strip() or None) if row[5] is not None else None,
+            source_url=(str(row[6]).strip() or None) if row[6] is not None else None,
+            similarity=0.0,
+        )
+        hits = _keyword_hit_count(_chunk_search_text(chunk), terms)
+        if hits <= 0:
+            continue
+        chunk.similarity = min(1.0, hits / max(1, len(terms)))
+        scored_chunks.append((hits, chunk))
+
+    scored_chunks.sort(key=lambda item: (item[0], item[1].similarity), reverse=True)
+    top_k = int(config["top_k"])
+    results: list[RetrievedChunk] = []
+    seen_keys: set[str] = set()
+    for _, chunk in scored_chunks:
+        dedupe_key = chunk.chunk_id or f"{chunk.source_path}:{chunk.text[:120]}"
+        if dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
+        results.append(chunk)
+        if len(results) >= top_k:
+            break
+    return results
+
+
+def _merge_chunks(
+    primary_chunks: list[RetrievedChunk],
+    secondary_chunks: list[RetrievedChunk],
+    limit: int,
+) -> list[RetrievedChunk]:
+    merged: list[RetrievedChunk] = []
+    seen_keys: set[str] = set()
+    for chunk in [*primary_chunks, *secondary_chunks]:
+        dedupe_key = chunk.chunk_id or f"{chunk.source_path}:{chunk.text[:120]}"
+        if dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
+        merged.append(chunk)
+        if len(merged) >= limit:
+            break
+    return merged
+
+
+def _has_grounded_keyword_overlap(message: str, chunks: list[RetrievedChunk]) -> bool:
+    terms = _extract_query_terms(message)
+    if not terms or not chunks:
+        return False
+
+    min_hits = 1 if len(terms) == 1 else 2
+    for chunk in chunks[:5]:
+        if _keyword_hit_count(_chunk_search_text(chunk), terms) >= min_hits:
+            return True
+    return False
 
 
 def _format_context(chunks: list[RetrievedChunk]) -> str:
@@ -308,6 +460,22 @@ def _citation_records_from_chunks(chunks: list[RetrievedChunk], limit: int = 3) 
     return records
 
 
+def _build_extractive_rag_answer(chunks: list[RetrievedChunk]) -> RagAnswer:
+    sources: list[str] = [f"rag:{chunk.chunk_id}" for chunk in chunks[:3] if chunk.chunk_id]
+    if not sources:
+        sources = [f"rag:{chunk.source_path}" for chunk in chunks[:3] if chunk.source_path]
+    citations = _citation_records_from_chunks(chunks, limit=3)
+    url_sources = [record["source_url"] for record in citations if record.get("source_url")]
+    if url_sources:
+        sources = url_sources
+    return RagAnswer(
+        answer=_build_extractive_fallback(chunks),
+        confidence=_confidence_from_chunks(chunks),
+        sources=sources or ["rag"],
+        citations=citations,
+    )
+
+
 def _invoke_llm_payload(
     message: str,
     chunks: list[RetrievedChunk],
@@ -372,19 +540,30 @@ def answer_with_rag(message: str) -> RagAnswer | None:
     if not config["dsn"] or not config["api_key"]:
         return None
 
+    chunks: list[RetrievedChunk] = []
     try:
         chunks = _retrieve_chunks(message, config)
     except Exception as exc:
         logger.warning("RAG retrieval failed: %s", exc)
-        return None
+        try:
+            chunks = _retrieve_keyword_chunks(message, config)
+        except Exception as keyword_exc:
+            logger.warning("RAG keyword retrieval failed: %s", keyword_exc)
+            return None
 
     if not chunks:
-        return RagAnswer(
-            answer=INSUFFICIENT_EVIDENCE_REPLY,
-            confidence=0.55,
-            sources=[],
-            citations=[],
-        )
+        try:
+            chunks = _retrieve_keyword_chunks(message, config)
+        except Exception as exc:
+            logger.warning("RAG keyword retrieval failed: %s", exc)
+            chunks = []
+        if not chunks:
+            return RagAnswer(
+                answer=INSUFFICIENT_EVIDENCE_REPLY,
+                confidence=0.55,
+                sources=[],
+                citations=[],
+            )
 
     allowed_chunk_ids = {chunk.chunk_id for chunk in chunks}
     payload: dict[str, Any] | None = None
@@ -397,6 +576,45 @@ def answer_with_rag(message: str) -> RagAnswer | None:
 
     if payload is not None and _is_valid_response(payload, allowed_chunk_ids):
         if payload["insufficient_evidence"] is True:
+            try:
+                keyword_chunks = _retrieve_keyword_chunks(message, config)
+            except Exception as exc:
+                logger.warning("RAG keyword retrieval failed in insufficient branch: %s", exc)
+                keyword_chunks = []
+
+            if keyword_chunks:
+                merge_limit = max(int(config["top_k"]) * 2, len(chunks))
+                chunks = _merge_chunks(chunks, keyword_chunks, limit=merge_limit)
+                merged_chunk_ids = {chunk.chunk_id for chunk in chunks}
+                try:
+                    retry_payload = _invoke_llm_payload(message, chunks, config, strict_retry=True)
+                except Exception as exc:
+                    logger.warning("RAG retry with merged chunks failed: %s", exc)
+                    retry_payload = None
+                if retry_payload is not None and _is_valid_response(retry_payload, merged_chunk_ids):
+                    if retry_payload["insufficient_evidence"] is False:
+                        citations = [str(chunk_id) for chunk_id in retry_payload["citations"]]
+                        citation_records = _citation_records_from_ids(citations, chunks)
+                        sources = [
+                            record.get("source_url") or f"rag:{record['chunk_id']}"
+                            for record in citation_records
+                        ]
+                        return RagAnswer(
+                            answer=_build_answer_text(
+                                str(retry_payload["answer"]),
+                                retry_payload.get("key_steps", []),
+                            ),
+                            confidence=_confidence_from_chunks(chunks),
+                            sources=sources,
+                            citations=citation_records,
+                        )
+
+            if _has_grounded_keyword_overlap(message, chunks):
+                logger.info(
+                    "RAG insufficient evidence but keyword overlap was found. "
+                    "Using extractive fallback."
+                )
+                return _build_extractive_rag_answer(chunks)
             return RagAnswer(
                 answer=INSUFFICIENT_EVIDENCE_REPLY,
                 confidence=0.55,
@@ -417,16 +635,4 @@ def answer_with_rag(message: str) -> RagAnswer | None:
         )
 
     logger.warning("RAG structured answer invalid, using extractive fallback.")
-    sources: list[str] = [f"rag:{chunk.chunk_id}" for chunk in chunks[:3] if chunk.chunk_id]
-    if not sources:
-        sources = [f"rag:{chunk.source_path}" for chunk in chunks[:3] if chunk.source_path]
-    citations = _citation_records_from_chunks(chunks, limit=3)
-    url_sources = [record["source_url"] for record in citations if record.get("source_url")]
-    if url_sources:
-        sources = url_sources
-    return RagAnswer(
-        answer=_build_extractive_fallback(chunks),
-        confidence=_confidence_from_chunks(chunks),
-        sources=sources or ["rag"],
-        citations=citations,
-    )
+    return _build_extractive_rag_answer(chunks)
