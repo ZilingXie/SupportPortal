@@ -5,18 +5,24 @@ import json
 import logging
 import os
 import re
+from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from backend.repositories.knowledge_repository import (
+    DisabledKnowledgeRepository,
+    KnowledgeRepository,
+    create_knowledge_repository,
+)
 from backend.repositories.ticket_repository import (
     InMemoryTicketRepository,
     TicketRepository,
@@ -24,6 +30,11 @@ from backend.repositories.ticket_repository import (
 )
 from backend.services.emotion_reply import generate_emotion_reply
 from backend.services.event_bus import AsyncRedisEventBus
+from backend.services.knowledge_ingestion import process_knowledge_ingestion
+from backend.services.knowledge_monitoring import (
+    build_empty_knowledge_metrics,
+    build_knowledge_event_payload,
+)
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, answer_with_rag
 from backend.services.sentiment_classifier import SentimentResult, classify_sentiment
 from backend.services.task_queue import AsyncRedisTaskQueue
@@ -76,6 +87,8 @@ def _safe_float_env(name: str, default: float) -> float:
 ASYNC_QUERY_ENABLED = _env_flag("ASYNC_QUERY_ENABLED", default=False)
 OPENAI_REQUEST_TIMEOUT_SECONDS = _safe_float_env("OPENAI_REQUEST_TIMEOUT_SECONDS", 20.0)
 OPENAI_MAX_RETRIES = _safe_int_env("OPENAI_MAX_RETRIES", 1)
+KNOWLEDGE_OFFICIAL_MAX_BYTES = _safe_int_env("KNOWLEDGE_OFFICIAL_MAX_BYTES", 5 * 1024 * 1024)
+KNOWLEDGE_ARTICLE_MAX_CHARS = _safe_int_env("KNOWLEDGE_ARTICLE_MAX_CHARS", 120000)
 
 
 def now_iso() -> str:
@@ -114,6 +127,12 @@ class TakeoverReplyRequest(BaseModel):
 class CancelPendingRequest(BaseModel):
     customer_id: str | None = None
     message_created_at: str = Field(min_length=1, max_length=64)
+
+
+class TechnicalKnowledgeArticleRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    content: str = Field(min_length=1, max_length=200000)
+    source_url: str = Field(min_length=1, max_length=2000)
 
 
 class ConnectionHub:
@@ -167,9 +186,11 @@ if DASHBOARD_DIR.exists():
 
 
 ticket_repository: TicketRepository = create_ticket_repository()
+knowledge_repository: KnowledgeRepository = create_knowledge_repository()
 hub = ConnectionHub()
 event_bus = AsyncRedisEventBus()
 task_queue = AsyncRedisTaskQueue()
+KNOWLEDGE_UPLOAD_DIR = BASE_DIR / "artifacts" / "knowledge_uploads"
 
 
 FAQ_ANSWERS = {
@@ -759,6 +780,14 @@ def build_query_task(ticket_id: str, customer_message: str, message_created_at: 
     }
 
 
+def build_knowledge_ingest_task(ingestion_id: str) -> dict[str, str]:
+    return {
+        "task_type": "knowledge_ingest",
+        "ingestion_id": ingestion_id,
+        "created_at": now_iso(),
+    }
+
+
 def build_client_sync_event(ticket: dict[str, Any], event_name: str, message: str | None = None) -> dict[str, Any]:
     event: dict[str, Any] = {
         "event": event_name,
@@ -833,6 +862,7 @@ def logout() -> dict[str, Any]:
 
 @app.on_event("startup")
 def startup_event() -> None:
+    global knowledge_repository
     global ticket_repository
     try:
         ticket_repository.initialize()
@@ -847,6 +877,16 @@ def startup_event() -> None:
         ticket_repository = fallback
         LOGGER.warning("Ticket repository switched to memory mode.")
 
+    try:
+        knowledge_repository.initialize()
+        LOGGER.info("Knowledge repository initialized: %s", knowledge_repository.storage_mode())
+    except Exception as exc:
+        LOGGER.warning(
+            "Knowledge repository initialization failed. Knowledge ingestion endpoints disabled. error=%s",
+            exc,
+        )
+        knowledge_repository = DisabledKnowledgeRepository()
+
 
 @app.on_event("shutdown")
 async def shutdown_event() -> None:
@@ -860,8 +900,209 @@ def health() -> dict[str, str]:
         "status": "ok",
         "time": now_iso(),
         "ticket_storage": ticket_repository.storage_mode(),
+        "knowledge_storage": knowledge_repository.storage_mode(),
         "async_query_enabled": "true" if ASYNC_QUERY_ENABLED else "false",
     }
+
+
+def _require_knowledge_repository() -> KnowledgeRepository:
+    if not knowledge_repository.is_enabled():
+        raise HTTPException(status_code=503, detail="Knowledge ingestion is not configured")
+    return knowledge_repository
+
+
+def _sanitize_uploaded_file_name(file_name: str) -> str:
+    normalized = Path(file_name or "document.md").name
+    clean_name = re.sub(r"[^a-zA-Z0-9._-]+", "-", normalized).strip(".-")
+    return clean_name or "document.md"
+
+
+def _save_official_markdown_upload(original_name: str, content: bytes) -> Path:
+    safe_name = _sanitize_uploaded_file_name(original_name)
+    upload_dir = KNOWLEDGE_UPLOAD_DIR / "official"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    destination = upload_dir / f"{uuid4().hex[:12]}-{safe_name}"
+    destination.write_bytes(content)
+    return destination
+
+
+def _ingestion_payload(
+    ingestion: dict[str, Any],
+    *,
+    queued: bool,
+    processing_mode: str,
+) -> dict[str, Any]:
+    return {
+        "ingestion": ingestion,
+        "queued": queued,
+        "processing_mode": processing_mode,
+    }
+
+
+def _knowledge_embedding_model() -> str:
+    return (os.getenv("OPENAI_EMBEDDING_MODEL") or "text-embedding-3-large").strip()
+
+
+def _knowledge_vector_table() -> str:
+    return (os.getenv("PGVECTOR_TABLE") or "docagent_chunks").strip() or "docagent_chunks"
+
+
+async def dispatch_knowledge_dashboard_event(
+    event_name: str,
+    ingestion: dict[str, Any] | None,
+    *,
+    status_override: str | None = None,
+) -> dict[str, Any]:
+    payload = build_knowledge_event_payload(
+        event_name,
+        ingestion,
+        status_override=status_override,
+    )
+    ticket_repository.record_event(None, payload["event"], payload)
+    await dispatch_event(["dashboard"], payload)
+    return payload
+
+
+async def _run_knowledge_ingestion_or_enqueue(ingestion_id: str) -> tuple[dict[str, Any], bool, str]:
+    task_enqueued = await task_queue.enqueue(build_knowledge_ingest_task(ingestion_id))
+    if task_enqueued:
+        record = knowledge_repository.get_ingestion(ingestion_id, include_content=False)
+        if record is None:
+            raise HTTPException(status_code=500, detail="Knowledge ingestion task was enqueued but the record disappeared")
+        return record, True, "queued"
+
+    queued_record = knowledge_repository.get_ingestion(ingestion_id, include_content=False)
+    if queued_record is not None:
+        await dispatch_knowledge_dashboard_event(
+            "knowledge_ingestion_processing",
+            queued_record,
+            status_override="processing",
+        )
+
+    try:
+        record = await asyncio.to_thread(
+            process_knowledge_ingestion,
+            knowledge_repository,
+            ingestion_id,
+        )
+    except Exception as exc:
+        failed_record = knowledge_repository.get_ingestion(ingestion_id, include_content=False)
+        if failed_record is not None:
+            await dispatch_knowledge_dashboard_event(
+                "knowledge_ingestion_failed",
+                failed_record,
+                status_override="failed",
+            )
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "message": "Knowledge ingestion failed",
+                    "ingestion_id": ingestion_id,
+                    "status": failed_record.get("status"),
+                    "error_message": failed_record.get("error_message"),
+                },
+            ) from exc
+        raise HTTPException(status_code=500, detail=f"Knowledge ingestion failed: {ingestion_id}") from exc
+
+    if record is None:
+        latest = knowledge_repository.get_ingestion(ingestion_id, include_content=False)
+        if latest is None:
+            raise HTTPException(status_code=500, detail=f"Knowledge ingestion finished without a record: {ingestion_id}")
+        record = latest
+    await dispatch_knowledge_dashboard_event(
+        "knowledge_ingestion_completed",
+        record,
+        status_override="completed",
+    )
+    return record, False, "synchronous_fallback"
+
+
+@app.post("/api/engineer/knowledge/official-documents", status_code=202)
+async def upload_official_document(file: UploadFile = File(...)) -> dict[str, Any]:
+    repository = _require_knowledge_repository()
+
+    original_name = _sanitize_uploaded_file_name(file.filename or "document.md")
+    suffix = Path(original_name).suffix.lower()
+    if suffix != ".md":
+        raise HTTPException(status_code=400, detail="Only .md files are supported for official documents")
+
+    raw_bytes = await file.read()
+    await file.close()
+    if not raw_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+    if len(raw_bytes) > KNOWLEDGE_OFFICIAL_MAX_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Official document is too large. Max size is {KNOWLEDGE_OFFICIAL_MAX_BYTES} bytes.",
+        )
+
+    stored_path = _save_official_markdown_upload(original_name, raw_bytes)
+    try:
+        ingestion = repository.create_ingestion(
+            entry_type="official_document",
+            knowledge_type="official",
+            file_name=original_name,
+            file_path=str(stored_path),
+            request_metadata={
+                "original_file_name": original_name,
+                "file_size_bytes": len(raw_bytes),
+            },
+        )
+    except Exception:
+        with suppress(FileNotFoundError):
+            stored_path.unlink()
+        raise
+
+    await dispatch_knowledge_dashboard_event(
+        "knowledge_ingestion_queued",
+        ingestion,
+        status_override="queued",
+    )
+    record, queued, processing_mode = await _run_knowledge_ingestion_or_enqueue(ingestion["ingestion_id"])
+    return _ingestion_payload(record, queued=queued, processing_mode=processing_mode)
+
+
+@app.post("/api/engineer/knowledge/articles", status_code=202)
+async def upload_technical_article(request: TechnicalKnowledgeArticleRequest) -> dict[str, Any]:
+    repository = _require_knowledge_repository()
+    if len(request.content) > KNOWLEDGE_ARTICLE_MAX_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Technical article content exceeds {KNOWLEDGE_ARTICLE_MAX_CHARS} characters",
+        )
+
+    ingestion = repository.create_ingestion(
+        entry_type="technical_article",
+        knowledge_type="technical",
+        title=request.title.strip(),
+        source_url=request.source_url.strip(),
+        content=request.content,
+        request_metadata={
+            "content_length": len(request.content),
+        },
+    )
+    await dispatch_knowledge_dashboard_event(
+        "knowledge_ingestion_queued",
+        ingestion,
+        status_override="queued",
+    )
+    record, queued, processing_mode = await _run_knowledge_ingestion_or_enqueue(ingestion["ingestion_id"])
+    return _ingestion_payload(record, queued=queued, processing_mode=processing_mode)
+
+
+@app.get("/api/engineer/knowledge/ingestions")
+def list_knowledge_ingestions(limit: int = Query(default=20, ge=1, le=100)) -> dict[str, Any]:
+    repository = _require_knowledge_repository()
+    return {"ingestions": repository.list_ingestions(limit=limit)}
+
+
+@app.get("/api/engineer/knowledge/ingestions/{ingestion_id}")
+def get_knowledge_ingestion(ingestion_id: str) -> dict[str, Any]:
+    repository = _require_knowledge_repository()
+    ingestion = repository.get_ingestion(ingestion_id, include_content=False)
+    if ingestion is None:
+        raise HTTPException(status_code=404, detail="Knowledge ingestion not found")
+    return {"ingestion": ingestion}
 
 
 @app.post("/api/tickets/query")
@@ -1426,6 +1667,40 @@ def dashboard_metrics() -> dict[str, Any]:
     }
 
 
+@app.get("/api/dashboard/knowledge-metrics")
+def dashboard_knowledge_metrics() -> dict[str, Any]:
+    if not knowledge_repository.is_enabled():
+        return build_empty_knowledge_metrics(
+            storage_mode=knowledge_repository.storage_mode(),
+            embedding_model=_knowledge_embedding_model(),
+            vector_table=_knowledge_vector_table(),
+        )
+    return knowledge_repository.dashboard_metrics()
+
+
+@app.get("/api/dashboard/knowledge-ingestions")
+def dashboard_knowledge_ingestions(
+    limit: int = Query(default=20, ge=1, le=100),
+    status: str = Query(default="all", pattern="^(all|queued|processing|completed|failed)$"),
+    knowledge_type: str = Query(default="all", pattern="^(all|official|technical)$"),
+) -> dict[str, Any]:
+    if not knowledge_repository.is_enabled():
+        return {
+            "ingestions": [],
+            "status_filter": status,
+            "knowledge_type_filter": knowledge_type,
+        }
+    return {
+        "ingestions": knowledge_repository.list_ingestions(
+            limit=limit,
+            status_filter=status,
+            knowledge_type=knowledge_type,
+        ),
+        "status_filter": status,
+        "knowledge_type_filter": knowledge_type,
+    }
+
+
 @app.get("/api/dashboard/events")
 def dashboard_events(limit: int = Query(default=20, ge=1, le=100)) -> dict[str, Any]:
     rows = ticket_repository.list_events(limit=limit)
@@ -1434,13 +1709,19 @@ def dashboard_events(limit: int = Query(default=20, ge=1, le=100)) -> dict[str, 
         payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
         event_type = str(row.get("event_type") or payload.get("event") or "ticket_updated")
         ticket_id = row.get("ticket_id") or payload.get("ticket_id")
+        ingestion_id = payload.get("ingestion_id")
         normalized = {
             "event": payload.get("event") or event_type,
             "ticket_id": str(ticket_id) if ticket_id is not None else "-",
+            "ingestion_id": str(ingestion_id) if ingestion_id is not None else None,
+            "title": payload.get("title"),
             "message": payload.get("message"),
             "status": payload.get("status"),
             "priority": payload.get("priority"),
             "engineer_mode": payload.get("engineer_mode"),
+            "knowledge_type": payload.get("knowledge_type"),
+            "chunk_count": payload.get("chunk_count"),
+            "error_message": payload.get("error_message"),
             "created_at": payload.get("created_at") or row.get("created_at") or now_iso(),
         }
         events.append(normalized)
