@@ -81,7 +81,7 @@ class TicketRepository(Protocol):
     ) -> None:
         ...
 
-    def record_event(self, ticket_id: str, event_type: str, payload: dict[str, Any]) -> None:
+    def record_event(self, ticket_id: str | None, event_type: str, payload: dict[str, Any]) -> None:
         ...
 
     def list_events(self, limit: int = 20) -> list[dict[str, Any]]:
@@ -129,7 +129,7 @@ class InMemoryTicketRepository:
             raise ValueError("ticket_id is required")
         self._tickets[ticket_id] = copy.deepcopy(ticket)
 
-    def record_event(self, ticket_id: str, event_type: str, payload: dict[str, Any]) -> None:
+    def record_event(self, ticket_id: str | None, event_type: str, payload: dict[str, Any]) -> None:
         created_at = payload.get("created_at") or _utc_now()
         self._events.append(
             {
@@ -483,7 +483,7 @@ class PostgresTicketRepository:
                     )
             conn.commit()
 
-    def record_event(self, ticket_id: str, event_type: str, payload: dict[str, Any]) -> None:
+    def record_event(self, ticket_id: str | None, event_type: str, payload: dict[str, Any]) -> None:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
