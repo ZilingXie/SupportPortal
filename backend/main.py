@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import re
-from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -18,24 +17,20 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from backend.repositories.knowledge_repository import (
-    DisabledKnowledgeRepository,
-    KnowledgeRepository,
-    create_knowledge_repository,
-)
 from backend.repositories.ticket_repository import (
-    InMemoryTicketRepository,
     TicketRepository,
     create_ticket_repository,
 )
 from backend.services.emotion_reply import generate_emotion_reply
 from backend.services.event_bus import AsyncRedisEventBus
-from backend.services.knowledge_ingestion import process_knowledge_ingestion
-from backend.services.knowledge_monitoring import (
-    build_empty_knowledge_metrics,
-    build_knowledge_event_payload,
+from backend.services.knowledge_monitoring import build_empty_knowledge_metrics
+from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
+from backend.services.rag_service_client import (
+    RagServiceClient,
+    RagServiceError,
+    async_to_thread,
+    map_rag_payload_to_ticket_answer,
 )
-from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, answer_with_rag
 from backend.services.sentiment_classifier import SentimentResult, classify_sentiment
 from backend.services.task_queue import AsyncRedisTaskQueue
 
@@ -186,19 +181,10 @@ if DASHBOARD_DIR.exists():
 
 
 ticket_repository: TicketRepository = create_ticket_repository()
-knowledge_repository: KnowledgeRepository = create_knowledge_repository()
 hub = ConnectionHub()
 event_bus = AsyncRedisEventBus()
 task_queue = AsyncRedisTaskQueue()
-KNOWLEDGE_UPLOAD_DIR = BASE_DIR / "artifacts" / "knowledge_uploads"
-
-
-FAQ_ANSWERS = {
-    "reset password": "Go to the sign-in page, click 'Forgot password', then follow the email instructions.",
-    "api authentication failed": "Check API key validity, token expiration, and environment configuration first.",
-    "where is config file": "The default config lives in /etc/app/config.yaml or your project root .env file.",
-    "database timeout": "Verify database host/network reachability and increase connection timeout if needed.",
-}
+rag_service_client = RagServiceClient()
 
 
 def derive_subject(message: str) -> str:
@@ -701,27 +687,42 @@ def build_ticket_summary(ticket: dict[str, Any]) -> tuple[str, str, str]:
     return fallback_summary, fallback_next_action, "fallback"
 
 
-def build_answer(message: str) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
-    rag_answer = answer_with_rag(message)
-    if rag_answer is not None:
-        is_rag_insufficient = rag_answer.answer.strip() == INSUFFICIENT_EVIDENCE_REPLY
-        return (
-            rag_answer.answer,
-            rag_answer.confidence,
-            rag_answer.sources,
-            rag_answer.citations,
-            is_rag_insufficient,
+def build_answer(
+    message: str,
+    *,
+    ticket_id: str | None = None,
+    customer_id: str | None = None,
+) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
+    request_id = f"rag-{uuid4().hex[:12]}"
+    try:
+        payload = rag_service_client.query(
+            question=message,
+            request_id=request_id,
+            ticket_id=ticket_id,
+            customer_id=customer_id,
         )
+    except RagServiceError as exc:
+        LOGGER.warning(
+            "RAG service unavailable request_id=%s ticket_id=%s error=%s",
+            request_id,
+            ticket_id,
+            exc,
+        )
+        return INSUFFICIENT_EVIDENCE_REPLY, 0.0, [], [], True
 
-    lowered = message.lower()
-    for keyword, answer in FAQ_ANSWERS.items():
-        if keyword in lowered:
-            return answer, 0.92, ["faq"], [], False
-    fallback = (
-        "I could not find an exact FAQ match. I created a ticket and linked related knowledge "
-        "articles for engineer follow-up."
+    answer_tuple = map_rag_payload_to_ticket_answer(
+        payload,
+        insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
     )
-    return fallback, 0.68, ["kb:simulated"], [], True
+    if answer_tuple[-1] is False:
+        return answer_tuple
+    LOGGER.info(
+        "RAG service escalated request_id=%s ticket_id=%s reason=%s",
+        request_id,
+        ticket_id,
+        payload.get("reason"),
+    )
+    return answer_tuple
 
 
 def detect_sentiment(message: str) -> SentimentResult:
@@ -776,14 +777,6 @@ def build_query_task(ticket_id: str, customer_message: str, message_created_at: 
         "ticket_id": ticket_id,
         "customer_message": customer_message,
         "message_created_at": message_created_at,
-        "created_at": now_iso(),
-    }
-
-
-def build_knowledge_ingest_task(ingestion_id: str) -> dict[str, str]:
-    return {
-        "task_type": "knowledge_ingest",
-        "ingestion_id": ingestion_id,
         "created_at": now_iso(),
     }
 
@@ -862,30 +855,12 @@ def logout() -> dict[str, Any]:
 
 @app.on_event("startup")
 def startup_event() -> None:
-    global knowledge_repository
-    global ticket_repository
     try:
         ticket_repository.initialize()
         LOGGER.info("Ticket repository initialized: %s", ticket_repository.storage_mode())
     except Exception as exc:
-        LOGGER.warning(
-            "Ticket repository initialization failed. Fallback to memory mode. error=%s",
-            exc,
-        )
-        fallback = InMemoryTicketRepository()
-        fallback.initialize()
-        ticket_repository = fallback
-        LOGGER.warning("Ticket repository switched to memory mode.")
-
-    try:
-        knowledge_repository.initialize()
-        LOGGER.info("Knowledge repository initialized: %s", knowledge_repository.storage_mode())
-    except Exception as exc:
-        LOGGER.warning(
-            "Knowledge repository initialization failed. Knowledge ingestion endpoints disabled. error=%s",
-            exc,
-        )
-        knowledge_repository = DisabledKnowledgeRepository()
+        LOGGER.error("Ticket repository initialization failed: %s", exc)
+        raise
 
 
 @app.on_event("shutdown")
@@ -895,20 +870,16 @@ async def shutdown_event() -> None:
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
+def health() -> dict[str, Any]:
+    rag_health = rag_service_client.probe_health()
     return {
         "status": "ok",
         "time": now_iso(),
         "ticket_storage": ticket_repository.storage_mode(),
-        "knowledge_storage": knowledge_repository.storage_mode(),
+        "knowledge_storage": rag_health.get("knowledge_storage") or "proxy",
+        "rag_service": rag_health.get("status") or "unknown",
         "async_query_enabled": "true" if ASYNC_QUERY_ENABLED else "false",
     }
-
-
-def _require_knowledge_repository() -> KnowledgeRepository:
-    if not knowledge_repository.is_enabled():
-        raise HTTPException(status_code=503, detail="Knowledge ingestion is not configured")
-    return knowledge_repository
 
 
 def _sanitize_uploaded_file_name(file_name: str) -> str:
@@ -917,110 +888,26 @@ def _sanitize_uploaded_file_name(file_name: str) -> str:
     return clean_name or "document.md"
 
 
-def _save_official_markdown_upload(original_name: str, content: bytes) -> Path:
-    safe_name = _sanitize_uploaded_file_name(original_name)
-    upload_dir = KNOWLEDGE_UPLOAD_DIR / "official"
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    destination = upload_dir / f"{uuid4().hex[:12]}-{safe_name}"
-    destination.write_bytes(content)
-    return destination
-
-
-def _ingestion_payload(
-    ingestion: dict[str, Any],
-    *,
-    queued: bool,
-    processing_mode: str,
-) -> dict[str, Any]:
-    return {
-        "ingestion": ingestion,
-        "queued": queued,
-        "processing_mode": processing_mode,
-    }
-
-
 def _knowledge_embedding_model() -> str:
     return (os.getenv("OPENAI_EMBEDDING_MODEL") or "text-embedding-3-large").strip()
 
 
 def _knowledge_vector_table() -> str:
-    return (os.getenv("PGVECTOR_TABLE") or "docagent_chunks").strip() or "docagent_chunks"
+    schema = (os.getenv("PGVECTOR_SCHEMA") or "supportportal").strip() or "supportportal"
+    raw_table = (os.getenv("PGVECTOR_TABLE") or "docagent_chunks").strip() or "docagent_chunks"
+    if "." in raw_table:
+        return raw_table
+    return f"{schema}.{raw_table}"
 
 
-async def dispatch_knowledge_dashboard_event(
-    event_name: str,
-    ingestion: dict[str, Any] | None,
-    *,
-    status_override: str | None = None,
-) -> dict[str, Any]:
-    payload = build_knowledge_event_payload(
-        event_name,
-        ingestion,
-        status_override=status_override,
-    )
-    ticket_repository.record_event(None, payload["event"], payload)
-    await dispatch_event(["dashboard"], payload)
-    return payload
-
-
-async def _run_knowledge_ingestion_or_enqueue(ingestion_id: str) -> tuple[dict[str, Any], bool, str]:
-    task_enqueued = await task_queue.enqueue(build_knowledge_ingest_task(ingestion_id))
-    if task_enqueued:
-        record = knowledge_repository.get_ingestion(ingestion_id, include_content=False)
-        if record is None:
-            raise HTTPException(status_code=500, detail="Knowledge ingestion task was enqueued but the record disappeared")
-        return record, True, "queued"
-
-    queued_record = knowledge_repository.get_ingestion(ingestion_id, include_content=False)
-    if queued_record is not None:
-        await dispatch_knowledge_dashboard_event(
-            "knowledge_ingestion_processing",
-            queued_record,
-            status_override="processing",
-        )
-
-    try:
-        record = await asyncio.to_thread(
-            process_knowledge_ingestion,
-            knowledge_repository,
-            ingestion_id,
-        )
-    except Exception as exc:
-        failed_record = knowledge_repository.get_ingestion(ingestion_id, include_content=False)
-        if failed_record is not None:
-            await dispatch_knowledge_dashboard_event(
-                "knowledge_ingestion_failed",
-                failed_record,
-                status_override="failed",
-            )
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "message": "Knowledge ingestion failed",
-                    "ingestion_id": ingestion_id,
-                    "status": failed_record.get("status"),
-                    "error_message": failed_record.get("error_message"),
-                },
-            ) from exc
-        raise HTTPException(status_code=500, detail=f"Knowledge ingestion failed: {ingestion_id}") from exc
-
-    if record is None:
-        latest = knowledge_repository.get_ingestion(ingestion_id, include_content=False)
-        if latest is None:
-            raise HTTPException(status_code=500, detail=f"Knowledge ingestion finished without a record: {ingestion_id}")
-        record = latest
-    await dispatch_knowledge_dashboard_event(
-        "knowledge_ingestion_completed",
-        record,
-        status_override="completed",
-    )
-    return record, False, "synchronous_fallback"
+def _raise_rag_service_http_error(exc: RagServiceError) -> None:
+    status_code = exc.status_code if isinstance(exc.status_code, int) and exc.status_code > 0 else 503
+    detail = exc.payload if exc.payload is not None else str(exc)
+    raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 @app.post("/api/engineer/knowledge/official-documents", status_code=202)
 async def upload_official_document(file: UploadFile = File(...)) -> dict[str, Any]:
-    repository = _require_knowledge_repository()
-
     original_name = _sanitize_uploaded_file_name(file.filename or "document.md")
     suffix = Path(original_name).suffix.lower()
     if suffix != ".md":
@@ -1035,74 +922,49 @@ async def upload_official_document(file: UploadFile = File(...)) -> dict[str, An
             status_code=400,
             detail=f"Official document is too large. Max size is {KNOWLEDGE_OFFICIAL_MAX_BYTES} bytes.",
         )
-
-    stored_path = _save_official_markdown_upload(original_name, raw_bytes)
     try:
-        ingestion = repository.create_ingestion(
-            entry_type="official_document",
-            knowledge_type="official",
+        return await async_to_thread(
+            rag_service_client.upload_official_document,
             file_name=original_name,
-            file_path=str(stored_path),
-            request_metadata={
-                "original_file_name": original_name,
-                "file_size_bytes": len(raw_bytes),
-            },
+            content=raw_bytes,
         )
-    except Exception:
-        with suppress(FileNotFoundError):
-            stored_path.unlink()
-        raise
-
-    await dispatch_knowledge_dashboard_event(
-        "knowledge_ingestion_queued",
-        ingestion,
-        status_override="queued",
-    )
-    record, queued, processing_mode = await _run_knowledge_ingestion_or_enqueue(ingestion["ingestion_id"])
-    return _ingestion_payload(record, queued=queued, processing_mode=processing_mode)
+    except RagServiceError as exc:
+        _raise_rag_service_http_error(exc)
 
 
 @app.post("/api/engineer/knowledge/articles", status_code=202)
 async def upload_technical_article(request: TechnicalKnowledgeArticleRequest) -> dict[str, Any]:
-    repository = _require_knowledge_repository()
     if len(request.content) > KNOWLEDGE_ARTICLE_MAX_CHARS:
         raise HTTPException(
             status_code=400,
             detail=f"Technical article content exceeds {KNOWLEDGE_ARTICLE_MAX_CHARS} characters",
         )
 
-    ingestion = repository.create_ingestion(
-        entry_type="technical_article",
-        knowledge_type="technical",
-        title=request.title.strip(),
-        source_url=request.source_url.strip(),
-        content=request.content,
-        request_metadata={
-            "content_length": len(request.content),
-        },
-    )
-    await dispatch_knowledge_dashboard_event(
-        "knowledge_ingestion_queued",
-        ingestion,
-        status_override="queued",
-    )
-    record, queued, processing_mode = await _run_knowledge_ingestion_or_enqueue(ingestion["ingestion_id"])
-    return _ingestion_payload(record, queued=queued, processing_mode=processing_mode)
+    try:
+        return await async_to_thread(
+            rag_service_client.upload_article,
+            title=request.title.strip(),
+            content=request.content,
+            source_url=request.source_url.strip(),
+        )
+    except RagServiceError as exc:
+        _raise_rag_service_http_error(exc)
 
 
 @app.get("/api/engineer/knowledge/ingestions")
 def list_knowledge_ingestions(limit: int = Query(default=20, ge=1, le=100)) -> dict[str, Any]:
-    repository = _require_knowledge_repository()
-    return {"ingestions": repository.list_ingestions(limit=limit)}
+    try:
+        return rag_service_client.list_ingestions(limit=limit)
+    except RagServiceError as exc:
+        _raise_rag_service_http_error(exc)
 
 
 @app.get("/api/engineer/knowledge/ingestions/{ingestion_id}")
 def get_knowledge_ingestion(ingestion_id: str) -> dict[str, Any]:
-    repository = _require_knowledge_repository()
-    ingestion = repository.get_ingestion(ingestion_id, include_content=False)
-    if ingestion is None:
-        raise HTTPException(status_code=404, detail="Knowledge ingestion not found")
-    return {"ingestion": ingestion}
+    try:
+        return rag_service_client.get_ingestion(ingestion_id)
+    except RagServiceError as exc:
+        _raise_rag_service_http_error(exc)
 
 
 @app.post("/api/tickets/query")
@@ -1208,12 +1070,16 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
         )
         if not task_enqueued:
             technical_answer, confidence, sources, citations, needs_engineer_guidance = build_answer(
-                customer_message
+                customer_message,
+                ticket_id=ticket_id,
+                customer_id=request.customer_id,
             )
             answer = compose_emotion_and_answer(emotion_reply.text, technical_answer)
     else:
         technical_answer, confidence, sources, citations, needs_engineer_guidance = build_answer(
-            customer_message
+            customer_message,
+            ticket_id=ticket_id,
+            customer_id=request.customer_id,
         )
         answer = compose_emotion_and_answer(emotion_reply.text, technical_answer)
 
@@ -1669,13 +1535,14 @@ def dashboard_metrics() -> dict[str, Any]:
 
 @app.get("/api/dashboard/knowledge-metrics")
 def dashboard_knowledge_metrics() -> dict[str, Any]:
-    if not knowledge_repository.is_enabled():
+    try:
+        return rag_service_client.knowledge_metrics()
+    except RagServiceError:
         return build_empty_knowledge_metrics(
-            storage_mode=knowledge_repository.storage_mode(),
+            storage_mode="unreachable",
             embedding_model=_knowledge_embedding_model(),
             vector_table=_knowledge_vector_table(),
         )
-    return knowledge_repository.dashboard_metrics()
 
 
 @app.get("/api/dashboard/knowledge-ingestions")
@@ -1684,21 +1551,18 @@ def dashboard_knowledge_ingestions(
     status: str = Query(default="all", pattern="^(all|queued|processing|completed|failed)$"),
     knowledge_type: str = Query(default="all", pattern="^(all|official|technical)$"),
 ) -> dict[str, Any]:
-    if not knowledge_repository.is_enabled():
+    try:
+        return rag_service_client.list_ingestions(
+            limit=limit,
+            status=status,
+            knowledge_type=knowledge_type,
+        )
+    except RagServiceError:
         return {
             "ingestions": [],
             "status_filter": status,
             "knowledge_type_filter": knowledge_type,
         }
-    return {
-        "ingestions": knowledge_repository.list_ingestions(
-            limit=limit,
-            status_filter=status,
-            knowledge_type=knowledge_type,
-        ),
-        "status_filter": status,
-        "knowledge_type_filter": knowledge_type,
-    }
 
 
 @app.get("/api/dashboard/events")

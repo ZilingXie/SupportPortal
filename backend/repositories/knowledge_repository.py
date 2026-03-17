@@ -284,13 +284,13 @@ class PostgresKnowledgeRepository:
         self,
         dsn: str,
         *,
-        schema: str = "public",
+        schema: str = "supportportal",
         vector_table: str = "docagent_chunks",
-        connect_timeout: int = 5,
+        connect_timeout: int = 10,
         default_vector_dim: int = 3072,
     ) -> None:
         self._dsn = dsn.strip()
-        self._schema = (schema or "public").strip() or "public"
+        self._schema = (schema or "supportportal").strip() or "supportportal"
         self._connect_timeout = _safe_positive_int(connect_timeout, 5)
         self._default_vector_dim = _safe_positive_int(default_vector_dim, 3072)
         self._vector_schema, self._vector_table_name = _split_table_name(vector_table, self._schema)
@@ -313,6 +313,10 @@ class PostgresKnowledgeRepository:
     def initialize(self) -> None:
         with self._connect() as conn:
             with conn.cursor() as cur:
+                # Serialize repository bootstrap across multi-worker processes.
+                # `CREATE EXTENSION IF NOT EXISTS vector` is not concurrency-safe
+                # during first-time initialization on the same database.
+                cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", (842918, 1))
                 cur.execute(
                     sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(self._schema))
                 )
@@ -995,14 +999,13 @@ def _default_vector_dim() -> int:
 
 
 def create_knowledge_repository() -> KnowledgeRepository:
-    dsn = ((os.getenv("PGVECTOR_DSN") or "") or (os.getenv("DATABASE_URL") or "")).strip()
+    dsn = (os.getenv("PGVECTOR_DSN") or "").strip()
     if not dsn:
-        LOGGER.info("PGVECTOR_DSN not configured. Knowledge ingestion endpoints disabled.")
-        return DisabledKnowledgeRepository()
+        raise RuntimeError("PGVECTOR_DSN is required")
 
-    schema = (os.getenv("PGVECTOR_SCHEMA") or "public").strip() or "public"
+    schema = (os.getenv("PGVECTOR_SCHEMA") or "supportportal").strip() or "supportportal"
     vector_table = (os.getenv("PGVECTOR_TABLE") or "docagent_chunks").strip() or "docagent_chunks"
-    connect_timeout = _safe_positive_int(os.getenv("PGVECTOR_CONNECT_TIMEOUT"), 5)
+    connect_timeout = _safe_positive_int(os.getenv("PGVECTOR_CONNECT_TIMEOUT"), 10)
     return PostgresKnowledgeRepository(
         dsn=dsn,
         schema=schema,

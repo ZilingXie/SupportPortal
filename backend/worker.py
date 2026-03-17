@@ -14,13 +14,10 @@ from backend.main import (
     build_client_sync_event,
     build_engineer_followup_request,
     ensure_ticket_defaults,
-    knowledge_repository,
     now_iso,
     ticket_repository,
 )
 from backend.services.event_bus import SyncRedisEventBus
-from backend.services.knowledge_ingestion import process_knowledge_ingestion
-from backend.services.knowledge_monitoring import build_knowledge_event_payload
 from backend.services.task_queue import SyncRedisTaskQueue
 
 LOGGER = logging.getLogger(__name__)
@@ -183,7 +180,11 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         _publish(bus, ["client"], build_client_sync_event(ticket, attention_event["event"]))
         return
 
-    answer, confidence, sources, citations, needs_engineer_guidance = build_answer(customer_message)
+    answer, confidence, sources, citations, needs_engineer_guidance = build_answer(
+        customer_message,
+        ticket_id=ticket_id,
+        customer_id=str(ticket.get("customer_id") or "").strip() or None,
+    )
     _ = confidence  # Confidence is returned to API responses; worker only persists messages/events.
     if _is_task_cancelled(ticket_id, message_created_at):
         LOGGER.info("Worker dropped result for cancelled task %s", ticket_id)
@@ -261,50 +262,6 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         ticket_repository.record_event(ticket_id, attention_event["event"], attention_event)
         _publish(bus, ["engineer", "dashboard"], attention_event)
         _publish(bus, ["client"], build_client_sync_event(ticket, attention_event["event"]))
-
-
-def _process_knowledge_ingest(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
-    ingestion_id = str(task.get("ingestion_id", "")).strip()
-    if not ingestion_id:
-        LOGGER.warning("Worker skipped knowledge_ingest task without ingestion_id")
-        return
-    if not knowledge_repository.is_enabled():
-        LOGGER.warning("Worker skipped knowledge_ingest task %s because repository is disabled", ingestion_id)
-        return
-    queued_record = knowledge_repository.get_ingestion(ingestion_id, include_content=False)
-    if queued_record is not None:
-        processing_payload = build_knowledge_event_payload(
-            "knowledge_ingestion_processing",
-            queued_record,
-            status_override="processing",
-        )
-        ticket_repository.record_event(None, processing_payload["event"], processing_payload)
-        _publish(bus, ["dashboard"], processing_payload)
-
-    try:
-        completed_record = process_knowledge_ingestion(knowledge_repository, ingestion_id)
-    except Exception:
-        failed_record = knowledge_repository.get_ingestion(ingestion_id, include_content=False)
-        if failed_record is not None:
-            failed_payload = build_knowledge_event_payload(
-                "knowledge_ingestion_failed",
-                failed_record,
-                status_override="failed",
-            )
-            ticket_repository.record_event(None, failed_payload["event"], failed_payload)
-            _publish(bus, ["dashboard"], failed_payload)
-        raise
-
-    if completed_record is not None:
-        completed_payload = build_knowledge_event_payload(
-            "knowledge_ingestion_completed",
-            completed_record,
-            status_override="completed",
-        )
-        ticket_repository.record_event(None, completed_payload["event"], completed_payload)
-        _publish(bus, ["dashboard"], completed_payload)
-
-
 def run_worker() -> int:
     logging.basicConfig(
         level=logging.INFO,
@@ -317,14 +274,6 @@ def run_worker() -> int:
     except Exception as exc:
         LOGGER.error("Worker failed to initialize ticket repository: %s", exc)
         return 1
-    try:
-        knowledge_repository.initialize()
-        LOGGER.info("Knowledge repository initialized: %s", knowledge_repository.storage_mode())
-    except Exception as exc:
-        LOGGER.warning(
-            "Worker failed to initialize knowledge repository. knowledge_ingest tasks may fail. error=%s",
-            exc,
-        )
 
     queue = SyncRedisTaskQueue()
     bus = SyncRedisEventBus()
@@ -343,12 +292,6 @@ def run_worker() -> int:
                 _process_ticket_query(bus, task)
             except Exception as exc:
                 LOGGER.exception("Worker failed to process ticket task: %s", exc)
-            continue
-        if task_type == "knowledge_ingest":
-            try:
-                _process_knowledge_ingest(bus, task)
-            except Exception as exc:
-                LOGGER.exception("Worker failed to process knowledge ingestion task: %s", exc)
             continue
         if task_type:
             LOGGER.warning("Worker ignored unknown task type: %s", task_type)

@@ -7,6 +7,7 @@ from pathlib import Path
 from backend.services.knowledge_ingestion import (
     _build_chunk_rows,
     parse_official_markdown_file,
+    parse_official_markdown_content,
     parse_technical_article,
 )
 
@@ -110,6 +111,18 @@ class KnowledgeIngestionParsingTests(unittest.TestCase):
         self.assertGreaterEqual(len(document.sections), 2)
         self.assertEqual(document.sections[0].h2, "Introduction")
         self.assertTrue(any(section.h2 == "Basic information" for section in document.sections))
+
+    def test_parse_official_markdown_content_supports_db_backed_uploads(self) -> None:
+        document = parse_official_markdown_content(
+            raw_markdown=SAMPLE_OFFICIAL_MARKDOWN,
+            file_name="agora-console-rest-api.md",
+            ingestion_id="KI-TEST-OFFICIAL-CONTENT",
+        )
+
+        self.assertEqual(document.title, "Agora Console REST API")
+        self.assertEqual(document.source_path, "official/agora-console-rest-api.md")
+        self.assertEqual(document.knowledge_type, "official")
+        self.assertTrue(any(section.h2 == "Create a project" for section in document.sections))
 
     def test_parse_technical_article_groups_steps_and_links(self) -> None:
         document = parse_technical_article(

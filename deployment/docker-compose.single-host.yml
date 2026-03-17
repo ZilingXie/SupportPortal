@@ -33,10 +33,10 @@ services:
       OPENAI_EMOTION_REPLY_MODEL: ${OPENAI_EMOTION_REPLY_MODEL:-gpt-4o-mini}
       OPENAI_REQUEST_TIMEOUT_SECONDS: ${OPENAI_REQUEST_TIMEOUT_SECONDS:-20.0}
       EMOTION_REPLY_TIMEOUT_SECONDS: ${EMOTION_REPLY_TIMEOUT_SECONDS:-2.0}
-      RAG_TOP_K: ${RAG_TOP_K:-5}
-      TICKET_DB_DSN: ${TICKET_DB_DSN:-postgresql://support:support@postgres:5432/support}
-      TICKET_DB_SCHEMA: ${TICKET_DB_SCHEMA:-public}
-      PGVECTOR_DSN: ${PGVECTOR_DSN:-postgresql://support:support@postgres:5432/support}
+      TICKET_DB_DSN: ${TICKET_DB_DSN:?TICKET_DB_DSN is required}
+      TICKET_DB_SCHEMA: ${TICKET_DB_SCHEMA:-supportportal}
+      TICKET_DB_CONNECT_TIMEOUT: ${TICKET_DB_CONNECT_TIMEOUT:-10}
+      PGVECTOR_SCHEMA: ${PGVECTOR_SCHEMA:-supportportal}
       PGVECTOR_TABLE: ${PGVECTOR_TABLE:-docagent_chunks}
       SENTIMENT_PROVIDER: ${SENTIMENT_PROVIDER:-model}
       SENTIMENT_MODEL_ID: ${SENTIMENT_MODEL_ID:-j-hartmann/emotion-english-distilroberta-base}
@@ -44,11 +44,83 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       EVENT_BUS_CHANNEL: ${EVENT_BUS_CHANNEL:-support.events}
       TASK_QUEUE_NAME: ${TASK_QUEUE_NAME:-support.tasks}
+      RAG_SERVICE_URL: ${RAG_SERVICE_URL:-http://rag_api:8020}
+      RAG_SERVICE_TIMEOUT_SECONDS: ${RAG_SERVICE_TIMEOUT_SECONDS:-45.0}
+      RAG_SERVICE_SHARED_TOKEN: ${RAG_SERVICE_SHARED_TOKEN:-supportportal-rag-internal}
       ASYNC_QUERY_ENABLED: ${ASYNC_QUERY_ENABLED:-true}
     depends_on:
       redis:
         condition: service_healthy
-      postgres:
+      rag_api:
+        condition: service_started
+    restart: unless-stopped
+
+  rag_api:
+    image: localhost/supportportal-app:latest
+    env_file:
+      - ../.env
+    command:
+      - uvicorn
+      - backend.rag_api:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8020"
+      - --workers
+      - "${RAG_API_WORKERS:-2}"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_CHAT_MODEL: ${RAG_OPENAI_CHAT_MODEL:-gpt-4.1}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-large}
+      OPENAI_REQUEST_TIMEOUT_SECONDS: ${OPENAI_REQUEST_TIMEOUT_SECONDS:-20.0}
+      OPENAI_MAX_RETRIES: ${OPENAI_MAX_RETRIES:-1}
+      RAG_TOP_K: ${RAG_TOP_K:-6}
+      RAG_REQUEST_TIMEOUT_SECONDS: ${RAG_REQUEST_TIMEOUT_SECONDS:-20.0}
+      RAG_OPENAI_MAX_RETRIES: ${RAG_OPENAI_MAX_RETRIES:-1}
+      PGVECTOR_DSN: ${PGVECTOR_DSN:?PGVECTOR_DSN is required}
+      PGVECTOR_CONNECT_TIMEOUT: ${PGVECTOR_CONNECT_TIMEOUT:-10}
+      PGVECTOR_TABLE: ${PGVECTOR_TABLE:-docagent_chunks}
+      PGVECTOR_SCHEMA: ${PGVECTOR_SCHEMA:-supportportal}
+      TICKET_DB_DSN: ${TICKET_DB_DSN:?TICKET_DB_DSN is required}
+      TICKET_DB_SCHEMA: ${TICKET_DB_SCHEMA:-supportportal}
+      TICKET_DB_CONNECT_TIMEOUT: ${TICKET_DB_CONNECT_TIMEOUT:-10}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      EVENT_BUS_CHANNEL: ${EVENT_BUS_CHANNEL:-support.events}
+      RAG_QUEUE_NAME: ${RAG_QUEUE_NAME:-support.rag.tasks}
+      RAG_SERVICE_SHARED_TOKEN: ${RAG_SERVICE_SHARED_TOKEN:-supportportal-rag-internal}
+      KNOWLEDGE_OFFICIAL_MAX_BYTES: ${KNOWLEDGE_OFFICIAL_MAX_BYTES:-5242880}
+      KNOWLEDGE_ARTICLE_MAX_CHARS: ${KNOWLEDGE_ARTICLE_MAX_CHARS:-120000}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  rag_worker:
+    image: localhost/supportportal-app:latest
+    env_file:
+      - ../.env
+    command:
+      - python
+      - -m
+      - backend.rag_worker
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_CHAT_MODEL: ${RAG_OPENAI_CHAT_MODEL:-gpt-4.1}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-large}
+      OPENAI_REQUEST_TIMEOUT_SECONDS: ${OPENAI_REQUEST_TIMEOUT_SECONDS:-20.0}
+      OPENAI_MAX_RETRIES: ${OPENAI_MAX_RETRIES:-1}
+      PGVECTOR_DSN: ${PGVECTOR_DSN:?PGVECTOR_DSN is required}
+      PGVECTOR_CONNECT_TIMEOUT: ${PGVECTOR_CONNECT_TIMEOUT:-10}
+      PGVECTOR_TABLE: ${PGVECTOR_TABLE:-docagent_chunks}
+      PGVECTOR_SCHEMA: ${PGVECTOR_SCHEMA:-supportportal}
+      TICKET_DB_DSN: ${TICKET_DB_DSN:?TICKET_DB_DSN is required}
+      TICKET_DB_SCHEMA: ${TICKET_DB_SCHEMA:-supportportal}
+      TICKET_DB_CONNECT_TIMEOUT: ${TICKET_DB_CONNECT_TIMEOUT:-10}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      EVENT_BUS_CHANNEL: ${EVENT_BUS_CHANNEL:-support.events}
+      RAG_QUEUE_NAME: ${RAG_QUEUE_NAME:-support.rag.tasks}
+    depends_on:
+      redis:
         condition: service_healthy
     restart: unless-stopped
 
@@ -80,16 +152,22 @@ services:
       - -m
       - backend.worker
     environment:
-      TICKET_DB_DSN: ${TICKET_DB_DSN:-postgresql://support:support@postgres:5432/support}
-      TICKET_DB_SCHEMA: ${TICKET_DB_SCHEMA:-public}
+      TICKET_DB_DSN: ${TICKET_DB_DSN:?TICKET_DB_DSN is required}
+      TICKET_DB_SCHEMA: ${TICKET_DB_SCHEMA:-supportportal}
+      TICKET_DB_CONNECT_TIMEOUT: ${TICKET_DB_CONNECT_TIMEOUT:-10}
+      PGVECTOR_SCHEMA: ${PGVECTOR_SCHEMA:-supportportal}
+      PGVECTOR_TABLE: ${PGVECTOR_TABLE:-docagent_chunks}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       EVENT_BUS_CHANNEL: ${EVENT_BUS_CHANNEL:-support.events}
       TASK_QUEUE_NAME: ${TASK_QUEUE_NAME:-support.tasks}
+      RAG_SERVICE_URL: ${RAG_SERVICE_URL:-http://rag_api:8020}
+      RAG_SERVICE_TIMEOUT_SECONDS: ${RAG_SERVICE_TIMEOUT_SECONDS:-45.0}
+      RAG_SERVICE_SHARED_TOKEN: ${RAG_SERVICE_SHARED_TOKEN:-supportportal-rag-internal}
     depends_on:
       redis:
         condition: service_healthy
-      postgres:
-        condition: service_healthy
+      rag_api:
+        condition: service_started
     restart: unless-stopped
 
   redis:
@@ -104,21 +182,5 @@ services:
       retries: 20
     restart: unless-stopped
 
-  postgres:
-    image: pgvector/pgvector:pg16
-    environment:
-      POSTGRES_DB: support
-      POSTGRES_USER: support
-      POSTGRES_PASSWORD: support
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U support -d support"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
-    restart: unless-stopped
-
 volumes:
   redis_data:
-  postgres_data:
