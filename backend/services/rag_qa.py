@@ -93,6 +93,18 @@ def _vector_literal(values: list[float]) -> str:
     return "[" + ",".join(f"{float(v):.10f}" for v in values) + "]"
 
 
+def _split_table_name(raw_value: str, default_schema: str = "supportportal") -> tuple[str, str]:
+    value = (raw_value or "").strip()
+    if not value:
+        return default_schema, "docagent_chunks"
+    if "." not in value:
+        return default_schema, value
+    schema, table_name = value.split(".", 1)
+    schema = schema.strip() or default_schema
+    table_name = table_name.strip() or "docagent_chunks"
+    return schema, table_name
+
+
 def _safe_int_env(key: str, default_value: int) -> int:
     raw = (os.getenv(key, "") or "").strip()
     if not raw:
@@ -120,14 +132,24 @@ def _build_heading(chunk: RetrievedChunk) -> str:
     return " > ".join(heading_items) if heading_items else "Unknown heading"
 
 
-def _get_rag_config() -> dict[str, Any]:
-    dsn = (os.getenv("PGVECTOR_DSN") or os.getenv("DATABASE_URL") or "").strip()
+def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
+    dsn = (os.getenv("PGVECTOR_DSN") or "").strip()
     api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    final_top_k = max(1, int(top_k)) if top_k is not None else _safe_int_env("RAG_TOP_K", 6)
+    vector_candidate_k = max(20, final_top_k * 4)
+    keyword_candidate_k = max(20, final_top_k * 4)
+    fusion_candidate_k = max(30, final_top_k * 5)
+    schema = (os.getenv("PGVECTOR_SCHEMA") or "supportportal").strip() or "supportportal"
+    raw_table = (os.getenv("PGVECTOR_TABLE") or "docagent_chunks").strip() or "docagent_chunks"
+    table_name = raw_table if "." in raw_table else f"{schema}.{raw_table}"
     return {
         "dsn": dsn,
         "api_key": api_key,
-        "table": (os.getenv("PGVECTOR_TABLE") or "docagent_chunks").strip(),
-        "top_k": _safe_int_env("RAG_TOP_K", 5),
+        "table": table_name,
+        "top_k": final_top_k,
+        "vector_candidate_k": vector_candidate_k,
+        "keyword_candidate_k": keyword_candidate_k,
+        "fusion_candidate_k": fusion_candidate_k,
         "chat_model": (os.getenv("OPENAI_CHAT_MODEL") or "gpt-4.1").strip(),
         "embedding_model": (
             os.getenv("OPENAI_EMBEDDING_MODEL") or "text-embedding-3-large"
@@ -137,7 +159,12 @@ def _get_rag_config() -> dict[str, Any]:
     }
 
 
-def _retrieve_chunks(message: str, config: dict[str, Any]) -> list[RetrievedChunk]:
+def _table_identifier(sql: Any, raw_table: str) -> Any:
+    schema, table_name = _split_table_name(raw_table)
+    return sql.Identifier(schema, table_name)
+
+
+def _retrieve_chunks(message: str, config: dict[str, Any], *, limit: int | None = None) -> list[RetrievedChunk]:
     _, OpenAIEmbeddings = _import_langchain()
     psycopg = _import_psycopg()
     sql = psycopg.sql
@@ -166,11 +193,11 @@ def _retrieve_chunks(message: str, config: dict[str, Any]) -> list[RetrievedChun
         ORDER BY embedding <=> %s::vector
         LIMIT %s
         """
-    ).format(sql.Identifier(config["table"]))
+    ).format(_table_identifier(sql, config["table"]))
 
     with psycopg.connect(config["dsn"]) as conn:
         with conn.cursor() as cur:
-            cur.execute(query, (vector_param, vector_param, int(config["top_k"])))
+            cur.execute(query, (vector_param, vector_param, int(limit or config["top_k"])))
             rows = cur.fetchall()
 
     chunks: list[RetrievedChunk] = []
@@ -185,6 +212,72 @@ def _retrieve_chunks(message: str, config: dict[str, Any]) -> list[RetrievedChun
                 h3=(str(row[5]).strip() or None) if row[5] is not None else None,
                 source_url=(str(row[6]).strip() or None) if row[6] is not None else None,
                 similarity=float(row[7]) if row[7] is not None else 0.0,
+            )
+        )
+    return chunks
+
+
+def _retrieve_fts_chunks(message: str, config: dict[str, Any], *, limit: int | None = None) -> list[RetrievedChunk]:
+    psycopg = _import_psycopg()
+    sql = psycopg.sql
+
+    query = sql.SQL(
+        """
+        SELECT
+            id,
+            content,
+            source_path,
+            h1,
+            h2,
+            h3,
+            source_url,
+            ts_rank_cd(
+                to_tsvector(
+                    'simple',
+                    concat_ws(
+                        ' ',
+                        coalesce(h1, ''),
+                        coalesce(h2, ''),
+                        coalesce(h3, ''),
+                        coalesce(content, '')
+                    )
+                ),
+                plainto_tsquery('simple', %s)
+            ) AS rank
+        FROM {}
+        WHERE to_tsvector(
+                'simple',
+                concat_ws(
+                    ' ',
+                    coalesce(h1, ''),
+                    coalesce(h2, ''),
+                    coalesce(h3, ''),
+                    coalesce(content, '')
+                )
+            ) @@ plainto_tsquery('simple', %s)
+        ORDER BY rank DESC
+        LIMIT %s
+        """
+    ).format(_table_identifier(sql, config["table"]))
+
+    with psycopg.connect(config["dsn"]) as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, (message, message, int(limit or config["keyword_candidate_k"])))
+            rows = cur.fetchall()
+
+    chunks: list[RetrievedChunk] = []
+    for row in rows:
+        rank = float(row[7]) if row[7] is not None else 0.0
+        chunks.append(
+            RetrievedChunk(
+                chunk_id=str(row[0]),
+                text=str(row[1]),
+                source_path=str(row[2]),
+                h1=(str(row[3]).strip() or None) if row[3] is not None else None,
+                h2=(str(row[4]).strip() or None) if row[4] is not None else None,
+                h3=(str(row[5]).strip() or None) if row[5] is not None else None,
+                source_url=(str(row[6]).strip() or None) if row[6] is not None else None,
+                similarity=max(0.0, min(1.0, rank)),
             )
         )
     return chunks
@@ -213,7 +306,12 @@ def _keyword_hit_count(search_text: str, terms: list[str]) -> int:
     return sum(1 for term in terms if term in search_text)
 
 
-def _retrieve_keyword_chunks(message: str, config: dict[str, Any]) -> list[RetrievedChunk]:
+def _retrieve_keyword_chunks(
+    message: str,
+    config: dict[str, Any],
+    *,
+    limit: int | None = None,
+) -> list[RetrievedChunk]:
     terms = _extract_query_terms(message)
     if not terms:
         return []
@@ -241,7 +339,7 @@ def _retrieve_keyword_chunks(message: str, config: dict[str, Any]) -> list[Retri
             OR lower(coalesce(h3, '')) LIKE ANY(%s)
         LIMIT %s
         """
-    ).format(sql.Identifier(config["table"]))
+    ).format(_table_identifier(sql, config["table"]))
 
     with psycopg.connect(config["dsn"]) as conn:
         with conn.cursor() as cur:
@@ -267,7 +365,7 @@ def _retrieve_keyword_chunks(message: str, config: dict[str, Any]) -> list[Retri
         scored_chunks.append((hits, chunk))
 
     scored_chunks.sort(key=lambda item: (item[0], item[1].similarity), reverse=True)
-    top_k = int(config["top_k"])
+    top_k = int(limit or config["top_k"])
     results: list[RetrievedChunk] = []
     seen_keys: set[str] = set()
     for _, chunk in scored_chunks:
@@ -278,6 +376,35 @@ def _retrieve_keyword_chunks(message: str, config: dict[str, Any]) -> list[Retri
         results.append(chunk)
         if len(results) >= top_k:
             break
+    return results
+
+
+def _rrf_merge(
+    vector_chunks: list[RetrievedChunk],
+    keyword_chunks: list[RetrievedChunk],
+    *,
+    limit: int,
+) -> list[RetrievedChunk]:
+    rrf_k = 60.0
+    merged_scores: dict[str, float] = {}
+    merged_chunks: dict[str, RetrievedChunk] = {}
+
+    for ranked_chunks in [vector_chunks, keyword_chunks]:
+        for index, chunk in enumerate(ranked_chunks, start=1):
+            dedupe_key = chunk.chunk_id or f"{chunk.source_path}:{chunk.text[:120]}"
+            merged_scores[dedupe_key] = merged_scores.get(dedupe_key, 0.0) + (1.0 / (rrf_k + index))
+            existing = merged_chunks.get(dedupe_key)
+            if existing is None or chunk.similarity > existing.similarity:
+                merged_chunks[dedupe_key] = chunk
+
+    ordered = sorted(
+        merged_scores.items(),
+        key=lambda item: (item[1], merged_chunks[item[0]].similarity),
+        reverse=True,
+    )
+    results: list[RetrievedChunk] = []
+    for dedupe_key, _score in ordered[: max(1, int(limit))]:
+        results.append(merged_chunks[dedupe_key])
     return results
 
 
@@ -531,29 +658,76 @@ def _confidence_from_chunks(chunks: list[RetrievedChunk]) -> float:
     return round(min(0.95, confidence), 2)
 
 
-def answer_with_rag(message: str) -> RagAnswer | None:
+def answer_with_rag(message: str, top_k: int | None = None) -> RagAnswer | None:
     """
     Attempt to answer with PostgreSQL pgvector retrieval + LangChain answer generation.
     Returns None when RAG is not configured or retrieval fails, so caller can fallback.
     """
-    config = _get_rag_config()
+    config = _get_rag_config(top_k=top_k)
     if not config["dsn"] or not config["api_key"]:
         return None
 
+    vector_chunks: list[RetrievedChunk] = []
+    keyword_chunks: list[RetrievedChunk] = []
     chunks: list[RetrievedChunk] = []
     try:
-        chunks = _retrieve_chunks(message, config)
+        vector_chunks = _retrieve_chunks(
+            message,
+            config,
+            limit=int(config["vector_candidate_k"]),
+        )
     except Exception as exc:
         logger.warning("RAG retrieval failed: %s", exc)
+
+    try:
+        keyword_chunks = _retrieve_fts_chunks(
+            message,
+            config,
+            limit=int(config["keyword_candidate_k"]),
+        )
+    except Exception as exc:
+        logger.warning("RAG FTS retrieval failed: %s", exc)
         try:
-            chunks = _retrieve_keyword_chunks(message, config)
+            keyword_chunks = _retrieve_keyword_chunks(
+                message,
+                config,
+                limit=int(config["keyword_candidate_k"]),
+            )
         except Exception as keyword_exc:
             logger.warning("RAG keyword retrieval failed: %s", keyword_exc)
-            return None
+            keyword_chunks = []
+
+    if not vector_chunks and not keyword_chunks:
+        try:
+            keyword_chunks = _retrieve_keyword_chunks(
+                message,
+                config,
+                limit=int(config["keyword_candidate_k"]),
+            )
+        except Exception as exc:
+            logger.warning("RAG keyword retrieval failed: %s", exc)
+            keyword_chunks = []
+
+    if vector_chunks or keyword_chunks:
+        chunks = _rrf_merge(
+            vector_chunks,
+            keyword_chunks,
+            limit=int(config["fusion_candidate_k"]),
+        )
+        if not chunks:
+            chunks = _merge_chunks(
+                vector_chunks,
+                keyword_chunks,
+                limit=int(config["fusion_candidate_k"]),
+            )
 
     if not chunks:
         try:
-            chunks = _retrieve_keyword_chunks(message, config)
+            chunks = _retrieve_keyword_chunks(
+                message,
+                config,
+                limit=int(config["top_k"]),
+            )
         except Exception as exc:
             logger.warning("RAG keyword retrieval failed: %s", exc)
             chunks = []
@@ -565,56 +739,27 @@ def answer_with_rag(message: str) -> RagAnswer | None:
                 citations=[],
             )
 
-    allowed_chunk_ids = {chunk.chunk_id for chunk in chunks}
+    final_chunks = chunks[: int(config["top_k"])]
+    if not final_chunks:
+        final_chunks = chunks
+
+    allowed_chunk_ids = {chunk.chunk_id for chunk in final_chunks}
     payload: dict[str, Any] | None = None
     try:
-        payload = _invoke_llm_payload(message, chunks, config, strict_retry=False)
+        payload = _invoke_llm_payload(message, final_chunks, config, strict_retry=False)
         if payload is None or not _is_valid_response(payload, allowed_chunk_ids):
-            payload = _invoke_llm_payload(message, chunks, config, strict_retry=True)
+            payload = _invoke_llm_payload(message, final_chunks, config, strict_retry=True)
     except Exception as exc:
         logger.warning("RAG answer generation failed: %s", exc)
 
     if payload is not None and _is_valid_response(payload, allowed_chunk_ids):
         if payload["insufficient_evidence"] is True:
-            try:
-                keyword_chunks = _retrieve_keyword_chunks(message, config)
-            except Exception as exc:
-                logger.warning("RAG keyword retrieval failed in insufficient branch: %s", exc)
-                keyword_chunks = []
-
-            if keyword_chunks:
-                merge_limit = max(int(config["top_k"]) * 2, len(chunks))
-                chunks = _merge_chunks(chunks, keyword_chunks, limit=merge_limit)
-                merged_chunk_ids = {chunk.chunk_id for chunk in chunks}
-                try:
-                    retry_payload = _invoke_llm_payload(message, chunks, config, strict_retry=True)
-                except Exception as exc:
-                    logger.warning("RAG retry with merged chunks failed: %s", exc)
-                    retry_payload = None
-                if retry_payload is not None and _is_valid_response(retry_payload, merged_chunk_ids):
-                    if retry_payload["insufficient_evidence"] is False:
-                        citations = [str(chunk_id) for chunk_id in retry_payload["citations"]]
-                        citation_records = _citation_records_from_ids(citations, chunks)
-                        sources = [
-                            record.get("source_url") or f"rag:{record['chunk_id']}"
-                            for record in citation_records
-                        ]
-                        return RagAnswer(
-                            answer=_build_answer_text(
-                                str(retry_payload["answer"]),
-                                retry_payload.get("key_steps", []),
-                            ),
-                            confidence=_confidence_from_chunks(chunks),
-                            sources=sources,
-                            citations=citation_records,
-                        )
-
-            if _has_grounded_keyword_overlap(message, chunks):
+            if _has_grounded_keyword_overlap(message, final_chunks):
                 logger.info(
                     "RAG insufficient evidence but keyword overlap was found. "
                     "Using extractive fallback."
                 )
-                return _build_extractive_rag_answer(chunks)
+                return _build_extractive_rag_answer(final_chunks)
             return RagAnswer(
                 answer=INSUFFICIENT_EVIDENCE_REPLY,
                 confidence=0.55,
@@ -622,17 +767,17 @@ def answer_with_rag(message: str) -> RagAnswer | None:
                 citations=[],
             )
         citations = [str(chunk_id) for chunk_id in payload["citations"]]
-        citation_records = _citation_records_from_ids(citations, chunks)
+        citation_records = _citation_records_from_ids(citations, final_chunks)
         sources = [
             record.get("source_url") or f"rag:{record['chunk_id']}"
             for record in citation_records
         ]
         return RagAnswer(
             answer=_build_answer_text(str(payload["answer"]), payload.get("key_steps", [])),
-            confidence=_confidence_from_chunks(chunks),
+            confidence=_confidence_from_chunks(final_chunks),
             sources=sources,
             citations=citation_records,
         )
 
     logger.warning("RAG structured answer invalid, using extractive fallback.")
-    return _build_extractive_rag_answer(chunks)
+    return _build_extractive_rag_answer(final_chunks)

@@ -62,7 +62,7 @@ class KnowledgeMonitoringTests(unittest.TestCase):
         payload = build_knowledge_metrics_payload(
             storage_mode="postgres",
             embedding_model="text-embedding-3-large",
-            vector_table="public.docagent",
+            vector_table="supportportal.docagent_chunks",
             documents_total=6,
             documents_official=2,
             documents_technical=4,
@@ -86,14 +86,14 @@ class KnowledgeMonitoringTests(unittest.TestCase):
         self.assertEqual(payload["avg_processing_seconds_last_24h"], 76.23)
         self.assertEqual(payload["avg_chunk_characters"], 911.61)
         self.assertEqual(payload["knowledge_storage"], "postgres")
-        self.assertEqual(payload["vector_table"], "public.docagent")
+        self.assertEqual(payload["vector_table"], "supportportal.docagent_chunks")
         self.assertEqual(payload["latest_completed_at"], "2026-03-16T08:30:00+00:00")
 
     def test_build_empty_knowledge_metrics_returns_zeroed_shape(self) -> None:
         payload = build_empty_knowledge_metrics(
             storage_mode="disabled",
             embedding_model="text-embedding-3-large",
-            vector_table="docagent_chunks",
+            vector_table="supportportal.docagent_chunks",
         )
         self.assertEqual(payload["documents_total"], 0)
         self.assertEqual(payload["chunks_total"], 0)

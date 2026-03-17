@@ -313,14 +313,18 @@ def _parse_markdown_sections(title: str, markdown_body: str) -> list[DocumentSec
     return sections
 
 
-def parse_official_markdown_file(file_path: str | Path, ingestion_id: str) -> NormalizedDocument:
-    path = Path(file_path)
-    raw_markdown = path.read_text(encoding="utf-8", errors="replace")
+def parse_official_markdown_content(
+    *,
+    raw_markdown: str,
+    file_name: str,
+    ingestion_id: str,
+) -> NormalizedDocument:
     front_matter, body = _split_front_matter(raw_markdown)
+    normalized_file_name = Path(file_name or "document.md").name or "document.md"
     title = (
         front_matter.get("title")
         or _find_first_heading(body)
-        or path.stem.replace("-", " ").replace("_", " ").strip()
+        or Path(normalized_file_name).stem.replace("-", " ").replace("_", " ").strip()
         or "Untitled Document"
     )
     source_url = (
@@ -328,7 +332,7 @@ def parse_official_markdown_file(file_path: str | Path, ingestion_id: str) -> No
         or _extract_html_version_url(body)
         or None
     )
-    exported_file = front_matter.get("exported_file") or path.name
+    exported_file = front_matter.get("exported_file") or normalized_file_name
     source_path = f"official/{exported_file}"
     product, module = _infer_url_taxonomy(source_url)
     checksum = _sha256_text(raw_markdown)
@@ -367,6 +371,16 @@ def parse_official_markdown_file(file_path: str | Path, ingestion_id: str) -> No
         sections=sections,
         platform=(front_matter.get("platform") or "").strip() or None,
         product=(product or "").strip() or None,
+    )
+
+
+def parse_official_markdown_file(file_path: str | Path, ingestion_id: str) -> NormalizedDocument:
+    path = Path(file_path)
+    raw_markdown = path.read_text(encoding="utf-8", errors="replace")
+    return parse_official_markdown_content(
+        raw_markdown=raw_markdown,
+        file_name=path.name,
+        ingestion_id=ingestion_id,
     )
 
 
@@ -826,9 +840,17 @@ def _resolve_document_from_ingestion(ingestion: dict[str, Any]) -> NormalizedDoc
     entry_type = str(ingestion.get("entry_type") or "").strip().lower()
     if entry_type == "official_document":
         file_path = str(ingestion.get("file_path") or "").strip()
-        if not file_path:
-            raise ValueError("Official document ingestion is missing file_path")
-        return parse_official_markdown_file(file_path=file_path, ingestion_id=ingestion_id)
+        if file_path:
+            return parse_official_markdown_file(file_path=file_path, ingestion_id=ingestion_id)
+        raw_markdown = str(ingestion.get("content") or "")
+        file_name = str(ingestion.get("file_name") or "document.md")
+        if not raw_markdown.strip():
+            raise ValueError("Official document ingestion is missing content")
+        return parse_official_markdown_content(
+            raw_markdown=raw_markdown,
+            file_name=file_name,
+            ingestion_id=ingestion_id,
+        )
 
     title = str(ingestion.get("title") or "").strip()
     content = str(ingestion.get("content") or "")

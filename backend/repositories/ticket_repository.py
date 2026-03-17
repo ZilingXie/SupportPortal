@@ -157,9 +157,9 @@ class InMemoryTicketRepository:
 
 
 class PostgresTicketRepository:
-    def __init__(self, dsn: str, schema: str = "public", connect_timeout: int = 5) -> None:
+    def __init__(self, dsn: str, schema: str = "supportportal", connect_timeout: int = 10) -> None:
         self._dsn = dsn.strip()
-        self._schema = (schema or "public").strip() or "public"
+        self._schema = (schema or "supportportal").strip() or "supportportal"
         self._connect_timeout = _safe_positive_int(connect_timeout, 5)
 
     def storage_mode(self) -> str:
@@ -174,6 +174,8 @@ class PostgresTicketRepository:
     def initialize(self) -> None:
         with self._connect() as conn:
             with conn.cursor() as cur:
+                # Serialize bootstrap across services/workers sharing the same AWS database.
+                cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", (842918, 1))
                 cur.execute(
                     sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(
                         sql.Identifier(self._schema)
@@ -556,16 +558,11 @@ class PostgresTicketRepository:
 
 
 def create_ticket_repository() -> TicketRepository:
-    dsn = (
-        (os.getenv("TICKET_DB_DSN") or "")
-        or (os.getenv("DATABASE_URL") or "")
-        or (os.getenv("PGVECTOR_DSN") or "")
-    ).strip()
+    dsn = (os.getenv("TICKET_DB_DSN") or "").strip()
     if not dsn:
-        LOGGER.info("Ticket DB DSN not configured. Using in-memory repository.")
-        return InMemoryTicketRepository()
-    schema = (os.getenv("TICKET_DB_SCHEMA") or "public").strip() or "public"
-    connect_timeout = _safe_positive_int(os.getenv("TICKET_DB_CONNECT_TIMEOUT"), 5)
+        raise RuntimeError("TICKET_DB_DSN is required")
+    schema = (os.getenv("TICKET_DB_SCHEMA") or "supportportal").strip() or "supportportal"
+    connect_timeout = _safe_positive_int(os.getenv("TICKET_DB_CONNECT_TIMEOUT"), 10)
     return PostgresTicketRepository(
         dsn=dsn,
         schema=schema,
