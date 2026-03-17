@@ -32,6 +32,44 @@ body {
   gap: 18px;
 }
 
+.dashboard-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dashboard-tab {
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  padding: 10px 16px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.dashboard-tab:hover {
+  border-color: color-mix(in srgb, var(--primary), var(--border-default) 45%);
+  color: var(--primary);
+}
+
+.dashboard-tab.active {
+  background: color-mix(in srgb, var(--primary), white 90%);
+  color: var(--primary);
+  border-color: color-mix(in srgb, var(--primary), white 75%);
+}
+
+.dashboard-panel {
+  display: none;
+  gap: 18px;
+}
+
+.dashboard-panel.active {
+  display: grid;
+}
+
 .page-header h1 {
   margin: 0;
   font-size: 28px;
@@ -264,6 +302,15 @@ h3 {
   overflow-x: auto;
 }
 
+.interactive-row {
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.interactive-row:hover {
+  background: color-mix(in srgb, var(--primary), white 96%);
+}
+
 .ingestions-table {
   width: 100%;
   border-collapse: collapse;
@@ -295,6 +342,12 @@ h3 {
 .ingestion-error {
   margin: 4px 0 0;
   color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.ingestion-warning {
+  margin: 4px 0 0;
+  color: #92400e;
   font-size: 12px;
 }
 
@@ -357,6 +410,16 @@ h3 {
   background: #fff;
 }
 
+.event-item.interactive {
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.event-item.interactive:hover {
+  background: color-mix(in srgb, var(--primary), white 96%);
+  border-color: color-mix(in srgb, var(--primary), white 78%);
+}
+
 .event-item.knowledge {
   border-left: 5px solid var(--status-info);
 }
@@ -387,6 +450,233 @@ h3 {
   text-align: center;
 }
 
+.reports-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.report-sidebar-card,
+.report-detail-card {
+  min-height: 560px;
+}
+
+.report-ingestion-list {
+  display: grid;
+  gap: 10px;
+}
+
+.report-ingestion-item {
+  width: 100%;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--bg-card), #f8fafc 40%);
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  display: grid;
+  gap: 6px;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+
+.report-ingestion-item:hover {
+  border-color: color-mix(in srgb, var(--primary), white 74%);
+  background: color-mix(in srgb, var(--primary), white 94%);
+}
+
+.report-ingestion-item.active {
+  border-color: color-mix(in srgb, var(--primary), white 70%);
+  background: color-mix(in srgb, var(--primary), white 92%);
+  transform: translateY(-1px);
+}
+
+.report-ingestion-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.report-ingestion-title {
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.report-ingestion-meta {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.report-detail {
+  display: grid;
+  gap: 14px;
+}
+
+.report-detail-empty,
+.report-list-empty {
+  padding: 20px 12px;
+}
+
+.report-section {
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  padding: 14px;
+  background: color-mix(in srgb, var(--bg-card), #fbfdff 35%);
+  display: grid;
+  gap: 12px;
+}
+
+.report-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.report-subsection {
+  display: grid;
+  gap: 8px;
+}
+
+.report-subsection h4,
+.report-preview-item h4 {
+  margin: 0;
+  font-size: 13px;
+  color: var(--foreground);
+}
+
+.report-muted {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.report-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.report-grid-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-card);
+}
+
+.report-grid-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.report-grid-value {
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.report-token-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.report-token {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary), white 92%);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.report-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.report-list li {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-card);
+}
+
+.report-links li {
+  justify-content: flex-start;
+}
+
+.report-links a {
+  color: var(--primary);
+  text-decoration: none;
+  word-break: break-word;
+}
+
+.report-links a:hover {
+  text-decoration: underline;
+}
+
+.report-preview-list {
+  display: grid;
+  gap: 10px;
+}
+
+.report-preview-item {
+  padding: 10px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-card);
+  display: grid;
+  gap: 6px;
+}
+
+.report-preview-item p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.report-warnings li {
+  color: var(--status-danger);
+  justify-content: flex-start;
+}
+
+.raw-json-panel {
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-card);
+}
+
+.raw-json-panel summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  font-weight: 600;
+}
+
+.report-json {
+  margin: 0;
+  padding: 0 12px 12px;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--foreground);
+}
+
 @media (min-width: 640px) {
   .user-meta {
     display: block;
@@ -395,6 +685,10 @@ h3 {
 
 @media (max-width: 960px) {
   .knowledge-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .reports-layout {
     grid-template-columns: 1fr;
   }
 }
@@ -410,5 +704,14 @@ h3 {
 
   .metric {
     font-size: 28px;
+  }
+
+  .report-section-header,
+  .report-ingestion-header {
+    flex-direction: column;
+  }
+
+  .report-list li {
+    flex-direction: column;
   }
 }

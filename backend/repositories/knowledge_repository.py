@@ -21,7 +21,15 @@ LOGGER = logging.getLogger(__name__)
 
 _VALID_KNOWLEDGE_TYPES = {"official", "technical"}
 _VALID_ENTRY_TYPES = {"official_document", "technical_article"}
+_VALID_SOURCE_TYPES = {"official_markdown_upload", "technical_article_api"}
 _VALID_INGESTION_STATUSES = {"queued", "processing", "completed", "failed"}
+_VALID_NORMALIZATION_STATUSES = {"pending", "normalized", "failed"}
+_VALID_DEDUPE_ACTIONS = {"new_document", "skipped_duplicate", "reindexed"}
+
+_SOURCE_TYPE_TO_ENTRY_TYPE = {
+    "official_markdown_upload": "official_document",
+    "technical_article_api": "technical_article",
+}
 
 
 def _utc_now() -> str:
@@ -59,6 +67,23 @@ def _normalize_ingestion_status(value: Any) -> str:
     return normalized if normalized in _VALID_INGESTION_STATUSES else "queued"
 
 
+def _normalize_source_type(value: Any) -> str:
+    normalized = str(value or "official_markdown_upload").strip().lower()
+    return normalized if normalized in _VALID_SOURCE_TYPES else "official_markdown_upload"
+
+
+def _normalize_normalization_status(value: Any) -> str:
+    normalized = str(value or "pending").strip().lower()
+    return normalized if normalized in _VALID_NORMALIZATION_STATUSES else "pending"
+
+
+def _normalize_dedupe_action(value: Any) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return None
+    return normalized if normalized in _VALID_DEDUPE_ACTIONS else None
+
+
 def _normalize_status_filter(value: Any) -> str:
     normalized = str(value or "all").strip().lower()
     return normalized if normalized in _VALID_INGESTION_STATUSES or normalized == "all" else "all"
@@ -80,6 +105,30 @@ def _split_table_name(raw_value: str, default_schema: str) -> tuple[str, str]:
     return schema, table_name
 
 
+def _entry_type_from_source_type(source_type: Any) -> str:
+    normalized_source_type = _normalize_source_type(source_type)
+    return _SOURCE_TYPE_TO_ENTRY_TYPE.get(normalized_source_type, "official_document")
+
+
+def _clean_text(value: Any) -> str | None:
+    normalized = " ".join(str(value or "").split()).strip()
+    return normalized or None
+
+
+def _report_summary(report_payload: dict[str, Any] | None) -> dict[str, Any]:
+    payload = report_payload if isinstance(report_payload, dict) else {}
+    cleaning_report = payload.get("cleaning_report") if isinstance(payload.get("cleaning_report"), dict) else {}
+    warnings = cleaning_report.get("warnings") if isinstance(cleaning_report.get("warnings"), list) else []
+    return {
+        "parser_name": _clean_text(payload.get("parser_name")),
+        "parser_version": _clean_text(payload.get("parser_version")),
+        "normalization_status": _clean_text(payload.get("normalization_status")) or "pending",
+        "dedupe_action": _clean_text(payload.get("dedupe_action")),
+        "warning_count": len(warnings),
+        "warnings_preview": [str(item).strip() for item in warnings[:3] if str(item).strip()],
+    }
+
+
 class KnowledgeRepository(Protocol):
     def initialize(self) -> None:
         ...
@@ -93,8 +142,8 @@ class KnowledgeRepository(Protocol):
     def create_ingestion(
         self,
         *,
-        entry_type: str,
         knowledge_type: str,
+        source_type: str,
         title: str | None = None,
         source_url: str | None = None,
         file_name: str | None = None,
@@ -130,6 +179,13 @@ class KnowledgeRepository(Protocol):
         title: str | None,
         source_url: str | None,
         checksum: str | None,
+        source_updated_at: str | None = None,
+        normalization_status: str | None = None,
+        parser_name: str | None = None,
+        parser_version: str | None = None,
+        cleaning_report: dict[str, Any] | None = None,
+        dedupe_action: str | None = None,
+        dedupe_target_doc_id: str | None = None,
     ) -> None:
         ...
 
@@ -145,18 +201,55 @@ class KnowledgeRepository(Protocol):
     def fail_ingestion(self, ingestion_id: str, error_message: str) -> None:
         ...
 
+    def find_dedupe_candidate(
+        self,
+        *,
+        source_url: str | None,
+        source_path: str,
+    ) -> dict[str, Any] | None:
+        ...
+
     def upsert_document(
         self,
         *,
         document_id: str,
         ingestion_id: str,
         knowledge_type: str,
+        source_type: str,
         title: str,
         source_url: str | None,
         source_path: str,
+        source_updated_at: str | None,
         checksum: str,
+        language: str | None,
+        product: str | None,
+        module: str | None,
         metadata: dict[str, Any],
+        normalized_payload: dict[str, Any],
+        metadata_source: str | None,
+        metadata_version: str | None,
     ) -> None:
+        ...
+
+    def upsert_ingestion_report(
+        self,
+        *,
+        ingestion_id: str,
+        knowledge_type: str,
+        source_type: str,
+        parser_name: str | None,
+        parser_version: str | None,
+        normalization_status: str,
+        dedupe_action: str | None,
+        dedupe_target_doc_id: str | None,
+        cleaning_report: dict[str, Any],
+        metadata_snapshot: dict[str, Any],
+        normalized_summary: dict[str, Any],
+        chunk_handoff_summary: dict[str, Any],
+    ) -> None:
+        ...
+
+    def get_ingestion_report(self, ingestion_id: str) -> dict[str, Any] | None:
         ...
 
     def replace_document_chunks(
@@ -220,11 +313,25 @@ class DisabledKnowledgeRepository:
         title: str | None,
         source_url: str | None,
         checksum: str | None,
+        source_updated_at: str | None = None,
+        normalization_status: str | None = None,
+        parser_name: str | None = None,
+        parser_version: str | None = None,
+        cleaning_report: dict[str, Any] | None = None,
+        dedupe_action: str | None = None,
+        dedupe_target_doc_id: str | None = None,
     ) -> None:
         _ = ingestion_id
         _ = title
         _ = source_url
         _ = checksum
+        _ = source_updated_at
+        _ = normalization_status
+        _ = parser_name
+        _ = parser_version
+        _ = cleaning_report
+        _ = dedupe_action
+        _ = dedupe_target_doc_id
         self._raise()
 
     def complete_ingestion(
@@ -244,27 +351,87 @@ class DisabledKnowledgeRepository:
         _ = error_message
         self._raise()
 
+    def find_dedupe_candidate(
+        self,
+        *,
+        source_url: str | None,
+        source_path: str,
+    ) -> dict[str, Any] | None:
+        _ = source_url
+        _ = source_path
+        return None
+
     def upsert_document(
         self,
         *,
         document_id: str,
         ingestion_id: str,
         knowledge_type: str,
+        source_type: str,
         title: str,
         source_url: str | None,
         source_path: str,
+        source_updated_at: str | None,
         checksum: str,
+        language: str | None,
+        product: str | None,
+        module: str | None,
         metadata: dict[str, Any],
+        normalized_payload: dict[str, Any],
+        metadata_source: str | None,
+        metadata_version: str | None,
     ) -> None:
         _ = document_id
         _ = ingestion_id
         _ = knowledge_type
+        _ = source_type
         _ = title
         _ = source_url
         _ = source_path
+        _ = source_updated_at
         _ = checksum
+        _ = language
+        _ = product
+        _ = module
         _ = metadata
+        _ = normalized_payload
+        _ = metadata_source
+        _ = metadata_version
         self._raise()
+
+    def upsert_ingestion_report(
+        self,
+        *,
+        ingestion_id: str,
+        knowledge_type: str,
+        source_type: str,
+        parser_name: str | None,
+        parser_version: str | None,
+        normalization_status: str,
+        dedupe_action: str | None,
+        dedupe_target_doc_id: str | None,
+        cleaning_report: dict[str, Any],
+        metadata_snapshot: dict[str, Any],
+        normalized_summary: dict[str, Any],
+        chunk_handoff_summary: dict[str, Any],
+    ) -> None:
+        _ = ingestion_id
+        _ = knowledge_type
+        _ = source_type
+        _ = parser_name
+        _ = parser_version
+        _ = normalization_status
+        _ = dedupe_action
+        _ = dedupe_target_doc_id
+        _ = cleaning_report
+        _ = metadata_snapshot
+        _ = normalized_summary
+        _ = chunk_handoff_summary
+        self._raise()
+
+    def get_ingestion_report(self, ingestion_id: str) -> dict[str, Any] | None:
+        _ = ingestion_id
+        return None
 
     def replace_document_chunks(
         self,
@@ -330,15 +497,23 @@ class PostgresKnowledgeRepository:
                         CREATE TABLE IF NOT EXISTS {} (
                             ingestion_id TEXT PRIMARY KEY,
                             entry_type TEXT NOT NULL,
+                            source_type TEXT NOT NULL DEFAULT 'official_markdown_upload',
                             knowledge_type TEXT NOT NULL,
                             status TEXT NOT NULL,
+                            normalization_status TEXT NOT NULL DEFAULT 'pending',
                             title TEXT,
                             source_url TEXT,
+                            source_updated_at TIMESTAMPTZ,
                             file_name TEXT,
                             file_path TEXT,
                             content TEXT,
                             checksum TEXT,
-                            request_metadata JSONB,
+                            request_metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            parser_name TEXT,
+                            parser_version TEXT,
+                            cleaning_report JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            dedupe_action TEXT,
+                            dedupe_target_doc_id TEXT,
                             document_id TEXT,
                             chunk_count INTEGER NOT NULL DEFAULT 0,
                             error_message TEXT,
@@ -357,11 +532,19 @@ class PostgresKnowledgeRepository:
                             document_id TEXT PRIMARY KEY,
                             ingestion_id TEXT REFERENCES {}(ingestion_id) ON DELETE SET NULL,
                             knowledge_type TEXT NOT NULL,
+                            source_type TEXT NOT NULL DEFAULT 'official_markdown_upload',
                             title TEXT NOT NULL,
                             source_url TEXT,
                             source_path TEXT NOT NULL,
+                            source_updated_at TIMESTAMPTZ,
                             checksum TEXT NOT NULL,
+                            language TEXT,
+                            product TEXT,
+                            module TEXT,
                             metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            normalized_payload JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            metadata_source TEXT,
+                            metadata_version TEXT,
                             is_active BOOLEAN NOT NULL DEFAULT TRUE,
                             created_at TIMESTAMPTZ NOT NULL,
                             updated_at TIMESTAMPTZ NOT NULL
@@ -372,15 +555,80 @@ class PostgresKnowledgeRepository:
                         self._table("support_knowledge_ingestions"),
                     )
                 )
-                self._ensure_vector_table(cur=cur, vector_dim=self._default_vector_dim)
                 cur.execute(
-                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMPTZ").format(
-                        self._table("support_knowledge_ingestions")
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            ingestion_id TEXT PRIMARY KEY REFERENCES {}(ingestion_id) ON DELETE CASCADE,
+                            knowledge_type TEXT NOT NULL,
+                            source_type TEXT NOT NULL,
+                            parser_name TEXT,
+                            parser_version TEXT,
+                            normalization_status TEXT NOT NULL DEFAULT 'pending',
+                            dedupe_action TEXT,
+                            dedupe_target_doc_id TEXT,
+                            cleaning_report JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            metadata_snapshot JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            normalized_summary JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            chunk_handoff_summary JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            created_at TIMESTAMPTZ NOT NULL,
+                            updated_at TIMESTAMPTZ NOT NULL
+                        )
+                        """
+                    ).format(
+                        self._table("support_knowledge_ingestion_reports"),
+                        self._table("support_knowledge_ingestions"),
+                    )
+                )
+                self._ensure_vector_table(cur=cur, vector_dim=self._default_vector_dim)
+                ingestion_alters = [
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'official_markdown_upload'",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS normalization_status TEXT NOT NULL DEFAULT 'pending'",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS source_updated_at TIMESTAMPTZ",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS parser_name TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS parser_version TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS cleaning_report JSONB NOT NULL DEFAULT '{{}}'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS dedupe_action TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS dedupe_target_doc_id TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMPTZ",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ",
+                ]
+                for statement in ingestion_alters:
+                    cur.execute(sql.SQL(statement).format(self._table("support_knowledge_ingestions")))
+                document_alters = [
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'official_markdown_upload'",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS source_updated_at TIMESTAMPTZ",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS language TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS product TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS module TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS normalized_payload JSONB NOT NULL DEFAULT '{{}}'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS metadata_source TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS metadata_version TEXT",
+                ]
+                for statement in document_alters:
+                    cur.execute(sql.SQL(statement).format(self._table("support_knowledge_documents")))
+                cur.execute(
+                    sql.SQL(
+                        "CREATE INDEX IF NOT EXISTS {} ON {} (source_url, updated_at DESC)"
+                    ).format(
+                        sql.Identifier("idx_support_knowledge_documents_source_url"),
+                        self._table("support_knowledge_documents"),
                     )
                 )
                 cur.execute(
-                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ").format(
-                        self._table("support_knowledge_ingestions")
+                    sql.SQL(
+                        "CREATE INDEX IF NOT EXISTS {} ON {} (source_path, updated_at DESC)"
+                    ).format(
+                        sql.Identifier("idx_support_knowledge_documents_source_path"),
+                        self._table("support_knowledge_documents"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE INDEX IF NOT EXISTS {} ON {} (created_at DESC)"
+                    ).format(
+                        sql.Identifier("idx_support_knowledge_ingestion_reports_created"),
+                        self._table("support_knowledge_ingestion_reports"),
                     )
                 )
             conn.commit()
@@ -465,38 +713,57 @@ class PostgresKnowledgeRepository:
         )
 
     def _row_to_ingestion(self, row: tuple[Any, ...], *, include_content: bool) -> dict[str, Any]:
+        cleaning_report = row[16] if isinstance(row[16], dict) else {}
+        source_type = _normalize_source_type(row[2])
         payload: dict[str, Any] = {
             "ingestion_id": str(row[0]),
-            "entry_type": _normalize_entry_type(row[1]),
-            "knowledge_type": _normalize_knowledge_type(row[2]),
-            "status": _normalize_ingestion_status(row[3]),
-            "title": str(row[4]).strip() if row[4] is not None else None,
-            "source_url": str(row[5]).strip() if row[5] is not None else None,
-            "file_name": str(row[6]).strip() if row[6] is not None else None,
-            "file_path": str(row[7]).strip() if row[7] is not None else None,
-            "checksum": str(row[9]).strip() if row[9] is not None else None,
-            "request_metadata": row[10] if isinstance(row[10], dict) else {},
-            "document_id": str(row[11]).strip() if row[11] is not None else None,
-            "chunk_count": int(row[12] or 0),
-            "error_message": str(row[13]).strip() if row[13] is not None else None,
-            "processing_started_at": _to_iso(row[14]) if row[14] is not None else None,
-            "finished_at": _to_iso(row[15]) if row[15] is not None else None,
-            "created_at": _to_iso(row[16]),
-            "updated_at": _to_iso(row[17]),
+            "entry_type": _normalize_entry_type(row[1]) if row[1] is not None else _entry_type_from_source_type(source_type),
+            "source_type": source_type,
+            "knowledge_type": _normalize_knowledge_type(row[3]),
+            "status": _normalize_ingestion_status(row[4]),
+            "normalization_status": _normalize_normalization_status(row[5]),
+            "title": str(row[6]).strip() if row[6] is not None else None,
+            "source_url": str(row[7]).strip() if row[7] is not None else None,
+            "source_updated_at": _to_iso(row[8]) if row[8] is not None else None,
+            "file_name": str(row[9]).strip() if row[9] is not None else None,
+            "file_path": str(row[10]).strip() if row[10] is not None else None,
+            "checksum": str(row[12]).strip() if row[12] is not None else None,
+            "request_metadata": row[13] if isinstance(row[13], dict) else {},
+            "parser_name": _clean_text(row[14]),
+            "parser_version": _clean_text(row[15]),
+            "cleaning_report": cleaning_report,
+            "dedupe_action": _normalize_dedupe_action(row[17]),
+            "dedupe_target_doc_id": _clean_text(row[18]),
+            "document_id": str(row[19]).strip() if row[19] is not None else None,
+            "chunk_count": int(row[20] or 0),
+            "error_message": str(row[21]).strip() if row[21] is not None else None,
+            "processing_started_at": _to_iso(row[22]) if row[22] is not None else None,
+            "finished_at": _to_iso(row[23]) if row[23] is not None else None,
+            "created_at": _to_iso(row[24]),
+            "updated_at": _to_iso(row[25]),
         }
         payload["duration_seconds"] = calculate_duration_seconds(
             payload.get("processing_started_at"),
             payload.get("finished_at"),
         )
+        payload["cleaning_report_summary"] = _report_summary(
+            {
+                "parser_name": payload.get("parser_name"),
+                "parser_version": payload.get("parser_version"),
+                "normalization_status": payload.get("normalization_status"),
+                "dedupe_action": payload.get("dedupe_action"),
+                "cleaning_report": cleaning_report,
+            }
+        )
         if include_content:
-            payload["content"] = str(row[8]) if row[8] is not None else None
+            payload["content"] = str(row[11]) if row[11] is not None else None
         return payload
 
     def create_ingestion(
         self,
         *,
-        entry_type: str,
         knowledge_type: str,
+        source_type: str,
         title: str | None = None,
         source_url: str | None = None,
         file_name: str | None = None,
@@ -515,35 +782,51 @@ class PostgresKnowledgeRepository:
                         INSERT INTO {} (
                             ingestion_id,
                             entry_type,
+                            source_type,
                             knowledge_type,
                             status,
+                            normalization_status,
                             title,
                             source_url,
+                            source_updated_at,
                             file_name,
                             file_path,
                             content,
                             checksum,
                             request_metadata,
+                            parser_name,
+                            parser_version,
+                            cleaning_report,
+                            dedupe_action,
+                            dedupe_target_doc_id,
                             created_at,
                             updated_at,
                             processing_started_at,
                             finished_at
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """
                     ).format(self._table("support_knowledge_ingestions")),
                     (
                         ingestion_id,
-                        _normalize_entry_type(entry_type),
+                        _entry_type_from_source_type(source_type),
+                        _normalize_source_type(source_type),
                         _normalize_knowledge_type(knowledge_type),
                         "queued",
+                        "pending",
                         title.strip() if title else None,
                         source_url.strip() if source_url else None,
+                        None,
                         file_name.strip() if file_name else None,
                         file_path.strip() if file_path else None,
                         content,
                         checksum.strip() if checksum else None,
                         Json(request_metadata) if request_metadata else Json({}),
+                        None,
+                        None,
+                        Json({}),
+                        None,
+                        None,
                         created_at,
                         created_at,
                         None,
@@ -565,15 +848,23 @@ class PostgresKnowledgeRepository:
                         SELECT
                             ingestion_id,
                             entry_type,
+                            source_type,
                             knowledge_type,
                             status,
+                            normalization_status,
                             title,
                             source_url,
+                            source_updated_at,
                             file_name,
                             file_path,
                             content,
                             checksum,
                             request_metadata,
+                            parser_name,
+                            parser_version,
+                            cleaning_report,
+                            dedupe_action,
+                            dedupe_target_doc_id,
                             document_id,
                             chunk_count,
                             error_message,
@@ -621,15 +912,23 @@ class PostgresKnowledgeRepository:
                         SELECT
                             ingestion_id,
                             entry_type,
+                            source_type,
                             knowledge_type,
                             status,
+                            normalization_status,
                             title,
                             source_url,
+                            source_updated_at,
                             file_name,
                             file_path,
                             content,
                             checksum,
                             request_metadata,
+                            parser_name,
+                            parser_version,
+                            cleaning_report,
+                            dedupe_action,
+                            dedupe_target_doc_id,
                             document_id,
                             chunk_count,
                             error_message,
@@ -760,6 +1059,13 @@ class PostgresKnowledgeRepository:
         title: str | None,
         source_url: str | None,
         checksum: str | None,
+        source_updated_at: str | None = None,
+        normalization_status: str | None = None,
+        parser_name: str | None = None,
+        parser_version: str | None = None,
+        cleaning_report: dict[str, Any] | None = None,
+        dedupe_action: str | None = None,
+        dedupe_target_doc_id: str | None = None,
     ) -> None:
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -770,6 +1076,13 @@ class PostgresKnowledgeRepository:
                         SET title = %s,
                             source_url = %s,
                             checksum = %s,
+                            source_updated_at = %s,
+                            normalization_status = %s,
+                            parser_name = %s,
+                            parser_version = %s,
+                            cleaning_report = %s,
+                            dedupe_action = %s,
+                            dedupe_target_doc_id = %s,
                             updated_at = %s
                         WHERE ingestion_id = %s
                         """
@@ -778,6 +1091,13 @@ class PostgresKnowledgeRepository:
                         title.strip() if title else None,
                         source_url.strip() if source_url else None,
                         checksum.strip() if checksum else None,
+                        source_updated_at,
+                        _normalize_normalization_status(normalization_status),
+                        _clean_text(parser_name),
+                        _clean_text(parser_version),
+                        Json(cleaning_report or {}),
+                        _normalize_dedupe_action(dedupe_action),
+                        _clean_text(dedupe_target_doc_id),
                         _utc_now(),
                         ingestion_id,
                     ),
@@ -798,6 +1118,7 @@ class PostgresKnowledgeRepository:
                         """
                         UPDATE {}
                         SET status = 'completed',
+                            normalization_status = 'normalized',
                             document_id = %s,
                             chunk_count = %s,
                             error_message = NULL,
@@ -819,6 +1140,7 @@ class PostgresKnowledgeRepository:
                         """
                         UPDATE {}
                         SET status = 'failed',
+                            normalization_status = 'failed',
                             error_message = %s,
                             finished_at = %s,
                             updated_at = %s
@@ -829,17 +1151,96 @@ class PostgresKnowledgeRepository:
                 )
             conn.commit()
 
+    def find_dedupe_candidate(
+        self,
+        *,
+        source_url: str | None,
+        source_path: str,
+    ) -> dict[str, Any] | None:
+        normalized_source_url = _clean_text(source_url)
+        normalized_source_path = _clean_text(source_path)
+        if not normalized_source_url and not normalized_source_path:
+            return None
+        query: sql.SQL
+        params: tuple[Any, ...]
+        if normalized_source_url:
+            query = sql.SQL(
+                """
+                SELECT
+                    d.document_id,
+                    d.source_url,
+                    d.source_path,
+                    d.checksum,
+                    d.title,
+                    COALESCE((
+                        SELECT COUNT(*)
+                        FROM {}
+                        WHERE doc_id = d.document_id
+                    ), 0) AS chunk_count
+                FROM {} AS d
+                WHERE d.is_active = TRUE
+                  AND d.source_url = %s
+                ORDER BY d.updated_at DESC
+                LIMIT 1
+                """
+            ).format(self._vector_table(), self._table("support_knowledge_documents"))
+            params = (normalized_source_url,)
+        else:
+            query = sql.SQL(
+                """
+                SELECT
+                    d.document_id,
+                    d.source_url,
+                    d.source_path,
+                    d.checksum,
+                    d.title,
+                    COALESCE((
+                        SELECT COUNT(*)
+                        FROM {}
+                        WHERE doc_id = d.document_id
+                    ), 0) AS chunk_count
+                FROM {} AS d
+                WHERE d.is_active = TRUE
+                  AND d.source_path = %s
+                ORDER BY d.updated_at DESC
+                LIMIT 1
+                """
+            ).format(self._vector_table(), self._table("support_knowledge_documents"))
+            params = (normalized_source_path,)
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(query, params)
+                row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "document_id": _clean_text(row[0]),
+            "source_url": _clean_text(row[1]),
+            "source_path": _clean_text(row[2]),
+            "checksum": _clean_text(row[3]),
+            "title": _clean_text(row[4]),
+            "chunk_count": _safe_positive_int(row[5], 0),
+        }
+
     def upsert_document(
         self,
         *,
         document_id: str,
         ingestion_id: str,
         knowledge_type: str,
+        source_type: str,
         title: str,
         source_url: str | None,
         source_path: str,
+        source_updated_at: str | None,
         checksum: str,
+        language: str | None,
+        product: str | None,
+        module: str | None,
         metadata: dict[str, Any],
+        normalized_payload: dict[str, Any],
+        metadata_source: str | None,
+        metadata_version: str | None,
     ) -> None:
         created_at = _utc_now()
         with self._connect() as conn:
@@ -851,24 +1252,40 @@ class PostgresKnowledgeRepository:
                             document_id,
                             ingestion_id,
                             knowledge_type,
+                            source_type,
                             title,
                             source_url,
                             source_path,
+                            source_updated_at,
                             checksum,
+                            language,
+                            product,
+                            module,
                             metadata,
+                            normalized_payload,
+                            metadata_source,
+                            metadata_version,
                             is_active,
                             created_at,
                             updated_at
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s)
                         ON CONFLICT (document_id) DO UPDATE SET
                             ingestion_id = EXCLUDED.ingestion_id,
                             knowledge_type = EXCLUDED.knowledge_type,
+                            source_type = EXCLUDED.source_type,
                             title = EXCLUDED.title,
                             source_url = EXCLUDED.source_url,
                             source_path = EXCLUDED.source_path,
+                            source_updated_at = EXCLUDED.source_updated_at,
                             checksum = EXCLUDED.checksum,
+                            language = EXCLUDED.language,
+                            product = EXCLUDED.product,
+                            module = EXCLUDED.module,
                             metadata = EXCLUDED.metadata,
+                            normalized_payload = EXCLUDED.normalized_payload,
+                            metadata_source = EXCLUDED.metadata_source,
+                            metadata_version = EXCLUDED.metadata_version,
                             is_active = TRUE,
                             updated_at = EXCLUDED.updated_at
                         """
@@ -877,16 +1294,194 @@ class PostgresKnowledgeRepository:
                         document_id,
                         ingestion_id,
                         _normalize_knowledge_type(knowledge_type),
+                        _normalize_source_type(source_type),
                         title.strip(),
                         source_url.strip() if source_url else None,
                         source_path.strip(),
+                        source_updated_at,
                         checksum.strip(),
+                        _clean_text(language),
+                        _clean_text(product),
+                        _clean_text(module),
                         Json(metadata or {}),
+                        Json(normalized_payload or {}),
+                        _clean_text(metadata_source),
+                        _clean_text(metadata_version),
                         created_at,
                         created_at,
                     ),
                 )
             conn.commit()
+
+    def upsert_ingestion_report(
+        self,
+        *,
+        ingestion_id: str,
+        knowledge_type: str,
+        source_type: str,
+        parser_name: str | None,
+        parser_version: str | None,
+        normalization_status: str,
+        dedupe_action: str | None,
+        dedupe_target_doc_id: str | None,
+        cleaning_report: dict[str, Any],
+        metadata_snapshot: dict[str, Any],
+        normalized_summary: dict[str, Any],
+        chunk_handoff_summary: dict[str, Any],
+    ) -> None:
+        created_at = _utc_now()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} (
+                            ingestion_id,
+                            knowledge_type,
+                            source_type,
+                            parser_name,
+                            parser_version,
+                            normalization_status,
+                            dedupe_action,
+                            dedupe_target_doc_id,
+                            cleaning_report,
+                            metadata_snapshot,
+                            normalized_summary,
+                            chunk_handoff_summary,
+                            created_at,
+                            updated_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (ingestion_id) DO UPDATE SET
+                            knowledge_type = EXCLUDED.knowledge_type,
+                            source_type = EXCLUDED.source_type,
+                            parser_name = EXCLUDED.parser_name,
+                            parser_version = EXCLUDED.parser_version,
+                            normalization_status = EXCLUDED.normalization_status,
+                            dedupe_action = EXCLUDED.dedupe_action,
+                            dedupe_target_doc_id = EXCLUDED.dedupe_target_doc_id,
+                            cleaning_report = EXCLUDED.cleaning_report,
+                            metadata_snapshot = EXCLUDED.metadata_snapshot,
+                            normalized_summary = EXCLUDED.normalized_summary,
+                            chunk_handoff_summary = EXCLUDED.chunk_handoff_summary,
+                            updated_at = EXCLUDED.updated_at
+                        """
+                    ).format(self._table("support_knowledge_ingestion_reports")),
+                    (
+                        ingestion_id,
+                        _normalize_knowledge_type(knowledge_type),
+                        _normalize_source_type(source_type),
+                        _clean_text(parser_name),
+                        _clean_text(parser_version),
+                        _normalize_normalization_status(normalization_status),
+                        _normalize_dedupe_action(dedupe_action),
+                        _clean_text(dedupe_target_doc_id),
+                        Json(cleaning_report or {}),
+                        Json(metadata_snapshot or {}),
+                        Json(normalized_summary or {}),
+                        Json(chunk_handoff_summary or {}),
+                        created_at,
+                        created_at,
+                    ),
+                )
+            conn.commit()
+
+    def get_ingestion_report(self, ingestion_id: str) -> dict[str, Any] | None:
+        ingestion = self.get_ingestion(ingestion_id, include_content=False)
+        if ingestion is None:
+            return None
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT
+                            knowledge_type,
+                            source_type,
+                            parser_name,
+                            parser_version,
+                            normalization_status,
+                            dedupe_action,
+                            dedupe_target_doc_id,
+                            cleaning_report,
+                            metadata_snapshot,
+                            normalized_summary,
+                            chunk_handoff_summary,
+                            created_at,
+                            updated_at
+                        FROM {}
+                        WHERE ingestion_id = %s
+                        """
+                    ).format(self._table("support_knowledge_ingestion_reports")),
+                    (ingestion_id,),
+                )
+                row = cur.fetchone()
+        if row is None:
+            report_record = {
+                "knowledge_type": _normalize_knowledge_type(ingestion.get("knowledge_type")),
+                "source_type": _normalize_source_type(ingestion.get("source_type")),
+                "parser_name": _clean_text(ingestion.get("parser_name")),
+                "parser_version": _clean_text(ingestion.get("parser_version")),
+                "normalization_status": _normalize_normalization_status(ingestion.get("normalization_status")),
+                "dedupe_action": _normalize_dedupe_action(ingestion.get("dedupe_action")),
+                "dedupe_target_doc_id": _clean_text(ingestion.get("dedupe_target_doc_id")),
+                "cleaning_report": ingestion.get("cleaning_report") if isinstance(ingestion.get("cleaning_report"), dict) else {},
+                "metadata_snapshot": {},
+                "normalized_summary": {},
+                "chunk_handoff_summary": {},
+                "created_at": ingestion.get("created_at"),
+                "updated_at": ingestion.get("updated_at"),
+            }
+        else:
+            report_record = {
+                "knowledge_type": _normalize_knowledge_type(row[0]),
+                "source_type": _normalize_source_type(row[1]),
+                "parser_name": _clean_text(row[2]),
+                "parser_version": _clean_text(row[3]),
+                "normalization_status": _normalize_normalization_status(row[4]),
+                "dedupe_action": _normalize_dedupe_action(row[5]),
+                "dedupe_target_doc_id": _clean_text(row[6]),
+                "cleaning_report": row[7] if isinstance(row[7], dict) else {},
+                "metadata_snapshot": row[8] if isinstance(row[8], dict) else {},
+                "normalized_summary": row[9] if isinstance(row[9], dict) else {},
+                "chunk_handoff_summary": row[10] if isinstance(row[10], dict) else {},
+                "created_at": _to_iso(row[11]) if row[11] is not None else None,
+                "updated_at": _to_iso(row[12]) if row[12] is not None else None,
+            }
+        warnings = report_record["cleaning_report"].get("warnings")
+        warnings_list = [str(item).strip() for item in warnings if str(item).strip()] if isinstance(warnings, list) else []
+        if ingestion.get("error_message"):
+            warnings_list.append(str(ingestion["error_message"]).strip())
+        summary = {
+            "ingestion_id": ingestion.get("ingestion_id"),
+            "title": ingestion.get("title"),
+            "status": ingestion.get("status"),
+            "normalization_status": report_record["normalization_status"],
+            "knowledge_type": report_record["knowledge_type"],
+            "source_type": report_record["source_type"],
+            "document_id": ingestion.get("document_id"),
+            "chunk_count": ingestion.get("chunk_count"),
+            "duration_seconds": ingestion.get("duration_seconds"),
+            "dedupe_action": report_record["dedupe_action"],
+            "dedupe_target_doc_id": report_record["dedupe_target_doc_id"],
+            "parser_name": report_record["parser_name"],
+            "parser_version": report_record["parser_version"],
+            "created_at": ingestion.get("created_at"),
+            "finished_at": ingestion.get("finished_at"),
+        }
+        return {
+            "ingestion": ingestion,
+            "summary": summary,
+            "cleaning_report": report_record["cleaning_report"],
+            "metadata": report_record["metadata_snapshot"],
+            "normalized_summary": report_record["normalized_summary"],
+            "chunk_handoff": report_record["chunk_handoff_summary"],
+            "warnings": warnings_list,
+            "raw": {
+                "ingestion": ingestion,
+                "report": report_record,
+            },
+        }
 
     def replace_document_chunks(
         self,
