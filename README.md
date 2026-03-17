@@ -114,3 +114,31 @@ dashboard/     # 管理端 UI
 deployment/    # compose 与 nginx 配置
 docs/          # 文档
 ```
+
+## Agora 官方文档抓取与上传
+
+仓库提供了一个手动运行的脚本，用于：
+1. 从 Agora 英文站点发现官方文档 URL。
+2. 下载对应的 Markdown 文件到 `official_doc/`。
+3. 调用现有 `POST /api/engineer/knowledge/official-documents` 接口逐个上传，并等待 ingestion 完成。
+
+运行方式：
+
+```bash
+python scripts/fetch_and_upload_agora_docs.py --api-base-url http://localhost:8080
+```
+
+常用参数：
+
+```bash
+python scripts/fetch_and_upload_agora_docs.py \
+  --api-base-url http://localhost:8080 \
+  --limit 3 \
+  --download-workers 8 \
+  --upload-workers 4
+```
+
+说明：
+1. `official_doc/` 每次运行都会先全量重建。
+2. 运行结束后会在 `official_doc/_sync_report.json` 写入下载、上传和 ingestion 结果汇总。
+3. `official_doc/` 已加入 `.gitignore`，作为本地生成产物保留。

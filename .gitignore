@@ -17,5 +17,5 @@ env/
 *.log
 artifacts/
 .env
-
+official_doc/
 
