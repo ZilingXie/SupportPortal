@@ -182,6 +182,52 @@ resolve_port() {
   printf '%s\n' "${port}"
 }
 
+resolve_positive_integer() {
+  local key="$1"
+  local default_value="$2"
+  local value
+
+  value="$(resolve_env_value "${key}")"
+  if [[ "${value}" =~ ^[0-9]+$ ]] && (( value > 0 )); then
+    printf '%s\n' "${value}"
+  else
+    printf '%s\n' "${default_value}"
+  fi
+}
+
+show_compose_diagnostics() {
+  log "Service status after failed health check:"
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps || true
+  log "Recent service logs:"
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" logs --tail=80 api nginx rag_api ws_gateway worker rag_worker || true
+}
+
+wait_for_http_ok() {
+  local label="$1"
+  local url="$2"
+  local timeout_seconds="$3"
+  local retry_interval_seconds="$4"
+  local start_ts current_ts elapsed response
+
+  start_ts="$(date +%s)"
+  while true; do
+    if response="$(curl -fsS --max-time 5 "${url}" 2>&1)"; then
+      log "${label} health response: ${response}"
+      return 0
+    fi
+
+    current_ts="$(date +%s)"
+    elapsed=$((current_ts - start_ts))
+    if (( elapsed >= timeout_seconds )); then
+      log "${label} health check last error: ${response}"
+      return 1
+    fi
+
+    log "Waiting for ${label} health (${elapsed}s/${timeout_seconds}s): ${response}"
+    sleep "${retry_interval_seconds}"
+  done
+}
+
 main() {
   parse_args "$@"
 
@@ -227,8 +273,10 @@ main() {
     log "Skipping git pull."
   fi
 
-  local host_port internal_url internal_resp external_url external_resp
+  local host_port internal_url external_url health_timeout_seconds health_retry_interval_seconds
   host_port="$(resolve_port)"
+  health_timeout_seconds="$(resolve_positive_integer DEPLOY_HEALTH_TIMEOUT_SECONDS 90)"
+  health_retry_interval_seconds="$(resolve_positive_integer DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS 2)"
 
   log "Stopping services..."
   docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" down
@@ -240,14 +288,16 @@ main() {
 
   internal_url="http://127.0.0.1:${host_port}/health"
   log "Checking internal health: ${internal_url}"
-  internal_resp="$(curl -fsS --max-time 20 "${internal_url}")" || fail "Internal health check failed: ${internal_url}"
-  log "Internal health response: ${internal_resp}"
+  if ! wait_for_http_ok "Internal" "${internal_url}" "${health_timeout_seconds}" "${health_retry_interval_seconds}"; then
+    show_compose_diagnostics
+    fail "Internal health check failed after ${health_timeout_seconds}s: ${internal_url}"
+  fi
 
   if [[ "${SKIP_EXTERNAL_CHECK}" -eq 0 ]]; then
     external_url="https://${DOMAIN}/health"
     log "Checking external health: ${external_url}"
-    external_resp="$(curl -fsS --max-time 20 "${external_url}")" || fail "External health check failed: ${external_url}"
-    log "External health response: ${external_resp}"
+    wait_for_http_ok "External" "${external_url}" "${health_timeout_seconds}" "${health_retry_interval_seconds}" \
+      || fail "External health check failed after ${health_timeout_seconds}s: ${external_url}"
   else
     log "Skipping external health check."
   fi
