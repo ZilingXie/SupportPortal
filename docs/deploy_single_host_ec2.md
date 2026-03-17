@@ -147,7 +147,12 @@ cp .env.example .env
 `.env` 至少配置：
 1. `OPENAI_API_KEY`
 2. `NGINX_HOST_PORT=80`
-3. （可选）外部数据库：`TICKET_DB_DSN`、`PGVECTOR_DSN`
+3. AWS Postgres：`TICKET_DB_DSN`、`PGVECTOR_DSN`
+4. `TICKET_DB_SCHEMA=supportportal`
+5. `PGVECTOR_SCHEMA=supportportal`
+6. `PGVECTOR_TABLE=docagent_chunks`
+
+如果工单库和向量库共用同一个 AWS Postgres，部署脚本会在缺少 `TICKET_DB_DSN` 时自动复用 `PGVECTOR_DSN`；但生产环境仍建议两个字段都明确写入 `.env`。
 
 ### 3.4 启动服务
 

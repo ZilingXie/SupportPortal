@@ -45,6 +45,98 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "Missing command: $1"
 }
 
+trim() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "${value}"
+}
+
+strip_wrapping_quotes() {
+  local value="$1"
+  if [[ ${#value} -ge 2 ]]; then
+    if [[ "${value:0:1}" == '"' && "${value: -1}" == '"' ]]; then
+      value="${value:1:${#value}-2}"
+    elif [[ "${value:0:1}" == "'" && "${value: -1}" == "'" ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+  fi
+  printf '%s' "${value}"
+}
+
+read_env_file_value() {
+  local key="$1"
+  local value
+  [[ -f "${ENV_FILE}" ]] || return 0
+  value="$(awk -F= -v key="${key}" '
+    $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+      sub("^[[:space:]]*" key "[[:space:]]*=[[:space:]]*", "", $0)
+      print $0
+      exit
+    }
+  ' "${ENV_FILE}")"
+  value="${value%$'\r'}"
+  value="$(trim "${value}")"
+  value="$(strip_wrapping_quotes "${value}")"
+  printf '%s' "${value}"
+}
+
+resolve_env_value() {
+  local key="$1"
+  if [[ -n "${!key:-}" ]]; then
+    printf '%s' "${!key}"
+    return 0
+  fi
+  read_env_file_value "${key}"
+}
+
+export_env_value() {
+  local key="$1"
+  local value="$2"
+  printf -v "${key}" '%s' "${value}"
+  export "${key}"
+}
+
+prepare_compose_env() {
+  local ticket_db_dsn pgvector_dsn ticket_schema pgvector_schema pgvector_table
+  ticket_db_dsn="$(resolve_env_value TICKET_DB_DSN)"
+  pgvector_dsn="$(resolve_env_value PGVECTOR_DSN)"
+
+  if [[ -z "${ticket_db_dsn}" && -n "${pgvector_dsn}" ]]; then
+    export_env_value TICKET_DB_DSN "${pgvector_dsn}"
+    ticket_db_dsn="${pgvector_dsn}"
+    log "TICKET_DB_DSN is missing in ${ENV_FILE}; reusing PGVECTOR_DSN for deploy."
+  fi
+
+  if [[ -z "${pgvector_dsn}" && -n "${ticket_db_dsn}" ]]; then
+    export_env_value PGVECTOR_DSN "${ticket_db_dsn}"
+    pgvector_dsn="${ticket_db_dsn}"
+    log "PGVECTOR_DSN is missing in ${ENV_FILE}; reusing TICKET_DB_DSN for deploy."
+  fi
+
+  [[ -n "${ticket_db_dsn}" ]] || fail "Missing TICKET_DB_DSN in ${ENV_FILE}. Set it to your AWS Postgres DSN."
+  [[ -n "${pgvector_dsn}" ]] || fail "Missing PGVECTOR_DSN in ${ENV_FILE}. Set it to your AWS Postgres DSN."
+
+  ticket_schema="$(resolve_env_value TICKET_DB_SCHEMA)"
+  pgvector_schema="$(resolve_env_value PGVECTOR_SCHEMA)"
+  pgvector_table="$(resolve_env_value PGVECTOR_TABLE)"
+
+  if [[ -z "${ticket_schema}" ]]; then
+    export_env_value TICKET_DB_SCHEMA "supportportal"
+    log "TICKET_DB_SCHEMA is missing in ${ENV_FILE}; defaulting to supportportal."
+  fi
+
+  if [[ -z "${pgvector_schema}" ]]; then
+    export_env_value PGVECTOR_SCHEMA "supportportal"
+    log "PGVECTOR_SCHEMA is missing in ${ENV_FILE}; defaulting to supportportal."
+  fi
+
+  if [[ -z "${pgvector_table}" ]]; then
+    export_env_value PGVECTOR_TABLE "docagent_chunks"
+    log "PGVECTOR_TABLE is missing in ${ENV_FILE}; defaulting to docagent_chunks."
+  fi
+}
+
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -111,6 +203,8 @@ main() {
     fi
   fi
 
+  prepare_compose_env
+
   local current_branch target_branch
   current_branch="$(git rev-parse --abbrev-ref HEAD)"
   [[ "${current_branch}" != "HEAD" ]] || fail "Detached HEAD detected. Checkout a branch first."
@@ -137,12 +231,12 @@ main() {
   host_port="$(resolve_port)"
 
   log "Stopping services..."
-  docker compose -f "${COMPOSE_FILE}" down
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" down
   log "Starting services (build + detached)..."
-  docker compose -f "${COMPOSE_FILE}" up -d --build
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build
 
   log "Current service status:"
-  docker compose -f "${COMPOSE_FILE}" ps
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps
 
   internal_url="http://127.0.0.1:${host_port}/health"
   log "Checking internal health: ${internal_url}"
@@ -160,7 +254,7 @@ main() {
 
   if [[ "${FOLLOW_LOGS}" -eq 1 ]]; then
     log "Following logs (Ctrl+C to exit)..."
-    docker compose -f "${COMPOSE_FILE}" logs -f --tail=120 api ws_gateway worker nginx
+    docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" logs -f --tail=120 api ws_gateway worker nginx rag_api rag_worker
   fi
 
   log "Deploy finished."
