@@ -1565,6 +1565,14 @@ def dashboard_knowledge_ingestions(
         }
 
 
+@app.get("/api/dashboard/knowledge-ingestions/{ingestion_id}/report")
+def dashboard_knowledge_ingestion_report(ingestion_id: str) -> dict[str, Any]:
+    try:
+        return rag_service_client.get_ingestion_report(ingestion_id)
+    except RagServiceError as exc:
+        _raise_rag_service_http_error(exc)
+
+
 @app.get("/api/dashboard/events")
 def dashboard_events(limit: int = Query(default=20, ge=1, le=100)) -> dict[str, Any]:
     rows = ticket_repository.list_events(limit=limit)
@@ -1584,7 +1592,9 @@ def dashboard_events(limit: int = Query(default=20, ge=1, le=100)) -> dict[str, 
             "priority": payload.get("priority"),
             "engineer_mode": payload.get("engineer_mode"),
             "knowledge_type": payload.get("knowledge_type"),
+            "source_type": payload.get("source_type"),
             "chunk_count": payload.get("chunk_count"),
+            "dedupe_action": payload.get("dedupe_action"),
             "error_message": payload.get("error_message"),
             "created_at": payload.get("created_at") or row.get("created_at") or now_iso(),
         }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import re
@@ -131,6 +132,41 @@ def _build_knowledge_ingest_task(ingestion_id: str) -> dict[str, str]:
         "task_type": "knowledge_ingest",
         "ingestion_id": ingestion_id,
         "created_at": now_iso(),
+    }
+
+
+def _request_idempotency_key(*parts: Any) -> str:
+    raw = "::".join(str(part or "").strip() for part in parts)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _request_metadata(
+    *,
+    submitted_via: str,
+    file_name: str | None = None,
+    mime_type: str | None = None,
+    file_size_bytes: int | None = None,
+    content_length_chars: int | None = None,
+    source_url: str | None = None,
+    raw_content: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "submitted_via": submitted_via,
+        "received_at": now_iso(),
+        "actor_type": "engineer",
+        "actor_id": None,
+        "client_system": "engineer_api",
+        "file_name": file_name,
+        "mime_type": mime_type,
+        "file_size_bytes": int(file_size_bytes or 0) if file_size_bytes is not None else None,
+        "content_length_chars": int(content_length_chars or 0) if content_length_chars is not None else None,
+        "source_url_provided": bool(str(source_url or "").strip()),
+        "idempotency_key": _request_idempotency_key(
+            submitted_via,
+            file_name or "",
+            source_url or "",
+            raw_content or "",
+        ),
     }
 
 
@@ -296,14 +332,18 @@ async def upload_official_document(
 
     markdown_text = raw_bytes.decode("utf-8", errors="replace")
     ingestion = repository.create_ingestion(
-        entry_type="official_document",
         knowledge_type="official",
+        source_type="official_markdown_upload",
         file_name=original_name,
         content=markdown_text,
-        request_metadata={
-            "original_file_name": original_name,
-            "file_size_bytes": len(raw_bytes),
-        },
+        request_metadata=_request_metadata(
+            submitted_via="official_documents_endpoint",
+            file_name=original_name,
+            mime_type="text/markdown",
+            file_size_bytes=len(raw_bytes),
+            content_length_chars=len(markdown_text),
+            raw_content=markdown_text,
+        ),
     )
 
     await _publish_dashboard_event(
@@ -328,12 +368,17 @@ async def upload_technical_article(
         )
 
     ingestion = repository.create_ingestion(
-        entry_type="technical_article",
         knowledge_type="technical",
+        source_type="technical_article_api",
         title=request.title.strip(),
         source_url=request.source_url.strip(),
         content=request.content,
-        request_metadata={"content_length": len(request.content)},
+        request_metadata=_request_metadata(
+            submitted_via="articles_endpoint",
+            content_length_chars=len(request.content),
+            source_url=request.source_url,
+            raw_content=request.content,
+        ),
     )
     await _publish_dashboard_event(
         "knowledge_ingestion_queued",
@@ -370,6 +415,15 @@ def get_knowledge_ingestion(ingestion_id: str, _: None = Depends(_require_intern
     if ingestion is None:
         raise HTTPException(status_code=404, detail="Knowledge ingestion not found")
     return {"ingestion": ingestion}
+
+
+@app.get("/internal/knowledge/ingestions/{ingestion_id}/report")
+def get_knowledge_ingestion_report(ingestion_id: str, _: None = Depends(_require_internal_auth)) -> dict[str, Any]:
+    repository = _require_knowledge_repository()
+    report = repository.get_ingestion_report(ingestion_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Knowledge ingestion report not found")
+    return report
 
 
 @app.get("/internal/knowledge/metrics")

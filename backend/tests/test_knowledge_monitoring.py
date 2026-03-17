@@ -32,16 +32,20 @@ class KnowledgeMonitoringTests(unittest.TestCase):
                 "ingestion_id": "KI-123",
                 "title": "Agora Console REST API",
                 "knowledge_type": "official",
+                "source_type": "official_markdown_upload",
                 "chunk_count": 18,
                 "status": "completed",
+                "dedupe_action": "new_document",
             },
             created_at="2026-03-16T12:00:00Z",
         )
         self.assertEqual(payload["ingestion_id"], "KI-123")
         self.assertEqual(payload["title"], "Agora Console REST API")
         self.assertEqual(payload["knowledge_type"], "official")
+        self.assertEqual(payload["source_type"], "official_markdown_upload")
         self.assertEqual(payload["status"], "completed")
         self.assertEqual(payload["chunk_count"], 18)
+        self.assertEqual(payload["dedupe_action"], "new_document")
         self.assertIn("18 chunks", payload["message"])
 
     def test_build_knowledge_event_payload_failed_uses_file_name_fallback(self) -> None:
@@ -103,6 +107,13 @@ class KnowledgeMonitoringTests(unittest.TestCase):
     def test_metadata_column_sql_uses_escaped_empty_json_default(self) -> None:
         repository_source = Path("backend/repositories/knowledge_repository.py").read_text(encoding="utf-8")
         self.assertIn("DEFAULT '{{}}'::jsonb", repository_source)
+
+    def test_document_upsert_sql_keeps_metadata_version_placeholder(self) -> None:
+        repository_source = Path("backend/repositories/knowledge_repository.py").read_text(encoding="utf-8")
+        self.assertIn(
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s)",
+            repository_source,
+        )
 
 
 if __name__ == "__main__":

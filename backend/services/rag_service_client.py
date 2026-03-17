@@ -273,6 +273,10 @@ class RagServiceClient:
         quoted = urllib.parse.quote(str(ingestion_id or "").strip(), safe="")
         return self._request("GET", f"/internal/knowledge/ingestions/{quoted}")
 
+    def get_ingestion_report(self, ingestion_id: str) -> dict[str, Any]:
+        quoted = urllib.parse.quote(str(ingestion_id or "").strip(), safe="")
+        return self._request("GET", f"/internal/knowledge/ingestions/{quoted}/report")
+
     def knowledge_metrics(self) -> dict[str, Any]:
         return self._request("GET", "/internal/knowledge/metrics")
 

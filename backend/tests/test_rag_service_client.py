@@ -89,6 +89,36 @@ class RagServiceClientTests(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 500)
         self.assertEqual(ctx.exception.payload, {"detail": "boom"})
 
+    def test_get_ingestion_report_uses_report_endpoint(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+        captured = {}
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"summary":{"ingestion_id":"KI-REPORT"}}'
+
+        def _fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["timeout"] = timeout
+            captured["authorization"] = request.headers.get("Authorization")
+            return _FakeResponse()
+
+        with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            payload = client.get_ingestion_report("KI-REPORT")
+
+        self.assertEqual(
+            captured["url"],
+            "http://rag-api.internal/internal/knowledge/ingestions/KI-REPORT/report",
+        )
+        self.assertEqual(captured["authorization"], "Bearer token")
+        self.assertEqual(payload["summary"]["ingestion_id"], "KI-REPORT")
+
 
 if __name__ == "__main__":
     unittest.main()

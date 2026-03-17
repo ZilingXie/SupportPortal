@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Admin Dashboard</title>
-    <link rel="stylesheet" href="./styles.css?v=20260316-knowledge-1" />
+    <link rel="stylesheet" href="./styles.css?v=20260317-reports-1" />
   </head>
   <body>
     <main class="container">
@@ -16,176 +16,234 @@
         <div id="header-user-controls" class="header-user-controls"></div>
       </header>
 
-      <section class="section-block">
-        <div class="section-header">
-          <div>
-            <h2>Ticket Operations</h2>
-            <p class="section-subtitle">Current service workload across the support queue.</p>
-          </div>
-        </div>
-        <div class="kpi-grid">
-          <article class="card">
-            <h3>Today Ticket Volume</h3>
-            <p class="metric" id="ticket-volume">0</p>
-          </article>
-          <article class="card">
-            <h3>Resolution Rate</h3>
-            <p class="metric" id="resolution-rate">0%</p>
-          </article>
-          <article class="card">
-            <h3>Sentiment Alerts</h3>
-            <p class="metric" id="sentiment-alerts">0</p>
-          </article>
-        </div>
-      </section>
+      <nav class="dashboard-tabs" aria-label="Dashboard sections">
+        <button type="button" class="dashboard-tab active" data-dashboard-tab="overview">Overview</button>
+        <button type="button" class="dashboard-tab" data-dashboard-tab="reports">Ingestion Reports</button>
+      </nav>
 
-      <section class="section-block">
-        <div class="section-header">
-          <div>
-            <h2>Knowledge Vectorization</h2>
-            <p class="section-subtitle">Deep diagnostics for document ingestion, chunking, and vector storage.</p>
+      <section class="dashboard-panel active" data-dashboard-panel="overview">
+        <section class="section-block">
+          <div class="section-header">
+            <div>
+              <h2>Ticket Operations</h2>
+              <p class="section-subtitle">Current service workload across the support queue.</p>
+            </div>
           </div>
-        </div>
-        <div class="kpi-grid knowledge-grid">
-          <article class="card">
-            <h3>Total Documents</h3>
-            <p class="metric" id="knowledge-documents-total">0</p>
-          </article>
-          <article class="card">
-            <h3>Total Chunks</h3>
-            <p class="metric" id="knowledge-chunks-total">0</p>
-          </article>
-          <article class="card">
-            <h3>Backlog</h3>
-            <p class="metric" id="knowledge-backlog-count">0</p>
-          </article>
-          <article class="card">
-            <h3>Failures (24h)</h3>
-            <p class="metric" id="knowledge-failures-24h">0</p>
-          </article>
-          <article class="card">
-            <h3>Avg Processing</h3>
-            <p class="metric metric-compact" id="knowledge-avg-processing">0s</p>
-          </article>
-          <article class="card">
-            <h3>Avg Chunk Size</h3>
-            <p class="metric metric-compact" id="knowledge-avg-chars">0 chars</p>
-          </article>
-        </div>
-      </section>
+          <div class="kpi-grid">
+            <article class="card">
+              <h3>Today Ticket Volume</h3>
+              <p class="metric" id="ticket-volume">0</p>
+            </article>
+            <article class="card">
+              <h3>Resolution Rate</h3>
+              <p class="metric" id="resolution-rate">0%</p>
+            </article>
+            <article class="card">
+              <h3>Sentiment Alerts</h3>
+              <p class="metric" id="sentiment-alerts">0</p>
+            </article>
+          </div>
+        </section>
 
-      <section class="knowledge-layout">
-        <article class="card diagnostics-card">
+        <section class="section-block">
+          <div class="section-header">
+            <div>
+              <h2>Knowledge Vectorization</h2>
+              <p class="section-subtitle">Deep diagnostics for document ingestion, chunking, and vector storage.</p>
+            </div>
+          </div>
+          <div class="kpi-grid knowledge-grid">
+            <article class="card">
+              <h3>Total Documents</h3>
+              <p class="metric" id="knowledge-documents-total">0</p>
+            </article>
+            <article class="card">
+              <h3>Total Chunks</h3>
+              <p class="metric" id="knowledge-chunks-total">0</p>
+            </article>
+            <article class="card">
+              <h3>Backlog</h3>
+              <p class="metric" id="knowledge-backlog-count">0</p>
+            </article>
+            <article class="card">
+              <h3>Failures (24h)</h3>
+              <p class="metric" id="knowledge-failures-24h">0</p>
+            </article>
+            <article class="card">
+              <h3>Avg Processing</h3>
+              <p class="metric metric-compact" id="knowledge-avg-processing">0s</p>
+            </article>
+            <article class="card">
+              <h3>Avg Chunk Size</h3>
+              <p class="metric metric-compact" id="knowledge-avg-chars">0 chars</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="knowledge-layout">
+          <article class="card diagnostics-card">
+            <div class="section-header compact">
+              <div>
+                <h2>Vectorization Diagnostics</h2>
+                <p class="section-subtitle">Storage config, breakdowns, and processing health.</p>
+              </div>
+            </div>
+            <div class="diagnostics-grid">
+              <div class="diagnostic-item">
+                <span class="diagnostic-label">Knowledge Storage</span>
+                <strong id="knowledge-storage-mode">unknown</strong>
+              </div>
+              <div class="diagnostic-item">
+                <span class="diagnostic-label">Embedding Model</span>
+                <strong id="knowledge-embedding-model">-</strong>
+              </div>
+              <div class="diagnostic-item">
+                <span class="diagnostic-label">Vector Table</span>
+                <strong id="knowledge-vector-table">-</strong>
+              </div>
+              <div class="diagnostic-item">
+                <span class="diagnostic-label">Latest Completed</span>
+                <strong id="knowledge-latest-completed">-</strong>
+              </div>
+              <div class="diagnostic-item">
+                <span class="diagnostic-label">Avg Chunks / Document</span>
+                <strong id="knowledge-avg-chunks-per-document">0</strong>
+              </div>
+              <div class="diagnostic-item">
+                <span class="diagnostic-label">Ingestion Statuses</span>
+                <strong id="knowledge-status-breakdown">0 / 0 / 0 / 0</strong>
+              </div>
+              <div class="diagnostic-item">
+                <span class="diagnostic-label">Official Documents</span>
+                <strong id="knowledge-documents-official">0</strong>
+              </div>
+              <div class="diagnostic-item">
+                <span class="diagnostic-label">Technical Documents</span>
+                <strong id="knowledge-documents-technical">0</strong>
+              </div>
+              <div class="diagnostic-item">
+                <span class="diagnostic-label">Official Chunks</span>
+                <strong id="knowledge-chunks-official">0</strong>
+              </div>
+              <div class="diagnostic-item">
+                <span class="diagnostic-label">Technical Chunks</span>
+                <strong id="knowledge-chunks-technical">0</strong>
+              </div>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="section-header compact section-header-actions">
+              <div>
+                <h2>Recent Ingestions</h2>
+                <p class="section-subtitle">Latest vectorization jobs with status, duration, and failure details.</p>
+              </div>
+              <div class="filter-row">
+                <label class="filter-field">
+                  <span>Status</span>
+                  <select id="knowledge-status-filter">
+                    <option value="all">All</option>
+                    <option value="queued">Queued</option>
+                    <option value="processing">Processing</option>
+                    <option value="completed">Completed</option>
+                    <option value="failed">Failed</option>
+                  </select>
+                </label>
+                <label class="filter-field">
+                  <span>Type</span>
+                  <select id="knowledge-type-filter">
+                    <option value="all">All</option>
+                    <option value="official">Official</option>
+                    <option value="technical">Technical</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <div class="table-scroll">
+              <table class="ingestions-table">
+                <thead>
+                  <tr>
+                    <th>Ingestion</th>
+                    <th>Status</th>
+                    <th>Chunks</th>
+                    <th>Duration</th>
+                    <th>Created</th>
+                    <th>Finished</th>
+                    <th>Source</th>
+                  </tr>
+                </thead>
+                <tbody id="knowledge-ingestions-body">
+                  <tr>
+                    <td colspan="7" class="empty-state">Loading knowledge ingestions...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </section>
+
+        <section class="card">
           <div class="section-header compact">
             <div>
-              <h2>Vectorization Diagnostics</h2>
-              <p class="section-subtitle">Storage config, breakdowns, and processing health.</p>
+              <h2>Realtime Event Stream</h2>
+              <p class="section-subtitle">Ticket and knowledge ingestion events on a shared live feed.</p>
             </div>
           </div>
-          <div class="diagnostics-grid">
-            <div class="diagnostic-item">
-              <span class="diagnostic-label">Knowledge Storage</span>
-              <strong id="knowledge-storage-mode">unknown</strong>
-            </div>
-            <div class="diagnostic-item">
-              <span class="diagnostic-label">Embedding Model</span>
-              <strong id="knowledge-embedding-model">-</strong>
-            </div>
-            <div class="diagnostic-item">
-              <span class="diagnostic-label">Vector Table</span>
-              <strong id="knowledge-vector-table">-</strong>
-            </div>
-            <div class="diagnostic-item">
-              <span class="diagnostic-label">Latest Completed</span>
-              <strong id="knowledge-latest-completed">-</strong>
-            </div>
-            <div class="diagnostic-item">
-              <span class="diagnostic-label">Avg Chunks / Document</span>
-              <strong id="knowledge-avg-chunks-per-document">0</strong>
-            </div>
-            <div class="diagnostic-item">
-              <span class="diagnostic-label">Ingestion Statuses</span>
-              <strong id="knowledge-status-breakdown">0 / 0 / 0 / 0</strong>
-            </div>
-            <div class="diagnostic-item">
-              <span class="diagnostic-label">Official Documents</span>
-              <strong id="knowledge-documents-official">0</strong>
-            </div>
-            <div class="diagnostic-item">
-              <span class="diagnostic-label">Technical Documents</span>
-              <strong id="knowledge-documents-technical">0</strong>
-            </div>
-            <div class="diagnostic-item">
-              <span class="diagnostic-label">Official Chunks</span>
-              <strong id="knowledge-chunks-official">0</strong>
-            </div>
-            <div class="diagnostic-item">
-              <span class="diagnostic-label">Technical Chunks</span>
-              <strong id="knowledge-chunks-technical">0</strong>
-            </div>
-          </div>
-        </article>
-
-        <article class="card">
-          <div class="section-header compact section-header-actions">
-            <div>
-              <h2>Recent Ingestions</h2>
-              <p class="section-subtitle">Latest vectorization jobs with status, duration, and failure details.</p>
-            </div>
-            <div class="filter-row">
-              <label class="filter-field">
-                <span>Status</span>
-                <select id="knowledge-status-filter">
-                  <option value="all">All</option>
-                  <option value="queued">Queued</option>
-                  <option value="processing">Processing</option>
-                  <option value="completed">Completed</option>
-                  <option value="failed">Failed</option>
-                </select>
-              </label>
-              <label class="filter-field">
-                <span>Type</span>
-                <select id="knowledge-type-filter">
-                  <option value="all">All</option>
-                  <option value="official">Official</option>
-                  <option value="technical">Technical</option>
-                </select>
-              </label>
-            </div>
-          </div>
-          <div class="table-scroll">
-            <table class="ingestions-table">
-              <thead>
-                <tr>
-                  <th>Ingestion</th>
-                  <th>Status</th>
-                  <th>Chunks</th>
-                  <th>Duration</th>
-                  <th>Created</th>
-                  <th>Finished</th>
-                  <th>Source</th>
-                </tr>
-              </thead>
-              <tbody id="knowledge-ingestions-body">
-                <tr>
-                  <td colspan="7" class="empty-state">Loading knowledge ingestions...</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </article>
+          <ul id="event-stream" class="event-stream"></ul>
+        </section>
       </section>
 
-      <section class="card">
-        <div class="section-header compact">
-          <div>
-            <h2>Realtime Event Stream</h2>
-            <p class="section-subtitle">Ticket and knowledge ingestion events on a shared live feed.</p>
+      <section class="dashboard-panel" data-dashboard-panel="reports">
+        <section class="section-block">
+          <div class="section-header">
+            <div>
+              <h2>Ingestion Reports</h2>
+              <p class="section-subtitle">Structured ingestion reports for every knowledge upload, including cleaning, metadata, and chunk handoff.</p>
+            </div>
           </div>
-        </div>
-        <ul id="event-stream" class="event-stream"></ul>
+        </section>
+
+        <section class="reports-layout">
+          <article class="card report-sidebar-card">
+            <div class="section-header compact section-header-actions">
+              <div>
+                <h2>Ingestion Runs</h2>
+                <p class="section-subtitle">Select a run to inspect its normalization and vectorization report.</p>
+              </div>
+              <div class="filter-row">
+                <label class="filter-field">
+                  <span>Status</span>
+                  <select id="report-status-filter">
+                    <option value="all">All</option>
+                    <option value="queued">Queued</option>
+                    <option value="processing">Processing</option>
+                    <option value="completed">Completed</option>
+                    <option value="failed">Failed</option>
+                  </select>
+                </label>
+                <label class="filter-field">
+                  <span>Type</span>
+                  <select id="report-type-filter">
+                    <option value="all">All</option>
+                    <option value="official">Official</option>
+                    <option value="technical">Technical</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <div id="report-ingestion-list" class="report-ingestion-list">
+              <div class="empty-state report-list-empty">Loading ingestion reports...</div>
+            </div>
+          </article>
+
+          <article class="card report-detail-card">
+            <div id="ingestion-report-detail" class="report-detail">
+              <div class="empty-state report-detail-empty">Select an ingestion run to view its report.</div>
+            </div>
+          </article>
+        </section>
       </section>
     </main>
-    <script src="./app.js?v=20260316-knowledge-1"></script>
+    <script src="./app.js?v=20260317-reports-1"></script>
   </body>
 </html>

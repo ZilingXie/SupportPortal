@@ -100,15 +100,18 @@ class KnowledgeIngestionParsingTests(unittest.TestCase):
 
         self.assertEqual(document.title, "Agora Console REST API")
         self.assertEqual(
-            document.source_url,
+            document.url,
             "https://docs.agora.io/en/video-calling/channel-management-api/agora-console-rest-api",
         )
         self.assertEqual(document.source_path, "official/agora-console-rest-api.md")
         self.assertEqual(document.knowledge_type, "official")
-        self.assertEqual(document.base_metadata["platform"], "android")
-        self.assertEqual(document.base_metadata["product"], "video-calling")
-        self.assertEqual(document.base_metadata["module"], "channel-management-api")
+        self.assertEqual(document.source_type, "official_markdown_upload")
+        self.assertEqual(document.metadata["platform"], "android")
+        self.assertEqual(document.metadata["product"], "video-calling")
+        self.assertEqual(document.metadata["module"], "channel-management-api")
+        self.assertEqual(document.cleaning_report["parser_name"], "official_markdown_parser")
         self.assertGreaterEqual(len(document.sections), 2)
+        self.assertGreater(len(document.content_blocks), 0)
         self.assertEqual(document.sections[0].h2, "Introduction")
         self.assertTrue(any(section.h2 == "Basic information" for section in document.sections))
 
@@ -122,6 +125,7 @@ class KnowledgeIngestionParsingTests(unittest.TestCase):
         self.assertEqual(document.title, "Agora Console REST API")
         self.assertEqual(document.source_path, "official/agora-console-rest-api.md")
         self.assertEqual(document.knowledge_type, "official")
+        self.assertEqual(document.source_type, "official_markdown_upload")
         self.assertTrue(any(section.h2 == "Create a project" for section in document.sections))
 
     def test_parse_technical_article_groups_steps_and_links(self) -> None:
@@ -134,16 +138,18 @@ class KnowledgeIngestionParsingTests(unittest.TestCase):
 
         self.assertEqual(document.title, "Livestream archive missing first 64 seconds")
         self.assertEqual(document.knowledge_type, "technical")
+        self.assertEqual(document.source_type, "technical_article_api")
         self.assertEqual(
-            document.base_metadata["platform_sdk"],
+            document.metadata["platform_sdk"],
             "Agora Cloud Transcoder used with AWS IVS for RTMP livestreaming.",
         )
-        self.assertEqual(len(document.base_metadata["reference_links"]), 3)
+        self.assertEqual(len(document.metadata["reference_links"]), 3)
         self.assertEqual(document.sections[0].section_type, "issue_overview")
         solution_chunks = [section for section in document.sections if section.section_type == "solution_steps"]
         self.assertEqual([section.h3 for section in solution_chunks], ["Steps 1-2", "Steps 3-4", "Steps 5-5"])
         self.assertTrue(any(section.section_type == "root_cause" for section in document.sections))
         self.assertTrue(any(section.section_type == "prevention_refs" for section in document.sections))
+        self.assertGreater(len(document.content_blocks), 0)
 
     def test_chunk_rows_include_context_prefix_for_technical_articles(self) -> None:
         document = parse_technical_article(
@@ -153,12 +159,25 @@ class KnowledgeIngestionParsingTests(unittest.TestCase):
             ingestion_id="KI-TEST-TECHNICAL",
         )
 
-        rows = _build_chunk_rows(document, document.base_metadata)
+        rows = _build_chunk_rows(document, document.metadata)
         self.assertGreaterEqual(len(rows), 4)
         self.assertEqual(rows[0]["knowledge_type"], "technical")
+        self.assertEqual(rows[0]["metadata"]["source_type"], "technical_article_api")
         self.assertIn("Title: Livestream archive missing first 64 seconds", rows[0]["content"])
         self.assertIn("Platform: Agora Cloud Transcoder used with AWS IVS for RTMP livestreaming.", rows[0]["content"])
         self.assertIn("Section:", rows[0]["content"])
+
+    def test_parse_technical_article_records_missing_sections_as_warnings(self) -> None:
+        document = parse_technical_article(
+            title="Partial technical note",
+            content="**Issue Description:**\nOnly the issue description is present.",
+            source_url="https://internal.example.com/kb/partial-note",
+            ingestion_id="KI-TEST-TECHNICAL-PARTIAL",
+        )
+
+        warnings = document.cleaning_report.get("warnings") if isinstance(document.cleaning_report.get("warnings"), list) else []
+        self.assertTrue(any(str(item).startswith("missing_section:") for item in warnings))
+        self.assertIn("issue_description", document.metadata["section_names"])
 
 
 if __name__ == "__main__":

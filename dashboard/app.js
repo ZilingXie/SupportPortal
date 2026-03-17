@@ -22,7 +22,13 @@ const knowledgeChunksTechnicalEl = document.getElementById("knowledge-chunks-tec
 const knowledgeIngestionsBodyEl = document.getElementById("knowledge-ingestions-body");
 const knowledgeStatusFilterEl = document.getElementById("knowledge-status-filter");
 const knowledgeTypeFilterEl = document.getElementById("knowledge-type-filter");
+const reportStatusFilterEl = document.getElementById("report-status-filter");
+const reportTypeFilterEl = document.getElementById("report-type-filter");
+const reportIngestionListEl = document.getElementById("report-ingestion-list");
+const ingestionReportDetailEl = document.getElementById("ingestion-report-detail");
 const eventStreamEl = document.getElementById("event-stream");
+const dashboardTabEls = Array.from(document.querySelectorAll("[data-dashboard-tab]"));
+const dashboardPanelEls = Array.from(document.querySelectorAll("[data-dashboard-panel]"));
 
 const DASHBOARD_USER = {
   username: "admin",
@@ -31,6 +37,7 @@ const DASHBOARD_USER = {
 
 const KNOWLEDGE_POLL_INTERVAL_MS = 10000;
 const EVENT_STREAM_LIMIT = 20;
+const REPORT_EMPTY_MESSAGE = "Select an ingestion run to view its report.";
 
 let ticketStorageMode = "unknown";
 let knowledgeStorageMode = "unknown";
@@ -39,8 +46,18 @@ let socket = null;
 let heartbeatTimer = null;
 let reconnectTimer = null;
 let knowledgePollTimer = null;
+let currentDashboardTab = "overview";
+let overviewIngestions = [];
+let reportIngestions = [];
+let selectedIngestionReportId = "";
+let currentReportPayload = null;
 
 const knowledgeFilters = {
+  status: "all",
+  knowledge_type: "all",
+};
+
+const reportFilters = {
   status: "all",
   knowledge_type: "all",
 };
@@ -132,6 +149,207 @@ function sanitizeHttpUrl(value) {
     // Ignore malformed URLs.
   }
   return "";
+}
+
+function normalizeStringList(value) {
+  if (typeof value === "string") {
+    return value.trim() ? [value.trim()] : [];
+  }
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((item) => String(item || "").trim()).filter(Boolean);
+}
+
+function normalizeLinkList(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => {
+      if (typeof item === "string") {
+        const url = sanitizeHttpUrl(item);
+        return url ? { label: url, url } : null;
+      }
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+      const url = sanitizeHttpUrl(item.url);
+      if (!url) {
+        return null;
+      }
+      return {
+        label: String(item.label || url).trim(),
+        url,
+      };
+    })
+    .filter(Boolean);
+}
+
+function formatDisplayValue(value) {
+  if (value === null || value === undefined) {
+    return "-";
+  }
+  if (typeof value === "boolean") {
+    return value ? "Yes" : "No";
+  }
+  if (typeof value === "number") {
+    return formatDecimal(value, 2);
+  }
+  const normalized = String(value).trim();
+  return normalized || "-";
+}
+
+function humanizeLabel(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    return "-";
+  }
+  return normalized
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function userFacingSourceType(value, fallback = "-") {
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    return fallback;
+  }
+  if (normalized === "official_markdown_upload") {
+    return "Official Markdown Upload";
+  }
+  if (normalized === "technical_article_api") {
+    return "Technical Article API";
+  }
+  return humanizeLabel(normalized);
+}
+
+function renderTokenList(values, emptyLabel = "-") {
+  const items = normalizeStringList(values);
+  if (!items.length) {
+    return `<p class="report-muted">${escapeHtml(emptyLabel)}</p>`;
+  }
+  return `
+    <div class="report-token-list">
+      ${items.map((item) => `<span class="report-token">${escapeHtml(item)}</span>`).join("")}
+    </div>
+  `;
+}
+
+function renderLinkList(values) {
+  const links = normalizeLinkList(values);
+  if (!links.length) {
+    return `<p class="report-muted">-</p>`;
+  }
+  return `
+    <ul class="report-list report-links">
+      ${links
+        .map(
+          (item) =>
+            `<li><a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(
+              item.label
+            )}</a></li>`
+        )
+        .join("")}
+    </ul>
+  `;
+}
+
+function renderDefinitionGrid(items) {
+  const normalizedItems = items.filter((item) => item && item.label);
+  if (!normalizedItems.length) {
+    return `<p class="report-muted">-</p>`;
+  }
+  return `
+    <div class="report-grid">
+      ${normalizedItems
+        .map(
+          (item) => `
+            <div class="report-grid-item">
+              <span class="report-grid-label">${escapeHtml(item.label)}</span>
+              <strong class="report-grid-value">${escapeHtml(formatDisplayValue(item.value))}</strong>
+            </div>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderCountList(record) {
+  if (!record || typeof record !== "object") {
+    return `<p class="report-muted">-</p>`;
+  }
+  const entries = Object.entries(record).filter(([, value]) => Number(value || 0) > 0);
+  if (!entries.length) {
+    return `<p class="report-muted">-</p>`;
+  }
+  return `
+    <ul class="report-list">
+      ${entries
+        .map(
+          ([key, value]) =>
+            `<li><strong>${escapeHtml(humanizeLabel(key))}</strong><span>${escapeHtml(
+              formatDisplayValue(value)
+            )}</span></li>`
+        )
+        .join("")}
+    </ul>
+  `;
+}
+
+function renderPreviewList(items, emptyLabel = "-") {
+  if (!Array.isArray(items) || !items.length) {
+    return `<p class="report-muted">${escapeHtml(emptyLabel)}</p>`;
+  }
+  return `
+    <div class="report-preview-list">
+      ${items
+        .map((item) => {
+          const heading = item.h3 || item.h2 || item.section_type || item.heading || "Section";
+          const preview = String(item.preview || item.text || "").trim();
+          return `
+            <article class="report-preview-item">
+              <h4>${escapeHtml(humanizeLabel(heading))}</h4>
+              <p>${escapeHtml(preview || "-")}</p>
+            </article>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderWarningList(warnings, errorMessage) {
+  const items = normalizeStringList(warnings);
+  const normalizedError = String(errorMessage || "").trim();
+  if (normalizedError && !items.includes(normalizedError)) {
+    items.push(normalizedError);
+  }
+  if (!items.length) {
+    return `<p class="report-muted">No warnings or errors recorded.</p>`;
+  }
+  return `
+    <ul class="report-list report-warnings">
+      ${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+    </ul>
+  `;
+}
+
+function renderRulesList(values, emptyLabel = "-") {
+  const items = normalizeStringList(values);
+  if (!items.length) {
+    return `<p class="report-muted">${escapeHtml(emptyLabel)}</p>`;
+  }
+  return `
+    <ul class="report-list">
+      ${items.map((item) => `<li>${escapeHtml(humanizeLabel(item))}</li>`).join("")}
+    </ul>
+  `;
+}
+
+function warningCountFor(ingestion) {
+  return Number(ingestion?.cleaning_report_summary?.warning_count || 0);
 }
 
 function UserProfileChip({ username, role }) {
@@ -268,7 +486,8 @@ function renderIngestionSource(ingestion) {
 }
 
 function renderKnowledgeIngestions(ingestions) {
-  if (!Array.isArray(ingestions) || ingestions.length === 0) {
+  overviewIngestions = Array.isArray(ingestions) ? ingestions : [];
+  if (!overviewIngestions.length) {
     knowledgeIngestionsBodyEl.innerHTML = `
       <tr>
         <td colspan="7" class="empty-state">No knowledge ingestions found for the selected filters.</td>
@@ -277,21 +496,31 @@ function renderKnowledgeIngestions(ingestions) {
     return;
   }
 
-  knowledgeIngestionsBodyEl.innerHTML = ingestions
+  knowledgeIngestionsBodyEl.innerHTML = overviewIngestions
     .map((ingestion) => {
       const title =
         String(ingestion?.title || "").trim()
         || String(ingestion?.file_name || "").trim()
         || String(ingestion?.ingestion_id || "").trim();
-      const entryType = String(ingestion?.entry_type || "").trim() || "-";
-      const knowledgeType = String(ingestion?.knowledge_type || "").trim() || "-";
+      const sourceType = userFacingSourceType(ingestion?.source_type, ingestion?.entry_type || "-");
+      const knowledgeType = humanizeLabel(ingestion?.knowledge_type || "-");
+      const normalizationStatus = humanizeLabel(ingestion?.normalization_status || "-");
+      const parserSummary = ingestion?.parser_name
+        ? `${humanizeLabel(ingestion.parser_name)}${ingestion?.parser_version ? ` (${ingestion.parser_version})` : ""}`
+        : "-";
+      const warningCount = warningCountFor(ingestion);
+      const dedupeAction = ingestion?.dedupe_action ? humanizeLabel(ingestion.dedupe_action) : "";
       const errorMessage = String(ingestion?.error_message || "").trim();
+      const ingestionId = String(ingestion?.ingestion_id || "").trim();
 
       return `
-        <tr>
+        <tr class="interactive-row" data-ingestion-id="${escapeHtml(ingestionId)}">
           <td>
             <p class="ingestion-title">${escapeHtml(title)}</p>
-            <p class="ingestion-meta">${escapeHtml(ingestion.ingestion_id || "-")} · ${escapeHtml(entryType)} · ${escapeHtml(knowledgeType)}</p>
+            <p class="ingestion-meta">${escapeHtml(ingestionId || "-")} · ${escapeHtml(knowledgeType)} · ${escapeHtml(sourceType)}</p>
+            <p class="ingestion-meta">Normalization: ${escapeHtml(normalizationStatus)} · Parser: ${escapeHtml(parserSummary)}</p>
+            ${warningCount ? `<p class="ingestion-warning">Warnings: ${escapeHtml(String(warningCount))}</p>` : ""}
+            ${dedupeAction ? `<p class="ingestion-meta">Dedupe: ${escapeHtml(dedupeAction)}</p>` : ""}
             ${errorMessage ? `<p class="ingestion-error">${escapeHtml(errorMessage)}</p>` : ""}
           </td>
           <td>${renderStatusPill(ingestion.status)}</td>
@@ -318,6 +547,331 @@ async function loadKnowledgeIngestions() {
   renderKnowledgeIngestions(Array.isArray(payload?.ingestions) ? payload.ingestions : []);
 }
 
+function renderReportListEmpty(message) {
+  reportIngestionListEl.innerHTML = `<div class="empty-state report-list-empty">${escapeHtml(message)}</div>`;
+}
+
+function renderReportDetailEmpty(message) {
+  ingestionReportDetailEl.innerHTML = `<div class="empty-state report-detail-empty">${escapeHtml(message)}</div>`;
+}
+
+function renderReportIngestionList(ingestions) {
+  reportIngestions = Array.isArray(ingestions) ? ingestions : [];
+  if (!reportIngestions.length) {
+    renderReportListEmpty("No ingestion reports found for the selected filters.");
+    return;
+  }
+  reportIngestionListEl.innerHTML = reportIngestions
+    .map((ingestion) => {
+      const ingestionId = String(ingestion?.ingestion_id || "").trim();
+      const title =
+        String(ingestion?.title || "").trim()
+        || String(ingestion?.file_name || "").trim()
+        || ingestionId;
+      const isActive = ingestionId && ingestionId === selectedIngestionReportId;
+      const warningCount = warningCountFor(ingestion);
+      const dedupeAction = ingestion?.dedupe_action ? humanizeLabel(ingestion.dedupe_action) : "New Document";
+      return `
+        <button
+          type="button"
+          class="report-ingestion-item${isActive ? " active" : ""}"
+          data-ingestion-id="${escapeHtml(ingestionId)}"
+        >
+          <div class="report-ingestion-header">
+            <span class="report-ingestion-title">${escapeHtml(title)}</span>
+            ${renderStatusPill(ingestion.status)}
+          </div>
+          <div class="report-ingestion-meta">${escapeHtml(ingestionId)} · ${escapeHtml(
+            humanizeLabel(ingestion.knowledge_type || "-")
+          )}</div>
+          <div class="report-ingestion-meta">${escapeHtml(userFacingSourceType(ingestion.source_type))}</div>
+          <div class="report-ingestion-meta">Chunks: ${escapeHtml(formatDisplayValue(ingestion.chunk_count))} · ${escapeHtml(
+            dedupeAction
+          )}</div>
+          <div class="report-ingestion-meta">Warnings: ${escapeHtml(String(warningCount))}</div>
+        </button>
+      `;
+    })
+    .join("");
+}
+
+function renderIngestionReport(report) {
+  const ingestion = report?.ingestion || {};
+  const summary = report?.summary || {};
+  const cleaningReport = report?.cleaning_report || {};
+  const metadata = report?.metadata || {};
+  const normalizedSummary = report?.normalized_summary || {};
+  const chunkHandoff = report?.chunk_handoff || {};
+  const warnings = Array.isArray(report?.warnings) ? report.warnings : [];
+
+  const runSummary = renderDefinitionGrid([
+    { label: "Ingestion ID", value: summary.ingestion_id },
+    { label: "Status", value: summary.status },
+    { label: "Normalization", value: summary.normalization_status },
+    { label: "Knowledge Type", value: humanizeLabel(summary.knowledge_type) },
+    { label: "Source Type", value: userFacingSourceType(summary.source_type) },
+    { label: "Document ID", value: summary.document_id },
+    { label: "Chunk Count", value: summary.chunk_count },
+    { label: "Duration", value: formatDuration(summary.duration_seconds) },
+    { label: "Dedupe Action", value: humanizeLabel(summary.dedupe_action) },
+    { label: "Dedupe Target", value: summary.dedupe_target_doc_id },
+    { label: "Created", value: formatDateTime(summary.created_at) },
+    { label: "Finished", value: formatDateTime(summary.finished_at) },
+  ]);
+
+  const parserSection = renderDefinitionGrid([
+    { label: "Parser", value: summary.parser_name || cleaningReport.parser_name },
+    { label: "Parser Version", value: summary.parser_version || cleaningReport.parser_version },
+    { label: "Template Detected", value: cleaningReport.template_detected },
+    { label: "Source Hash", value: cleaningReport.source_hash },
+    { label: "Processed At", value: formatDateTime(cleaningReport.processed_at) },
+  ]);
+
+  const metadataSection = renderDefinitionGrid([
+    { label: "Title", value: metadata.title || ingestion.title },
+    { label: "URL", value: metadata.url || ingestion.source_url },
+    { label: "Language", value: metadata.language },
+    { label: "Product", value: metadata.product || metadata.product_area },
+    { label: "Module", value: metadata.module },
+    { label: "Platform", value: metadata.platform || metadata.platform_sdk },
+    { label: "Metadata Source", value: metadata.metadata_source },
+    { label: "Metadata Model", value: metadata.metadata_model },
+    { label: "Metadata Generated", value: formatDateTime(metadata.metadata_generated_at) },
+    { label: "Metadata Version", value: metadata.metadata_version },
+  ]);
+
+  const normalizedSection = renderDefinitionGrid([
+    { label: "Source Path", value: normalizedSummary.source_path },
+    { label: "Source Updated", value: formatDateTime(normalizedSummary.source_updated_at) },
+    { label: "Section Count", value: normalizedSummary.section_count },
+    { label: "Block Count", value: normalizedSummary.block_count },
+    { label: "Language", value: normalizedSummary.language },
+    { label: "Product", value: normalizedSummary.product },
+    { label: "Module", value: normalizedSummary.module },
+  ]);
+
+  const chunkSection = renderDefinitionGrid([
+    { label: "Mode", value: humanizeLabel(chunkHandoff.mode) },
+    { label: "Content Blocks", value: chunkHandoff.content_block_count },
+    { label: "Chunk Count", value: chunkHandoff.chunk_count },
+  ]);
+
+  ingestionReportDetailEl.innerHTML = `
+    <section class="report-section">
+      <div class="report-section-header">
+        <div>
+          <h3>Run Summary</h3>
+          <p class="section-subtitle">${escapeHtml(String(ingestion?.title || summary?.title || "Untitled Ingestion"))}</p>
+        </div>
+        ${renderStatusPill(summary.status)}
+      </div>
+      ${runSummary}
+    </section>
+
+    <section class="report-section">
+      <div class="report-section-header">
+        <div>
+          <h3>Parser &amp; Cleaning</h3>
+          <p class="section-subtitle">Template detection, applied rules, and cleanup notes.</p>
+        </div>
+      </div>
+      ${parserSection}
+      <div class="report-subsection">
+        <h4>Rules Applied</h4>
+        ${renderRulesList(cleaningReport.rules_applied)}
+      </div>
+      <div class="report-subsection">
+        <h4>Removed Noise</h4>
+        ${renderRulesList(cleaningReport.removed_noise)}
+      </div>
+      ${Array.isArray(cleaningReport.missing_sections) && cleaningReport.missing_sections.length
+        ? `
+          <div class="report-subsection">
+            <h4>Missing Sections</h4>
+            ${renderRulesList(cleaningReport.missing_sections)}
+          </div>
+        `
+        : ""}
+    </section>
+
+    <section class="report-section">
+      <div class="report-section-header">
+        <div>
+          <h3>Metadata</h3>
+          <p class="section-subtitle">Rule-first metadata with optional LLM enrichment.</p>
+        </div>
+      </div>
+      ${metadataSection}
+      <div class="report-subsection">
+        <h4>Tags</h4>
+        ${renderTokenList(metadata.tags)}
+      </div>
+      <div class="report-subsection">
+        <h4>Capabilities / Symptoms</h4>
+        ${renderTokenList(metadata.capabilities || metadata.symptoms)}
+      </div>
+      <div class="report-subsection">
+        <h4>Reference Links</h4>
+        ${renderLinkList(metadata.reference_links)}
+      </div>
+    </section>
+
+    <section class="report-section">
+      <div class="report-section-header">
+        <div>
+          <h3>Normalized Document Summary</h3>
+          <p class="section-subtitle">Structured document snapshot used as the chunking input.</p>
+        </div>
+      </div>
+      ${normalizedSection}
+      <div class="report-subsection">
+        <h4>Block Counts by Type</h4>
+        ${renderCountList(normalizedSummary.block_counts_by_type)}
+      </div>
+      <div class="report-subsection">
+        <h4>Section Preview</h4>
+        ${renderPreviewList(normalizedSummary.sections)}
+      </div>
+    </section>
+
+    <section class="report-section">
+      <div class="report-section-header">
+        <div>
+          <h3>Chunk Handoff</h3>
+          <p class="section-subtitle">What was sent into vectorization after normalization.</p>
+        </div>
+      </div>
+      ${chunkSection}
+      <div class="report-subsection">
+        <h4>Section to Chunk Counts</h4>
+        ${renderCountList(chunkHandoff.section_to_chunk_counts)}
+      </div>
+      <div class="report-subsection">
+        <h4>Chunk Preview</h4>
+        ${renderPreviewList(chunkHandoff.chunks, "No chunks generated.")}
+      </div>
+    </section>
+
+    <section class="report-section">
+      <div class="report-section-header">
+        <div>
+          <h3>Warnings / Errors</h3>
+          <p class="section-subtitle">Anything the cleaner, parser, or ingestion run flagged.</p>
+        </div>
+      </div>
+      ${renderWarningList(warnings, ingestion.error_message)}
+    </section>
+
+    <section class="report-section">
+      <details class="raw-json-panel">
+        <summary>Raw JSON</summary>
+        <pre class="report-json">${escapeHtml(JSON.stringify(report.raw || report, null, 2))}</pre>
+      </details>
+    </section>
+  `;
+}
+
+async function loadKnowledgeIngestionReport(ingestionId) {
+  const normalizedId = String(ingestionId || "").trim();
+  if (!normalizedId) {
+    selectedIngestionReportId = "";
+    currentReportPayload = null;
+    renderReportDetailEmpty(REPORT_EMPTY_MESSAGE);
+    return;
+  }
+  selectedIngestionReportId = normalizedId;
+  renderReportIngestionList(reportIngestions);
+  renderReportDetailEmpty("Loading ingestion report...");
+  const payload = await fetchJson(`/api/dashboard/knowledge-ingestions/${encodeURIComponent(normalizedId)}/report`);
+  currentReportPayload = payload;
+  selectedIngestionReportId = String(payload?.ingestion?.ingestion_id || normalizedId);
+  renderReportIngestionList(reportIngestions);
+  renderIngestionReport(payload);
+}
+
+async function loadKnowledgeReportList({ refreshSelected = false } = {}) {
+  const query = new URLSearchParams({
+    limit: "50",
+    status: reportFilters.status,
+    knowledge_type: reportFilters.knowledge_type,
+  });
+  const payload = await fetchJson(`/api/dashboard/knowledge-ingestions?${query.toString()}`);
+  const ingestions = Array.isArray(payload?.ingestions) ? payload.ingestions : [];
+  reportIngestions = ingestions;
+
+  if (!reportIngestions.length) {
+    selectedIngestionReportId = "";
+    currentReportPayload = null;
+    renderReportIngestionList([]);
+    renderReportDetailEmpty("No ingestion reports found for the selected filters.");
+    return;
+  }
+
+  const selectionExists = reportIngestions.some(
+    (ingestion) => String(ingestion?.ingestion_id || "").trim() === selectedIngestionReportId
+  );
+  if (!selectionExists) {
+    selectedIngestionReportId = String(reportIngestions[0]?.ingestion_id || "").trim();
+  }
+  renderReportIngestionList(reportIngestions);
+  if (
+    selectedIngestionReportId
+    && (!currentReportPayload
+      || String(currentReportPayload?.ingestion?.ingestion_id || "").trim() !== selectedIngestionReportId
+      || refreshSelected)
+  ) {
+    await loadKnowledgeIngestionReport(selectedIngestionReportId);
+  }
+}
+
+function setActiveDashboardTab(tabName) {
+  currentDashboardTab = tabName === "reports" ? "reports" : "overview";
+  dashboardTabEls.forEach((button) => {
+    button.classList.toggle("active", button.dataset.dashboardTab === currentDashboardTab);
+  });
+  dashboardPanels.forEach((panel) => {
+    panel.classList.toggle("active", panel.dataset.dashboardPanel === currentDashboardTab);
+  });
+}
+
+async function openIngestionReport(ingestionId) {
+  const normalizedId = String(ingestionId || "").trim();
+  if (!normalizedId) {
+    return;
+  }
+  setActiveDashboardTab("reports");
+  selectedIngestionReportId = normalizedId;
+  const inCurrentList = reportIngestions.some(
+    (ingestion) => String(ingestion?.ingestion_id || "").trim() === normalizedId
+  );
+  if (!inCurrentList && (reportFilters.status !== "all" || reportFilters.knowledge_type !== "all")) {
+    reportFilters.status = "all";
+    reportFilters.knowledge_type = "all";
+    if (reportStatusFilterEl) {
+      reportStatusFilterEl.value = "all";
+    }
+    if (reportTypeFilterEl) {
+      reportTypeFilterEl.value = "all";
+    }
+    await loadKnowledgeReportList({ refreshSelected: false });
+  }
+  await loadKnowledgeIngestionReport(normalizedId);
+}
+
+function bindDashboardTabs() {
+  dashboardTabEls.forEach((button) => {
+    button.addEventListener("click", () => {
+      const tabName = String(button.dataset.dashboardTab || "overview");
+      setActiveDashboardTab(tabName);
+      if (tabName === "reports" && selectedIngestionReportId) {
+        loadKnowledgeIngestionReport(selectedIngestionReportId).catch((error) => {
+          setRealtimeStatus(`Failed to load ingestion report: ${error.message}`);
+        });
+      }
+    });
+  });
+}
+
 function normalizeEvent(event) {
   const eventName = String(event?.event || "ticket_updated");
   const ticketId = String(event?.ticket_id || "").trim();
@@ -333,6 +887,8 @@ function normalizeEvent(event) {
     title: String(event?.title || "").trim(),
     message: String(event?.message || "").trim(),
     status: String(event?.status || "").trim(),
+    sourceType: String(event?.source_type || "").trim(),
+    dedupeAction: String(event?.dedupe_action || "").trim(),
     createdAt: String(event?.created_at || new Date().toISOString()),
     isKnowledge,
   };
@@ -349,6 +905,10 @@ function appendEvent(event) {
   if (isAlert) {
     classNames.push("alert");
   }
+  if (normalized.ingestionId) {
+    classNames.push("interactive");
+    item.dataset.ingestionId = normalized.ingestionId;
+  }
   item.className = classNames.join(" ");
 
   const identityText = normalized.ingestionId
@@ -357,6 +917,9 @@ function appendEvent(event) {
   const secondaryMessage = normalized.title
     ? escapeHtml(normalized.title)
     : escapeHtml(normalized.message || normalized.status || "Update received");
+  const extraMeta = [normalized.sourceType ? userFacingSourceType(normalized.sourceType) : "", normalized.dedupeAction ? humanizeLabel(normalized.dedupeAction) : ""]
+    .filter(Boolean)
+    .join(" · ");
 
   item.innerHTML = `
     <div class="event-title">
@@ -365,6 +928,7 @@ function appendEvent(event) {
     </div>
     <div>${secondaryMessage}</div>
     ${normalized.title && normalized.message ? `<div class="event-meta">${escapeHtml(normalized.message)}</div>` : ""}
+    ${extraMeta ? `<div class="event-meta">${escapeHtml(extraMeta)}</div>` : ""}
     <div class="event-meta">${escapeHtml(formatDateTime(normalized.createdAt))}</div>
   `;
   eventStreamEl.prepend(item);
@@ -398,12 +962,20 @@ function closeDashboardSocket() {
   }
 }
 
+async function refreshKnowledgeViews({ refreshReportDetail = false } = {}) {
+  await Promise.all([
+    loadKnowledgeMetrics(),
+    loadKnowledgeIngestions(),
+    loadKnowledgeReportList({ refreshSelected: refreshReportDetail }),
+  ]);
+}
+
 function startKnowledgePolling() {
   if (knowledgePollTimer) {
     clearInterval(knowledgePollTimer);
   }
   knowledgePollTimer = setInterval(() => {
-    Promise.all([loadKnowledgeMetrics(), loadKnowledgeIngestions()]).catch((error) => {
+    refreshKnowledgeViews({ refreshReportDetail: currentDashboardTab === "reports" }).catch((error) => {
       setRealtimeStatus(`Knowledge refresh failed: ${error.message}`);
     });
   }, KNOWLEDGE_POLL_INTERVAL_MS);
@@ -440,7 +1012,11 @@ function setupWebSocket() {
     appendEvent(payload);
     try {
       if (isKnowledgeEvent(payload?.event)) {
-        await Promise.all([loadKnowledgeMetrics(), loadKnowledgeIngestions()]);
+        await refreshKnowledgeViews({
+          refreshReportDetail:
+            currentDashboardTab === "reports"
+            || String(payload?.ingestion_id || "").trim() === selectedIngestionReportId,
+        });
       } else {
         await loadMetrics();
       }
@@ -471,6 +1047,51 @@ function bindKnowledgeFilters() {
   });
 }
 
+function bindReportFilters() {
+  reportStatusFilterEl?.addEventListener("change", () => {
+    reportFilters.status = reportStatusFilterEl.value;
+    loadKnowledgeReportList({ refreshSelected: false }).catch((error) => {
+      setRealtimeStatus(`Failed to filter ingestion reports: ${error.message}`);
+    });
+  });
+  reportTypeFilterEl?.addEventListener("change", () => {
+    reportFilters.knowledge_type = reportTypeFilterEl.value;
+    loadKnowledgeReportList({ refreshSelected: false }).catch((error) => {
+      setRealtimeStatus(`Failed to filter ingestion reports: ${error.message}`);
+    });
+  });
+}
+
+function bindIngestionNavigation() {
+  knowledgeIngestionsBodyEl?.addEventListener("click", (event) => {
+    const row = event.target.closest("[data-ingestion-id]");
+    if (!row) {
+      return;
+    }
+    openIngestionReport(row.dataset.ingestionId).catch((error) => {
+      setRealtimeStatus(`Failed to open ingestion report: ${error.message}`);
+    });
+  });
+  reportIngestionListEl?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-ingestion-id]");
+    if (!button) {
+      return;
+    }
+    openIngestionReport(button.dataset.ingestionId).catch((error) => {
+      setRealtimeStatus(`Failed to open ingestion report: ${error.message}`);
+    });
+  });
+  eventStreamEl?.addEventListener("click", (event) => {
+    const item = event.target.closest("[data-ingestion-id]");
+    if (!item) {
+      return;
+    }
+    openIngestionReport(item.dataset.ingestionId).catch((error) => {
+      setRealtimeStatus(`Failed to open ingestion report: ${error.message}`);
+    });
+  });
+}
+
 async function handleLogoutClick() {
   if (logoutLoading) {
     return;
@@ -491,12 +1112,17 @@ async function handleLogoutClick() {
 
 async function initializeDashboard() {
   renderHeaderUserControls();
+  bindDashboardTabs();
   bindKnowledgeFilters();
+  bindReportFilters();
+  bindIngestionNavigation();
+  setActiveDashboardTab("overview");
   await detectStorageModes();
   await Promise.all([
     loadMetrics(),
     loadKnowledgeMetrics(),
     loadKnowledgeIngestions(),
+    loadKnowledgeReportList({ refreshSelected: false }),
     loadRecentEvents(),
   ]);
   setRealtimeStatus("Realtime: connecting...");
@@ -507,4 +1133,5 @@ async function initializeDashboard() {
 initializeDashboard().catch((error) => {
   startKnowledgePolling();
   setRealtimeStatus(`Failed to load dashboard: ${error.message}`);
+  renderReportDetailEmpty(REPORT_EMPTY_MESSAGE);
 });
