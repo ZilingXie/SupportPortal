@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 from backend.services.knowledge_monitoring import (
@@ -110,10 +111,17 @@ class KnowledgeMonitoringTests(unittest.TestCase):
 
     def test_document_upsert_sql_keeps_metadata_version_placeholder(self) -> None:
         repository_source = Path("backend/repositories/knowledge_repository.py").read_text(encoding="utf-8")
-        self.assertIn(
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, TRUE, %s, %s)",
+        match = re.search(
+            r"INSERT INTO \{\}\s*\(\s*document_id,.*?updated_at\s*\)\s*VALUES \((.*?)\)\s*ON CONFLICT \(document_id\) DO UPDATE SET",
             repository_source,
+            re.DOTALL,
         )
+        self.assertIsNotNone(match)
+        values_clause = match.group(1)
+        self.assertGreaterEqual(values_clause.count("%s"), 26)
+        self.assertIn("metadata_version = EXCLUDED.metadata_version", repository_source)
+        self.assertIn("metadata_missing_flags = EXCLUDED.metadata_missing_flags", repository_source)
+        self.assertIn("is_stale = EXCLUDED.is_stale", repository_source)
 
 
 if __name__ == "__main__":

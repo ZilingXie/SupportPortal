@@ -1573,6 +1573,61 @@ def dashboard_knowledge_ingestion_report(ingestion_id: str) -> dict[str, Any]:
         _raise_rag_service_http_error(exc)
 
 
+@app.get("/api/dashboard/rag/{page}")
+def dashboard_rag_page(
+    page: str,
+    range: str = Query(default="7d", pattern="^(7d|30d)$"),
+    source_type: str | None = Query(default=None),
+    product: str | None = Query(default=None),
+    language: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    query_type: str | None = Query(default=None),
+    retrieval_strategy: str | None = Query(default=None),
+    chunk_strategy: str | None = Query(default=None),
+    experiment_id: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    cursor: str | None = Query(default=None),
+) -> dict[str, Any]:
+    try:
+        return rag_service_client.rag_dashboard_page(
+            page,
+            range_value=range,
+            filters={
+                "source_type": source_type,
+                "product": product,
+                "language": language,
+                "status": status,
+                "query_type": query_type,
+                "retrieval_strategy": retrieval_strategy,
+                "chunk_strategy": chunk_strategy,
+                "experiment_id": experiment_id,
+                "limit": limit,
+                "cursor": cursor,
+            },
+        )
+    except RagServiceError:
+        return {
+            "range": range,
+            "filters": {
+                "source_type": source_type or "all",
+                "product": product or "all",
+                "language": language or "all",
+                "status": status or "all",
+                "query_type": query_type or "all",
+                "retrieval_strategy": retrieval_strategy or "all",
+                "chunk_strategy": chunk_strategy or "all",
+                "experiment_id": experiment_id or "all",
+                "limit": limit,
+                "cursor": cursor,
+            },
+            "cards": {},
+            "charts": {},
+            "tables": {},
+            "has_eval_data": False,
+            "last_refreshed_at": now_iso(),
+        }
+
+
 @app.get("/api/dashboard/events")
 def dashboard_events(limit: int = Query(default=20, ge=1, le=100)) -> dict[str, Any]:
     rows = ticket_repository.list_events(limit=limit)
