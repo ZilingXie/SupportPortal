@@ -3,9 +3,11 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from backend.services.knowledge_ingestion import (
     _build_chunk_rows,
+    _build_shadow_chunk_rows,
     parse_official_markdown_file,
     parse_official_markdown_content,
     parse_technical_article,
@@ -92,6 +94,21 @@ In most cases, this type of delay is caused by startup latency within the Cloud 
 
 
 class KnowledgeIngestionParsingTests(unittest.TestCase):
+    class _FakeProvider:
+        provider_name = "siliconflow_qwen3"
+        model_id = "Qwen/Qwen3-Embedding-8B"
+        vector_dim = 1024
+
+        def embed_documents(self, texts: list[str]) -> list[list[float]]:
+            vectors: list[list[float]] = []
+            for text in texts:
+                score = float(len(text or ""))
+                vectors.append([score, score / 2.0, 1.0])
+            return vectors
+
+        def count_tokens(self, text: str) -> int:
+            return max(1, len(str(text or "").split()))
+
     def test_parse_official_markdown_extracts_front_matter_and_sections(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             markdown_path = Path(tmpdir) / "agora-console-rest-api.md"
@@ -166,6 +183,26 @@ class KnowledgeIngestionParsingTests(unittest.TestCase):
         self.assertIn("Title: Livestream archive missing first 64 seconds", rows[0]["content"])
         self.assertIn("Platform: Agora Cloud Transcoder used with AWS IVS for RTMP livestreaming.", rows[0]["content"])
         self.assertIn("Section:", rows[0]["content"])
+
+    def test_shadow_chunk_rows_capture_shadow_role_and_strategy(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            document = parse_official_markdown_content(
+                raw_markdown=SAMPLE_OFFICIAL_MARKDOWN,
+                file_name="agora-console-rest-api.md",
+                ingestion_id="KI-TEST-OFFICIAL-SHADOW",
+            )
+
+            result = _build_shadow_chunk_rows(
+                document,
+                document.metadata,
+                provider=self._FakeProvider(),
+            )
+
+        self.assertGreaterEqual(len(result.rows), 1)
+        self.assertEqual(result.index_role, "shadow")
+        self.assertEqual(result.chunk_strategy, "semantic_qwen3_v1")
+        self.assertTrue(all(row["index_role"] == "shadow" for row in result.rows))
+        self.assertTrue(all(trace["index_role"] == "shadow" for trace in result.traces))
 
     def test_parse_technical_article_records_missing_sections_as_warnings(self) -> None:
         document = parse_technical_article(

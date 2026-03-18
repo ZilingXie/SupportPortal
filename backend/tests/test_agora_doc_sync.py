@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from backend.services.agora_doc_sync import (
     DownloadResult,
     SyncConfig,
     UploadResult,
+    _ingest_single_document,
     build_sync_report,
     extract_ingestion_id_from_upload_payload,
     extract_markdown_urls_from_llms_text,
@@ -43,6 +46,63 @@ class _Clock:
         if not self._values:
             raise AssertionError("Clock exhausted")
         return self._values.pop(0)
+
+
+class _FakeRepository:
+    def __init__(self) -> None:
+        self.ingestion = {
+            "ingestion_id": "KI-LOCAL-1",
+            "status": "completed",
+        }
+        self.processed_source_doc_id: str | None = None
+        self.failed_source_doc_id: str | None = None
+
+    def upsert_source_document(self, **kwargs: object) -> dict:
+        return {
+            "source_doc_id": "SRC-LOCAL-1",
+            "knowledge_type": "official",
+            "source_system": "agora",
+            "content_format": "markdown",
+            "raw_content": kwargs.get("raw_content"),
+            "checksum": "checksum-1",
+            "metadata": kwargs.get("metadata") or {},
+        }
+
+    def create_sync_run(self, **_: object) -> dict:
+        return {"sync_run_id": "SYNC-LOCAL-1"}
+
+    def update_sync_run(self, *args: object, **kwargs: object) -> None:
+        _ = args
+        _ = kwargs
+        return None
+
+    def create_ingestion(self, **_: object) -> dict:
+        return {"ingestion_id": "KI-LOCAL-1"}
+
+    def mark_source_document_processed(self, source_doc_id: str, *, processed_ingestion_id: str) -> None:
+        _ = processed_ingestion_id
+        self.processed_source_doc_id = source_doc_id
+
+    def mark_source_document_failed(self, source_doc_id: str, *, error_message: str) -> None:
+        _ = error_message
+        self.failed_source_doc_id = source_doc_id
+
+    def get_ingestion(self, ingestion_id: str, *, include_content: bool = False) -> dict:
+        _ = ingestion_id
+        _ = include_content
+        return dict(self.ingestion)
+
+    def get_ingestion_report(self, ingestion_id: str) -> dict:
+        _ = ingestion_id
+        return {
+            "summary": {
+                "status": "completed",
+                "chunk_count": 4,
+                "document_id": "official-123",
+                "dedupe_action": "new_document",
+            },
+            "warnings": [],
+        }
 
 
 class AgoraDocSyncTests(unittest.TestCase):
@@ -150,7 +210,7 @@ class AgoraDocSyncTests(unittest.TestCase):
     def test_build_sync_report_aggregates_failure_counts(self) -> None:
         config = SyncConfig(
             api_base_url="http://localhost:8080",
-            output_dir=Path("/tmp/official_doc"),
+            output_dir=Path("/tmp/local_knowledge/official/raw"),
             limit=3,
         )
         report = build_sync_report(
@@ -196,6 +256,27 @@ class AgoraDocSyncTests(unittest.TestCase):
         self.assertEqual(report["uploads"]["upload_failed"], 1)
         self.assertEqual(report["uploads"]["ingestion_failed"], 1)
         self.assertEqual(report["uploads"]["timed_out"], 1)
+
+    def test_ingest_single_document_runs_local_direct_mode(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            markdown_path = root / "en" / "video-calling" / "overview.md"
+            markdown_path.parent.mkdir(parents=True, exist_ok=True)
+            markdown_path.write_text("# Overview\n", encoding="utf-8")
+            repository = _FakeRepository()
+
+            with patch("backend.services.local_source_sync.process_knowledge_ingestion") as process:
+                result = _ingest_single_document(
+                    file_path=markdown_path,
+                    output_dir=root,
+                    repository=repository,
+                )
+
+        self.assertEqual(result.upload_status, "completed")
+        self.assertEqual(result.processing_mode, "local_direct")
+        self.assertEqual(result.ingestion_id, "KI-LOCAL-1")
+        self.assertEqual(repository.processed_source_doc_id, "SRC-LOCAL-1")
+        process.assert_called_once()
 
 
 if __name__ == "__main__":

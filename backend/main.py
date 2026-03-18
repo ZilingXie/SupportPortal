@@ -21,6 +21,10 @@ from backend.repositories.ticket_repository import (
     TicketRepository,
     create_ticket_repository,
 )
+from backend.services.embedding_provider import (
+    DEFAULT_PGVECTOR_TABLE,
+    embedding_model_id,
+)
 from backend.services.emotion_reply import generate_emotion_reply
 from backend.services.event_bus import AsyncRedisEventBus
 from backend.services.knowledge_monitoring import build_empty_knowledge_metrics
@@ -889,12 +893,12 @@ def _sanitize_uploaded_file_name(file_name: str) -> str:
 
 
 def _knowledge_embedding_model() -> str:
-    return (os.getenv("OPENAI_EMBEDDING_MODEL") or "text-embedding-3-large").strip()
+    return embedding_model_id()
 
 
 def _knowledge_vector_table() -> str:
     schema = (os.getenv("PGVECTOR_SCHEMA") or "supportportal").strip() or "supportportal"
-    raw_table = (os.getenv("PGVECTOR_TABLE") or "docagent_chunks").strip() or "docagent_chunks"
+    raw_table = (os.getenv("PGVECTOR_TABLE") or DEFAULT_PGVECTOR_TABLE).strip() or DEFAULT_PGVECTOR_TABLE
     if "." in raw_table:
         return raw_table
     return f"{schema}.{raw_table}"

@@ -13,7 +13,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from backend.repositories.knowledge_repository import KnowledgeRepository
 
 SITEMAP_URL = "https://docs.agora.io/en/sitemap.xml"
 LLMS_URL = "https://docs.agora.io/en/llms.txt"
@@ -28,8 +31,8 @@ FINAL_INGESTION_STATUSES = {"completed", "failed"}
 
 @dataclass(frozen=True)
 class SyncConfig:
-    api_base_url: str
     output_dir: Path
+    api_base_url: str | None = None
     download_workers: int = 8
     upload_workers: int = 4
     poll_interval_seconds: float = 2.0
@@ -375,15 +378,21 @@ def run_sync(config: SyncConfig) -> tuple[int, dict[str, Any], Path]:
         if not downloaded_markdown_files:
             raise RuntimeError("No Markdown documents were downloaded successfully")
 
-        client = KnowledgeApiClient(base_url=config.api_base_url)
-        upload_results = upload_documents(
-            markdown_files=downloaded_markdown_files,
-            output_dir=config.output_dir,
-            client=client,
-            workers=config.upload_workers,
-            poll_interval_seconds=config.poll_interval_seconds,
-            poll_timeout_seconds=config.poll_timeout_seconds,
-        )
+        if config.api_base_url:
+            client = KnowledgeApiClient(base_url=config.api_base_url)
+            upload_results = upload_documents(
+                markdown_files=downloaded_markdown_files,
+                output_dir=config.output_dir,
+                client=client,
+                workers=config.upload_workers,
+                poll_interval_seconds=config.poll_interval_seconds,
+                poll_timeout_seconds=config.poll_timeout_seconds,
+            )
+        else:
+            upload_results = ingest_documents_locally(
+                markdown_files=downloaded_markdown_files,
+                output_dir=config.output_dir,
+            )
     except Exception as exc:
         run_error = str(exc)
 
@@ -400,6 +409,53 @@ def run_sync(config: SyncConfig) -> tuple[int, dict[str, Any], Path]:
     report_path = write_sync_report(config.output_dir, report)
     exit_code = 0 if report["success"] else 1
     return exit_code, report, report_path
+
+
+def ingest_documents_locally(
+    *,
+    markdown_files: list[Path],
+    output_dir: Path,
+) -> list[UploadResult]:
+    if not markdown_files:
+        return []
+    from backend.repositories.knowledge_repository import create_knowledge_repository
+
+    repository = create_knowledge_repository()
+    repository.initialize()
+    sync_run = repository.create_sync_run(
+        source_system="agora",
+        knowledge_type="official",
+        status="running",
+        host_name=socket.gethostname(),
+        config_snapshot={
+            "mode": "local_direct",
+            "output_dir": str(output_dir),
+            "file_count": len(markdown_files),
+        },
+    )
+    results = [
+        _ingest_single_document(
+            file_path=file_path,
+            output_dir=output_dir,
+            repository=repository,
+            sync_run_id=sync_run["sync_run_id"],
+        )
+        for file_path in markdown_files
+    ]
+    repository.update_sync_run(
+        sync_run["sync_run_id"],
+        status="completed" if all(item.upload_status == "completed" for item in results) else "failed",
+        discovered_count=len(markdown_files),
+        claimed_count=len(markdown_files),
+        processed_count=sum(1 for item in results if item.upload_status == "completed"),
+        failed_count=sum(1 for item in results if item.upload_status != "completed"),
+        summary={
+            "processed": sum(1 for item in results if item.upload_status == "completed"),
+            "failed": sum(1 for item in results if item.upload_status != "completed"),
+            "ingestion_ids": [item.ingestion_id for item in results if item.ingestion_id],
+        },
+    )
+    return sorted(results, key=lambda item: item.local_path)
 
 
 def discover_documents(*, limit: int | None) -> tuple[list[DiscoveryItem], dict[str, Any]]:
@@ -503,6 +559,77 @@ def upload_documents(
         for future in as_completed(futures):
             results.append(future.result())
     return sorted(results, key=lambda item: item.local_path)
+
+
+def _ingest_single_document(
+    *,
+    file_path: Path,
+    output_dir: Path,
+    repository: "KnowledgeRepository",
+    sync_run_id: str | None = None,
+) -> UploadResult:
+    from backend.services.local_source_sync import ingest_source_document, stage_source_document
+
+    local_path = file_path.relative_to(output_dir).as_posix()
+    try:
+        source_document = stage_source_document(
+            repository,
+            knowledge_type="official",
+            source_system="agora",
+            external_id=local_path,
+            title=file_path.stem,
+            source_url=None,
+            published_url=None,
+            content_format="markdown",
+            raw_content=file_path.read_text(encoding="utf-8"),
+            metadata={
+                "sync_mode": "local_direct",
+                "source_absolute_path": str(file_path),
+                "source_relative_path": local_path,
+            },
+        )
+        result = ingest_source_document(
+            repository,
+            source_document,
+            sync_mode="local_direct",
+            sync_run_id=sync_run_id,
+        )
+        report = repository.get_ingestion_report(result.ingestion_id) or {}
+        summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+        warning_count = len(report.get("warnings") or []) if isinstance(report.get("warnings"), list) else 0
+        return UploadResult(
+            local_path=local_path,
+            upload_status="completed" if result.status == "completed" else "ingestion_failed",
+            ingestion_id=result.ingestion_id,
+            ingestion_status=result.status,
+            queued=False,
+            processing_mode="local_direct",
+            http_status=None,
+            chunk_count=result.chunk_count if result.chunk_count is not None else summary.get("chunk_count"),
+            document_id=result.document_id or summary.get("document_id"),
+            dedupe_action=result.dedupe_action or summary.get("dedupe_action"),
+            error_message=result.error_message or summary.get("error_message"),
+            error=None,
+            report_warning_count=warning_count,
+        )
+    except Exception as exc:
+        report = None
+        summary = report.get("summary") if isinstance(report, dict) and isinstance(report.get("summary"), dict) else {}
+        return UploadResult(
+            local_path=local_path,
+            upload_status="upload_failed",
+            ingestion_id=None,
+            ingestion_status=None,
+            queued=False,
+            processing_mode="local_direct",
+            http_status=None,
+            chunk_count=summary.get("chunk_count"),
+            document_id=summary.get("document_id"),
+            dedupe_action=summary.get("dedupe_action"),
+            error_message=clean_text(summary.get("error_message")) or str(exc),
+            error=str(exc),
+            report_warning_count=len(report.get("warnings") or []) if isinstance(report, dict) and isinstance(report.get("warnings"), list) else 0,
+        )
 
 
 def _discover_html_urls_from_sitemap() -> list[str]:

@@ -12,9 +12,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
+from uuid import uuid4
 
 if TYPE_CHECKING:
     from backend.repositories.knowledge_repository import KnowledgeRepository
+
+from backend.services.embedding_provider import (
+    EmbeddingProvider,
+    embedding_model_id,
+    embedding_provider_name,
+    get_embedding_provider,
+    primary_chunk_strategy_name,
+    shadow_chunk_enabled,
+    shadow_chunk_strategy_name,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -38,6 +49,7 @@ class KnowledgeIngestionRequest:
     title: str | None
     source_url: str | None
     file_name: str | None
+    file_path: str | None
     raw_content: str
     request_metadata: dict[str, Any]
 
@@ -83,6 +95,16 @@ class NormalizedKnowledgeDocument:
     product: str | None = None
     module: str | None = None
     language: str | None = None
+
+
+@dataclass
+class ChunkBuildResult:
+    chunk_run_id: str
+    index_role: str
+    chunk_strategy: str
+    strategy_version: str
+    rows: list[dict[str, Any]]
+    traces: list[dict[str, Any]]
 
 
 def _safe_int_env(name: str, default: int) -> int:
@@ -247,7 +269,51 @@ def _merge_string_lists(*collections: Any) -> list[str]:
 
 
 def _chunk_strategy_for(knowledge_type: str) -> str:
-    return "markdown_header" if knowledge_type == "official" else "token_500_overlap_100"
+    _ = knowledge_type
+    return primary_chunk_strategy_name()
+
+
+def _shadow_strategy_for(knowledge_type: str) -> str:
+    _ = knowledge_type
+    return shadow_chunk_strategy_name()
+
+
+def _chunk_strategy_version(strategy_name: str) -> str:
+    return strategy_name
+
+
+def _chunk_run_id(ingestion_id: str, document_id: str, index_role: str) -> str:
+    digest = hashlib.sha1(f"{ingestion_id}:{document_id}:{index_role}:{uuid4().hex}".encode("utf-8")).hexdigest()[:24]
+    return f"chunkrun-{digest}"
+
+
+def _chunk_id_for_role(
+    document_id: str,
+    chunk_index: int,
+    section_type: str,
+    *,
+    index_role: str,
+) -> str:
+    if index_role == "primary":
+        return _chunk_id(document_id, chunk_index, section_type)
+    digest = hashlib.sha1(f"{document_id}:{index_role}:{chunk_index}:{section_type}".encode("utf-8")).hexdigest()[:24]
+    return f"{document_id}-{digest}"
+
+
+def _heading_path(h1: str | None, h2: str | None, h3: str | None) -> list[str]:
+    return [heading for heading in [h1, h2, h3] if _clean_text(heading)]
+
+
+def _cosine_similarity(left: list[float], right: list[float]) -> float | None:
+    if not left or not right or len(left) != len(right):
+        return None
+    dot = sum(float(a) * float(b) for a, b in zip(left, right, strict=False))
+    left_norm = sum(float(a) * float(a) for a in left) ** 0.5
+    right_norm = sum(float(b) * float(b) for b in right) ** 0.5
+    if left_norm <= 0 or right_norm <= 0:
+        return None
+    similarity = dot / (left_norm * right_norm)
+    return round(max(-1.0, min(1.0, similarity)), 4)
 
 
 def _split_front_matter(markdown_text: str) -> tuple[dict[str, str], str]:
@@ -1147,12 +1213,14 @@ def _build_chunk_handoff_summary(
     *,
     dedupe_action: str,
     existing_chunk_count: int | None = None,
+    chunk_results: list[ChunkBuildResult] | None = None,
+    embedding_requests: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     section_counter: dict[str, int] = defaultdict(int)
     for row in rows:
         label = _clean_text(row.get("h3")) or _clean_text(row.get("h2")) or _clean_text(row.get("section_type")) or "Unknown"
         section_counter[label] += 1
-    return {
+    summary = {
         "mode": dedupe_action,
         "content_block_count": len(document.content_blocks),
         "chunk_count": len(rows) if rows else max(0, int(existing_chunk_count or 0)),
@@ -1168,106 +1236,471 @@ def _build_chunk_handoff_summary(
             for row in rows[:24]
         ],
     }
+    if chunk_results:
+        summary["index_roles"] = [
+            {
+                "index_role": result.index_role,
+                "chunk_strategy": result.chunk_strategy,
+                "strategy_version": result.strategy_version,
+                "chunk_run_id": result.chunk_run_id,
+                "chunk_count": len(result.rows),
+                "trace_count": len(result.traces),
+            }
+            for result in chunk_results
+        ]
+    if embedding_requests:
+        summary["embedding_requests"] = embedding_requests
+    return summary
 
 
-def _build_chunk_rows(document: NormalizedKnowledgeDocument, metadata: dict[str, Any]) -> list[dict[str, Any]]:
+def _count_tokens(text: str, provider: EmbeddingProvider | None) -> int:
+    if provider is not None:
+        try:
+            return max(0, int(provider.count_tokens(text)))
+        except Exception:
+            LOGGER.debug("Falling back to heuristic token count for chunk text")
+    return _estimate_token_count(text)
+
+
+def _chunk_context_prefix(
+    document: NormalizedKnowledgeDocument,
+    block: ContentBlock,
+    *,
+    platform: str | None,
+    product: str | None,
+) -> str:
+    prefix_lines = [
+        f"Title: {document.title}",
+        f"Knowledge Type: {'Official Documentation' if document.knowledge_type == 'official' else 'Technical Article'}",
+    ]
+    if platform:
+        prefix_lines.append(f"Platform: {platform}")
+    if product:
+        prefix_lines.append(f"Product: {product}")
+    section_label = _clean_text(block.h3) or _clean_text(block.h2) or _clean_text(block.section_type.replace("_", " "))
+    if section_label:
+        prefix_lines.append(f"Section: {section_label}")
+    return "\n".join(prefix_lines).strip()
+
+
+def _base_chunk_metadata(
+    document: NormalizedKnowledgeDocument,
+    metadata: dict[str, Any],
+    block: ContentBlock,
+    *,
+    platform: str | None,
+    product: str | None,
+    module: str | None,
+    language: str | None,
+    chunk_strategy: str,
+    chunk_run_id: str,
+    index_role: str,
+    strategy_version: str,
+    chunk_index: int,
+    chunk_token_count: int,
+) -> dict[str, Any]:
+    return {
+        "doc_id": document.document_id,
+        "doc_hash": document.checksum,
+        "chunk_index": chunk_index,
+        "knowledge_type": document.knowledge_type,
+        "source_type": document.source_type,
+        "block_type": block.block_type,
+        "section_type": block.section_type,
+        "title": document.title,
+        "source_path": document.source_path,
+        "source_url": document.url,
+        "h1": block.h1,
+        "h2": block.h2,
+        "h3": block.h3,
+        "platform": platform,
+        "product": product,
+        "module": module,
+        "language": language,
+        "tags": metadata.get("tags", []),
+        "chunk_strategy": chunk_strategy,
+        "chunk_token_count": chunk_token_count,
+        "chunk_run_id": chunk_run_id,
+        "index_role": index_role,
+        "strategy_version": strategy_version,
+        "embedding_provider": embedding_provider_name(),
+    }
+
+
+def _build_chunk_row(
+    document: NormalizedKnowledgeDocument,
+    metadata: dict[str, Any],
+    block: ContentBlock,
+    *,
+    block_index: int,
+    chunk_run_id: str,
+    chunk_index: int,
+    index_role: str,
+    chunk_strategy: str,
+    strategy_version: str,
+    prefix: str,
+    raw_piece: str,
+    provider: EmbeddingProvider | None,
+    platform: str | None,
+    product: str | None,
+    module: str | None,
+    language: str | None,
+    overlap_tokens: int,
+    boundary_reason: str,
+    unit_count: int,
+    semantic_similarity_prev: float | None = None,
+    semantic_similarity_next: float | None = None,
+    seen_chunk_hashes: set[str] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    chunk_text = f"{prefix}\n\n{raw_piece}".strip()
+    content_hash = _sha256_text(chunk_text)
+    is_duplicate_chunk = content_hash in (seen_chunk_hashes or set())
+    if seen_chunk_hashes is not None:
+        seen_chunk_hashes.add(content_hash)
+    chunk_token_count = _count_tokens(chunk_text, provider)
+    row = {
+        "id": _chunk_id_for_role(
+            document.document_id,
+            chunk_index,
+            block.section_type,
+            index_role=index_role,
+        ),
+        "doc_id": document.document_id,
+        "doc_hash": document.checksum,
+        "source_path": document.source_path,
+        "h1": block.h1 or document.title,
+        "h2": block.h2,
+        "h3": block.h3,
+        "source_url": document.url,
+        "platform": platform,
+        "product": product,
+        "chunk_index": chunk_index,
+        "content": chunk_text,
+        "metadata": _base_chunk_metadata(
+            document,
+            metadata,
+            block,
+            platform=platform,
+            product=product,
+            module=module,
+            language=language,
+            chunk_strategy=chunk_strategy,
+            chunk_run_id=chunk_run_id,
+            index_role=index_role,
+            strategy_version=strategy_version,
+            chunk_index=chunk_index,
+            chunk_token_count=chunk_token_count,
+        ),
+        "knowledge_type": document.knowledge_type,
+        "section_type": block.section_type,
+        "ingestion_id": document.ingestion_id,
+        "chunk_run_id": chunk_run_id,
+        "index_role": index_role,
+        "strategy_version": strategy_version,
+        "chunk_token_count": chunk_token_count,
+        "overlap_tokens": max(0, int(overlap_tokens)),
+        "chunk_strategy": chunk_strategy,
+        "embedding_model": embedding_model_id(),
+        "vector_indexed_at": _utc_now(),
+        "fts_indexed_at": _utc_now(),
+        "has_empty_content": not bool(chunk_text.strip()),
+        "is_duplicate_chunk": is_duplicate_chunk,
+    }
+    trace = {
+        "trace_id": f"trace-{uuid4().hex}",
+        "chunk_run_id": chunk_run_id,
+        "ingestion_id": document.ingestion_id,
+        "document_id": document.document_id,
+        "chunk_id": row["id"],
+        "chunk_strategy": chunk_strategy,
+        "index_role": index_role,
+        "heading_path": _heading_path(block.h1 or document.title, block.h2, block.h3),
+        "parent_block_id": f"{document.document_id}:block:{block_index}",
+        "parent_block_type": block.block_type,
+        "parent_section_type": block.section_type,
+        "raw_chunk_text": raw_piece,
+        "retrieval_text": chunk_text,
+        "char_count": len(chunk_text),
+        "token_count": chunk_token_count,
+        "overlap_tokens": max(0, int(overlap_tokens)),
+        "unit_count": max(1, int(unit_count)),
+        "boundary_reason": boundary_reason,
+        "semantic_similarity_prev": semantic_similarity_prev,
+        "semantic_similarity_next": semantic_similarity_next,
+        "is_duplicate_chunk": is_duplicate_chunk,
+        "vector_row_id": row["id"],
+        "metadata": {
+            "block_index": block_index,
+            "source_path": document.source_path,
+            "source_url": document.url,
+        },
+    }
+    return row, trace
+
+
+def _split_sentences(text: str) -> list[str]:
+    normalized = str(text or "").strip()
+    if not normalized:
+        return []
+    parts = re.split(r"(?<=[。！？.!?])\s+|(?<=[。！？.!?])\n+", normalized)
+    sentences = [part.strip() for part in parts if part and part.strip()]
+    return sentences or [normalized]
+
+
+def _semantic_units_from_block(text: str) -> list[str]:
+    normalized = _normalize_article_text(text)
+    if not normalized:
+        return []
+    paragraphs = [part.strip() for part in re.split(r"\n{2,}", normalized) if part.strip()]
+    units: list[str] = []
+    for paragraph in paragraphs or [normalized]:
+        if len(paragraph) <= 900:
+            units.append(paragraph)
+            continue
+        sentences = _split_sentences(paragraph)
+        if not sentences:
+            units.extend(_paragraph_window_split(paragraph, max_chars=1200, overlap_chars=120))
+            continue
+        for sentence in sentences:
+            if len(sentence) > 1200:
+                units.extend(_paragraph_window_split(sentence, max_chars=1200, overlap_chars=120))
+            else:
+                units.append(sentence)
+    return [unit for unit in units if unit.strip()]
+
+
+def _build_primary_chunk_rows(
+    document: NormalizedKnowledgeDocument,
+    metadata: dict[str, Any],
+    *,
+    provider: EmbeddingProvider | None = None,
+    chunk_run_id: str | None = None,
+) -> ChunkBuildResult:
     platform = _document_platform(metadata, document.platform)
     product = _document_product(metadata, document.product)
     module = _document_module(metadata, document.module)
     language = _document_language(metadata, document.language)
     chunk_strategy = _chunk_strategy_for(document.knowledge_type)
-    embedding_model = (_openai_config().get("embedding_model") or "text-embedding-3-large").strip()
+    strategy_version = _chunk_strategy_version(chunk_strategy)
+    run_id = chunk_run_id or _chunk_run_id(document.ingestion_id, document.document_id, "primary")
     rows: list[dict[str, Any]] = []
+    traces: list[dict[str, Any]] = []
     chunk_index = 0
     seen_chunk_hashes: set[str] = set()
-    for block in document.content_blocks:
-        prefix_lines = [
-            f"Title: {document.title}",
-            f"Knowledge Type: {'Official Documentation' if document.knowledge_type == 'official' else 'Technical Article'}",
-        ]
-        if platform:
-            prefix_lines.append(f"Platform: {platform}")
-        if product:
-            prefix_lines.append(f"Product: {product}")
-        section_label = _clean_text(block.h3) or _clean_text(block.h2) or _clean_text(block.section_type.replace("_", " "))
-        if section_label:
-            prefix_lines.append(f"Section: {section_label}")
-        prefix = "\n".join(prefix_lines).strip()
+    for block_index, block in enumerate(document.content_blocks, start=1):
+        prefix = _chunk_context_prefix(document, block, platform=platform, product=product)
         max_chars = _OFFICIAL_MARKDOWN_MAX_CHARS if document.knowledge_type == "official" else _TECHNICAL_MAX_CHARS
         overlap_chars = _OFFICIAL_MARKDOWN_OVERLAP if document.knowledge_type == "official" else _TECHNICAL_OVERLAP
         for piece in _paragraph_window_split(block.text, max_chars=max_chars, overlap_chars=overlap_chars):
             chunk_index += 1
-            chunk_text = f"{prefix}\n\n{piece}".strip()
-            content_hash = _sha256_text(chunk_text)
-            is_duplicate_chunk = content_hash in seen_chunk_hashes
-            seen_chunk_hashes.add(content_hash)
-            chunk_token_count = _estimate_token_count(chunk_text)
-            row_metadata = {
-                "doc_id": document.document_id,
-                "doc_hash": document.checksum,
-                "chunk_index": chunk_index,
-                "knowledge_type": document.knowledge_type,
-                "source_type": document.source_type,
-                "block_type": block.block_type,
-                "section_type": block.section_type,
-                "title": document.title,
-                "source_path": document.source_path,
-                "source_url": document.url,
-                "h1": block.h1,
-                "h2": block.h2,
-                "h3": block.h3,
-                "platform": platform,
-                "product": product,
-                "module": module,
-                "language": language,
-                "tags": metadata.get("tags", []),
-                "chunk_strategy": chunk_strategy,
-                "chunk_token_count": chunk_token_count,
-            }
-            rows.append(
-                {
-                    "id": _chunk_id(document.document_id, chunk_index, block.section_type),
-                    "doc_id": document.document_id,
-                    "doc_hash": document.checksum,
-                    "source_path": document.source_path,
-                    "h1": block.h1 or document.title,
-                    "h2": block.h2,
-                    "h3": block.h3,
-                    "source_url": document.url,
-                    "platform": platform,
-                    "product": product,
-                    "chunk_index": chunk_index,
-                    "content": chunk_text,
-                    "metadata": row_metadata,
-                    "knowledge_type": document.knowledge_type,
-                    "section_type": block.section_type,
-                    "ingestion_id": document.ingestion_id,
-                    "chunk_token_count": chunk_token_count,
-                    "overlap_tokens": _estimate_token_count(piece[:overlap_chars]),
-                    "chunk_strategy": chunk_strategy,
-                    "embedding_model": embedding_model,
-                    "vector_indexed_at": _utc_now(),
-                    "fts_indexed_at": _utc_now(),
-                    "has_empty_content": not bool(chunk_text.strip()),
-                    "is_duplicate_chunk": is_duplicate_chunk,
-                }
+            row, trace = _build_chunk_row(
+                document,
+                metadata,
+                block,
+                block_index=block_index,
+                chunk_run_id=run_id,
+                chunk_index=chunk_index,
+                index_role="primary",
+                chunk_strategy=chunk_strategy,
+                strategy_version=strategy_version,
+                prefix=prefix,
+                raw_piece=piece,
+                provider=provider,
+                platform=platform,
+                product=product,
+                module=module,
+                language=language,
+                overlap_tokens=_count_tokens(piece[:overlap_chars], provider),
+                boundary_reason="paragraph_window",
+                unit_count=1,
+                seen_chunk_hashes=seen_chunk_hashes,
             )
-    return rows
-
-
-def _embed_rows(rows: list[dict[str, Any]]) -> list[list[float]]:
-    config = _openai_config()
-    api_key = config["api_key"]
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is required for knowledge ingestion")
-    _, OpenAIEmbeddings = _import_langchain()
-    embeddings = OpenAIEmbeddings(
-        model=config["embedding_model"],
-        api_key=api_key,
-        request_timeout=config["request_timeout_seconds"],
-        max_retries=int(config["max_retries"]),
+            rows.append(row)
+            traces.append(trace)
+    return ChunkBuildResult(
+        chunk_run_id=run_id,
+        index_role="primary",
+        chunk_strategy=chunk_strategy,
+        strategy_version=strategy_version,
+        rows=rows,
+        traces=traces,
     )
-    return embeddings.embed_documents([row["content"] for row in rows])
+
+def _build_chunk_rows(
+    document: NormalizedKnowledgeDocument,
+    metadata: dict[str, Any],
+    provider: EmbeddingProvider | None = None,
+) -> list[dict[str, Any]]:
+    return _build_primary_chunk_rows(document, metadata, provider=provider).rows
+
+
+def _build_shadow_chunk_rows(
+    document: NormalizedKnowledgeDocument,
+    metadata: dict[str, Any],
+    *,
+    provider: EmbeddingProvider,
+    chunk_run_id: str | None = None,
+) -> ChunkBuildResult:
+    platform = _document_platform(metadata, document.platform)
+    product = _document_product(metadata, document.product)
+    module = _document_module(metadata, document.module)
+    language = _document_language(metadata, document.language)
+    chunk_strategy = _shadow_strategy_for(document.knowledge_type)
+    strategy_version = _chunk_strategy_version(chunk_strategy)
+    run_id = chunk_run_id or _chunk_run_id(document.ingestion_id, document.document_id, "shadow")
+    max_tokens = 700 if document.knowledge_type == "official" else 640
+    min_tokens = 140 if document.knowledge_type == "official" else 120
+    similarity_threshold = 0.72
+    rows: list[dict[str, Any]] = []
+    traces: list[dict[str, Any]] = []
+    chunk_index = 0
+    seen_chunk_hashes: set[str] = set()
+
+    for block_index, block in enumerate(document.content_blocks, start=1):
+        prefix = _chunk_context_prefix(document, block, platform=platform, product=product)
+        units = _semantic_units_from_block(block.text)
+        if not units:
+            continue
+        embeddings = provider.embed_documents(units) if len(units) > 1 else [[]]
+        unit_tokens = [_count_tokens(unit, provider) for unit in units]
+        start_index = 0
+
+        while start_index < len(units):
+            current_units = [units[start_index]]
+            current_tokens = unit_tokens[start_index]
+            next_boundary_reason = "finalize"
+            next_similarity: float | None = None
+            cursor = start_index + 1
+
+            while cursor < len(units):
+                similarity = None
+                if len(units) > 1 and embeddings[start_index] is not None and embeddings[cursor - 1]:
+                    similarity = _cosine_similarity(
+                        embeddings[cursor - 1],
+                        embeddings[cursor],
+                    )
+                next_tokens = unit_tokens[cursor]
+                looks_structural = bool(re.match(r"^([-*]|\d+\.)\s", units[cursor].lstrip()))
+                should_split = False
+                if current_tokens >= max_tokens:
+                    should_split = True
+                    next_boundary_reason = "max_tokens"
+                elif current_tokens >= min_tokens and current_tokens + next_tokens > max_tokens:
+                    should_split = True
+                    next_boundary_reason = "token_budget"
+                elif current_tokens >= min_tokens and similarity is not None and similarity < similarity_threshold:
+                    should_split = True
+                    next_boundary_reason = "semantic_boundary"
+                elif current_tokens >= min_tokens and looks_structural:
+                    should_split = True
+                    next_boundary_reason = "structural_boundary"
+                if should_split:
+                    next_similarity = similarity
+                    break
+                current_units.append(units[cursor])
+                current_tokens += next_tokens
+                cursor += 1
+
+            chunk_index += 1
+            raw_piece = "\n\n".join(current_units).strip()
+            similarity_prev = None
+            if start_index > 0 and len(units) > 1 and embeddings[start_index - 1]:
+                similarity_prev = _cosine_similarity(
+                    embeddings[start_index - 1],
+                    embeddings[start_index],
+                )
+            row, trace = _build_chunk_row(
+                document,
+                metadata,
+                block,
+                block_index=block_index,
+                chunk_run_id=run_id,
+                chunk_index=chunk_index,
+                index_role="shadow",
+                chunk_strategy=chunk_strategy,
+                strategy_version=strategy_version,
+                prefix=prefix,
+                raw_piece=raw_piece,
+                provider=provider,
+                platform=platform,
+                product=product,
+                module=module,
+                language=language,
+                overlap_tokens=0,
+                boundary_reason=next_boundary_reason,
+                unit_count=len(current_units),
+                semantic_similarity_prev=similarity_prev,
+                semantic_similarity_next=next_similarity,
+                seen_chunk_hashes=seen_chunk_hashes,
+            )
+            rows.append(row)
+            traces.append(trace)
+            start_index = cursor
+
+    return ChunkBuildResult(
+        chunk_run_id=run_id,
+        index_role="shadow",
+        chunk_strategy=chunk_strategy,
+        strategy_version=strategy_version,
+        rows=rows,
+        traces=traces,
+    )
+
+
+def _build_chunk_results(
+    document: NormalizedKnowledgeDocument,
+    metadata: dict[str, Any],
+    *,
+    provider: EmbeddingProvider,
+) -> list[ChunkBuildResult]:
+    results = [
+        _build_primary_chunk_rows(
+            document,
+            metadata,
+            provider=provider,
+            chunk_run_id=_chunk_run_id(document.ingestion_id, document.document_id, "primary"),
+        )
+    ]
+    if shadow_chunk_enabled():
+        results.append(
+            _build_shadow_chunk_rows(
+                document,
+                metadata,
+                provider=provider,
+                chunk_run_id=_chunk_run_id(document.ingestion_id, document.document_id, "shadow"),
+            )
+        )
+    return results
+
+
+def _chunk_run_summary(
+    result: ChunkBuildResult,
+    *,
+    dedupe_action: str,
+    vector_dim: int,
+) -> dict[str, Any]:
+    token_counts = [int(row.get("chunk_token_count") or 0) for row in result.rows]
+    overlap_counts = [int(row.get("overlap_tokens") or 0) for row in result.rows]
+    return {
+        "chunk_run_id": result.chunk_run_id,
+        "chunk_strategy": result.chunk_strategy,
+        "index_role": result.index_role,
+        "embedding_provider": embedding_provider_name(),
+        "embedding_model": embedding_model_id(),
+        "vector_dim": vector_dim,
+        "chunk_count": len(result.rows),
+        "trace_count": len(result.traces),
+        "token_count_total": sum(token_counts),
+        "avg_chunk_tokens": round(sum(token_counts) / len(token_counts), 2) if token_counts else None,
+        "min_chunk_tokens": min(token_counts) if token_counts else None,
+        "max_chunk_tokens": max(token_counts) if token_counts else None,
+        "avg_overlap_tokens": round(sum(overlap_counts) / len(overlap_counts), 2) if overlap_counts else None,
+        "dedupe_action": dedupe_action,
+    }
+
+
+def _embed_rows(rows: list[dict[str, Any]], *, provider: EmbeddingProvider) -> list[list[float]]:
+    return provider.embed_documents([row["content"] for row in rows])
 
 
 def _source_type_from_ingestion(ingestion: dict[str, Any]) -> str:
@@ -1287,6 +1720,7 @@ def _request_from_ingestion(ingestion: dict[str, Any]) -> KnowledgeIngestionRequ
         title=_clean_text(ingestion.get("title")) or None,
         source_url=_clean_text(ingestion.get("source_url")) or None,
         file_name=_clean_text(ingestion.get("file_name")) or None,
+        file_path=_clean_text(ingestion.get("file_path")) or None,
         raw_content=str(ingestion.get("content") or ""),
         request_metadata=ingestion.get("request_metadata") if isinstance(ingestion.get("request_metadata"), dict) else {},
     )
@@ -1294,6 +1728,8 @@ def _request_from_ingestion(ingestion: dict[str, Any]) -> KnowledgeIngestionRequ
 
 def _resolve_document_from_request(request: KnowledgeIngestionRequest) -> NormalizedKnowledgeDocument:
     if request.knowledge_type == "official":
+        if request.file_path and Path(request.file_path).exists():
+            return parse_official_markdown_file(request.file_path, ingestion_id=request.ingestion_id)
         if not request.raw_content.strip():
             raise ValueError("Official document ingestion is missing content")
         return parse_official_markdown_content(
@@ -1323,6 +1759,8 @@ def process_knowledge_ingestion(
     report_metadata: dict[str, Any] = {}
     dedupe_action = "new_document"
     dedupe_target_doc_id: str | None = None
+    provider: EmbeddingProvider | None = None
+    chunk_results: list[ChunkBuildResult] = []
     rows: list[dict[str, Any]] = []
     existing_chunk_count = 0
     processing_started_perf = time.perf_counter()
@@ -1347,7 +1785,11 @@ def process_knowledge_ingestion(
         "long_chunk_rate_gt_800": None,
         "long_chunk_rate_gt_1000": None,
     }
-    embedding_model = (_openai_config().get("embedding_model") or "text-embedding-3-large").strip()
+    embedding_provider = embedding_provider_name()
+    embedding_model = embedding_model_id()
+    vector_dim: int | None = None
+    index_roles_summary: dict[str, Any] = {}
+    embedding_request_log: list[dict[str, Any]] = []
     empty_doc_flag = False
     short_doc_flag = False
     duplicate_doc_flag = False
@@ -1355,12 +1797,16 @@ def process_knowledge_ingestion(
     fts_upsert_success: bool | None = None
 
     try:
+        provider = get_embedding_provider()
+        embedding_provider = provider.provider_name
+        embedding_model = provider.model_id
+        vector_dim = provider.vector_dim
         request = _request_from_ingestion(ingestion)
         clean_started_perf = time.perf_counter()
         document = _resolve_document_from_request(request)
         cleaning_latency_ms = round((time.perf_counter() - clean_started_perf) * 1000, 2)
         final_metadata, report_metadata = _enrich_metadata_with_llm(document)
-        doc_token_count = _estimate_token_count(document.content)
+        doc_token_count = _count_tokens(document.content, provider)
         cleaned_token_count = doc_token_count
         metadata_missing_flags = _metadata_missing_flags(document, final_metadata)
         chunk_strategy = _chunk_strategy_for(document.knowledge_type)
@@ -1399,27 +1845,56 @@ def process_knowledge_ingestion(
         normalized_payload = _normalized_payload(document, final_metadata)
 
         chunking_started_perf = time.perf_counter()
-        rows = _build_chunk_rows(document, final_metadata)
+        chunk_results = _build_chunk_results(document, final_metadata, provider=provider)
+        embedding_request_log.extend(provider.drain_request_log())
+        primary_result = next((result for result in chunk_results if result.index_role == "primary"), None)
+        if primary_result is None:
+            raise RuntimeError("Primary chunking did not produce a result")
+        rows = primary_result.rows
         chunking_latency_ms = round((time.perf_counter() - chunking_started_perf) * 1000, 2)
         if not rows and dedupe_action != "skipped_duplicate":
             raise RuntimeError("No chunks were generated from the document")
         chunk_stats = _chunk_stats(rows)
+        index_roles_summary = {
+            result.index_role: {
+                "chunk_run_id": result.chunk_run_id,
+                "chunk_strategy": result.chunk_strategy,
+                "strategy_version": result.strategy_version,
+                "chunk_count": len(result.rows),
+                "trace_count": len(result.traces),
+            }
+            for result in chunk_results
+        }
 
         if dedupe_action != "skipped_duplicate":
             embed_started_perf = time.perf_counter()
             failed_stage = "embed"
-            vectors = _embed_rows(rows)
+            for result in chunk_results:
+                if not result.rows:
+                    continue
+                vectors = _embed_rows(result.rows, provider=provider)
+                for row, embedding in zip(result.rows, vectors, strict=False):
+                    row["embedding"] = embedding
             embedding_latency_ms = round((time.perf_counter() - embed_started_perf) * 1000, 2)
-            vector_dim = len(vectors[0]) if vectors else 0
-            for row, embedding in zip(rows, vectors):
-                row["embedding"] = embedding
+            embedding_request_log.extend(provider.drain_request_log())
             index_started_perf = time.perf_counter()
             failed_stage = "index_upsert"
-            written = repository.replace_document_chunks(
-                document_id=document.document_id,
-                vector_dim=vector_dim,
-                rows=rows,
-            )
+            written = 0
+            for result in chunk_results:
+                if result.index_role == "primary":
+                    written = repository.replace_document_chunks(
+                        document_id=document.document_id,
+                        index_role=result.index_role,
+                        vector_dim=vector_dim,
+                        rows=result.rows,
+                    )
+                    continue
+                repository.replace_document_chunks(
+                    document_id=document.document_id,
+                    index_role=result.index_role,
+                    vector_dim=vector_dim,
+                    rows=result.rows,
+                )
             index_upsert_latency_ms = round((time.perf_counter() - index_started_perf) * 1000, 2)
             existing_chunk_count = written
             vector_upsert_success = True
@@ -1428,6 +1903,43 @@ def process_knowledge_ingestion(
             vector_upsert_success = True
             fts_upsert_success = True
             existing_chunk_count = len(rows) or existing_chunk_count
+
+        for result in chunk_results:
+            boundary_counter = Counter(
+                _clean_text(trace.get("boundary_reason")) or "unknown"
+                for trace in result.traces
+            )
+            repository.record_chunk_run(
+                run={
+                    **_chunk_run_summary(
+                        result,
+                        dedupe_action=dedupe_action,
+                        vector_dim=vector_dim or 0,
+                    ),
+                    "ingestion_id": ingestion_id,
+                    "document_id": document.document_id,
+                    "knowledge_type": document.knowledge_type,
+                    "source_type": document.source_type,
+                    "strategy_version": result.strategy_version,
+                    "config_snapshot": {
+                        "embedding_provider": embedding_provider,
+                        "embedding_model": embedding_model,
+                        "vector_dim": vector_dim,
+                        "chunk_strategy": result.chunk_strategy,
+                        "index_role": result.index_role,
+                        "shadow_chunk_enabled": shadow_chunk_enabled(),
+                    },
+                    "summary": {
+                        **_chunk_run_summary(
+                            result,
+                            dedupe_action=dedupe_action,
+                            vector_dim=vector_dim or 0,
+                        ),
+                        "boundary_reason_distribution": dict(boundary_counter),
+                    },
+                },
+                traces=result.traces,
+            )
 
         repository.upsert_document(
             document_id=document.document_id,
@@ -1461,6 +1973,8 @@ def process_knowledge_ingestion(
             rows,
             dedupe_action=dedupe_action,
             existing_chunk_count=existing_chunk_count,
+            chunk_results=chunk_results,
+            embedding_requests=embedding_request_log,
         )
         ingestion_latency_ms = round((time.perf_counter() - processing_started_perf) * 1000, 2)
         repository.upsert_ingestion_report(
@@ -1499,7 +2013,10 @@ def process_knowledge_ingestion(
             short_doc_flag=short_doc_flag,
             duplicate_doc_flag=duplicate_doc_flag,
             metadata_missing_flags=metadata_missing_flags,
+            embedding_provider=embedding_provider,
             embedding_model=embedding_model,
+            vector_dim=vector_dim,
+            index_roles_summary=index_roles_summary,
             vector_upsert_success=vector_upsert_success,
             fts_upsert_success=fts_upsert_success,
         )
@@ -1558,6 +2075,8 @@ def process_knowledge_ingestion(
                 rows,
                 dedupe_action=dedupe_action,
                 existing_chunk_count=existing_chunk_count,
+                chunk_results=chunk_results,
+                embedding_requests=embedding_request_log,
             ) if document is not None else {},
             failed_stage=failed_stage,
             error_code=error_code,
@@ -1582,7 +2101,10 @@ def process_knowledge_ingestion(
             short_doc_flag=short_doc_flag,
             duplicate_doc_flag=duplicate_doc_flag,
             metadata_missing_flags=metadata_missing_flags,
+            embedding_provider=embedding_provider,
             embedding_model=embedding_model,
+            vector_dim=vector_dim,
+            index_roles_summary=index_roles_summary,
             vector_upsert_success=vector_upsert_success,
             fts_upsert_success=fts_upsert_success,
         )

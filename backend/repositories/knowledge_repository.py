@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
 import os
+import re
 import statistics
 from collections import Counter
 from datetime import datetime, timezone
@@ -14,6 +16,14 @@ import psycopg
 from psycopg import sql
 from psycopg.types.json import Json
 
+from backend.services.embedding_provider import (
+    DEFAULT_PGVECTOR_TABLE,
+    embedding_external_cost_per_1k,
+    embedding_model_id,
+    embedding_provider_name,
+    require_configured_vector_dim,
+    validate_embedding_provider_dim,
+)
 from backend.services.knowledge_monitoring import (
     build_empty_knowledge_metrics,
     build_knowledge_metrics_payload,
@@ -28,6 +38,7 @@ _VALID_SOURCE_TYPES = {"official_markdown_upload", "technical_article_api"}
 _VALID_INGESTION_STATUSES = {"queued", "processing", "completed", "failed"}
 _VALID_NORMALIZATION_STATUSES = {"pending", "normalized", "failed"}
 _VALID_DEDUPE_ACTIONS = {"new_document", "skipped_duplicate", "reindexed"}
+_VALID_SOURCE_SYNC_STATUSES = {"pending", "claimed", "processed", "failed"}
 _VALID_DASHBOARD_PAGES = {
     "overview",
     "ingestion",
@@ -42,14 +53,12 @@ _VALID_DASHBOARD_PAGES = {
 }
 _VALID_DASHBOARD_RANGES = {"7d": 7, "30d": 30}
 _CHUNK_STRATEGIES = {
-    "official": "markdown_header",
-    "technical": "token_500_overlap_100",
+    "official": "markdown_header_v1",
+    "technical": "markdown_header_v1",
 }
 _MODEL_PRICING = {
     "gpt-4.1": {"prompt_per_1k": 0.002, "completion_per_1k": 0.008},
     "gpt-4.1-mini": {"prompt_per_1k": 0.0004, "completion_per_1k": 0.0016},
-    "text-embedding-3-large": {"embedding_per_1k": 0.00013},
-    "text-embedding-3-small": {"embedding_per_1k": 0.00002},
 }
 
 _SOURCE_TYPE_TO_ENTRY_TYPE = {
@@ -151,7 +160,10 @@ def _model_cost_for_tokens(model_name: str | None, *, prompt_tokens: int = 0, co
     pricing = _MODEL_PRICING.get(normalized_model, {})
     prompt_cost = (prompt_tokens / 1000.0) * _safe_float(pricing.get("prompt_per_1k"))
     completion_cost = (completion_tokens / 1000.0) * _safe_float(pricing.get("completion_per_1k"))
-    embedding_cost = (embedding_tokens / 1000.0) * _safe_float(pricing.get("embedding_per_1k"))
+    embedding_rate = _safe_float(pricing.get("embedding_per_1k"))
+    if embedding_rate <= 0 and normalized_model == embedding_model_id():
+        embedding_rate = embedding_external_cost_per_1k()
+    embedding_cost = (embedding_tokens / 1000.0) * embedding_rate
     return round(prompt_cost + completion_cost + embedding_cost, 6)
 
 
@@ -207,12 +219,12 @@ def _vector_literal(values: list[float]) -> str:
 def _split_table_name(raw_value: str, default_schema: str) -> tuple[str, str]:
     value = (raw_value or "").strip()
     if not value:
-        return default_schema, "docagent_chunks"
+        return default_schema, DEFAULT_PGVECTOR_TABLE
     if "." not in value:
         return default_schema, value
     schema, table_name = value.split(".", 1)
     schema = schema.strip() or default_schema
-    table_name = table_name.strip() or "docagent_chunks"
+    table_name = table_name.strip() or DEFAULT_PGVECTOR_TABLE
     return schema, table_name
 
 
@@ -224,6 +236,18 @@ def _entry_type_from_source_type(source_type: Any) -> str:
 def _clean_text(value: Any) -> str | None:
     normalized = " ".join(str(value or "").split()).strip()
     return normalized or None
+
+
+def _vector_type_dimension(value: Any) -> int | None:
+    raw = str(value or "").strip().lower()
+    match = re.search(r"vector\((\d+)\)", raw)
+    if match is None:
+        return None
+    try:
+        parsed = int(match.group(1))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
 
 
 def _report_summary(report_payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -240,6 +264,35 @@ def _report_summary(report_payload: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _normalize_source_sync_status(value: Any) -> str:
+    normalized = str(value or "pending").strip().lower()
+    return normalized if normalized in _VALID_SOURCE_SYNC_STATUSES else "pending"
+
+
+def _stable_source_doc_id(
+    *,
+    knowledge_type: str,
+    source_system: str,
+    external_id: str | None,
+    source_url: str | None,
+    published_url: str | None,
+    checksum: str | None,
+    title: str | None,
+) -> str:
+    identity = (
+        _clean_text(external_id)
+        or _clean_text(source_url)
+        or _clean_text(published_url)
+        or _clean_text(checksum)
+        or _clean_text(title)
+        or str(uuid4())
+    )
+    digest = hashlib.sha1(
+        f"{_normalize_knowledge_type(knowledge_type)}:{_clean_text(source_system) or 'manual'}:{identity}".encode("utf-8")
+    ).hexdigest()[:24]
+    return f"SRC-{digest.upper()}"
+
+
 class KnowledgeRepository(Protocol):
     def initialize(self) -> None:
         ...
@@ -248,6 +301,74 @@ class KnowledgeRepository(Protocol):
         ...
 
     def is_enabled(self) -> bool:
+        ...
+
+    def upsert_source_document(
+        self,
+        *,
+        knowledge_type: str,
+        source_system: str,
+        external_id: str | None = None,
+        title: str | None = None,
+        source_url: str | None = None,
+        published_url: str | None = None,
+        content_format: str,
+        raw_content: str | None,
+        raw_payload: dict[str, Any] | None = None,
+        checksum: str,
+        source_updated_at: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        sync_status: str = "pending",
+    ) -> dict[str, Any]:
+        ...
+
+    def get_source_document(self, source_doc_id: str) -> dict[str, Any] | None:
+        ...
+
+    def claim_source_documents(
+        self,
+        *,
+        limit: int,
+        source_system: str | None = None,
+        knowledge_type: str | None = None,
+        claim_token: str,
+        claim_host: str | None = None,
+    ) -> list[dict[str, Any]]:
+        ...
+
+    def mark_source_document_processed(
+        self,
+        source_doc_id: str,
+        *,
+        processed_ingestion_id: str,
+    ) -> None:
+        ...
+
+    def mark_source_document_failed(self, source_doc_id: str, *, error_message: str) -> None:
+        ...
+
+    def create_sync_run(
+        self,
+        *,
+        source_system: str,
+        knowledge_type: str,
+        status: str,
+        host_name: str | None = None,
+        config_snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        ...
+
+    def update_sync_run(
+        self,
+        sync_run_id: str,
+        *,
+        status: str,
+        discovered_count: int | None = None,
+        claimed_count: int | None = None,
+        processed_count: int | None = None,
+        failed_count: int | None = None,
+        summary: dict[str, Any] | None = None,
+    ) -> None:
         ...
 
     def create_ingestion(
@@ -388,7 +509,10 @@ class KnowledgeRepository(Protocol):
         short_doc_flag: bool | None = None,
         duplicate_doc_flag: bool | None = None,
         metadata_missing_flags: dict[str, Any] | None = None,
+        embedding_provider: str | None = None,
         embedding_model: str | None = None,
+        vector_dim: int | None = None,
+        index_roles_summary: dict[str, Any] | None = None,
         vector_upsert_success: bool | None = None,
         fts_upsert_success: bool | None = None,
     ) -> None:
@@ -401,9 +525,18 @@ class KnowledgeRepository(Protocol):
         self,
         *,
         document_id: str,
+        index_role: str,
         vector_dim: int,
         rows: list[dict[str, Any]],
     ) -> int:
+        ...
+
+    def record_chunk_run(
+        self,
+        *,
+        run: dict[str, Any],
+        traces: list[dict[str, Any]],
+    ) -> None:
         ...
 
     def record_rag_query_run(
@@ -437,6 +570,80 @@ class DisabledKnowledgeRepository:
     def _raise(self) -> None:
         raise RuntimeError("Knowledge repository is not configured")
 
+    def upsert_source_document(self, **_: Any) -> dict[str, Any]:
+        self._raise()
+
+    def get_source_document(self, source_doc_id: str) -> dict[str, Any] | None:
+        _ = source_doc_id
+        return None
+
+    def claim_source_documents(
+        self,
+        *,
+        limit: int,
+        source_system: str | None = None,
+        knowledge_type: str | None = None,
+        claim_token: str,
+        claim_host: str | None = None,
+    ) -> list[dict[str, Any]]:
+        _ = limit
+        _ = source_system
+        _ = knowledge_type
+        _ = claim_token
+        _ = claim_host
+        return []
+
+    def mark_source_document_processed(
+        self,
+        source_doc_id: str,
+        *,
+        processed_ingestion_id: str,
+    ) -> None:
+        _ = source_doc_id
+        _ = processed_ingestion_id
+        self._raise()
+
+    def mark_source_document_failed(self, source_doc_id: str, *, error_message: str) -> None:
+        _ = source_doc_id
+        _ = error_message
+        self._raise()
+
+    def create_sync_run(
+        self,
+        *,
+        source_system: str,
+        knowledge_type: str,
+        status: str,
+        host_name: str | None = None,
+        config_snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        _ = source_system
+        _ = knowledge_type
+        _ = status
+        _ = host_name
+        _ = config_snapshot
+        self._raise()
+
+    def update_sync_run(
+        self,
+        sync_run_id: str,
+        *,
+        status: str,
+        discovered_count: int | None = None,
+        claimed_count: int | None = None,
+        processed_count: int | None = None,
+        failed_count: int | None = None,
+        summary: dict[str, Any] | None = None,
+    ) -> None:
+        _ = sync_run_id
+        _ = status
+        _ = discovered_count
+        _ = claimed_count
+        _ = processed_count
+        _ = failed_count
+        _ = summary
+        self._raise()
+
     def create_ingestion(self, **_: Any) -> dict[str, Any]:
         self._raise()
 
@@ -460,8 +667,8 @@ class DisabledKnowledgeRepository:
     def dashboard_metrics(self) -> dict[str, Any]:
         return build_empty_knowledge_metrics(
             storage_mode=self.storage_mode(),
-            embedding_model=(os.getenv("OPENAI_EMBEDDING_MODEL") or "text-embedding-3-large").strip(),
-            vector_table=(os.getenv("PGVECTOR_TABLE") or "docagent_chunks").strip(),
+            embedding_model=embedding_model_id(),
+            vector_table=(os.getenv("PGVECTOR_TABLE") or DEFAULT_PGVECTOR_TABLE).strip(),
         )
 
     def mark_ingestion_processing(self, ingestion_id: str) -> None:
@@ -615,7 +822,10 @@ class DisabledKnowledgeRepository:
         short_doc_flag: bool | None = None,
         duplicate_doc_flag: bool | None = None,
         metadata_missing_flags: dict[str, Any] | None = None,
+        embedding_provider: str | None = None,
         embedding_model: str | None = None,
+        vector_dim: int | None = None,
+        index_roles_summary: dict[str, Any] | None = None,
         vector_upsert_success: bool | None = None,
         fts_upsert_success: bool | None = None,
     ) -> None:
@@ -654,7 +864,10 @@ class DisabledKnowledgeRepository:
         _ = short_doc_flag
         _ = duplicate_doc_flag
         _ = metadata_missing_flags
+        _ = embedding_provider
         _ = embedding_model
+        _ = vector_dim
+        _ = index_roles_summary
         _ = vector_upsert_success
         _ = fts_upsert_success
         self._raise()
@@ -667,12 +880,24 @@ class DisabledKnowledgeRepository:
         self,
         *,
         document_id: str,
+        index_role: str,
         vector_dim: int,
         rows: list[dict[str, Any]],
     ) -> int:
         _ = document_id
+        _ = index_role
         _ = vector_dim
         _ = rows
+        self._raise()
+
+    def record_chunk_run(
+        self,
+        *,
+        run: dict[str, Any],
+        traces: list[dict[str, Any]],
+    ) -> None:
+        _ = run
+        _ = traces
         self._raise()
 
     def record_rag_query_run(
@@ -712,14 +937,14 @@ class PostgresKnowledgeRepository:
         dsn: str,
         *,
         schema: str = "supportportal",
-        vector_table: str = "docagent_chunks",
+        vector_table: str = DEFAULT_PGVECTOR_TABLE,
         connect_timeout: int = 10,
-        default_vector_dim: int = 3072,
+        default_vector_dim: int = 1024,
     ) -> None:
         self._dsn = dsn.strip()
         self._schema = (schema or "supportportal").strip() or "supportportal"
         self._connect_timeout = _safe_positive_int(connect_timeout, 5)
-        self._default_vector_dim = _safe_positive_int(default_vector_dim, 3072)
+        self._default_vector_dim = _safe_positive_int(default_vector_dim, 1024)
         self._vector_schema, self._vector_table_name = _split_table_name(vector_table, self._schema)
 
     def storage_mode(self) -> str:
@@ -858,7 +1083,10 @@ class PostgresKnowledgeRepository:
                             short_doc_flag BOOLEAN,
                             duplicate_doc_flag BOOLEAN,
                             metadata_missing_flags JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            embedding_provider TEXT,
                             embedding_model TEXT,
+                            vector_dim INTEGER,
+                            index_roles_summary JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                             vector_upsert_success BOOLEAN,
                             fts_upsert_success BOOLEAN,
                             cleaning_report JSONB NOT NULL DEFAULT '{{}}'::jsonb,
@@ -874,7 +1102,130 @@ class PostgresKnowledgeRepository:
                         self._table("support_knowledge_ingestions"),
                     )
                 )
-                self._ensure_vector_table(cur=cur, vector_dim=self._default_vector_dim)
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            chunk_run_id TEXT PRIMARY KEY,
+                            ingestion_id TEXT NOT NULL REFERENCES {}(ingestion_id) ON DELETE CASCADE,
+                            document_id TEXT NOT NULL,
+                            knowledge_type TEXT NOT NULL,
+                            source_type TEXT NOT NULL,
+                            chunk_strategy TEXT NOT NULL,
+                            strategy_version TEXT,
+                            index_role TEXT NOT NULL,
+                            embedding_provider TEXT,
+                            embedding_model TEXT,
+                            vector_dim INTEGER,
+                            chunk_count INTEGER NOT NULL DEFAULT 0,
+                            token_count_total INTEGER,
+                            avg_chunk_tokens DOUBLE PRECISION,
+                            min_chunk_tokens INTEGER,
+                            max_chunk_tokens INTEGER,
+                            avg_overlap_tokens DOUBLE PRECISION,
+                            config_snapshot JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            summary JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            created_at TIMESTAMPTZ NOT NULL,
+                            updated_at TIMESTAMPTZ NOT NULL
+                        )
+                        """
+                    ).format(
+                        self._table("support_knowledge_chunk_runs"),
+                        self._table("support_knowledge_ingestions"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            trace_id TEXT PRIMARY KEY,
+                            chunk_run_id TEXT NOT NULL REFERENCES {}(chunk_run_id) ON DELETE CASCADE,
+                            ingestion_id TEXT NOT NULL,
+                            document_id TEXT NOT NULL,
+                            chunk_id TEXT NOT NULL,
+                            chunk_strategy TEXT NOT NULL,
+                            index_role TEXT NOT NULL,
+                            heading_path JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            parent_block_id TEXT,
+                            parent_block_type TEXT,
+                            parent_section_type TEXT,
+                            raw_chunk_text TEXT,
+                            retrieval_text TEXT NOT NULL,
+                            char_count INTEGER,
+                            token_count INTEGER,
+                            overlap_tokens INTEGER,
+                            unit_count INTEGER,
+                            boundary_reason TEXT,
+                            semantic_similarity_prev DOUBLE PRECISION,
+                            semantic_similarity_next DOUBLE PRECISION,
+                            is_duplicate_chunk BOOLEAN NOT NULL DEFAULT FALSE,
+                            vector_row_id TEXT,
+                            metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            created_at TIMESTAMPTZ NOT NULL
+                        )
+                        """
+                    ).format(
+                        self._table("support_knowledge_chunk_traces"),
+                        self._table("support_knowledge_chunk_runs"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            source_doc_id TEXT PRIMARY KEY,
+                            knowledge_type TEXT NOT NULL,
+                            source_system TEXT NOT NULL,
+                            external_id TEXT,
+                            title TEXT,
+                            source_url TEXT,
+                            published_url TEXT,
+                            content_format TEXT NOT NULL,
+                            raw_content TEXT,
+                            raw_payload JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            checksum TEXT NOT NULL,
+                            source_updated_at TIMESTAMPTZ,
+                            sync_status TEXT NOT NULL DEFAULT 'pending',
+                            claimed_at TIMESTAMPTZ,
+                            claim_token TEXT,
+                            claim_host TEXT,
+                            processed_ingestion_id TEXT REFERENCES {}(ingestion_id) ON DELETE SET NULL,
+                            last_error TEXT,
+                            metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            created_at TIMESTAMPTZ NOT NULL,
+                            updated_at TIMESTAMPTZ NOT NULL
+                        )
+                        """
+                    ).format(
+                        self._table("support_knowledge_source_documents"),
+                        self._table("support_knowledge_ingestions"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            sync_run_id TEXT PRIMARY KEY,
+                            source_system TEXT NOT NULL,
+                            knowledge_type TEXT NOT NULL,
+                            status TEXT NOT NULL,
+                            host_name TEXT,
+                            started_at TIMESTAMPTZ,
+                            finished_at TIMESTAMPTZ,
+                            discovered_count INTEGER NOT NULL DEFAULT 0,
+                            claimed_count INTEGER NOT NULL DEFAULT 0,
+                            processed_count INTEGER NOT NULL DEFAULT 0,
+                            failed_count INTEGER NOT NULL DEFAULT 0,
+                            config_snapshot JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            summary JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            created_at TIMESTAMPTZ NOT NULL,
+                            updated_at TIMESTAMPTZ NOT NULL
+                        )
+                        """
+                    ).format(self._table("support_knowledge_sync_runs"))
+                )
+                validated_vector_dim = validate_embedding_provider_dim()
+                self._ensure_vector_table(cur=cur, vector_dim=validated_vector_dim)
                 ingestion_alters = [
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'official_markdown_upload'",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS normalization_status TEXT NOT NULL DEFAULT 'pending'",
@@ -933,12 +1284,43 @@ class PostgresKnowledgeRepository:
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS short_doc_flag BOOLEAN",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS duplicate_doc_flag BOOLEAN",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS metadata_missing_flags JSONB NOT NULL DEFAULT '{{}}'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS embedding_provider TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS embedding_model TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS vector_dim INTEGER",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS index_roles_summary JSONB NOT NULL DEFAULT '{{}}'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS vector_upsert_success BOOLEAN",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS fts_upsert_success BOOLEAN",
                 ]
                 for statement in report_alters:
                     cur.execute(sql.SQL(statement).format(self._table("support_knowledge_ingestion_reports")))
+                source_document_alters = [
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS external_id TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS published_url TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS content_format TEXT NOT NULL DEFAULT 'markdown'",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS raw_content TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS raw_payload JSONB NOT NULL DEFAULT '{{}}'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS checksum TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS source_updated_at TIMESTAMPTZ",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS sync_status TEXT NOT NULL DEFAULT 'pending'",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS claim_token TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS claim_host TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS processed_ingestion_id TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS last_error TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb",
+                ]
+                for statement in source_document_alters:
+                    cur.execute(sql.SQL(statement).format(self._table("support_knowledge_source_documents")))
+                sync_run_alters = [
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS discovered_count INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS claimed_count INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS processed_count INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS failed_count INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS config_snapshot JSONB NOT NULL DEFAULT '{{}}'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS summary JSONB NOT NULL DEFAULT '{{}}'::jsonb",
+                ]
+                for statement in sync_run_alters:
+                    cur.execute(sql.SQL(statement).format(self._table("support_knowledge_sync_runs")))
                 cur.execute(
                     sql.SQL(
                         """
@@ -969,6 +1351,10 @@ class PostgresKnowledgeRepository:
                             embedding_tokens INTEGER,
                             avg_cost_per_query DOUBLE PRECISION,
                             confidence_score DOUBLE PRECISION,
+                            embedding_provider TEXT,
+                            embedding_model TEXT,
+                            embedding_dimensions INTEGER,
+                            embedding_request_meta JSONB NOT NULL DEFAULT '[]'::jsonb,
                             primary_source_type TEXT,
                             primary_chunk_strategy TEXT,
                             needs_human BOOLEAN NOT NULL DEFAULT FALSE,
@@ -989,6 +1375,10 @@ class PostgresKnowledgeRepository:
                 )
                 query_run_alters = [
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS confidence_score DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS embedding_provider TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS embedding_model TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS embedding_dimensions INTEGER",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS embedding_request_meta JSONB NOT NULL DEFAULT '[]'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS primary_source_type TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS primary_chunk_strategy TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS error_flag BOOLEAN NOT NULL DEFAULT FALSE",
@@ -1113,6 +1503,54 @@ class PostgresKnowledgeRepository:
                     )
                 )
                 cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (document_id, index_role, created_at DESC)").format(
+                        sql.Identifier("idx_support_knowledge_chunk_runs_doc_role_created"),
+                        self._table("support_knowledge_chunk_runs"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (ingestion_id, index_role, created_at DESC)").format(
+                        sql.Identifier("idx_support_knowledge_chunk_runs_ingestion_role_created"),
+                        self._table("support_knowledge_chunk_runs"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (chunk_run_id)").format(
+                        sql.Identifier("idx_support_knowledge_chunk_traces_run"),
+                        self._table("support_knowledge_chunk_traces"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (document_id, index_role)").format(
+                        sql.Identifier("idx_support_knowledge_chunk_traces_doc_role"),
+                        self._table("support_knowledge_chunk_traces"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (sync_status, source_system, updated_at DESC)").format(
+                        sql.Identifier("idx_support_knowledge_source_documents_status_system"),
+                        self._table("support_knowledge_source_documents"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (processed_ingestion_id)").format(
+                        sql.Identifier("idx_support_knowledge_source_documents_ingestion"),
+                        self._table("support_knowledge_source_documents"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (source_system, knowledge_type, external_id) WHERE external_id IS NOT NULL").format(
+                        sql.Identifier("idx_support_knowledge_source_documents_external_id"),
+                        self._table("support_knowledge_source_documents"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (status, started_at DESC)").format(
+                        sql.Identifier("idx_support_knowledge_sync_runs_status_started"),
+                        self._table("support_knowledge_sync_runs"),
+                    )
+                )
+                cur.execute(
                     sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (created_at DESC)").format(
                         sql.Identifier("idx_support_rag_query_runs_created"),
                         self._table("support_rag_query_runs"),
@@ -1158,6 +1596,7 @@ class PostgresKnowledgeRepository:
                 CREATE TABLE IF NOT EXISTS {} (
                     id TEXT PRIMARY KEY,
                     doc_id TEXT NOT NULL,
+                    chunk_run_id TEXT,
                     doc_hash TEXT,
                     source_path TEXT NOT NULL,
                     h1 TEXT,
@@ -1175,6 +1614,8 @@ class PostgresKnowledgeRepository:
                     chunk_token_count INTEGER,
                     overlap_tokens INTEGER,
                     chunk_strategy TEXT,
+                    index_role TEXT NOT NULL DEFAULT 'primary',
+                    strategy_version TEXT,
                     embedding_model TEXT,
                     vector_indexed_at TIMESTAMPTZ,
                     fts_indexed_at TIMESTAMPTZ,
@@ -1187,8 +1628,36 @@ class PostgresKnowledgeRepository:
                 """
             ).format(self._vector_table(), sql.SQL(str(int(safe_dim))))
         )
+        cur.execute(
+            """
+            SELECT format_type(a.atttypid, a.atttypmod)
+            FROM pg_attribute AS a
+            JOIN pg_class AS c ON a.attrelid = c.oid
+            JOIN pg_namespace AS n ON c.relnamespace = n.oid
+            WHERE n.nspname = %s
+              AND c.relname = %s
+              AND a.attname = 'embedding'
+              AND NOT a.attisdropped
+            LIMIT 1
+            """,
+            (self._vector_schema, self._vector_table_name),
+        )
+        existing_row = cur.fetchone()
+        existing_dim = _vector_type_dimension(existing_row[0] if existing_row else None)
+        if existing_dim is not None and existing_dim != int(safe_dim):
+            table_name = (
+                f"{self._vector_schema}.{self._vector_table_name}"
+                if self._vector_schema
+                else self._vector_table_name
+            )
+            raise RuntimeError(
+                f"Configured PGVECTOR_DIM={int(safe_dim)} does not match existing {table_name}.embedding "
+                f"dimension vector({existing_dim}). Recreate the table or point PGVECTOR_TABLE to a "
+                f"table with vector({int(safe_dim)})."
+            )
         alter_statements = [
             "ALTER TABLE {} ADD COLUMN IF NOT EXISTS doc_id TEXT",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS chunk_run_id TEXT",
             "ALTER TABLE {} ADD COLUMN IF NOT EXISTS doc_hash TEXT",
             "ALTER TABLE {} ADD COLUMN IF NOT EXISTS source_path TEXT",
             "ALTER TABLE {} ADD COLUMN IF NOT EXISTS h1 TEXT",
@@ -1206,6 +1675,8 @@ class PostgresKnowledgeRepository:
             "ALTER TABLE {} ADD COLUMN IF NOT EXISTS chunk_token_count INTEGER",
             "ALTER TABLE {} ADD COLUMN IF NOT EXISTS overlap_tokens INTEGER",
             "ALTER TABLE {} ADD COLUMN IF NOT EXISTS chunk_strategy TEXT",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS index_role TEXT NOT NULL DEFAULT 'primary'",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS strategy_version TEXT",
             "ALTER TABLE {} ADD COLUMN IF NOT EXISTS embedding_model TEXT",
             "ALTER TABLE {} ADD COLUMN IF NOT EXISTS vector_indexed_at TIMESTAMPTZ",
             "ALTER TABLE {} ADD COLUMN IF NOT EXISTS fts_indexed_at TIMESTAMPTZ",
@@ -1218,13 +1689,14 @@ class PostgresKnowledgeRepository:
             cur.execute(sql.SQL(statement).format(self._vector_table()))
 
         index_specs = [
-            (f"{self._vector_table_name}_doc_id_idx", "doc_id"),
+            (f"{self._vector_table_name}_doc_id_role_idx", "doc_id, index_role"),
             (f"{self._vector_table_name}_knowledge_type_idx", "knowledge_type"),
+            (f"{self._vector_table_name}_index_role_idx", "index_role"),
             (f"{self._vector_table_name}_updated_at_idx", "updated_at DESC"),
             ("idx_support_knowledge_ingestions_status_updated", f"{self._schema}.support_knowledge_ingestions (status, updated_at DESC)"),
             ("idx_support_knowledge_documents_type_updated", f"{self._schema}.support_knowledge_documents (knowledge_type, updated_at DESC)"),
         ]
-        for index_name, target in index_specs[:3]:
+        for index_name, target in index_specs[:4]:
             cur.execute(
                 sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} ({})").format(
                     sql.Identifier(index_name),
@@ -1312,6 +1784,451 @@ class PostgresKnowledgeRepository:
         if include_content:
             payload["content"] = str(row[11]) if row[11] is not None else None
         return payload
+
+    def _row_to_source_document(self, row: tuple[Any, ...]) -> dict[str, Any]:
+        return {
+            "source_doc_id": str(row[0]),
+            "knowledge_type": _normalize_knowledge_type(row[1]),
+            "source_system": str(row[2]).strip() if row[2] is not None else "manual",
+            "external_id": _clean_text(row[3]),
+            "title": _clean_text(row[4]),
+            "source_url": _clean_text(row[5]),
+            "published_url": _clean_text(row[6]),
+            "content_format": _clean_text(row[7]) or "markdown",
+            "raw_content": row[8] if row[8] is not None else None,
+            "raw_payload": row[9] if isinstance(row[9], dict) else {},
+            "checksum": _clean_text(row[10]),
+            "source_updated_at": _to_iso(row[11]) if row[11] is not None else None,
+            "sync_status": _normalize_source_sync_status(row[12]),
+            "claimed_at": _to_iso(row[13]) if row[13] is not None else None,
+            "claim_token": _clean_text(row[14]),
+            "claim_host": _clean_text(row[15]),
+            "processed_ingestion_id": _clean_text(row[16]),
+            "last_error": _clean_text(row[17]),
+            "metadata": row[18] if isinstance(row[18], dict) else {},
+            "created_at": _to_iso(row[19]),
+            "updated_at": _to_iso(row[20]),
+        }
+
+    def _row_to_sync_run(self, row: tuple[Any, ...]) -> dict[str, Any]:
+        return {
+            "sync_run_id": str(row[0]),
+            "source_system": _clean_text(row[1]) or "manual",
+            "knowledge_type": _normalize_knowledge_type(row[2]),
+            "status": _clean_text(row[3]) or "running",
+            "host_name": _clean_text(row[4]),
+            "started_at": _to_iso(row[5]) if row[5] is not None else None,
+            "finished_at": _to_iso(row[6]) if row[6] is not None else None,
+            "discovered_count": int(row[7] or 0),
+            "claimed_count": int(row[8] or 0),
+            "processed_count": int(row[9] or 0),
+            "failed_count": int(row[10] or 0),
+            "config_snapshot": row[11] if isinstance(row[11], dict) else {},
+            "summary": row[12] if isinstance(row[12], dict) else {},
+            "created_at": _to_iso(row[13]),
+            "updated_at": _to_iso(row[14]),
+        }
+
+    def get_source_document(self, source_doc_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT
+                            source_doc_id,
+                            knowledge_type,
+                            source_system,
+                            external_id,
+                            title,
+                            source_url,
+                            published_url,
+                            content_format,
+                            raw_content,
+                            raw_payload,
+                            checksum,
+                            source_updated_at,
+                            sync_status,
+                            claimed_at,
+                            claim_token,
+                            claim_host,
+                            processed_ingestion_id,
+                            last_error,
+                            metadata,
+                            created_at,
+                            updated_at
+                        FROM {}
+                        WHERE source_doc_id = %s
+                        """
+                    ).format(self._table("support_knowledge_source_documents")),
+                    (source_doc_id,),
+                )
+                row = cur.fetchone()
+        return self._row_to_source_document(row) if row else None
+
+    def upsert_source_document(
+        self,
+        *,
+        knowledge_type: str,
+        source_system: str,
+        external_id: str | None = None,
+        title: str | None = None,
+        source_url: str | None = None,
+        published_url: str | None = None,
+        content_format: str,
+        raw_content: str | None,
+        raw_payload: dict[str, Any] | None = None,
+        checksum: str,
+        source_updated_at: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        sync_status: str = "pending",
+    ) -> dict[str, Any]:
+        source_doc_id = _stable_source_doc_id(
+            knowledge_type=knowledge_type,
+            source_system=source_system,
+            external_id=external_id,
+            source_url=source_url,
+            published_url=published_url,
+            checksum=checksum,
+            title=title,
+        )
+        existing = self.get_source_document(source_doc_id)
+        if existing and _clean_text(existing.get("checksum")) == _clean_text(checksum):
+            return existing
+        created_at = _utc_now()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} (
+                            source_doc_id,
+                            knowledge_type,
+                            source_system,
+                            external_id,
+                            title,
+                            source_url,
+                            published_url,
+                            content_format,
+                            raw_content,
+                            raw_payload,
+                            checksum,
+                            source_updated_at,
+                            sync_status,
+                            claimed_at,
+                            claim_token,
+                            claim_host,
+                            processed_ingestion_id,
+                            last_error,
+                            metadata,
+                            created_at,
+                            updated_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (source_doc_id) DO UPDATE SET
+                            knowledge_type = EXCLUDED.knowledge_type,
+                            source_system = EXCLUDED.source_system,
+                            external_id = EXCLUDED.external_id,
+                            title = EXCLUDED.title,
+                            source_url = EXCLUDED.source_url,
+                            published_url = EXCLUDED.published_url,
+                            content_format = EXCLUDED.content_format,
+                            raw_content = EXCLUDED.raw_content,
+                            raw_payload = EXCLUDED.raw_payload,
+                            checksum = EXCLUDED.checksum,
+                            source_updated_at = EXCLUDED.source_updated_at,
+                            sync_status = EXCLUDED.sync_status,
+                            claimed_at = NULL,
+                            claim_token = NULL,
+                            claim_host = NULL,
+                            processed_ingestion_id = NULL,
+                            last_error = NULL,
+                            metadata = EXCLUDED.metadata,
+                            updated_at = EXCLUDED.updated_at
+                        """
+                    ).format(self._table("support_knowledge_source_documents")),
+                    (
+                        source_doc_id,
+                        _normalize_knowledge_type(knowledge_type),
+                        _clean_text(source_system) or "manual",
+                        _clean_text(external_id),
+                        _clean_text(title),
+                        _clean_text(source_url),
+                        _clean_text(published_url),
+                        _clean_text(content_format) or "markdown",
+                        raw_content,
+                        Json(raw_payload or {}),
+                        _clean_text(checksum),
+                        source_updated_at,
+                        _normalize_source_sync_status(sync_status),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        Json(metadata or {}),
+                        created_at,
+                        created_at,
+                    ),
+                )
+            conn.commit()
+        stored = self.get_source_document(source_doc_id)
+        if stored is None:
+            raise RuntimeError(f"Failed to upsert source document {source_doc_id}")
+        return stored
+
+    def claim_source_documents(
+        self,
+        *,
+        limit: int,
+        source_system: str | None = None,
+        knowledge_type: str | None = None,
+        claim_token: str,
+        claim_host: str | None = None,
+    ) -> list[dict[str, Any]]:
+        safe_limit = _safe_positive_int(limit, 10)
+        filters = ["sync_status IN ('pending', 'failed')"]
+        filter_params: list[Any] = []
+        if _clean_text(source_system):
+            filters.append("source_system = %s")
+            filter_params.append(_clean_text(source_system))
+        if _clean_text(knowledge_type):
+            filters.append("knowledge_type = %s")
+            filter_params.append(_normalize_knowledge_type(knowledge_type))
+        claimed_at = _utc_now()
+        updated_at = _utc_now()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        f"""
+                        WITH picked AS (
+                            SELECT source_doc_id
+                            FROM {{table}}
+                            WHERE {' AND '.join(filters)}
+                            ORDER BY COALESCE(source_updated_at, created_at) ASC, created_at ASC
+                            FOR UPDATE SKIP LOCKED
+                            LIMIT %s
+                        )
+                        UPDATE {{table}} AS src
+                        SET sync_status = %s,
+                            claimed_at = %s,
+                            claim_token = %s,
+                            claim_host = %s,
+                            updated_at = %s
+                        FROM picked
+                        WHERE src.source_doc_id = picked.source_doc_id
+                        RETURNING
+                            src.source_doc_id,
+                            src.knowledge_type,
+                            src.source_system,
+                            src.external_id,
+                            src.title,
+                            src.source_url,
+                            src.published_url,
+                            src.content_format,
+                            src.raw_content,
+                            src.raw_payload,
+                            src.checksum,
+                            src.source_updated_at,
+                            src.sync_status,
+                            src.claimed_at,
+                            src.claim_token,
+                            src.claim_host,
+                            src.processed_ingestion_id,
+                            src.last_error,
+                            src.metadata,
+                            src.created_at,
+                            src.updated_at
+                        """
+                    ).format(table=self._table("support_knowledge_source_documents")),
+                    (
+                        *filter_params,
+                        safe_limit,
+                        "claimed",
+                        claimed_at,
+                        _clean_text(claim_token),
+                        _clean_text(claim_host),
+                        updated_at,
+                    ),
+                )
+                rows = cur.fetchall()
+            conn.commit()
+        return [self._row_to_source_document(row) for row in rows]
+
+    def mark_source_document_processed(
+        self,
+        source_doc_id: str,
+        *,
+        processed_ingestion_id: str,
+    ) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {}
+                        SET sync_status = 'processed',
+                            processed_ingestion_id = %s,
+                            last_error = NULL,
+                            claim_token = NULL,
+                            claim_host = NULL,
+                            updated_at = %s
+                        WHERE source_doc_id = %s
+                        """
+                    ).format(self._table("support_knowledge_source_documents")),
+                    (_clean_text(processed_ingestion_id), _utc_now(), source_doc_id),
+                )
+            conn.commit()
+
+    def mark_source_document_failed(self, source_doc_id: str, *, error_message: str) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {}
+                        SET sync_status = 'failed',
+                            last_error = %s,
+                            claim_token = NULL,
+                            claim_host = NULL,
+                            updated_at = %s
+                        WHERE source_doc_id = %s
+                        """
+                    ).format(self._table("support_knowledge_source_documents")),
+                    (_clean_text(error_message), _utc_now(), source_doc_id),
+                )
+            conn.commit()
+
+    def create_sync_run(
+        self,
+        *,
+        source_system: str,
+        knowledge_type: str,
+        status: str,
+        host_name: str | None = None,
+        config_snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        sync_run_id = f"SYNC-{uuid4().hex[:12].upper()}"
+        created_at = _utc_now()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} (
+                            sync_run_id,
+                            source_system,
+                            knowledge_type,
+                            status,
+                            host_name,
+                            started_at,
+                            finished_at,
+                            discovered_count,
+                            claimed_count,
+                            processed_count,
+                            failed_count,
+                            config_snapshot,
+                            summary,
+                            created_at,
+                            updated_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """
+                    ).format(self._table("support_knowledge_sync_runs")),
+                    (
+                        sync_run_id,
+                        _clean_text(source_system) or "manual",
+                        _normalize_knowledge_type(knowledge_type),
+                        _clean_text(status) or "running",
+                        _clean_text(host_name),
+                        created_at,
+                        None,
+                        0,
+                        0,
+                        0,
+                        0,
+                        Json(config_snapshot or {}),
+                        Json({}),
+                        created_at,
+                        created_at,
+                    ),
+                )
+            conn.commit()
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT
+                            sync_run_id,
+                            source_system,
+                            knowledge_type,
+                            status,
+                            host_name,
+                            started_at,
+                            finished_at,
+                            discovered_count,
+                            claimed_count,
+                            processed_count,
+                            failed_count,
+                            config_snapshot,
+                            summary,
+                            created_at,
+                            updated_at
+                        FROM {}
+                        WHERE sync_run_id = %s
+                        """
+                    ).format(self._table("support_knowledge_sync_runs")),
+                    (sync_run_id,),
+                )
+                row = cur.fetchone()
+        if row is None:
+            raise RuntimeError(f"Failed to create sync run {sync_run_id}")
+        return self._row_to_sync_run(row)
+
+    def update_sync_run(
+        self,
+        sync_run_id: str,
+        *,
+        status: str,
+        discovered_count: int | None = None,
+        claimed_count: int | None = None,
+        processed_count: int | None = None,
+        failed_count: int | None = None,
+        summary: dict[str, Any] | None = None,
+    ) -> None:
+        finished_at = _utc_now() if _clean_text(status) in {"completed", "failed"} else None
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {}
+                        SET status = %s,
+                            discovered_count = COALESCE(%s, discovered_count),
+                            claimed_count = COALESCE(%s, claimed_count),
+                            processed_count = COALESCE(%s, processed_count),
+                            failed_count = COALESCE(%s, failed_count),
+                            summary = COALESCE(%s::jsonb, summary),
+                            finished_at = COALESCE(%s, finished_at),
+                            updated_at = %s
+                        WHERE sync_run_id = %s
+                        """
+                    ).format(self._table("support_knowledge_sync_runs")),
+                    (
+                        _clean_text(status) or "running",
+                        discovered_count,
+                        claimed_count,
+                        processed_count,
+                        failed_count,
+                        Json(summary) if summary is not None else None,
+                        finished_at,
+                        _utc_now(),
+                        sync_run_id,
+                    ),
+                )
+            conn.commit()
 
     def create_ingestion(
         self,
@@ -1505,7 +2422,7 @@ class PostgresKnowledgeRepository:
         return [self._row_to_ingestion(row, include_content=False) for row in rows]
 
     def dashboard_metrics(self) -> dict[str, Any]:
-        embedding_model = (os.getenv("OPENAI_EMBEDDING_MODEL") or "text-embedding-3-large").strip()
+        embedding_model = embedding_model_id()
         vector_table = (
             f"{self._vector_schema}.{self._vector_table_name}"
             if self._vector_schema
@@ -1536,6 +2453,7 @@ class PostgresKnowledgeRepository:
                             AVG(length(content))::double precision AS avg_chunk_characters,
                             COUNT(DISTINCT doc_id) AS distinct_docs_with_chunks
                         FROM {}
+                        WHERE index_role = 'primary'
                         """
                     ).format(self._vector_table())
                 )
@@ -1566,6 +2484,38 @@ class PostgresKnowledgeRepository:
                 )
                 ingestion_row = cur.fetchone() or (0, 0, 0, 0, 0, 0.0, None)
 
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT
+                            COUNT(*) AS total_count,
+                            COUNT(*) FILTER (WHERE sync_status = 'pending') AS pending_count,
+                            COUNT(*) FILTER (WHERE sync_status = 'claimed') AS claimed_count,
+                            COUNT(*) FILTER (WHERE sync_status = 'failed') AS failed_count,
+                            COUNT(*) FILTER (WHERE source_system = 'agora') AS agora_count,
+                            COUNT(*) FILTER (WHERE source_system = 'n8n') AS n8n_count,
+                            COUNT(*) FILTER (WHERE source_system = 'manual') AS manual_count
+                        FROM {}
+                        """
+                    ).format(self._table("support_knowledge_source_documents"))
+                )
+                source_row = cur.fetchone() or (0, 0, 0, 0, 0, 0, 0)
+
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT
+                            COUNT(*) FILTER (WHERE started_at >= NOW() - INTERVAL '24 hours') AS total_last_24h,
+                            COUNT(*) FILTER (
+                                WHERE started_at >= NOW() - INTERVAL '24 hours'
+                                  AND status = 'failed'
+                            ) AS failed_last_24h
+                        FROM {}
+                        """
+                    ).format(self._table("support_knowledge_sync_runs"))
+                )
+                sync_row = cur.fetchone() or (0, 0)
+
         return build_knowledge_metrics_payload(
             storage_mode=self.storage_mode(),
             embedding_model=embedding_model,
@@ -1585,6 +2535,17 @@ class PostgresKnowledgeRepository:
             failure_count_last_24h=ingestion_row[4],
             avg_processing_seconds_last_24h=ingestion_row[5],
             latest_completed_at=ingestion_row[6],
+            source_documents_total=source_row[0],
+            source_documents_pending=source_row[1],
+            source_documents_claimed=source_row[2],
+            source_documents_failed=source_row[3],
+            source_documents_by_system={
+                "agora": source_row[4],
+                "n8n": source_row[5],
+                "manual": source_row[6],
+            },
+            sync_runs_last_24h=sync_row[0],
+            sync_runs_failed_last_24h=sync_row[1],
         )
 
     def mark_ingestion_processing(self, ingestion_id: str) -> None:
@@ -1941,142 +2902,128 @@ class PostgresKnowledgeRepository:
         short_doc_flag: bool | None = None,
         duplicate_doc_flag: bool | None = None,
         metadata_missing_flags: dict[str, Any] | None = None,
+        embedding_provider: str | None = None,
         embedding_model: str | None = None,
+        vector_dim: int | None = None,
+        index_roles_summary: dict[str, Any] | None = None,
         vector_upsert_success: bool | None = None,
         fts_upsert_success: bool | None = None,
     ) -> None:
         created_at = _utc_now()
+        columns = [
+            "ingestion_id",
+            "knowledge_type",
+            "source_type",
+            "parser_name",
+            "parser_version",
+            "normalization_status",
+            "dedupe_action",
+            "dedupe_target_doc_id",
+            "failed_stage",
+            "error_code",
+            "ingestion_latency_ms",
+            "cleaning_latency_ms",
+            "chunking_latency_ms",
+            "embedding_latency_ms",
+            "index_upsert_latency_ms",
+            "cleaned_token_count",
+            "doc_token_count",
+            "chunk_strategy",
+            "avg_chunk_tokens",
+            "p50_chunk_tokens",
+            "p90_chunk_tokens",
+            "p99_chunk_tokens",
+            "avg_overlap_tokens",
+            "avg_chunks_per_doc",
+            "short_chunk_rate_lt_100",
+            "long_chunk_rate_gt_800",
+            "long_chunk_rate_gt_1000",
+            "empty_doc_flag",
+            "short_doc_flag",
+            "duplicate_doc_flag",
+            "metadata_missing_flags",
+            "embedding_provider",
+            "embedding_model",
+            "vector_dim",
+            "index_roles_summary",
+            "vector_upsert_success",
+            "fts_upsert_success",
+            "cleaning_report",
+            "metadata_snapshot",
+            "normalized_summary",
+            "chunk_handoff_summary",
+            "created_at",
+            "updated_at",
+        ]
+        values = (
+            ingestion_id,
+            _normalize_knowledge_type(knowledge_type),
+            _normalize_source_type(source_type),
+            _clean_text(parser_name),
+            _clean_text(parser_version),
+            _normalize_normalization_status(normalization_status),
+            _normalize_dedupe_action(dedupe_action),
+            _clean_text(dedupe_target_doc_id),
+            _clean_text(failed_stage),
+            _clean_text(error_code),
+            _safe_float(ingestion_latency_ms, 0.0) if ingestion_latency_ms is not None else None,
+            _safe_float(cleaning_latency_ms, 0.0) if cleaning_latency_ms is not None else None,
+            _safe_float(chunking_latency_ms, 0.0) if chunking_latency_ms is not None else None,
+            _safe_float(embedding_latency_ms, 0.0) if embedding_latency_ms is not None else None,
+            _safe_float(index_upsert_latency_ms, 0.0) if index_upsert_latency_ms is not None else None,
+            max(0, int(cleaned_token_count or 0)) if cleaned_token_count is not None else None,
+            max(0, int(doc_token_count or 0)) if doc_token_count is not None else None,
+            _clean_text(chunk_strategy),
+            _safe_float(avg_chunk_tokens, 0.0) if avg_chunk_tokens is not None else None,
+            _safe_float(p50_chunk_tokens, 0.0) if p50_chunk_tokens is not None else None,
+            _safe_float(p90_chunk_tokens, 0.0) if p90_chunk_tokens is not None else None,
+            _safe_float(p99_chunk_tokens, 0.0) if p99_chunk_tokens is not None else None,
+            _safe_float(avg_overlap_tokens, 0.0) if avg_overlap_tokens is not None else None,
+            _safe_float(avg_chunks_per_doc, 0.0) if avg_chunks_per_doc is not None else None,
+            _safe_float(short_chunk_rate_lt_100, 0.0) if short_chunk_rate_lt_100 is not None else None,
+            _safe_float(long_chunk_rate_gt_800, 0.0) if long_chunk_rate_gt_800 is not None else None,
+            _safe_float(long_chunk_rate_gt_1000, 0.0) if long_chunk_rate_gt_1000 is not None else None,
+            empty_doc_flag,
+            short_doc_flag,
+            duplicate_doc_flag,
+            Json(metadata_missing_flags or {}),
+            _clean_text(embedding_provider),
+            _clean_text(embedding_model),
+            max(0, int(vector_dim or 0)) if vector_dim is not None else None,
+            Json(index_roles_summary or {}),
+            vector_upsert_success,
+            fts_upsert_success,
+            Json(cleaning_report or {}),
+            Json(metadata_snapshot or {}),
+            Json(normalized_summary or {}),
+            Json(chunk_handoff_summary or {}),
+            created_at,
+            created_at,
+        )
+        update_fields = [column for column in columns if column not in {"ingestion_id", "created_at"}]
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     sql.SQL(
                         """
-                        INSERT INTO {} (
-                            ingestion_id,
-                            knowledge_type,
-                            source_type,
-                            parser_name,
-                            parser_version,
-                            normalization_status,
-                            dedupe_action,
-                            dedupe_target_doc_id,
-                            failed_stage,
-                            error_code,
-                            ingestion_latency_ms,
-                            cleaning_latency_ms,
-                            chunking_latency_ms,
-                            embedding_latency_ms,
-                            index_upsert_latency_ms,
-                            cleaned_token_count,
-                            doc_token_count,
-                            chunk_strategy,
-                            avg_chunk_tokens,
-                            p50_chunk_tokens,
-                            p90_chunk_tokens,
-                            p99_chunk_tokens,
-                            avg_overlap_tokens,
-                            avg_chunks_per_doc,
-                            short_chunk_rate_lt_100,
-                            long_chunk_rate_gt_800,
-                            long_chunk_rate_gt_1000,
-                            empty_doc_flag,
-                            short_doc_flag,
-                            duplicate_doc_flag,
-                            metadata_missing_flags,
-                            embedding_model,
-                            vector_upsert_success,
-                            fts_upsert_success,
-                            cleaning_report,
-                            metadata_snapshot,
-                            normalized_summary,
-                            chunk_handoff_summary,
-                            created_at,
-                            updated_at
-                        )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        INSERT INTO {} ({columns})
+                        VALUES ({placeholders})
                         ON CONFLICT (ingestion_id) DO UPDATE SET
-                            knowledge_type = EXCLUDED.knowledge_type,
-                            source_type = EXCLUDED.source_type,
-                            parser_name = EXCLUDED.parser_name,
-                            parser_version = EXCLUDED.parser_version,
-                            normalization_status = EXCLUDED.normalization_status,
-                            dedupe_action = EXCLUDED.dedupe_action,
-                            dedupe_target_doc_id = EXCLUDED.dedupe_target_doc_id,
-                            failed_stage = EXCLUDED.failed_stage,
-                            error_code = EXCLUDED.error_code,
-                            ingestion_latency_ms = EXCLUDED.ingestion_latency_ms,
-                            cleaning_latency_ms = EXCLUDED.cleaning_latency_ms,
-                            chunking_latency_ms = EXCLUDED.chunking_latency_ms,
-                            embedding_latency_ms = EXCLUDED.embedding_latency_ms,
-                            index_upsert_latency_ms = EXCLUDED.index_upsert_latency_ms,
-                            cleaned_token_count = EXCLUDED.cleaned_token_count,
-                            doc_token_count = EXCLUDED.doc_token_count,
-                            chunk_strategy = EXCLUDED.chunk_strategy,
-                            avg_chunk_tokens = EXCLUDED.avg_chunk_tokens,
-                            p50_chunk_tokens = EXCLUDED.p50_chunk_tokens,
-                            p90_chunk_tokens = EXCLUDED.p90_chunk_tokens,
-                            p99_chunk_tokens = EXCLUDED.p99_chunk_tokens,
-                            avg_overlap_tokens = EXCLUDED.avg_overlap_tokens,
-                            avg_chunks_per_doc = EXCLUDED.avg_chunks_per_doc,
-                            short_chunk_rate_lt_100 = EXCLUDED.short_chunk_rate_lt_100,
-                            long_chunk_rate_gt_800 = EXCLUDED.long_chunk_rate_gt_800,
-                            long_chunk_rate_gt_1000 = EXCLUDED.long_chunk_rate_gt_1000,
-                            empty_doc_flag = EXCLUDED.empty_doc_flag,
-                            short_doc_flag = EXCLUDED.short_doc_flag,
-                            duplicate_doc_flag = EXCLUDED.duplicate_doc_flag,
-                            metadata_missing_flags = EXCLUDED.metadata_missing_flags,
-                            embedding_model = EXCLUDED.embedding_model,
-                            vector_upsert_success = EXCLUDED.vector_upsert_success,
-                            fts_upsert_success = EXCLUDED.fts_upsert_success,
-                            cleaning_report = EXCLUDED.cleaning_report,
-                            metadata_snapshot = EXCLUDED.metadata_snapshot,
-                            normalized_summary = EXCLUDED.normalized_summary,
-                            chunk_handoff_summary = EXCLUDED.chunk_handoff_summary,
-                            updated_at = EXCLUDED.updated_at
+                            {updates}
                         """
-                    ).format(self._table("support_knowledge_ingestion_reports")),
-                    (
-                        ingestion_id,
-                        _normalize_knowledge_type(knowledge_type),
-                        _normalize_source_type(source_type),
-                        _clean_text(parser_name),
-                        _clean_text(parser_version),
-                        _normalize_normalization_status(normalization_status),
-                        _normalize_dedupe_action(dedupe_action),
-                        _clean_text(dedupe_target_doc_id),
-                        _clean_text(failed_stage),
-                        _clean_text(error_code),
-                        _safe_float(ingestion_latency_ms, 0.0) if ingestion_latency_ms is not None else None,
-                        _safe_float(cleaning_latency_ms, 0.0) if cleaning_latency_ms is not None else None,
-                        _safe_float(chunking_latency_ms, 0.0) if chunking_latency_ms is not None else None,
-                        _safe_float(embedding_latency_ms, 0.0) if embedding_latency_ms is not None else None,
-                        _safe_float(index_upsert_latency_ms, 0.0) if index_upsert_latency_ms is not None else None,
-                        max(0, int(cleaned_token_count or 0)) if cleaned_token_count is not None else None,
-                        max(0, int(doc_token_count or 0)) if doc_token_count is not None else None,
-                        _clean_text(chunk_strategy),
-                        _safe_float(avg_chunk_tokens, 0.0) if avg_chunk_tokens is not None else None,
-                        _safe_float(p50_chunk_tokens, 0.0) if p50_chunk_tokens is not None else None,
-                        _safe_float(p90_chunk_tokens, 0.0) if p90_chunk_tokens is not None else None,
-                        _safe_float(p99_chunk_tokens, 0.0) if p99_chunk_tokens is not None else None,
-                        _safe_float(avg_overlap_tokens, 0.0) if avg_overlap_tokens is not None else None,
-                        _safe_float(avg_chunks_per_doc, 0.0) if avg_chunks_per_doc is not None else None,
-                        _safe_float(short_chunk_rate_lt_100, 0.0) if short_chunk_rate_lt_100 is not None else None,
-                        _safe_float(long_chunk_rate_gt_800, 0.0) if long_chunk_rate_gt_800 is not None else None,
-                        _safe_float(long_chunk_rate_gt_1000, 0.0) if long_chunk_rate_gt_1000 is not None else None,
-                        empty_doc_flag,
-                        short_doc_flag,
-                        duplicate_doc_flag,
-                        Json(metadata_missing_flags or {}),
-                        _clean_text(embedding_model),
-                        vector_upsert_success,
-                        fts_upsert_success,
-                        Json(cleaning_report or {}),
-                        Json(metadata_snapshot or {}),
-                        Json(normalized_summary or {}),
-                        Json(chunk_handoff_summary or {}),
-                        created_at,
-                        created_at,
+                    ).format(
+                        self._table("support_knowledge_ingestion_reports"),
+                        columns=sql.SQL(", ").join(sql.Identifier(column) for column in columns),
+                        placeholders=sql.SQL(", ").join(sql.SQL("%s") for _ in columns),
+                        updates=sql.SQL(", ").join(
+                            sql.SQL("{} = EXCLUDED.{}").format(
+                                sql.Identifier(column),
+                                sql.Identifier(column),
+                            )
+                            for column in update_fields
+                        ),
                     ),
+                    values,
                 )
             conn.commit()
 
@@ -2120,7 +3067,10 @@ class PostgresKnowledgeRepository:
                             short_doc_flag,
                             duplicate_doc_flag,
                             metadata_missing_flags,
+                            embedding_provider,
                             embedding_model,
+                            vector_dim,
+                            index_roles_summary,
                             vector_upsert_success,
                             fts_upsert_success,
                             cleaning_report,
@@ -2168,7 +3118,10 @@ class PostgresKnowledgeRepository:
                 "short_doc_flag": None,
                 "duplicate_doc_flag": None,
                 "metadata_missing_flags": {},
+                "embedding_provider": None,
                 "embedding_model": None,
+                "vector_dim": None,
+                "index_roles_summary": {},
                 "vector_upsert_success": None,
                 "fts_upsert_success": None,
                 "cleaning_report": ingestion.get("cleaning_report") if isinstance(ingestion.get("cleaning_report"), dict) else {},
@@ -2210,15 +3163,18 @@ class PostgresKnowledgeRepository:
                 "short_doc_flag": row[27],
                 "duplicate_doc_flag": row[28],
                 "metadata_missing_flags": row[29] if isinstance(row[29], dict) else {},
-                "embedding_model": _clean_text(row[30]),
-                "vector_upsert_success": row[31],
-                "fts_upsert_success": row[32],
-                "cleaning_report": row[33] if isinstance(row[33], dict) else {},
-                "metadata_snapshot": row[34] if isinstance(row[34], dict) else {},
-                "normalized_summary": row[35] if isinstance(row[35], dict) else {},
-                "chunk_handoff_summary": row[36] if isinstance(row[36], dict) else {},
-                "created_at": _to_iso(row[37]) if row[37] is not None else None,
-                "updated_at": _to_iso(row[38]) if row[38] is not None else None,
+                "embedding_provider": _clean_text(row[30]),
+                "embedding_model": _clean_text(row[31]),
+                "vector_dim": row[32],
+                "index_roles_summary": row[33] if isinstance(row[33], dict) else {},
+                "vector_upsert_success": row[34],
+                "fts_upsert_success": row[35],
+                "cleaning_report": row[36] if isinstance(row[36], dict) else {},
+                "metadata_snapshot": row[37] if isinstance(row[37], dict) else {},
+                "normalized_summary": row[38] if isinstance(row[38], dict) else {},
+                "chunk_handoff_summary": row[39] if isinstance(row[39], dict) else {},
+                "created_at": _to_iso(row[40]) if row[40] is not None else None,
+                "updated_at": _to_iso(row[41]) if row[41] is not None else None,
             }
         warnings = report_record["cleaning_report"].get("warnings")
         warnings_list = [str(item).strip() for item in warnings if str(item).strip()] if isinstance(warnings, list) else []
@@ -2261,7 +3217,10 @@ class PostgresKnowledgeRepository:
             "short_doc_flag": report_record["short_doc_flag"],
             "duplicate_doc_flag": report_record["duplicate_doc_flag"],
             "metadata_missing_flags": report_record["metadata_missing_flags"],
+            "embedding_provider": report_record["embedding_provider"],
             "embedding_model": report_record["embedding_model"],
+            "vector_dim": report_record["vector_dim"],
+            "index_roles_summary": report_record["index_roles_summary"],
             "vector_upsert_success": report_record["vector_upsert_success"],
             "fts_upsert_success": report_record["fts_upsert_success"],
             "created_at": ingestion.get("created_at"),
@@ -2281,89 +3240,221 @@ class PostgresKnowledgeRepository:
             },
         }
 
+    def record_chunk_run(
+        self,
+        *,
+        run: dict[str, Any],
+        traces: list[dict[str, Any]],
+    ) -> None:
+        chunk_run_id = _clean_text(run.get("chunk_run_id"))
+        if not chunk_run_id:
+            raise ValueError("chunk_run_id is required")
+        created_at = _clean_text(run.get("created_at")) or _utc_now()
+        run_columns = [
+            "chunk_run_id",
+            "ingestion_id",
+            "document_id",
+            "knowledge_type",
+            "source_type",
+            "chunk_strategy",
+            "strategy_version",
+            "index_role",
+            "embedding_provider",
+            "embedding_model",
+            "vector_dim",
+            "chunk_count",
+            "token_count_total",
+            "avg_chunk_tokens",
+            "min_chunk_tokens",
+            "max_chunk_tokens",
+            "avg_overlap_tokens",
+            "config_snapshot",
+            "summary",
+            "created_at",
+            "updated_at",
+        ]
+        run_values = (
+            chunk_run_id,
+            _clean_text(run.get("ingestion_id")),
+            _clean_text(run.get("document_id")),
+            _normalize_knowledge_type(run.get("knowledge_type")),
+            _normalize_source_type(run.get("source_type")),
+            _clean_text(run.get("chunk_strategy")),
+            _clean_text(run.get("strategy_version")),
+            _clean_text(run.get("index_role")) or "primary",
+            _clean_text(run.get("embedding_provider")),
+            _clean_text(run.get("embedding_model")),
+            max(0, int(run.get("vector_dim") or 0)) if run.get("vector_dim") is not None else None,
+            max(0, int(run.get("chunk_count") or 0)),
+            max(0, int(run.get("token_count_total") or 0)) if run.get("token_count_total") is not None else None,
+            _safe_float(run.get("avg_chunk_tokens"), 0.0) if run.get("avg_chunk_tokens") is not None else None,
+            max(0, int(run.get("min_chunk_tokens") or 0)) if run.get("min_chunk_tokens") is not None else None,
+            max(0, int(run.get("max_chunk_tokens") or 0)) if run.get("max_chunk_tokens") is not None else None,
+            _safe_float(run.get("avg_overlap_tokens"), 0.0) if run.get("avg_overlap_tokens") is not None else None,
+            Json(run.get("config_snapshot") or {}),
+            Json(run.get("summary") or {}),
+            created_at,
+            created_at,
+        )
+        run_update_fields = [column for column in run_columns if column not in {"chunk_run_id", "created_at"}]
+        trace_payload = [
+            (
+                _clean_text(trace.get("trace_id")) or f"trace-{uuid4()}",
+                chunk_run_id,
+                _clean_text(trace.get("ingestion_id")) or _clean_text(run.get("ingestion_id")),
+                _clean_text(trace.get("document_id")) or _clean_text(run.get("document_id")),
+                _clean_text(trace.get("chunk_id")),
+                _clean_text(trace.get("chunk_strategy")) or _clean_text(run.get("chunk_strategy")),
+                _clean_text(trace.get("index_role")) or _clean_text(run.get("index_role")) or "primary",
+                Json(trace.get("heading_path") or []),
+                _clean_text(trace.get("parent_block_id")),
+                _clean_text(trace.get("parent_block_type")),
+                _clean_text(trace.get("parent_section_type")),
+                trace.get("raw_chunk_text"),
+                str(trace.get("retrieval_text") or ""),
+                max(0, int(trace.get("char_count") or 0)) if trace.get("char_count") is not None else None,
+                max(0, int(trace.get("token_count") or 0)) if trace.get("token_count") is not None else None,
+                max(0, int(trace.get("overlap_tokens") or 0)) if trace.get("overlap_tokens") is not None else None,
+                max(0, int(trace.get("unit_count") or 0)) if trace.get("unit_count") is not None else None,
+                _clean_text(trace.get("boundary_reason")),
+                _safe_float(trace.get("semantic_similarity_prev"), 0.0) if trace.get("semantic_similarity_prev") is not None else None,
+                _safe_float(trace.get("semantic_similarity_next"), 0.0) if trace.get("semantic_similarity_next") is not None else None,
+                bool(trace.get("is_duplicate_chunk")),
+                _clean_text(trace.get("vector_row_id")),
+                Json(trace.get("metadata") or {}),
+                _clean_text(trace.get("created_at")) or created_at,
+            )
+            for trace in traces
+        ]
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} ({columns})
+                        VALUES ({placeholders})
+                        ON CONFLICT (chunk_run_id) DO UPDATE SET
+                            {updates}
+                        """
+                    ).format(
+                        self._table("support_knowledge_chunk_runs"),
+                        columns=sql.SQL(", ").join(sql.Identifier(column) for column in run_columns),
+                        placeholders=sql.SQL(", ").join(
+                            sql.SQL("%s::jsonb") if column in {"config_snapshot", "summary"} else sql.SQL("%s")
+                            for column in run_columns
+                        ),
+                        updates=sql.SQL(", ").join(
+                            sql.SQL("{} = EXCLUDED.{}").format(
+                                sql.Identifier(column),
+                                sql.Identifier(column),
+                            )
+                            for column in run_update_fields
+                        ),
+                    ),
+                    run_values,
+                )
+                cur.execute(
+                    sql.SQL("DELETE FROM {} WHERE chunk_run_id = %s").format(
+                        self._table("support_knowledge_chunk_traces")
+                    ),
+                    (chunk_run_id,),
+                )
+                if trace_payload:
+                    cur.executemany(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (
+                                trace_id,
+                                chunk_run_id,
+                                ingestion_id,
+                                document_id,
+                                chunk_id,
+                                chunk_strategy,
+                                index_role,
+                                heading_path,
+                                parent_block_id,
+                                parent_block_type,
+                                parent_section_type,
+                                raw_chunk_text,
+                                retrieval_text,
+                                char_count,
+                                token_count,
+                                overlap_tokens,
+                                unit_count,
+                                boundary_reason,
+                                semantic_similarity_prev,
+                                semantic_similarity_next,
+                                is_duplicate_chunk,
+                                vector_row_id,
+                                metadata,
+                                created_at
+                            )
+                            VALUES (
+                                %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s,
+                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s
+                            )
+                            """
+                        ).format(self._table("support_knowledge_chunk_traces")),
+                        trace_payload,
+                    )
+            conn.commit()
+
     def replace_document_chunks(
         self,
         *,
         document_id: str,
+        index_role: str,
         vector_dim: int,
         rows: list[dict[str, Any]],
     ) -> int:
+        normalized_index_role = _clean_text(index_role) or "primary"
         if not rows:
             with self._connect() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        sql.SQL("DELETE FROM {} WHERE doc_id = %s").format(self._vector_table()),
-                        (document_id,),
+                        sql.SQL("DELETE FROM {} WHERE doc_id = %s AND index_role = %s").format(self._vector_table()),
+                        (document_id, normalized_index_role),
                     )
                 conn.commit()
             return 0
 
-        insert_query = sql.SQL(
-            """
-            INSERT INTO {} (
-                id,
-                doc_id,
-                doc_hash,
-                source_path,
-                h1,
-                h2,
-                h3,
-                source_url,
-                platform,
-                product,
-                chunk_index,
-                content,
-                metadata,
-                knowledge_type,
-                section_type,
-                ingestion_id,
-                chunk_token_count,
-                overlap_tokens,
-                chunk_strategy,
-                embedding_model,
-                vector_indexed_at,
-                fts_indexed_at,
-                has_empty_content,
-                is_duplicate_chunk,
-                embedding,
-                updated_at
-            )
-            VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::vector, NOW()
-            )
-            ON CONFLICT (id) DO UPDATE SET
-                doc_id = EXCLUDED.doc_id,
-                doc_hash = EXCLUDED.doc_hash,
-                source_path = EXCLUDED.source_path,
-                h1 = EXCLUDED.h1,
-                h2 = EXCLUDED.h2,
-                h3 = EXCLUDED.h3,
-                source_url = EXCLUDED.source_url,
-                platform = EXCLUDED.platform,
-                product = EXCLUDED.product,
-                chunk_index = EXCLUDED.chunk_index,
-                content = EXCLUDED.content,
-                metadata = EXCLUDED.metadata,
-                knowledge_type = EXCLUDED.knowledge_type,
-                section_type = EXCLUDED.section_type,
-                ingestion_id = EXCLUDED.ingestion_id,
-                chunk_token_count = EXCLUDED.chunk_token_count,
-                overlap_tokens = EXCLUDED.overlap_tokens,
-                chunk_strategy = EXCLUDED.chunk_strategy,
-                embedding_model = EXCLUDED.embedding_model,
-                vector_indexed_at = EXCLUDED.vector_indexed_at,
-                fts_indexed_at = EXCLUDED.fts_indexed_at,
-                has_empty_content = EXCLUDED.has_empty_content,
-                is_duplicate_chunk = EXCLUDED.is_duplicate_chunk,
-                embedding = EXCLUDED.embedding,
-                updated_at = NOW()
-            """
-        ).format(self._vector_table())
-
+        columns = [
+            "id",
+            "doc_id",
+            "chunk_run_id",
+            "doc_hash",
+            "source_path",
+            "h1",
+            "h2",
+            "h3",
+            "source_url",
+            "platform",
+            "product",
+            "chunk_index",
+            "content",
+            "metadata",
+            "knowledge_type",
+            "section_type",
+            "ingestion_id",
+            "chunk_token_count",
+            "overlap_tokens",
+            "chunk_strategy",
+            "index_role",
+            "strategy_version",
+            "embedding_model",
+            "vector_indexed_at",
+            "fts_indexed_at",
+            "has_empty_content",
+            "is_duplicate_chunk",
+            "embedding",
+            "updated_at",
+        ]
+        update_fields = [column for column in columns if column != "id"]
         payload = [
             (
                 row["id"],
                 row["doc_id"],
+                row.get("chunk_run_id"),
                 row.get("doc_hash"),
                 row["source_path"],
                 row.get("h1"),
@@ -2381,22 +3472,50 @@ class PostgresKnowledgeRepository:
                 max(0, int(row.get("chunk_token_count") or 0)),
                 max(0, int(row.get("overlap_tokens") or 0)),
                 row.get("chunk_strategy"),
+                row.get("index_role") or normalized_index_role,
+                row.get("strategy_version"),
                 row.get("embedding_model"),
                 row.get("vector_indexed_at") or _utc_now(),
                 row.get("fts_indexed_at") or _utc_now(),
                 bool(row.get("has_empty_content")),
                 bool(row.get("is_duplicate_chunk")),
                 _vector_literal(row["embedding"]),
+                _utc_now(),
             )
             for row in rows
         ]
+
+        insert_query = sql.SQL(
+            """
+            INSERT INTO {} ({columns})
+            VALUES ({placeholders})
+            ON CONFLICT (id) DO UPDATE SET
+                {updates}
+            """
+        ).format(
+            self._vector_table(),
+            columns=sql.SQL(", ").join(sql.Identifier(column) for column in columns),
+            placeholders=sql.SQL(", ").join(
+                sql.SQL("%s::jsonb") if column == "metadata"
+                else sql.SQL("%s::vector") if column == "embedding"
+                else sql.SQL("%s")
+                for column in columns
+            ),
+            updates=sql.SQL(", ").join(
+                sql.SQL("{} = EXCLUDED.{}").format(
+                    sql.Identifier(column),
+                    sql.Identifier(column),
+                )
+                for column in update_fields
+            ),
+        )
 
         with self._connect() as conn:
             with conn.cursor() as cur:
                 self._ensure_vector_table(cur=cur, vector_dim=vector_dim)
                 cur.execute(
-                    sql.SQL("DELETE FROM {} WHERE doc_id = %s").format(self._vector_table()),
-                    (document_id,),
+                    sql.SQL("DELETE FROM {} WHERE doc_id = %s AND index_role = %s").format(self._vector_table()),
+                    (document_id, normalized_index_role),
                 )
                 cur.executemany(insert_query, payload)
             conn.commit()
@@ -2412,141 +3531,127 @@ class PostgresKnowledgeRepository:
         if not request_id:
             raise ValueError("request_id is required for RAG query telemetry")
         created_at = _clean_text(run.get("created_at")) or _utc_now()
+        columns = [
+            "request_id",
+            "ticket_id",
+            "user_query",
+            "rewritten_query",
+            "intent",
+            "query_type",
+            "retrieval_strategy",
+            "top_k",
+            "vector_candidates_count",
+            "bm25_candidates_count",
+            "reranked_candidates_count",
+            "retrieved_chunk_ids",
+            "selected_chunk_ids",
+            "retrieval_latency_ms",
+            "rerank_latency_ms",
+            "generation_latency_ms",
+            "total_latency_ms",
+            "intent_latency_ms",
+            "rewrite_latency_ms",
+            "vector_retrieval_latency_ms",
+            "bm25_retrieval_latency_ms",
+            "prompt_tokens",
+            "completion_tokens",
+            "embedding_tokens",
+            "avg_cost_per_query",
+            "confidence_score",
+            "embedding_provider",
+            "embedding_model",
+            "embedding_dimensions",
+            "embedding_request_meta",
+            "primary_source_type",
+            "primary_chunk_strategy",
+            "needs_human",
+            "handoff_reason",
+            "error_flag",
+            "timeout_flag",
+            "error_type",
+            "answer_text",
+            "answer_length",
+            "citation_count",
+            "cited_chunk_ids",
+            "model_name",
+            "prompt_version",
+            "created_at",
+        ]
+        values = (
+            request_id,
+            _clean_text(run.get("ticket_id")),
+            str(run.get("user_query") or "").strip(),
+            _clean_text(run.get("rewritten_query")),
+            _clean_text(run.get("intent")),
+            _clean_text(run.get("query_type")),
+            _clean_text(run.get("retrieval_strategy")),
+            int(run.get("top_k") or 0) if run.get("top_k") is not None else None,
+            int(run.get("vector_candidates_count") or 0) if run.get("vector_candidates_count") is not None else None,
+            int(run.get("bm25_candidates_count") or 0) if run.get("bm25_candidates_count") is not None else None,
+            int(run.get("reranked_candidates_count") or 0) if run.get("reranked_candidates_count") is not None else None,
+            Json(run.get("retrieved_chunk_ids") or []),
+            Json(run.get("selected_chunk_ids") or []),
+            _safe_float(run.get("retrieval_latency_ms"), 0.0) if run.get("retrieval_latency_ms") is not None else None,
+            _safe_float(run.get("rerank_latency_ms"), 0.0) if run.get("rerank_latency_ms") is not None else None,
+            _safe_float(run.get("generation_latency_ms"), 0.0) if run.get("generation_latency_ms") is not None else None,
+            _safe_float(run.get("total_latency_ms"), 0.0) if run.get("total_latency_ms") is not None else None,
+            _safe_float(run.get("intent_latency_ms"), 0.0) if run.get("intent_latency_ms") is not None else None,
+            _safe_float(run.get("rewrite_latency_ms"), 0.0) if run.get("rewrite_latency_ms") is not None else None,
+            _safe_float(run.get("vector_retrieval_latency_ms"), 0.0) if run.get("vector_retrieval_latency_ms") is not None else None,
+            _safe_float(run.get("bm25_retrieval_latency_ms"), 0.0) if run.get("bm25_retrieval_latency_ms") is not None else None,
+            int(run.get("prompt_tokens") or 0) if run.get("prompt_tokens") is not None else None,
+            int(run.get("completion_tokens") or 0) if run.get("completion_tokens") is not None else None,
+            int(run.get("embedding_tokens") or 0) if run.get("embedding_tokens") is not None else None,
+            _safe_float(run.get("avg_cost_per_query"), 0.0) if run.get("avg_cost_per_query") is not None else None,
+            _safe_float(run.get("confidence_score"), 0.0) if run.get("confidence_score") is not None else None,
+            _clean_text(run.get("embedding_provider")),
+            _clean_text(run.get("embedding_model")),
+            int(run.get("embedding_dimensions") or 0) if run.get("embedding_dimensions") is not None else None,
+            Json(run.get("embedding_request_meta") or []),
+            _clean_text(run.get("primary_source_type")),
+            _clean_text(run.get("primary_chunk_strategy")),
+            bool(run.get("needs_human")),
+            _clean_text(run.get("handoff_reason")),
+            bool(run.get("error_flag")),
+            bool(run.get("timeout_flag")),
+            _clean_text(run.get("error_type")),
+            str(run.get("answer_text") or "").strip() or None,
+            int(run.get("answer_length") or 0) if run.get("answer_length") is not None else None,
+            int(run.get("citation_count") or 0),
+            Json(run.get("cited_chunk_ids") or []),
+            _clean_text(run.get("model_name")),
+            _clean_text(run.get("prompt_version")),
+            created_at,
+        )
+        update_fields = [column for column in columns if column != "request_id"]
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     sql.SQL(
                         """
-                        INSERT INTO {} (
-                            request_id,
-                            ticket_id,
-                            user_query,
-                            rewritten_query,
-                            intent,
-                            query_type,
-                            retrieval_strategy,
-                            top_k,
-                            vector_candidates_count,
-                            bm25_candidates_count,
-                            reranked_candidates_count,
-                            retrieved_chunk_ids,
-                            selected_chunk_ids,
-                            retrieval_latency_ms,
-                            rerank_latency_ms,
-                            generation_latency_ms,
-                            total_latency_ms,
-                            intent_latency_ms,
-                            rewrite_latency_ms,
-                            vector_retrieval_latency_ms,
-                            bm25_retrieval_latency_ms,
-                            prompt_tokens,
-                            completion_tokens,
-                            embedding_tokens,
-                            avg_cost_per_query,
-                            confidence_score,
-                            primary_source_type,
-                            primary_chunk_strategy,
-                            needs_human,
-                            handoff_reason,
-                            error_flag,
-                            timeout_flag,
-                            error_type,
-                            answer_text,
-                            answer_length,
-                            citation_count,
-                            cited_chunk_ids,
-                            model_name,
-                            prompt_version,
-                            created_at
-                        )
-                        VALUES (
-                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-                        )
+                        INSERT INTO {} ({columns})
+                        VALUES ({placeholders})
                         ON CONFLICT (request_id) DO UPDATE SET
-                            ticket_id = EXCLUDED.ticket_id,
-                            user_query = EXCLUDED.user_query,
-                            rewritten_query = EXCLUDED.rewritten_query,
-                            intent = EXCLUDED.intent,
-                            query_type = EXCLUDED.query_type,
-                            retrieval_strategy = EXCLUDED.retrieval_strategy,
-                            top_k = EXCLUDED.top_k,
-                            vector_candidates_count = EXCLUDED.vector_candidates_count,
-                            bm25_candidates_count = EXCLUDED.bm25_candidates_count,
-                            reranked_candidates_count = EXCLUDED.reranked_candidates_count,
-                            retrieved_chunk_ids = EXCLUDED.retrieved_chunk_ids,
-                            selected_chunk_ids = EXCLUDED.selected_chunk_ids,
-                            retrieval_latency_ms = EXCLUDED.retrieval_latency_ms,
-                            rerank_latency_ms = EXCLUDED.rerank_latency_ms,
-                            generation_latency_ms = EXCLUDED.generation_latency_ms,
-                            total_latency_ms = EXCLUDED.total_latency_ms,
-                            intent_latency_ms = EXCLUDED.intent_latency_ms,
-                            rewrite_latency_ms = EXCLUDED.rewrite_latency_ms,
-                            vector_retrieval_latency_ms = EXCLUDED.vector_retrieval_latency_ms,
-                            bm25_retrieval_latency_ms = EXCLUDED.bm25_retrieval_latency_ms,
-                            prompt_tokens = EXCLUDED.prompt_tokens,
-                            completion_tokens = EXCLUDED.completion_tokens,
-                            embedding_tokens = EXCLUDED.embedding_tokens,
-                            avg_cost_per_query = EXCLUDED.avg_cost_per_query,
-                            confidence_score = EXCLUDED.confidence_score,
-                            primary_source_type = EXCLUDED.primary_source_type,
-                            primary_chunk_strategy = EXCLUDED.primary_chunk_strategy,
-                            needs_human = EXCLUDED.needs_human,
-                            handoff_reason = EXCLUDED.handoff_reason,
-                            error_flag = EXCLUDED.error_flag,
-                            timeout_flag = EXCLUDED.timeout_flag,
-                            error_type = EXCLUDED.error_type,
-                            answer_text = EXCLUDED.answer_text,
-                            answer_length = EXCLUDED.answer_length,
-                            citation_count = EXCLUDED.citation_count,
-                            cited_chunk_ids = EXCLUDED.cited_chunk_ids,
-                            model_name = EXCLUDED.model_name,
-                            prompt_version = EXCLUDED.prompt_version,
-                            created_at = EXCLUDED.created_at
+                            {updates}
                         """
-                    ).format(self._table("support_rag_query_runs")),
-                    (
-                        request_id,
-                        _clean_text(run.get("ticket_id")),
-                        str(run.get("user_query") or "").strip(),
-                        _clean_text(run.get("rewritten_query")),
-                        _clean_text(run.get("intent")),
-                        _clean_text(run.get("query_type")),
-                        _clean_text(run.get("retrieval_strategy")),
-                        int(run.get("top_k") or 0) if run.get("top_k") is not None else None,
-                        int(run.get("vector_candidates_count") or 0) if run.get("vector_candidates_count") is not None else None,
-                        int(run.get("bm25_candidates_count") or 0) if run.get("bm25_candidates_count") is not None else None,
-                        int(run.get("reranked_candidates_count") or 0) if run.get("reranked_candidates_count") is not None else None,
-                        Json(run.get("retrieved_chunk_ids") or []),
-                        Json(run.get("selected_chunk_ids") or []),
-                        _safe_float(run.get("retrieval_latency_ms"), 0.0) if run.get("retrieval_latency_ms") is not None else None,
-                        _safe_float(run.get("rerank_latency_ms"), 0.0) if run.get("rerank_latency_ms") is not None else None,
-                        _safe_float(run.get("generation_latency_ms"), 0.0) if run.get("generation_latency_ms") is not None else None,
-                        _safe_float(run.get("total_latency_ms"), 0.0) if run.get("total_latency_ms") is not None else None,
-                        _safe_float(run.get("intent_latency_ms"), 0.0) if run.get("intent_latency_ms") is not None else None,
-                        _safe_float(run.get("rewrite_latency_ms"), 0.0) if run.get("rewrite_latency_ms") is not None else None,
-                        _safe_float(run.get("vector_retrieval_latency_ms"), 0.0) if run.get("vector_retrieval_latency_ms") is not None else None,
-                        _safe_float(run.get("bm25_retrieval_latency_ms"), 0.0) if run.get("bm25_retrieval_latency_ms") is not None else None,
-                        int(run.get("prompt_tokens") or 0) if run.get("prompt_tokens") is not None else None,
-                        int(run.get("completion_tokens") or 0) if run.get("completion_tokens") is not None else None,
-                        int(run.get("embedding_tokens") or 0) if run.get("embedding_tokens") is not None else None,
-                        _safe_float(run.get("avg_cost_per_query"), 0.0) if run.get("avg_cost_per_query") is not None else None,
-                        _safe_float(run.get("confidence_score"), 0.0) if run.get("confidence_score") is not None else None,
-                        _clean_text(run.get("primary_source_type")),
-                        _clean_text(run.get("primary_chunk_strategy")),
-                        bool(run.get("needs_human")),
-                        _clean_text(run.get("handoff_reason")),
-                        bool(run.get("error_flag")),
-                        bool(run.get("timeout_flag")),
-                        _clean_text(run.get("error_type")),
-                        str(run.get("answer_text") or "").strip() or None,
-                        int(run.get("answer_length") or 0) if run.get("answer_length") is not None else None,
-                        int(run.get("citation_count") or 0),
-                        Json(run.get("cited_chunk_ids") or []),
-                        _clean_text(run.get("model_name")),
-                        _clean_text(run.get("prompt_version")),
-                        created_at,
+                    ).format(
+                        self._table("support_rag_query_runs"),
+                        columns=sql.SQL(", ").join(sql.Identifier(column) for column in columns),
+                        placeholders=sql.SQL(", ").join(
+                            sql.SQL("%s::jsonb")
+                            if column in {"retrieved_chunk_ids", "selected_chunk_ids", "cited_chunk_ids", "embedding_request_meta"}
+                            else sql.SQL("%s")
+                            for column in columns
+                        ),
+                        updates=sql.SQL(", ").join(
+                            sql.SQL("{} = EXCLUDED.{}").format(
+                                sql.Identifier(column),
+                                sql.Identifier(column),
+                            )
+                            for column in update_fields
+                        ),
                     ),
+                    values,
                 )
                 cur.execute(
                     sql.SQL("DELETE FROM {} WHERE request_id = %s").format(
@@ -2603,6 +3708,7 @@ class PostgresKnowledgeRepository:
             "query_type": _clean_text(raw.get("query_type")) or "all",
             "retrieval_strategy": _clean_text(raw.get("retrieval_strategy")) or "all",
             "chunk_strategy": _clean_text(raw.get("chunk_strategy")) or "all",
+            "index_role": _clean_text(raw.get("index_role")) or "primary",
             "experiment_id": _clean_text(raw.get("experiment_id")) or "all",
             "limit": _safe_positive_int(raw.get("limit"), 20),
             "cursor": _clean_text(raw.get("cursor")),
@@ -3212,6 +4318,7 @@ class PostgresKnowledgeRepository:
                 "product": "d.product",
                 "language": "d.language",
                 "chunk_strategy": "c.chunk_strategy",
+                "index_role": "c.index_role",
             },
         )
         stats_row = self._query_rows(
@@ -3264,6 +4371,24 @@ class PostgresKnowledgeRepository:
             ),
             tuple(chunk_filter_params),
         )
+        role_rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    COALESCE(c.index_role, 'unknown') AS index_role,
+                    COUNT(*) AS chunk_count
+                FROM {} AS c
+                JOIN {} AS d
+                  ON d.document_id = c.doc_id
+                WHERE d.is_active = TRUE
+                GROUP BY 1
+                ORDER BY 2 DESC, 1 ASC
+                """
+            ).format(
+                self._vector_table(),
+                self._table("support_knowledge_documents"),
+            )
+        )
         histogram_rows = self._query_rows(
             sql.SQL(
                 """
@@ -3311,7 +4436,12 @@ class PostgresKnowledgeRepository:
                 """
             ).format(
                 self._table("support_knowledge_documents"),
-                filters=sql.SQL(chunk_filter_sql.replace("c.chunk_strategy", "chunk_strategy").replace("d.", "")),
+                filters=sql.SQL(
+                    chunk_filter_sql
+                    .replace("c.chunk_strategy", "chunk_strategy")
+                    .replace("c.index_role", "'primary'")
+                    .replace("d.", "")
+                ),
             ),
             tuple(chunk_filter_params),
         )
@@ -3393,6 +4523,9 @@ class PostgresKnowledgeRepository:
             "avg_overlap_tokens": _coalesce_metric(stats_row[8]),
             "chunk_strategy_distribution": [
                 {"label": str(row[0]), "value": int(row[1] or 0)} for row in strategy_rows
+            ],
+            "index_role_distribution": [
+                {"label": str(row[0]), "value": int(row[1] or 0)} for row in role_rows
             ],
             "short_chunk_rate_lt_100": _coalesce_metric(stats_row[4]),
             "long_chunk_rate_gt_800": _coalesce_metric(stats_row[5]),
@@ -3506,9 +4639,12 @@ class PostgresKnowledgeRepository:
                 """
                 SELECT COUNT(*)
                 FROM {}
-                WHERE vector_indexed_at IS NULL
-                   OR fts_indexed_at IS NULL
-                   OR embedding_model IS NULL
+                WHERE index_role = 'primary'
+                  AND (
+                      vector_indexed_at IS NULL
+                      OR fts_indexed_at IS NULL
+                      OR embedding_model IS NULL
+                  )
                 """
             ).format(self._vector_table())
         ) or 0
@@ -3531,6 +4667,7 @@ class PostgresKnowledgeRepository:
                 LEFT JOIN {} AS c
                   ON c.doc_id = d.document_id
                 WHERE d.is_active = TRUE
+                  AND (c.index_role = 'primary' OR c.index_role IS NULL)
                 """
             ).format(self._table("support_knowledge_documents"), self._vector_table())
         )[0][0]
@@ -3545,7 +4682,11 @@ class PostgresKnowledgeRepository:
                     SUM(CASE WHEN language IS NULL OR language = '' THEN 1 ELSE 0 END) AS language_missing,
                     SUM(CASE WHEN source_updated_at IS NULL THEN 1 ELSE 0 END) AS updated_at_missing,
                     SUM(CASE WHEN source_path IS NULL OR source_path = '' THEN 1 ELSE 0 END) AS title_path_missing,
-                    (SELECT SUM(CASE WHEN id IS NULL OR id = '' THEN 1 ELSE 0 END) FROM {}) AS chunk_id_missing,
+                    (
+                        SELECT SUM(CASE WHEN id IS NULL OR id = '' THEN 1 ELSE 0 END)
+                        FROM {}
+                        WHERE index_role = 'primary'
+                    ) AS chunk_id_missing,
                     COUNT(*) AS total_docs
                 FROM {}
                 WHERE is_active = TRUE
@@ -4343,15 +5484,7 @@ class PostgresKnowledgeRepository:
 
 
 def _default_vector_dim() -> int:
-    raw_model = (os.getenv("OPENAI_EMBEDDING_MODEL") or "text-embedding-3-large").strip().lower()
-    raw_dim = (os.getenv("PGVECTOR_DIM") or "").strip()
-    if raw_dim:
-        return _safe_positive_int(raw_dim, 3072)
-    if "small" in raw_model:
-        return 1536
-    if "ada" in raw_model:
-        return 1536
-    return 3072
+    return require_configured_vector_dim()
 
 
 def create_knowledge_repository() -> KnowledgeRepository:
@@ -4360,7 +5493,7 @@ def create_knowledge_repository() -> KnowledgeRepository:
         raise RuntimeError("PGVECTOR_DSN is required")
 
     schema = (os.getenv("PGVECTOR_SCHEMA") or "supportportal").strip() or "supportportal"
-    vector_table = (os.getenv("PGVECTOR_TABLE") or "docagent_chunks").strip() or "docagent_chunks"
+    vector_table = (os.getenv("PGVECTOR_TABLE") or DEFAULT_PGVECTOR_TABLE).strip() or DEFAULT_PGVECTOR_TABLE
     connect_timeout = _safe_positive_int(os.getenv("PGVECTOR_CONNECT_TIMEOUT"), 10)
     return PostgresKnowledgeRepository(
         dsn=dsn,
