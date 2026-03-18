@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -63,10 +64,13 @@ class RetrievedChunk:
     text: str
     source_path: str
     similarity: float
+    doc_id: str | None = None
     h1: str | None = None
     h2: str | None = None
     h3: str | None = None
     source_url: str | None = None
+    source_type: str | None = None
+    chunk_strategy: str | None = None
 
 
 @dataclass
@@ -75,6 +79,44 @@ class RagAnswer:
     confidence: float
     sources: list[str]
     citations: list[dict[str, str]]
+
+
+@dataclass
+class RagQueryTrace:
+    query_type: str
+    retrieval_strategy: str
+    vector_candidates_count: int
+    bm25_candidates_count: int
+    reranked_candidates_count: int
+    retrieved_chunk_ids: list[str]
+    selected_chunk_ids: list[str]
+    vector_retrieval_latency_ms: float
+    bm25_retrieval_latency_ms: float
+    retrieval_latency_ms: float
+    rerank_latency_ms: float
+    generation_latency_ms: float
+    total_latency_ms: float
+    prompt_tokens: int
+    completion_tokens: int
+    embedding_tokens: int
+    model_name: str | None
+    answer_length: int
+    citation_count: int
+    cited_chunk_ids: list[str]
+    needs_human: bool
+    handoff_reason: str | None
+    confidence_score: float
+    primary_source_type: str | None
+    primary_chunk_strategy: str | None
+    error_flag: bool = False
+    timeout_flag: bool = False
+    error_type: str | None = None
+
+
+@dataclass
+class RagQueryResult:
+    answer: RagAnswer
+    trace: RagQueryTrace
 
 
 def _import_langchain() -> tuple[Any, Any]:
@@ -182,12 +224,15 @@ def _retrieve_chunks(message: str, config: dict[str, Any], *, limit: int | None 
         """
         SELECT
             id,
+            doc_id,
             content,
             source_path,
             h1,
             h2,
             h3,
             source_url,
+            metadata ->> 'source_type' AS source_type,
+            chunk_strategy,
             1 - (embedding <=> %s::vector) AS similarity
         FROM {}
         ORDER BY embedding <=> %s::vector
@@ -205,13 +250,16 @@ def _retrieve_chunks(message: str, config: dict[str, Any], *, limit: int | None 
         chunks.append(
             RetrievedChunk(
                 chunk_id=str(row[0]),
-                text=str(row[1]),
-                source_path=str(row[2]),
-                h1=(str(row[3]).strip() or None) if row[3] is not None else None,
-                h2=(str(row[4]).strip() or None) if row[4] is not None else None,
-                h3=(str(row[5]).strip() or None) if row[5] is not None else None,
-                source_url=(str(row[6]).strip() or None) if row[6] is not None else None,
-                similarity=float(row[7]) if row[7] is not None else 0.0,
+                doc_id=(str(row[1]).strip() or None) if row[1] is not None else None,
+                text=str(row[2]),
+                source_path=str(row[3]),
+                h1=(str(row[4]).strip() or None) if row[4] is not None else None,
+                h2=(str(row[5]).strip() or None) if row[5] is not None else None,
+                h3=(str(row[6]).strip() or None) if row[6] is not None else None,
+                source_url=(str(row[7]).strip() or None) if row[7] is not None else None,
+                source_type=(str(row[8]).strip() or None) if row[8] is not None else None,
+                chunk_strategy=(str(row[9]).strip() or None) if row[9] is not None else None,
+                similarity=float(row[10]) if row[10] is not None else 0.0,
             )
         )
     return chunks
@@ -225,35 +273,38 @@ def _retrieve_fts_chunks(message: str, config: dict[str, Any], *, limit: int | N
         """
         SELECT
             id,
+            doc_id,
             content,
             source_path,
             h1,
             h2,
             h3,
             source_url,
+            metadata ->> 'source_type' AS source_type,
+            chunk_strategy,
             ts_rank_cd(
                 to_tsvector(
                     'simple',
-                    concat_ws(
-                        ' ',
-                        coalesce(h1, ''),
-                        coalesce(h2, ''),
-                        coalesce(h3, ''),
-                        coalesce(content, '')
-                    )
+                    coalesce(h1, '')
+                    || ' '
+                    || coalesce(h2, '')
+                    || ' '
+                    || coalesce(h3, '')
+                    || ' '
+                    || coalesce(content, '')
                 ),
                 plainto_tsquery('simple', %s)
             ) AS rank
         FROM {}
         WHERE to_tsvector(
                 'simple',
-                concat_ws(
-                    ' ',
-                    coalesce(h1, ''),
-                    coalesce(h2, ''),
-                    coalesce(h3, ''),
-                    coalesce(content, '')
-                )
+                coalesce(h1, '')
+                || ' '
+                || coalesce(h2, '')
+                || ' '
+                || coalesce(h3, '')
+                || ' '
+                || coalesce(content, '')
             ) @@ plainto_tsquery('simple', %s)
         ORDER BY rank DESC
         LIMIT %s
@@ -267,16 +318,19 @@ def _retrieve_fts_chunks(message: str, config: dict[str, Any], *, limit: int | N
 
     chunks: list[RetrievedChunk] = []
     for row in rows:
-        rank = float(row[7]) if row[7] is not None else 0.0
+        rank = float(row[10]) if row[10] is not None else 0.0
         chunks.append(
             RetrievedChunk(
                 chunk_id=str(row[0]),
-                text=str(row[1]),
-                source_path=str(row[2]),
-                h1=(str(row[3]).strip() or None) if row[3] is not None else None,
-                h2=(str(row[4]).strip() or None) if row[4] is not None else None,
-                h3=(str(row[5]).strip() or None) if row[5] is not None else None,
-                source_url=(str(row[6]).strip() or None) if row[6] is not None else None,
+                doc_id=(str(row[1]).strip() or None) if row[1] is not None else None,
+                text=str(row[2]),
+                source_path=str(row[3]),
+                h1=(str(row[4]).strip() or None) if row[4] is not None else None,
+                h2=(str(row[5]).strip() or None) if row[5] is not None else None,
+                h3=(str(row[6]).strip() or None) if row[6] is not None else None,
+                source_url=(str(row[7]).strip() or None) if row[7] is not None else None,
+                source_type=(str(row[8]).strip() or None) if row[8] is not None else None,
+                chunk_strategy=(str(row[9]).strip() or None) if row[9] is not None else None,
                 similarity=max(0.0, min(1.0, rank)),
             )
         )
@@ -325,12 +379,15 @@ def _retrieve_keyword_chunks(
         """
         SELECT
             id,
+            doc_id,
             content,
             source_path,
             h1,
             h2,
             h3,
-            source_url
+            source_url,
+            metadata ->> 'source_type' AS source_type,
+            chunk_strategy
         FROM {}
         WHERE
             lower(content) LIKE ANY(%s)
@@ -350,12 +407,15 @@ def _retrieve_keyword_chunks(
     for row in rows:
         chunk = RetrievedChunk(
             chunk_id=str(row[0]),
-            text=str(row[1]),
-            source_path=str(row[2]),
-            h1=(str(row[3]).strip() or None) if row[3] is not None else None,
-            h2=(str(row[4]).strip() or None) if row[4] is not None else None,
-            h3=(str(row[5]).strip() or None) if row[5] is not None else None,
-            source_url=(str(row[6]).strip() or None) if row[6] is not None else None,
+            doc_id=(str(row[1]).strip() or None) if row[1] is not None else None,
+            text=str(row[2]),
+            source_path=str(row[3]),
+            h1=(str(row[4]).strip() or None) if row[4] is not None else None,
+            h2=(str(row[5]).strip() or None) if row[5] is not None else None,
+            h3=(str(row[6]).strip() or None) if row[6] is not None else None,
+            source_url=(str(row[7]).strip() or None) if row[7] is not None else None,
+            source_type=(str(row[8]).strip() or None) if row[8] is not None else None,
+            chunk_strategy=(str(row[9]).strip() or None) if row[9] is not None else None,
             similarity=0.0,
         )
         hits = _keyword_hit_count(_chunk_search_text(chunk), terms)
@@ -650,6 +710,54 @@ def _invoke_llm_payload(
     return None
 
 
+def _invoke_llm_payload_with_trace(
+    message: str,
+    chunks: list[RetrievedChunk],
+    config: dict[str, Any],
+    strict_retry: bool = False,
+) -> tuple[dict[str, Any] | None, int, int, str | None]:
+    ChatOpenAI, _ = _import_langchain()
+    context_block = _format_context(chunks)
+    prompt = _build_answer_prompt(message, context_block)
+    if strict_retry:
+        prompt += (
+            "\n\nRetry requirement:\n"
+            "- Return JSON only.\n"
+            "- Every citation must be one of the provided chunk ids.\n"
+            f'- If unsure, use this exact insufficient answer: "{INSUFFICIENT_EVIDENCE_REPLY}".\n'
+        )
+
+    model_candidates: list[str] = []
+    for candidate in [config["chat_model"], "gpt-4.1", "gpt-4o-mini"]:
+        if candidate in _UNAVAILABLE_MODELS:
+            continue
+        if candidate not in model_candidates:
+            model_candidates.append(candidate)
+
+    for model_name in model_candidates:
+        try:
+            llm = ChatOpenAI(
+                model=model_name,
+                temperature=0,
+                api_key=config["api_key"],
+                request_timeout=config["request_timeout_seconds"],
+                max_retries=int(config["max_retries"]),
+            )
+            response = llm.invoke([("system", SYSTEM_PROMPT), ("user", prompt)])
+            payload = _extract_json_payload(_response_to_text(response))
+            prompt_tokens, completion_tokens = _usage_tokens_from_response(response)
+            if payload is not None:
+                return payload, prompt_tokens, completion_tokens, model_name
+        except Exception as exc:
+            lower = str(exc).lower()
+            if "model_not_found" in lower or "does not exist" in lower:
+                _UNAVAILABLE_MODELS.add(model_name)
+                logger.warning("RAG model unavailable (%s), trying fallback model", model_name)
+                continue
+            raise
+    return None, 0, 0, None
+
+
 def _confidence_from_chunks(chunks: list[RetrievedChunk]) -> float:
     if not chunks:
         return 0.0
@@ -658,11 +766,56 @@ def _confidence_from_chunks(chunks: list[RetrievedChunk]) -> float:
     return round(min(0.95, confidence), 2)
 
 
-def answer_with_rag(message: str, top_k: int | None = None) -> RagAnswer | None:
-    """
-    Attempt to answer with PostgreSQL pgvector retrieval + LangChain answer generation.
-    Returns None when RAG is not configured or retrieval fails, so caller can fallback.
-    """
+def _usage_tokens_from_response(response: Any) -> tuple[int, int]:
+    usage = getattr(response, "usage_metadata", None)
+    if isinstance(usage, dict):
+        return int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0)
+    response_metadata = getattr(response, "response_metadata", None)
+    if isinstance(response_metadata, dict):
+        token_usage = response_metadata.get("token_usage") if isinstance(response_metadata.get("token_usage"), dict) else {}
+        return int(token_usage.get("prompt_tokens") or 0), int(token_usage.get("completion_tokens") or 0)
+    return 0, 0
+
+
+def _infer_query_type(message: str) -> str:
+    text = str(message or "").strip().lower()
+    if not text:
+        return "unclear_query"
+    if any(term in text for term in ["hello", "hi ", "thanks", "thank you"]):
+        return "small_talk"
+    if "error code" in text or re.search(r"\b\d{3,5}\b", text):
+        return "error_code"
+    if any(term in text for term in ["price", "pricing", "policy", "plan", "billing"]):
+        return "pricing_or_policy"
+    if any(term in text for term in ["configure", "configuration", "setup", "enable", "disable"]):
+        return "configuration"
+    if any(term in text for term in ["troubleshoot", "issue", "problem", "delay", "missing", "failed", "failure", "root cause"]):
+        return "troubleshooting"
+    if any(term in text for term in ["what", "how", "where", "can i", "does", "is there"]):
+        return "faq"
+    return "unclear_query"
+
+
+def _dominant_value(chunks: list[RetrievedChunk], attr_name: str) -> str | None:
+    counts: dict[str, int] = {}
+    for chunk in chunks:
+        value = str(getattr(chunk, attr_name, "") or "").strip()
+        if not value:
+            continue
+        counts[value] = counts.get(value, 0) + 1
+    if not counts:
+        return None
+    return max(counts.items(), key=lambda item: item[1])[0]
+
+
+def _estimate_embedding_tokens(message: str) -> int:
+    raw = str(message or "")
+    if not raw.strip():
+        return 0
+    return max(1, len(raw.split()), (len(raw) + 3) // 4)
+
+
+def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | None:
     config = _get_rag_config(top_k=top_k)
     if not config["dsn"] or not config["api_key"]:
         return None
@@ -670,40 +823,57 @@ def answer_with_rag(message: str, top_k: int | None = None) -> RagAnswer | None:
     vector_chunks: list[RetrievedChunk] = []
     keyword_chunks: list[RetrievedChunk] = []
     chunks: list[RetrievedChunk] = []
+    query_type = _infer_query_type(message)
+    total_started_at = time.perf_counter()
+    vector_latency_ms = 0.0
+    bm25_latency_ms = 0.0
+    generation_latency_ms = 0.0
+    prompt_tokens = 0
+    completion_tokens = 0
+    model_name: str | None = None
+
     try:
+        vector_started_at = time.perf_counter()
         vector_chunks = _retrieve_chunks(
             message,
             config,
             limit=int(config["vector_candidate_k"]),
         )
+        vector_latency_ms = round((time.perf_counter() - vector_started_at) * 1000, 2)
     except Exception as exc:
         logger.warning("RAG retrieval failed: %s", exc)
 
     try:
+        bm25_started_at = time.perf_counter()
         keyword_chunks = _retrieve_fts_chunks(
             message,
             config,
             limit=int(config["keyword_candidate_k"]),
         )
+        bm25_latency_ms = round((time.perf_counter() - bm25_started_at) * 1000, 2)
     except Exception as exc:
         logger.warning("RAG FTS retrieval failed: %s", exc)
         try:
+            bm25_started_at = time.perf_counter()
             keyword_chunks = _retrieve_keyword_chunks(
                 message,
                 config,
                 limit=int(config["keyword_candidate_k"]),
             )
+            bm25_latency_ms = round((time.perf_counter() - bm25_started_at) * 1000, 2)
         except Exception as keyword_exc:
             logger.warning("RAG keyword retrieval failed: %s", keyword_exc)
             keyword_chunks = []
 
     if not vector_chunks and not keyword_chunks:
         try:
+            bm25_started_at = time.perf_counter()
             keyword_chunks = _retrieve_keyword_chunks(
                 message,
                 config,
                 limit=int(config["keyword_candidate_k"]),
             )
+            bm25_latency_ms = round((time.perf_counter() - bm25_started_at) * 1000, 2)
         except Exception as exc:
             logger.warning("RAG keyword retrieval failed: %s", exc)
             keyword_chunks = []
@@ -723,34 +893,103 @@ def answer_with_rag(message: str, top_k: int | None = None) -> RagAnswer | None:
 
     if not chunks:
         try:
+            bm25_started_at = time.perf_counter()
             chunks = _retrieve_keyword_chunks(
                 message,
                 config,
                 limit=int(config["top_k"]),
             )
+            bm25_latency_ms = round((time.perf_counter() - bm25_started_at) * 1000, 2)
         except Exception as exc:
             logger.warning("RAG keyword retrieval failed: %s", exc)
             chunks = []
         if not chunks:
-            return RagAnswer(
+            answer = RagAnswer(
                 answer=INSUFFICIENT_EVIDENCE_REPLY,
                 confidence=0.55,
                 sources=[],
                 citations=[],
             )
+            trace = RagQueryTrace(
+                query_type=query_type,
+                retrieval_strategy="bm25_only" if keyword_chunks else "vector_only",
+                vector_candidates_count=len(vector_chunks),
+                bm25_candidates_count=len(keyword_chunks),
+                reranked_candidates_count=0,
+                retrieved_chunk_ids=[],
+                selected_chunk_ids=[],
+                vector_retrieval_latency_ms=vector_latency_ms,
+                bm25_retrieval_latency_ms=bm25_latency_ms,
+                retrieval_latency_ms=round(vector_latency_ms + bm25_latency_ms, 2),
+                rerank_latency_ms=0.0,
+                generation_latency_ms=0.0,
+                total_latency_ms=round((time.perf_counter() - total_started_at) * 1000, 2),
+                prompt_tokens=0,
+                completion_tokens=0,
+                embedding_tokens=_estimate_embedding_tokens(message),
+                model_name=None,
+                answer_length=0,
+                citation_count=0,
+                cited_chunk_ids=[],
+                needs_human=True,
+                handoff_reason="insufficient_evidence",
+                confidence_score=0.55,
+                primary_source_type=None,
+                primary_chunk_strategy=None,
+            )
+            return RagQueryResult(answer=answer, trace=trace)
 
-    final_chunks = chunks[: int(config["top_k"])]
-    if not final_chunks:
-        final_chunks = chunks
-
+    final_chunks = chunks[: int(config["top_k"])] or chunks
     allowed_chunk_ids = {chunk.chunk_id for chunk in final_chunks}
     payload: dict[str, Any] | None = None
     try:
-        payload = _invoke_llm_payload(message, final_chunks, config, strict_retry=False)
+        generation_started_at = time.perf_counter()
+        payload, prompt_tokens, completion_tokens, model_name = _invoke_llm_payload_with_trace(
+            message,
+            final_chunks,
+            config,
+            strict_retry=False,
+        )
         if payload is None or not _is_valid_response(payload, allowed_chunk_ids):
-            payload = _invoke_llm_payload(message, final_chunks, config, strict_retry=True)
+            payload, prompt_tokens, completion_tokens, model_name = _invoke_llm_payload_with_trace(
+                message,
+                final_chunks,
+                config,
+                strict_retry=True,
+            )
+        generation_latency_ms = round((time.perf_counter() - generation_started_at) * 1000, 2)
     except Exception as exc:
         logger.warning("RAG answer generation failed: %s", exc)
+
+    def _trace_for(answer: RagAnswer, *, needs_human: bool, handoff_reason: str | None) -> RagQueryTrace:
+        cited_chunk_ids = [str(item.get("chunk_id")) for item in answer.citations if isinstance(item, dict) and item.get("chunk_id")]
+        return RagQueryTrace(
+            query_type=query_type,
+            retrieval_strategy="hybrid_rrf" if vector_chunks and keyword_chunks else ("vector_only" if vector_chunks else "bm25_only"),
+            vector_candidates_count=len(vector_chunks),
+            bm25_candidates_count=len(keyword_chunks),
+            reranked_candidates_count=0,
+            retrieved_chunk_ids=[chunk.chunk_id for chunk in chunks if chunk.chunk_id],
+            selected_chunk_ids=[chunk.chunk_id for chunk in final_chunks if chunk.chunk_id],
+            vector_retrieval_latency_ms=vector_latency_ms,
+            bm25_retrieval_latency_ms=bm25_latency_ms,
+            retrieval_latency_ms=round(vector_latency_ms + bm25_latency_ms, 2),
+            rerank_latency_ms=0.0,
+            generation_latency_ms=generation_latency_ms,
+            total_latency_ms=round((time.perf_counter() - total_started_at) * 1000, 2),
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            embedding_tokens=_estimate_embedding_tokens(message),
+            model_name=model_name,
+            answer_length=len(answer.answer.strip()) if answer.answer else 0,
+            citation_count=len(cited_chunk_ids),
+            cited_chunk_ids=cited_chunk_ids,
+            needs_human=needs_human,
+            handoff_reason=handoff_reason,
+            confidence_score=answer.confidence,
+            primary_source_type=_dominant_value(final_chunks, "source_type"),
+            primary_chunk_strategy=_dominant_value(final_chunks, "chunk_strategy"),
+        )
 
     if payload is not None and _is_valid_response(payload, allowed_chunk_ids):
         if payload["insufficient_evidence"] is True:
@@ -759,12 +998,17 @@ def answer_with_rag(message: str, top_k: int | None = None) -> RagAnswer | None:
                     "RAG insufficient evidence but keyword overlap was found. "
                     "Using extractive fallback."
                 )
-                return _build_extractive_rag_answer(final_chunks)
-            return RagAnswer(
+                answer = _build_extractive_rag_answer(final_chunks)
+                return RagQueryResult(answer=answer, trace=_trace_for(answer, needs_human=False, handoff_reason=None))
+            answer = RagAnswer(
                 answer=INSUFFICIENT_EVIDENCE_REPLY,
                 confidence=0.55,
                 sources=[],
                 citations=[],
+            )
+            return RagQueryResult(
+                answer=answer,
+                trace=_trace_for(answer, needs_human=True, handoff_reason="insufficient_evidence"),
             )
         citations = [str(chunk_id) for chunk_id in payload["citations"]]
         citation_records = _citation_records_from_ids(citations, final_chunks)
@@ -772,12 +1016,23 @@ def answer_with_rag(message: str, top_k: int | None = None) -> RagAnswer | None:
             record.get("source_url") or f"rag:{record['chunk_id']}"
             for record in citation_records
         ]
-        return RagAnswer(
+        answer = RagAnswer(
             answer=_build_answer_text(str(payload["answer"]), payload.get("key_steps", [])),
             confidence=_confidence_from_chunks(final_chunks),
             sources=sources,
             citations=citation_records,
         )
+        return RagQueryResult(answer=answer, trace=_trace_for(answer, needs_human=False, handoff_reason=None))
 
     logger.warning("RAG structured answer invalid, using extractive fallback.")
-    return _build_extractive_rag_answer(final_chunks)
+    answer = _build_extractive_rag_answer(final_chunks)
+    return RagQueryResult(answer=answer, trace=_trace_for(answer, needs_human=False, handoff_reason=None))
+
+
+def answer_with_rag(message: str, top_k: int | None = None) -> RagAnswer | None:
+    """
+    Attempt to answer with PostgreSQL pgvector retrieval + LangChain answer generation.
+    Returns None when RAG is not configured or retrieval fails, so caller can fallback.
+    """
+    result = run_rag_query(message, top_k=top_k)
+    return result.answer if result is not None else None

@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Admin Dashboard</title>
-    <link rel="stylesheet" href="./styles.css?v=20260317-reports-1" />
+    <link rel="stylesheet" href="./styles.css?v=20260317-ragops-1" />
   </head>
   <body>
     <main class="container">
@@ -18,10 +18,89 @@
 
       <nav class="dashboard-tabs" aria-label="Dashboard sections">
         <button type="button" class="dashboard-tab active" data-dashboard-tab="overview">Overview</button>
+        <button type="button" class="dashboard-tab" data-dashboard-tab="ingestion">Ingestion</button>
+        <button type="button" class="dashboard-tab" data-dashboard-tab="chunking">Chunking</button>
+        <button type="button" class="dashboard-tab" data-dashboard-tab="embedding-index">Embedding &amp; Index</button>
+        <button type="button" class="dashboard-tab" data-dashboard-tab="retrieval">Retrieval</button>
+        <button type="button" class="dashboard-tab" data-dashboard-tab="generation">Response Quality</button>
+        <button type="button" class="dashboard-tab" data-dashboard-tab="handoff">Handoff</button>
+        <button type="button" class="dashboard-tab" data-dashboard-tab="performance-cost">Performance &amp; Cost</button>
+        <button type="button" class="dashboard-tab" data-dashboard-tab="failures">Failures</button>
+        <button type="button" class="dashboard-tab" data-dashboard-tab="experiments">Experiments</button>
         <button type="button" class="dashboard-tab" data-dashboard-tab="reports">Ingestion Reports</button>
       </nav>
 
       <section class="dashboard-panel active" data-dashboard-panel="overview">
+        <section class="card rag-filter-card">
+          <div class="section-header compact section-header-actions">
+            <div>
+              <h2>RAG Scope Filters</h2>
+              <p class="section-subtitle">Apply shared filters across the RAG Ops dashboard pages.</p>
+            </div>
+            <div class="filter-row rag-filter-row">
+              <label class="filter-field">
+                <span>Range</span>
+                <select id="rag-range-filter">
+                  <option value="7d">Last 7 days</option>
+                  <option value="30d">Last 30 days</option>
+                </select>
+              </label>
+              <label class="filter-field">
+                <span>Source</span>
+                <select id="rag-source-filter">
+                  <option value="all">All</option>
+                  <option value="official_markdown_upload">Official Markdown Upload</option>
+                  <option value="technical_article_api">Technical Article API</option>
+                </select>
+              </label>
+              <label class="filter-field">
+                <span>Status</span>
+                <select id="rag-status-filter">
+                  <option value="all">All</option>
+                  <option value="processed">Processed</option>
+                  <option value="failed">Failed</option>
+                  <option value="pending">Pending</option>
+                  <option value="stale">Stale</option>
+                </select>
+              </label>
+              <label class="filter-field">
+                <span>Query Type</span>
+                <select id="rag-query-type-filter">
+                  <option value="all">All</option>
+                  <option value="faq">FAQ</option>
+                  <option value="troubleshooting">Troubleshooting</option>
+                  <option value="configuration">Configuration</option>
+                  <option value="error_code">Error Code</option>
+                  <option value="pricing_or_policy">Pricing or Policy</option>
+                  <option value="small_talk">Small Talk</option>
+                  <option value="unclear_query">Unclear Query</option>
+                </select>
+              </label>
+              <label class="filter-field">
+                <span>Retrieval</span>
+                <select id="rag-retrieval-filter">
+                  <option value="all">All</option>
+                  <option value="vector_only">Vector Only</option>
+                  <option value="bm25_only">BM25 Only</option>
+                  <option value="hybrid_rrf">Hybrid RRF</option>
+                  <option value="hybrid_rrf_rerank">Hybrid RRF Rerank</option>
+                  <option value="hybrid_rrf_rerank_rewrite">Hybrid RRF Rerank Rewrite</option>
+                </select>
+              </label>
+              <label class="filter-field">
+                <span>Chunk Strategy</span>
+                <select id="rag-chunk-filter">
+                  <option value="all">All</option>
+                  <option value="markdown_header">Markdown Header</option>
+                  <option value="token_300_overlap_80">Token 300 Overlap 80</option>
+                  <option value="token_500_overlap_100">Token 500 Overlap 100</option>
+                  <option value="token_800_overlap_120">Token 800 Overlap 120</option>
+                </select>
+              </label>
+            </div>
+          </div>
+        </section>
+
         <section class="section-block">
           <div class="section-header">
             <div>
@@ -78,6 +157,18 @@
               <p class="metric metric-compact" id="knowledge-avg-chars">0 chars</p>
             </article>
           </div>
+        </section>
+
+        <section class="section-block">
+          <div class="section-header">
+            <div>
+              <h2>RAG Overview</h2>
+              <p class="section-subtitle">End-to-end health for ingestion freshness, retrieval quality, grounded answers, and handoff pressure.</p>
+            </div>
+          </div>
+          <div id="rag-overview-cards" class="rag-card-grid"></div>
+          <div id="rag-overview-charts" class="rag-chart-grid"></div>
+          <div id="rag-overview-tables" class="rag-table-stack"></div>
         </section>
 
         <section class="knowledge-layout">
@@ -193,6 +284,132 @@
         </section>
       </section>
 
+      <section class="dashboard-panel" data-dashboard-panel="ingestion">
+        <section class="section-block">
+          <div class="section-header">
+            <div>
+              <h2>Ingestion</h2>
+              <p class="section-subtitle">Ingestion health, document quality, and failed tasks.</p>
+            </div>
+          </div>
+          <div id="rag-ingestion-cards" class="rag-card-grid"></div>
+          <div id="rag-ingestion-charts" class="rag-chart-grid"></div>
+          <div id="rag-ingestion-tables" class="rag-table-stack"></div>
+        </section>
+      </section>
+
+      <section class="dashboard-panel" data-dashboard-panel="chunking">
+        <section class="section-block">
+          <div class="section-header">
+            <div>
+              <h2>Chunking</h2>
+              <p class="section-subtitle">Chunk size distribution, strategy comparison, and anomaly detection.</p>
+            </div>
+          </div>
+          <div id="rag-chunking-cards" class="rag-card-grid"></div>
+          <div id="rag-chunking-charts" class="rag-chart-grid"></div>
+          <div id="rag-chunking-tables" class="rag-table-stack"></div>
+        </section>
+      </section>
+
+      <section class="dashboard-panel" data-dashboard-panel="embedding-index">
+        <section class="section-block">
+          <div class="section-header">
+            <div>
+              <h2>Embedding &amp; Index</h2>
+              <p class="section-subtitle">Embedding throughput, vector/FTS index health, and metadata completeness.</p>
+            </div>
+          </div>
+          <div id="rag-embedding-index-cards" class="rag-card-grid"></div>
+          <div id="rag-embedding-index-charts" class="rag-chart-grid"></div>
+          <div id="rag-embedding-index-tables" class="rag-table-stack"></div>
+        </section>
+      </section>
+
+      <section class="dashboard-panel" data-dashboard-panel="retrieval">
+        <section class="section-block">
+          <div class="section-header">
+            <div>
+              <h2>Retrieval</h2>
+              <p class="section-subtitle">Recall quality, strategy breakdown, and replay traces.</p>
+            </div>
+          </div>
+          <div id="rag-retrieval-cards" class="rag-card-grid"></div>
+          <div id="rag-retrieval-charts" class="rag-chart-grid"></div>
+          <div id="rag-retrieval-tables" class="rag-table-stack"></div>
+        </section>
+      </section>
+
+      <section class="dashboard-panel" data-dashboard-panel="generation">
+        <section class="section-block">
+          <div class="section-header">
+            <div>
+              <h2>Response Quality</h2>
+              <p class="section-subtitle">Faithfulness, groundedness, citation quality, and bucket analysis.</p>
+            </div>
+          </div>
+          <div id="rag-generation-cards" class="rag-card-grid"></div>
+          <div id="rag-generation-charts" class="rag-chart-grid"></div>
+          <div id="rag-generation-tables" class="rag-table-stack"></div>
+        </section>
+      </section>
+
+      <section class="dashboard-panel" data-dashboard-panel="handoff">
+        <section class="section-block">
+          <div class="section-header">
+            <div>
+              <h2>Handoff</h2>
+              <p class="section-subtitle">Human escalation pressure, timing, and reason breakdown.</p>
+            </div>
+          </div>
+          <div id="rag-handoff-cards" class="rag-card-grid"></div>
+          <div id="rag-handoff-charts" class="rag-chart-grid"></div>
+          <div id="rag-handoff-tables" class="rag-table-stack"></div>
+        </section>
+      </section>
+
+      <section class="dashboard-panel" data-dashboard-panel="performance-cost">
+        <section class="section-block">
+          <div class="section-header">
+            <div>
+              <h2>Performance &amp; Cost</h2>
+              <p class="section-subtitle">Latency percentiles, model spend, and waterfall timings.</p>
+            </div>
+          </div>
+          <div id="rag-performance-cost-cards" class="rag-card-grid"></div>
+          <div id="rag-performance-cost-charts" class="rag-chart-grid"></div>
+          <div id="rag-performance-cost-tables" class="rag-table-stack"></div>
+        </section>
+      </section>
+
+      <section class="dashboard-panel" data-dashboard-panel="failures">
+        <section class="section-block">
+          <div class="section-header">
+            <div>
+              <h2>Failures</h2>
+              <p class="section-subtitle">Failure cases, grouped patterns, and direct drill-down entry points.</p>
+            </div>
+          </div>
+          <div id="rag-failures-cards" class="rag-card-grid"></div>
+          <div id="rag-failures-charts" class="rag-chart-grid"></div>
+          <div id="rag-failures-tables" class="rag-table-stack"></div>
+        </section>
+      </section>
+
+      <section class="dashboard-panel" data-dashboard-panel="experiments">
+        <section class="section-block">
+          <div class="section-header">
+            <div>
+              <h2>Experiments</h2>
+              <p class="section-subtitle">A/B strategy comparisons from stored eval runs.</p>
+            </div>
+          </div>
+          <div id="rag-experiments-cards" class="rag-card-grid"></div>
+          <div id="rag-experiments-charts" class="rag-chart-grid"></div>
+          <div id="rag-experiments-tables" class="rag-table-stack"></div>
+        </section>
+      </section>
+
       <section class="dashboard-panel" data-dashboard-panel="reports">
         <section class="section-block">
           <div class="section-header">
@@ -244,6 +461,7 @@
         </section>
       </section>
     </main>
-    <script src="./app.js?v=20260317-reports-1"></script>
+    <script src="./vendor/chart.umd.min.js"></script>
+    <script src="./app.js?v=20260317-ragops-1"></script>
   </body>
 </html>

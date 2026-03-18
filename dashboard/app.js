@@ -29,6 +29,64 @@ const ingestionReportDetailEl = document.getElementById("ingestion-report-detail
 const eventStreamEl = document.getElementById("event-stream");
 const dashboardTabEls = Array.from(document.querySelectorAll("[data-dashboard-tab]"));
 const dashboardPanelEls = Array.from(document.querySelectorAll("[data-dashboard-panel]"));
+const ragRangeFilterEl = document.getElementById("rag-range-filter");
+const ragSourceFilterEl = document.getElementById("rag-source-filter");
+const ragStatusFilterEl = document.getElementById("rag-status-filter");
+const ragQueryTypeFilterEl = document.getElementById("rag-query-type-filter");
+const ragRetrievalFilterEl = document.getElementById("rag-retrieval-filter");
+const ragChunkFilterEl = document.getElementById("rag-chunk-filter");
+const ragPageContainers = {
+  overview: {
+    cards: document.getElementById("rag-overview-cards"),
+    charts: document.getElementById("rag-overview-charts"),
+    tables: document.getElementById("rag-overview-tables"),
+  },
+  ingestion: {
+    cards: document.getElementById("rag-ingestion-cards"),
+    charts: document.getElementById("rag-ingestion-charts"),
+    tables: document.getElementById("rag-ingestion-tables"),
+  },
+  chunking: {
+    cards: document.getElementById("rag-chunking-cards"),
+    charts: document.getElementById("rag-chunking-charts"),
+    tables: document.getElementById("rag-chunking-tables"),
+  },
+  "embedding-index": {
+    cards: document.getElementById("rag-embedding-index-cards"),
+    charts: document.getElementById("rag-embedding-index-charts"),
+    tables: document.getElementById("rag-embedding-index-tables"),
+  },
+  retrieval: {
+    cards: document.getElementById("rag-retrieval-cards"),
+    charts: document.getElementById("rag-retrieval-charts"),
+    tables: document.getElementById("rag-retrieval-tables"),
+  },
+  generation: {
+    cards: document.getElementById("rag-generation-cards"),
+    charts: document.getElementById("rag-generation-charts"),
+    tables: document.getElementById("rag-generation-tables"),
+  },
+  handoff: {
+    cards: document.getElementById("rag-handoff-cards"),
+    charts: document.getElementById("rag-handoff-charts"),
+    tables: document.getElementById("rag-handoff-tables"),
+  },
+  "performance-cost": {
+    cards: document.getElementById("rag-performance-cost-cards"),
+    charts: document.getElementById("rag-performance-cost-charts"),
+    tables: document.getElementById("rag-performance-cost-tables"),
+  },
+  failures: {
+    cards: document.getElementById("rag-failures-cards"),
+    charts: document.getElementById("rag-failures-charts"),
+    tables: document.getElementById("rag-failures-tables"),
+  },
+  experiments: {
+    cards: document.getElementById("rag-experiments-cards"),
+    charts: document.getElementById("rag-experiments-charts"),
+    tables: document.getElementById("rag-experiments-tables"),
+  },
+};
 
 const DASHBOARD_USER = {
   username: "admin",
@@ -51,6 +109,8 @@ let overviewIngestions = [];
 let reportIngestions = [];
 let selectedIngestionReportId = "";
 let currentReportPayload = null;
+let ragPageCache = {};
+let ragChartInstances = {};
 
 const knowledgeFilters = {
   status: "all",
@@ -61,6 +121,34 @@ const reportFilters = {
   status: "all",
   knowledge_type: "all",
 };
+
+const ragFilters = {
+  range: "7d",
+  source_type: "all",
+  status: "all",
+  query_type: "all",
+  retrieval_strategy: "all",
+  chunk_strategy: "all",
+  limit: 20,
+};
+
+const EVAL_FIELDS = new Set([
+  "retrieval_hit_at_1",
+  "retrieval_hit_at_3",
+  "retrieval_hit_at_5",
+  "retrieval_recall_at_5",
+  "mrr",
+  "ndcg_at_5",
+  "document_relevance_score_avg",
+  "faithfulness_score_avg",
+  "groundedness_score_avg",
+  "response_relevance_score_avg",
+  "response_completeness_score_avg",
+  "citation_correctness_score_avg",
+  "hallucination_rate",
+  "false_positive_handoff_rate",
+  "false_negative_handoff_rate",
+]);
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -296,6 +384,319 @@ function renderCountList(record) {
         .join("")}
     </ul>
   `;
+}
+
+function formatMetricValue(key, value, hasEvalData = true) {
+  if (value === null || value === undefined) {
+    if (EVAL_FIELDS.has(key) && !hasEvalData) {
+      return "No evaluation data yet";
+    }
+    return "-";
+  }
+  if (typeof value === "boolean") {
+    return value ? "Yes" : "No";
+  }
+  if (Array.isArray(value)) {
+    return `${value.length} items`;
+  }
+  if (typeof value === "number") {
+    if (key.endsWith("_rate") || key.includes("_score")) {
+      return `${formatDecimal(value * 100, 1)}%`;
+    }
+    if (key.includes("_latency_ms") || key.includes("_freshness_minutes") || key.includes("_size")) {
+      return formatDecimal(value, 1);
+    }
+    return formatDecimal(value, 2);
+  }
+  return String(value);
+}
+
+function buildRagQuery() {
+  const query = new URLSearchParams({
+    range: ragFilters.range,
+    source_type: ragFilters.source_type,
+    status: ragFilters.status,
+    query_type: ragFilters.query_type,
+    retrieval_strategy: ragFilters.retrieval_strategy,
+    chunk_strategy: ragFilters.chunk_strategy,
+    limit: String(ragFilters.limit),
+  });
+  return query.toString();
+}
+
+function chartInstanceKey(pageName, chartKey) {
+  return `${pageName}:${chartKey}`;
+}
+
+function destroyPageCharts(pageName) {
+  Object.keys(ragChartInstances).forEach((key) => {
+    if (!key.startsWith(`${pageName}:`)) {
+      return;
+    }
+    ragChartInstances[key]?.destroy?.();
+    delete ragChartInstances[key];
+  });
+}
+
+function renderRagCards(pageName, cards = {}, hasEvalData = false) {
+  const container = ragPageContainers[pageName]?.cards;
+  if (!container) {
+    return;
+  }
+  const entries = Object.entries(cards || {});
+  if (!entries.length) {
+    container.innerHTML = `<div class="rag-empty">No card data available.</div>`;
+    return;
+  }
+  container.innerHTML = entries
+    .map(([key, value]) => {
+      if (Array.isArray(value)) {
+        return `
+          <article class="rag-panel-card rag-kpi-card">
+            <span class="metric-label">${escapeHtml(humanizeLabel(key))}</span>
+            <div class="rag-token-list">
+              ${value
+                .slice(0, 8)
+                .map((item) => `<span class="rag-token">${escapeHtml(String(item.label || item.value || item))}</span>`)
+                .join("")}
+            </div>
+          </article>
+        `;
+      }
+      return `
+        <article class="rag-panel-card rag-kpi-card">
+          <span class="metric-label">${escapeHtml(humanizeLabel(key))}</span>
+          <strong class="metric-value">${escapeHtml(formatMetricValue(key, value, hasEvalData))}</strong>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function guessChartConfig(chartKey, values) {
+  const firstItem = Array.isArray(values) ? values[0] : null;
+  if (!firstItem || typeof firstItem !== "object") {
+    return null;
+  }
+  if ("date" in firstItem && "value" in firstItem) {
+    return {
+      type: "line",
+      labels: values.map((item) => item.date),
+      data: values.map((item) => item.value),
+      datasetLabel: humanizeLabel(chartKey),
+    };
+  }
+  if ("label" in firstItem && "value" in firstItem) {
+    return {
+      type: "bar",
+      labels: values.map((item) => item.label),
+      data: values.map((item) => item.value),
+      datasetLabel: humanizeLabel(chartKey),
+    };
+  }
+  if ("chunk_token_count_bucket" in firstItem && "chunk_count" in firstItem) {
+    return {
+      type: "bar",
+      labels: values.map((item) => item.chunk_token_count_bucket),
+      data: values.map((item) => item.chunk_count),
+      datasetLabel: humanizeLabel(chartKey),
+    };
+  }
+  if ("doc_token_count" in firstItem && "chunk_count_per_doc" in firstItem) {
+    return {
+      type: "scatter",
+      labels: values.map((item) => item.title || item.doc_id || ""),
+      data: values.map((item) => ({ x: item.doc_token_count, y: item.chunk_count_per_doc })),
+      datasetLabel: humanizeLabel(chartKey),
+    };
+  }
+  return null;
+}
+
+function renderRagCharts(pageName, charts = {}, hasEvalData = false) {
+  const container = ragPageContainers[pageName]?.charts;
+  if (!container) {
+    return;
+  }
+  destroyPageCharts(pageName);
+  const entries = Object.entries(charts || {});
+  if (!entries.length) {
+    container.innerHTML = `<div class="rag-empty">No chart data available.</div>`;
+    return;
+  }
+  container.innerHTML = entries
+    .map(
+      ([key]) => `
+        <article class="rag-panel-card rag-chart-card">
+          <div>
+            <h3 class="rag-section-title">${escapeHtml(humanizeLabel(key))}</h3>
+            <p class="rag-subtitle">${hasEvalData || !EVAL_FIELDS.has(key) ? "Live and aggregated RAG metric view." : "No evaluation data yet."}</p>
+          </div>
+          <canvas id="chart-${escapeHtml(pageName)}-${escapeHtml(key)}"></canvas>
+        </article>
+      `
+    )
+    .join("");
+  entries.forEach(([key, value]) => {
+    const canvas = document.getElementById(`chart-${pageName}-${key}`);
+    const chartConfig = guessChartConfig(key, value);
+    if (!canvas || !chartConfig || !window.Chart) {
+      if (canvas && (!chartConfig || !Array.isArray(value) || !value.length)) {
+        canvas.parentElement.insertAdjacentHTML("beforeend", `<div class="rag-empty">${EVAL_FIELDS.has(key) && !hasEvalData ? "No evaluation data yet" : "No chart data available."}</div>`);
+        canvas.remove();
+      }
+      return;
+    }
+    const chart = new window.Chart(canvas.getContext("2d"), {
+      type: chartConfig.type,
+      data: {
+        labels: chartConfig.labels,
+        datasets: [
+          {
+            label: chartConfig.datasetLabel,
+            data: chartConfig.data,
+            borderColor: "#145da0",
+            backgroundColor: chartConfig.type === "line" ? "rgba(20, 93, 160, 0.18)" : "rgba(20, 93, 160, 0.72)",
+            tension: 0.28,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: chartConfig.type === "scatter"
+          ? {
+              x: { title: { display: true, text: "Document Tokens" } },
+              y: { title: { display: true, text: "Chunks Per Document" } },
+            }
+          : {},
+        plugins: {
+          legend: {
+            display: chartConfig.type === "line" || chartConfig.type === "scatter",
+          },
+        },
+      },
+    });
+    ragChartInstances[chartInstanceKey(pageName, key)] = chart;
+  });
+}
+
+function renderCellValue(pageName, tableKey, columnKey, value, row) {
+  if (Array.isArray(value)) {
+    if (!value.length) {
+      return "-";
+    }
+    return `<div class="rag-token-list">${value
+      .slice(0, 4)
+      .map((item) => `<span class="rag-token">${escapeHtml(String(item))}</span>`)
+      .join("")}</div>`;
+  }
+  if (tableKey === "failed_tasks" && columnKey === "job_id" && value) {
+    return `<button class="rag-table-row-action" data-open-ingestion="${escapeHtml(String(value))}">${escapeHtml(String(value))}</button>`;
+  }
+  if (tableKey === "retrieval_replay" && columnKey === "request_id" && Array.isArray(row.candidates) && row.candidates.length) {
+    return `
+      <button class="rag-table-row-action" data-toggle-detail="${escapeHtml(String(value))}">
+        ${escapeHtml(String(value))}
+      </button>
+    `;
+  }
+  if (typeof value === "boolean") {
+    return value ? "Yes" : "No";
+  }
+  if (value === null || value === undefined || value === "") {
+    return "-";
+  }
+  return escapeHtml(String(value));
+}
+
+function renderRagTables(pageName, tables = {}, hasEvalData = false) {
+  const container = ragPageContainers[pageName]?.tables;
+  if (!container) {
+    return;
+  }
+  const entries = Object.entries(tables || {});
+  if (!entries.length) {
+    container.innerHTML = `<div class="rag-empty">No table data available.</div>`;
+    return;
+  }
+  container.innerHTML = entries
+    .map(([tableKey, rows]) => {
+      const tableRows = Array.isArray(rows) ? rows : [];
+      if (!tableRows.length) {
+        return `
+          <article class="rag-panel-card rag-table-card">
+            <div>
+              <h3 class="rag-section-title">${escapeHtml(humanizeLabel(tableKey))}</h3>
+              <p class="rag-subtitle">${EVAL_FIELDS.has(tableKey) && !hasEvalData ? "No evaluation data yet." : "No rows available."}</p>
+            </div>
+            <div class="rag-empty">${EVAL_FIELDS.has(tableKey) && !hasEvalData ? "No evaluation data yet" : "No rows available."}</div>
+          </article>
+        `;
+      }
+      const columns = Object.keys(tableRows[0] || {});
+      return `
+        <article class="rag-panel-card rag-table-card" data-rag-table="${escapeHtml(tableKey)}">
+          <div>
+            <h3 class="rag-section-title">${escapeHtml(humanizeLabel(tableKey))}</h3>
+            <p class="rag-subtitle">Structured rows from the latest dashboard aggregation.</p>
+          </div>
+          <div class="rag-table-scroll">
+            <table class="rag-generic-table">
+              <thead>
+                <tr>
+                  ${columns.map((column) => `<th>${escapeHtml(humanizeLabel(column))}</th>`).join("")}
+                </tr>
+              </thead>
+              <tbody>
+                ${tableRows
+                  .map((row) => {
+                    const detailHtml =
+                      tableKey === "retrieval_replay" && Array.isArray(row.candidates) && row.candidates.length
+                        ? `
+                          <tr class="rag-table-detail" id="detail-${escapeHtml(String(row.request_id))}" hidden>
+                            <td colspan="${columns.length}">
+                              <pre>${escapeHtml(JSON.stringify(row.candidates, null, 2))}</pre>
+                            </td>
+                          </tr>
+                        `
+                        : "";
+                    return `
+                      <tr>
+                        ${columns
+                          .map((column) => `<td>${renderCellValue(pageName, tableKey, column, row[column], row)}</td>`)
+                          .join("")}
+                      </tr>
+                      ${detailHtml}
+                    `;
+                  })
+                  .join("")}
+              </tbody>
+            </table>
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+async function loadRagPage(pageName, { force = false } = {}) {
+  if (!ragPageContainers[pageName]) {
+    return;
+  }
+  if (!force && ragPageCache[pageName] && currentDashboardTab !== pageName) {
+    return;
+  }
+  const payload = await fetchJson(`/api/dashboard/rag/${encodeURIComponent(pageName)}?${buildRagQuery()}`);
+  ragPageCache[pageName] = payload;
+  renderRagCards(pageName, payload.cards, payload.has_eval_data);
+  renderRagCharts(pageName, payload.charts, payload.has_eval_data);
+  renderRagTables(pageName, payload.tables, payload.has_eval_data);
+}
+
+async function loadAllRagPages({ force = false } = {}) {
+  const pages = Object.keys(ragPageContainers);
+  await Promise.all(pages.map((pageName) => loadRagPage(pageName, { force })));
 }
 
 function renderPreviewList(items, emptyLabel = "-") {
@@ -825,11 +1226,11 @@ async function loadKnowledgeReportList({ refreshSelected = false } = {}) {
 }
 
 function setActiveDashboardTab(tabName) {
-  currentDashboardTab = tabName === "reports" ? "reports" : "overview";
+  currentDashboardTab = String(tabName || "overview");
   dashboardTabEls.forEach((button) => {
     button.classList.toggle("active", button.dataset.dashboardTab === currentDashboardTab);
   });
-  dashboardPanels.forEach((panel) => {
+  dashboardPanelEls.forEach((panel) => {
     panel.classList.toggle("active", panel.dataset.dashboardPanel === currentDashboardTab);
   });
 }
@@ -866,6 +1267,10 @@ function bindDashboardTabs() {
       if (tabName === "reports" && selectedIngestionReportId) {
         loadKnowledgeIngestionReport(selectedIngestionReportId).catch((error) => {
           setRealtimeStatus(`Failed to load ingestion report: ${error.message}`);
+        });
+      } else if (ragPageContainers[tabName]) {
+        loadRagPage(tabName, { force: true }).catch((error) => {
+          setRealtimeStatus(`Failed to load ${tabName} dashboard data: ${error.message}`);
         });
       }
     });
@@ -967,6 +1372,7 @@ async function refreshKnowledgeViews({ refreshReportDetail = false } = {}) {
     loadKnowledgeMetrics(),
     loadKnowledgeIngestions(),
     loadKnowledgeReportList({ refreshSelected: refreshReportDetail }),
+    loadAllRagPages({ force: true }),
   ]);
 }
 
@@ -1018,7 +1424,7 @@ function setupWebSocket() {
             || String(payload?.ingestion_id || "").trim() === selectedIngestionReportId,
         });
       } else {
-        await loadMetrics();
+        await Promise.all([loadMetrics(), loadAllRagPages({ force: true })]);
       }
     } catch (error) {
       setRealtimeStatus(`Realtime refresh failed: ${error.message}`);
@@ -1062,6 +1468,23 @@ function bindReportFilters() {
   });
 }
 
+function bindRagFilters() {
+  const bindSelect = (element, key) => {
+    element?.addEventListener("change", () => {
+      ragFilters[key] = element.value;
+      loadAllRagPages({ force: true }).catch((error) => {
+        setRealtimeStatus(`Failed to refresh RAG dashboard filters: ${error.message}`);
+      });
+    });
+  };
+  bindSelect(ragRangeFilterEl, "range");
+  bindSelect(ragSourceFilterEl, "source_type");
+  bindSelect(ragStatusFilterEl, "status");
+  bindSelect(ragQueryTypeFilterEl, "query_type");
+  bindSelect(ragRetrievalFilterEl, "retrieval_strategy");
+  bindSelect(ragChunkFilterEl, "chunk_strategy");
+}
+
 function bindIngestionNavigation() {
   knowledgeIngestionsBodyEl?.addEventListener("click", (event) => {
     const row = event.target.closest("[data-ingestion-id]");
@@ -1090,6 +1513,27 @@ function bindIngestionNavigation() {
       setRealtimeStatus(`Failed to open ingestion report: ${error.message}`);
     });
   });
+  Object.values(ragPageContainers).forEach((containerSet) => {
+    containerSet?.tables?.addEventListener("click", (event) => {
+      const ingestionTrigger = event.target.closest("[data-open-ingestion]");
+      if (ingestionTrigger) {
+        openIngestionReport(ingestionTrigger.dataset.openIngestion).catch((error) => {
+          setRealtimeStatus(`Failed to open ingestion report: ${error.message}`);
+        });
+        return;
+      }
+      const detailTrigger = event.target.closest("[data-toggle-detail]");
+      if (!detailTrigger) {
+        return;
+      }
+      const detailId = detailTrigger.dataset.toggleDetail;
+      const detailRow = document.getElementById(`detail-${detailId}`);
+      if (!detailRow) {
+        return;
+      }
+      detailRow.hidden = !detailRow.hidden;
+    });
+  });
 }
 
 async function handleLogoutClick() {
@@ -1115,6 +1559,7 @@ async function initializeDashboard() {
   bindDashboardTabs();
   bindKnowledgeFilters();
   bindReportFilters();
+  bindRagFilters();
   bindIngestionNavigation();
   setActiveDashboardTab("overview");
   await detectStorageModes();
@@ -1124,6 +1569,7 @@ async function initializeDashboard() {
     loadKnowledgeIngestions(),
     loadKnowledgeReportList({ refreshSelected: false }),
     loadRecentEvents(),
+    loadAllRagPages({ force: true }),
   ]);
   setRealtimeStatus("Realtime: connecting...");
   startKnowledgePolling();

@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import unittest
 import urllib.error
+import urllib.parse
 from unittest.mock import patch
 
 from backend.services.rag_service_client import (
@@ -118,6 +119,41 @@ class RagServiceClientTests(unittest.TestCase):
         )
         self.assertEqual(captured["authorization"], "Bearer token")
         self.assertEqual(payload["summary"]["ingestion_id"], "KI-REPORT")
+
+    def test_rag_dashboard_page_uses_internal_dashboard_endpoint(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+        captured = {}
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"cards":{"doc_count_total":12}}'
+
+        def _fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["authorization"] = request.headers.get("Authorization")
+            return _FakeResponse()
+
+        with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            payload = client.rag_dashboard_page(
+                "overview",
+                range_value="30d",
+                filters={"source_type": "technical_article_api", "limit": 25},
+            )
+
+        parsed = urllib.parse.urlparse(captured["url"])
+        query = urllib.parse.parse_qs(parsed.query)
+        self.assertEqual(parsed.path, "/internal/dashboard/rag/overview")
+        self.assertEqual(query["range"], ["30d"])
+        self.assertEqual(query["source_type"], ["technical_article_api"])
+        self.assertEqual(query["limit"], ["25"])
+        self.assertEqual(captured["authorization"], "Bearer token")
+        self.assertEqual(payload["cards"]["doc_count_total"], 12)
 
 
 if __name__ == "__main__":

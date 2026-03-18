@@ -25,7 +25,7 @@ from backend.services.knowledge_monitoring import (
     build_knowledge_event_payload,
     now_iso,
 )
-from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, answer_with_rag
+from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, run_rag_query
 from backend.services.task_queue import AsyncRedisTaskQueue
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -34,6 +34,15 @@ load_dotenv(dotenv_path=BASE_DIR / ".env", override=False)
 LOGGER = logging.getLogger(__name__)
 KNOWLEDGE_OFFICIAL_MAX_BYTES = max(1, int(os.getenv("KNOWLEDGE_OFFICIAL_MAX_BYTES") or 5 * 1024 * 1024))
 KNOWLEDGE_ARTICLE_MAX_CHARS = max(1, int(os.getenv("KNOWLEDGE_ARTICLE_MAX_CHARS") or 120000))
+_CHAT_MODEL_PRICING = {
+    "gpt-4.1": {"prompt_per_1k": 0.002, "completion_per_1k": 0.008},
+    "gpt-4.1-mini": {"prompt_per_1k": 0.0004, "completion_per_1k": 0.0016},
+    "gpt-4o-mini": {"prompt_per_1k": 0.00015, "completion_per_1k": 0.0006},
+}
+_EMBEDDING_MODEL_PRICING = {
+    "text-embedding-3-large": 0.00013,
+    "text-embedding-3-small": 0.00002,
+}
 
 
 class RagQueryRequest(BaseModel):
@@ -77,6 +86,22 @@ def _knowledge_vector_table() -> str:
     if "." in raw_table:
         return raw_table
     return f"{schema}.{raw_table}"
+
+
+def _query_cost(
+    *,
+    model_name: str | None,
+    prompt_tokens: int,
+    completion_tokens: int,
+    embedding_tokens: int,
+) -> float:
+    chat_pricing = _CHAT_MODEL_PRICING.get((model_name or "").strip(), {})
+    embedding_model = _knowledge_embedding_model()
+    embedding_rate = _EMBEDDING_MODEL_PRICING.get(embedding_model, 0.0)
+    prompt_cost = (max(0, int(prompt_tokens or 0)) / 1000.0) * float(chat_pricing.get("prompt_per_1k", 0.0))
+    completion_cost = (max(0, int(completion_tokens or 0)) / 1000.0) * float(chat_pricing.get("completion_per_1k", 0.0))
+    embedding_cost = (max(0, int(embedding_tokens or 0)) / 1000.0) * float(embedding_rate)
+    return round(prompt_cost + completion_cost + embedding_cost, 6)
 
 
 def _require_internal_auth(authorization: str | None = Header(default=None)) -> None:
@@ -261,7 +286,7 @@ def health() -> dict[str, Any]:
 @app.post("/internal/rag/query")
 def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_internal_auth)) -> dict[str, Any]:
     try:
-        rag_answer = answer_with_rag(request.question, top_k=request.top_k or 6)
+        result = run_rag_query(request.question, top_k=request.top_k or 6)
     except Exception as exc:
         LOGGER.warning(
             "RAG query failed request_id=%s ticket_id=%s error=%s",
@@ -269,6 +294,51 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             request.ticket_id,
             exc,
         )
+        if knowledge_repository.is_enabled():
+            knowledge_repository.record_rag_query_run(
+                run={
+                    "request_id": request.request_id,
+                    "ticket_id": request.ticket_id,
+                    "user_query": request.question,
+                    "intent": "knowledge_qa",
+                    "query_type": "unclear_query",
+                    "retrieval_strategy": "hybrid_rrf",
+                    "top_k": request.top_k or 6,
+                    "vector_candidates_count": 0,
+                    "bm25_candidates_count": 0,
+                    "reranked_candidates_count": 0,
+                    "retrieved_chunk_ids": [],
+                    "selected_chunk_ids": [],
+                    "retrieval_latency_ms": 0.0,
+                    "rerank_latency_ms": 0.0,
+                    "generation_latency_ms": 0.0,
+                    "total_latency_ms": 0.0,
+                    "intent_latency_ms": 0.0,
+                    "rewrite_latency_ms": 0.0,
+                    "vector_retrieval_latency_ms": 0.0,
+                    "bm25_retrieval_latency_ms": 0.0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "embedding_tokens": 0,
+                    "avg_cost_per_query": 0.0,
+                    "confidence_score": 0.0,
+                    "primary_source_type": None,
+                    "primary_chunk_strategy": None,
+                    "needs_human": True,
+                    "handoff_reason": "rag_query_failed",
+                    "error_flag": True,
+                    "timeout_flag": "timeout" in str(exc).lower(),
+                    "error_type": exc.__class__.__name__,
+                    "answer_text": "",
+                    "answer_length": 0,
+                    "citation_count": 0,
+                    "cited_chunk_ids": [],
+                    "model_name": None,
+                    "prompt_version": "rag-v1",
+                    "created_at": now_iso(),
+                },
+                candidates=[],
+            )
         return {
             "decision": "escalate",
             "answer": "",
@@ -278,7 +348,52 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             "reason": "rag_query_failed",
         }
 
-    if rag_answer is None:
+    if result is None:
+        if knowledge_repository.is_enabled():
+            knowledge_repository.record_rag_query_run(
+                run={
+                    "request_id": request.request_id,
+                    "ticket_id": request.ticket_id,
+                    "user_query": request.question,
+                    "intent": "knowledge_qa",
+                    "query_type": "unclear_query",
+                    "retrieval_strategy": "hybrid_rrf",
+                    "top_k": request.top_k or 6,
+                    "vector_candidates_count": 0,
+                    "bm25_candidates_count": 0,
+                    "reranked_candidates_count": 0,
+                    "retrieved_chunk_ids": [],
+                    "selected_chunk_ids": [],
+                    "retrieval_latency_ms": 0.0,
+                    "rerank_latency_ms": 0.0,
+                    "generation_latency_ms": 0.0,
+                    "total_latency_ms": 0.0,
+                    "intent_latency_ms": 0.0,
+                    "rewrite_latency_ms": 0.0,
+                    "vector_retrieval_latency_ms": 0.0,
+                    "bm25_retrieval_latency_ms": 0.0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "embedding_tokens": 0,
+                    "avg_cost_per_query": 0.0,
+                    "confidence_score": 0.0,
+                    "primary_source_type": None,
+                    "primary_chunk_strategy": None,
+                    "needs_human": True,
+                    "handoff_reason": "rag_unavailable",
+                    "error_flag": True,
+                    "timeout_flag": False,
+                    "error_type": "rag_unavailable",
+                    "answer_text": "",
+                    "answer_length": 0,
+                    "citation_count": 0,
+                    "cited_chunk_ids": [],
+                    "model_name": None,
+                    "prompt_version": "rag-v1",
+                    "created_at": now_iso(),
+                },
+                candidates=[],
+            )
         return {
             "decision": "escalate",
             "answer": "",
@@ -287,6 +402,72 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             "citations": [],
             "reason": "rag_unavailable",
         }
+
+    rag_answer = result.answer
+    trace = result.trace
+    candidates = [
+        {
+            "chunk_id": citation.get("chunk_id"),
+            "doc_id": None,
+            "rank_before_rerank": index + 1,
+            "rank_after_rerank": index + 1,
+            "retrieval_score": None,
+            "rerank_score": None,
+            "title": citation.get("heading"),
+            "source_url": citation.get("source_url"),
+            "used_in_final_answer": True,
+        }
+        for index, citation in enumerate(rag_answer.citations)
+    ]
+    knowledge_repository.record_rag_query_run(
+        run={
+            "request_id": request.request_id,
+            "ticket_id": request.ticket_id,
+            "user_query": request.question,
+            "intent": "knowledge_qa",
+            "query_type": trace.query_type,
+            "retrieval_strategy": trace.retrieval_strategy,
+            "top_k": request.top_k or 6,
+            "vector_candidates_count": trace.vector_candidates_count,
+            "bm25_candidates_count": trace.bm25_candidates_count,
+            "reranked_candidates_count": trace.reranked_candidates_count,
+            "retrieved_chunk_ids": trace.retrieved_chunk_ids,
+            "selected_chunk_ids": trace.selected_chunk_ids,
+            "retrieval_latency_ms": trace.retrieval_latency_ms,
+            "rerank_latency_ms": trace.rerank_latency_ms,
+            "generation_latency_ms": trace.generation_latency_ms,
+            "total_latency_ms": trace.total_latency_ms,
+            "intent_latency_ms": 0.0,
+            "rewrite_latency_ms": 0.0,
+            "vector_retrieval_latency_ms": trace.vector_retrieval_latency_ms,
+            "bm25_retrieval_latency_ms": trace.bm25_retrieval_latency_ms,
+            "prompt_tokens": trace.prompt_tokens,
+            "completion_tokens": trace.completion_tokens,
+            "embedding_tokens": trace.embedding_tokens,
+            "avg_cost_per_query": _query_cost(
+                model_name=trace.model_name,
+                prompt_tokens=trace.prompt_tokens,
+                completion_tokens=trace.completion_tokens,
+                embedding_tokens=trace.embedding_tokens,
+            ),
+            "confidence_score": trace.confidence_score,
+            "primary_source_type": trace.primary_source_type,
+            "primary_chunk_strategy": trace.primary_chunk_strategy,
+            "needs_human": trace.needs_human,
+            "handoff_reason": trace.handoff_reason,
+            "error_flag": trace.error_flag,
+            "timeout_flag": trace.timeout_flag,
+            "error_type": trace.error_type,
+            "answer_text": rag_answer.answer,
+            "answer_length": trace.answer_length,
+            "citation_count": trace.citation_count,
+            "cited_chunk_ids": trace.cited_chunk_ids,
+            "model_name": trace.model_name,
+            "prompt_version": "rag-v1",
+            "created_at": now_iso(),
+        },
+        candidates=candidates,
+    )
 
     if rag_answer.answer.strip() == INSUFFICIENT_EVIDENCE_REPLY:
         return {
@@ -306,6 +487,41 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
         "citations": rag_answer.citations,
         "reason": "grounded_answer",
     }
+
+
+@app.get("/internal/dashboard/rag/{page}")
+def internal_rag_dashboard_page(
+    page: str,
+    range: str = Query(default="7d", pattern="^(7d|30d)$"),
+    source_type: str | None = Query(default=None),
+    product: str | None = Query(default=None),
+    language: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    query_type: str | None = Query(default=None),
+    retrieval_strategy: str | None = Query(default=None),
+    chunk_strategy: str | None = Query(default=None),
+    experiment_id: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    cursor: str | None = Query(default=None),
+    _: None = Depends(_require_internal_auth),
+) -> dict[str, Any]:
+    repository = _require_knowledge_repository()
+    return repository.rag_dashboard_page(
+        page,
+        range_value=range,
+        filters={
+            "source_type": source_type,
+            "product": product,
+            "language": language,
+            "status": status,
+            "query_type": query_type,
+            "retrieval_strategy": retrieval_strategy,
+            "chunk_strategy": chunk_strategy,
+            "experiment_id": experiment_id,
+            "limit": limit,
+            "cursor": cursor,
+        },
+    )
 
 
 @app.post("/internal/knowledge/official-documents", status_code=202)

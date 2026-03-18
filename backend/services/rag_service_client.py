@@ -280,6 +280,18 @@ class RagServiceClient:
     def knowledge_metrics(self) -> dict[str, Any]:
         return self._request("GET", "/internal/knowledge/metrics")
 
+    def rag_dashboard_page(
+        self,
+        page: str,
+        *,
+        range_value: str = "7d",
+        filters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        quoted = urllib.parse.quote(str(page or "").strip(), safe="")
+        payload = dict(filters or {})
+        payload["range"] = range_value
+        return self._request("GET", f"/internal/dashboard/rag/{quoted}", query=payload)
+
     def health(self, *, timeout_seconds: float | None = None) -> dict[str, Any]:
         return self._request("GET", "/health", timeout_seconds=timeout_seconds)
 

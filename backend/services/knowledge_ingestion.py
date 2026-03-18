@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -170,6 +171,13 @@ def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _estimate_token_count(text: str) -> int:
+    raw = str(text or "")
+    if not raw.strip():
+        return 0
+    return max(1, len(raw.split()), (len(raw) + 3) // 4)
+
+
 def _document_id(knowledge_type: str, identity: str) -> str:
     digest = hashlib.sha1(identity.encode("utf-8")).hexdigest()[:20]
     return f"{knowledge_type}-{digest}"
@@ -236,6 +244,10 @@ def _merge_string_lists(*collections: Any) -> list[str]:
             if normalized and normalized not in items:
                 items.append(normalized)
     return items
+
+
+def _chunk_strategy_for(knowledge_type: str) -> str:
+    return "markdown_header" if knowledge_type == "official" else "token_500_overlap_100"
 
 
 def _split_front_matter(markdown_text: str) -> tuple[dict[str, str], str]:
@@ -1081,6 +1093,54 @@ def _build_normalized_summary(
     }
 
 
+def _metadata_missing_flags(document: NormalizedKnowledgeDocument, metadata: dict[str, Any]) -> dict[str, bool]:
+    return {
+        "missing_title": not bool(_clean_text(document.title)),
+        "missing_source_url": not bool(_clean_text(document.url)),
+        "missing_product": not bool(_clean_text(_document_product(metadata, document.product))),
+        "missing_updated_at": not bool(_clean_text(document.source_updated_at)),
+        "missing_language": not bool(_clean_text(_document_language(metadata, document.language))),
+    }
+
+
+def _chunk_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "avg_chunk_tokens": None,
+            "p50_chunk_tokens": None,
+            "p90_chunk_tokens": None,
+            "p99_chunk_tokens": None,
+            "avg_overlap_tokens": None,
+            "avg_chunks_per_doc": 0,
+            "short_chunk_rate_lt_100": None,
+            "long_chunk_rate_gt_800": None,
+            "long_chunk_rate_gt_1000": None,
+        }
+    token_counts = sorted(int(row.get("chunk_token_count") or 0) for row in rows)
+    overlap_counts = [int(row.get("overlap_tokens") or 0) for row in rows]
+
+    def _percentile(percent: float) -> float:
+        if len(token_counts) == 1:
+            return float(token_counts[0])
+        index = (len(token_counts) - 1) * percent
+        lower = int(index)
+        upper = min(len(token_counts) - 1, lower + 1)
+        weight = index - lower
+        return (token_counts[lower] * (1 - weight)) + (token_counts[upper] * weight)
+
+    return {
+        "avg_chunk_tokens": round(sum(token_counts) / len(token_counts), 2),
+        "p50_chunk_tokens": round(_percentile(0.5), 2),
+        "p90_chunk_tokens": round(_percentile(0.9), 2),
+        "p99_chunk_tokens": round(_percentile(0.99), 2),
+        "avg_overlap_tokens": round(sum(overlap_counts) / len(overlap_counts), 2),
+        "avg_chunks_per_doc": round(float(len(rows)), 2),
+        "short_chunk_rate_lt_100": round(sum(1 for value in token_counts if value < 100) / len(token_counts), 4),
+        "long_chunk_rate_gt_800": round(sum(1 for value in token_counts if value > 800) / len(token_counts), 4),
+        "long_chunk_rate_gt_1000": round(sum(1 for value in token_counts if value > 1000) / len(token_counts), 4),
+    }
+
+
 def _build_chunk_handoff_summary(
     document: NormalizedKnowledgeDocument,
     rows: list[dict[str, Any]],
@@ -1115,8 +1175,11 @@ def _build_chunk_rows(document: NormalizedKnowledgeDocument, metadata: dict[str,
     product = _document_product(metadata, document.product)
     module = _document_module(metadata, document.module)
     language = _document_language(metadata, document.language)
+    chunk_strategy = _chunk_strategy_for(document.knowledge_type)
+    embedding_model = (_openai_config().get("embedding_model") or "text-embedding-3-large").strip()
     rows: list[dict[str, Any]] = []
     chunk_index = 0
+    seen_chunk_hashes: set[str] = set()
     for block in document.content_blocks:
         prefix_lines = [
             f"Title: {document.title}",
@@ -1135,6 +1198,10 @@ def _build_chunk_rows(document: NormalizedKnowledgeDocument, metadata: dict[str,
         for piece in _paragraph_window_split(block.text, max_chars=max_chars, overlap_chars=overlap_chars):
             chunk_index += 1
             chunk_text = f"{prefix}\n\n{piece}".strip()
+            content_hash = _sha256_text(chunk_text)
+            is_duplicate_chunk = content_hash in seen_chunk_hashes
+            seen_chunk_hashes.add(content_hash)
+            chunk_token_count = _estimate_token_count(chunk_text)
             row_metadata = {
                 "doc_id": document.document_id,
                 "doc_hash": document.checksum,
@@ -1154,6 +1221,8 @@ def _build_chunk_rows(document: NormalizedKnowledgeDocument, metadata: dict[str,
                 "module": module,
                 "language": language,
                 "tags": metadata.get("tags", []),
+                "chunk_strategy": chunk_strategy,
+                "chunk_token_count": chunk_token_count,
             }
             rows.append(
                 {
@@ -1173,6 +1242,14 @@ def _build_chunk_rows(document: NormalizedKnowledgeDocument, metadata: dict[str,
                     "knowledge_type": document.knowledge_type,
                     "section_type": block.section_type,
                     "ingestion_id": document.ingestion_id,
+                    "chunk_token_count": chunk_token_count,
+                    "overlap_tokens": _estimate_token_count(piece[:overlap_chars]),
+                    "chunk_strategy": chunk_strategy,
+                    "embedding_model": embedding_model,
+                    "vector_indexed_at": _utc_now(),
+                    "fts_indexed_at": _utc_now(),
+                    "has_empty_content": not bool(chunk_text.strip()),
+                    "is_duplicate_chunk": is_duplicate_chunk,
                 }
             )
     return rows
@@ -1248,11 +1325,47 @@ def process_knowledge_ingestion(
     dedupe_target_doc_id: str | None = None
     rows: list[dict[str, Any]] = []
     existing_chunk_count = 0
+    processing_started_perf = time.perf_counter()
+    cleaning_latency_ms = 0.0
+    chunking_latency_ms = 0.0
+    embedding_latency_ms = 0.0
+    index_upsert_latency_ms = 0.0
+    failed_stage: str | None = None
+    error_code: str | None = None
+    metadata_missing_flags: dict[str, bool] = {}
+    cleaned_token_count = 0
+    doc_token_count = 0
+    chunk_strategy: str | None = None
+    chunk_stats: dict[str, Any] = {
+        "avg_chunk_tokens": None,
+        "p50_chunk_tokens": None,
+        "p90_chunk_tokens": None,
+        "p99_chunk_tokens": None,
+        "avg_overlap_tokens": None,
+        "avg_chunks_per_doc": 0,
+        "short_chunk_rate_lt_100": None,
+        "long_chunk_rate_gt_800": None,
+        "long_chunk_rate_gt_1000": None,
+    }
+    embedding_model = (_openai_config().get("embedding_model") or "text-embedding-3-large").strip()
+    empty_doc_flag = False
+    short_doc_flag = False
+    duplicate_doc_flag = False
+    vector_upsert_success: bool | None = None
+    fts_upsert_success: bool | None = None
 
     try:
         request = _request_from_ingestion(ingestion)
+        clean_started_perf = time.perf_counter()
         document = _resolve_document_from_request(request)
+        cleaning_latency_ms = round((time.perf_counter() - clean_started_perf) * 1000, 2)
         final_metadata, report_metadata = _enrich_metadata_with_llm(document)
+        doc_token_count = _estimate_token_count(document.content)
+        cleaned_token_count = doc_token_count
+        metadata_missing_flags = _metadata_missing_flags(document, final_metadata)
+        chunk_strategy = _chunk_strategy_for(document.knowledge_type)
+        empty_doc_flag = cleaned_token_count == 0
+        short_doc_flag = 0 < cleaned_token_count < 100
         normalized_summary = _build_normalized_summary(document, final_metadata)
         candidate = repository.find_dedupe_candidate(
             source_url=document.url,
@@ -1267,6 +1380,7 @@ def process_knowledge_ingestion(
                 dedupe_action = "reindexed"
             if dedupe_target_doc_id:
                 document.document_id = dedupe_target_doc_id
+        duplicate_doc_flag = dedupe_action == "skipped_duplicate"
 
         repository.update_ingestion_source(
             ingestion_id,
@@ -1283,6 +1397,38 @@ def process_knowledge_ingestion(
         )
 
         normalized_payload = _normalized_payload(document, final_metadata)
+
+        chunking_started_perf = time.perf_counter()
+        rows = _build_chunk_rows(document, final_metadata)
+        chunking_latency_ms = round((time.perf_counter() - chunking_started_perf) * 1000, 2)
+        if not rows and dedupe_action != "skipped_duplicate":
+            raise RuntimeError("No chunks were generated from the document")
+        chunk_stats = _chunk_stats(rows)
+
+        if dedupe_action != "skipped_duplicate":
+            embed_started_perf = time.perf_counter()
+            failed_stage = "embed"
+            vectors = _embed_rows(rows)
+            embedding_latency_ms = round((time.perf_counter() - embed_started_perf) * 1000, 2)
+            vector_dim = len(vectors[0]) if vectors else 0
+            for row, embedding in zip(rows, vectors):
+                row["embedding"] = embedding
+            index_started_perf = time.perf_counter()
+            failed_stage = "index_upsert"
+            written = repository.replace_document_chunks(
+                document_id=document.document_id,
+                vector_dim=vector_dim,
+                rows=rows,
+            )
+            index_upsert_latency_ms = round((time.perf_counter() - index_started_perf) * 1000, 2)
+            existing_chunk_count = written
+            vector_upsert_success = True
+            fts_upsert_success = True
+        else:
+            vector_upsert_success = True
+            fts_upsert_success = True
+            existing_chunk_count = len(rows) or existing_chunk_count
+
         repository.upsert_document(
             document_id=document.document_id,
             ingestion_id=ingestion_id,
@@ -1300,22 +1446,15 @@ def process_knowledge_ingestion(
             normalized_payload=normalized_payload,
             metadata_source=_clean_text(report_metadata.get("metadata_source")),
             metadata_version=_clean_text(report_metadata.get("metadata_version")),
+            status="processed",
+            cleaned_token_count=cleaned_token_count,
+            chunk_strategy=chunk_strategy,
+            chunk_count=existing_chunk_count,
+            avg_chunk_tokens=chunk_stats.get("avg_chunk_tokens"),
+            metadata_missing_flags=metadata_missing_flags,
+            is_duplicate=duplicate_doc_flag,
+            is_stale=False,
         )
-
-        if dedupe_action != "skipped_duplicate":
-            rows = _build_chunk_rows(document, final_metadata)
-            if not rows:
-                raise RuntimeError("No chunks were generated from the document")
-            vectors = _embed_rows(rows)
-            vector_dim = len(vectors[0]) if vectors else 0
-            for row, embedding in zip(rows, vectors):
-                row["embedding"] = embedding
-            written = repository.replace_document_chunks(
-                document_id=document.document_id,
-                vector_dim=vector_dim,
-                rows=rows,
-            )
-            existing_chunk_count = written
 
         chunk_handoff_summary = _build_chunk_handoff_summary(
             document,
@@ -1323,6 +1462,7 @@ def process_knowledge_ingestion(
             dedupe_action=dedupe_action,
             existing_chunk_count=existing_chunk_count,
         )
+        ingestion_latency_ms = round((time.perf_counter() - processing_started_perf) * 1000, 2)
         repository.upsert_ingestion_report(
             ingestion_id=ingestion_id,
             knowledge_type=document.knowledge_type,
@@ -1336,6 +1476,32 @@ def process_knowledge_ingestion(
             metadata_snapshot=final_metadata,
             normalized_summary=normalized_summary,
             chunk_handoff_summary=chunk_handoff_summary,
+            failed_stage=None,
+            error_code=None,
+            ingestion_latency_ms=ingestion_latency_ms,
+            cleaning_latency_ms=cleaning_latency_ms,
+            chunking_latency_ms=chunking_latency_ms,
+            embedding_latency_ms=embedding_latency_ms,
+            index_upsert_latency_ms=index_upsert_latency_ms,
+            cleaned_token_count=cleaned_token_count,
+            doc_token_count=doc_token_count,
+            chunk_strategy=chunk_strategy,
+            avg_chunk_tokens=chunk_stats.get("avg_chunk_tokens"),
+            p50_chunk_tokens=chunk_stats.get("p50_chunk_tokens"),
+            p90_chunk_tokens=chunk_stats.get("p90_chunk_tokens"),
+            p99_chunk_tokens=chunk_stats.get("p99_chunk_tokens"),
+            avg_overlap_tokens=chunk_stats.get("avg_overlap_tokens"),
+            avg_chunks_per_doc=chunk_stats.get("avg_chunks_per_doc"),
+            short_chunk_rate_lt_100=chunk_stats.get("short_chunk_rate_lt_100"),
+            long_chunk_rate_gt_800=chunk_stats.get("long_chunk_rate_gt_800"),
+            long_chunk_rate_gt_1000=chunk_stats.get("long_chunk_rate_gt_1000"),
+            empty_doc_flag=empty_doc_flag,
+            short_doc_flag=short_doc_flag,
+            duplicate_doc_flag=duplicate_doc_flag,
+            metadata_missing_flags=metadata_missing_flags,
+            embedding_model=embedding_model,
+            vector_upsert_success=vector_upsert_success,
+            fts_upsert_success=fts_upsert_success,
         )
         repository.complete_ingestion(
             ingestion_id,
@@ -1344,6 +1510,7 @@ def process_knowledge_ingestion(
         )
     except Exception as exc:
         LOGGER.exception("Knowledge ingestion failed for %s", ingestion_id)
+        ingestion_latency_ms = round((time.perf_counter() - processing_started_perf) * 1000, 2)
         failure_cleaning_report = dict(document.cleaning_report) if document is not None else {
             "parser_name": "unknown",
             "parser_version": _PARSER_VERSION,
@@ -1358,6 +1525,9 @@ def process_knowledge_ingestion(
         if failure_message:
             warnings = [*warnings, failure_message]
         failure_cleaning_report["warnings"] = warnings
+        error_code = error_code or exc.__class__.__name__
+        if failed_stage is None:
+            failed_stage = "clean"
         repository.update_ingestion_source(
             ingestion_id,
             title=document.title if document is not None else _clean_text(ingestion.get("title")),
@@ -1389,6 +1559,32 @@ def process_knowledge_ingestion(
                 dedupe_action=dedupe_action,
                 existing_chunk_count=existing_chunk_count,
             ) if document is not None else {},
+            failed_stage=failed_stage,
+            error_code=error_code,
+            ingestion_latency_ms=ingestion_latency_ms,
+            cleaning_latency_ms=cleaning_latency_ms,
+            chunking_latency_ms=chunking_latency_ms,
+            embedding_latency_ms=embedding_latency_ms,
+            index_upsert_latency_ms=index_upsert_latency_ms,
+            cleaned_token_count=cleaned_token_count if cleaned_token_count else None,
+            doc_token_count=doc_token_count if doc_token_count else None,
+            chunk_strategy=chunk_strategy,
+            avg_chunk_tokens=chunk_stats.get("avg_chunk_tokens"),
+            p50_chunk_tokens=chunk_stats.get("p50_chunk_tokens"),
+            p90_chunk_tokens=chunk_stats.get("p90_chunk_tokens"),
+            p99_chunk_tokens=chunk_stats.get("p99_chunk_tokens"),
+            avg_overlap_tokens=chunk_stats.get("avg_overlap_tokens"),
+            avg_chunks_per_doc=chunk_stats.get("avg_chunks_per_doc"),
+            short_chunk_rate_lt_100=chunk_stats.get("short_chunk_rate_lt_100"),
+            long_chunk_rate_gt_800=chunk_stats.get("long_chunk_rate_gt_800"),
+            long_chunk_rate_gt_1000=chunk_stats.get("long_chunk_rate_gt_1000"),
+            empty_doc_flag=empty_doc_flag,
+            short_doc_flag=short_doc_flag,
+            duplicate_doc_flag=duplicate_doc_flag,
+            metadata_missing_flags=metadata_missing_flags,
+            embedding_model=embedding_model,
+            vector_upsert_success=vector_upsert_success,
+            fts_upsert_success=fts_upsert_success,
         )
         repository.fail_ingestion(ingestion_id, str(exc))
         raise
