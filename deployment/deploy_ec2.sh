@@ -281,7 +281,10 @@ main() {
   log "Stopping services..."
   docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" down
   log "Starting services (build + detached)..."
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build
+  if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build; then
+    show_compose_diagnostics
+    fail "docker compose up failed"
+  fi
 
   log "Current service status:"
   docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps

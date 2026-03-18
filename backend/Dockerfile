@@ -7,11 +7,17 @@ WORKDIR /app
 
 COPY requirements.txt /app/requirements.txt
 RUN python -m pip install --upgrade pip && \
+    install_ok=0 && \
     for i in 1 2 3; do \
-      pip install --no-cache-dir -r /app/requirements.txt && break; \
+      if python -m pip install --no-cache-dir -r /app/requirements.txt; then \
+        install_ok=1; \
+        break; \
+      fi; \
       echo "pip install failed, retry ${i}/3"; \
       sleep 5; \
-    done
+    done && \
+    test "${install_ok}" -eq 1 && \
+    python -m pip show uvicorn fastapi >/dev/null
 
 COPY backend /app/backend
 COPY client_ui /app/client_ui
