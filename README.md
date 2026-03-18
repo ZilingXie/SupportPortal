@@ -115,30 +115,57 @@ deployment/    # compose 与 nginx 配置
 docs/          # 文档
 ```
 
-## Agora 官方文档抓取与上传
+## Agora 官方文档抓取与端点入库
 
 仓库提供了一个手动运行的脚本，用于：
 1. 从 Agora 英文站点发现官方文档 URL。
-2. 下载对应的 Markdown 文件到 `official_doc/`。
-3. 调用现有 `POST /api/engineer/knowledge/official-documents` 接口逐个上传，并等待 ingestion 完成。
+2. 下载对应的 Markdown 文件到 `local_knowledge/official/raw/`。
+3. 默认把下载得到的 `.md` 文件上传到 `https://support.stellarix.space` 的官方文档端点。
+4. 由 RAG 端点完成规范化、`primary/shadow` 双轨切片、Qwen3 向量化和落库。
 
 运行方式：
 
 ```bash
-python scripts/fetch_and_upload_agora_docs.py --api-base-url http://localhost:8080
+python scripts/fetch_and_upload_agora_docs.py
 ```
 
 常用参数：
 
 ```bash
 python scripts/fetch_and_upload_agora_docs.py \
-  --api-base-url http://localhost:8080 \
+  --api-base-url support.stellarix.space \
   --limit 3 \
-  --download-workers 8 \
-  --upload-workers 4
+  --download-workers 8
 ```
 
 说明：
-1. `official_doc/` 每次运行都会先全量重建。
-2. 运行结束后会在 `official_doc/_sync_report.json` 写入下载、上传和 ingestion 结果汇总。
-3. `official_doc/` 已加入 `.gitignore`，作为本地生成产物保留。
+1. `local_knowledge/official/raw/` 每次运行都会先全量重建。
+2. `--api-base-url` 支持传入 `support.stellarix.space` 这种 host-only 值，脚本会自动补成 `https://support.stellarix.space`。
+3. 运行结束后会在 `local_knowledge/official/raw/_sync_report.json` 写入下载和 ingestion 结果汇总。
+4. `local_knowledge/` 已加入 `.gitignore`，作为本地生成产物保留。
+
+## Local Embedding / Dual-Track Chunking
+
+默认向量化配置已经切到 SiliconFlow Qwen3 Embedding：
+
+```env
+EMBEDDING_PROVIDER=siliconflow_qwen3
+EMBEDDING_MODEL_ID=Qwen/Qwen3-Embedding-8B
+EMBEDDING_BATCH_SIZE=16
+SILICONFLOW_API_KEY=...
+SILLICONFLOW_KEY=...
+SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1
+SILICONFLOW_EMBEDDING_DIMENSIONS=1024
+PGVECTOR_TABLE=docagent_chunks_qwen3_1024
+PGVECTOR_DIM=1024
+PRIMARY_CHUNK_STRATEGY=markdown_header_v1
+SHADOW_CHUNK_STRATEGY=semantic_qwen3_v1
+SHADOW_CHUNK_ENABLED=true
+LOCAL_KNOWLEDGE_ROOT=local_knowledge
+```
+
+说明：
+1. `support_knowledge_documents` 继续保存 canonical 文档结构和 `primary` 统计。
+2. `support_knowledge_chunk_runs` / `support_knowledge_chunk_traces` 会额外记录双轨切片过程数据，供后续优化使用。
+3. 检索链路只会召回 `index_role='primary'` 的 chunk。
+4. 技术文档推荐由 `n8n` 直接写入 `support_knowledge_source_documents`，再执行 `python scripts/ingest_local_knowledge_sources.py --source-system n8n --knowledge-type technical` 做本地增量入库。

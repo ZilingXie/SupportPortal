@@ -18,4 +18,4 @@ env/
 artifacts/
 .env
 official_doc/
-
+local_knowledge/

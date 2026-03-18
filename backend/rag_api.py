@@ -18,6 +18,12 @@ from backend.repositories.knowledge_repository import (
     KnowledgeRepository,
     create_knowledge_repository,
 )
+from backend.services.embedding_provider import (
+    DEFAULT_PGVECTOR_TABLE,
+    embedding_external_cost_per_1k,
+    embedding_model_id,
+    embedding_provider_name,
+)
 from backend.services.event_bus import AsyncRedisEventBus
 from backend.services.knowledge_ingestion import process_knowledge_ingestion
 from backend.services.knowledge_monitoring import (
@@ -25,6 +31,7 @@ from backend.services.knowledge_monitoring import (
     build_knowledge_event_payload,
     now_iso,
 )
+from backend.services.local_source_sync import ingest_source_document, stage_source_document
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, run_rag_query
 from backend.services.task_queue import AsyncRedisTaskQueue
 
@@ -39,11 +46,6 @@ _CHAT_MODEL_PRICING = {
     "gpt-4.1-mini": {"prompt_per_1k": 0.0004, "completion_per_1k": 0.0016},
     "gpt-4o-mini": {"prompt_per_1k": 0.00015, "completion_per_1k": 0.0006},
 }
-_EMBEDDING_MODEL_PRICING = {
-    "text-embedding-3-large": 0.00013,
-    "text-embedding-3-small": 0.00002,
-}
-
 
 class RagQueryRequest(BaseModel):
     question: str = Field(min_length=1, max_length=20000)
@@ -72,17 +74,39 @@ def _sanitize_uploaded_file_name(file_name: str) -> str:
     return clean_name or "document.md"
 
 
+def _clean_text(value: Any) -> str:
+    return " ".join(str(value or "").split()).strip()
+
+
 def _shared_token() -> str:
     return (os.getenv("RAG_SERVICE_SHARED_TOKEN") or "").strip()
 
 
 def _knowledge_embedding_model() -> str:
-    return (os.getenv("OPENAI_EMBEDDING_MODEL") or "text-embedding-3-large").strip()
+    return embedding_model_id()
+
+
+def _knowledge_embedding_provider() -> str:
+    return embedding_provider_name()
+
+
+def _knowledge_embedding_dimensions() -> int | None:
+    for key in ["PGVECTOR_DIM", "SILICONFLOW_EMBEDDING_DIMENSIONS"]:
+        raw = _clean_text(os.getenv(key))
+        if not raw:
+            continue
+        try:
+            value = int(raw)
+        except ValueError:
+            continue
+        if value > 0:
+            return value
+    return None
 
 
 def _knowledge_vector_table() -> str:
     schema = (os.getenv("PGVECTOR_SCHEMA") or "supportportal").strip() or "supportportal"
-    raw_table = (os.getenv("PGVECTOR_TABLE") or "docagent_chunks").strip() or "docagent_chunks"
+    raw_table = (os.getenv("PGVECTOR_TABLE") or DEFAULT_PGVECTOR_TABLE).strip() or DEFAULT_PGVECTOR_TABLE
     if "." in raw_table:
         return raw_table
     return f"{schema}.{raw_table}"
@@ -96,8 +120,7 @@ def _query_cost(
     embedding_tokens: int,
 ) -> float:
     chat_pricing = _CHAT_MODEL_PRICING.get((model_name or "").strip(), {})
-    embedding_model = _knowledge_embedding_model()
-    embedding_rate = _EMBEDDING_MODEL_PRICING.get(embedding_model, 0.0)
+    embedding_rate = embedding_external_cost_per_1k()
     prompt_cost = (max(0, int(prompt_tokens or 0)) / 1000.0) * float(chat_pricing.get("prompt_per_1k", 0.0))
     completion_cost = (max(0, int(completion_tokens or 0)) / 1000.0) * float(chat_pricing.get("completion_per_1k", 0.0))
     embedding_cost = (max(0, int(embedding_tokens or 0)) / 1000.0) * float(embedding_rate)
@@ -278,6 +301,7 @@ def health() -> dict[str, Any]:
         "time": now_iso(),
         "service": "rag-api",
         "knowledge_storage": knowledge_repository.storage_mode(),
+        "embedding_provider": _knowledge_embedding_provider(),
         "embedding_model": _knowledge_embedding_model(),
         "vector_table": _knowledge_vector_table(),
     }
@@ -322,6 +346,10 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
                     "embedding_tokens": 0,
                     "avg_cost_per_query": 0.0,
                     "confidence_score": 0.0,
+                    "embedding_provider": _knowledge_embedding_provider(),
+                    "embedding_model": _knowledge_embedding_model(),
+                    "embedding_dimensions": _knowledge_embedding_dimensions(),
+                    "embedding_request_meta": [],
                     "primary_source_type": None,
                     "primary_chunk_strategy": None,
                     "needs_human": True,
@@ -377,6 +405,10 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
                     "embedding_tokens": 0,
                     "avg_cost_per_query": 0.0,
                     "confidence_score": 0.0,
+                    "embedding_provider": _knowledge_embedding_provider(),
+                    "embedding_model": _knowledge_embedding_model(),
+                    "embedding_dimensions": _knowledge_embedding_dimensions(),
+                    "embedding_request_meta": [],
                     "primary_source_type": None,
                     "primary_chunk_strategy": None,
                     "needs_human": True,
@@ -451,6 +483,10 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
                 embedding_tokens=trace.embedding_tokens,
             ),
             "confidence_score": trace.confidence_score,
+            "embedding_provider": trace.embedding_provider,
+            "embedding_model": trace.embedding_model,
+            "embedding_dimensions": trace.embedding_dimensions,
+            "embedding_request_meta": trace.embedding_request_meta,
             "primary_source_type": trace.primary_source_type,
             "primary_chunk_strategy": trace.primary_chunk_strategy,
             "needs_human": trace.needs_human,
@@ -547,28 +583,42 @@ async def upload_official_document(
         )
 
     markdown_text = raw_bytes.decode("utf-8", errors="replace")
-    ingestion = repository.create_ingestion(
-        knowledge_type="official",
-        source_type="official_markdown_upload",
+    request_metadata = _request_metadata(
+        submitted_via="official_documents_endpoint",
         file_name=original_name,
-        content=markdown_text,
-        request_metadata=_request_metadata(
-            submitted_via="official_documents_endpoint",
-            file_name=original_name,
-            mime_type="text/markdown",
-            file_size_bytes=len(raw_bytes),
-            content_length_chars=len(markdown_text),
-            raw_content=markdown_text,
-        ),
+        mime_type="text/markdown",
+        file_size_bytes=len(raw_bytes),
+        content_length_chars=len(markdown_text),
+        raw_content=markdown_text,
     )
-
+    source_document = stage_source_document(
+        repository,
+        knowledge_type="official",
+        source_system="manual",
+        external_id=_clean_text(request_metadata.get("idempotency_key")) or original_name,
+        title=original_name,
+        content_format="markdown",
+        raw_content=markdown_text,
+        raw_payload={"file_name": original_name},
+        metadata=request_metadata,
+    )
+    result = await asyncio.to_thread(
+        ingest_source_document,
+        repository,
+        source_document,
+        sync_mode="api_compat",
+    )
+    if not result.ingestion_id:
+        raise HTTPException(status_code=500, detail="Knowledge ingestion failed before ingestion creation")
+    record = repository.get_ingestion(result.ingestion_id, include_content=False)
+    if record is None:
+        raise HTTPException(status_code=500, detail="Knowledge ingestion finished without a record")
     await _publish_dashboard_event(
-        "knowledge_ingestion_queued",
-        ingestion,
-        status_override="queued",
+        "knowledge_ingestion_completed" if record.get("status") == "completed" else "knowledge_ingestion_failed",
+        record,
+        status_override=str(record.get("status") or "").lower() or None,
     )
-    record, queued, processing_mode = await _run_knowledge_ingestion_or_enqueue(ingestion["ingestion_id"])
-    return _ingestion_payload(record, queued=queued, processing_mode=processing_mode)
+    return _ingestion_payload(record, queued=False, processing_mode="synchronous_direct")
 
 
 @app.post("/internal/knowledge/articles", status_code=202)
@@ -583,26 +633,46 @@ async def upload_technical_article(
             detail=f"Technical article content exceeds {KNOWLEDGE_ARTICLE_MAX_CHARS} characters",
         )
 
-    ingestion = repository.create_ingestion(
+    request_metadata = _request_metadata(
+        submitted_via="articles_endpoint",
+        content_length_chars=len(request.content),
+        source_url=request.source_url,
+        raw_content=request.content,
+    )
+    source_document = stage_source_document(
+        repository,
         knowledge_type="technical",
-        source_type="technical_article_api",
+        source_system="manual",
+        external_id=_clean_text(request_metadata.get("idempotency_key")) or request.source_url.strip(),
         title=request.title.strip(),
         source_url=request.source_url.strip(),
-        content=request.content,
-        request_metadata=_request_metadata(
-            submitted_via="articles_endpoint",
-            content_length_chars=len(request.content),
-            source_url=request.source_url,
-            raw_content=request.content,
-        ),
+        published_url=request.source_url.strip(),
+        content_format="markdown",
+        raw_content=request.content,
+        raw_payload={
+            "title": request.title.strip(),
+            "content": request.content,
+            "source_url": request.source_url.strip(),
+        },
+        metadata=request_metadata,
     )
+    result = await asyncio.to_thread(
+        ingest_source_document,
+        repository,
+        source_document,
+        sync_mode="api_compat",
+    )
+    if not result.ingestion_id:
+        raise HTTPException(status_code=500, detail="Knowledge ingestion failed before ingestion creation")
+    record = repository.get_ingestion(result.ingestion_id, include_content=False)
+    if record is None:
+        raise HTTPException(status_code=500, detail="Knowledge ingestion finished without a record")
     await _publish_dashboard_event(
-        "knowledge_ingestion_queued",
-        ingestion,
-        status_override="queued",
+        "knowledge_ingestion_completed" if record.get("status") == "completed" else "knowledge_ingestion_failed",
+        record,
+        status_override=str(record.get("status") or "").lower() or None,
     )
-    record, queued, processing_mode = await _run_knowledge_ingestion_or_enqueue(ingestion["ingestion_id"])
-    return _ingestion_payload(record, queued=queued, processing_mode=processing_mode)
+    return _ingestion_payload(record, queued=False, processing_mode="synchronous_direct")
 
 
 @app.get("/internal/knowledge/ingestions")

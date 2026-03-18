@@ -8,6 +8,13 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from backend.services.embedding_provider import (
+    DEFAULT_PGVECTOR_TABLE,
+    embedding_model_id,
+    embedding_provider_name,
+    get_embedding_provider,
+)
+
 logger = logging.getLogger(__name__)
 _UNAVAILABLE_MODELS: set[str] = set()
 _QUERY_STOPWORDS = {
@@ -99,6 +106,10 @@ class RagQueryTrace:
     prompt_tokens: int
     completion_tokens: int
     embedding_tokens: int
+    embedding_provider: str | None
+    embedding_model: str | None
+    embedding_dimensions: int | None
+    embedding_request_meta: list[dict[str, Any]]
     model_name: str | None
     answer_length: int
     citation_count: int
@@ -119,10 +130,20 @@ class RagQueryResult:
     trace: RagQueryTrace
 
 
-def _import_langchain() -> tuple[Any, Any]:
-    from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+def _drain_embedding_request_meta(provider: Any) -> list[dict[str, Any]]:
+    try:
+        raw_items = provider.drain_request_log()
+    except Exception:
+        return []
+    if not isinstance(raw_items, list):
+        return []
+    return [item for item in raw_items if isinstance(item, dict)]
 
-    return ChatOpenAI, OpenAIEmbeddings
+
+def _import_langchain() -> Any:
+    from langchain_openai import ChatOpenAI
+
+    return ChatOpenAI
 
 
 def _import_psycopg() -> Any:
@@ -138,12 +159,12 @@ def _vector_literal(values: list[float]) -> str:
 def _split_table_name(raw_value: str, default_schema: str = "supportportal") -> tuple[str, str]:
     value = (raw_value or "").strip()
     if not value:
-        return default_schema, "docagent_chunks"
+        return default_schema, DEFAULT_PGVECTOR_TABLE
     if "." not in value:
         return default_schema, value
     schema, table_name = value.split(".", 1)
     schema = schema.strip() or default_schema
-    table_name = table_name.strip() or "docagent_chunks"
+    table_name = table_name.strip() or DEFAULT_PGVECTOR_TABLE
     return schema, table_name
 
 
@@ -182,7 +203,7 @@ def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
     keyword_candidate_k = max(20, final_top_k * 4)
     fusion_candidate_k = max(30, final_top_k * 5)
     schema = (os.getenv("PGVECTOR_SCHEMA") or "supportportal").strip() or "supportportal"
-    raw_table = (os.getenv("PGVECTOR_TABLE") or "docagent_chunks").strip() or "docagent_chunks"
+    raw_table = (os.getenv("PGVECTOR_TABLE") or DEFAULT_PGVECTOR_TABLE).strip() or DEFAULT_PGVECTOR_TABLE
     table_name = raw_table if "." in raw_table else f"{schema}.{raw_table}"
     return {
         "dsn": dsn,
@@ -193,9 +214,8 @@ def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
         "keyword_candidate_k": keyword_candidate_k,
         "fusion_candidate_k": fusion_candidate_k,
         "chat_model": (os.getenv("OPENAI_CHAT_MODEL") or "gpt-4.1").strip(),
-        "embedding_model": (
-            os.getenv("OPENAI_EMBEDDING_MODEL") or "text-embedding-3-large"
-        ).strip(),
+        "embedding_provider": embedding_provider_name(),
+        "embedding_model": embedding_model_id(),
         "request_timeout_seconds": _safe_float_env("RAG_REQUEST_TIMEOUT_SECONDS", 20.0),
         "max_retries": _safe_int_env("RAG_OPENAI_MAX_RETRIES", 1),
     }
@@ -207,17 +227,11 @@ def _table_identifier(sql: Any, raw_table: str) -> Any:
 
 
 def _retrieve_chunks(message: str, config: dict[str, Any], *, limit: int | None = None) -> list[RetrievedChunk]:
-    _, OpenAIEmbeddings = _import_langchain()
     psycopg = _import_psycopg()
     sql = psycopg.sql
 
-    embeddings = OpenAIEmbeddings(
-        model=config["embedding_model"],
-        api_key=config["api_key"],
-        request_timeout=config["request_timeout_seconds"],
-        max_retries=int(config["max_retries"]),
-    )
-    query_embedding = embeddings.embed_query(message)
+    provider = get_embedding_provider()
+    query_embedding = provider.embed_query(message)
     vector_param = _vector_literal(query_embedding)
 
     query = sql.SQL(
@@ -235,6 +249,7 @@ def _retrieve_chunks(message: str, config: dict[str, Any], *, limit: int | None 
             chunk_strategy,
             1 - (embedding <=> %s::vector) AS similarity
         FROM {}
+        WHERE index_role = 'primary'
         ORDER BY embedding <=> %s::vector
         LIMIT %s
         """
@@ -296,7 +311,8 @@ def _retrieve_fts_chunks(message: str, config: dict[str, Any], *, limit: int | N
                 plainto_tsquery('simple', %s)
             ) AS rank
         FROM {}
-        WHERE to_tsvector(
+        WHERE index_role = 'primary'
+          AND to_tsvector(
                 'simple',
                 coalesce(h1, '')
                 || ' '
@@ -390,10 +406,13 @@ def _retrieve_keyword_chunks(
             chunk_strategy
         FROM {}
         WHERE
+            index_role = 'primary'
+            AND (
             lower(content) LIKE ANY(%s)
             OR lower(coalesce(h1, '')) LIKE ANY(%s)
             OR lower(coalesce(h2, '')) LIKE ANY(%s)
             OR lower(coalesce(h3, '')) LIKE ANY(%s)
+            )
         LIMIT %s
         """
     ).format(_table_identifier(sql, config["table"]))
@@ -669,7 +688,7 @@ def _invoke_llm_payload(
     config: dict[str, Any],
     strict_retry: bool = False,
 ) -> dict[str, Any] | None:
-    ChatOpenAI, _ = _import_langchain()
+    ChatOpenAI = _import_langchain()
     context_block = _format_context(chunks)
     prompt = _build_answer_prompt(message, context_block)
     if strict_retry:
@@ -716,7 +735,7 @@ def _invoke_llm_payload_with_trace(
     config: dict[str, Any],
     strict_retry: bool = False,
 ) -> tuple[dict[str, Any] | None, int, int, str | None]:
-    ChatOpenAI, _ = _import_langchain()
+    ChatOpenAI = _import_langchain()
     context_block = _format_context(chunks)
     prompt = _build_answer_prompt(message, context_block)
     if strict_retry:
@@ -812,7 +831,10 @@ def _estimate_embedding_tokens(message: str) -> int:
     raw = str(message or "")
     if not raw.strip():
         return 0
-    return max(1, len(raw.split()), (len(raw) + 3) // 4)
+    try:
+        return max(0, int(get_embedding_provider().count_tokens(raw)))
+    except Exception:
+        return max(1, len(raw.split()), (len(raw) + 3) // 4)
 
 
 def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | None:
@@ -820,9 +842,12 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
     if not config["dsn"] or not config["api_key"]:
         return None
 
+    provider = get_embedding_provider()
     vector_chunks: list[RetrievedChunk] = []
     keyword_chunks: list[RetrievedChunk] = []
     chunks: list[RetrievedChunk] = []
+    embedding_request_meta: list[dict[str, Any]] = []
+    embedding_dimensions = getattr(provider, "vector_dim", None)
     query_type = _infer_query_type(message)
     total_started_at = time.perf_counter()
     vector_latency_ms = 0.0
@@ -842,6 +867,8 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
         vector_latency_ms = round((time.perf_counter() - vector_started_at) * 1000, 2)
     except Exception as exc:
         logger.warning("RAG retrieval failed: %s", exc)
+    finally:
+        embedding_request_meta.extend(_drain_embedding_request_meta(provider))
 
     try:
         bm25_started_at = time.perf_counter()
@@ -927,6 +954,10 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
                 prompt_tokens=0,
                 completion_tokens=0,
                 embedding_tokens=_estimate_embedding_tokens(message),
+                embedding_provider=config["embedding_provider"],
+                embedding_model=config["embedding_model"],
+                embedding_dimensions=embedding_dimensions,
+                embedding_request_meta=list(embedding_request_meta),
                 model_name=None,
                 answer_length=0,
                 citation_count=0,
@@ -980,6 +1011,10 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             embedding_tokens=_estimate_embedding_tokens(message),
+            embedding_provider=config["embedding_provider"],
+            embedding_model=config["embedding_model"],
+            embedding_dimensions=embedding_dimensions,
+            embedding_request_meta=list(embedding_request_meta),
             model_name=model_name,
             answer_length=len(answer.answer.strip()) if answer.answer else 0,
             citation_count=len(cited_chunk_ids),

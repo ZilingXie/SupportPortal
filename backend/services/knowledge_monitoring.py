@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from backend.services.embedding_provider import DEFAULT_PGVECTOR_TABLE, embedding_model_id
+
 _KNOWLEDGE_EVENT_STATUS = {
     "knowledge_ingestion_queued": "queued",
     "knowledge_ingestion_processing": "processing",
@@ -130,6 +132,13 @@ def build_knowledge_metrics_payload(
     avg_chunk_characters: Any = 0.0,
     distinct_docs_with_chunks: Any = 0,
     latest_completed_at: Any = None,
+    source_documents_total: Any = 0,
+    source_documents_pending: Any = 0,
+    source_documents_claimed: Any = 0,
+    source_documents_failed: Any = 0,
+    source_documents_by_system: dict[str, Any] | None = None,
+    sync_runs_last_24h: Any = 0,
+    sync_runs_failed_last_24h: Any = 0,
 ) -> dict[str, Any]:
     documents_total_value = _to_int(documents_total)
     chunks_total_value = _to_int(chunks_total)
@@ -145,6 +154,8 @@ def build_knowledge_metrics_payload(
 
     queued_value = _to_int(queued)
     processing_value = _to_int(processing)
+    pending_sources = _to_int(source_documents_pending)
+    claimed_sources = _to_int(source_documents_claimed)
 
     return {
         "documents_total": documents_total_value,
@@ -169,9 +180,23 @@ def build_knowledge_metrics_payload(
         "avg_chunks_per_document": avg_chunks_per_document,
         "avg_chunk_characters": round(avg_chunk_chars, 2),
         "latest_completed_at": latest_completed.isoformat() if latest_completed is not None else None,
-        "embedding_model": _clean_text(embedding_model) or "text-embedding-3-large",
-        "vector_table": _clean_text(vector_table) or "docagent_chunks",
+        "embedding_model": _clean_text(embedding_model) or embedding_model_id(),
+        "vector_table": _clean_text(vector_table) or DEFAULT_PGVECTOR_TABLE,
         "knowledge_storage": _clean_text(storage_mode) or "disabled",
+        "source_documents_total": _to_int(source_documents_total),
+        "source_documents_by_status": {
+            "pending": pending_sources,
+            "claimed": claimed_sources,
+            "failed": _to_int(source_documents_failed),
+        },
+        "source_backlog_count": pending_sources + claimed_sources,
+        "source_documents_by_system": {
+            str(key): _to_int(value)
+            for key, value in (source_documents_by_system or {}).items()
+            if _clean_text(key)
+        },
+        "sync_runs_last_24h": _to_int(sync_runs_last_24h),
+        "sync_runs_failed_last_24h": _to_int(sync_runs_failed_last_24h),
     }
 
 

@@ -3,14 +3,30 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_API_BASE_URL = "https://support.stellarix.space"
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from backend.services.agora_doc_sync import SyncConfig, run_sync
+
+load_dotenv(dotenv_path=REPO_ROOT / ".env", override=False)
+os.environ.setdefault("EMBEDDING_PROVIDER", "siliconflow_qwen3")
+os.environ.setdefault("EMBEDDING_MODEL_ID", "Qwen/Qwen3-Embedding-8B")
+os.environ.setdefault("EMBEDDING_BATCH_SIZE", "16")
+os.environ.setdefault("PRIMARY_CHUNK_STRATEGY", "markdown_header_v1")
+os.environ.setdefault("SHADOW_CHUNK_STRATEGY", "semantic_qwen3_v1")
+os.environ.setdefault("SHADOW_CHUNK_ENABLED", "true")
+os.environ.setdefault("PGVECTOR_TABLE", "docagent_chunks_qwen3_1024")
+os.environ.setdefault("PGVECTOR_DIM", "1024")
+os.environ.setdefault("SILICONFLOW_EMBEDDING_DIMENSIONS", "1024")
+os.environ.setdefault("LOCAL_KNOWLEDGE_ROOT", str(REPO_ROOT / "local_knowledge"))
 
 
 def _positive_int(value: str) -> int:
@@ -27,19 +43,28 @@ def _positive_float(value: str) -> float:
     return parsed
 
 
+def _normalized_api_base_url(value: str | None) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if "://" not in raw:
+        return f"https://{raw}"
+    return raw.rstrip("/")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Fetch Agora official Markdown docs into official_doc and upload them to SupportPortal.",
+        description="Fetch Agora official Markdown docs into local_knowledge and ingest them into SupportPortal.",
     )
     parser.add_argument(
         "--output",
-        default=str(REPO_ROOT / "official_doc"),
+        default=str(REPO_ROOT / "local_knowledge" / "official" / "raw"),
         help="Directory to rebuild with downloaded Markdown files.",
     )
     parser.add_argument(
         "--api-base-url",
-        required=True,
-        help="Base URL for the SupportPortal API, for example http://localhost:8080.",
+        default=DEFAULT_API_BASE_URL,
+        help="RAG API base URL used for official document uploads.",
     )
     parser.add_argument(
         "--download-workers",
@@ -77,7 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     config = SyncConfig(
-        api_base_url=args.api_base_url,
+        api_base_url=_normalized_api_base_url(args.api_base_url),
         output_dir=Path(args.output).expanduser().resolve(),
         download_workers=args.download_workers,
         upload_workers=args.upload_workers,
@@ -87,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     print(f"Rebuilding output directory: {config.output_dir}")
-    print(f"Uploading through API base URL: {config.api_base_url}")
+    print(f"Ingestion mode: API upload via {config.api_base_url}")
 
     exit_code, report, report_path = run_sync(config)
     discovery = report.get("discovery", {})
