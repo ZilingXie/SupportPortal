@@ -41,6 +41,8 @@ class BenchmarkCase:
     question: str
     query_type: str
     source_type: str
+    product: str | None
+    language: str | None
     expected_document_ids: list[str]
     expected_heading_paths: list[str]
     answer_key_points: list[str]
@@ -131,6 +133,8 @@ def _parse_benchmark_case(payload: dict[str, Any], *, line_number: int) -> Bench
     question = _clean_text(payload.get("question"))
     query_type = _clean_text(payload.get("query_type"))
     source_type = _clean_text(payload.get("source_type"))
+    product = _clean_text(payload.get("product"))
+    language = _clean_text(payload.get("language"))
     expected_document_ids = _normalize_string_list(payload.get("expected_document_ids"))
     expected_heading_paths = [_normalize_heading_path(item) for item in _normalize_string_list(payload.get("expected_heading_paths"))]
     answer_key_points = _normalize_string_list(payload.get("answer_key_points"))
@@ -154,6 +158,8 @@ def _parse_benchmark_case(payload: dict[str, Any], *, line_number: int) -> Bench
         question=question,
         query_type=query_type,
         source_type=source_type,
+        product=product,
+        language=language,
         expected_document_ids=expected_document_ids,
         expected_heading_paths=[item for item in expected_heading_paths if item],
         answer_key_points=answer_key_points,
@@ -232,6 +238,12 @@ def build_live_review_sample(run: dict[str, Any]) -> dict[str, Any] | None:
             "generation_mode": generation_mode,
             "confidence_score": confidence_score,
             "citation_count": citation_count,
+            "citation_coverage_ratio": _safe_float(run.get("citation_coverage_ratio")),
+            "selected_doc_count": run.get("selected_doc_count"),
+            "top1_similarity_score": _safe_float(run.get("top1_similarity_score")),
+            "avg_selected_similarity_score": _safe_float(run.get("avg_selected_similarity_score")),
+            "structured_retry_used": bool(run.get("structured_retry_used")),
+            "extractive_fallback_used": bool(run.get("extractive_fallback_used")),
             "needs_human": bool(run.get("needs_human")),
             "error_flag": bool(run.get("error_flag")),
         },
@@ -280,14 +292,21 @@ def build_benchmark_review_sample(
         "citation_ok": None,
         "note": None,
         "sample_payload": {
+            "experiment_id": _clean_text(result_row.get("experiment_id")),
             "query_type": _clean_text(result_row.get("query_type")),
             "source_type": _clean_text(result_row.get("source_type")),
+            "product": _clean_text(result_row.get("product")),
+            "language": _clean_text(result_row.get("language")),
             "chunk_strategy": _clean_text(result_row.get("chunk_strategy")),
             "retrieval_strategy": _clean_text(result_row.get("retrieval_strategy")),
             "failure_type": _clean_text(result_row.get("failure_type")),
+            "root_cause_label": _clean_text(result_row.get("root_cause_label")),
             "question": _clean_text(result_row.get("question")),
             "answer_preview": _clean_text(result_row.get("answer_preview")),
+            "expected_document_ids": _normalize_string_list(result_row.get("expected_document_ids")),
+            "expected_heading_paths": _normalize_string_list(result_row.get("expected_heading_paths")),
             "judge_disagreement_flag": bool(result_row.get("judge_disagreement_flag")),
+            "trace_payload": result_row.get("trace_payload") if isinstance(result_row.get("trace_payload"), dict) else {},
             "scores": {
                 field_name: _safe_float(result_row.get(field_name))
                 for field_name in CORE_QUALITY_FIELDS
