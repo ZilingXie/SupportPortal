@@ -27,11 +27,15 @@ class _FakeProvider:
 
 
 class EmbeddingProviderConfigTests(unittest.TestCase):
-    def test_embedding_defaults_to_siliconflow_qwen3(self) -> None:
+    def test_embedding_defaults_to_siliconflow_bge_large(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(embedding_provider_name(), "siliconflow_qwen3")
-            self.assertEqual(embedding_model_id(), "Qwen/Qwen3-Embedding-8B")
+            self.assertEqual(embedding_provider_name(), "siliconflow")
+            self.assertEqual(embedding_model_id(), "BAAI/bge-large-en-v1.5")
             self.assertEqual(siliconflow_embedding_dimensions(), 1024)
+
+    def test_embedding_provider_normalizes_legacy_siliconflow_qwen3_alias(self) -> None:
+        with patch.dict(os.environ, {"EMBEDDING_PROVIDER": "siliconflow_qwen3"}, clear=True):
+            self.assertEqual(embedding_provider_name(), "siliconflow")
 
     def test_require_configured_vector_dim_needs_env(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
@@ -49,14 +53,14 @@ class EmbeddingProviderConfigTests(unittest.TestCase):
         fake_auto_config = types.SimpleNamespace(from_pretrained=lambda *args, **kwargs: fake_config)
         fake_transformers = types.SimpleNamespace(AutoConfig=fake_auto_config)
         with patch.dict(sys.modules, {"transformers": fake_transformers}):
-            self.assertEqual(_model_dim_from_config("Qwen/Qwen3-Embedding-8B"), 1024)
+            self.assertEqual(_model_dim_from_config("BAAI/bge-large-en-v1.5"), 1024)
 
     def test_validate_embedding_provider_dim_uses_configured_dimensions_for_siliconflow(self) -> None:
         with patch.dict(
             os.environ,
             {
                 "EMBEDDING_PROVIDER": "siliconflow_qwen3",
-                "EMBEDDING_MODEL_ID": "Qwen/Qwen3-Embedding-8B",
+                "EMBEDDING_MODEL_ID": "BAAI/bge-large-en-v1.5",
                 "PGVECTOR_DIM": "1024",
                 "SILICONFLOW_EMBEDDING_DIMENSIONS": "1024",
             },
@@ -113,7 +117,7 @@ class EmbeddingProviderConfigTests(unittest.TestCase):
             payload, headers = _siliconflow_request_json(
                 url="https://api.siliconflow.cn/v1/embeddings",
                 api_key="secret",
-                payload={"model": "Qwen/Qwen3-Embedding-8B", "input": ["hello"]},
+                payload={"model": "BAAI/bge-large-en-v1.5", "input": ["hello"]},
                 timeout_seconds=10.0,
             )
         self.assertEqual(payload["usage"]["prompt_tokens"], 12)

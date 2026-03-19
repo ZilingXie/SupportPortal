@@ -95,8 +95,8 @@ In most cases, this type of delay is caused by startup latency within the Cloud 
 
 class KnowledgeIngestionParsingTests(unittest.TestCase):
     class _FakeProvider:
-        provider_name = "siliconflow_qwen3"
-        model_id = "Qwen/Qwen3-Embedding-8B"
+        provider_name = "siliconflow"
+        model_id = "BAAI/bge-large-en-v1.5"
         vector_dim = 1024
 
         def embed_documents(self, texts: list[str]) -> list[list[float]]:
