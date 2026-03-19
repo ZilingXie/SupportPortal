@@ -98,7 +98,7 @@ export_env_value() {
 }
 
 prepare_compose_env() {
-  local ticket_db_dsn pgvector_dsn ticket_schema pgvector_schema pgvector_table
+  local ticket_db_dsn pgvector_dsn ticket_schema pgvector_schema pgvector_table pgvector_dim
   ticket_db_dsn="$(resolve_env_value TICKET_DB_DSN)"
   pgvector_dsn="$(resolve_env_value PGVECTOR_DSN)"
 
@@ -120,6 +120,7 @@ prepare_compose_env() {
   ticket_schema="$(resolve_env_value TICKET_DB_SCHEMA)"
   pgvector_schema="$(resolve_env_value PGVECTOR_SCHEMA)"
   pgvector_table="$(resolve_env_value PGVECTOR_TABLE)"
+  pgvector_dim="$(resolve_env_value PGVECTOR_DIM)"
 
   if [[ -z "${ticket_schema}" ]]; then
     export_env_value TICKET_DB_SCHEMA "supportportal"
@@ -132,9 +133,22 @@ prepare_compose_env() {
   fi
 
   if [[ -z "${pgvector_table}" ]]; then
-    export_env_value PGVECTOR_TABLE "docagent_chunks"
-    log "PGVECTOR_TABLE is missing in ${ENV_FILE}; defaulting to docagent_chunks."
+    export_env_value PGVECTOR_TABLE "docagent_chunks_qwen3_1024"
+    pgvector_table="docagent_chunks_qwen3_1024"
+    log "PGVECTOR_TABLE is missing in ${ENV_FILE}; defaulting to docagent_chunks_qwen3_1024."
   fi
+
+  if [[ -z "${pgvector_dim}" ]]; then
+    export_env_value PGVECTOR_DIM "1024"
+    pgvector_dim="1024"
+    log "PGVECTOR_DIM is missing in ${ENV_FILE}; defaulting to 1024."
+  fi
+
+  if [[ "${pgvector_table}" == "docagent" || "${pgvector_table}" == "docagent_chunks" ]]; then
+    log "PGVECTOR_TABLE=${pgvector_table} looks like a legacy table name. Current default is docagent_chunks_qwen3_1024."
+  fi
+
+  log "Effective vector config: schema=${pgvector_schema:-supportportal} table=${pgvector_table} dim=${pgvector_dim}"
 }
 
 parse_args() {
