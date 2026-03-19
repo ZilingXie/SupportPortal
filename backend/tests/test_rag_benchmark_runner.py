@@ -193,6 +193,19 @@ class RagBenchmarkRunnerTests(unittest.TestCase):
         self.assertEqual(first_row["failure_type"], "grounded_answer")
         self.assertEqual(len(first_row["judge_votes"]), 3)
         self.assertTrue(any("error" in vote for vote in first_row["judge_votes"]))
+        self.assertEqual(first_row["expected_document_ids"], ["official-doc-1"])
+        self.assertEqual(first_row["expected_heading_paths"], ["Setup"])
+        self.assertEqual(first_row["selected_doc_count"], 1)
+        self.assertEqual(first_row["top1_similarity_score"], 0.93)
+        self.assertEqual(first_row["avg_selected_similarity_score"], 0.93)
+        self.assertIsInstance(first_row["trace_payload"], dict)
+        self.assertEqual(first_row["trace_payload"]["question"], "How do I use it?")
+        self.assertEqual(first_row["trace_payload"]["answer_text"], "Use the official setup guide.")
+        self.assertEqual(first_row["trace_payload"]["citation_count"], 1)
+        self.assertEqual(first_row["trace_payload"]["selected_contexts"][0]["chunk_id"], "chunk-1")
+        self.assertEqual(first_row["trace_payload"]["expected_document_ids"], ["official-doc-1"])
+        self.assertEqual(first_row["trace_payload"]["missed_expected_docs"], [])
+        self.assertIsNotNone(first_row["avg_cost_per_query"])
 
 
 if __name__ == "__main__":

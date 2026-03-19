@@ -57,7 +57,7 @@ podman-compose -f deployment/docker-compose.single-host.yml down
 
 ## 更新代码后如何生效
 
-1. 修改了 `backend/`、`client_ui/`、`engineer_ui/`、`dashboard/`：
+1. 修改了 `backend/`、`ui/client-ui/`、`ui/engineer-ui/`、`ui/dashboard-ui/`：
 
 ```bash
 podman-compose -f deployment/docker-compose.single-host.yml build api
@@ -108,9 +108,10 @@ EC2 上继续使用 Docker（不是 Podman）。
 
 ```text
 backend/       # FastAPI backend + worker + ws gateway
-client_ui/     # 客户端 UI
-engineer_ui/   # 工程师端 UI
-dashboard/     # 管理端 UI
+ui/
+  client-ui/   # 客户端 UI（含 next-prototype/ 历史原型）
+  engineer-ui/ # 工程师端 UI
+  dashboard-ui/# 管理端 UI
 deployment/    # compose 与 nginx 配置
 docs/          # 文档
 ```

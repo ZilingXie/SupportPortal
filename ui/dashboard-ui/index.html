@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RAG Tuning Workbench</title>
+    <link rel="stylesheet" href="./styles.css?v=20260319-rag-workbench-1" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div class="topbar-copy">
+          <p class="eyebrow">SupportPortal</p>
+          <h1>RAG Tuning Workbench</h1>
+          <p id="dashboard-status" class="status-line">Loading RAG workbench...</p>
+        </div>
+        <div class="topbar-actions">
+          <div class="status-stack">
+            <span id="active-scope-label">Scope: all data</span>
+            <span id="last-refreshed-label">Last refreshed: -</span>
+          </div>
+          <button id="refresh-button" class="primary-button" type="button">Refresh</button>
+        </div>
+      </header>
+
+      <nav class="dashboard-tabs" aria-label="RAG workbench pages">
+        <button type="button" class="dashboard-tab active" data-dashboard-tab="experiments">Experiments</button>
+        <button type="button" class="dashboard-tab" data-dashboard-tab="diagnosis">Diagnosis</button>
+        <button type="button" class="dashboard-tab" data-dashboard-tab="knowledge-supply">Knowledge Supply</button>
+        <button type="button" class="dashboard-tab" data-dashboard-tab="production-signals">Production Signals</button>
+        <button type="button" class="dashboard-tab" data-dashboard-tab="review">Review Queue</button>
+      </nav>
+
+      <section class="filter-panel">
+        <div class="filter-panel-copy">
+          <h2>Global Scope</h2>
+          <p>Keep these filters stable while you compare experiments, inspect traces, and review risky samples.</p>
+        </div>
+        <div class="filter-grid">
+          <label class="filter-field">
+            <span>Range</span>
+            <select id="rag-range-filter">
+              <option value="7d">Last 7 days</option>
+              <option value="30d">Last 30 days</option>
+            </select>
+          </label>
+          <label class="filter-field">
+            <span>Source Type</span>
+            <select id="rag-source-filter">
+              <option value="all">All</option>
+              <option value="official_markdown_upload">Official Markdown Upload</option>
+              <option value="technical_article_api">Technical Article API</option>
+            </select>
+          </label>
+          <label class="filter-field">
+            <span>Query Type</span>
+            <select id="rag-query-type-filter">
+              <option value="all">All</option>
+              <option value="faq">FAQ</option>
+              <option value="troubleshooting">Troubleshooting</option>
+              <option value="configuration">Configuration</option>
+              <option value="error_code">Error Code</option>
+              <option value="pricing_or_policy">Pricing or Policy</option>
+              <option value="small_talk">Small Talk</option>
+              <option value="unclear_query">Unclear Query</option>
+            </select>
+          </label>
+          <label class="filter-field">
+            <span>Retrieval Strategy</span>
+            <select id="rag-retrieval-filter">
+              <option value="all">All</option>
+              <option value="vector_only">Vector Only</option>
+              <option value="bm25_only">BM25 Only</option>
+              <option value="hybrid_rrf">Hybrid RRF</option>
+              <option value="hybrid_rrf_rerank">Hybrid RRF Rerank</option>
+              <option value="hybrid_rrf_rerank_rewrite">Hybrid RRF Rerank Rewrite</option>
+            </select>
+          </label>
+          <label class="filter-field">
+            <span>Chunk Strategy</span>
+            <select id="rag-chunk-filter">
+              <option value="all">All</option>
+              <option value="markdown_header_v1">Markdown Header v1</option>
+              <option value="semantic_qwen3_v1">Semantic Qwen3 v1</option>
+              <option value="token_300_overlap_80">Token 300 Overlap 80</option>
+              <option value="token_500_overlap_100">Token 500 Overlap 100</option>
+              <option value="token_800_overlap_120">Token 800 Overlap 120</option>
+            </select>
+          </label>
+          <label class="filter-field">
+            <span>Product</span>
+            <input id="rag-product-filter" type="text" placeholder="all" />
+          </label>
+          <label class="filter-field">
+            <span>Language</span>
+            <input id="rag-language-filter" type="text" placeholder="all" />
+          </label>
+          <label class="filter-field">
+            <span>Experiment Id</span>
+            <input id="rag-experiment-filter" type="text" placeholder="all" />
+          </label>
+        </div>
+      </section>
+
+      <section class="dashboard-panel active" data-dashboard-panel="experiments">
+        <div id="rag-experiments-page" class="page-shell"></div>
+      </section>
+
+      <section class="dashboard-panel" data-dashboard-panel="diagnosis">
+        <div id="rag-diagnosis-page" class="page-shell"></div>
+      </section>
+
+      <section class="dashboard-panel" data-dashboard-panel="knowledge-supply">
+        <div id="rag-knowledge-supply-page" class="page-shell"></div>
+      </section>
+
+      <section class="dashboard-panel" data-dashboard-panel="production-signals">
+        <div id="rag-production-signals-page" class="page-shell"></div>
+      </section>
+
+      <section class="dashboard-panel" data-dashboard-panel="review">
+        <div id="rag-review-page" class="page-shell"></div>
+      </section>
+    </main>
+
+    <aside id="report-drawer" class="report-drawer" hidden>
+      <div class="report-drawer-backdrop" data-close-report></div>
+      <div class="report-drawer-card">
+        <div class="report-drawer-header">
+          <div>
+            <p class="eyebrow">Ingestion Report</p>
+            <h2 id="report-drawer-title">Report</h2>
+          </div>
+          <button type="button" class="ghost-button" data-close-report>Close</button>
+        </div>
+        <div id="report-drawer-body" class="report-drawer-body"></div>
+      </div>
+    </aside>
+
+    <script src="./app.js?v=20260319-rag-workbench-1"></script>
+  </body>
+</html>

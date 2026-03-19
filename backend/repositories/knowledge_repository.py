@@ -54,6 +54,17 @@ _VALID_DASHBOARD_PAGES = {
     "performance-cost",
     "failures",
     "experiments",
+    "diagnosis",
+    "knowledge-supply",
+    "production-signals",
+    "review",
+}
+_WORKBENCH_DASHBOARD_PAGES = {
+    "experiments",
+    "diagnosis",
+    "knowledge-supply",
+    "production-signals",
+    "review",
 }
 _VALID_DASHBOARD_RANGES = {"7d": 7, "30d": 30}
 _CHUNK_STRATEGIES = {
@@ -148,9 +159,88 @@ def _coalesce_metric(value: Any) -> Any:
     return value
 
 
+def _heading_path(*parts: Any) -> str | None:
+    normalized = [_clean_text(part) for part in parts]
+    values = [item for item in normalized if item]
+    if not values:
+        return None
+    return " > ".join(values)
+
+
+def _json_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _json_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _experiment_quality_score(row: dict[str, Any]) -> float:
+    return round(
+        (_safe_float(row.get("faithfulness_score_avg")) * 0.4)
+        + (_safe_float(row.get("groundedness_score_avg")) * 0.25)
+        + (_safe_float(row.get("citation_correctness_score_avg")) * 0.2)
+        + (_safe_float(row.get("hit_at_5")) * 0.15),
+        6,
+    )
+
+
+def _case_quality_score(row: dict[str, Any] | None) -> float:
+    payload = row if isinstance(row, dict) else {}
+    return round(
+        (_safe_float(payload.get("faithfulness_score")) * 0.4)
+        + (_safe_float(payload.get("groundedness_score")) * 0.25)
+        + (_safe_float(payload.get("citation_correctness_score")) * 0.2)
+        + (_safe_float(payload.get("hit_at_5")) * 0.15),
+        6,
+    )
+
+
+def _round_delta(candidate: Any, baseline: Any) -> float | None:
+    if candidate is None or baseline is None:
+        return None
+    return round(_safe_float(candidate) - _safe_float(baseline), 4)
+
+
+def _benchmark_root_causes(row: dict[str, Any]) -> list[str]:
+    labels: list[str] = []
+    root_cause = _clean_text(row.get("root_cause_label"))
+    if root_cause:
+        labels.append(root_cause)
+    if _safe_float(row.get("hit_at_5")) == 0.0 and "retrieval_miss" not in labels:
+        labels.append("retrieval_miss")
+    if bool(row.get("hallucination_flag")) and "generation_hallucination" not in labels:
+        labels.append("generation_hallucination")
+    if (_safe_float(row.get("citation_correctness_score")) or 1.0) < 0.70 and "citation_issue" not in labels:
+        labels.append("citation_issue")
+    if (_safe_float(row.get("response_completeness_score")) or 1.0) < 0.70 and "weak_context_selection" not in labels:
+        labels.append("weak_context_selection")
+    if bool(row.get("needs_human")) and "unnecessary_handoff" not in labels:
+        labels.append("unnecessary_handoff")
+    return labels or ["grounded_answer"]
+
+
+def _live_root_causes(row: dict[str, Any]) -> list[str]:
+    labels: list[str] = []
+    if bool(row.get("error_flag")) or int(row.get("selected_doc_count") or 0) <= 0:
+        labels.append("retrieval_miss")
+    top1_similarity = row.get("top1_similarity_score")
+    if top1_similarity is not None and _safe_float(top1_similarity) < 0.5:
+        labels.append("bad_chunking")
+    if bool(row.get("extractive_fallback_used")):
+        labels.append("weak_context_selection")
+    if int(row.get("citation_count") or 0) == 0 or (_safe_float(row.get("citation_coverage_ratio")) or 1.0) < 0.5:
+        labels.append("citation_issue")
+    if bool(row.get("needs_human")) and (_safe_float(row.get("confidence_score")) or 0.0) >= 0.7:
+        labels.append("unnecessary_handoff")
+    if row.get("generation_mode") == "extractive_fallback":
+        labels.append("weak_context_selection")
+    return labels or ["needs_review"]
+
+
 def _normalize_dashboard_page(page: Any) -> str:
-    normalized = str(page or "overview").strip().lower()
-    return normalized if normalized in _VALID_DASHBOARD_PAGES else "overview"
+    normalized = str(page or "experiments").strip().lower()
+    return normalized if normalized in _VALID_DASHBOARD_PAGES else "experiments"
 
 
 def _normalize_dashboard_range(value: Any) -> tuple[str, int]:
@@ -1568,8 +1658,15 @@ class PostgresKnowledgeRepository:
                             test_case_id TEXT,
                             query_type TEXT,
                             source_type TEXT,
+                            product TEXT,
+                            language TEXT,
                             chunk_strategy TEXT,
                             retrieval_strategy TEXT,
+                            question TEXT,
+                            answer_preview TEXT,
+                            expected_document_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            expected_heading_paths JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            trace_payload JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                             hit_at_1 DOUBLE PRECISION,
                             hit_at_3 DOUBLE PRECISION,
                             hit_at_5 DOUBLE PRECISION,
@@ -1585,6 +1682,14 @@ class PostgresKnowledgeRepository:
                             hallucination_flag BOOLEAN,
                             needs_human BOOLEAN,
                             failure_type TEXT,
+                            root_cause_label TEXT,
+                            retrieval_latency_ms DOUBLE PRECISION,
+                            generation_latency_ms DOUBLE PRECISION,
+                            total_latency_ms DOUBLE PRECISION,
+                            selected_doc_count INTEGER,
+                            top1_similarity_score DOUBLE PRECISION,
+                            avg_selected_similarity_score DOUBLE PRECISION,
+                            avg_cost_per_query DOUBLE PRECISION,
                             judge_votes JSONB NOT NULL DEFAULT '[]'::jsonb,
                             judge_disagreement_flag BOOLEAN NOT NULL DEFAULT FALSE
                         )
@@ -1647,8 +1752,23 @@ class PostgresKnowledgeRepository:
                 for statement in eval_run_alters:
                     cur.execute(sql.SQL(statement).format(self._table("support_rag_eval_runs")))
                 eval_result_alters = [
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS product TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS language TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS question TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS answer_preview TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS expected_document_ids JSONB NOT NULL DEFAULT '[]'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS expected_heading_paths JSONB NOT NULL DEFAULT '[]'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS trace_payload JSONB NOT NULL DEFAULT '{{}}'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS judge_votes JSONB NOT NULL DEFAULT '[]'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS judge_disagreement_flag BOOLEAN NOT NULL DEFAULT FALSE",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS root_cause_label TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS retrieval_latency_ms DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS generation_latency_ms DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS total_latency_ms DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS selected_doc_count INTEGER",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS top1_similarity_score DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS avg_selected_similarity_score DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS avg_cost_per_query DOUBLE PRECISION",
                 ]
                 for statement in eval_result_alters:
                     cur.execute(sql.SQL(statement).format(self._table("support_rag_eval_results")))
@@ -3991,8 +4111,15 @@ class PostgresKnowledgeRepository:
             "test_case_id",
             "query_type",
             "source_type",
+            "product",
+            "language",
             "chunk_strategy",
             "retrieval_strategy",
+            "question",
+            "answer_preview",
+            "expected_document_ids",
+            "expected_heading_paths",
+            "trace_payload",
             "hit_at_1",
             "hit_at_3",
             "hit_at_5",
@@ -4008,6 +4135,14 @@ class PostgresKnowledgeRepository:
             "hallucination_flag",
             "needs_human",
             "failure_type",
+            "root_cause_label",
+            "retrieval_latency_ms",
+            "generation_latency_ms",
+            "total_latency_ms",
+            "selected_doc_count",
+            "top1_similarity_score",
+            "avg_selected_similarity_score",
+            "avg_cost_per_query",
             "judge_votes",
             "judge_disagreement_flag",
         ]
@@ -4017,8 +4152,15 @@ class PostgresKnowledgeRepository:
                 _clean_text(row.get("test_case_id")),
                 _clean_text(row.get("query_type")),
                 _clean_text(row.get("source_type")),
+                _clean_text(row.get("product")),
+                _clean_text(row.get("language")),
                 _clean_text(row.get("chunk_strategy")),
                 _clean_text(row.get("retrieval_strategy")),
+                _clean_text(row.get("question")),
+                _clean_text(row.get("answer_preview")),
+                Json(_json_list(row.get("expected_document_ids"))),
+                Json(_json_list(row.get("expected_heading_paths"))),
+                Json(_json_dict(row.get("trace_payload"))),
                 _safe_float(row.get("hit_at_1"), 0.0) if row.get("hit_at_1") is not None else None,
                 _safe_float(row.get("hit_at_3"), 0.0) if row.get("hit_at_3") is not None else None,
                 _safe_float(row.get("hit_at_5"), 0.0) if row.get("hit_at_5") is not None else None,
@@ -4034,6 +4176,16 @@ class PostgresKnowledgeRepository:
                 row.get("hallucination_flag") if isinstance(row.get("hallucination_flag"), bool) else None,
                 row.get("needs_human") if isinstance(row.get("needs_human"), bool) else None,
                 _clean_text(row.get("failure_type")),
+                _clean_text(row.get("root_cause_label")),
+                _safe_float(row.get("retrieval_latency_ms"), 0.0) if row.get("retrieval_latency_ms") is not None else None,
+                _safe_float(row.get("generation_latency_ms"), 0.0) if row.get("generation_latency_ms") is not None else None,
+                _safe_float(row.get("total_latency_ms"), 0.0) if row.get("total_latency_ms") is not None else None,
+                _safe_positive_int(row.get("selected_doc_count"), 0) if row.get("selected_doc_count") is not None else None,
+                _safe_float(row.get("top1_similarity_score"), 0.0) if row.get("top1_similarity_score") is not None else None,
+                _safe_float(row.get("avg_selected_similarity_score"), 0.0)
+                if row.get("avg_selected_similarity_score") is not None
+                else None,
+                _safe_float(row.get("avg_cost_per_query"), 0.0) if row.get("avg_cost_per_query") is not None else None,
                 Json(row.get("judge_votes") or []),
                 bool(row.get("judge_disagreement_flag")),
             )
@@ -4056,14 +4208,17 @@ class PostgresKnowledgeRepository:
                         sql.SQL(
                             """
                             INSERT INTO {} ({columns})
-                            VALUES (
-                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s
-                            )
+                            VALUES ({placeholders})
                             """
                         ).format(
                             self._table("support_rag_eval_results"),
                             columns=sql.SQL(", ").join(sql.Identifier(column) for column in columns),
+                            placeholders=sql.SQL(", ").join(
+                                sql.SQL("%s::jsonb")
+                                if column in {"expected_document_ids", "expected_heading_paths", "trace_payload", "judge_votes"}
+                                else sql.SQL("%s")
+                                for column in columns
+                            ),
                         ),
                         payload,
                     )
@@ -4278,6 +4433,12 @@ class PostgresKnowledgeRepository:
             "chunk_strategy": _clean_text(raw.get("chunk_strategy")) or "all",
             "index_role": _clean_text(raw.get("index_role")) or "primary",
             "experiment_id": _clean_text(raw.get("experiment_id")) or "all",
+            "sample_id": _clean_text(raw.get("sample_id")),
+            "request_id": _clean_text(raw.get("request_id")),
+            "eval_run_id": _clean_text(raw.get("eval_run_id")),
+            "test_case_id": _clean_text(raw.get("test_case_id")),
+            "baseline_experiment_id": _clean_text(raw.get("baseline_experiment_id")),
+            "candidate_experiment_id": _clean_text(raw.get("candidate_experiment_id")),
             "limit": _safe_positive_int(raw.get("limit"), 20),
             "cursor": _clean_text(raw.get("cursor")),
         }
@@ -4321,6 +4482,8 @@ class PostgresKnowledgeRepository:
             {
                 "query_type": "r.query_type",
                 "source_type": "r.source_type",
+                "product": "r.product",
+                "language": "r.language",
                 "retrieval_strategy": "r.retrieval_strategy",
                 "chunk_strategy": "r.chunk_strategy",
                 "experiment_id": "e.experiment_id",
@@ -4351,6 +4514,8 @@ class PostgresKnowledgeRepository:
             {
                 "query_type": "r.query_type",
                 "source_type": "r.source_type",
+                "product": "r.product",
+                "language": "r.language",
                 "retrieval_strategy": "r.retrieval_strategy",
                 "chunk_strategy": "r.chunk_strategy",
                 "experiment_id": "e.experiment_id",
@@ -4490,6 +4655,24 @@ class PostgresKnowledgeRepository:
             "last_refreshed_at": _utc_now(),
         }
 
+    def _build_workbench_envelope(
+        self,
+        *,
+        layout: str,
+        range_value: str,
+        filters: dict[str, Any],
+        sections: dict[str, Any],
+        has_eval_data: bool,
+    ) -> dict[str, Any]:
+        return {
+            "layout": layout,
+            "range": range_value,
+            "filters": filters,
+            "sections": sections,
+            "has_eval_data": has_eval_data,
+            "last_refreshed_at": _utc_now(),
+        }
+
     def _review_queue_summary(self, days: int) -> tuple[int, int, int]:
         row = self._query_rows(
             sql.SQL(
@@ -4513,6 +4696,8 @@ class PostgresKnowledgeRepository:
                 "query_type": "COALESCE(q.query_type, r.query_type, s.sample_payload ->> 'query_type')",
                 "retrieval_strategy": "COALESCE(q.retrieval_strategy, r.retrieval_strategy, s.sample_payload ->> 'retrieval_strategy')",
                 "source_type": "COALESCE(q.primary_source_type, r.source_type, s.sample_payload ->> 'source_type')",
+                "product": "COALESCE(r.product, s.sample_payload ->> 'product')",
+                "language": "COALESCE(r.language, s.sample_payload ->> 'language')",
                 "chunk_strategy": "COALESCE(q.primary_chunk_strategy, r.chunk_strategy, s.sample_payload ->> 'chunk_strategy')",
             },
         )
@@ -4536,6 +4721,8 @@ class PostgresKnowledgeRepository:
                     COALESCE(q.query_type, r.query_type, s.sample_payload ->> 'query_type') AS query_type,
                     COALESCE(q.retrieval_strategy, r.retrieval_strategy, s.sample_payload ->> 'retrieval_strategy') AS retrieval_strategy,
                     COALESCE(q.primary_source_type, r.source_type, s.sample_payload ->> 'source_type') AS source_type,
+                    COALESCE(r.product, s.sample_payload ->> 'product') AS product,
+                    COALESCE(r.language, s.sample_payload ->> 'language') AS language,
                     COALESCE(q.primary_chunk_strategy, r.chunk_strategy, s.sample_payload ->> 'chunk_strategy') AS chunk_strategy,
                     COALESCE(r.failure_type, s.sample_payload ->> 'failure_type') AS failure_type,
                     r.document_relevance_score,
@@ -4590,20 +4777,22 @@ class PostgresKnowledgeRepository:
                 "query_type": row[13],
                 "retrieval_strategy": row[14],
                 "source_type": row[15],
-                "chunk_strategy": row[16],
-                "failure_type": row[17],
-                "document_relevance_score": _coalesce_metric(row[18]),
-                "faithfulness_score": _coalesce_metric(row[19]),
-                "groundedness_score": _coalesce_metric(row[20]),
-                "response_relevance_score": _coalesce_metric(row[21]),
-                "response_completeness_score": _coalesce_metric(row[22]),
-                "citation_correctness_score": _coalesce_metric(row[23]),
-                "judge_disagreement_flag": bool(row[24]) if row[24] is not None else None,
-                "generation_mode": row[25],
-                "confidence_score": _coalesce_metric(row[26]),
-                "citation_count": int(row[27] or 0) if row[27] is not None else 0,
-                "review_context": row[28] if isinstance(row[28], dict) else {},
-                "updated_at": _to_iso(row[29]),
+                "product": row[16],
+                "language": row[17],
+                "chunk_strategy": row[18],
+                "failure_type": row[19],
+                "document_relevance_score": _coalesce_metric(row[20]),
+                "faithfulness_score": _coalesce_metric(row[21]),
+                "groundedness_score": _coalesce_metric(row[22]),
+                "response_relevance_score": _coalesce_metric(row[23]),
+                "response_completeness_score": _coalesce_metric(row[24]),
+                "citation_correctness_score": _coalesce_metric(row[25]),
+                "judge_disagreement_flag": bool(row[26]) if row[26] is not None else None,
+                "generation_mode": row[27],
+                "confidence_score": _coalesce_metric(row[28]),
+                "citation_count": int(row[29] or 0) if row[29] is not None else 0,
+                "review_context": row[30] if isinstance(row[30], dict) else {},
+                "updated_at": _to_iso(row[31]),
                 "review_action": "Review",
             }
             for row in rows
@@ -6360,6 +6549,1159 @@ class PostgresKnowledgeRepository:
             has_eval_data=has_eval_data,
         )
 
+    def _experiment_rows(self, days: int, filters: dict[str, Any]) -> list[dict[str, Any]]:
+        if not self._has_eval_data(days, filters):
+            return []
+        eval_filter_sql, eval_filter_params = self._build_filter_clause(
+            filters,
+            {
+                "query_type": "r.query_type",
+                "source_type": "r.source_type",
+                "product": "r.product",
+                "language": "r.language",
+                "retrieval_strategy": "r.retrieval_strategy",
+                "chunk_strategy": "r.chunk_strategy",
+                "experiment_id": "e.experiment_id",
+            },
+        )
+        rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    e.eval_run_id,
+                    COALESCE(e.experiment_id, e.eval_run_id) AS experiment_id,
+                    e.benchmark_version,
+                    e.judge_models,
+                    e.strategy_snapshot,
+                    e.started_at,
+                    e.finished_at,
+                    AVG(r.hit_at_1),
+                    AVG(r.hit_at_3),
+                    AVG(r.hit_at_5),
+                    AVG(r.recall_at_5),
+                    AVG(r.mrr),
+                    AVG(r.ndcg_at_5),
+                    AVG(r.document_relevance_score),
+                    AVG(r.faithfulness_score),
+                    AVG(r.groundedness_score),
+                    AVG(r.response_relevance_score),
+                    AVG(r.response_completeness_score),
+                    AVG(r.citation_correctness_score),
+                    AVG(CASE WHEN r.hallucination_flag THEN 1.0 ELSE 0.0 END),
+                    AVG(CASE WHEN r.judge_disagreement_flag THEN 1.0 ELSE 0.0 END),
+                    AVG(r.retrieval_latency_ms),
+                    AVG(r.generation_latency_ms),
+                    AVG(r.total_latency_ms),
+                    percentile_cont(0.95) WITHIN GROUP (ORDER BY r.total_latency_ms),
+                    AVG(r.avg_cost_per_query),
+                    AVG(r.selected_doc_count),
+                    AVG(r.top1_similarity_score),
+                    AVG(r.avg_selected_similarity_score),
+                    MAX(r.chunk_strategy),
+                    MAX(r.retrieval_strategy),
+                    COUNT(*)
+                FROM {} AS r
+                JOIN {} AS e
+                  ON e.eval_run_id = r.eval_run_id
+                WHERE COALESCE(e.finished_at, e.started_at) >= NOW() - (%s * INTERVAL '1 day')
+                {filters}
+                GROUP BY e.eval_run_id, experiment_id, e.benchmark_version, e.judge_models, e.strategy_snapshot, e.started_at, e.finished_at
+                """
+            ).format(
+                self._table("support_rag_eval_results"),
+                self._table("support_rag_eval_runs"),
+                filters=sql.SQL(eval_filter_sql),
+            ),
+            tuple([days, *eval_filter_params]),
+        )
+        experiments: list[dict[str, Any]] = []
+        for row in rows:
+            strategy_snapshot = _json_dict(row[4])
+            retrieval_strategy = _clean_text(row[30]) or _clean_text(strategy_snapshot.get("retrieval_strategy")) or "unknown"
+            experiment = {
+                "eval_run_id": row[0],
+                "experiment_id": row[1],
+                "benchmark_version": row[2],
+                "judge_models": _json_list(row[3]),
+                "chunk_strategy": _clean_text(row[29]),
+                "embedding_model": _clean_text(strategy_snapshot.get("embedding_model")),
+                "retrieval_strategy": retrieval_strategy,
+                "reranker_model": _clean_text(strategy_snapshot.get("reranker_model")),
+                "query_rewrite_enabled": bool(strategy_snapshot.get("query_rewrite_enabled"))
+                or ("rewrite" in retrieval_strategy),
+                "created_at": _to_iso(row[5]) if row[5] is not None else None,
+                "finished_at": _to_iso(row[6]) if row[6] is not None else None,
+                "hit_at_1": _coalesce_metric(row[7]),
+                "hit_at_3": _coalesce_metric(row[8]),
+                "hit_at_5": _coalesce_metric(row[9]),
+                "recall_at_5": _coalesce_metric(row[10]),
+                "mrr": _coalesce_metric(row[11]),
+                "ndcg_at_5": _coalesce_metric(row[12]),
+                "document_relevance_score_avg": _coalesce_metric(row[13]),
+                "faithfulness_score_avg": _coalesce_metric(row[14]),
+                "groundedness_score_avg": _coalesce_metric(row[15]),
+                "response_relevance_score_avg": _coalesce_metric(row[16]),
+                "response_completeness_score_avg": _coalesce_metric(row[17]),
+                "citation_correctness_score_avg": _coalesce_metric(row[18]),
+                "hallucination_rate": _coalesce_metric(row[19]),
+                "judge_disagreement_rate": _coalesce_metric(row[20]),
+                "avg_retrieval_latency_ms": _coalesce_metric(row[21]),
+                "avg_generation_latency_ms": _coalesce_metric(row[22]),
+                "avg_total_latency_ms": _coalesce_metric(row[23]),
+                "p95_latency_ms": _coalesce_metric(row[24]),
+                "avg_cost_per_query": _coalesce_metric(row[25]),
+                "avg_selected_doc_count": _coalesce_metric(row[26]),
+                "avg_top1_similarity_score": _coalesce_metric(row[27]),
+                "avg_selected_similarity_score": _coalesce_metric(row[28]),
+                "case_count": int(row[31] or 0),
+            }
+            experiment["quality_rank_score"] = _experiment_quality_score(experiment)
+            experiments.append(experiment)
+        experiments.sort(
+            key=lambda item: (
+                _safe_float(item.get("faithfulness_score_avg")),
+                _safe_float(item.get("groundedness_score_avg")),
+                _safe_float(item.get("citation_correctness_score_avg")),
+                _safe_float(item.get("hit_at_5")),
+                _safe_float(item.get("quality_rank_score")),
+                _safe_float(item.get("judge_disagreement_rate")) * -1,
+            ),
+            reverse=True,
+        )
+        return experiments
+
+    def _select_experiment_rows(
+        self,
+        experiments: list[dict[str, Any]],
+        filters: dict[str, Any],
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        if not experiments:
+            return None, None
+
+        def _match(identifier: str | None) -> dict[str, Any] | None:
+            normalized_identifier = _clean_text(identifier)
+            if not normalized_identifier:
+                return None
+            for item in experiments:
+                if normalized_identifier in {
+                    _clean_text(item.get("experiment_id")),
+                    _clean_text(item.get("eval_run_id")),
+                }:
+                    return item
+            return None
+
+        candidate = (
+            _match(filters.get("candidate_experiment_id"))
+            or _match(filters.get("experiment_id"))
+            or experiments[0]
+        )
+        baseline = _match(filters.get("baseline_experiment_id"))
+        if baseline is None:
+            baseline = next(
+                (
+                    item
+                    for item in experiments
+                    if _clean_text(item.get("eval_run_id")) != _clean_text(candidate.get("eval_run_id"))
+                ),
+                candidate,
+            )
+        return baseline, candidate
+
+    def _experiment_case_rows(self, eval_run_ids: list[str]) -> dict[str, dict[str, dict[str, Any]]]:
+        normalized_run_ids = [_clean_text(item) for item in eval_run_ids if _clean_text(item)]
+        if not normalized_run_ids:
+            return {}
+        rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    eval_run_id,
+                    test_case_id,
+                    query_type,
+                    source_type,
+                    product,
+                    language,
+                    chunk_strategy,
+                    retrieval_strategy,
+                    question,
+                    answer_preview,
+                    expected_document_ids,
+                    expected_heading_paths,
+                    trace_payload,
+                    hit_at_1,
+                    hit_at_3,
+                    hit_at_5,
+                    recall_at_5,
+                    mrr,
+                    ndcg_at_5,
+                    document_relevance_score,
+                    faithfulness_score,
+                    groundedness_score,
+                    response_relevance_score,
+                    response_completeness_score,
+                    citation_correctness_score,
+                    hallucination_flag,
+                    needs_human,
+                    failure_type,
+                    root_cause_label,
+                    retrieval_latency_ms,
+                    generation_latency_ms,
+                    total_latency_ms,
+                    selected_doc_count,
+                    top1_similarity_score,
+                    avg_selected_similarity_score,
+                    avg_cost_per_query,
+                    judge_votes,
+                    judge_disagreement_flag
+                FROM {}
+                WHERE eval_run_id = ANY(%s)
+                """
+            ).format(self._table("support_rag_eval_results")),
+            (normalized_run_ids,),
+        )
+        grouped: dict[str, dict[str, dict[str, Any]]] = {}
+        for row in rows:
+            payload = {
+                "eval_run_id": row[0],
+                "test_case_id": row[1],
+                "query_type": row[2],
+                "source_type": row[3],
+                "product": row[4],
+                "language": row[5],
+                "chunk_strategy": row[6],
+                "retrieval_strategy": row[7],
+                "question": row[8],
+                "answer_preview": row[9],
+                "expected_document_ids": _json_list(row[10]),
+                "expected_heading_paths": _json_list(row[11]),
+                "trace_payload": _json_dict(row[12]),
+                "hit_at_1": _coalesce_metric(row[13]),
+                "hit_at_3": _coalesce_metric(row[14]),
+                "hit_at_5": _coalesce_metric(row[15]),
+                "recall_at_5": _coalesce_metric(row[16]),
+                "mrr": _coalesce_metric(row[17]),
+                "ndcg_at_5": _coalesce_metric(row[18]),
+                "document_relevance_score": _coalesce_metric(row[19]),
+                "faithfulness_score": _coalesce_metric(row[20]),
+                "groundedness_score": _coalesce_metric(row[21]),
+                "response_relevance_score": _coalesce_metric(row[22]),
+                "response_completeness_score": _coalesce_metric(row[23]),
+                "citation_correctness_score": _coalesce_metric(row[24]),
+                "hallucination_flag": bool(row[25]) if row[25] is not None else None,
+                "needs_human": bool(row[26]) if row[26] is not None else None,
+                "failure_type": row[27],
+                "root_cause_label": row[28],
+                "retrieval_latency_ms": _coalesce_metric(row[29]),
+                "generation_latency_ms": _coalesce_metric(row[30]),
+                "total_latency_ms": _coalesce_metric(row[31]),
+                "selected_doc_count": row[32],
+                "top1_similarity_score": _coalesce_metric(row[33]),
+                "avg_selected_similarity_score": _coalesce_metric(row[34]),
+                "avg_cost_per_query": _coalesce_metric(row[35]),
+                "judge_votes": _json_list(row[36]),
+                "judge_disagreement_flag": bool(row[37]) if row[37] is not None else None,
+            }
+            grouped.setdefault(str(row[0]), {})[str(row[1])] = payload
+        return grouped
+
+    def _segment_breakdown_from_cases(
+        self,
+        *,
+        baseline_cases: dict[str, dict[str, Any]],
+        candidate_cases: dict[str, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        groups: list[dict[str, Any]] = []
+        for dimension in ["query_type", "source_type", "product", "language"]:
+            buckets: dict[str, dict[str, list[float]]] = {}
+            for test_case_id, candidate in candidate_cases.items():
+                baseline = baseline_cases.get(test_case_id, {})
+                segment = _clean_text(candidate.get(dimension)) or _clean_text(baseline.get(dimension)) or "unknown"
+                bucket = buckets.setdefault(
+                    segment,
+                    {
+                        "candidate_quality": [],
+                        "baseline_quality": [],
+                        "candidate_hit_at_5": [],
+                        "baseline_hit_at_5": [],
+                        "candidate_faithfulness_score": [],
+                        "baseline_faithfulness_score": [],
+                        "candidate_groundedness_score": [],
+                        "baseline_groundedness_score": [],
+                        "candidate_citation_correctness_score": [],
+                        "baseline_citation_correctness_score": [],
+                    },
+                )
+                bucket["candidate_quality"].append(_case_quality_score(candidate))
+                bucket["baseline_quality"].append(_case_quality_score(baseline))
+                for field_name in [
+                    "hit_at_5",
+                    "faithfulness_score",
+                    "groundedness_score",
+                    "citation_correctness_score",
+                ]:
+                    candidate_value = candidate.get(field_name)
+                    baseline_value = baseline.get(field_name)
+                    if candidate_value is not None:
+                        bucket[f"candidate_{field_name}"].append(_safe_float(candidate_value))
+                    if baseline_value is not None:
+                        bucket[f"baseline_{field_name}"].append(_safe_float(baseline_value))
+            rows = []
+            for segment, bucket in buckets.items():
+                candidate_quality = _safe_statistics_mean(bucket["candidate_quality"])
+                baseline_quality = _safe_statistics_mean(bucket["baseline_quality"])
+                candidate_hit = _safe_statistics_mean(bucket["candidate_hit_at_5"])
+                baseline_hit = _safe_statistics_mean(bucket["baseline_hit_at_5"])
+                candidate_faithfulness = _safe_statistics_mean(bucket["candidate_faithfulness_score"])
+                baseline_faithfulness = _safe_statistics_mean(bucket["baseline_faithfulness_score"])
+                candidate_groundedness = _safe_statistics_mean(bucket["candidate_groundedness_score"])
+                baseline_groundedness = _safe_statistics_mean(bucket["baseline_groundedness_score"])
+                candidate_citation = _safe_statistics_mean(bucket["candidate_citation_correctness_score"])
+                baseline_citation = _safe_statistics_mean(bucket["baseline_citation_correctness_score"])
+                rows.append(
+                    {
+                        "segment": segment,
+                        "case_count": len(bucket["candidate_quality"]),
+                        "candidate_quality_score": candidate_quality,
+                        "baseline_quality_score": baseline_quality,
+                        "delta_quality_score": _round_delta(candidate_quality, baseline_quality),
+                        "candidate_hit_at_5": candidate_hit,
+                        "baseline_hit_at_5": baseline_hit,
+                        "delta_hit_at_5": _round_delta(candidate_hit, baseline_hit),
+                        "candidate_faithfulness_score": candidate_faithfulness,
+                        "baseline_faithfulness_score": baseline_faithfulness,
+                        "delta_faithfulness_score": _round_delta(candidate_faithfulness, baseline_faithfulness),
+                        "candidate_groundedness_score": candidate_groundedness,
+                        "baseline_groundedness_score": baseline_groundedness,
+                        "delta_groundedness_score": _round_delta(candidate_groundedness, baseline_groundedness),
+                        "candidate_citation_correctness_score": candidate_citation,
+                        "baseline_citation_correctness_score": baseline_citation,
+                        "delta_citation_correctness_score": _round_delta(candidate_citation, baseline_citation),
+                    }
+                )
+            rows.sort(key=lambda item: (_safe_float(item.get("delta_quality_score")), item["case_count"]), reverse=True)
+            groups.append({"dimension": dimension, "rows": rows})
+        return groups
+
+    def _sample_deltas_from_cases(
+        self,
+        *,
+        baseline_eval_run_id: str | None,
+        candidate_eval_run_id: str | None,
+        baseline_cases: dict[str, dict[str, Any]],
+        candidate_cases: dict[str, dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        items: list[dict[str, Any]] = []
+        for test_case_id, candidate in candidate_cases.items():
+            baseline = baseline_cases.get(test_case_id)
+            candidate_score = _case_quality_score(candidate)
+            baseline_score = _case_quality_score(baseline)
+            delta_score = round(candidate_score - baseline_score, 4)
+            items.append(
+                {
+                    "sample_source": "benchmark",
+                    "eval_run_id": candidate_eval_run_id,
+                    "baseline_eval_run_id": baseline_eval_run_id,
+                    "test_case_id": test_case_id,
+                    "question": candidate.get("question"),
+                    "query_type": candidate.get("query_type"),
+                    "source_type": candidate.get("source_type"),
+                    "product": candidate.get("product"),
+                    "language": candidate.get("language"),
+                    "candidate_quality_score": candidate_score,
+                    "baseline_quality_score": baseline_score,
+                    "delta_quality_score": delta_score,
+                    "candidate_failure_type": candidate.get("failure_type"),
+                    "baseline_failure_type": baseline.get("failure_type") if isinstance(baseline, dict) else None,
+                    "root_cause_labels": _benchmark_root_causes(candidate),
+                }
+            )
+        wins = sorted(items, key=lambda item: item["delta_quality_score"], reverse=True)[:8]
+        regressions = sorted(items, key=lambda item: item["delta_quality_score"])[:8]
+        return wins, regressions
+
+    def _chunk_details(self, chunk_ids: list[str]) -> dict[str, dict[str, Any]]:
+        normalized_chunk_ids = [_clean_text(item) for item in chunk_ids if _clean_text(item)]
+        if not normalized_chunk_ids:
+            return {}
+        rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    c.id,
+                    c.doc_id,
+                    c.source_path,
+                    c.h1,
+                    c.h2,
+                    c.h3,
+                    c.source_url,
+                    c.content,
+                    c.chunk_token_count,
+                    c.overlap_tokens,
+                    c.chunk_strategy,
+                    c.index_role,
+                    c.ingestion_id,
+                    d.cleaned_token_count,
+                    d.source_updated_at,
+                    d.is_stale,
+                    d.product,
+                    d.language,
+                    d.title,
+                    d.source_type,
+                    t.boundary_reason
+                FROM {} AS c
+                LEFT JOIN {} AS d
+                  ON d.document_id = c.doc_id
+                LEFT JOIN {} AS t
+                  ON t.chunk_id = c.id
+                WHERE c.id = ANY(%s)
+                """
+            ).format(
+                self._vector_table(),
+                self._table("support_knowledge_documents"),
+                self._table("support_knowledge_chunk_traces"),
+            ),
+            (normalized_chunk_ids,),
+        )
+        details: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            details[str(row[0])] = {
+                "chunk_id": row[0],
+                "doc_id": row[1],
+                "source_path": row[2],
+                "heading": _heading_path(row[3], row[4], row[5]),
+                "source_url": row[6],
+                "text": row[7],
+                "chunk_token_count": row[8],
+                "overlap_tokens": row[9],
+                "chunk_strategy": row[10],
+                "index_role": row[11],
+                "ingestion_id": row[12],
+                "doc_token_count": row[13],
+                "source_updated_at": _to_iso(row[14]) if row[14] is not None else None,
+                "is_stale": bool(row[15]) if row[15] is not None else False,
+                "product": row[16],
+                "language": row[17],
+                "title": row[18],
+                "source_type": row[19],
+                "boundary_reason": row[20],
+            }
+        return details
+
+    def _live_risky_case_rows(self, days: int, filters: dict[str, Any]) -> list[dict[str, Any]]:
+        query_filter_sql, query_filter_params = self._build_filter_clause(
+            filters,
+            {
+                "query_type": "query_type",
+                "retrieval_strategy": "retrieval_strategy",
+                "source_type": "primary_source_type",
+                "chunk_strategy": "primary_chunk_strategy",
+            },
+        )
+        rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    request_id,
+                    ticket_id,
+                    user_query,
+                    query_type,
+                    primary_source_type,
+                    primary_chunk_strategy,
+                    retrieval_strategy,
+                    generation_mode,
+                    needs_human,
+                    confidence_score,
+                    citation_count,
+                    selected_doc_count,
+                    top1_similarity_score,
+                    avg_selected_similarity_score,
+                    created_at
+                FROM {}
+                WHERE created_at >= NOW() - (%s * INTERVAL '1 day')
+                  AND (
+                      needs_human = TRUE
+                      OR error_flag = TRUE
+                      OR citation_count = 0
+                      OR confidence_score < 0.65
+                      OR generation_mode <> 'structured_answer'
+                  )
+                {filters}
+                ORDER BY created_at DESC
+                LIMIT %s
+                """
+            ).format(
+                self._table("support_rag_query_runs"),
+                filters=sql.SQL(query_filter_sql),
+            ),
+            tuple([days, *query_filter_params, filters["limit"]]),
+        )
+        return [
+            {
+                "sample_source": "live_query",
+                "request_id": row[0],
+                "ticket_id": row[1],
+                "question": row[2],
+                "query_type": row[3],
+                "source_type": row[4],
+                "chunk_strategy": row[5],
+                "retrieval_strategy": row[6],
+                "generation_mode": row[7],
+                "needs_human": bool(row[8]),
+                "confidence_score": _coalesce_metric(row[9]),
+                "citation_count": int(row[10] or 0),
+                "selected_doc_count": row[11],
+                "top1_similarity_score": _coalesce_metric(row[12]),
+                "avg_selected_similarity_score": _coalesce_metric(row[13]),
+                "created_at": _to_iso(row[14]),
+            }
+            for row in rows
+        ]
+
+    def _query_run_detail(self, request_id: str) -> dict[str, Any] | None:
+        normalized_request_id = _clean_text(request_id)
+        if not normalized_request_id:
+            return None
+        rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    request_id,
+                    ticket_id,
+                    user_query,
+                    rewritten_query,
+                    intent,
+                    query_type,
+                    retrieval_strategy,
+                    primary_source_type,
+                    primary_chunk_strategy,
+                    vector_candidates_count,
+                    bm25_candidates_count,
+                    reranked_candidates_count,
+                    selected_chunk_ids,
+                    retrieval_latency_ms,
+                    generation_latency_ms,
+                    total_latency_ms,
+                    confidence_score,
+                    citation_count,
+                    citation_coverage_ratio,
+                    cited_chunk_ids,
+                    structured_retry_used,
+                    extractive_fallback_used,
+                    selected_doc_count,
+                    top1_similarity_score,
+                    avg_selected_similarity_score,
+                    generation_mode,
+                    needs_human,
+                    handoff_reason,
+                    answer_text,
+                    created_at,
+                    error_flag
+                FROM {}
+                WHERE request_id = %s
+                LIMIT 1
+                """
+            ).format(self._table("support_rag_query_runs")),
+            (normalized_request_id,),
+        )
+        if not rows:
+            return None
+        row = rows[0]
+        candidate_rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    chunk_id,
+                    doc_id,
+                    rank_before_rerank,
+                    rank_after_rerank,
+                    retrieval_score,
+                    rerank_score,
+                    used_in_final_answer,
+                    title,
+                    source_url
+                FROM {}
+                WHERE request_id = %s
+                ORDER BY rank_before_rerank ASC NULLS LAST, id ASC
+                """
+            ).format(self._table("support_rag_query_candidates")),
+            (normalized_request_id,),
+        )
+        selected_chunk_ids = _json_list(row[12])
+        chunk_ids = selected_chunk_ids + [str(item[0]) for item in candidate_rows if item[0]]
+        chunk_details = self._chunk_details(chunk_ids)
+        candidates = []
+        for item in candidate_rows:
+            candidate_payload = {
+                "chunk_id": item[0],
+                "doc_id": item[1],
+                "rank_before_rerank": item[2],
+                "rank_after_rerank": item[3],
+                "retrieval_score": _coalesce_metric(item[4]),
+                "rerank_score": _coalesce_metric(item[5]),
+                "used_in_final_answer": bool(item[6]),
+                "source_url": item[8],
+                "heading": chunk_details.get(str(item[0]), {}).get("heading") or item[7],
+            }
+            candidates.append(candidate_payload)
+        selected_contexts = []
+        for chunk_id in selected_chunk_ids:
+            detail = dict(chunk_details.get(str(chunk_id), {}))
+            if not detail:
+                detail = {"chunk_id": chunk_id}
+            selected_contexts.append(detail)
+        payload = {
+            "sample_source": "live_query",
+            "request_id": row[0],
+            "ticket_id": row[1],
+            "query_type": row[5],
+            "source_type": row[7],
+            "chunk_strategy": row[8],
+            "retrieval_strategy": row[6],
+            "created_at": _to_iso(row[29]),
+            "user_query": row[2],
+            "rewritten_query": row[3],
+            "intent": row[4],
+            "generation_mode": row[25],
+            "needs_human": bool(row[26]),
+            "handoff_reason": row[27],
+            "vector_candidates_count": row[9],
+            "bm25_candidates_count": row[10],
+            "reranked_candidates_count": row[11],
+            "selected_doc_count": row[22],
+            "top1_similarity_score": _coalesce_metric(row[23]),
+            "avg_selected_similarity_score": _coalesce_metric(row[24]),
+            "retrieval_latency_ms": _coalesce_metric(row[13]),
+            "generation_latency_ms": _coalesce_metric(row[14]),
+            "total_latency_ms": _coalesce_metric(row[15]),
+            "answer": row[28],
+            "confidence_score": _coalesce_metric(row[16]),
+            "citation_count": int(row[17] or 0),
+            "citation_coverage_ratio": _coalesce_metric(row[18]),
+            "cited_chunk_ids": _json_list(row[19]),
+            "structured_retry_used": bool(row[20]),
+            "extractive_fallback_used": bool(row[21]),
+            "error_flag": bool(row[30]),
+            "candidates": candidates,
+            "selected_contexts": selected_contexts,
+        }
+        payload["root_cause_labels"] = _live_root_causes(payload)
+        payload["related_ingestion_ids"] = [
+            detail.get("ingestion_id")
+            for detail in selected_contexts
+            if _clean_text(detail.get("ingestion_id"))
+        ]
+        payload["related_ingestion_ids"] = list(dict.fromkeys(payload["related_ingestion_ids"]))
+        return payload
+
+    def _eval_run_meta_map(self, eval_run_ids: list[str]) -> dict[str, dict[str, Any]]:
+        normalized_run_ids = [_clean_text(item) for item in eval_run_ids if _clean_text(item)]
+        if not normalized_run_ids:
+            return {}
+        rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    eval_run_id,
+                    COALESCE(experiment_id, eval_run_id) AS experiment_id,
+                    benchmark_version,
+                    judge_models,
+                    strategy_snapshot,
+                    started_at,
+                    finished_at
+                FROM {}
+                WHERE eval_run_id = ANY(%s)
+                """
+            ).format(self._table("support_rag_eval_runs")),
+            (normalized_run_ids,),
+        )
+        meta_map: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            strategy_snapshot = _json_dict(row[4])
+            meta_map[str(row[0])] = {
+                "eval_run_id": row[0],
+                "experiment_id": row[1],
+                "benchmark_version": row[2],
+                "judge_models": _json_list(row[3]),
+                "strategy_snapshot": strategy_snapshot,
+                "embedding_model": _clean_text(strategy_snapshot.get("embedding_model")),
+                "reranker_model": _clean_text(strategy_snapshot.get("reranker_model")),
+                "query_rewrite_enabled": bool(strategy_snapshot.get("query_rewrite_enabled")),
+                "created_at": _to_iso(row[5]) if row[5] is not None else None,
+                "finished_at": _to_iso(row[6]) if row[6] is not None else None,
+            }
+        return meta_map
+
+    def _benchmark_trace_detail(
+        self,
+        row: dict[str, Any],
+        *,
+        run_meta: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        trace_payload = _json_dict(row.get("trace_payload"))
+        retrieval_candidates = _json_list(trace_payload.get("retrieval_candidates"))
+        selected_context_rows = _json_list(trace_payload.get("selected_contexts"))
+        chunk_ids = [
+            _clean_text(item.get("chunk_id"))
+            for item in [*selected_context_rows, *retrieval_candidates]
+            if isinstance(item, dict) and _clean_text(item.get("chunk_id"))
+        ]
+        chunk_details = self._chunk_details(chunk_ids)
+        selected_contexts: list[dict[str, Any]] = []
+        for item in selected_context_rows:
+            if not isinstance(item, dict):
+                continue
+            detail = dict(chunk_details.get(str(item.get("chunk_id")), {}))
+            detail["chunk_id"] = item.get("chunk_id") or detail.get("chunk_id")
+            detail["doc_id"] = item.get("doc_id") or detail.get("doc_id")
+            detail["source_path"] = item.get("source_path") or detail.get("source_path")
+            detail["heading"] = item.get("heading") or detail.get("heading")
+            detail["text"] = item.get("text") or detail.get("text")
+            selected_contexts.append(detail)
+        candidates: list[dict[str, Any]] = []
+        for item in retrieval_candidates:
+            if not isinstance(item, dict):
+                continue
+            detail = chunk_details.get(str(item.get("chunk_id")), {})
+            candidates.append(
+                {
+                    "chunk_id": item.get("chunk_id"),
+                    "doc_id": item.get("doc_id"),
+                    "rank_before_rerank": item.get("rank_before_rerank"),
+                    "rank_after_rerank": item.get("rank_after_rerank"),
+                    "retrieval_score": _coalesce_metric(item.get("retrieval_score")),
+                    "rerank_score": _coalesce_metric(item.get("rerank_score")),
+                    "used_in_final_answer": bool(item.get("used_in_final_answer")),
+                    "source_url": item.get("source_url") or detail.get("source_url"),
+                    "heading": detail.get("heading") or item.get("title"),
+                }
+            )
+        payload = {
+            "sample_source": "benchmark",
+            "eval_run_id": row.get("eval_run_id"),
+            "experiment_id": row.get("experiment_id") or (run_meta or {}).get("experiment_id"),
+            "benchmark_version": (run_meta or {}).get("benchmark_version"),
+            "judge_models": (run_meta or {}).get("judge_models", []),
+            "query_type": row.get("query_type"),
+            "source_type": row.get("source_type"),
+            "product": row.get("product"),
+            "language": row.get("language"),
+            "chunk_strategy": row.get("chunk_strategy"),
+            "retrieval_strategy": row.get("retrieval_strategy"),
+            "created_at": (run_meta or {}).get("finished_at") or (run_meta or {}).get("created_at"),
+            "user_query": row.get("question"),
+            "rewritten_query": None,
+            "intent": None,
+            "generation_mode": trace_payload.get("generation_mode"),
+            "needs_human": row.get("needs_human"),
+            "handoff_reason": trace_payload.get("handoff_reason"),
+            "vector_candidates_count": trace_payload.get("vector_candidates_count"),
+            "bm25_candidates_count": trace_payload.get("bm25_candidates_count"),
+            "reranked_candidates_count": trace_payload.get("reranked_candidates_count"),
+            "selected_doc_count": row.get("selected_doc_count"),
+            "top1_similarity_score": row.get("top1_similarity_score"),
+            "avg_selected_similarity_score": row.get("avg_selected_similarity_score"),
+            "retrieval_latency_ms": row.get("retrieval_latency_ms"),
+            "generation_latency_ms": row.get("generation_latency_ms"),
+            "total_latency_ms": row.get("total_latency_ms"),
+            "answer": trace_payload.get("answer_text") or row.get("answer_preview"),
+            "confidence_score": trace_payload.get("confidence_score"),
+            "citation_count": trace_payload.get("citation_count"),
+            "citation_coverage_ratio": trace_payload.get("citation_coverage_ratio"),
+            "cited_chunk_ids": _json_list(trace_payload.get("cited_chunk_ids")),
+            "structured_retry_used": bool(trace_payload.get("structured_retry_used")),
+            "extractive_fallback_used": bool(trace_payload.get("extractive_fallback_used")),
+            "expected_document_ids": _json_list(row.get("expected_document_ids")),
+            "expected_heading_paths": _json_list(row.get("expected_heading_paths")),
+            "missed_expected_docs": _json_list(trace_payload.get("missed_expected_docs")),
+            "candidates": candidates,
+            "selected_contexts": selected_contexts,
+            "document_relevance_score": row.get("document_relevance_score"),
+            "faithfulness_score": row.get("faithfulness_score"),
+            "groundedness_score": row.get("groundedness_score"),
+            "response_relevance_score": row.get("response_relevance_score"),
+            "response_completeness_score": row.get("response_completeness_score"),
+            "citation_correctness_score": row.get("citation_correctness_score"),
+            "hallucination_flag": row.get("hallucination_flag"),
+            "failure_type": row.get("failure_type"),
+            "judge_votes": _json_list(row.get("judge_votes")),
+        }
+        payload["root_cause_labels"] = _benchmark_root_causes(row)
+        payload["related_ingestion_ids"] = list(
+            dict.fromkeys(
+                detail.get("ingestion_id")
+                for detail in selected_contexts
+                if _clean_text(detail.get("ingestion_id"))
+            )
+        )
+        return payload
+
+    def _experiments_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
+        experiments = self._experiment_rows(days, filters)
+        baseline, candidate = self._select_experiment_rows(experiments, filters)
+        cases_by_run = self._experiment_case_rows(
+            [
+                _clean_text((baseline or {}).get("eval_run_id")),
+                _clean_text((candidate or {}).get("eval_run_id")),
+            ]
+        )
+        baseline_cases = cases_by_run.get(_clean_text((baseline or {}).get("eval_run_id")) or "", {})
+        candidate_cases = cases_by_run.get(_clean_text((candidate or {}).get("eval_run_id")) or "", {})
+        wins, regressions = self._sample_deltas_from_cases(
+            baseline_eval_run_id=_clean_text((baseline or {}).get("eval_run_id")),
+            candidate_eval_run_id=_clean_text((candidate or {}).get("eval_run_id")),
+            baseline_cases=baseline_cases,
+            candidate_cases=candidate_cases,
+        )
+        metric_rows = []
+        for field_name, label in [
+            ("hit_at_1", "Hit@1"),
+            ("hit_at_3", "Hit@3"),
+            ("hit_at_5", "Hit@5"),
+            ("recall_at_5", "Recall@5"),
+            ("mrr", "MRR"),
+            ("ndcg_at_5", "NDCG@5"),
+            ("document_relevance_score_avg", "Document Relevance"),
+            ("faithfulness_score_avg", "Faithfulness"),
+            ("groundedness_score_avg", "Groundedness"),
+            ("response_relevance_score_avg", "Response Relevance"),
+            ("response_completeness_score_avg", "Response Completeness"),
+            ("citation_correctness_score_avg", "Citation Correctness"),
+            ("hallucination_rate", "Hallucination Rate"),
+            ("judge_disagreement_rate", "Judge Disagreement Rate"),
+            ("p95_latency_ms", "P95 Latency (ms)"),
+            ("avg_cost_per_query", "Avg Cost / Query"),
+            ("avg_selected_doc_count", "Avg Selected Docs"),
+            ("avg_top1_similarity_score", "Avg Top1 Similarity"),
+        ]:
+            candidate_value = candidate.get(field_name) if candidate else None
+            baseline_value = baseline.get(field_name) if baseline else None
+            metric_rows.append(
+                {
+                    "metric": label,
+                    "field_name": field_name,
+                    "candidate": candidate_value,
+                    "baseline": baseline_value,
+                    "delta": _round_delta(candidate_value, baseline_value),
+                }
+            )
+        sections = {
+            "summary": {
+                "title": "Experiments",
+                "subtitle": "Offline benchmark is the ranking truth source for retrieval and answer quality.",
+                "baseline_experiment_id": (baseline or {}).get("experiment_id"),
+                "candidate_experiment_id": (candidate or {}).get("experiment_id"),
+                "benchmark_version": (candidate or {}).get("benchmark_version") or (baseline or {}).get("benchmark_version"),
+                "available_experiments": [
+                    {
+                        "eval_run_id": item.get("eval_run_id"),
+                        "experiment_id": item.get("experiment_id"),
+                        "label": f"{item.get('experiment_id')} · {item.get('benchmark_version') or 'benchmark'}",
+                        "finished_at": item.get("finished_at"),
+                    }
+                    for item in experiments
+                ],
+                "cards": {
+                    "candidate_quality_rank_score": (candidate or {}).get("quality_rank_score"),
+                    "candidate_faithfulness_score_avg": (candidate or {}).get("faithfulness_score_avg"),
+                    "candidate_groundedness_score_avg": (candidate or {}).get("groundedness_score_avg"),
+                    "candidate_citation_correctness_score_avg": (candidate or {}).get("citation_correctness_score_avg"),
+                    "candidate_hit_at_5": (candidate or {}).get("hit_at_5"),
+                    "baseline_quality_rank_score": (baseline or {}).get("quality_rank_score"),
+                },
+            },
+            "leaderboard": {"rows": experiments[: max(10, filters["limit"])]},
+            "metric_matrix": {"rows": metric_rows},
+            "segment_breakdown": {
+                "groups": self._segment_breakdown_from_cases(
+                    baseline_cases=baseline_cases,
+                    candidate_cases=candidate_cases,
+                )
+            },
+            "sample_list": {
+                "top_wins": wins,
+                "top_regressions": regressions,
+            },
+        }
+        return self._build_workbench_envelope(
+            layout="experiments",
+            range_value=range_value,
+            filters=filters,
+            sections=sections,
+            has_eval_data=bool(experiments),
+        )
+
+    def _diagnosis_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
+        experiments = self._experiment_rows(days, filters)
+        baseline, candidate = self._select_experiment_rows(experiments, filters)
+        cases_by_run = self._experiment_case_rows(
+            [
+                _clean_text((baseline or {}).get("eval_run_id")),
+                _clean_text((candidate or {}).get("eval_run_id")),
+            ]
+        )
+        baseline_cases = cases_by_run.get(_clean_text((baseline or {}).get("eval_run_id")) or "", {})
+        candidate_cases = cases_by_run.get(_clean_text((candidate or {}).get("eval_run_id")) or "", {})
+        wins, regressions = self._sample_deltas_from_cases(
+            baseline_eval_run_id=_clean_text((baseline or {}).get("eval_run_id")),
+            candidate_eval_run_id=_clean_text((candidate or {}).get("eval_run_id")),
+            baseline_cases=baseline_cases,
+            candidate_cases=candidate_cases,
+        )
+        review_queue_rows = self._review_queue_rows(days, filters)
+        risky_live_rows = self._live_risky_case_rows(days, filters)
+
+        selected_request_id = _clean_text(filters.get("request_id"))
+        selected_eval_run_id = _clean_text(filters.get("eval_run_id"))
+        selected_test_case_id = _clean_text(filters.get("test_case_id"))
+        if filters.get("sample_id"):
+            matched_review = next(
+                (row for row in review_queue_rows if _clean_text(row.get("sample_id")) == _clean_text(filters.get("sample_id"))),
+                None,
+            )
+            if matched_review is not None:
+                selected_request_id = _clean_text(matched_review.get("request_id")) or selected_request_id
+                selected_eval_run_id = _clean_text(matched_review.get("eval_run_id")) or selected_eval_run_id
+                selected_test_case_id = _clean_text(matched_review.get("test_case_id")) or selected_test_case_id
+        if not selected_request_id and not (selected_eval_run_id and selected_test_case_id):
+            if regressions:
+                selected_eval_run_id = _clean_text(regressions[0].get("eval_run_id"))
+                selected_test_case_id = _clean_text(regressions[0].get("test_case_id"))
+            elif risky_live_rows:
+                selected_request_id = _clean_text(risky_live_rows[0].get("request_id"))
+            elif review_queue_rows:
+                first_review = review_queue_rows[0]
+                selected_request_id = _clean_text(first_review.get("request_id"))
+                selected_eval_run_id = _clean_text(first_review.get("eval_run_id"))
+                selected_test_case_id = _clean_text(first_review.get("test_case_id"))
+
+        diagnosis_trace: dict[str, Any] | None = None
+        if selected_request_id:
+            diagnosis_trace = {
+                "mode": "live_query",
+                "primary": self._query_run_detail(selected_request_id),
+                "baseline": None,
+            }
+        elif selected_eval_run_id and selected_test_case_id:
+            run_meta_map = self._eval_run_meta_map(
+                [
+                    selected_eval_run_id,
+                    _clean_text((baseline or {}).get("eval_run_id")),
+                ]
+            )
+            primary_row = self._experiment_case_rows([selected_eval_run_id]).get(selected_eval_run_id, {}).get(selected_test_case_id)
+            baseline_row = None
+            baseline_eval_run_id = _clean_text((baseline or {}).get("eval_run_id"))
+            if baseline_eval_run_id and baseline_eval_run_id != selected_eval_run_id:
+                baseline_row = self._experiment_case_rows([baseline_eval_run_id]).get(baseline_eval_run_id, {}).get(
+                    selected_test_case_id
+                )
+            diagnosis_trace = {
+                "mode": "benchmark_compare",
+                "primary": self._benchmark_trace_detail(primary_row, run_meta=run_meta_map.get(selected_eval_run_id))
+                if primary_row
+                else None,
+                "baseline": self._benchmark_trace_detail(
+                    baseline_row,
+                    run_meta=run_meta_map.get(baseline_eval_run_id),
+                )
+                if baseline_row
+                else None,
+            }
+        if diagnosis_trace and diagnosis_trace.get("primary") and diagnosis_trace.get("baseline"):
+            primary_row = diagnosis_trace["primary"]
+            baseline_row = diagnosis_trace["baseline"]
+            diagnosis_trace["deltas"] = {
+                "quality_score": _round_delta(_case_quality_score(primary_row), _case_quality_score(baseline_row)),
+                "faithfulness_score": _round_delta(primary_row.get("faithfulness_score"), baseline_row.get("faithfulness_score")),
+                "groundedness_score": _round_delta(primary_row.get("groundedness_score"), baseline_row.get("groundedness_score")),
+                "citation_correctness_score": _round_delta(
+                    primary_row.get("citation_correctness_score"),
+                    baseline_row.get("citation_correctness_score"),
+                ),
+                "hit_at_5": _round_delta(primary_row.get("hit_at_5"), baseline_row.get("hit_at_5")),
+            }
+        sections = {
+            "summary": {
+                "title": "Diagnosis",
+                "subtitle": "Trace one benchmark regression or one risky live query through retrieval, context selection, generation, and review.",
+                "selected_request_id": selected_request_id,
+                "selected_eval_run_id": selected_eval_run_id,
+                "selected_test_case_id": selected_test_case_id,
+                "baseline_experiment_id": (baseline or {}).get("experiment_id"),
+                "candidate_experiment_id": (candidate or {}).get("experiment_id"),
+            },
+            "sample_list": {
+                "top_regressions": regressions,
+                "top_wins": wins,
+                "risky_live_queries": risky_live_rows,
+                "review_queue": review_queue_rows[:10],
+            },
+            "diagnosis_trace": diagnosis_trace or {},
+        }
+        return self._build_workbench_envelope(
+            layout="diagnosis",
+            range_value=range_value,
+            filters=filters,
+            sections=sections,
+            has_eval_data=bool(experiments),
+        )
+
+    def _knowledge_supply_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
+        ingestion_page = self._ingestion_page(range_value, days, filters)
+        chunking_page = self._chunking_page(range_value, days, filters)
+        embedding_page = self._embedding_index_page(range_value, days, filters)
+        sections = {
+            "summary": {
+                "title": "Knowledge Supply",
+                "subtitle": "Surface ingestion, chunking, and index risks that can degrade retrieval and answer quality.",
+                "cards": {
+                    "ingestion_job_count_24h": ingestion_page["cards"].get("ingestion_job_count_24h"),
+                    "ingestion_success_rate_24h": ingestion_page["cards"].get("ingestion_success_rate_24h"),
+                    "empty_doc_rate": ingestion_page["cards"].get("empty_doc_rate"),
+                    "duplicate_doc_rate": ingestion_page["cards"].get("duplicate_doc_rate"),
+                    "avg_chunk_tokens": chunking_page["cards"].get("avg_chunk_tokens"),
+                    "short_chunk_rate": chunking_page["cards"].get("short_chunk_rate"),
+                    "long_chunk_rate": chunking_page["cards"].get("long_chunk_rate"),
+                    "index_freshness_minutes": embedding_page["cards"].get("index_freshness_minutes"),
+                    "stale_doc_count": embedding_page["cards"].get("stale_doc_count"),
+                    "orphan_chunk_count": embedding_page["cards"].get("orphan_chunk_count"),
+                },
+            },
+            "segment_breakdown": {
+                "groups": [
+                    {
+                        "title": "Ingestion Pipeline",
+                        "cards": ingestion_page.get("cards", {}),
+                        "charts": ingestion_page.get("charts", {}),
+                        "tables": {
+                            "stage_latency_percentiles": ingestion_page.get("tables", {}).get("stage_latency_percentiles", []),
+                            "metadata_missing_breakdown": ingestion_page.get("tables", {}).get(
+                                "metadata_missing_breakdown", []
+                            ),
+                        },
+                    },
+                    {
+                        "title": "Chunk Quality",
+                        "cards": chunking_page.get("cards", {}),
+                        "charts": chunking_page.get("charts", {}),
+                        "tables": chunking_page.get("tables", {}),
+                    },
+                    {
+                        "title": "Index Health",
+                        "cards": embedding_page.get("cards", {}),
+                        "charts": embedding_page.get("charts", {}),
+                        "tables": embedding_page.get("tables", {}),
+                    },
+                ]
+            },
+            "sample_list": {
+                "failed_tasks": ingestion_page.get("tables", {}).get("failed_tasks", []),
+                "chunking_anomalies": chunking_page.get("tables", {}).get("chunking_anomalies", []),
+                "metadata_completeness": embedding_page.get("tables", {}).get("metadata_completeness", []),
+            },
+        }
+        return self._build_workbench_envelope(
+            layout="knowledge-supply",
+            range_value=range_value,
+            filters=filters,
+            sections=sections,
+            has_eval_data=bool(chunking_page.get("has_eval_data")),
+        )
+
+    def _production_signals_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
+        retrieval_page = self._retrieval_page(range_value, days, filters)
+        generation_page = self._generation_page(range_value, days, filters)
+        performance_page = self._performance_cost_page(range_value, days, filters)
+        failures_page = self._failures_page(range_value, days, filters)
+        sections = {
+            "summary": {
+                "title": "Production Signals",
+                "subtitle": "Watch live proxy quality signals for regressions, then jump into risky cases.",
+                "cards": {
+                    "needs_human_rate": generation_page["cards"].get("needs_human_rate"),
+                    "no_answer_rate": generation_page["cards"].get("no_answer_rate"),
+                    "citation_missing_rate": generation_page["cards"].get("citation_missing_rate"),
+                    "extractive_fallback_rate": generation_page["cards"].get("extractive_fallback_rate"),
+                    "structured_retry_rate": generation_page["cards"].get("structured_retry_rate"),
+                    "low_confidence_rate": generation_page["cards"].get("low_confidence_rate"),
+                    "avg_citation_coverage_ratio": generation_page["cards"].get("avg_citation_coverage_ratio"),
+                    "p95_total_latency_ms": performance_page["cards"].get("p95_total_latency_ms"),
+                    "p95_retrieval_latency_ms": performance_page["cards"].get("p95_retrieval_latency_ms"),
+                    "p50_generation_latency_ms": performance_page["cards"].get("p50_generation_latency_ms"),
+                    "error_rate": performance_page["cards"].get("error_rate"),
+                    "timeout_rate": performance_page["cards"].get("timeout_rate"),
+                },
+            },
+            "segment_breakdown": {
+                "groups": [
+                    {
+                        "title": "Retrieval Strategy",
+                        "cards": retrieval_page.get("cards", {}),
+                        "charts": retrieval_page.get("charts", {}),
+                        "tables": {
+                            "retrieval_strategy_breakdown": retrieval_page.get("tables", {}).get(
+                                "retrieval_strategy_breakdown", []
+                            ),
+                            "query_type_analysis": retrieval_page.get("tables", {}).get("query_type_analysis", []),
+                        },
+                    },
+                    {
+                        "title": "Generation Signals",
+                        "cards": generation_page.get("cards", {}),
+                        "charts": generation_page.get("charts", {}),
+                        "tables": generation_page.get("tables", {}),
+                    },
+                    {
+                        "title": "Latency and Reliability",
+                        "cards": performance_page.get("cards", {}),
+                        "charts": performance_page.get("charts", {}),
+                        "tables": performance_page.get("tables", {}),
+                    },
+                ]
+            },
+            "sample_list": {
+                "risky_cases": failures_page.get("tables", {}).get("failure_cases", []),
+                "review_queue": failures_page.get("tables", {}).get("review_queue", [])[:10],
+            },
+        }
+        return self._build_workbench_envelope(
+            layout="production-signals",
+            range_value=range_value,
+            filters=filters,
+            sections=sections,
+            has_eval_data=bool(retrieval_page.get("has_eval_data") or generation_page.get("has_eval_data")),
+        )
+
+    def _review_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
+        review_rows = self._review_queue_rows(days, filters)
+        pending_review_count, live_review_count, benchmark_review_count = self._review_queue_summary(days)
+        reviewed_count = sum(1 for row in review_rows if row.get("review_status") == "reviewed")
+        sections = {
+            "summary": {
+                "title": "Review Queue",
+                "subtitle": "Close the loop on risky live traffic and disputed benchmark samples.",
+                "cards": {
+                    "pending_review_count": pending_review_count,
+                    "live_review_sample_count": live_review_count,
+                    "benchmark_review_sample_count": benchmark_review_count,
+                    "reviewed_throughput": reviewed_count,
+                },
+            },
+            "review_queue": {
+                "rows": review_rows,
+                "pending_rows": [row for row in review_rows if row.get("review_status") == "pending"],
+                "benchmark_rows": [row for row in review_rows if row.get("sample_source") == "benchmark"],
+                "live_rows": [row for row in review_rows if row.get("sample_source") == "live_query"],
+            },
+        }
+        return self._build_workbench_envelope(
+            layout="review",
+            range_value=range_value,
+            filters=filters,
+            sections=sections,
+            has_eval_data=True,
+        )
+
     def rag_dashboard_page(
         self,
         page: str,
@@ -6370,6 +7712,16 @@ class PostgresKnowledgeRepository:
         normalized_page = _normalize_dashboard_page(page)
         normalized_range, days = _normalize_dashboard_range(range_value)
         normalized_filters = self._normalize_dashboard_filters(filters)
+        if normalized_page == "experiments":
+            return self._experiments_workbench_page(normalized_range, days, normalized_filters)
+        if normalized_page == "diagnosis":
+            return self._diagnosis_workbench_page(normalized_range, days, normalized_filters)
+        if normalized_page == "knowledge-supply":
+            return self._knowledge_supply_workbench_page(normalized_range, days, normalized_filters)
+        if normalized_page == "production-signals":
+            return self._production_signals_workbench_page(normalized_range, days, normalized_filters)
+        if normalized_page == "review":
+            return self._review_workbench_page(normalized_range, days, normalized_filters)
         if normalized_page == "overview":
             return self._overview_page(normalized_range, days, normalized_filters)
         if normalized_page == "ingestion":
@@ -6388,8 +7740,6 @@ class PostgresKnowledgeRepository:
             return self._performance_cost_page(normalized_range, days, normalized_filters)
         if normalized_page == "failures":
             return self._failures_page(normalized_range, days, normalized_filters)
-        if normalized_page == "experiments":
-            return self._experiments_page(normalized_range, days, normalized_filters)
         return self._build_envelope(
             range_value=normalized_range,
             filters=normalized_filters,

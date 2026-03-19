@@ -39,9 +39,10 @@ from backend.services.sentiment_classifier import SentimentResult, classify_sent
 from backend.services.task_queue import AsyncRedisTaskQueue
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-CLIENT_DIR = BASE_DIR / "client_ui"
-ENGINEER_DIR = BASE_DIR / "engineer_ui"
-DASHBOARD_DIR = BASE_DIR / "dashboard"
+UI_DIR = BASE_DIR / "ui"
+CLIENT_DIR = UI_DIR / "client-ui"
+ENGINEER_DIR = UI_DIR / "engineer-ui"
+DASHBOARD_DIR = UI_DIR / "dashboard-ui"
 
 # Auto-load project environment variables from repository root.
 load_dotenv(dotenv_path=BASE_DIR / ".env", override=False)
@@ -1597,6 +1598,12 @@ def dashboard_rag_page(
     retrieval_strategy: str | None = Query(default=None),
     chunk_strategy: str | None = Query(default=None),
     experiment_id: str | None = Query(default=None),
+    sample_id: str | None = Query(default=None),
+    request_id: str | None = Query(default=None),
+    eval_run_id: str | None = Query(default=None),
+    test_case_id: str | None = Query(default=None),
+    baseline_experiment_id: str | None = Query(default=None),
+    candidate_experiment_id: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
     cursor: str | None = Query(default=None),
 ) -> dict[str, Any]:
@@ -1613,25 +1620,47 @@ def dashboard_rag_page(
                 "retrieval_strategy": retrieval_strategy,
                 "chunk_strategy": chunk_strategy,
                 "experiment_id": experiment_id,
+                "sample_id": sample_id,
+                "request_id": request_id,
+                "eval_run_id": eval_run_id,
+                "test_case_id": test_case_id,
+                "baseline_experiment_id": baseline_experiment_id,
+                "candidate_experiment_id": candidate_experiment_id,
                 "limit": limit,
                 "cursor": cursor,
             },
         )
     except RagServiceError:
+        normalized_filters = {
+            "source_type": source_type or "all",
+            "product": product or "all",
+            "language": language or "all",
+            "status": status or "all",
+            "query_type": query_type or "all",
+            "retrieval_strategy": retrieval_strategy or "all",
+            "chunk_strategy": chunk_strategy or "all",
+            "experiment_id": experiment_id or "all",
+            "sample_id": sample_id,
+            "request_id": request_id,
+            "eval_run_id": eval_run_id,
+            "test_case_id": test_case_id,
+            "baseline_experiment_id": baseline_experiment_id,
+            "candidate_experiment_id": candidate_experiment_id,
+            "limit": limit,
+            "cursor": cursor,
+        }
+        if page in {"experiments", "diagnosis", "knowledge-supply", "production-signals", "review"}:
+            return {
+                "layout": page,
+                "range": range,
+                "filters": normalized_filters,
+                "sections": {},
+                "has_eval_data": False,
+                "last_refreshed_at": now_iso(),
+            }
         return {
             "range": range,
-            "filters": {
-                "source_type": source_type or "all",
-                "product": product or "all",
-                "language": language or "all",
-                "status": status or "all",
-                "query_type": query_type or "all",
-                "retrieval_strategy": retrieval_strategy or "all",
-                "chunk_strategy": chunk_strategy or "all",
-                "experiment_id": experiment_id or "all",
-                "limit": limit,
-                "cursor": cursor,
-            },
+            "filters": normalized_filters,
             "cards": {},
             "charts": {},
             "tables": {},

@@ -156,6 +156,53 @@ class RagServiceClientTests(unittest.TestCase):
         self.assertEqual(captured["authorization"], "Bearer token")
         self.assertEqual(payload["cards"]["doc_count_total"], 12)
 
+    def test_rag_dashboard_page_supports_diagnosis_and_experiment_filters(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+        captured = {}
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"layout":"diagnosis","sections":{"summary":{}}}'
+
+        def _fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["authorization"] = request.headers.get("Authorization")
+            return _FakeResponse()
+
+        with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            payload = client.rag_dashboard_page(
+                "diagnosis",
+                range_value="30d",
+                filters={
+                    "sample_id": "RS-1",
+                    "baseline_experiment_id": "exp-baseline",
+                    "candidate_experiment_id": "exp-candidate",
+                    "product": "video-calling",
+                    "language": "en",
+                    "experiment_id": "exp-candidate",
+                    "limit": 10,
+                },
+            )
+
+        parsed = urllib.parse.urlparse(captured["url"])
+        query = urllib.parse.parse_qs(parsed.query)
+        self.assertEqual(parsed.path, "/internal/dashboard/rag/diagnosis")
+        self.assertEqual(query["range"], ["30d"])
+        self.assertEqual(query["sample_id"], ["RS-1"])
+        self.assertEqual(query["baseline_experiment_id"], ["exp-baseline"])
+        self.assertEqual(query["candidate_experiment_id"], ["exp-candidate"])
+        self.assertEqual(query["product"], ["video-calling"])
+        self.assertEqual(query["language"], ["en"])
+        self.assertEqual(query["experiment_id"], ["exp-candidate"])
+        self.assertEqual(captured["authorization"], "Bearer token")
+        self.assertEqual(payload["layout"], "diagnosis")
+
     def test_update_review_sample_uses_internal_review_endpoint(self) -> None:
         client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
         captured = {}

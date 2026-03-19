@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 from uuid import uuid4
 
-from backend.services.embedding_provider import DEFAULT_PGVECTOR_TABLE, embedding_model_id, embedding_provider_name
+from backend.services.embedding_provider import (
+    DEFAULT_PGVECTOR_TABLE,
+    embedding_external_cost_per_1k,
+    embedding_model_id,
+    embedding_provider_name,
+)
 from backend.services.rag_benchmark import (
     DEFAULT_JUDGE_MODELS,
     BenchmarkCase,
@@ -21,6 +26,13 @@ from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, RagQueryResult,
 
 if TYPE_CHECKING:
     from backend.repositories.knowledge_repository import KnowledgeRepository
+
+
+_MODEL_PRICING = {
+    "gpt-4.1": {"prompt_per_1k": 0.002, "completion_per_1k": 0.008},
+    "gpt-4.1-mini": {"prompt_per_1k": 0.0004, "completion_per_1k": 0.0016},
+    "gpt-4o-mini": {"prompt_per_1k": 0.00015, "completion_per_1k": 0.0006},
+}
 
 
 def _utc_now() -> str:
@@ -61,7 +73,111 @@ def _strategy_snapshot(judge_models: list[str]) -> dict[str, Any]:
         "vector_table": _vector_table_name(),
         "rag_top_k": _clean_text(os.getenv("RAG_TOP_K")) or None,
         "chat_model": _clean_text(os.getenv("OPENAI_CHAT_MODEL")) or "gpt-4.1",
+        "reranker_model": _clean_text(os.getenv("RAG_RERANK_MODEL")),
+        "query_rewrite_enabled": (_clean_text(os.getenv("RAG_QUERY_REWRITE_ENABLED")) or "").lower()
+        in {"1", "true", "yes", "on"},
         "judge_models": judge_models,
+    }
+
+
+def _estimate_query_cost(result: RagQueryResult) -> float:
+    trace = result.trace
+    pricing = _MODEL_PRICING.get(_clean_text(trace.model_name), {})
+    prompt_cost = (max(0, int(trace.prompt_tokens or 0)) / 1000.0) * float(pricing.get("prompt_per_1k", 0.0))
+    completion_cost = (max(0, int(trace.completion_tokens or 0)) / 1000.0) * float(
+        pricing.get("completion_per_1k", 0.0)
+    )
+    embedding_rate = 0.0
+    if _clean_text(trace.embedding_model) == embedding_model_id():
+        embedding_rate = embedding_external_cost_per_1k()
+    embedding_cost = (max(0, int(trace.embedding_tokens or 0)) / 1000.0) * embedding_rate
+    return round(prompt_cost + completion_cost + embedding_cost, 6)
+
+
+def _missed_expected_docs(
+    *,
+    case: BenchmarkCase,
+    retrieval_candidates: list[dict[str, Any]],
+) -> list[str]:
+    expected_docs = {_clean_text(item) for item in case.expected_document_ids if _clean_text(item)}
+    candidate_docs = {
+        _clean_text(candidate.get("doc_id"))
+        for candidate in retrieval_candidates
+        if _clean_text(candidate.get("doc_id"))
+    }
+    return sorted(item for item in expected_docs if item and item not in candidate_docs)
+
+
+def _root_cause_label(
+    *,
+    case: BenchmarkCase,
+    result: RagQueryResult,
+    retrieval_metrics: dict[str, Any],
+    judge_aggregate: dict[str, Any],
+) -> str:
+    if retrieval_metrics.get("hit_at_5") == 0.0:
+        return "retrieval_miss"
+    if int(result.trace.selected_doc_count or 0) <= 0:
+        return "weak_context_selection"
+    if result.trace.top1_similarity_score is not None and float(result.trace.top1_similarity_score or 0.0) < 0.5:
+        return "bad_chunking"
+    if judge_aggregate.get("hallucination_flag") is True:
+        return "generation_hallucination"
+    if (judge_aggregate.get("citation_correctness_score") or 1.0) < 0.70 or int(result.trace.citation_count or 0) == 0:
+        return "citation_issue"
+    if (judge_aggregate.get("needs_human") is True or result.trace.needs_human) and not case.expected_handoff:
+        return "unnecessary_handoff"
+    return "grounded_answer"
+
+
+def _build_trace_payload(
+    *,
+    case: BenchmarkCase,
+    result: RagQueryResult,
+    retrieval_metrics: dict[str, Any],
+    judge_votes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    trace = result.trace
+    answer = result.answer
+    missed_expected_docs = _missed_expected_docs(
+        case=case,
+        retrieval_candidates=trace.retrieval_candidates,
+    )
+    return {
+        "question": case.question,
+        "answer_text": answer.answer,
+        "answer_preview": _clean_text(answer.answer)[:280],
+        "query_type": case.query_type or trace.query_type,
+        "source_type": case.source_type or trace.primary_source_type,
+        "product": case.product,
+        "language": case.language,
+        "expected_document_ids": case.expected_document_ids,
+        "expected_heading_paths": case.expected_heading_paths,
+        "missed_expected_docs": missed_expected_docs,
+        "retrieval_metrics": retrieval_metrics,
+        "generation_mode": trace.generation_mode,
+        "needs_human": trace.needs_human,
+        "handoff_reason": trace.handoff_reason,
+        "confidence_score": trace.confidence_score,
+        "citation_count": trace.citation_count,
+        "citation_coverage_ratio": trace.citation_coverage_ratio,
+        "cited_chunk_ids": trace.cited_chunk_ids,
+        "structured_retry_used": trace.structured_retry_used,
+        "extractive_fallback_used": trace.extractive_fallback_used,
+        "selected_doc_count": trace.selected_doc_count,
+        "top1_similarity_score": trace.top1_similarity_score,
+        "avg_selected_similarity_score": trace.avg_selected_similarity_score,
+        "vector_candidates_count": trace.vector_candidates_count,
+        "bm25_candidates_count": trace.bm25_candidates_count,
+        "reranked_candidates_count": trace.reranked_candidates_count,
+        "retrieval_candidates": trace.retrieval_candidates,
+        "selected_contexts": trace.selected_contexts,
+        "latency_ms": {
+            "retrieval": trace.retrieval_latency_ms,
+            "generation": trace.generation_latency_ms,
+            "total": trace.total_latency_ms,
+        },
+        "judge_votes": judge_votes,
     }
 
 
@@ -208,11 +324,19 @@ def _build_eval_row(
         expected_heading_paths=case.expected_heading_paths,
     )
     judge_aggregate = aggregate_judge_votes(judge_votes)
+    trace_payload = _build_trace_payload(
+        case=case,
+        result=result,
+        retrieval_metrics=retrieval_metrics,
+        judge_votes=judge_votes,
+    )
     row = {
         "test_case_id": case.test_case_id,
         "question": case.question,
         "query_type": case.query_type or result.trace.query_type,
         "source_type": case.source_type or result.trace.primary_source_type,
+        "product": case.product,
+        "language": case.language,
         "chunk_strategy": result.trace.primary_chunk_strategy,
         "retrieval_strategy": result.trace.retrieval_strategy,
         "hit_at_1": retrieval_metrics.get("hit_at_1"),
@@ -236,15 +360,28 @@ def _build_eval_row(
         "judge_votes": judge_votes,
         "judge_disagreement_flag": bool(judge_aggregate.get("judge_disagreement_flag")),
         "answer_preview": _clean_text(result.answer.answer)[:280],
+        "expected_document_ids": case.expected_document_ids,
+        "expected_heading_paths": case.expected_heading_paths,
+        "trace_payload": trace_payload,
         "retrieval_latency_ms": result.trace.retrieval_latency_ms,
         "generation_latency_ms": result.trace.generation_latency_ms,
         "total_latency_ms": result.trace.total_latency_ms,
+        "selected_doc_count": result.trace.selected_doc_count,
+        "top1_similarity_score": result.trace.top1_similarity_score,
+        "avg_selected_similarity_score": result.trace.avg_selected_similarity_score,
+        "avg_cost_per_query": _estimate_query_cost(result),
     }
     row["failure_type"] = _failure_type(
         result=result,
         retrieval_metrics=retrieval_metrics,
         judge_aggregate=row,
         case=case,
+    )
+    row["root_cause_label"] = _root_cause_label(
+        case=case,
+        result=result,
+        retrieval_metrics=retrieval_metrics,
+        judge_aggregate=row,
     )
     return row
 

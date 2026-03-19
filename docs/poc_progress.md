@@ -19,8 +19,8 @@
 ## 每日进展日志
 | Date | Phase | Status | What Changed | Evidence Path | Next Step | Owner |
 |---|---|---|---|---|---|---|
-| 2026-03-04 | P1 | In Progress | 完成 `backend/`、`client_ui/`、`engineer_ui/`、`dashboard/` 骨架与最小 API/WS 联通 | `artifacts/phase-1/init/` | 执行 P1-T1~P1-T3 并登记结果 | Codex |
-| 2026-03-05 | P4 | In Progress | `client_ui` 按 `ui_for_client` 信息架构重构为登录/聊天主页/会话详情/会话历史四视图，保留与本地后端 API 联通 | `artifacts/phase-4/client-ui-redesign/` | 浏览器回归并执行 P4-T1~P4-T3 | Codex |
+| 2026-03-04 | P1 | In Progress | 完成 `backend/`、`ui/client-ui/`、`ui/engineer-ui/`、`ui/dashboard-ui/` 骨架与最小 API/WS 联通 | `artifacts/phase-1/init/` | 执行 P1-T1~P1-T3 并登记结果 | Codex |
+| 2026-03-05 | P4 | In Progress | `ui/client-ui/` 按 `ui/client-ui/next-prototype/` 信息架构重构为登录/聊天主页/会话详情/会话历史四视图，保留与本地后端 API 联通 | `artifacts/phase-4/client-ui-redesign/` | 浏览器回归并执行 P4-T1~P4-T3 | Codex |
 | 2026-03-05 | P2 | In Progress | 接入 LangChain RAG：客户提问优先走 PostgreSQL(pgvector) 检索+LLM 回答，失败时自动回退 FAQ | `artifacts/phase-2/rag-integration/` | 配置 `OPENAI_API_KEY` 与 `PGVECTOR_DSN` 后执行检索命中验证 | Codex |
 | 2026-03-05 | P2 | In Progress | RAG 回答风格升级为 DocAgent 同款：结构化 JSON（answer/key_steps/citations/insufficient_evidence）+ citation 校验 + 严格重试 | `artifacts/phase-2/rag-answer-style/` | 增加前端 citations 展示并做回归验证 | Codex |
 | 2026-03-07 | P4 | In Progress | 客户端输入交互升级：`Enter` 发送、`Shift+Enter` 换行；发送中按钮切换为停止图标，可中断生成并编辑刚发送消息后重发 | `artifacts/phase-4/client-input-interaction/` | 浏览器手工验证停止与编辑重发链路 | Codex |

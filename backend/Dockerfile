@@ -20,8 +20,6 @@ RUN python -m pip install --upgrade pip && \
     python -m pip show uvicorn fastapi >/dev/null
 
 COPY backend /app/backend
-COPY client_ui /app/client_ui
-COPY engineer_ui /app/engineer_ui
-COPY dashboard /app/dashboard
+COPY ui /app/ui
 
 EXPOSE 8000

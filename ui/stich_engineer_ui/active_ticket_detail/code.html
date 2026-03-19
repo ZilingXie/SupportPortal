@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Concierge AI - Active Ticket Workspace</title>
+<!-- Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<!-- Icons -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "on-tertiary-container": "#00434b",
+              "surface": "#f6f9ff",
+              "on-error-container": "#93000a",
+              "on-tertiary": "#ffffff",
+              "surface-bright": "#f6f9ff",
+              "on-surface": "#171c21",
+              "on-secondary-fixed-variant": "#343d96",
+              "on-surface-variant": "#3e4851",
+              "surface-dim": "#d6dae1",
+              "on-background": "#171c21",
+              "surface-container": "#eaeef5",
+              "on-primary-container": "#004060",
+              "inverse-on-surface": "#ecf1f8",
+              "on-secondary-fixed": "#000767",
+              "primary-fixed-dim": "#8dcdff",
+              "surface-container-highest": "#dee3ea",
+              "on-tertiary-fixed-variant": "#004f58",
+              "surface-variant": "#dee3ea",
+              "primary": "#006493",
+              "tertiary-fixed": "#9cf0ff",
+              "error": "#ba1a1a",
+              "surface-container-low": "#eff4fb",
+              "background": "#f6f9ff",
+              "on-secondary": "#ffffff",
+              "on-primary": "#ffffff",
+              "primary-container": "#00b0ff",
+              "outline-variant": "#bdc8d3",
+              "secondary-container": "#959efd",
+              "surface-container-high": "#e4e9ef",
+              "secondary-fixed": "#e0e0ff",
+              "tertiary-container": "#00b7cc",
+              "on-error": "#ffffff",
+              "inverse-surface": "#2c3136",
+              "error-container": "#ffdad6",
+              "surface-tint": "#006493",
+              "on-primary-fixed-variant": "#004b70",
+              "primary-fixed": "#cae6ff",
+              "outline": "#6e7882",
+              "tertiary": "#006875",
+              "on-secondary-container": "#27308a",
+              "surface-container-lowest": "#ffffff",
+              "on-tertiary-fixed": "#001f24",
+              "tertiary-fixed-dim": "#00daf3",
+              "inverse-primary": "#8dcdff",
+              "secondary": "#4c56af",
+              "on-primary-fixed": "#001e30",
+              "secondary-fixed-dim": "#bdc2ff"
+            },
+            fontFamily: {
+              "headline": ["Manrope"],
+              "body": ["Inter"],
+              "label": ["Inter"]
+            },
+            borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+        .glass-panel {
+            background: rgba(222, 227, 234, 0.6);
+            backdrop-filter: blur(20px);
+        }
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+    </style>
+</head>
+<body class="bg-surface font-body text-on-surface">
+<!-- TopAppBar -->
+<header class="fixed top-0 z-50 flex justify-between items-center w-full px-6 py-3 bg-white dark:bg-slate-950 shadow-sm dark:shadow-none border-b border-outline-variant">
+<div class="flex items-center gap-8">
+<span class="text-xl font-bold tracking-tighter text-indigo-900 dark:text-indigo-200">Concierge AI</span>
+<div class="flex items-center bg-slate-50 dark:bg-slate-900 px-3 py-1.5 rounded-lg border border-outline-variant">
+<span class="material-symbols-outlined text-slate-400 mr-2">search</span>
+<input class="bg-transparent border-none text-sm focus:ring-0 w-64" placeholder="Search tickets..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<button class="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors rounded-full">
+<span class="material-symbols-outlined text-slate-500">notifications</span>
+</button>
+<div class="flex items-center gap-2 pl-4 border-l border-outline-variant">
+<div class="text-right">
+<p class="font-manrope text-sm font-semibold tracking-tight text-on-surface">Alex Chen</p>
+<p class="text-[10px] uppercase tracking-widest text-slate-500">Senior Engineer</p>
+</div>
+<span class="material-symbols-outlined text-sky-600 dark:text-sky-400 text-3xl">account_circle</span>
+</div>
+</div>
+</header>
+<!-- SideNavBar -->
+<aside class="fixed left-0 top-0 h-full z-40 flex flex-col py-8 bg-indigo-950 dark:bg-black docked left-0 h-full w-20 hover:w-64 transition-all duration-300 group shadow-xl">
+<div class="flex flex-col gap-6 mt-16 px-4 h-full">
+<!-- Active Item: Ticket Pool (Contextual) -->
+<a class="flex items-center gap-4 p-3 rounded-xl bg-sky-500/10 text-sky-400 border-r-4 border-sky-400 transition-all ease-in-out duration-200" href="#">
+<span class="material-symbols-outlined">confirmation_number</span>
+<span class="opacity-0 group-hover:opacity-100 font-inter text-xs font-medium uppercase tracking-widest whitespace-nowrap">Ticket Pool</span>
+</a>
+<a class="flex items-center gap-4 p-3 rounded-xl text-slate-400 hover:text-white hover:bg-indigo-900/50 dark:hover:bg-slate-800 transition-all ease-in-out duration-200" href="#">
+<span class="material-symbols-outlined">auto_stories</span>
+<span class="opacity-0 group-hover:opacity-100 font-inter text-xs font-medium uppercase tracking-widest whitespace-nowrap">Knowledge Base</span>
+</a>
+<a class="flex items-center gap-4 p-3 rounded-xl text-slate-400 hover:text-white hover:bg-indigo-900/50 dark:hover:bg-slate-800 transition-all ease-in-out duration-200" href="#">
+<span class="material-symbols-outlined">bar_chart</span>
+<span class="opacity-0 group-hover:opacity-100 font-inter text-xs font-medium uppercase tracking-widest whitespace-nowrap">Reports</span>
+</a>
+<a class="flex items-center gap-4 p-3 rounded-xl text-slate-400 hover:text-white hover:bg-indigo-900/50 dark:hover:bg-slate-800 transition-all ease-in-out duration-200" href="#">
+<span class="material-symbols-outlined">health_and_safety</span>
+<span class="opacity-0 group-hover:opacity-100 font-inter text-xs font-medium uppercase tracking-widest whitespace-nowrap">System Health</span>
+</a>
+<div class="mt-auto flex flex-col gap-4 border-t border-white/10 pt-6">
+<a class="flex items-center gap-4 p-3 rounded-xl text-slate-400 hover:text-white transition-all ease-in-out duration-200" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="opacity-0 group-hover:opacity-100 font-inter text-xs font-medium uppercase tracking-widest whitespace-nowrap">Settings</span>
+</a>
+<a class="flex items-center gap-4 p-3 rounded-xl text-slate-400 hover:text-white transition-all ease-in-out duration-200" href="#">
+<span class="material-symbols-outlined">help_outline</span>
+<span class="opacity-0 group-hover:opacity-100 font-inter text-xs font-medium uppercase tracking-widest whitespace-nowrap">Help</span>
+</a>
+</div>
+</div>
+</aside>
+<!-- Main Content Canvas -->
+<main class="ml-20 pt-[60px] h-screen overflow-hidden flex flex-col bg-surface">
+<!-- Ticket Header Area -->
+<div class="px-8 py-6 flex justify-between items-center bg-white border-b border-outline-variant">
+<div class="flex flex-col gap-1">
+<div class="flex items-center gap-3">
+<span class="text-xs font-bold font-label uppercase tracking-widest text-secondary px-2 py-0.5 bg-secondary-fixed rounded">Ticket #AI-9421</span>
+<h1 class="font-headline text-2xl font-bold tracking-tight text-on-surface">Database Sync Failure - Production Region US-East</h1>
+</div>
+<div class="flex items-center gap-4 mt-1">
+<div class="flex items-center gap-2">
+<div class="w-24 h-1.5 bg-surface-container-highest rounded-full overflow-hidden">
+<div class="h-full bg-gradient-to-r from-error to-primary-container" style="width: 75%;"></div>
+</div>
+<span class="text-[10px] font-bold uppercase text-on-surface-variant tracking-wider">Sentiment: 75% Positive</span>
+</div>
+<span class="text-xs text-outline flex items-center gap-1">
+<span class="material-symbols-outlined text-sm">schedule</span> Created 14m ago
+                    </span>
+</div>
+</div>
+<div class="flex gap-3">
+<button class="flex items-center gap-2 px-4 py-2 border border-outline-variant text-on-surface hover:bg-surface-container transition-colors rounded-xl font-label text-sm font-semibold">
+<span class="material-symbols-outlined text-sm">sync</span> Sync Status
+                </button>
+<button class="flex items-center gap-2 px-4 py-2 border border-outline-variant text-on-surface hover:bg-surface-container transition-colors rounded-xl font-label text-sm font-semibold">
+<span class="material-symbols-outlined text-sm">sticky_note_2</span> Internal Note
+                </button>
+<button class="flex items-center gap-2 px-6 py-2 bg-primary-container text-on-primary-container hover:shadow-lg transition-all rounded-xl font-label text-sm font-bold">
+<span class="material-symbols-outlined text-sm" style="font-variation-settings: 'FILL' 1;">check_circle</span> Resolve Ticket
+                </button>
+</div>
+</div>
+<!-- Split Workspace Layout -->
+<div class="flex flex-1 overflow-hidden">
+<!-- Left Side: Conversation History (Editorial Scroll) -->
+<section class="w-1/2 flex flex-col bg-slate-50 border-r border-outline-variant overflow-y-auto no-scrollbar px-8 py-8 space-y-8">
+<!-- Chat Bubble: Customer -->
+<div class="flex flex-col items-start max-w-[85%]">
+<div class="flex items-center gap-2 mb-2">
+<span class="font-headline font-bold text-sm">Sarah Jenkins</span>
+<span class="text-[10px] text-outline">10:42 AM</span>
+</div>
+<div class="bg-surface-container-high p-5 rounded-xl rounded-tl-sm text-on-surface shadow-sm leading-relaxed">
+                        I'm seeing multiple 'ECONNREFUSED' errors when trying to sync the production database to the analytics warehouse. This started about 15 minutes ago. It's affecting our real-time dashboards.
+                    </div>
+<div class="mt-2 flex gap-2">
+<span class="px-2 py-0.5 bg-error-container text-on-error-container text-[10px] font-bold rounded uppercase">Critical Path</span>
+</div>
+</div>
+<!-- Chat Bubble: AI Assistant -->
+<div class="flex flex-col items-end self-end max-w-[85%]">
+<div class="flex items-center gap-2 mb-2">
+<span class="text-[10px] text-outline">10:43 AM</span>
+<span class="font-headline font-bold text-sm flex items-center gap-1 text-primary">
+<span class="material-symbols-outlined text-sm" style="font-variation-settings: 'FILL' 1;">auto_awesome</span>
+                            Concierge AI
+                        </span>
+</div>
+<div class="bg-primary-fixed p-5 rounded-xl rounded-tr-sm text-on-primary-fixed-variant shadow-sm border border-primary-container/20 leading-relaxed relative">
+                        Hello Sarah, I've acknowledged the sync issue. I am currently running diagnostics on the US-East-1 connection string and checking for any VPC peering mismatches that might have occurred during the recent update. I will have more details shortly.
+                        <div class="absolute -bottom-3 -right-2 flex items-center gap-1 px-2 py-1 bg-secondary-fixed text-on-secondary-fixed-variant rounded-full text-[9px] font-bold shadow-sm border border-outline-variant">
+<span class="material-symbols-outlined text-[10px]">menu_book</span> RAG: CONN_DOC_24
+                        </div>
+</div>
+</div>
+<!-- Chat Bubble: Customer -->
+<div class="flex flex-col items-start max-w-[85%]">
+<div class="flex items-center gap-2 mb-2">
+<span class="font-headline font-bold text-sm">Sarah Jenkins</span>
+<span class="text-[10px] text-outline">10:45 AM</span>
+</div>
+<div class="bg-surface-container-high p-5 rounded-xl rounded-tl-sm text-on-surface shadow-sm leading-relaxed">
+                        Thanks for looking into it. We have a board meeting in 45 minutes, so we really need those dashboards live. Any ETAs?
+                    </div>
+<div class="mt-2">
+<span class="flex items-center gap-1 text-[10px] text-error font-bold uppercase tracking-tight">
+<span class="material-symbols-outlined text-xs">priority_high</span> Urgency Detected
+                        </span>
+</div>
+</div>
+<!-- AI Typing Indicator -->
+<div class="flex items-center gap-2 animate-pulse text-primary/50 self-end">
+<span class="text-[10px] font-bold uppercase tracking-widest">AI Drafting Response</span>
+<span class="material-symbols-outlined text-sm">more_horiz</span>
+</div>
+</section>
+<!-- Right Side: Engineer Controls (Architectural Frame) -->
+<section class="w-1/2 flex flex-col bg-surface overflow-y-auto no-scrollbar">
+<!-- AI Management Toggle -->
+<div class="p-6 bg-white shadow-sm flex items-center justify-between border-b border-outline-variant">
+<div class="flex flex-col">
+<p class="text-[10px] font-bold text-outline uppercase tracking-widest">Operating Mode</p>
+<h3 class="font-headline font-bold text-on-surface">Control Strategy</h3>
+</div>
+<div class="bg-surface-container p-1 rounded-full flex gap-1 relative overflow-hidden">
+<button class="z-10 px-6 py-2 rounded-full text-xs font-bold uppercase tracking-widest bg-primary-container text-on-primary-container shadow-md transition-all">AI Managing</button>
+<button class="z-10 px-6 py-2 rounded-full text-xs font-bold uppercase tracking-widest text-on-surface-variant hover:bg-surface-variant transition-colors">Human Takeover</button>
+</div>
+</div>
+<div class="p-8 space-y-8">
+<!-- Asymmetric Section 1: AI Suggested Next Steps -->
+<div class="grid grid-cols-12 gap-6">
+<div class="col-span-12">
+<div class="flex items-center justify-between mb-4">
+<h3 class="font-headline text-lg font-bold">Suggested Response</h3>
+<span class="text-[10px] font-bold text-primary flex items-center gap-1">
+<span class="material-symbols-outlined text-sm">verified</span> 92% CONFIDENCE
+                                </span>
+</div>
+<div class="p-6 bg-white border-l-4 border-primary-container rounded-xl shadow-sm space-y-4">
+<p class="text-sm italic text-on-surface-variant leading-relaxed">"I understand the urgency with the board meeting. I have identified a transient IP block on the gateway. I am initiating a route reset now, which typically takes 3-5 minutes. I'll confirm once the sync starts flowing again."</p>
+<div class="flex gap-2">
+<button class="px-4 py-2 bg-primary-container text-on-primary-container text-xs font-bold rounded-lg hover:shadow-md transition-all">Approve &amp; Send</button>
+<button class="px-4 py-2 bg-surface-container text-on-surface text-xs font-bold rounded-lg hover:bg-surface-variant">Edit Draft</button>
+</div>
+</div>
+</div>
+</div>
+<!-- Asymmetric Section 2: Metrics & RAG Context -->
+<div class="grid grid-cols-2 gap-6">
+<!-- Sentiment History -->
+<div class="bg-white p-6 rounded-xl shadow-sm border border-outline-variant/10">
+<div class="flex items-center justify-between mb-6">
+<p class="text-xs font-bold uppercase tracking-widest text-outline">Sentiment Trend</p>
+<span class="material-symbols-outlined text-primary-container">trending_up</span>
+</div>
+<div class="h-24 flex items-end gap-1.5">
+<div class="w-full bg-primary/20 rounded-t-sm" style="height: 40%;"></div>
+<div class="w-full bg-primary/20 rounded-t-sm" style="height: 35%;"></div>
+<div class="w-full bg-primary/30 rounded-t-sm" style="height: 50%;"></div>
+<div class="w-full bg-primary/40 rounded-t-sm" style="height: 45%;"></div>
+<div class="w-full bg-error/40 rounded-t-sm" style="height: 85%;"></div>
+<div class="w-full bg-primary-container rounded-t-sm" style="height: 60%;"></div>
+<div class="w-full bg-primary-container rounded-t-sm" style="height: 70%;"></div>
+</div>
+<p class="mt-4 text-[10px] text-outline text-center uppercase tracking-tighter">Last 30 Minutes of Activity</p>
+</div>
+<!-- Knowledge Base Sidebar -->
+<div class="bg-indigo-950 p-6 rounded-xl shadow-xl text-white">
+<div class="flex items-center justify-between mb-4">
+<p class="text-[10px] font-bold uppercase tracking-widest text-sky-300">RAG Context</p>
+<span class="material-symbols-outlined text-sky-400 text-sm">database</span>
+</div>
+<ul class="space-y-3">
+<li class="p-2.5 rounded-lg bg-white/5 border border-white/10 flex items-start gap-2 group cursor-pointer hover:bg-white/10 transition-colors">
+<span class="material-symbols-outlined text-xs mt-0.5 text-sky-400">description</span>
+<div class="flex flex-col">
+<span class="text-[11px] font-bold leading-none">VPC_Peering_Troubleshoot.md</span>
+<span class="text-[9px] text-slate-400">Used for gateway diagnosis</span>
+</div>
+</li>
+<li class="p-2.5 rounded-lg bg-white/5 border border-white/10 flex items-start gap-2 group cursor-pointer hover:bg-white/10 transition-colors">
+<span class="material-symbols-outlined text-xs mt-0.5 text-sky-400">description</span>
+<div class="flex flex-col">
+<span class="text-[11px] font-bold leading-none">Sync_Warehouse_SOP.pdf</span>
+<span class="text-[9px] text-slate-400">Standard response templates</span>
+</div>
+</li>
+<li class="p-2.5 rounded-lg bg-white/5 border border-white/10 flex items-start gap-2 group cursor-pointer hover:bg-white/10 transition-colors">
+<span class="material-symbols-outlined text-xs mt-0.5 text-sky-400">description</span>
+<div class="flex flex-col">
+<span class="text-[11px] font-bold leading-none">Error_Code_ECNREF.json</span>
+<span class="text-[9px] text-slate-400">Automated mapping logic</span>
+</div>
+</li>
+</ul>
+</div>
+</div>
+<!-- Direct Input Area -->
+<div class="bg-white p-6 rounded-xl shadow-sm border border-outline-variant/30">
+<div class="flex items-center gap-2 mb-4">
+<span class="material-symbols-outlined text-on-surface">keyboard</span>
+<span class="font-headline font-bold text-sm">Direct Engineer Input</span>
+</div>
+<textarea class="w-full h-32 bg-slate-50 border border-outline-variant rounded-xl p-4 text-sm focus:ring-primary focus:border-primary no-scrollbar" placeholder="Type directly to customer (AI will stay silent)..."></textarea>
+<div class="flex justify-between items-center mt-4">
+<div class="flex gap-2">
+<button class="p-2 text-outline hover:text-on-surface transition-colors">
+<span class="material-symbols-outlined">attach_file</span>
+</button>
+<button class="p-2 text-outline hover:text-on-surface transition-colors">
+<span class="material-symbols-outlined">mood</span>
+</button>
+</div>
+<button class="px-8 py-2 bg-secondary text-white text-xs font-bold uppercase tracking-widest rounded-lg hover:shadow-lg transition-all">Send Now</button>
+</div>
+</div>
+</div>
+</section>
+</div>
+</main>
+<!-- Contextual Floating Indicator (AI Pulse) -->
+<div class="fixed bottom-6 right-6 z-50">
+<div class="flex items-center gap-3 bg-white px-4 py-3 rounded-full shadow-2xl border border-primary-container/30">
+<div class="relative flex h-3 w-3">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary-container opacity-75"></span>
+<span class="relative inline-flex rounded-full h-3 w-3 bg-primary-container"></span>
+</div>
+<p class="text-[11px] font-bold uppercase tracking-widest text-on-surface">AI Analyzing System Logs</p>
+</div>
+</div>
+</body></html>
