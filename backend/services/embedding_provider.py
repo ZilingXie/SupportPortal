@@ -11,10 +11,10 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Protocol
 
-DEFAULT_EMBEDDING_PROVIDER = "siliconflow_qwen3"
-DEFAULT_EMBEDDING_MODEL_ID = "Qwen/Qwen3-Embedding-8B"
+DEFAULT_EMBEDDING_PROVIDER = "siliconflow"
+DEFAULT_EMBEDDING_MODEL_ID = "BAAI/bge-large-en-v1.5"
 DEFAULT_EMBEDDING_BATCH_SIZE = 16
-DEFAULT_PGVECTOR_TABLE = "docagent_chunks_qwen3_1024"
+DEFAULT_PGVECTOR_TABLE = "docagent_chunks_bge_large_en_v1_5_1024"
 DEFAULT_PGVECTOR_SCHEMA = "supportportal"
 DEFAULT_PRIMARY_CHUNK_STRATEGY = "markdown_header_v1"
 DEFAULT_SHADOW_CHUNK_STRATEGY = "semantic_qwen3_v1"
@@ -53,6 +53,13 @@ def _clean_text(value: Any) -> str:
     return " ".join(str(value or "").split()).strip()
 
 
+def _normalize_embedding_provider_name(value: Any) -> str:
+    normalized = _clean_text(value)
+    if normalized == "siliconflow_qwen3":
+        return "siliconflow"
+    return normalized
+
+
 def _estimate_tokens_fallback(text: str) -> int:
     raw = str(text or "")
     if not raw.strip():
@@ -68,7 +75,7 @@ def _env_flag(name: str, default: bool) -> bool:
 
 
 def embedding_provider_name() -> str:
-    return _clean_text(os.getenv("EMBEDDING_PROVIDER")) or DEFAULT_EMBEDDING_PROVIDER
+    return _normalize_embedding_provider_name(os.getenv("EMBEDDING_PROVIDER")) or DEFAULT_EMBEDDING_PROVIDER
 
 
 def embedding_model_id() -> str:
@@ -407,14 +414,12 @@ def _siliconflow_request_json(
         raise RuntimeError(f"SiliconFlow embedding request failed: {exc}") from exc
 
 
-class SiliconFlowQwenEmbeddingProvider:
+class SiliconFlowEmbeddingProvider:
     def __init__(self, config: EmbeddingRuntimeConfig) -> None:
         api_key = siliconflow_api_key()
         if not api_key:
-            raise RuntimeError(
-                "SILICONFLOW_API_KEY is required for EMBEDDING_PROVIDER=siliconflow_qwen3"
-            )
-        self.provider_name = "siliconflow_qwen3"
+            raise RuntimeError("SILICONFLOW_API_KEY is required for EMBEDDING_PROVIDER=siliconflow")
+        self.provider_name = "siliconflow"
         self.model_id = config.model_id
         self._api_key = api_key
         self._base_url = siliconflow_base_url().rstrip("/")
@@ -562,8 +567,8 @@ class OpenAIEmbeddingProvider:
 @lru_cache(maxsize=1)
 def get_embedding_provider() -> EmbeddingProvider:
     config = _runtime_config()
-    if config.provider == "siliconflow_qwen3":
-        return SiliconFlowQwenEmbeddingProvider(config)
+    if config.provider == "siliconflow":
+        return SiliconFlowEmbeddingProvider(config)
     if config.provider == "local_bge_m3":
         return LocalBGEM3EmbeddingProvider(config)
     if config.provider == "openai":
@@ -577,7 +582,7 @@ def reset_embedding_provider_cache() -> None:
 
 def validate_embedding_provider_dim(provider: EmbeddingProvider | None = None) -> int:
     configured_dim = require_configured_vector_dim()
-    if provider is None and embedding_provider_name() == "siliconflow_qwen3":
+    if provider is None and embedding_provider_name() == "siliconflow":
         actual_dim = siliconflow_embedding_dimensions()
         if actual_dim != configured_dim:
             raise RuntimeError(
@@ -605,7 +610,7 @@ def validate_embedding_provider_dim(provider: EmbeddingProvider | None = None) -
 
 def embedding_external_cost_per_1k() -> float:
     provider = embedding_provider_name()
-    if provider == "siliconflow_qwen3":
+    if provider == "siliconflow":
         return siliconflow_embedding_cost_per_1k()
     if provider != "openai":
         return 0.0

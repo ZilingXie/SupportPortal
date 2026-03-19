@@ -64,7 +64,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIsInstance(repository, PostgresKnowledgeRepository)
         self.assertEqual(repository._schema, "supportportal")
         self.assertEqual(repository._vector_schema, "supportportal")
-        self.assertEqual(repository._vector_table_name, "docagent_chunks_qwen3_1024")
+        self.assertEqual(repository._vector_table_name, "docagent_chunks_bge_large_en_v1_5_1024")
 
     def test_vector_type_dimension_extracts_pgvector_dim(self) -> None:
         self.assertEqual(_vector_type_dimension("vector(1024)"), 1024)

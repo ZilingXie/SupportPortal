@@ -146,17 +146,17 @@ python scripts/fetch_and_upload_agora_docs.py \
 
 ## Local Embedding / Dual-Track Chunking
 
-默认向量化配置已经切到 SiliconFlow Qwen3 Embedding：
+默认向量化配置已经切到 SiliconFlow BGE Large Embedding：
 
 ```env
-EMBEDDING_PROVIDER=siliconflow_qwen3
-EMBEDDING_MODEL_ID=Qwen/Qwen3-Embedding-8B
+EMBEDDING_PROVIDER=siliconflow
+EMBEDDING_MODEL_ID=BAAI/bge-large-en-v1.5
 EMBEDDING_BATCH_SIZE=16
 SILICONFLOW_API_KEY=...
 SILLICONFLOW_KEY=...
 SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1
 SILICONFLOW_EMBEDDING_DIMENSIONS=1024
-PGVECTOR_TABLE=docagent_chunks_qwen3_1024
+PGVECTOR_TABLE=docagent_chunks_bge_large_en_v1_5_1024
 PGVECTOR_DIM=1024
 PRIMARY_CHUNK_STRATEGY=markdown_header_v1
 SHADOW_CHUNK_STRATEGY=semantic_qwen3_v1

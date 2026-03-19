@@ -11,7 +11,10 @@ from backend.services.rag_qa import RetrievedChunk, _get_rag_config, _rrf_merge,
 class RagQaHybridTests(unittest.TestCase):
     def test_split_table_name_supports_schema_prefix(self) -> None:
         self.assertEqual(_split_table_name("public.docagent"), ("public", "docagent"))
-        self.assertEqual(_split_table_name("docagent_chunks_qwen3_1024"), ("supportportal", "docagent_chunks_qwen3_1024"))
+        self.assertEqual(
+            _split_table_name("docagent_chunks_bge_large_en_v1_5_1024"),
+            ("supportportal", "docagent_chunks_bge_large_en_v1_5_1024"),
+        )
 
     def test_get_rag_config_uses_hybrid_candidate_windows(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
@@ -20,9 +23,9 @@ class RagQaHybridTests(unittest.TestCase):
         self.assertEqual(config["vector_candidate_k"], 24)
         self.assertEqual(config["keyword_candidate_k"], 24)
         self.assertEqual(config["fusion_candidate_k"], 30)
-        self.assertEqual(config["table"], "supportportal.docagent_chunks_qwen3_1024")
-        self.assertEqual(config["embedding_provider"], "siliconflow_qwen3")
-        self.assertEqual(config["embedding_model"], "Qwen/Qwen3-Embedding-8B")
+        self.assertEqual(config["table"], "supportportal.docagent_chunks_bge_large_en_v1_5_1024")
+        self.assertEqual(config["embedding_provider"], "siliconflow")
+        self.assertEqual(config["embedding_model"], "BAAI/bge-large-en-v1.5")
 
     def test_rrf_merge_dedupes_and_limits_results(self) -> None:
         shared = RetrievedChunk(

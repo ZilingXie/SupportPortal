@@ -133,9 +133,9 @@ prepare_compose_env() {
   fi
 
   if [[ -z "${pgvector_table}" ]]; then
-    export_env_value PGVECTOR_TABLE "docagent_chunks_qwen3_1024"
-    pgvector_table="docagent_chunks_qwen3_1024"
-    log "PGVECTOR_TABLE is missing in ${ENV_FILE}; defaulting to docagent_chunks_qwen3_1024."
+    export_env_value PGVECTOR_TABLE "docagent_chunks_bge_large_en_v1_5_1024"
+    pgvector_table="docagent_chunks_bge_large_en_v1_5_1024"
+    log "PGVECTOR_TABLE is missing in ${ENV_FILE}; defaulting to docagent_chunks_bge_large_en_v1_5_1024."
   fi
 
   if [[ -z "${pgvector_dim}" ]]; then
@@ -144,8 +144,8 @@ prepare_compose_env() {
     log "PGVECTOR_DIM is missing in ${ENV_FILE}; defaulting to 1024."
   fi
 
-  if [[ "${pgvector_table}" == "docagent" || "${pgvector_table}" == "docagent_chunks" ]]; then
-    log "PGVECTOR_TABLE=${pgvector_table} looks like a legacy table name. Current default is docagent_chunks_qwen3_1024."
+  if [[ "${pgvector_table}" == "docagent" || "${pgvector_table}" == "docagent_chunks" || "${pgvector_table}" == "docagent_chunks_qwen3_1024" ]]; then
+    log "PGVECTOR_TABLE=${pgvector_table} looks like a legacy table name. Current default is docagent_chunks_bge_large_en_v1_5_1024."
   fi
 
   log "Effective vector config: schema=${pgvector_schema:-supportportal} table=${pgvector_table} dim=${pgvector_dim}"

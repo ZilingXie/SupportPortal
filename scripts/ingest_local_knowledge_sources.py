@@ -17,13 +17,13 @@ from backend.repositories.knowledge_repository import create_knowledge_repositor
 from backend.services.local_source_sync import claim_and_ingest_source_documents
 
 load_dotenv(dotenv_path=REPO_ROOT / ".env", override=False)
-os.environ.setdefault("EMBEDDING_PROVIDER", "siliconflow_qwen3")
-os.environ.setdefault("EMBEDDING_MODEL_ID", "Qwen/Qwen3-Embedding-8B")
+os.environ.setdefault("EMBEDDING_PROVIDER", "siliconflow")
+os.environ.setdefault("EMBEDDING_MODEL_ID", "BAAI/bge-large-en-v1.5")
 os.environ.setdefault("EMBEDDING_BATCH_SIZE", "16")
 os.environ.setdefault("PRIMARY_CHUNK_STRATEGY", "markdown_header_v1")
 os.environ.setdefault("SHADOW_CHUNK_STRATEGY", "semantic_qwen3_v1")
 os.environ.setdefault("SHADOW_CHUNK_ENABLED", "true")
-os.environ.setdefault("PGVECTOR_TABLE", "docagent_chunks_qwen3_1024")
+os.environ.setdefault("PGVECTOR_TABLE", "docagent_chunks_bge_large_en_v1_5_1024")
 os.environ.setdefault("PGVECTOR_DIM", "1024")
 os.environ.setdefault("SILICONFLOW_EMBEDDING_DIMENSIONS", "1024")
 os.environ.setdefault("LOCAL_KNOWLEDGE_ROOT", str(REPO_ROOT / "local_knowledge"))
