@@ -292,6 +292,30 @@ class RagServiceClient:
         payload["range"] = range_value
         return self._request("GET", f"/internal/dashboard/rag/{quoted}", query=payload)
 
+    def update_review_sample(
+        self,
+        sample_id: str,
+        *,
+        review_status: str | None = None,
+        retrieval_ok: bool | None = None,
+        answer_ok: bool | None = None,
+        citation_ok: bool | None = None,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        quoted = urllib.parse.quote(str(sample_id or "").strip(), safe="")
+        payload = {
+            "review_status": review_status,
+            "retrieval_ok": retrieval_ok,
+            "answer_ok": answer_ok,
+            "citation_ok": citation_ok,
+            "note": note,
+        }
+        return self._request(
+            "POST",
+            f"/internal/dashboard/rag/review-samples/{quoted}",
+            json_body=payload,
+        )
+
     def health(self, *, timeout_seconds: float | None = None) -> dict[str, Any]:
         return self._request("GET", "/health", timeout_seconds=timeout_seconds)
 

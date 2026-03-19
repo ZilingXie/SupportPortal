@@ -274,6 +274,85 @@ function normalizeLinkList(value) {
     .filter(Boolean);
 }
 
+function optionalBooleanValue(value) {
+  if (value === true) {
+    return "true";
+  }
+  if (value === false) {
+    return "false";
+  }
+  return "";
+}
+
+function parseOptionalBoolean(value) {
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  return null;
+}
+
+function renderReviewDetailRow(row, columnCount) {
+  const sampleId = escapeHtml(String(row.sample_id || ""));
+  const reviewContext = row.review_context ? JSON.stringify(row.review_context, null, 2) : "{}";
+  const reviewStatus = String(row.review_status || "pending");
+  return `
+    <tr class="rag-table-detail" id="review-detail-${sampleId}" hidden>
+      <td colspan="${columnCount}">
+        <div class="rag-review-detail">
+          <div class="rag-review-context">
+            <h4>Review Context</h4>
+            <pre>${escapeHtml(reviewContext)}</pre>
+          </div>
+          <div class="rag-review-form">
+            <label>
+              <span>Status</span>
+              <select data-review-status="${sampleId}">
+                <option value="pending" ${reviewStatus === "pending" ? "selected" : ""}>Pending</option>
+                <option value="reviewed" ${reviewStatus === "reviewed" ? "selected" : ""}>Reviewed</option>
+                <option value="dismissed" ${reviewStatus === "dismissed" ? "selected" : ""}>Dismissed</option>
+              </select>
+            </label>
+            <label>
+              <span>Retrieval OK</span>
+              <select data-review-retrieval="${sampleId}">
+                <option value="" ${optionalBooleanValue(row.retrieval_ok) === "" ? "selected" : ""}>Unset</option>
+                <option value="true" ${optionalBooleanValue(row.retrieval_ok) === "true" ? "selected" : ""}>Yes</option>
+                <option value="false" ${optionalBooleanValue(row.retrieval_ok) === "false" ? "selected" : ""}>No</option>
+              </select>
+            </label>
+            <label>
+              <span>Answer OK</span>
+              <select data-review-answer="${sampleId}">
+                <option value="" ${optionalBooleanValue(row.answer_ok) === "" ? "selected" : ""}>Unset</option>
+                <option value="true" ${optionalBooleanValue(row.answer_ok) === "true" ? "selected" : ""}>Yes</option>
+                <option value="false" ${optionalBooleanValue(row.answer_ok) === "false" ? "selected" : ""}>No</option>
+              </select>
+            </label>
+            <label>
+              <span>Citation OK</span>
+              <select data-review-citation="${sampleId}">
+                <option value="" ${optionalBooleanValue(row.citation_ok) === "" ? "selected" : ""}>Unset</option>
+                <option value="true" ${optionalBooleanValue(row.citation_ok) === "true" ? "selected" : ""}>Yes</option>
+                <option value="false" ${optionalBooleanValue(row.citation_ok) === "false" ? "selected" : ""}>No</option>
+              </select>
+            </label>
+            <label class="rag-review-note">
+              <span>Note</span>
+              <textarea data-review-note="${sampleId}" rows="4">${escapeHtml(String(row.note || ""))}</textarea>
+            </label>
+            <div class="rag-review-actions">
+              <button class="rag-table-row-action" type="button" data-submit-review-sample="${sampleId}">Save Review</button>
+            </div>
+          </div>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
 function formatDisplayValue(value) {
   if (value === null || value === undefined) {
     return "-";
@@ -601,8 +680,25 @@ function renderCellValue(pageName, tableKey, columnKey, value, row) {
       </button>
     `;
   }
+  if (tableKey === "review_queue" && columnKey === "sample_id" && value) {
+    return `
+      <button class="rag-table-row-action" data-toggle-review-detail="${escapeHtml(String(value))}">
+        ${escapeHtml(String(value))}
+      </button>
+    `;
+  }
+  if (tableKey === "review_queue" && columnKey === "review_action" && row.sample_id) {
+    return `
+      <button class="rag-table-row-action" data-toggle-review-detail="${escapeHtml(String(row.sample_id))}">
+        ${escapeHtml(String(value))}
+      </button>
+    `;
+  }
   if (typeof value === "boolean") {
     return value ? "Yes" : "No";
+  }
+  if (value && typeof value === "object") {
+    return escapeHtml(JSON.stringify(value));
   }
   if (value === null || value === undefined || value === "") {
     return "-";
@@ -634,7 +730,7 @@ function renderRagTables(pageName, tables = {}, hasEvalData = false) {
           </article>
         `;
       }
-      const columns = Object.keys(tableRows[0] || {});
+      const columns = Object.keys(tableRows[0] || {}).filter((column) => !(tableKey === "review_queue" && column === "review_context"));
       return `
         <article class="rag-panel-card rag-table-card" data-rag-table="${escapeHtml(tableKey)}">
           <div>
@@ -660,6 +756,8 @@ function renderRagTables(pageName, tables = {}, hasEvalData = false) {
                             </td>
                           </tr>
                         `
+                        : tableKey === "review_queue"
+                          ? renderReviewDetailRow(row, columns.length)
                         : "";
                     return `
                       <tr>
@@ -1519,6 +1617,48 @@ function bindIngestionNavigation() {
       if (ingestionTrigger) {
         openIngestionReport(ingestionTrigger.dataset.openIngestion).catch((error) => {
           setRealtimeStatus(`Failed to open ingestion report: ${error.message}`);
+        });
+        return;
+      }
+      const reviewTrigger = event.target.closest("[data-toggle-review-detail]");
+      if (reviewTrigger) {
+        const detailId = reviewTrigger.dataset.toggleReviewDetail;
+        const detailRow = document.getElementById(`review-detail-${detailId}`);
+        if (detailRow) {
+          detailRow.hidden = !detailRow.hidden;
+        }
+        return;
+      }
+      const reviewSubmitTrigger = event.target.closest("[data-submit-review-sample]");
+      if (reviewSubmitTrigger) {
+        const sampleId = reviewSubmitTrigger.dataset.submitReviewSample;
+        const detailRow = document.getElementById(`review-detail-${sampleId}`);
+        if (!detailRow) {
+          return;
+        }
+        const reviewStatus = detailRow.querySelector(`[data-review-status="${sampleId}"]`)?.value || "pending";
+        const retrievalOk = parseOptionalBoolean(detailRow.querySelector(`[data-review-retrieval="${sampleId}"]`)?.value || "");
+        const answerOk = parseOptionalBoolean(detailRow.querySelector(`[data-review-answer="${sampleId}"]`)?.value || "");
+        const citationOk = parseOptionalBoolean(detailRow.querySelector(`[data-review-citation="${sampleId}"]`)?.value || "");
+        const note = detailRow.querySelector(`[data-review-note="${sampleId}"]`)?.value || "";
+        fetchJson(`/api/dashboard/rag/review-samples/${encodeURIComponent(sampleId)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            review_status: reviewStatus,
+            retrieval_ok: retrievalOk,
+            answer_ok: answerOk,
+            citation_ok: citationOk,
+            note,
+          }),
+        }).then(async () => {
+          setRealtimeStatus(`Review sample ${sampleId} updated.`);
+          await Promise.all([
+            loadRagPage("failures", { force: true }),
+            loadRagPage("overview", { force: true }),
+          ]);
+        }).catch((error) => {
+          setRealtimeStatus(`Failed to update review sample: ${error.message}`);
         });
         return;
       }

@@ -24,6 +24,10 @@ from backend.services.embedding_provider import (
     require_configured_vector_dim,
     validate_embedding_provider_dim,
 )
+from backend.services.rag_benchmark import (
+    build_benchmark_review_sample,
+    build_live_review_sample,
+)
 from backend.services.knowledge_monitoring import (
     build_empty_knowledge_metrics,
     build_knowledge_metrics_payload,
@@ -59,6 +63,7 @@ _CHUNK_STRATEGIES = {
 _MODEL_PRICING = {
     "gpt-4.1": {"prompt_per_1k": 0.002, "completion_per_1k": 0.008},
     "gpt-4.1-mini": {"prompt_per_1k": 0.0004, "completion_per_1k": 0.0016},
+    "gpt-4o-mini": {"prompt_per_1k": 0.00015, "completion_per_1k": 0.0006},
 }
 
 _SOURCE_TYPE_TO_ENTRY_TYPE = {
@@ -210,6 +215,11 @@ def _normalize_dedupe_action(value: Any) -> str | None:
 def _normalize_status_filter(value: Any) -> str:
     normalized = str(value or "all").strip().lower()
     return normalized if normalized in _VALID_INGESTION_STATUSES or normalized == "all" else "all"
+
+
+def _normalize_review_status(value: Any) -> str:
+    normalized = str(value or "pending").strip().lower()
+    return normalized if normalized in {"pending", "reviewed", "dismissed"} else "pending"
 
 
 def _vector_literal(values: list[float]) -> str:
@@ -544,6 +554,54 @@ class KnowledgeRepository(Protocol):
         *,
         run: dict[str, Any],
         candidates: list[dict[str, Any]],
+    ) -> None:
+        ...
+
+    def upsert_rag_eval_run(
+        self,
+        *,
+        eval_run: dict[str, Any],
+    ) -> None:
+        ...
+
+    def replace_rag_eval_results(
+        self,
+        *,
+        eval_run_id: str,
+        rows: list[dict[str, Any]],
+    ) -> None:
+        ...
+
+    def upsert_rag_daily_metric(
+        self,
+        *,
+        metric_date: str,
+        metrics: dict[str, Any],
+        source_type: str | None = None,
+        product: str | None = None,
+        query_type: str | None = None,
+        retrieval_strategy: str | None = None,
+        chunk_strategy: str | None = None,
+        experiment_id: str | None = None,
+    ) -> None:
+        ...
+
+    def upsert_review_sample(
+        self,
+        *,
+        sample: dict[str, Any],
+    ) -> None:
+        ...
+
+    def update_review_sample(
+        self,
+        sample_id: str,
+        *,
+        review_status: str | None = None,
+        retrieval_ok: bool | None = None,
+        answer_ok: bool | None = None,
+        citation_ok: bool | None = None,
+        note: str | None = None,
     ) -> None:
         ...
 
@@ -908,6 +966,72 @@ class DisabledKnowledgeRepository:
     ) -> None:
         _ = run
         _ = candidates
+        self._raise()
+
+    def upsert_rag_eval_run(
+        self,
+        *,
+        eval_run: dict[str, Any],
+    ) -> None:
+        _ = eval_run
+        self._raise()
+
+    def replace_rag_eval_results(
+        self,
+        *,
+        eval_run_id: str,
+        rows: list[dict[str, Any]],
+    ) -> None:
+        _ = eval_run_id
+        _ = rows
+        self._raise()
+
+    def upsert_rag_daily_metric(
+        self,
+        *,
+        metric_date: str,
+        metrics: dict[str, Any],
+        source_type: str | None = None,
+        product: str | None = None,
+        query_type: str | None = None,
+        retrieval_strategy: str | None = None,
+        chunk_strategy: str | None = None,
+        experiment_id: str | None = None,
+    ) -> None:
+        _ = metric_date
+        _ = metrics
+        _ = source_type
+        _ = product
+        _ = query_type
+        _ = retrieval_strategy
+        _ = chunk_strategy
+        _ = experiment_id
+        self._raise()
+
+    def upsert_review_sample(
+        self,
+        *,
+        sample: dict[str, Any],
+    ) -> None:
+        _ = sample
+        self._raise()
+
+    def update_review_sample(
+        self,
+        sample_id: str,
+        *,
+        review_status: str | None = None,
+        retrieval_ok: bool | None = None,
+        answer_ok: bool | None = None,
+        citation_ok: bool | None = None,
+        note: str | None = None,
+    ) -> None:
+        _ = sample_id
+        _ = review_status
+        _ = retrieval_ok
+        _ = answer_ok
+        _ = citation_ok
+        _ = note
         self._raise()
 
     def rag_dashboard_page(
@@ -1381,6 +1505,13 @@ class PostgresKnowledgeRepository:
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS embedding_request_meta JSONB NOT NULL DEFAULT '[]'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS primary_source_type TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS primary_chunk_strategy TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS generation_mode TEXT NOT NULL DEFAULT 'structured_answer'",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS structured_retry_used BOOLEAN NOT NULL DEFAULT FALSE",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS extractive_fallback_used BOOLEAN NOT NULL DEFAULT FALSE",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS selected_doc_count INTEGER",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS top1_similarity_score DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS avg_selected_similarity_score DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS citation_coverage_ratio DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS error_flag BOOLEAN NOT NULL DEFAULT FALSE",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS timeout_flag BOOLEAN NOT NULL DEFAULT FALSE",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS error_type TEXT",
@@ -1419,6 +1550,8 @@ class PostgresKnowledgeRepository:
                             eval_type TEXT NOT NULL,
                             experiment_id TEXT,
                             strategy_snapshot JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            judge_models JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            benchmark_version TEXT,
                             status TEXT NOT NULL,
                             started_at TIMESTAMPTZ,
                             finished_at TIMESTAMPTZ
@@ -1451,7 +1584,9 @@ class PostgresKnowledgeRepository:
                             citation_correctness_score DOUBLE PRECISION,
                             hallucination_flag BOOLEAN,
                             needs_human BOOLEAN,
-                            failure_type TEXT
+                            failure_type TEXT,
+                            judge_votes JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            judge_disagreement_flag BOOLEAN NOT NULL DEFAULT FALSE
                         )
                         """
                     ).format(
@@ -1478,6 +1613,62 @@ class PostgresKnowledgeRepository:
                         """
                     ).format(self._table("support_rag_daily_metrics"))
                 )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            sample_id TEXT PRIMARY KEY,
+                            sample_source TEXT NOT NULL,
+                            request_id TEXT REFERENCES {}(request_id) ON DELETE SET NULL,
+                            eval_run_id TEXT REFERENCES {}(eval_run_id) ON DELETE CASCADE,
+                            test_case_id TEXT,
+                            risk_score DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+                            sampling_reasons JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            review_status TEXT NOT NULL DEFAULT 'pending',
+                            retrieval_ok BOOLEAN,
+                            answer_ok BOOLEAN,
+                            citation_ok BOOLEAN,
+                            note TEXT,
+                            sample_payload JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    ).format(
+                        self._table("support_rag_review_samples"),
+                        self._table("support_rag_query_runs"),
+                        self._table("support_rag_eval_runs"),
+                    )
+                )
+                eval_run_alters = [
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS judge_models JSONB NOT NULL DEFAULT '[]'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS benchmark_version TEXT",
+                ]
+                for statement in eval_run_alters:
+                    cur.execute(sql.SQL(statement).format(self._table("support_rag_eval_runs")))
+                eval_result_alters = [
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS judge_votes JSONB NOT NULL DEFAULT '[]'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS judge_disagreement_flag BOOLEAN NOT NULL DEFAULT FALSE",
+                ]
+                for statement in eval_result_alters:
+                    cur.execute(sql.SQL(statement).format(self._table("support_rag_eval_results")))
+                review_sample_alters = [
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS request_id TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS eval_run_id TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS test_case_id TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS risk_score DOUBLE PRECISION NOT NULL DEFAULT 0.0",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS sampling_reasons JSONB NOT NULL DEFAULT '[]'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS review_status TEXT NOT NULL DEFAULT 'pending'",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS retrieval_ok BOOLEAN",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS answer_ok BOOLEAN",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS citation_ok BOOLEAN",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS note TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS sample_payload JSONB NOT NULL DEFAULT '{{}}'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+                ]
+                for statement in review_sample_alters:
+                    cur.execute(sql.SQL(statement).format(self._table("support_rag_review_samples")))
                 cur.execute(
                     sql.SQL(
                         "CREATE INDEX IF NOT EXISTS {} ON {} (source_url, updated_at DESC)"
@@ -1584,6 +1775,18 @@ class PostgresKnowledgeRepository:
                     sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (metric_date DESC)").format(
                         sql.Identifier("idx_support_rag_daily_metrics_date"),
                         self._table("support_rag_daily_metrics"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (review_status, updated_at DESC)").format(
+                        sql.Identifier("idx_support_rag_review_samples_status_updated"),
+                        self._table("support_rag_review_samples"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (sample_source, created_at DESC)").format(
+                        sql.Identifier("idx_support_rag_review_samples_source_created"),
+                        self._table("support_rag_review_samples"),
                     )
                 )
             conn.commit()
@@ -3564,6 +3767,13 @@ class PostgresKnowledgeRepository:
             "embedding_request_meta",
             "primary_source_type",
             "primary_chunk_strategy",
+            "generation_mode",
+            "structured_retry_used",
+            "extractive_fallback_used",
+            "selected_doc_count",
+            "top1_similarity_score",
+            "avg_selected_similarity_score",
+            "citation_coverage_ratio",
             "needs_human",
             "handoff_reason",
             "error_flag",
@@ -3610,6 +3820,13 @@ class PostgresKnowledgeRepository:
             Json(run.get("embedding_request_meta") or []),
             _clean_text(run.get("primary_source_type")),
             _clean_text(run.get("primary_chunk_strategy")),
+            _clean_text(run.get("generation_mode")) or "structured_answer",
+            bool(run.get("structured_retry_used")),
+            bool(run.get("extractive_fallback_used")),
+            int(run.get("selected_doc_count") or 0) if run.get("selected_doc_count") is not None else None,
+            _safe_float(run.get("top1_similarity_score"), 0.0) if run.get("top1_similarity_score") is not None else None,
+            _safe_float(run.get("avg_selected_similarity_score"), 0.0) if run.get("avg_selected_similarity_score") is not None else None,
+            _safe_float(run.get("citation_coverage_ratio"), 0.0) if run.get("citation_coverage_ratio") is not None else None,
             bool(run.get("needs_human")),
             _clean_text(run.get("handoff_reason")),
             bool(run.get("error_flag")),
@@ -3697,6 +3914,357 @@ class PostgresKnowledgeRepository:
                         ],
                     )
             conn.commit()
+        review_sample = build_live_review_sample(run)
+        if review_sample is not None:
+            self.upsert_review_sample(sample=review_sample)
+
+    def upsert_rag_eval_run(
+        self,
+        *,
+        eval_run: dict[str, Any],
+    ) -> None:
+        eval_run_id = _clean_text(eval_run.get("eval_run_id"))
+        if not eval_run_id:
+            raise ValueError("eval_run_id is required")
+        columns = [
+            "eval_run_id",
+            "dataset_name",
+            "eval_type",
+            "experiment_id",
+            "strategy_snapshot",
+            "judge_models",
+            "benchmark_version",
+            "status",
+            "started_at",
+            "finished_at",
+        ]
+        values = (
+            eval_run_id,
+            _clean_text(eval_run.get("dataset_name")) or "supportportal_faq",
+            _clean_text(eval_run.get("eval_type")) or "offline_benchmark",
+            _clean_text(eval_run.get("experiment_id")),
+            Json(eval_run.get("strategy_snapshot") or {}),
+            Json(eval_run.get("judge_models") or []),
+            _clean_text(eval_run.get("benchmark_version")),
+            _clean_text(eval_run.get("status")) or "running",
+            _clean_text(eval_run.get("started_at")) or _utc_now(),
+            _clean_text(eval_run.get("finished_at")),
+        )
+        update_fields = [column for column in columns if column != "eval_run_id"]
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} ({columns})
+                        VALUES ({placeholders})
+                        ON CONFLICT (eval_run_id) DO UPDATE SET
+                            {updates}
+                        """
+                    ).format(
+                        self._table("support_rag_eval_runs"),
+                        columns=sql.SQL(", ").join(sql.Identifier(column) for column in columns),
+                        placeholders=sql.SQL(", ").join(
+                            sql.SQL("%s::jsonb") if column in {"strategy_snapshot", "judge_models"} else sql.SQL("%s")
+                            for column in columns
+                        ),
+                        updates=sql.SQL(", ").join(
+                            sql.SQL("{} = EXCLUDED.{}").format(sql.Identifier(column), sql.Identifier(column))
+                            for column in update_fields
+                        ),
+                    ),
+                    values,
+                )
+            conn.commit()
+
+    def replace_rag_eval_results(
+        self,
+        *,
+        eval_run_id: str,
+        rows: list[dict[str, Any]],
+    ) -> None:
+        normalized_eval_run_id = _clean_text(eval_run_id)
+        if not normalized_eval_run_id:
+            raise ValueError("eval_run_id is required")
+        columns = [
+            "eval_run_id",
+            "test_case_id",
+            "query_type",
+            "source_type",
+            "chunk_strategy",
+            "retrieval_strategy",
+            "hit_at_1",
+            "hit_at_3",
+            "hit_at_5",
+            "recall_at_5",
+            "mrr",
+            "ndcg_at_5",
+            "document_relevance_score",
+            "faithfulness_score",
+            "groundedness_score",
+            "response_relevance_score",
+            "response_completeness_score",
+            "citation_correctness_score",
+            "hallucination_flag",
+            "needs_human",
+            "failure_type",
+            "judge_votes",
+            "judge_disagreement_flag",
+        ]
+        payload = [
+            (
+                normalized_eval_run_id,
+                _clean_text(row.get("test_case_id")),
+                _clean_text(row.get("query_type")),
+                _clean_text(row.get("source_type")),
+                _clean_text(row.get("chunk_strategy")),
+                _clean_text(row.get("retrieval_strategy")),
+                _safe_float(row.get("hit_at_1"), 0.0) if row.get("hit_at_1") is not None else None,
+                _safe_float(row.get("hit_at_3"), 0.0) if row.get("hit_at_3") is not None else None,
+                _safe_float(row.get("hit_at_5"), 0.0) if row.get("hit_at_5") is not None else None,
+                _safe_float(row.get("recall_at_5"), 0.0) if row.get("recall_at_5") is not None else None,
+                _safe_float(row.get("mrr"), 0.0) if row.get("mrr") is not None else None,
+                _safe_float(row.get("ndcg_at_5"), 0.0) if row.get("ndcg_at_5") is not None else None,
+                _safe_float(row.get("document_relevance_score"), 0.0) if row.get("document_relevance_score") is not None else None,
+                _safe_float(row.get("faithfulness_score"), 0.0) if row.get("faithfulness_score") is not None else None,
+                _safe_float(row.get("groundedness_score"), 0.0) if row.get("groundedness_score") is not None else None,
+                _safe_float(row.get("response_relevance_score"), 0.0) if row.get("response_relevance_score") is not None else None,
+                _safe_float(row.get("response_completeness_score"), 0.0) if row.get("response_completeness_score") is not None else None,
+                _safe_float(row.get("citation_correctness_score"), 0.0) if row.get("citation_correctness_score") is not None else None,
+                row.get("hallucination_flag") if isinstance(row.get("hallucination_flag"), bool) else None,
+                row.get("needs_human") if isinstance(row.get("needs_human"), bool) else None,
+                _clean_text(row.get("failure_type")),
+                Json(row.get("judge_votes") or []),
+                bool(row.get("judge_disagreement_flag")),
+            )
+            for row in rows
+        ]
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL("DELETE FROM {} WHERE eval_run_id = %s").format(self._table("support_rag_eval_results")),
+                    (normalized_eval_run_id,),
+                )
+                cur.execute(
+                    sql.SQL(
+                        "DELETE FROM {} WHERE sample_source = 'benchmark' AND eval_run_id = %s"
+                    ).format(self._table("support_rag_review_samples")),
+                    (normalized_eval_run_id,),
+                )
+                if payload:
+                    cur.executemany(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} ({columns})
+                            VALUES (
+                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s
+                            )
+                            """
+                        ).format(
+                            self._table("support_rag_eval_results"),
+                            columns=sql.SQL(", ").join(sql.Identifier(column) for column in columns),
+                        ),
+                        payload,
+                    )
+            conn.commit()
+
+        for row in rows:
+            review_sample = build_benchmark_review_sample(
+                eval_run_id=normalized_eval_run_id,
+                test_case_id=_clean_text(row.get("test_case_id")),
+                result_row=row,
+            )
+            if review_sample is not None:
+                self.upsert_review_sample(sample=review_sample)
+
+    def upsert_rag_daily_metric(
+        self,
+        *,
+        metric_date: str,
+        metrics: dict[str, Any],
+        source_type: str | None = None,
+        product: str | None = None,
+        query_type: str | None = None,
+        retrieval_strategy: str | None = None,
+        chunk_strategy: str | None = None,
+        experiment_id: str | None = None,
+    ) -> None:
+        normalized_metric_date = _clean_text(metric_date)
+        if not normalized_metric_date:
+            raise ValueError("metric_date is required")
+        values = (
+            normalized_metric_date,
+            _clean_text(source_type),
+            _clean_text(product),
+            _clean_text(query_type),
+            _clean_text(retrieval_strategy),
+            _clean_text(chunk_strategy),
+            _clean_text(experiment_id),
+            Json(metrics or {}),
+        )
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        DELETE FROM {}
+                        WHERE metric_date = %s
+                          AND source_type IS NOT DISTINCT FROM %s
+                          AND product IS NOT DISTINCT FROM %s
+                          AND query_type IS NOT DISTINCT FROM %s
+                          AND retrieval_strategy IS NOT DISTINCT FROM %s
+                          AND chunk_strategy IS NOT DISTINCT FROM %s
+                          AND experiment_id IS NOT DISTINCT FROM %s
+                        """
+                    ).format(self._table("support_rag_daily_metrics")),
+                    values[:-1],
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} (
+                            metric_date,
+                            source_type,
+                            product,
+                            query_type,
+                            retrieval_strategy,
+                            chunk_strategy,
+                            experiment_id,
+                            metrics,
+                            created_at,
+                            updated_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, NOW(), NOW())
+                        """
+                    ).format(self._table("support_rag_daily_metrics")),
+                    values,
+                )
+            conn.commit()
+
+    def upsert_review_sample(
+        self,
+        *,
+        sample: dict[str, Any],
+    ) -> None:
+        sample_id = _clean_text(sample.get("sample_id"))
+        if not sample_id:
+            raise ValueError("sample_id is required")
+        columns = [
+            "sample_id",
+            "sample_source",
+            "request_id",
+            "eval_run_id",
+            "test_case_id",
+            "risk_score",
+            "sampling_reasons",
+            "review_status",
+            "retrieval_ok",
+            "answer_ok",
+            "citation_ok",
+            "note",
+            "sample_payload",
+            "created_at",
+            "updated_at",
+        ]
+        created_at = _clean_text(sample.get("created_at")) or _utc_now()
+        values = (
+            sample_id,
+            _clean_text(sample.get("sample_source")) or "live_query",
+            _clean_text(sample.get("request_id")),
+            _clean_text(sample.get("eval_run_id")),
+            _clean_text(sample.get("test_case_id")),
+            _safe_float(sample.get("risk_score"), 0.0) if sample.get("risk_score") is not None else 0.0,
+            Json(sample.get("sampling_reasons") or []),
+            _normalize_review_status(sample.get("review_status")),
+            sample.get("retrieval_ok") if isinstance(sample.get("retrieval_ok"), bool) else None,
+            sample.get("answer_ok") if isinstance(sample.get("answer_ok"), bool) else None,
+            sample.get("citation_ok") if isinstance(sample.get("citation_ok"), bool) else None,
+            str(sample.get("note") or "").strip() or None,
+            Json(sample.get("sample_payload") or {}),
+            created_at,
+            _clean_text(sample.get("updated_at")) or _utc_now(),
+        )
+        update_fields = [column for column in columns if column not in {"sample_id", "created_at"}]
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} ({columns})
+                        VALUES ({placeholders})
+                        ON CONFLICT (sample_id) DO UPDATE SET
+                            {updates}
+                        """
+                    ).format(
+                        self._table("support_rag_review_samples"),
+                        columns=sql.SQL(", ").join(sql.Identifier(column) for column in columns),
+                        placeholders=sql.SQL(", ").join(
+                            sql.SQL("%s::jsonb") if column in {"sampling_reasons", "sample_payload"} else sql.SQL("%s")
+                            for column in columns
+                        ),
+                        updates=sql.SQL(", ").join(
+                            sql.SQL("{} = EXCLUDED.{}").format(sql.Identifier(column), sql.Identifier(column))
+                            for column in update_fields
+                        ),
+                    ),
+                    values,
+                )
+            conn.commit()
+
+    def update_review_sample(
+        self,
+        sample_id: str,
+        *,
+        review_status: str | None = None,
+        retrieval_ok: bool | None = None,
+        answer_ok: bool | None = None,
+        citation_ok: bool | None = None,
+        note: str | None = None,
+    ) -> None:
+        normalized_sample_id = _clean_text(sample_id)
+        if not normalized_sample_id:
+            raise ValueError("sample_id is required")
+
+        assignments: list[sql.SQL] = []
+        params: list[Any] = []
+        if review_status is not None:
+            assignments.append(sql.SQL("review_status = %s"))
+            params.append(_normalize_review_status(review_status))
+        if retrieval_ok is not None:
+            assignments.append(sql.SQL("retrieval_ok = %s"))
+            params.append(bool(retrieval_ok))
+        if answer_ok is not None:
+            assignments.append(sql.SQL("answer_ok = %s"))
+            params.append(bool(answer_ok))
+        if citation_ok is not None:
+            assignments.append(sql.SQL("citation_ok = %s"))
+            params.append(bool(citation_ok))
+        if note is not None:
+            assignments.append(sql.SQL("note = %s"))
+            params.append(str(note).strip() or None)
+        assignments.append(sql.SQL("updated_at = NOW()"))
+        params.append(normalized_sample_id)
+
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {}
+                        SET {assignments}
+                        WHERE sample_id = %s
+                        """
+                    ).format(
+                        self._table("support_rag_review_samples"),
+                        assignments=sql.SQL(", ").join(assignments),
+                    ),
+                    tuple(params),
+                )
+                updated = cur.rowcount
+            conn.commit()
+        if updated <= 0:
+            raise LookupError(f"Review sample not found: {normalized_sample_id}")
 
     def _normalize_dashboard_filters(self, filters: dict[str, Any] | None) -> dict[str, Any]:
         raw = filters if isinstance(filters, dict) else {}
@@ -3922,6 +4490,125 @@ class PostgresKnowledgeRepository:
             "last_refreshed_at": _utc_now(),
         }
 
+    def _review_queue_summary(self, days: int) -> tuple[int, int, int]:
+        row = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE review_status = 'pending') AS pending_count,
+                    COUNT(*) FILTER (WHERE sample_source = 'live_query') AS live_query_count,
+                    COUNT(*) FILTER (WHERE sample_source = 'benchmark') AS benchmark_count
+                FROM {}
+                WHERE created_at >= NOW() - (%s * INTERVAL '1 day')
+                """
+            ).format(self._table("support_rag_review_samples")),
+            (days,),
+        )[0]
+        return int(row[0] or 0), int(row[1] or 0), int(row[2] or 0)
+
+    def _review_queue_rows(self, days: int, filters: dict[str, Any]) -> list[dict[str, Any]]:
+        review_filter_sql, review_filter_params = self._build_filter_clause(
+            filters,
+            {
+                "query_type": "COALESCE(q.query_type, r.query_type, s.sample_payload ->> 'query_type')",
+                "retrieval_strategy": "COALESCE(q.retrieval_strategy, r.retrieval_strategy, s.sample_payload ->> 'retrieval_strategy')",
+                "source_type": "COALESCE(q.primary_source_type, r.source_type, s.sample_payload ->> 'source_type')",
+                "chunk_strategy": "COALESCE(q.primary_chunk_strategy, r.chunk_strategy, s.sample_payload ->> 'chunk_strategy')",
+            },
+        )
+        rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    s.sample_id,
+                    s.sample_source,
+                    s.request_id,
+                    s.eval_run_id,
+                    s.test_case_id,
+                    s.risk_score,
+                    s.sampling_reasons,
+                    s.review_status,
+                    s.retrieval_ok,
+                    s.answer_ok,
+                    s.citation_ok,
+                    s.note,
+                    COALESCE(q.user_query, s.sample_payload ->> 'question') AS sample_question,
+                    COALESCE(q.query_type, r.query_type, s.sample_payload ->> 'query_type') AS query_type,
+                    COALESCE(q.retrieval_strategy, r.retrieval_strategy, s.sample_payload ->> 'retrieval_strategy') AS retrieval_strategy,
+                    COALESCE(q.primary_source_type, r.source_type, s.sample_payload ->> 'source_type') AS source_type,
+                    COALESCE(q.primary_chunk_strategy, r.chunk_strategy, s.sample_payload ->> 'chunk_strategy') AS chunk_strategy,
+                    COALESCE(r.failure_type, s.sample_payload ->> 'failure_type') AS failure_type,
+                    r.document_relevance_score,
+                    r.faithfulness_score,
+                    r.groundedness_score,
+                    r.response_relevance_score,
+                    r.response_completeness_score,
+                    r.citation_correctness_score,
+                    r.judge_disagreement_flag,
+                    COALESCE(q.generation_mode, s.sample_payload ->> 'generation_mode') AS generation_mode,
+                    q.confidence_score,
+                    q.citation_count,
+                    s.sample_payload,
+                    s.updated_at
+                FROM {} AS s
+                LEFT JOIN {} AS q
+                  ON q.request_id = s.request_id
+                LEFT JOIN {} AS r
+                  ON r.eval_run_id = s.eval_run_id
+                 AND r.test_case_id = s.test_case_id
+                WHERE s.created_at >= NOW() - (%s * INTERVAL '1 day')
+                {filters}
+                ORDER BY
+                    CASE WHEN s.review_status = 'pending' THEN 0 ELSE 1 END,
+                    s.risk_score DESC,
+                    s.updated_at DESC
+                LIMIT %s
+                """
+            ).format(
+                self._table("support_rag_review_samples"),
+                self._table("support_rag_query_runs"),
+                self._table("support_rag_eval_results"),
+                filters=sql.SQL(review_filter_sql),
+            ),
+            tuple([days, *review_filter_params, filters["limit"]]),
+        )
+        return [
+            {
+                "sample_id": row[0],
+                "sample_source": row[1],
+                "request_id": row[2],
+                "eval_run_id": row[3],
+                "test_case_id": row[4],
+                "risk_score": _coalesce_metric(row[5]),
+                "sampling_reasons": row[6] if isinstance(row[6], list) else [],
+                "review_status": row[7],
+                "retrieval_ok": row[8],
+                "answer_ok": row[9],
+                "citation_ok": row[10],
+                "note": row[11],
+                "sample_question": row[12],
+                "query_type": row[13],
+                "retrieval_strategy": row[14],
+                "source_type": row[15],
+                "chunk_strategy": row[16],
+                "failure_type": row[17],
+                "document_relevance_score": _coalesce_metric(row[18]),
+                "faithfulness_score": _coalesce_metric(row[19]),
+                "groundedness_score": _coalesce_metric(row[20]),
+                "response_relevance_score": _coalesce_metric(row[21]),
+                "response_completeness_score": _coalesce_metric(row[22]),
+                "citation_correctness_score": _coalesce_metric(row[23]),
+                "judge_disagreement_flag": bool(row[24]) if row[24] is not None else None,
+                "generation_mode": row[25],
+                "confidence_score": _coalesce_metric(row[26]),
+                "citation_count": int(row[27] or 0) if row[27] is not None else 0,
+                "review_context": row[28] if isinstance(row[28], dict) else {},
+                "updated_at": _to_iso(row[29]),
+                "review_action": "Review",
+            }
+            for row in rows
+        ]
+
     def _overview_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
         has_eval_data = self._has_eval_data(days, filters)
         eval_metrics = self._eval_aggregates(days, filters) if has_eval_data else {}
@@ -3940,6 +4627,8 @@ class PostgresKnowledgeRepository:
             {
                 "query_type": "query_type",
                 "retrieval_strategy": "retrieval_strategy",
+                "source_type": "primary_source_type",
+                "chunk_strategy": "primary_chunk_strategy",
             },
         )
         docs_row = self._query_rows(
@@ -4006,7 +4695,11 @@ class PostgresKnowledgeRepository:
                     AVG(CASE WHEN needs_human THEN 1.0 ELSE 0.0 END) FILTER (
                         WHERE created_at >= NOW() - INTERVAL '24 hours'
                     ),
-                    COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')
+                    COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours'),
+                    AVG(CASE WHEN citation_count = 0 THEN 1.0 ELSE 0.0 END),
+                    AVG(CASE WHEN extractive_fallback_used THEN 1.0 ELSE 0.0 END),
+                    AVG(CASE WHEN structured_retry_used THEN 1.0 ELSE 0.0 END),
+                    AVG(CASE WHEN confidence_score < 0.65 THEN 1.0 ELSE 0.0 END)
                 FROM {}
                 WHERE created_at >= NOW() - (%s * INTERVAL '1 day')
                 {filters}
@@ -4017,6 +4710,7 @@ class PostgresKnowledgeRepository:
             ),
             tuple([days, *query_filter_params]),
         )[0]
+        pending_review_count, live_review_count, benchmark_review_count = self._review_queue_summary(days)
         cards = {
             "doc_count_total": int(docs_row[0] or 0),
             "chunk_count_total": int(docs_row[1] or 0),
@@ -4028,6 +4722,13 @@ class PostgresKnowledgeRepository:
             "groundedness_score_avg": eval_metrics.get("groundedness_score_avg") if has_eval_data else None,
             "p95_response_latency_ms": _coalesce_metric(query_row[0]),
             "handoff_rate_24h": _coalesce_metric(query_row[1]) if query_row[2] else None,
+            "citation_missing_rate": _coalesce_metric(query_row[3]),
+            "extractive_fallback_rate": _coalesce_metric(query_row[4]),
+            "structured_retry_rate": _coalesce_metric(query_row[5]),
+            "low_confidence_rate": _coalesce_metric(query_row[6]),
+            "pending_review_count": pending_review_count,
+            "live_review_sample_count": live_review_count,
+            "benchmark_review_sample_count": benchmark_review_count,
         }
         date_labels = self._date_labels(days)
         overlays = self._daily_metric_overlays(days, filters)
@@ -4151,10 +4852,20 @@ class PostgresKnowledgeRepository:
                     COUNT(*) FILTER (WHERE i.status = 'completed') AS ingestion_success_count_24h,
                     COUNT(*) FILTER (WHERE i.status = 'failed') AS ingestion_fail_count_24h,
                     AVG(r.ingestion_latency_ms) AS avg_ingestion_latency_ms,
+                    percentile_cont(0.5) WITHIN GROUP (ORDER BY r.ingestion_latency_ms) AS p50_ingestion_latency_ms,
+                    percentile_cont(0.95) WITHIN GROUP (ORDER BY r.ingestion_latency_ms) AS p95_ingestion_latency_ms,
                     AVG(r.cleaning_latency_ms) AS avg_cleaning_latency_ms,
+                    percentile_cont(0.5) WITHIN GROUP (ORDER BY r.cleaning_latency_ms) AS p50_cleaning_latency_ms,
+                    percentile_cont(0.95) WITHIN GROUP (ORDER BY r.cleaning_latency_ms) AS p95_cleaning_latency_ms,
                     AVG(r.chunking_latency_ms) AS avg_chunking_latency_ms,
+                    percentile_cont(0.5) WITHIN GROUP (ORDER BY r.chunking_latency_ms) AS p50_chunking_latency_ms,
+                    percentile_cont(0.95) WITHIN GROUP (ORDER BY r.chunking_latency_ms) AS p95_chunking_latency_ms,
                     AVG(r.embedding_latency_ms) AS avg_embedding_latency_ms,
+                    percentile_cont(0.5) WITHIN GROUP (ORDER BY r.embedding_latency_ms) AS p50_embedding_latency_ms,
+                    percentile_cont(0.95) WITHIN GROUP (ORDER BY r.embedding_latency_ms) AS p95_embedding_latency_ms,
                     AVG(r.index_upsert_latency_ms) AS avg_index_upsert_latency_ms,
+                    percentile_cont(0.5) WITHIN GROUP (ORDER BY r.index_upsert_latency_ms) AS p50_index_upsert_latency_ms,
+                    percentile_cont(0.95) WITHIN GROUP (ORDER BY r.index_upsert_latency_ms) AS p95_index_upsert_latency_ms,
                     AVG(CASE WHEN r.empty_doc_flag THEN 1.0 ELSE 0.0 END) AS empty_doc_rate,
                     AVG(CASE WHEN r.short_doc_flag THEN 1.0 ELSE 0.0 END) AS short_doc_rate,
                     AVG(CASE WHEN r.duplicate_doc_flag THEN 1.0 ELSE 0.0 END) AS duplicate_doc_rate,
@@ -4186,14 +4897,24 @@ class PostgresKnowledgeRepository:
             "ingestion_fail_count_24h": int(report_rows[2] or 0),
             "ingestion_success_rate_24h": _safe_ratio(report_rows[1], report_rows[0]),
             "avg_ingestion_latency_ms": _coalesce_metric(report_rows[3]),
-            "avg_cleaning_latency_ms": _coalesce_metric(report_rows[4]),
-            "avg_chunking_latency_ms": _coalesce_metric(report_rows[5]),
-            "avg_embedding_latency_ms": _coalesce_metric(report_rows[6]),
-            "avg_index_upsert_latency_ms": _coalesce_metric(report_rows[7]),
-            "empty_doc_rate": _coalesce_metric(report_rows[8]),
-            "short_doc_rate": _coalesce_metric(report_rows[9]),
-            "duplicate_doc_rate": _coalesce_metric(report_rows[10]),
-            "metadata_missing_rate": _coalesce_metric(report_rows[11]),
+            "p50_ingestion_latency_ms": _coalesce_metric(report_rows[4]),
+            "p95_ingestion_latency_ms": _coalesce_metric(report_rows[5]),
+            "avg_cleaning_latency_ms": _coalesce_metric(report_rows[6]),
+            "p50_cleaning_latency_ms": _coalesce_metric(report_rows[7]),
+            "p95_cleaning_latency_ms": _coalesce_metric(report_rows[8]),
+            "avg_chunking_latency_ms": _coalesce_metric(report_rows[9]),
+            "p50_chunking_latency_ms": _coalesce_metric(report_rows[10]),
+            "p95_chunking_latency_ms": _coalesce_metric(report_rows[11]),
+            "avg_embedding_latency_ms": _coalesce_metric(report_rows[12]),
+            "p50_embedding_latency_ms": _coalesce_metric(report_rows[13]),
+            "p95_embedding_latency_ms": _coalesce_metric(report_rows[14]),
+            "avg_index_upsert_latency_ms": _coalesce_metric(report_rows[15]),
+            "p50_index_upsert_latency_ms": _coalesce_metric(report_rows[16]),
+            "p95_index_upsert_latency_ms": _coalesce_metric(report_rows[17]),
+            "empty_doc_rate": _coalesce_metric(report_rows[18]),
+            "short_doc_rate": _coalesce_metric(report_rows[19]),
+            "duplicate_doc_rate": _coalesce_metric(report_rows[20]),
+            "metadata_missing_rate": _coalesce_metric(report_rows[21]),
         }
         distribution_rows = self._query_rows(
             sql.SQL(
@@ -4290,6 +5011,38 @@ class PostgresKnowledgeRepository:
                     "updated_at": _to_iso(row[9]),
                 }
                 for row in failed_rows
+            ],
+            "stage_latency_percentiles": [
+                {
+                    "stage_name": "ingestion",
+                    "avg_latency_ms": _coalesce_metric(report_rows[3]),
+                    "p50_latency_ms": _coalesce_metric(report_rows[4]),
+                    "p95_latency_ms": _coalesce_metric(report_rows[5]),
+                },
+                {
+                    "stage_name": "cleaning",
+                    "avg_latency_ms": _coalesce_metric(report_rows[6]),
+                    "p50_latency_ms": _coalesce_metric(report_rows[7]),
+                    "p95_latency_ms": _coalesce_metric(report_rows[8]),
+                },
+                {
+                    "stage_name": "chunking",
+                    "avg_latency_ms": _coalesce_metric(report_rows[9]),
+                    "p50_latency_ms": _coalesce_metric(report_rows[10]),
+                    "p95_latency_ms": _coalesce_metric(report_rows[11]),
+                },
+                {
+                    "stage_name": "embedding",
+                    "avg_latency_ms": _coalesce_metric(report_rows[12]),
+                    "p50_latency_ms": _coalesce_metric(report_rows[13]),
+                    "p95_latency_ms": _coalesce_metric(report_rows[14]),
+                },
+                {
+                    "stage_name": "index_upsert",
+                    "avg_latency_ms": _coalesce_metric(report_rows[15]),
+                    "p50_latency_ms": _coalesce_metric(report_rows[16]),
+                    "p95_latency_ms": _coalesce_metric(report_rows[17]),
+                },
             ],
             "metadata_missing_breakdown": [
                 {
@@ -4389,6 +5142,34 @@ class PostgresKnowledgeRepository:
                 self._table("support_knowledge_documents"),
             )
         )
+        role_comparison_rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    COALESCE(r.index_role, 'unknown') AS index_role,
+                    COUNT(*) AS run_count,
+                    AVG(r.chunk_count) AS avg_chunk_count,
+                    AVG(r.avg_chunk_tokens) AS avg_chunk_tokens,
+                    AVG(r.avg_overlap_tokens) AS avg_overlap_tokens
+                FROM {} AS r
+                JOIN {} AS d
+                  ON d.document_id = r.document_id
+                WHERE d.is_active = TRUE
+                {filters}
+                GROUP BY 1
+                ORDER BY 2 DESC, 1 ASC
+                """
+            ).format(
+                self._table("support_knowledge_chunk_runs"),
+                self._table("support_knowledge_documents"),
+                filters=sql.SQL(
+                    chunk_filter_sql
+                    .replace("c.chunk_strategy", "r.chunk_strategy")
+                    .replace("c.index_role", "r.index_role")
+                ),
+            ),
+            tuple(chunk_filter_params),
+        )
         histogram_rows = self._query_rows(
             sql.SQL(
                 """
@@ -4415,6 +5196,32 @@ class PostgresKnowledgeRepository:
                 self._vector_table(),
                 self._table("support_knowledge_documents"),
                 filters=sql.SQL(chunk_filter_sql),
+            ),
+            tuple(chunk_filter_params),
+        )
+        boundary_rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    COALESCE(t.boundary_reason, 'unknown') AS boundary_reason,
+                    COALESCE(t.index_role, 'unknown') AS index_role,
+                    COUNT(*) AS chunk_count
+                FROM {} AS t
+                JOIN {} AS d
+                  ON d.document_id = t.document_id
+                WHERE d.is_active = TRUE
+                {filters}
+                GROUP BY 1, 2
+                ORDER BY 3 DESC, 1 ASC, 2 ASC
+                """
+            ).format(
+                self._table("support_knowledge_chunk_traces"),
+                self._table("support_knowledge_documents"),
+                filters=sql.SQL(
+                    chunk_filter_sql
+                    .replace("c.chunk_strategy", "t.chunk_strategy")
+                    .replace("c.index_role", "t.index_role")
+                ),
             ),
             tuple(chunk_filter_params),
         )
@@ -4535,6 +5342,10 @@ class PostgresKnowledgeRepository:
             "chunk_token_count_bucket": [
                 {"chunk_token_count_bucket": str(row[0]), "chunk_count": int(row[1] or 0)} for row in histogram_rows
             ],
+            "boundary_reason_distribution": [
+                {"label": f"{str(row[0])}:{str(row[1])}", "value": int(row[2] or 0)}
+                for row in boundary_rows
+            ],
             "doc_length_vs_chunk_count": [
                 {
                     "doc_token_count": int(row[0] or 0),
@@ -4548,6 +5359,16 @@ class PostgresKnowledgeRepository:
             ],
         }
         tables = {
+            "primary_shadow_comparison": [
+                {
+                    "index_role": str(row[0]),
+                    "run_count": int(row[1] or 0),
+                    "avg_chunk_count": _coalesce_metric(row[2]),
+                    "avg_chunk_tokens": _coalesce_metric(row[3]),
+                    "avg_overlap_tokens": _coalesce_metric(row[4]),
+                }
+                for row in role_comparison_rows
+            ],
             "chunk_strategy_comparison": [
                 {
                     "chunk_strategy": str(row[0]),
@@ -4586,6 +5407,14 @@ class PostgresKnowledgeRepository:
                     "updated_at": _to_iso(row[9]),
                 }
                 for row in anomaly_rows
+            ],
+            "boundary_reason_breakdown": [
+                {
+                    "boundary_reason": str(row[0]),
+                    "index_role": str(row[1]),
+                    "chunk_count": int(row[2] or 0),
+                }
+                for row in boundary_rows
             ],
         }
         return self._build_envelope(
@@ -4749,6 +5578,8 @@ class PostgresKnowledgeRepository:
             {
                 "query_type": "query_type",
                 "retrieval_strategy": "retrieval_strategy",
+                "source_type": "primary_source_type",
+                "chunk_strategy": "primary_chunk_strategy",
             },
         )
         query_row = self._query_rows(
@@ -4756,7 +5587,12 @@ class PostgresKnowledgeRepository:
                 """
                 SELECT
                     COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours'),
-                    AVG(retrieval_latency_ms)
+                    AVG(retrieval_latency_ms),
+                    AVG(vector_retrieval_latency_ms),
+                    AVG(bm25_retrieval_latency_ms),
+                    AVG(top1_similarity_score),
+                    AVG(avg_selected_similarity_score),
+                    AVG(selected_doc_count)
                 FROM {}
                 WHERE created_at >= NOW() - (%s * INTERVAL '1 day')
                 {filters}
@@ -4774,7 +5610,9 @@ class PostgresKnowledgeRepository:
                     COALESCE(retrieval_strategy, 'unknown') AS retrieval_strategy,
                     COUNT(*) AS query_count,
                     AVG(retrieval_latency_ms) AS avg_latency_ms,
-                    AVG(confidence_score) AS avg_confidence_score
+                    AVG(confidence_score) AS avg_confidence_score,
+                    AVG(top1_similarity_score) AS avg_top1_similarity_score,
+                    AVG(selected_doc_count) AS avg_selected_doc_count
                 FROM {}
                 WHERE created_at >= NOW() - (%s * INTERVAL '1 day')
                 {filters}
@@ -4794,7 +5632,8 @@ class PostgresKnowledgeRepository:
                     COALESCE(query_type, 'unknown') AS query_type,
                     COUNT(*) AS query_count,
                     AVG(CASE WHEN needs_human THEN 1.0 ELSE 0.0 END) AS handoff_rate,
-                    AVG(total_latency_ms) AS avg_latency_ms
+                    AVG(total_latency_ms) AS avg_latency_ms,
+                    AVG(top1_similarity_score) AS avg_top1_similarity_score
                 FROM {}
                 WHERE created_at >= NOW() - (%s * INTERVAL '1 day')
                 {filters}
@@ -4823,7 +5662,11 @@ class PostgresKnowledgeRepository:
                     selected_chunk_ids,
                     retrieval_latency_ms,
                     created_at,
-                    query_type
+                    query_type,
+                    generation_mode,
+                    selected_doc_count,
+                    top1_similarity_score,
+                    avg_selected_similarity_score
                 FROM {}
                 WHERE created_at >= NOW() - (%s * INTERVAL '1 day')
                 {filters}
@@ -4884,6 +5727,11 @@ class PostgresKnowledgeRepository:
             "mrr": eval_metrics.get("mrr") if has_eval_data else None,
             "ndcg_at_5": eval_metrics.get("ndcg_at_5") if has_eval_data else None,
             "avg_retrieval_latency_ms": _coalesce_metric(query_row[1]),
+            "avg_vector_retrieval_latency_ms": _coalesce_metric(query_row[2]),
+            "avg_bm25_retrieval_latency_ms": _coalesce_metric(query_row[3]),
+            "avg_top1_similarity_score": _coalesce_metric(query_row[4]),
+            "avg_selected_similarity_score": _coalesce_metric(query_row[5]),
+            "avg_selected_doc_count": _coalesce_metric(query_row[6]),
             "document_relevance_score_avg": eval_metrics.get("document_relevance_score_avg") if has_eval_data else None,
         }
         tables = {
@@ -4892,6 +5740,9 @@ class PostgresKnowledgeRepository:
                     "retrieval_strategy": row[0],
                     "query_count": int(row[1] or 0),
                     "avg_latency_ms": _coalesce_metric(row[2]),
+                    "avg_confidence_score": _coalesce_metric(row[3]),
+                    "avg_top1_similarity_score": _coalesce_metric(row[4]),
+                    "avg_selected_doc_count": _coalesce_metric(row[5]),
                     "hit_at_5": None,
                     "document_relevance_score_avg": None,
                     "citation_correctness_score_avg": None,
@@ -4907,6 +5758,7 @@ class PostgresKnowledgeRepository:
                     "document_relevance_score_avg": None,
                     "handoff_rate": _coalesce_metric(row[2]),
                     "avg_latency_ms": _coalesce_metric(row[3]),
+                    "avg_top1_similarity_score": _coalesce_metric(row[4]),
                 }
                 for row in query_type_rows
             ],
@@ -4917,7 +5769,6 @@ class PostgresKnowledgeRepository:
                     "user_query": row[2],
                     "rewritten_query": row[3],
                     "intent": row[4],
-                    "query_type": row[12],
                     "retrieval_strategy": row[5],
                     "vector_candidates_count": row[6],
                     "bm25_candidates_count": row[7],
@@ -4925,6 +5776,11 @@ class PostgresKnowledgeRepository:
                     "selected_chunk_ids": row[9] if isinstance(row[9], list) else [],
                     "retrieval_latency_ms": _coalesce_metric(row[10]),
                     "created_at": _to_iso(row[11]),
+                    "query_type": row[12],
+                    "generation_mode": row[13],
+                    "selected_doc_count": row[14],
+                    "top1_similarity_score": _coalesce_metric(row[15]),
+                    "avg_selected_similarity_score": _coalesce_metric(row[16]),
                     "candidates": candidates_by_request.get(str(row[0]), []),
                 }
                 for row in replay_rows
@@ -4947,6 +5803,8 @@ class PostgresKnowledgeRepository:
             {
                 "query_type": "query_type",
                 "retrieval_strategy": "retrieval_strategy",
+                "source_type": "primary_source_type",
+                "chunk_strategy": "primary_chunk_strategy",
             },
         )
         row = self._query_rows(
@@ -4957,7 +5815,13 @@ class PostgresKnowledgeRepository:
                     AVG(CASE WHEN COALESCE(answer_length, 0) = 0 THEN 1.0 ELSE 0.0 END),
                     AVG(CASE WHEN needs_human THEN 1.0 ELSE 0.0 END),
                     AVG(citation_count),
-                    COUNT(*)
+                    COUNT(*),
+                    AVG(CASE WHEN citation_count = 0 THEN 1.0 ELSE 0.0 END),
+                    AVG(CASE WHEN extractive_fallback_used THEN 1.0 ELSE 0.0 END),
+                    AVG(CASE WHEN structured_retry_used THEN 1.0 ELSE 0.0 END),
+                    AVG(CASE WHEN confidence_score < 0.65 THEN 1.0 ELSE 0.0 END),
+                    AVG(citation_coverage_ratio),
+                    AVG(generation_latency_ms)
                 FROM {}
                 WHERE created_at >= NOW() - (%s * INTERVAL '1 day')
                 {filters}
@@ -4972,12 +5836,10 @@ class PostgresKnowledgeRepository:
             sql.SQL(
                 """
                 SELECT
-                    CASE
-                        WHEN jsonb_array_length(selected_chunk_ids) <= 1 THEN 'single_chunk_context'
-                        ELSE 'multi_chunk_context'
-                    END AS bucket_name,
+                    COALESCE(generation_mode, 'structured_answer') AS bucket_name,
                     COUNT(*) AS query_count,
-                    AVG(CASE WHEN needs_human THEN 1.0 ELSE 0.0 END) AS handoff_rate
+                    AVG(CASE WHEN needs_human THEN 1.0 ELSE 0.0 END) AS handoff_rate,
+                    AVG(citation_coverage_ratio) AS avg_citation_coverage_ratio
                 FROM {}
                 WHERE created_at >= NOW() - (%s * INTERVAL '1 day')
                 {filters}
@@ -4986,7 +5848,8 @@ class PostgresKnowledgeRepository:
                 SELECT
                     CASE WHEN citation_count > 0 THEN 'has_citation' ELSE 'no_citation' END AS bucket_name,
                     COUNT(*) AS query_count,
-                    AVG(CASE WHEN needs_human THEN 1.0 ELSE 0.0 END) AS handoff_rate
+                    AVG(CASE WHEN needs_human THEN 1.0 ELSE 0.0 END) AS handoff_rate,
+                    AVG(citation_coverage_ratio) AS avg_citation_coverage_ratio
                 FROM {}
                 WHERE created_at >= NOW() - (%s * INTERVAL '1 day')
                 {filters}
@@ -5007,6 +5870,11 @@ class PostgresKnowledgeRepository:
                     request_id AS answer_id,
                     citation_count,
                     cited_chunk_ids,
+                    generation_mode,
+                    citation_coverage_ratio,
+                    extractive_fallback_used,
+                    structured_retry_used,
+                    confidence_score,
                     created_at
                 FROM {}
                 WHERE created_at >= NOW() - (%s * INTERVAL '1 day')
@@ -5030,6 +5898,12 @@ class PostgresKnowledgeRepository:
             "hallucination_rate": eval_metrics.get("hallucination_rate") if has_eval_data else None,
             "no_answer_rate": _coalesce_metric(row[1]),
             "needs_human_rate": _coalesce_metric(row[2]),
+            "citation_missing_rate": _coalesce_metric(row[5]),
+            "extractive_fallback_rate": _coalesce_metric(row[6]),
+            "structured_retry_rate": _coalesce_metric(row[7]),
+            "low_confidence_rate": _coalesce_metric(row[8]),
+            "avg_citation_coverage_ratio": _coalesce_metric(row[9]),
+            "avg_generation_latency_ms": _coalesce_metric(row[10]),
         }
         tables = {
             "bucket_analysis": [
@@ -5040,8 +5914,9 @@ class PostgresKnowledgeRepository:
                     "groundedness_score_avg": None,
                     "citation_correctness_score_avg": None,
                     "handoff_rate": _coalesce_metric(handoff_rate),
+                    "avg_citation_coverage_ratio": _coalesce_metric(citation_coverage_ratio),
                 }
-                for bucket, count, handoff_rate in bucket_rows
+                for bucket, count, handoff_rate, citation_coverage_ratio in bucket_rows
             ],
             "citation_quality": [
                 {
@@ -5049,10 +5924,15 @@ class PostgresKnowledgeRepository:
                     "answer_id": row[1],
                     "citation_count": int(row[2] or 0),
                     "cited_chunk_ids": row[3] if isinstance(row[3], list) else [],
+                    "generation_mode": row[4],
+                    "citation_coverage_ratio": _coalesce_metric(row[5]),
+                    "extractive_fallback_used": bool(row[6]),
+                    "structured_retry_used": bool(row[7]),
+                    "confidence_score": _coalesce_metric(row[8]),
                     "citation_correctness_score": None,
                     "citation_missing_flag": int(row[2] or 0) == 0,
                     "citation_broken_link_flag": False,
-                    "created_at": _to_iso(row[4]),
+                    "created_at": _to_iso(row[9]),
                 }
                 for row in citation_rows
             ],
@@ -5072,6 +5952,8 @@ class PostgresKnowledgeRepository:
             {
                 "query_type": "q.query_type",
                 "retrieval_strategy": "q.retrieval_strategy",
+                "source_type": "q.primary_source_type",
+                "chunk_strategy": "q.primary_chunk_strategy",
             },
         )
         row = self._query_rows(
@@ -5157,6 +6039,8 @@ class PostgresKnowledgeRepository:
             {
                 "query_type": "query_type",
                 "retrieval_strategy": "retrieval_strategy",
+                "source_type": "primary_source_type",
+                "chunk_strategy": "primary_chunk_strategy",
             },
         )
         row = self._query_rows(
@@ -5292,6 +6176,8 @@ class PostgresKnowledgeRepository:
             {
                 "query_type": "query_type",
                 "retrieval_strategy": "retrieval_strategy",
+                "source_type": "primary_source_type",
+                "chunk_strategy": "primary_chunk_strategy",
             },
         )
         failure_rows = self._query_rows(
@@ -5313,6 +6199,9 @@ class PostgresKnowledgeRepository:
                     primary_source_type,
                     primary_chunk_strategy,
                     needs_human,
+                    generation_mode,
+                    confidence_score,
+                    citation_count,
                     created_at
                 FROM {}
                 WHERE created_at >= NOW() - (%s * INTERVAL '1 day')
@@ -5327,6 +6216,8 @@ class PostgresKnowledgeRepository:
             ),
             tuple([days, *query_filter_params, filters["limit"]]),
         )
+        review_queue_rows = self._review_queue_rows(days, filters)
+        pending_review_count, live_review_count, benchmark_review_count = self._review_queue_summary(days)
         grouped: dict[str, dict[str, Any]] = {}
         for row in failure_rows:
             failure_type = str(row[4])
@@ -5356,7 +6247,10 @@ class PostgresKnowledgeRepository:
                     "groundedness_score": None,
                     "citation_correctness_score": None,
                     "needs_human": bool(row[8]),
-                    "created_at": _to_iso(row[9]),
+                    "generation_mode": row[9],
+                    "confidence_score": _coalesce_metric(row[10]),
+                    "citation_count": int(row[11] or 0),
+                    "created_at": _to_iso(row[12]),
                 }
                 for row in failure_rows
             ],
@@ -5371,11 +6265,16 @@ class PostgresKnowledgeRepository:
                 }
                 for failure_type, payload in sorted(grouped.items(), key=lambda item: item[1]["count"], reverse=True)
             ],
+            "review_queue": review_queue_rows,
         }
         return self._build_envelope(
             range_value=range_value,
             filters=filters,
-            cards={},
+            cards={
+                "pending_review_count": pending_review_count,
+                "live_review_sample_count": live_review_count,
+                "benchmark_review_sample_count": benchmark_review_count,
+            },
             charts={},
             tables=tables,
             has_eval_data=False,
@@ -5385,6 +6284,16 @@ class PostgresKnowledgeRepository:
         has_eval_data = self._has_eval_data(days, filters)
         rows: list[tuple[Any, ...]] = []
         if has_eval_data:
+            eval_filter_sql, eval_filter_params = self._build_filter_clause(
+                filters,
+                {
+                    "query_type": "r.query_type",
+                    "source_type": "r.source_type",
+                    "retrieval_strategy": "r.retrieval_strategy",
+                    "chunk_strategy": "r.chunk_strategy",
+                    "experiment_id": "e.experiment_id",
+                },
+            )
             rows = self._query_rows(
                 sql.SQL(
                     """
@@ -5399,11 +6308,15 @@ class PostgresKnowledgeRepository:
                         AVG(r.groundedness_score),
                         AVG(r.citation_correctness_score),
                         NULL::double precision AS p95_latency_ms,
-                        NULL::double precision AS avg_cost_per_query
+                        NULL::double precision AS avg_cost_per_query,
+                        MAX(e.benchmark_version) AS benchmark_version,
+                        MAX(e.judge_models) AS judge_models,
+                        AVG(CASE WHEN r.judge_disagreement_flag THEN 1.0 ELSE 0.0 END) AS judge_disagreement_rate
                     FROM {} AS r
                     JOIN {} AS e
                       ON e.eval_run_id = r.eval_run_id
                     WHERE COALESCE(e.finished_at, e.started_at) >= NOW() - (%s * INTERVAL '1 day')
+                    {filters}
                     GROUP BY e.eval_run_id
                     ORDER BY MAX(COALESCE(e.finished_at, e.started_at)) DESC NULLS LAST
                     LIMIT %s
@@ -5411,13 +6324,15 @@ class PostgresKnowledgeRepository:
                 ).format(
                     self._table("support_rag_eval_results"),
                     self._table("support_rag_eval_runs"),
+                    filters=sql.SQL(eval_filter_sql),
                 ),
-                (days, filters["limit"]),
+                tuple([days, *eval_filter_params, filters["limit"]]),
             )
         tables = {
             "experiments": [
                 {
                     "experiment_id": row[3] or row[0],
+                    "benchmark_version": row[11],
                     "chunk_strategy": row[1],
                     "embedding_model": None,
                     "retrieval_strategy": row[2],
@@ -5430,6 +6345,8 @@ class PostgresKnowledgeRepository:
                     "citation_correctness_score_avg": _coalesce_metric(row[8]),
                     "p95_latency_ms": _coalesce_metric(row[9]),
                     "avg_cost_per_query": _coalesce_metric(row[10]),
+                    "judge_models": row[12] if isinstance(row[12], list) else [],
+                    "judge_disagreement_rate": _coalesce_metric(row[13]),
                 }
                 for row in rows
             ]
