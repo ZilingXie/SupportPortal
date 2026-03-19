@@ -44,6 +44,14 @@ CLIENT_DIR = UI_DIR / "client-ui"
 ENGINEER_DIR = UI_DIR / "engineer-ui"
 DASHBOARD_DIR = UI_DIR / "dashboard-ui"
 
+PRIMARY_RAG_WORKBENCH_PAGES = (
+    "experiments",
+    "diagnosis",
+    "knowledge-supply",
+    "production-signals",
+    "review",
+)
+
 # Auto-load project environment variables from repository root.
 load_dotenv(dotenv_path=BASE_DIR / ".env", override=False)
 

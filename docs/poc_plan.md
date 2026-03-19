@@ -29,7 +29,7 @@
 2. 测试用例 ID 固定：`P{阶段号}-T{序号}`，例如 `P3-T2`。
 3. 测试登记表列固定：`Case ID | Objective | Command/Action | Expected | Actual | Result | Evidence`。
 4. 证据路径固定规则：`artifacts/phase-{n}/...`。
-5. UI 规范优先级：`docs/agent.md` 高于其他文档中的 UI 描述，冲突时以 `docs/agent.md` 为准。
+5. UI 规范优先级：`design.md` 高于其他文档中的 UI 描述，冲突时以 `design.md` 为准。
 
 ## 阶段计划与闸门
 
@@ -99,13 +99,13 @@
 
 任务：
 1. 完成 `/client`、`/engineer`、`/dashboard` 三端页面。
-2. 按 `docs/agent.md` 执行 UI 一致性实现。
+2. 按 `design.md` 执行 UI 一致性实现。
 3. 联调 API 与 WebSocket 展示完整流程。
 
 测试用例：
 1. `P4-T1` 三端路由可访问，期望 HTTP `200`。
 2. `P4-T2` 首屏加载时间检查，期望每端 `<= 2s`。
-3. `P4-T3` UI 规范一致性核对（按 `docs/agent.md` checklist），期望无 P0/P1 偏差。
+3. `P4-T3` UI 规范一致性核对（按 `design.md` checklist），期望无 P0/P1 偏差。
 
 进入条件：
 1. Phase 3 闸门通过。
@@ -156,7 +156,7 @@
 ## 实施顺序（必须遵守）
 1. 创建并维护 `docs/poc_plan.md`（本文件）。
 2. 创建并维护 `docs/poc_progress.md`（状态与证据）。
-3. 创建并维护 `docs/agent.md`（UI 唯一规范源）。
+3. 创建并维护 `design.md`（UI 唯一规范源）。
 4. 每完成一个阶段，先在 `docs/poc_progress.md` 记录证据，再执行闸门判定。
 5. 判定 `Failed` 时禁止进入下一阶段，只能修复并重测。
 
@@ -177,4 +177,4 @@
 ## 默认假设
 1. 文档语言使用中文，技术关键词保留英文。
 2. 当前只覆盖本地 POC 阶段，不扩展云端章节。
-3. 团队统一以 `docs/agent.md` 作为 UI 唯一规范源。
+3. 团队统一以 `design.md` 作为 UI 唯一规范源。

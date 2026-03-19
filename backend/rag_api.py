@@ -41,6 +41,13 @@ load_dotenv(dotenv_path=BASE_DIR / ".env", override=False)
 LOGGER = logging.getLogger(__name__)
 KNOWLEDGE_OFFICIAL_MAX_BYTES = max(1, int(os.getenv("KNOWLEDGE_OFFICIAL_MAX_BYTES") or 5 * 1024 * 1024))
 KNOWLEDGE_ARTICLE_MAX_CHARS = max(1, int(os.getenv("KNOWLEDGE_ARTICLE_MAX_CHARS") or 120000))
+PRIMARY_RAG_WORKBENCH_PAGES = (
+    "experiments",
+    "diagnosis",
+    "knowledge-supply",
+    "production-signals",
+    "review",
+)
 _CHAT_MODEL_PRICING = {
     "gpt-4.1": {"prompt_per_1k": 0.002, "completion_per_1k": 0.008},
     "gpt-4.1-mini": {"prompt_per_1k": 0.0004, "completion_per_1k": 0.0016},
