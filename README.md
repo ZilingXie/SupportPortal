@@ -39,8 +39,9 @@ podman-compose -f deployment/docker-compose.single-host.yml up -d
 ### 访问地址
 1. 客户端: [http://localhost:8080/client/](http://localhost:8080/client/)
 2. 工程师端: [http://localhost:8080/engineer/](http://localhost:8080/engineer/)
-3. 管理端: [http://localhost:8080/dashboard/](http://localhost:8080/dashboard/)
-4. 健康检查: [http://localhost:8080/health](http://localhost:8080/health)
+3. 管理端（Ticket Dashboard）: [http://localhost:8080/dashboard/](http://localhost:8080/dashboard/)
+4. RAG Workbench: [http://localhost:8080/dashboard/rag/](http://localhost:8080/dashboard/rag/)
+5. 健康检查: [http://localhost:8080/health](http://localhost:8080/health)
 
 ### 常用命令
 
@@ -111,7 +112,7 @@ backend/       # FastAPI backend + worker + ws gateway
 ui/
   client-ui/   # 客户端 UI（含 next-prototype/ 历史原型）
   engineer-ui/ # 工程师端 UI
-  dashboard-ui/# 管理端 UI
+  dashboard-ui/# 管理端 UI（`/dashboard/` + `/dashboard/rag/`）
 deployment/    # compose 与 nginx 配置
 docs/          # 文档
 ```

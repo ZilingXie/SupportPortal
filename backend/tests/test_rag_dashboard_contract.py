@@ -5,15 +5,18 @@ from pathlib import Path
 
 
 class RagDashboardContractTests(unittest.TestCase):
-    def test_repository_accepts_workbench_pages(self) -> None:
+    def test_repository_dispatches_workbench_pages(self) -> None:
         source = Path("backend/repositories/knowledge_repository.py").read_text(encoding="utf-8")
-        for page_name in [
-            '"diagnosis"',
-            '"knowledge-supply"',
-            '"production-signals"',
-            '"review"',
-        ]:
-            self.assertIn(page_name, source)
+        expected_dispatches = {
+            'if normalized_page == "experiments":': "_experiments_workbench_page",
+            'if normalized_page == "diagnosis":': "_diagnosis_workbench_page",
+            'if normalized_page == "knowledge-supply":': "_knowledge_supply_workbench_page",
+            'if normalized_page == "production-signals":': "_production_signals_workbench_page",
+            'if normalized_page == "review":': "_review_workbench_page",
+        }
+        for branch, helper_name in expected_dispatches.items():
+            self.assertIn(branch, source)
+            self.assertIn(helper_name, source)
 
     def test_repository_normalizes_diagnosis_and_compare_filters(self) -> None:
         source = Path("backend/repositories/knowledge_repository.py").read_text(encoding="utf-8")
@@ -40,6 +43,19 @@ class RagDashboardContractTests(unittest.TestCase):
                 "candidate_experiment_id",
             ]:
                 self.assertIn(f"{filter_name}: str | None = Query(default=None)", source)
+
+    def test_workbench_pages_are_primary_public_page_set(self) -> None:
+        main_source = Path("backend/main.py").read_text(encoding="utf-8")
+        rag_api_source = Path("backend/rag_api.py").read_text(encoding="utf-8")
+        for source in [main_source, rag_api_source]:
+            for page_name in [
+                "experiments",
+                "diagnosis",
+                "knowledge-supply",
+                "production-signals",
+                "review",
+            ]:
+                self.assertIn(page_name, source)
 
 
 if __name__ == "__main__":

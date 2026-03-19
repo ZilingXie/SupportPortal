@@ -3,140 +3,125 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>RAG Tuning Workbench</title>
-    <link rel="stylesheet" href="./styles.css?v=20260319-rag-workbench-1" />
+    <title>Ticket Operations Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@500;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css?v=20260319-ticket-ops-1" />
   </head>
   <body>
-    <main class="shell">
+    <main class="dashboard-shell">
       <header class="topbar">
         <div class="topbar-copy">
           <p class="eyebrow">SupportPortal</p>
-          <h1>RAG Tuning Workbench</h1>
-          <p id="dashboard-status" class="status-line">Loading RAG workbench...</p>
+          <h1>Ticket Operations</h1>
+          <p id="ws-status" class="status-line">Realtime: connecting...</p>
         </div>
         <div class="topbar-actions">
-          <div class="status-stack">
-            <span id="active-scope-label">Scope: all data</span>
-            <span id="last-refreshed-label">Last refreshed: -</span>
+          <div class="quick-actions">
+            <a class="workbench-link" href="/dashboard/rag/">Open RAG Workbench</a>
+            <button id="refresh-button" class="ghost-button" type="button">Refresh Feed</button>
           </div>
-          <button id="refresh-button" class="primary-button" type="button">Refresh</button>
+          <div id="header-user-controls" class="header-user-controls"></div>
         </div>
       </header>
 
-      <nav class="dashboard-tabs" aria-label="RAG workbench pages">
-        <button type="button" class="dashboard-tab active" data-dashboard-tab="experiments">Experiments</button>
-        <button type="button" class="dashboard-tab" data-dashboard-tab="diagnosis">Diagnosis</button>
-        <button type="button" class="dashboard-tab" data-dashboard-tab="knowledge-supply">Knowledge Supply</button>
-        <button type="button" class="dashboard-tab" data-dashboard-tab="production-signals">Production Signals</button>
-        <button type="button" class="dashboard-tab" data-dashboard-tab="review">Review Queue</button>
-      </nav>
+      <section class="hero-grid">
+        <article class="hero-card">
+          <div class="hero-copy">
+            <p class="eyebrow">Command Center</p>
+            <h2>AI-managed queue with live escalation signals and a calmer operator surface.</h2>
+            <p id="ops-brief-body" class="hero-body">
+              Loading the latest customer activity, resolution pace, and priority signals.
+            </p>
+          </div>
+          <div class="hero-stats">
+            <div class="hero-stat">
+              <span class="hero-label">Latest Event</span>
+              <strong id="latest-event-label">Loading...</strong>
+            </div>
+            <div class="hero-stat">
+              <span class="hero-label">Priority Signal</span>
+              <strong id="priority-signal">Calibrating...</strong>
+            </div>
+          </div>
+        </article>
 
-      <section class="filter-panel">
-        <div class="filter-panel-copy">
-          <h2>Global Scope</h2>
-          <p>Keep these filters stable while you compare experiments, inspect traces, and review risky samples.</p>
-        </div>
-        <div class="filter-grid">
-          <label class="filter-field">
-            <span>Range</span>
-            <select id="rag-range-filter">
-              <option value="7d">Last 7 days</option>
-              <option value="30d">Last 30 days</option>
-            </select>
-          </label>
-          <label class="filter-field">
-            <span>Source Type</span>
-            <select id="rag-source-filter">
-              <option value="all">All</option>
-              <option value="official_markdown_upload">Official Markdown Upload</option>
-              <option value="technical_article_api">Technical Article API</option>
-            </select>
-          </label>
-          <label class="filter-field">
-            <span>Query Type</span>
-            <select id="rag-query-type-filter">
-              <option value="all">All</option>
-              <option value="faq">FAQ</option>
-              <option value="troubleshooting">Troubleshooting</option>
-              <option value="configuration">Configuration</option>
-              <option value="error_code">Error Code</option>
-              <option value="pricing_or_policy">Pricing or Policy</option>
-              <option value="small_talk">Small Talk</option>
-              <option value="unclear_query">Unclear Query</option>
-            </select>
-          </label>
-          <label class="filter-field">
-            <span>Retrieval Strategy</span>
-            <select id="rag-retrieval-filter">
-              <option value="all">All</option>
-              <option value="vector_only">Vector Only</option>
-              <option value="bm25_only">BM25 Only</option>
-              <option value="hybrid_rrf">Hybrid RRF</option>
-              <option value="hybrid_rrf_rerank">Hybrid RRF Rerank</option>
-              <option value="hybrid_rrf_rerank_rewrite">Hybrid RRF Rerank Rewrite</option>
-            </select>
-          </label>
-          <label class="filter-field">
-            <span>Chunk Strategy</span>
-            <select id="rag-chunk-filter">
-              <option value="all">All</option>
-              <option value="markdown_header_v1">Markdown Header v1</option>
-              <option value="semantic_qwen3_v1">Semantic Qwen3 v1</option>
-              <option value="token_300_overlap_80">Token 300 Overlap 80</option>
-              <option value="token_500_overlap_100">Token 500 Overlap 100</option>
-              <option value="token_800_overlap_120">Token 800 Overlap 120</option>
-            </select>
-          </label>
-          <label class="filter-field">
-            <span>Product</span>
-            <input id="rag-product-filter" type="text" placeholder="all" />
-          </label>
-          <label class="filter-field">
-            <span>Language</span>
-            <input id="rag-language-filter" type="text" placeholder="all" />
-          </label>
-          <label class="filter-field">
-            <span>Experiment Id</span>
-            <input id="rag-experiment-filter" type="text" placeholder="all" />
-          </label>
-        </div>
+        <aside class="brief-card">
+          <p class="eyebrow">Split Surface</p>
+          <h2 id="ops-brief-title">Ticket ops stays operational.</h2>
+          <p id="ops-brief-detail">
+            Use this page for workload, websocket health, and event triage. The RAG workbench now lives on a separate page.
+          </p>
+          <a class="primary-link" href="/dashboard/rag/">Go to /dashboard/rag/</a>
+        </aside>
       </section>
 
-      <section class="dashboard-panel active" data-dashboard-panel="experiments">
-        <div id="rag-experiments-page" class="page-shell"></div>
+      <section class="kpi-grid" aria-label="Ticket operations metrics">
+        <article class="metric-card">
+          <p class="metric-label">Today Ticket Volume</p>
+          <p class="metric-value" id="ticket-volume">0</p>
+          <p class="metric-note">Active tickets handled across the queue.</p>
+        </article>
+        <article class="metric-card">
+          <p class="metric-label">Resolution Rate</p>
+          <p class="metric-value" id="resolution-rate">0%</p>
+          <p class="metric-note">Resolved tickets over the current workload.</p>
+        </article>
+        <article class="metric-card metric-card-attention">
+          <p class="metric-label">Sentiment Alerts</p>
+          <p class="metric-value" id="sentiment-alerts">0</p>
+          <p class="metric-note">High-risk signals needing closer review.</p>
+        </article>
       </section>
 
-      <section class="dashboard-panel" data-dashboard-panel="diagnosis">
-        <div id="rag-diagnosis-page" class="page-shell"></div>
-      </section>
+      <section class="content-grid">
+        <section class="feed-card">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Live Stream</p>
+              <h2>Ticket event feed</h2>
+              <p>Realtime updates from the support queue, ordered from newest to oldest.</p>
+            </div>
+          </div>
+          <ul id="event-stream" class="event-list" aria-live="polite">
+            <li class="event-empty">Loading ticket events...</li>
+          </ul>
+        </section>
 
-      <section class="dashboard-panel" data-dashboard-panel="knowledge-supply">
-        <div id="rag-knowledge-supply-page" class="page-shell"></div>
-      </section>
+        <aside class="signal-stack">
+          <article class="signal-card signal-card-cool">
+            <p class="eyebrow">AI Brief</p>
+            <h2 id="active-focus">Watching the queue.</h2>
+            <p id="active-focus-detail">
+              The dashboard will summarize the newest customer-facing movement here.
+            </p>
+          </article>
 
-      <section class="dashboard-panel" data-dashboard-panel="production-signals">
-        <div id="rag-production-signals-page" class="page-shell"></div>
-      </section>
+          <article class="signal-card signal-card-neutral">
+            <p class="eyebrow">Routing Note</p>
+            <h2>Knowledge quality is separate now.</h2>
+            <p>
+              Keep ticket triage here. Open the dedicated RAG workbench when you need experiment comparisons, diagnosis traces,
+              or review queues.
+            </p>
+            <a class="inline-link" href="/dashboard/rag/">Open RAG Workbench</a>
+          </article>
 
-      <section class="dashboard-panel" data-dashboard-panel="review">
-        <div id="rag-review-page" class="page-shell"></div>
+          <article class="signal-card signal-card-warm">
+            <p class="eyebrow">Live Health</p>
+            <h2 id="live-health-title">Waiting for dashboard traffic.</h2>
+            <p id="live-health-detail">
+              Once events arrive, this card will call out the strongest current operational signal.
+            </p>
+          </article>
+        </aside>
       </section>
     </main>
 
-    <aside id="report-drawer" class="report-drawer" hidden>
-      <div class="report-drawer-backdrop" data-close-report></div>
-      <div class="report-drawer-card">
-        <div class="report-drawer-header">
-          <div>
-            <p class="eyebrow">Ingestion Report</p>
-            <h2 id="report-drawer-title">Report</h2>
-          </div>
-          <button type="button" class="ghost-button" data-close-report>Close</button>
-        </div>
-        <div id="report-drawer-body" class="report-drawer-body"></div>
-      </div>
-    </aside>
-
-    <script src="./app.js?v=20260319-rag-workbench-1"></script>
+    <script src="./app.js?v=20260319-ticket-ops-1"></script>
   </body>
 </html>

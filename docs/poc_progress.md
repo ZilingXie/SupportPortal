@@ -27,6 +27,7 @@
 | 2026-03-07 | P1 | In Progress | 新增 PostgreSQL 工单持久化仓储层（tickets/messages/events），后端接口读写已切换为 DB，并保留无 DSN 的内存回退模式 | `artifacts/phase-1/ticket-db-persistence/` | 按 P1/P2 闸门补齐自动化测试与证据归档 | Codex |
 | 2026-03-07 | P3 | In Progress | 管理端新增历史事件接口 `/api/dashboard/events`（从 PostgreSQL 读取），工程师端与管理端状态栏显示 `Storage: postgres/memory` 便于核验数据源 | `artifacts/phase-3/dashboard-db-events/` | 浏览器验证 admin 首屏历史事件与实时事件叠加显示 | Codex |
 | 2026-03-08 | P3 | In Progress | 部署链路升级为单机可生产形态：拆分 `api/ws_gateway/worker`，接入 Redis 任务队列与事件总线；补齐 `deployment/docker-compose.single-host.yml` 与 Nginx 入口配置，支持本地 Podman + EC2 Docker | `artifacts/phase-3/single-host-runtime/` | 完成本地端到端验证并执行 EC2 首次部署演练 | Codex |
+| 2026-03-19 | P4 | In Progress | 管理端拆分为 `/dashboard/` ticket dashboard 与 `/dashboard/rag/` workbench；新增根目录 `design.md` 作为 UI 规范源，并将旧 `docs/agent.md` 降级为兼容跳转 | `artifacts/phase-4/dashboard-split/` | 执行路由、UI 契约与容器回归验证 | Codex |
 
 ## 阻塞与处理
 | Blocker ID | Date | Phase | Description | Impact | Mitigation | Owner | Status |
@@ -49,7 +50,7 @@
 | P3-T3 | 广播一致性 | 状态更新广播 | 双端一致 | TBD | Not Started | `artifacts/phase-3/p3-t3/` |
 | P4-T1 | 三端路由可访问 | 访问 `/client` `/engineer` `/dashboard` | `200` | TBD | Not Started | `artifacts/phase-4/p4-t1/` |
 | P4-T2 | 首屏加载时间 | 浏览器性能采样 | `<=2s` | TBD | Not Started | `artifacts/phase-4/p4-t2/` |
-| P4-T3 | UI 规范一致性 | 按 `docs/agent.md` checklist 核对 | 无 P0/P1 偏差 | TBD | Not Started | `artifacts/phase-4/p4-t3/` |
+| P4-T3 | UI 规范一致性 | 按 `design.md` checklist 核对 | 无 P0/P1 偏差 | TBD | Not Started | `artifacts/phase-4/p4-t3/` |
 | P5-T1 | 全量回归 | P1-P4 关键用例复测 | 全通过 | TBD | Not Started | `artifacts/phase-5/p5-t1/` |
 | P5-T2 | 报告完整性 | 检查 `local_test_report.md` | 指标+证据齐全 | TBD | Not Started | `artifacts/phase-5/p5-t2/` |
 | P5-T3 | 闭环演示 | 提问->告警->处理->看板更新 | 全流程成功 | TBD | Not Started | `artifacts/phase-5/p5-t3/` |
