@@ -55,6 +55,14 @@ class RagQueryRequest(BaseModel):
     top_k: int | None = Field(default=None, ge=1, le=12)
 
 
+class ReviewSampleUpdateRequest(BaseModel):
+    review_status: str | None = Field(default=None, pattern="^(pending|reviewed|dismissed)$")
+    retrieval_ok: bool | None = None
+    answer_ok: bool | None = None
+    citation_ok: bool | None = None
+    note: str | None = Field(default=None, max_length=4000)
+
+
 class TechnicalKnowledgeArticleRequest(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     content: str = Field(min_length=1, max_length=200000)
@@ -352,6 +360,13 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
                     "embedding_request_meta": [],
                     "primary_source_type": None,
                     "primary_chunk_strategy": None,
+                    "generation_mode": "insufficient_evidence",
+                    "structured_retry_used": False,
+                    "extractive_fallback_used": False,
+                    "selected_doc_count": 0,
+                    "top1_similarity_score": None,
+                    "avg_selected_similarity_score": None,
+                    "citation_coverage_ratio": None,
                     "needs_human": True,
                     "handoff_reason": "rag_query_failed",
                     "error_flag": True,
@@ -411,6 +426,13 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
                     "embedding_request_meta": [],
                     "primary_source_type": None,
                     "primary_chunk_strategy": None,
+                    "generation_mode": "insufficient_evidence",
+                    "structured_retry_used": False,
+                    "extractive_fallback_used": False,
+                    "selected_doc_count": 0,
+                    "top1_similarity_score": None,
+                    "avg_selected_similarity_score": None,
+                    "citation_coverage_ratio": None,
                     "needs_human": True,
                     "handoff_reason": "rag_unavailable",
                     "error_flag": True,
@@ -437,20 +459,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
 
     rag_answer = result.answer
     trace = result.trace
-    candidates = [
-        {
-            "chunk_id": citation.get("chunk_id"),
-            "doc_id": None,
-            "rank_before_rerank": index + 1,
-            "rank_after_rerank": index + 1,
-            "retrieval_score": None,
-            "rerank_score": None,
-            "title": citation.get("heading"),
-            "source_url": citation.get("source_url"),
-            "used_in_final_answer": True,
-        }
-        for index, citation in enumerate(rag_answer.citations)
-    ]
+    candidates = trace.retrieval_candidates or []
     knowledge_repository.record_rag_query_run(
         run={
             "request_id": request.request_id,
@@ -489,6 +498,13 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             "embedding_request_meta": trace.embedding_request_meta,
             "primary_source_type": trace.primary_source_type,
             "primary_chunk_strategy": trace.primary_chunk_strategy,
+            "generation_mode": trace.generation_mode,
+            "structured_retry_used": trace.structured_retry_used,
+            "extractive_fallback_used": trace.extractive_fallback_used,
+            "selected_doc_count": trace.selected_doc_count,
+            "top1_similarity_score": trace.top1_similarity_score,
+            "avg_selected_similarity_score": trace.avg_selected_similarity_score,
+            "citation_coverage_ratio": trace.citation_coverage_ratio,
             "needs_human": trace.needs_human,
             "handoff_reason": trace.handoff_reason,
             "error_flag": trace.error_flag,
@@ -558,6 +574,31 @@ def internal_rag_dashboard_page(
             "cursor": cursor,
         },
     )
+
+
+@app.post("/internal/dashboard/rag/review-samples/{sample_id}")
+def internal_update_review_sample(
+    sample_id: str,
+    request: ReviewSampleUpdateRequest,
+    _: None = Depends(_require_internal_auth),
+) -> dict[str, Any]:
+    repository = _require_knowledge_repository()
+    try:
+        repository.update_review_sample(
+            sample_id,
+            review_status=request.review_status,
+            retrieval_ok=request.retrieval_ok,
+            answer_ok=request.answer_ok,
+            citation_ok=request.citation_ok,
+            note=request.note,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "sample_id": sample_id,
+        "updated": True,
+        "updated_at": now_iso(),
+    }
 
 
 @app.post("/internal/knowledge/official-documents", status_code=202)

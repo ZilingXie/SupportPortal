@@ -5,7 +5,7 @@ import logging
 import os
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from backend.services.embedding_provider import (
@@ -119,6 +119,15 @@ class RagQueryTrace:
     confidence_score: float
     primary_source_type: str | None
     primary_chunk_strategy: str | None
+    generation_mode: str = "structured_answer"
+    structured_retry_used: bool = False
+    extractive_fallback_used: bool = False
+    selected_doc_count: int = 0
+    top1_similarity_score: float | None = None
+    avg_selected_similarity_score: float | None = None
+    citation_coverage_ratio: float | None = None
+    retrieval_candidates: list[dict[str, Any]] = field(default_factory=list)
+    selected_contexts: list[dict[str, Any]] = field(default_factory=list)
     error_flag: bool = False
     timeout_flag: bool = False
     error_type: str | None = None
@@ -827,6 +836,60 @@ def _dominant_value(chunks: list[RetrievedChunk], attr_name: str) -> str | None:
     return max(counts.items(), key=lambda item: item[1])[0]
 
 
+def _unique_doc_ids(chunks: list[RetrievedChunk]) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for chunk in chunks:
+        doc_id = str(chunk.doc_id or "").strip()
+        if not doc_id or doc_id in seen:
+            continue
+        seen.add(doc_id)
+        values.append(doc_id)
+    return values
+
+
+def _selected_contexts(chunks: list[RetrievedChunk]) -> list[dict[str, Any]]:
+    contexts: list[dict[str, Any]] = []
+    for chunk in chunks:
+        contexts.append(
+            {
+                "chunk_id": chunk.chunk_id,
+                "doc_id": chunk.doc_id,
+                "source_path": chunk.source_path,
+                "heading": _build_heading(chunk),
+                "source_url": chunk.source_url,
+                "source_type": chunk.source_type,
+                "chunk_strategy": chunk.chunk_strategy,
+                "similarity": round(max(0.0, min(1.0, float(chunk.similarity))), 4),
+                "text": chunk.text,
+            }
+        )
+    return contexts
+
+
+def _candidate_rows(
+    chunks: list[RetrievedChunk],
+    *,
+    selected_chunk_ids: set[str],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index, chunk in enumerate(chunks, start=1):
+        rows.append(
+            {
+                "chunk_id": chunk.chunk_id,
+                "doc_id": chunk.doc_id,
+                "rank_before_rerank": index,
+                "rank_after_rerank": None,
+                "retrieval_score": round(max(0.0, min(1.0, float(chunk.similarity))), 4),
+                "rerank_score": None,
+                "title": _build_heading(chunk),
+                "source_url": chunk.source_url,
+                "used_in_final_answer": chunk.chunk_id in selected_chunk_ids,
+            }
+        )
+    return rows
+
+
 def _estimate_embedding_tokens(message: str) -> int:
     raw = str(message or "")
     if not raw.strip():
@@ -856,6 +919,9 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
     prompt_tokens = 0
     completion_tokens = 0
     model_name: str | None = None
+    structured_retry_used = False
+    generation_mode = "structured_answer"
+    extractive_fallback_used = False
 
     try:
         vector_started_at = time.perf_counter()
@@ -967,6 +1033,13 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
                 confidence_score=0.55,
                 primary_source_type=None,
                 primary_chunk_strategy=None,
+                generation_mode="insufficient_evidence",
+                selected_doc_count=0,
+                top1_similarity_score=None,
+                avg_selected_similarity_score=None,
+                citation_coverage_ratio=None,
+                retrieval_candidates=[],
+                selected_contexts=[],
             )
             return RagQueryResult(answer=answer, trace=trace)
 
@@ -982,6 +1055,7 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
             strict_retry=False,
         )
         if payload is None or not _is_valid_response(payload, allowed_chunk_ids):
+            structured_retry_used = True
             payload, prompt_tokens, completion_tokens, model_name = _invoke_llm_payload_with_trace(
                 message,
                 final_chunks,
@@ -992,8 +1066,28 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
     except Exception as exc:
         logger.warning("RAG answer generation failed: %s", exc)
 
-    def _trace_for(answer: RagAnswer, *, needs_human: bool, handoff_reason: str | None) -> RagQueryTrace:
+    def _trace_for(
+        answer: RagAnswer,
+        *,
+        needs_human: bool,
+        handoff_reason: str | None,
+        generation_mode: str,
+        extractive_fallback_used: bool,
+    ) -> RagQueryTrace:
         cited_chunk_ids = [str(item.get("chunk_id")) for item in answer.citations if isinstance(item, dict) and item.get("chunk_id")]
+        selected_chunk_ids = [chunk.chunk_id for chunk in final_chunks if chunk.chunk_id]
+        unique_selected_chunk_ids = {chunk_id for chunk_id in selected_chunk_ids if chunk_id}
+        top1_similarity_score = round(max(0.0, min(1.0, float(final_chunks[0].similarity))), 4) if final_chunks else None
+        avg_selected_similarity_score = (
+            round(sum(max(0.0, min(1.0, float(chunk.similarity))) for chunk in final_chunks) / len(final_chunks), 4)
+            if final_chunks
+            else None
+        )
+        citation_coverage_ratio = (
+            round(len(set(cited_chunk_ids)) / len(unique_selected_chunk_ids), 4)
+            if unique_selected_chunk_ids
+            else None
+        )
         return RagQueryTrace(
             query_type=query_type,
             retrieval_strategy="hybrid_rrf" if vector_chunks and keyword_chunks else ("vector_only" if vector_chunks else "bm25_only"),
@@ -1001,7 +1095,7 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
             bm25_candidates_count=len(keyword_chunks),
             reranked_candidates_count=0,
             retrieved_chunk_ids=[chunk.chunk_id for chunk in chunks if chunk.chunk_id],
-            selected_chunk_ids=[chunk.chunk_id for chunk in final_chunks if chunk.chunk_id],
+            selected_chunk_ids=selected_chunk_ids,
             vector_retrieval_latency_ms=vector_latency_ms,
             bm25_retrieval_latency_ms=bm25_latency_ms,
             retrieval_latency_ms=round(vector_latency_ms + bm25_latency_ms, 2),
@@ -1024,6 +1118,15 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
             confidence_score=answer.confidence,
             primary_source_type=_dominant_value(final_chunks, "source_type"),
             primary_chunk_strategy=_dominant_value(final_chunks, "chunk_strategy"),
+            generation_mode=generation_mode,
+            structured_retry_used=structured_retry_used,
+            extractive_fallback_used=extractive_fallback_used,
+            selected_doc_count=len(_unique_doc_ids(final_chunks)),
+            top1_similarity_score=top1_similarity_score,
+            avg_selected_similarity_score=avg_selected_similarity_score,
+            citation_coverage_ratio=citation_coverage_ratio,
+            retrieval_candidates=_candidate_rows(chunks, selected_chunk_ids=unique_selected_chunk_ids),
+            selected_contexts=_selected_contexts(final_chunks),
         )
 
     if payload is not None and _is_valid_response(payload, allowed_chunk_ids):
@@ -1033,17 +1136,35 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
                     "RAG insufficient evidence but keyword overlap was found. "
                     "Using extractive fallback."
                 )
+                generation_mode = "extractive_fallback"
+                extractive_fallback_used = True
                 answer = _build_extractive_rag_answer(final_chunks)
-                return RagQueryResult(answer=answer, trace=_trace_for(answer, needs_human=False, handoff_reason=None))
+                return RagQueryResult(
+                    answer=answer,
+                    trace=_trace_for(
+                        answer,
+                        needs_human=False,
+                        handoff_reason=None,
+                        generation_mode=generation_mode,
+                        extractive_fallback_used=extractive_fallback_used,
+                    ),
+                )
             answer = RagAnswer(
                 answer=INSUFFICIENT_EVIDENCE_REPLY,
                 confidence=0.55,
                 sources=[],
                 citations=[],
             )
+            generation_mode = "insufficient_evidence"
             return RagQueryResult(
                 answer=answer,
-                trace=_trace_for(answer, needs_human=True, handoff_reason="insufficient_evidence"),
+                trace=_trace_for(
+                    answer,
+                    needs_human=True,
+                    handoff_reason="insufficient_evidence",
+                    generation_mode=generation_mode,
+                    extractive_fallback_used=False,
+                ),
             )
         citations = [str(chunk_id) for chunk_id in payload["citations"]]
         citation_records = _citation_records_from_ids(citations, final_chunks)
@@ -1057,11 +1178,32 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
             sources=sources,
             citations=citation_records,
         )
-        return RagQueryResult(answer=answer, trace=_trace_for(answer, needs_human=False, handoff_reason=None))
+        generation_mode = "structured_answer"
+        return RagQueryResult(
+            answer=answer,
+            trace=_trace_for(
+                answer,
+                needs_human=False,
+                handoff_reason=None,
+                generation_mode=generation_mode,
+                extractive_fallback_used=False,
+            ),
+        )
 
     logger.warning("RAG structured answer invalid, using extractive fallback.")
+    generation_mode = "extractive_fallback"
+    extractive_fallback_used = True
     answer = _build_extractive_rag_answer(final_chunks)
-    return RagQueryResult(answer=answer, trace=_trace_for(answer, needs_human=False, handoff_reason=None))
+    return RagQueryResult(
+        answer=answer,
+        trace=_trace_for(
+            answer,
+            needs_human=False,
+            handoff_reason=None,
+            generation_mode=generation_mode,
+            extractive_fallback_used=extractive_fallback_used,
+        ),
+    )
 
 
 def answer_with_rag(message: str, top_k: int | None = None) -> RagAnswer | None:

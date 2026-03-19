@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import unittest
 import urllib.error
 import urllib.parse
@@ -154,6 +155,45 @@ class RagServiceClientTests(unittest.TestCase):
         self.assertEqual(query["limit"], ["25"])
         self.assertEqual(captured["authorization"], "Bearer token")
         self.assertEqual(payload["cards"]["doc_count_total"], 12)
+
+    def test_update_review_sample_uses_internal_review_endpoint(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+        captured = {}
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"sample_id":"RS-1","updated":true}'
+
+        def _fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["authorization"] = request.headers.get("Authorization")
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return _FakeResponse()
+
+        with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            payload = client.update_review_sample(
+                "RS-1",
+                review_status="reviewed",
+                retrieval_ok=True,
+                answer_ok=False,
+                citation_ok=True,
+                note="Needs retrieval follow-up.",
+            )
+
+        self.assertEqual(
+            captured["url"],
+            "http://rag-api.internal/internal/dashboard/rag/review-samples/RS-1",
+        )
+        self.assertEqual(captured["authorization"], "Bearer token")
+        self.assertEqual(captured["body"]["review_status"], "reviewed")
+        self.assertEqual(captured["body"]["retrieval_ok"], True)
+        self.assertEqual(payload["updated"], True)
 
 
 if __name__ == "__main__":

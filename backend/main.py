@@ -113,6 +113,14 @@ class TicketModeRequest(BaseModel):
     engineer_id: str = Field(default="eng")
 
 
+class ReviewSampleUpdateRequest(BaseModel):
+    review_status: str | None = Field(default=None, pattern="^(pending|reviewed|dismissed)$")
+    retrieval_ok: bool | None = None
+    answer_ok: bool | None = None
+    citation_ok: bool | None = None
+    note: str | None = Field(default=None, max_length=4000)
+
+
 class ManagedResponseRequest(BaseModel):
     engineer_id: str = Field(default="eng")
     solution: str = Field(min_length=1, max_length=4000)
@@ -1630,6 +1638,24 @@ def dashboard_rag_page(
             "has_eval_data": False,
             "last_refreshed_at": now_iso(),
         }
+
+
+@app.post("/api/dashboard/rag/review-samples/{sample_id}")
+def dashboard_update_review_sample(
+    sample_id: str,
+    request: ReviewSampleUpdateRequest,
+) -> dict[str, Any]:
+    try:
+        return rag_service_client.update_review_sample(
+            sample_id,
+            review_status=request.review_status,
+            retrieval_ok=request.retrieval_ok,
+            answer_ok=request.answer_ok,
+            citation_ok=request.citation_ok,
+            note=request.note,
+        )
+    except RagServiceError as exc:
+        _raise_rag_service_http_error(exc)
 
 
 @app.get("/api/dashboard/events")
