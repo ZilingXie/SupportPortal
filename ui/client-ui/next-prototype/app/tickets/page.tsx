@@ -14,11 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  FilterSelect,
 } from "@/components/ui/select"
 import { getTicketsByUser, updateTicketStatus, type Ticket } from "@/lib/tickets"
 import { TICKET_STATUS_CONFIG, type TicketStatus } from "@/lib/constants"
@@ -30,6 +26,13 @@ import {
   RotateCcw,
 } from "lucide-react"
 import { toast } from "sonner"
+
+const STATUS_FILTER_OPTIONS = (Object.keys(TICKET_STATUS_CONFIG) as TicketStatus[]).map(
+  (status) => ({
+    value: status,
+    label: TICKET_STATUS_CONFIG[status].label,
+  }),
+)
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-US", {
@@ -111,19 +114,18 @@ export default function TicketsPage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Filter by status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Statuses</SelectItem>
-              {(Object.keys(TICKET_STATUS_CONFIG) as TicketStatus[]).map((s) => (
-                <SelectItem key={s} value={s}>
-                  {TICKET_STATUS_CONFIG[s].label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <FilterSelect
+            className="w-[180px]"
+            value={statusFilter}
+            onValueChange={setStatusFilter}
+            options={STATUS_FILTER_OPTIONS}
+            allowEmpty
+            emptyValue="all"
+            emptyLabel="All Statuses"
+            allowFreeInput={false}
+            placeholder="Filter by status"
+            toggleAriaLabel="Toggle status filter"
+          />
         </div>
       </header>
 
