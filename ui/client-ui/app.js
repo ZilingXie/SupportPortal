@@ -15,11 +15,35 @@ const STATUS_CONFIG = {
   resolved: { label: "Resolved", className: "status-resolved" },
 };
 
+const STATUS_FILTER_OPTIONS = [
+  { value: "all", label: "All Statuses" },
+  ...Object.entries(STATUS_CONFIG).map(([value, config]) => ({
+    value,
+    label: config.label,
+  })),
+];
+
 const FEATURES = [
-  { icon: "SVR", label: "Server Troubleshooting", desc: "Linux/Windows server diagnostics" },
-  { icon: "SEC", label: "Security Response", desc: "Vulnerability fixes & intrusion detection" },
-  { icon: "DB", label: "Database Operations", desc: "MySQL/PG/Redis support" },
-  { icon: "CLD", label: "Cloud Services", desc: "AWS/Azure/GCP issue handling" },
+  {
+    icon: "dns",
+    label: "Server Troubleshooting",
+    desc: "Linux, Windows, and service diagnostics",
+  },
+  {
+    icon: "security",
+    label: "Security Response",
+    desc: "Incident follow-up and escalation guidance",
+  },
+  {
+    icon: "storage",
+    label: "Database Operations",
+    desc: "MySQL, PostgreSQL, and cache issue support",
+  },
+  {
+    icon: "cloud",
+    label: "Cloud Services",
+    desc: "AWS, Azure, and GCP request handling",
+  },
 ];
 
 const state = {
@@ -116,18 +140,21 @@ function renderCitationsHtml(citations) {
   }
   const items = citations
     .map((citation, index) => {
-      const heading = citation.heading ? escapeHtml(citation.heading) : "Reference";
-      const sourcePath = citation.sourcePath ? ` (${escapeHtml(citation.sourcePath)})` : "";
+      const heading = citation.heading
+        ? escapeHtml(citation.heading)
+        : citation.sourcePath
+        ? escapeHtml(citation.sourcePath)
+        : `Reference ${index + 1}`;
       if (citation.sourceUrl) {
-        return `<li><a class="citation-link" href="${escapeHtml(citation.sourceUrl)}" target="_blank" rel="noopener noreferrer">${heading}</a>${sourcePath}</li>`;
+        return `<a class="citation-pill" href="${escapeHtml(citation.sourceUrl)}" target="_blank" rel="noopener noreferrer">${heading}</a>`;
       }
-      return `<li>${heading}${sourcePath}</li>`;
+      return `<span class="citation-pill">${heading}</span>`;
     })
     .join("");
   return `
     <div class="citations">
-      <div class="citation-title">Related Documentation</div>
-      <ol class="citation-list">${items}</ol>
+      <div class="citation-title">Source Context</div>
+      <div class="citation-list">${items}</div>
     </div>
   `;
 }
@@ -579,6 +606,55 @@ function createTicket(userId) {
   return ticket;
 }
 
+function isTicketEmpty(ticket) {
+  const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
+  return messages.length === 0;
+}
+
+function isReusableDraftTicket(ticket, userId) {
+  const normalizedUserId = String(userId || "").trim();
+  if (!normalizedUserId) {
+    return false;
+  }
+  return (
+    String(ticket?.userId || "").trim() === normalizedUserId &&
+    String(ticket?.status || "").trim().toLowerCase() !== "resolved" &&
+    String(ticket?.title || "New Session").trim() === "New Session" &&
+    isTicketEmpty(ticket)
+  );
+}
+
+function findReusableDraftTicket(userId) {
+  return getAllTickets()
+    .filter((ticket) => isReusableDraftTicket(ticket, userId))
+    .sort((left, right) => {
+      const rightTime = toTimestamp(right?.updatedAt || right?.createdAt);
+      const leftTime = toTimestamp(left?.updatedAt || left?.createdAt);
+      return rightTime - leftTime;
+    })[0] || null;
+}
+
+function getOrCreateDraftTicket(userId) {
+  return findReusableDraftTicket(userId) || createTicket(userId);
+}
+
+function openDraftTicket(userId) {
+  const ticket = getOrCreateDraftTicket(userId);
+  const targetPath = `/chat/${ticket.id}`;
+  const targetHash = `#${targetPath}`;
+  const currentTicketId = String(state.activeTicketId || "").trim();
+
+  if (
+    String(window.location.hash || "").trim() === targetHash ||
+    (state.view === "chat-ticket" && currentTicketId === ticket.id)
+  ) {
+    return ticket;
+  }
+
+  navigate(targetPath);
+  return ticket;
+}
+
 function updateTicketStatus(ticketId, status) {
   const all = getAllTickets();
   const idx = all.findIndex((ticket) => ticket.id === ticketId);
@@ -626,6 +702,55 @@ function statusBadge(status) {
   return `<span class="status-badge ${config.className}">${config.label}</span>`;
 }
 
+function getStatusFilterOption(value) {
+  return STATUS_FILTER_OPTIONS.find((option) => option.value === value) || STATUS_FILTER_OPTIONS[0];
+}
+
+function renderStatusFilter() {
+  const selectedOption = getStatusFilterOption(state.statusFilter);
+  return `
+    <div class="filter-select" data-filter-select>
+      <input id="status-filter" type="hidden" value="${escapeHtml(selectedOption.value)}" />
+      <button
+        class="filter-select-trigger"
+        data-status-filter-trigger
+        type="button"
+        role="combobox"
+        aria-label="Filter sessions by status"
+        aria-controls="status-filter-listbox"
+        aria-expanded="false"
+        aria-haspopup="listbox"
+      >
+        <span class="filter-select-trigger-label">${escapeHtml(selectedOption.label)}</span>
+        <span class="filter-select-trigger-icon" aria-hidden="true">
+          <span class="material-symbols-outlined">expand_more</span>
+        </span>
+      </button>
+      <div class="filter-select-panel" data-status-filter-panel hidden>
+        <div class="filter-select-options" id="status-filter-listbox" role="listbox" aria-label="Session status filter">
+          ${STATUS_FILTER_OPTIONS.map((option, index) => {
+            const isSelected = option.value === selectedOption.value;
+            return `
+              <button
+                class="filter-select-option ${isSelected ? "is-selected" : ""}"
+                data-status-filter-option
+                data-value="${escapeHtml(option.value)}"
+                id="status-filter-option-${index}"
+                type="button"
+                role="option"
+                aria-selected="${isSelected ? "true" : "false"}"
+              >
+                <span class="filter-select-option-copy">${escapeHtml(option.label)}</span>
+                <span class="filter-select-check material-symbols-outlined" aria-hidden="true">check</span>
+              </button>
+            `;
+          }).join("")}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function parseRoute() {
   const hash = window.location.hash || "#/chat";
   const path = hash.replace(/^#/, "");
@@ -660,18 +785,44 @@ function navigate(path) {
 function renderLogin() {
   appRoot.innerHTML = `
     <div class="page-auth">
+      <div class="auth-backdrop auth-backdrop-primary" aria-hidden="true"></div>
+      <div class="auth-backdrop auth-backdrop-secondary" aria-hidden="true"></div>
       <div class="auth-wrap">
-        <div class="brand-head">
-          <div class="brand-icon">IT</div>
-          <div>
-            <h1>IT HelpDesk</h1>
-            <p>IT Operations Support Portal</p>
+        <section class="auth-intro">
+          <div class="brand-head">
+            <div class="brand-icon">
+              <span class="material-symbols-outlined" aria-hidden="true">support_agent</span>
+            </div>
+            <div>
+              <p class="brand-kicker">Client Workspace</p>
+              <h1>Concierge AI</h1>
+            </div>
           </div>
-        </div>
-        <section class="panel">
+          <p class="auth-copy">
+            Start a technical support conversation, track active ticket context, and return to prior
+            sessions without losing the AI thread.
+          </p>
+          <div class="auth-highlights">
+            <div class="auth-highlight">
+              <span class="material-symbols-outlined" aria-hidden="true">bolt</span>
+              <div>
+                <strong>AI-guided intake</strong>
+                <p>Calmer issue reporting with structured follow-up.</p>
+              </div>
+            </div>
+            <div class="auth-highlight">
+              <span class="material-symbols-outlined" aria-hidden="true">auto_stories</span>
+              <div>
+                <strong>Citation-aware replies</strong>
+                <p>Responses can carry source context and next-step guidance.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section class="panel auth-panel">
           <div class="panel-header">
             <h2 class="panel-title">Sign In</h2>
-            <p class="panel-desc">Enter your credentials to access the system</p>
+            <p class="panel-desc">Enter your credentials to access Concierge AI.</p>
           </div>
           <div class="panel-body">
             <form id="login-form" class="stack">
@@ -696,11 +847,11 @@ function renderLogin() {
             </form>
           </div>
         </section>
-        <section class="demo-box">
-          <div><strong>Demo Account</strong></div>
-          <div>Username: admin / Password: admin</div>
-        </section>
       </div>
+      <section class="demo-box">
+        <div><strong>Demo Account</strong></div>
+        <div>Username: admin / Password: admin</div>
+      </section>
     </div>
   `;
 
@@ -724,79 +875,218 @@ function renderLogin() {
   });
 }
 
-function renderSidebar() {
+function renderSidebarNav() {
+  return `
+    <button class="sidebar-nav-item" data-action="new-session" type="button">
+      <span class="material-symbols-outlined" aria-hidden="true">bolt</span>
+      <span class="sidebar-nav-label">New Session</span>
+    </button>
+    <button
+      class="sidebar-nav-item ${state.view !== "tickets" ? "active" : ""}"
+      data-action="go-chat"
+      type="button"
+    >
+      <span class="material-symbols-outlined" aria-hidden="true">chat</span>
+      <span class="sidebar-nav-label">Workspace</span>
+    </button>
+    <button
+      class="sidebar-nav-item ${state.view === "tickets" ? "active" : ""}"
+      data-action="go-tickets"
+      type="button"
+    >
+      <span class="material-symbols-outlined" aria-hidden="true">confirmation_number</span>
+      <span class="sidebar-nav-label">Session History</span>
+    </button>
+  `;
+}
+
+function renderSidebarContent() {
   const tickets = getTicketsByUser(state.user.id);
   const recent = tickets.slice(0, MAX_RECENT);
   return `
-    <aside class="sidebar">
-      <div class="sidebar-header">
-        <div class="sidebar-brand">
-          <div class="sidebar-brand-icon">IT</div>
-          <div class="sidebar-brand-title">
-            <span class="line-1">IT HelpDesk</span>
-            <span class="line-2">Support Portal</span>
-          </div>
-        </div>
-        <button class="btn btn-primary" data-action="new-session">+ New Session</button>
-      </div>
-      <div class="sidebar-content">
-        <div class="sidebar-label">RECENT SESSIONS</div>
-        ${
-          recent.length === 0
-            ? `<p class="session-empty">No sessions yet. Click above to create one.</p>`
-            : recent
-                .map(
-                  (ticket) => `
-              <button class="session-btn ${
-                state.activeTicketId === ticket.id ? "active" : ""
-              }" data-action="open-ticket" data-ticket-id="${ticket.id}">
-                <div class="session-top">
-                  <span class="session-id">${ticket.id}</span>
-                  ${statusBadge(ticket.status)}
-                </div>
-                <div class="session-title">${escapeHtml(ticket.title)}</div>
-              </button>
-            `
-                )
-                .join("")
-        }
-      </div>
-      <div class="sidebar-footer">
-        <button class="btn btn-ghost" data-action="go-tickets">View All Sessions</button>
-        <div class="user-row">
-          <div class="user-meta">
-            <span class="user-name">${escapeHtml(state.user.name)}</span>
-            <span class="user-email">${escapeHtml(state.user.email)}</span>
-          </div>
-          <button class="btn btn-ghost btn-icon" data-action="logout">X</button>
-        </div>
-      </div>
-    </aside>
+    <div class="sidebar-label">Recent Sessions</div>
+    ${
+      recent.length === 0
+        ? `<p class="session-empty">No sessions yet. Start a conversation to build your history.</p>`
+        : recent
+            .map(
+              (ticket) => `
+          <button class="session-btn ${
+            state.activeTicketId === ticket.id ? "active" : ""
+          }" data-action="open-ticket" data-ticket-id="${ticket.id}" type="button">
+            <div class="session-top">
+              <span class="session-id mono">${ticket.id}</span>
+              ${statusBadge(ticket.status)}
+            </div>
+            <div class="session-title">${escapeHtml(ticket.title)}</div>
+            <div class="session-meta">${escapeHtml(formatDate(ticket.updatedAt))}</div>
+          </button>
+        `
+            )
+            .join("")
+    }
   `;
+}
+
+function renderSidebarFooter() {
+  return `
+    <button class="btn btn-ghost sidebar-footer-btn" data-action="go-tickets" type="button">View All Sessions</button>
+    <div class="user-row">
+      <div class="user-meta">
+        <span class="user-name">${escapeHtml(state.user.name)}</span>
+        <span class="user-email">${escapeHtml(state.user.email)}</span>
+      </div>
+      <button class="btn btn-ghost btn-icon" data-action="logout" type="button" aria-label="Logout">
+        <span class="material-symbols-outlined" aria-hidden="true">logout</span>
+      </button>
+    </div>
+  `;
+}
+
+function renderAuthedShell() {
+  return `
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <div class="sidebar-brand">
+            <div class="sidebar-brand-icon">
+              <span class="material-symbols-outlined" aria-hidden="true">support_agent</span>
+            </div>
+            <div class="sidebar-brand-title">
+              <span class="line-1">Concierge AI</span>
+              <span class="line-2">Client Workspace</span>
+            </div>
+          </div>
+        </div>
+        <nav class="sidebar-nav" aria-label="Client navigation" data-authed-region="sidebar-nav"></nav>
+        <div class="sidebar-content" data-authed-region="sidebar-content"></div>
+        <div class="sidebar-footer" data-authed-region="sidebar-footer"></div>
+      </aside>
+      <div class="workspace-shell">
+        <div data-authed-region="topbar"></div>
+        <div data-authed-region="context"></div>
+        <main class="main" data-authed-region="main"></main>
+      </div>
+    </div>
+  `;
+}
+
+function ensureAuthedShell() {
+  const existingShell = appRoot.querySelector(".app-shell");
+  if (existingShell) {
+    return existingShell;
+  }
+  appRoot.innerHTML = renderAuthedShell();
+  return appRoot.querySelector(".app-shell");
+}
+
+function renderTopbar() {
+  const ticketCount = getTicketsByUser(state.user.id).length;
+  return `
+    <header class="topbar">
+      <div class="topbar-copy">
+        <h2>Concierge AI</h2>
+        <p>Technical Support</p>
+      </div>
+      <div class="topbar-meta">
+        <div class="topbar-pill">
+          <span class="topbar-pill-label">Sessions</span>
+          <strong>${ticketCount}</strong>
+        </div>
+        <div class="topbar-user">
+          <span class="material-symbols-outlined" aria-hidden="true">account_circle</span>
+          <div>
+            <p>${escapeHtml(state.user.name)}</p>
+            <span>${escapeHtml(state.user.email)}</span>
+          </div>
+        </div>
+      </div>
+    </header>
+  `;
+}
+
+function renderContextBar() {
+  if (state.view === "chat-ticket") {
+    const ticket = getTicketById(state.activeTicketId);
+    if (ticket && ticket.userId === state.user.id) {
+      const actionButton =
+        ticket.status === "resolved"
+          ? `<button class="btn btn-outline" data-action="reopen-ticket" data-ticket-id="${ticket.id}" type="button">Reopen Ticket</button>`
+          : isTicketEmpty(ticket)
+          ? ""
+          : `<button class="btn btn-outline btn-danger" data-action="resolve-ticket" data-ticket-id="${ticket.id}" type="button">Close Ticket</button>`;
+      return `
+        <section class="context-bar">
+          <div class="context-copy">
+            <div class="context-chip">
+              <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
+              <span>AI-SOLVING</span>
+            </div>
+            <div class="context-divider" aria-hidden="true"></div>
+            <div class="context-ticket">
+              <span class="context-ticket-title">Ticket ${escapeHtml(ticket.id)}: ${escapeHtml(ticket.title)}</span>
+              ${statusBadge(ticket.status)}
+            </div>
+          </div>
+          ${actionButton ? `<div class="context-actions">${actionButton}</div>` : ""}
+        </section>
+      `;
+    }
+  }
+
+  if (state.view === "tickets") {
+    return `
+      <section class="context-bar context-bar-static">
+        <div class="context-copy">
+          <div class="context-chip">
+            <span class="material-symbols-outlined" aria-hidden="true">history</span>
+            <span>SESSION HISTORY</span>
+          </div>
+          <div class="context-divider" aria-hidden="true"></div>
+          <div class="context-ticket">
+            <span class="context-ticket-title">Review and reopen previous support conversations.</span>
+          </div>
+        </div>
+        <div class="context-actions">
+          <button class="btn btn-primary" data-action="new-session" type="button">Start New Session</button>
+        </div>
+      </section>
+    `;
+  }
+
+  return "";
 }
 
 function renderChatHome() {
   return `
     <section class="welcome">
       <div class="welcome-inner">
-        <div class="bot-mark">AI</div>
-        <h1 class="welcome-title">Welcome to IT Support</h1>
+        <div class="bot-mark">
+          <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
+        </div>
+        <p class="welcome-kicker">Concierge AI</p>
+        <h1 class="welcome-title">Technical support with a calmer, source-aware workspace.</h1>
         <p class="welcome-desc">
-          Your AI operations assistant, ready to help with server troubleshooting, security incidents,
-          performance optimization, and more. Start a new session to begin.
+          Start a new session to describe an issue, continue an active ticket, or return to a previous
+          conversation without losing its context.
         </p>
         <div class="feature-grid">
           ${FEATURES.map(
             (feature) => `
             <article class="feature-item">
-              <div class="feature-icon">${feature.icon}</div>
+              <div class="feature-icon">
+                <span class="material-symbols-outlined" aria-hidden="true">${feature.icon}</span>
+              </div>
               <div class="feature-label">${escapeHtml(feature.label)}</div>
               <div class="feature-desc">${escapeHtml(feature.desc)}</div>
             </article>
           `
           ).join("")}
         </div>
-        <button class="btn btn-primary" data-action="new-session">+ New Session</button>
+        <div class="welcome-actions">
+          <button class="btn btn-primary" data-action="new-session" type="button">Start New Session</button>
+          <button class="btn btn-outline" data-action="go-tickets" type="button">Open Session History</button>
+        </div>
       </div>
     </section>
   `;
@@ -820,28 +1110,17 @@ function renderChatTicket() {
 
   return `
     <section class="chat-root">
-      <header class="chat-header">
-        <div>
-          <div class="chat-ticket-id">${ticket.id} ${statusBadge(ticket.status)}</div>
-          <div class="chat-ticket-title">${escapeHtml(ticket.title)}</div>
-        </div>
-        <div>
-          ${
-            ticket.status === "resolved"
-              ? `<button class="btn btn-outline" data-action="reopen-ticket" data-ticket-id="${ticket.id}">Reopen</button>`
-              : `<button class="btn btn-outline" data-action="resolve-ticket" data-ticket-id="${ticket.id}">Resolve</button>`
-          }
-        </div>
-      </header>
       <main class="chat-main">
         <div class="message-list">
           ${
             ticket.messages.length === 0
               ? `
                 <div class="empty-chat">
-                  <div class="bot-mark">AI</div>
-                  <h3>IT Support</h3>
-                  <p>Describe your IT issue and I will provide professional technical support.</p>
+                  <div class="bot-mark">
+                    <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
+                  </div>
+                  <h3>Concierge AI</h3>
+                  <p>Describe your technical issue and Concierge AI will start with the most likely next step.</p>
                 </div>
               `
               : ticket.messages
@@ -849,16 +1128,30 @@ function renderChatTicket() {
                     (message) => {
                       const role = String(message.role || "assistant");
                       const tone = role === "user" ? "user" : role === "engineer" ? "engineer" : "assistant";
-                      const avatar = role === "user" ? "U" : role === "engineer" ? "E" : "A";
+                      const author =
+                        role === "user"
+                          ? state.user.name
+                          : role === "engineer"
+                          ? "Engineer"
+                          : "Concierge AI";
+                      const metaTime = formatDate(message.createdAt || new Date().toISOString());
                       return `
-                <div class="msg-row ${tone === "user" ? "user" : ""}">
-                  <div class="avatar ${tone}">
-                    ${avatar}
+                <article class="msg-row ${tone === "user" ? "user" : ""}">
+                  <div class="msg-column">
+                    <div class="message-meta ${tone === "user" ? "message-meta-user" : ""}">
+                      ${
+                        tone === "user"
+                          ? ""
+                          : `<span class="avatar ${tone}"><span class="material-symbols-outlined" aria-hidden="true">${
+                              tone === "engineer" ? "engineering" : "auto_awesome"
+                            }</span></span>`
+                      }
+                      <span class="message-author">${escapeHtml(author)}</span>
+                      <span class="message-time">${escapeHtml(metaTime)}</span>
+                    </div>
+                    <div class="bubble ${tone}">${renderMessageBody(message)}</div>
                   </div>
-                  <div class="bubble ${tone}">${renderMessageBody(
-                      message
-                    )}</div>
-                </div>
+                </article>
               `;
                     }
                   )
@@ -867,9 +1160,9 @@ function renderChatTicket() {
           ${
             sending
               ? `
-            <div class="msg-row">
-              <div class="avatar assistant">A</div>
-              <div class="bubble assistant"><span class="typing-wrap"><span class="typing"><span></span><span></span><span></span></span><span class="typing-label">checking the knowledge base</span></span></div>
+            <div class="thinking-line">
+              <span class="thinking-dots"><span></span><span></span><span></span></span>
+              <span class="thinking-label">AI is cross-referencing system health logs...</span>
             </div>
           `
               : ""
@@ -889,14 +1182,24 @@ function renderChatTicket() {
             id="chat-input"
             class="textarea"
             rows="1"
-            placeholder="Describe your IT issue..."
+            placeholder="Type your request or technical issue..."
             ${canCompose ? "" : "disabled"}
           >${escapeHtml(state.inputDraft || "")}</textarea>
-          ${
-            sending
-              ? `<button class="send-btn send-btn-stop" type="button" data-action="stop-generation" title="Stop generation"><span class="stop-glyph" aria-hidden="true"></span></button>`
-              : `<button class="send-btn" type="submit" ${canCompose ? "" : "disabled"}>${isEditing ? "Resend" : "Send"}</button>`
-          }
+          <div class="composer-toolbar">
+            <div class="composer-secondary-actions">
+              <button class="btn btn-ghost btn-inline" data-action="go-tickets" type="button">Session History</button>
+              ${
+                sending
+                  ? `<button class="btn btn-ghost btn-inline" type="button" data-action="stop-generation">Stop Generation</button>`
+                  : ""
+              }
+            </div>
+            ${
+              sending
+                ? `<span class="composer-status">Waiting for AI response...</span>`
+                : `<button class="send-btn" type="submit" ${canCompose ? "" : "disabled"}>${isEditing ? "Resend Request" : "Send Request"}</button>`
+            }
+          </div>
         </form>
       </footer>
     </section>
@@ -914,64 +1217,54 @@ function renderTicketsPage() {
     <section class="tickets-root">
       <header class="tickets-header">
         <div class="tickets-header-left">
-          <button class="btn btn-ghost btn-icon" data-action="go-chat">&lt;</button>
-          <div class="tickets-title">Session History</div>
+          <button class="btn btn-ghost btn-icon" data-action="go-chat" type="button" aria-label="Back to workspace">
+            <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
+          </button>
+          <div>
+            <div class="tickets-title">Session History</div>
+            <p class="tickets-subtitle">Review active, waiting, and resolved support conversations.</p>
+          </div>
         </div>
-        <select class="select" id="status-filter">
-          <option value="all" ${state.statusFilter === "all" ? "selected" : ""}>All Statuses</option>
-          <option value="new" ${state.statusFilter === "new" ? "selected" : ""}>New</option>
-          <option value="waiting_for_support" ${
-            state.statusFilter === "waiting_for_support" ? "selected" : ""
-          }>Waiting for Support</option>
-          <option value="waiting_for_agent" ${
-            state.statusFilter === "waiting_for_agent" ? "selected" : ""
-          }>Waiting for Customer</option>
-          <option value="resolved" ${state.statusFilter === "resolved" ? "selected" : ""}>Resolved</option>
-        </select>
+        <div class="tickets-actions">
+          ${renderStatusFilter()}
+        </div>
       </header>
       <div class="tickets-body">
         ${
           filtered.length === 0
             ? `<div class="empty-state">No sessions found.</div>`
             : `
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Session ID</th>
-                  <th>Title</th>
-                  <th>Status</th>
-                  <th>Created</th>
-                  <th>Updated</th>
-                  <th style="text-align:right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
+          <div class="tickets-grid">
                 ${filtered
                   .map(
                     (ticket) => `
-                  <tr>
-                    <td class="mono">${ticket.id}</td>
-                    <td>${escapeHtml(ticket.title)}</td>
-                    <td>${statusBadge(ticket.status)}</td>
-                    <td class="mono">${formatDate(ticket.createdAt)}</td>
-                    <td class="mono">${formatDate(ticket.updatedAt)}</td>
-                    <td>
-                      <div class="actions">
-                        <button class="btn btn-ghost" data-action="open-ticket" data-ticket-id="${ticket.id}">View</button>
+                  <article class="ticket-card">
+                    <div class="ticket-card-head">
+                      <div>
+                        <p class="ticket-card-label">Session ID</p>
+                        <h3 class="ticket-card-id mono">${ticket.id}</h3>
+                      </div>
+                      ${statusBadge(ticket.status)}
+                    </div>
+                    <p class="ticket-card-title">${escapeHtml(ticket.title)}</p>
+                    <div class="ticket-card-meta">
+                      <span>Created ${escapeHtml(formatDate(ticket.createdAt))}</span>
+                      <span>Updated ${escapeHtml(formatDate(ticket.updatedAt))}</span>
+                    </div>
+                    <div class="actions">
+                      <button class="btn btn-ghost" data-action="open-ticket" data-ticket-id="${ticket.id}" type="button">Open</button>
                         ${
                           ticket.status === "resolved"
-                            ? `<button class="btn btn-outline" data-action="reopen-ticket" data-ticket-id="${ticket.id}">Reopen</button>`
-                            : `<button class="btn btn-outline" data-action="resolve-ticket" data-ticket-id="${ticket.id}">Resolve</button>`
+                            ? `<button class="btn btn-outline" data-action="reopen-ticket" data-ticket-id="${ticket.id}" type="button">Reopen</button>`
+                            : isTicketEmpty(ticket)
+                            ? ""
+                            : `<button class="btn btn-outline" data-action="resolve-ticket" data-ticket-id="${ticket.id}" type="button">Resolve</button>`
                         }
-                      </div>
-                    </td>
-                  </tr>
+                    </div>
+                  </article>
                 `
                   )
                   .join("")}
-              </tbody>
-            </table>
           </div>
         `
         }
@@ -993,21 +1286,24 @@ function syncChatScrollToBottom() {
   });
 }
 
+function renderMainContent() {
+  if (state.view === "tickets") {
+    return renderTicketsPage();
+  }
+  if (state.view === "chat-ticket") {
+    return renderChatTicket();
+  }
+  return renderChatHome();
+}
+
 function renderAuthed() {
-  appRoot.innerHTML = `
-    <div class="app-shell">
-      ${renderSidebar()}
-      <main class="main">
-        ${
-          state.view === "tickets"
-            ? renderTicketsPage()
-            : state.view === "chat-ticket"
-            ? renderChatTicket()
-            : renderChatHome()
-        }
-      </main>
-    </div>
-  `;
+  const shell = ensureAuthedShell();
+  shell.querySelector('[data-authed-region="sidebar-nav"]').innerHTML = renderSidebarNav();
+  shell.querySelector('[data-authed-region="sidebar-content"]').innerHTML = renderSidebarContent();
+  shell.querySelector('[data-authed-region="sidebar-footer"]').innerHTML = renderSidebarFooter();
+  shell.querySelector('[data-authed-region="topbar"]').innerHTML = renderTopbar();
+  shell.querySelector('[data-authed-region="context"]').innerHTML = renderContextBar();
+  shell.querySelector('[data-authed-region="main"]').innerHTML = renderMainContent();
 
   bindAuthedEvents();
 }
@@ -1220,8 +1516,7 @@ async function handleSendMessage(text, options = {}) {
 function bindAuthedEvents() {
   appRoot.querySelectorAll("[data-action='new-session']").forEach((element) => {
     element.addEventListener("click", () => {
-      const ticket = createTicket(state.user.id);
-      navigate(`/chat/${ticket.id}`);
+      openDraftTicket(state.user.id);
     });
   });
 
@@ -1271,17 +1566,14 @@ function bindAuthedEvents() {
     navigate("/login");
   });
 
-  const goTickets = appRoot.querySelector("[data-action='go-tickets']");
-  goTickets?.addEventListener("click", () => navigate("/tickets"));
-
-  const goChat = appRoot.querySelector("[data-action='go-chat']");
-  goChat?.addEventListener("click", () => navigate("/chat"));
-
-  const filter = document.getElementById("status-filter");
-  filter?.addEventListener("change", (event) => {
-    state.statusFilter = event.target.value;
-    render();
+  appRoot.querySelectorAll("[data-action='go-tickets']").forEach((element) => {
+    element.addEventListener("click", () => navigate("/tickets"));
   });
+
+  appRoot.querySelectorAll("[data-action='go-chat']").forEach((element) => {
+    element.addEventListener("click", () => navigate("/chat"));
+  });
+  bindStatusFilter();
 
   const form = document.getElementById("chat-input-form");
   form?.addEventListener("submit", async (event) => {
@@ -1310,6 +1602,201 @@ function bindAuthedEvents() {
   stopButton?.addEventListener("click", () => {
     stopGeneration().catch(() => {
       // Stop action errors are already surfaced by toast.
+    });
+  });
+}
+
+function bindStatusFilter() {
+  const root = appRoot.querySelector("[data-filter-select]");
+  if (!root) {
+    return;
+  }
+
+  const trigger = root.querySelector("[data-status-filter-trigger]");
+  const panel = root.querySelector("[data-status-filter-panel]");
+  const hiddenInput = root.querySelector("#status-filter");
+  const options = Array.from(root.querySelectorAll("[data-status-filter-option]"));
+
+  if (!trigger || !panel || options.length === 0) {
+    return;
+  }
+
+  let closeTimer = null;
+
+  const clearCloseTimer = () => {
+    if (closeTimer !== null) {
+      clearTimeout(closeTimer);
+      closeTimer = null;
+    }
+  };
+
+  const isOpen = () => root.classList.contains("is-open");
+
+  const setActiveDescendant = (option) => {
+    if (option?.id) {
+      trigger.setAttribute("aria-activedescendant", option.id);
+      return;
+    }
+    trigger.removeAttribute("aria-activedescendant");
+  };
+
+  const getSelectedOption = () =>
+    options.find((option) => option.getAttribute("data-value") === state.statusFilter) || options[0];
+
+  const openPanel = (focusTarget = "selected") => {
+    clearCloseTimer();
+    root.classList.add("is-open");
+    panel.hidden = false;
+    trigger.setAttribute("aria-expanded", "true");
+
+    if (focusTarget === "trigger") {
+      setActiveDescendant(getSelectedOption());
+      return;
+    }
+
+    const target =
+      focusTarget === "first"
+        ? options[0]
+        : focusTarget === "last"
+        ? options[options.length - 1]
+        : getSelectedOption();
+
+    if (target) {
+      setActiveDescendant(target);
+      target.focus();
+    }
+  };
+
+  const closePanel = ({ restoreFocus = false } = {}) => {
+    clearCloseTimer();
+    root.classList.remove("is-open");
+    panel.hidden = true;
+    trigger.setAttribute("aria-expanded", "false");
+    setActiveDescendant(null);
+    if (restoreFocus) {
+      trigger.focus();
+    }
+  };
+
+  const moveFocus = (currentOption, direction) => {
+    const currentIndex = options.indexOf(currentOption);
+    const nextIndex =
+      currentIndex === -1
+        ? direction > 0
+          ? 0
+          : options.length - 1
+        : (currentIndex + direction + options.length) % options.length;
+    const nextOption = options[nextIndex];
+    if (!nextOption) {
+      return;
+    }
+    setActiveDescendant(nextOption);
+    nextOption.focus();
+  };
+
+  const selectOption = (value) => {
+    const nextValue = getStatusFilterOption(value).value;
+    hiddenInput.value = nextValue;
+    if (nextValue === state.statusFilter) {
+      closePanel({ restoreFocus: true });
+      return;
+    }
+    state.statusFilter = nextValue;
+    render();
+  };
+
+  trigger.addEventListener("click", () => {
+    if (isOpen()) {
+      closePanel();
+      return;
+    }
+    openPanel("trigger");
+  });
+
+  trigger.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      openPanel("selected");
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      openPanel("last");
+      return;
+    }
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      if (isOpen()) {
+        closePanel();
+      } else {
+        openPanel("selected");
+      }
+      return;
+    }
+    if (event.key === "Escape" && isOpen()) {
+      event.preventDefault();
+      closePanel();
+    }
+  });
+
+  root.addEventListener("focusin", () => {
+    clearCloseTimer();
+  });
+
+  root.addEventListener("focusout", (event) => {
+    const nextTarget = event.relatedTarget;
+    if (nextTarget instanceof Node && root.contains(nextTarget)) {
+      return;
+    }
+    clearCloseTimer();
+    closeTimer = setTimeout(() => {
+      closePanel();
+    }, 120);
+  });
+
+  options.forEach((option) => {
+    option.addEventListener("focus", () => {
+      setActiveDescendant(option);
+    });
+
+    option.addEventListener("click", () => {
+      selectOption(option.getAttribute("data-value") || "all");
+    });
+
+    option.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        moveFocus(option, 1);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        moveFocus(option, -1);
+        return;
+      }
+      if (event.key === "Home") {
+        event.preventDefault();
+        moveFocus(options[options.length - 1], 1);
+        return;
+      }
+      if (event.key === "End") {
+        event.preventDefault();
+        moveFocus(options[0], -1);
+        return;
+      }
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        selectOption(option.getAttribute("data-value") || "all");
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closePanel({ restoreFocus: true });
+        return;
+      }
+      if (event.key === "Tab") {
+        closePanel();
+      }
     });
   });
 }

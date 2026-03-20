@@ -6,6 +6,140 @@ import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 
+type FilterSelectOption = {
+  value: string
+  label: string
+  disabled?: boolean
+  keywords?: string[]
+}
+
+type FilterSelectOptionInput = FilterSelectOption | string
+
+type FilterSelectProps = Omit<
+  React.ComponentProps<'input'>,
+  'size' | 'value' | 'defaultValue' | 'onChange'
+> & {
+  options: FilterSelectOptionInput[]
+  value?: string
+  defaultValue?: string
+  onValueChange?: (value: string) => void
+  allowEmpty?: boolean
+  emptyLabel?: string
+  emptyValue?: string
+  allowFreeInput?: boolean
+  submitOnSelect?: boolean
+  noResultsText?: string
+  size?: 'sm' | 'default'
+  triggerClassName?: string
+  panelClassName?: string
+  optionClassName?: string
+  toggleAriaLabel?: string
+}
+
+function normalizeFilterOption(option: FilterSelectOptionInput): FilterSelectOption {
+  if (typeof option === 'string') {
+    return {
+      value: option,
+      label: option,
+      keywords: [],
+    }
+  }
+
+  return {
+    value: String(option.value),
+    label: String(option.label),
+    disabled: Boolean(option.disabled),
+    keywords: Array.isArray(option.keywords)
+      ? option.keywords.map((keyword) => String(keyword))
+      : [],
+  }
+}
+
+function dedupeAndSortOptions(
+  options: FilterSelectOptionInput[],
+  config: {
+    allowEmpty: boolean
+    emptyLabel: string
+    emptyValue: string
+  },
+) {
+  const deduped = new Map<string, FilterSelectOption>()
+
+  for (const option of options) {
+    const normalized = normalizeFilterOption(option)
+    if (!deduped.has(normalized.value)) {
+      deduped.set(normalized.value, normalized)
+    }
+  }
+
+  const sorted = Array.from(deduped.values()).sort((left, right) =>
+    left.label.localeCompare(right.label, undefined, {
+      numeric: true,
+      sensitivity: 'base',
+    }),
+  )
+
+  if (!config.allowEmpty) {
+    return sorted
+  }
+
+  return [
+    {
+      value: config.emptyValue,
+      label: config.emptyLabel,
+      keywords: [],
+    },
+    ...sorted.filter((option) => option.value !== config.emptyValue),
+  ]
+}
+
+function matchesFilterOption(option: FilterSelectOption, query: string) {
+  const normalizedQuery = query.trim().toLowerCase()
+  if (!normalizedQuery) {
+    return true
+  }
+
+  const haystacks = [option.label, option.value, ...(option.keywords || [])]
+  return haystacks.some((candidate) =>
+    String(candidate).toLowerCase().includes(normalizedQuery),
+  )
+}
+
+function getNextEnabledIndex(
+  options: FilterSelectOption[],
+  currentIndex: number,
+  direction: 1 | -1,
+) {
+  if (options.length === 0) {
+    return -1
+  }
+
+  let nextIndex = currentIndex
+  for (let attempt = 0; attempt < options.length; attempt += 1) {
+    nextIndex = (nextIndex + direction + options.length) % options.length
+    if (!options[nextIndex]?.disabled) {
+      return nextIndex
+    }
+  }
+
+  return -1
+}
+
+function requestAssociatedFormSubmit(
+  hiddenInput: HTMLInputElement | null,
+  formId?: string,
+) {
+  if (formId) {
+    const formElement = document.getElementById(formId)
+    if (formElement instanceof HTMLFormElement) {
+      formElement.requestSubmit()
+      return
+    }
+  }
+
+  hiddenInput?.form?.requestSubmit()
+}
+
 function Select({
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Root>) {
@@ -171,7 +305,477 @@ function SelectScrollDownButton({
   )
 }
 
+function FilterSelect({
+  options,
+  value,
+  defaultValue,
+  onValueChange,
+  allowEmpty = false,
+  emptyLabel = 'All',
+  emptyValue = '',
+  allowFreeInput = false,
+  submitOnSelect = false,
+  noResultsText = 'No option found',
+  size = 'default',
+  className,
+  triggerClassName,
+  panelClassName,
+  optionClassName,
+  toggleAriaLabel = 'Toggle options',
+  disabled = false,
+  id,
+  name,
+  form,
+  placeholder = 'Select an option',
+  onBlur,
+  onFocus,
+  onKeyDown,
+  autoFocus,
+  required,
+  'aria-label': ariaLabel,
+  'aria-labelledby': ariaLabelledBy,
+  ...inputProps
+}: FilterSelectProps) {
+  const generatedId = React.useId()
+  const inputId = id ?? `filter-select-${generatedId}`
+  const listboxId = `${inputId}-listbox`
+  const containerRef = React.useRef<HTMLDivElement>(null)
+  const inputRef = React.useRef<HTMLInputElement>(null)
+  const hiddenInputRef = React.useRef<HTMLInputElement>(null)
+  const closeTimerRef = React.useRef<number | null>(null)
+  const focusOpenModeRef = React.useRef<'button' | 'input' | null>(null)
+  const [open, setOpen] = React.useState(false)
+  const [internalValue, setInternalValue] = React.useState(
+    defaultValue ?? (allowEmpty ? emptyValue : ''),
+  )
+  const [query, setQuery] = React.useState('')
+  const [dirtyQuery, setDirtyQuery] = React.useState(false)
+  const [highlightedIndex, setHighlightedIndex] = React.useState(-1)
+
+  const currentValue = value !== undefined ? value : internalValue
+
+  const normalizedOptions = React.useMemo(
+    () =>
+      dedupeAndSortOptions(options, {
+        allowEmpty,
+        emptyLabel,
+        emptyValue,
+      }),
+    [allowEmpty, emptyLabel, emptyValue, options],
+  )
+
+  const selectedOption = React.useMemo(() => {
+    const matched = normalizedOptions.find((option) => option.value === currentValue)
+    if (matched) {
+      return matched
+    }
+
+    if (currentValue) {
+      return {
+        value: currentValue,
+        label: currentValue,
+        keywords: [],
+      }
+    }
+
+    return null
+  }, [currentValue, normalizedOptions])
+
+  const filteredOptions = React.useMemo(() => {
+    if (!allowFreeInput || !open || !dirtyQuery) {
+      return normalizedOptions
+    }
+
+    return normalizedOptions.filter((option) =>
+      matchesFilterOption(option, query),
+    )
+  }, [allowFreeInput, dirtyQuery, normalizedOptions, open, query])
+
+  const activeDescendantId =
+    highlightedIndex >= 0 && highlightedIndex < filteredOptions.length
+      ? `${inputId}-option-${highlightedIndex}`
+      : undefined
+
+  const clearCloseTimer = React.useCallback(() => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current)
+      closeTimerRef.current = null
+    }
+  }, [])
+
+  const syncQueryToSelected = React.useCallback(() => {
+    setQuery(selectedOption?.label ?? '')
+    setDirtyQuery(false)
+  }, [selectedOption])
+
+  const commitValue = React.useCallback(
+    (nextValue: string) => {
+      if (value === undefined) {
+        setInternalValue(nextValue)
+      }
+      onValueChange?.(nextValue)
+    },
+    [onValueChange, value],
+  )
+
+  const closePanel = React.useCallback(() => {
+    setOpen(false)
+    syncQueryToSelected()
+  }, [syncQueryToSelected])
+
+  const selectOption = React.useCallback(
+    (option: FilterSelectOption) => {
+      if (option.disabled || disabled) {
+        return
+      }
+
+      commitValue(option.value)
+      setQuery(option.label)
+      setDirtyQuery(false)
+      setOpen(false)
+
+      requestAnimationFrame(() => {
+        inputRef.current?.focus()
+      })
+
+      if (submitOnSelect) {
+        requestAssociatedFormSubmit(hiddenInputRef.current, form)
+      }
+    },
+    [commitValue, disabled, form, submitOnSelect],
+  )
+
+  const openPanel = React.useCallback(
+    (source: 'button' | 'input') => {
+      if (disabled) {
+        return
+      }
+
+      clearCloseTimer()
+      setOpen(true)
+      setHighlightedIndex(
+        filteredOptions.findIndex(
+          (option) => option.value === currentValue && !option.disabled,
+        ),
+      )
+
+      if (!allowFreeInput) {
+        return
+      }
+
+      if (source === 'button') {
+        setQuery('')
+        setDirtyQuery(false)
+        return
+      }
+
+      setQuery(selectedOption?.label ?? '')
+      setDirtyQuery(false)
+      requestAnimationFrame(() => {
+        inputRef.current?.select()
+      })
+    },
+    [
+      allowFreeInput,
+      clearCloseTimer,
+      currentValue,
+      disabled,
+      filteredOptions,
+      selectedOption,
+    ],
+  )
+
+  React.useEffect(() => {
+    if (!open) {
+      syncQueryToSelected()
+    }
+  }, [open, syncQueryToSelected])
+
+  React.useEffect(() => {
+    if (disabled) {
+      clearCloseTimer()
+      setOpen(false)
+    }
+  }, [clearCloseTimer, disabled])
+
+  React.useEffect(() => {
+    if (!open) {
+      return
+    }
+
+    const selectedIndex = filteredOptions.findIndex(
+      (option) => option.value === currentValue && !option.disabled,
+    )
+    setHighlightedIndex(
+      selectedIndex >= 0
+        ? selectedIndex
+        : getNextEnabledIndex(filteredOptions, -1, 1),
+    )
+  }, [currentValue, filteredOptions, open])
+
+  React.useEffect(() => {
+    return () => {
+      clearCloseTimer()
+    }
+  }, [clearCloseTimer])
+
+  const handleBlur = React.useCallback(
+    (event: React.FocusEvent<HTMLDivElement>) => {
+      onBlur?.(event as unknown as React.FocusEvent<HTMLInputElement>)
+
+      const nextTarget = event.relatedTarget
+      if (nextTarget instanceof Node && containerRef.current?.contains(nextTarget)) {
+        return
+      }
+
+      clearCloseTimer()
+      closeTimerRef.current = window.setTimeout(() => {
+        closePanel()
+      }, 120)
+    },
+    [clearCloseTimer, closePanel, onBlur],
+  )
+
+  const handleFocus = React.useCallback(
+    (event: React.FocusEvent<HTMLInputElement>) => {
+      clearCloseTimer()
+      onFocus?.(event)
+      const source = focusOpenModeRef.current ?? 'input'
+      focusOpenModeRef.current = null
+      openPanel(source)
+    },
+    [clearCloseTimer, onFocus, openPanel],
+  )
+
+  const handleKeyDown = React.useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      onKeyDown?.(event)
+      if (event.defaultPrevented || disabled) {
+        return
+      }
+
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        if (!open) {
+          openPanel('button')
+          return
+        }
+        setHighlightedIndex((currentIndex) =>
+          getNextEnabledIndex(filteredOptions, currentIndex, 1),
+        )
+        return
+      }
+
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        if (!open) {
+          openPanel('button')
+          return
+        }
+        setHighlightedIndex((currentIndex) =>
+          getNextEnabledIndex(filteredOptions, currentIndex, -1),
+        )
+        return
+      }
+
+      if (event.key === 'Enter') {
+        if (!open) {
+          return
+        }
+        event.preventDefault()
+        const option = filteredOptions[highlightedIndex]
+        if (option) {
+          selectOption(option)
+        }
+        return
+      }
+
+      if (event.key === 'Escape') {
+        if (!open) {
+          return
+        }
+        event.preventDefault()
+        closePanel()
+        return
+      }
+
+      if (event.key === 'Tab') {
+        closePanel()
+      }
+    },
+    [
+      closePanel,
+      disabled,
+      filteredOptions,
+      highlightedIndex,
+      onKeyDown,
+      open,
+      openPanel,
+      selectOption,
+    ],
+  )
+
+  const displayValue = allowFreeInput && open ? query : (selectedOption?.label ?? '')
+
+  return (
+    <div
+      ref={containerRef}
+      className={cn('relative w-full', className)}
+      onBlur={handleBlur}
+    >
+      {name ? (
+        <input
+          ref={hiddenInputRef}
+          type="hidden"
+          name={name}
+          value={currentValue}
+          disabled={disabled}
+          form={form}
+        />
+      ) : null}
+
+      <div
+        className={cn(
+          'border-input bg-input/50 flex w-full items-center rounded-md border shadow-xs transition-[color,box-shadow]',
+          'focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50',
+          size === 'sm' ? 'min-h-8' : 'min-h-9',
+          disabled && 'cursor-not-allowed opacity-50',
+          triggerClassName,
+        )}
+      >
+        <input
+          {...inputProps}
+          ref={inputRef}
+          id={inputId}
+          type="text"
+          autoFocus={autoFocus}
+          disabled={disabled}
+          readOnly={!allowFreeInput}
+          required={required}
+          role="combobox"
+          aria-label={ariaLabel}
+          aria-labelledby={ariaLabelledBy}
+          aria-controls={listboxId}
+          aria-expanded={open}
+          aria-haspopup="listbox"
+          aria-autocomplete={allowFreeInput ? 'list' : 'none'}
+          aria-activedescendant={open ? activeDescendantId : undefined}
+          autoComplete="off"
+          value={displayValue}
+          placeholder={placeholder}
+          onFocus={handleFocus}
+          onKeyDown={handleKeyDown}
+          onClick={() => openPanel('input')}
+          onChange={(event) => {
+            if (!allowFreeInput) {
+              return
+            }
+            setQuery(event.target.value)
+            setDirtyQuery(true)
+            if (!open) {
+              setOpen(true)
+            }
+          }}
+          className={cn(
+            'text-foreground placeholder:text-muted-foreground w-full min-w-0 bg-transparent px-3 py-2 text-sm outline-none',
+            !allowFreeInput && 'cursor-pointer',
+          )}
+        />
+        <button
+          type="button"
+          disabled={disabled}
+          aria-label={toggleAriaLabel}
+          className={cn(
+            'text-muted-foreground border-input hover:bg-secondary focus-visible:ring-ring/50 flex h-full min-h-9 w-9 shrink-0 items-center justify-center border-l transition-[background-color,transform,box-shadow] outline-none focus-visible:ring-[3px]',
+            size === 'sm' && 'min-h-8',
+          )}
+          onClick={() => {
+            if (open) {
+              closePanel()
+              return
+            }
+            focusOpenModeRef.current = 'button'
+            inputRef.current?.focus()
+            openPanel('button')
+          }}
+        >
+          <ChevronDownIcon
+            className={cn(
+              'size-4 transition-transform duration-150',
+              open && 'rotate-180',
+            )}
+          />
+        </button>
+      </div>
+
+      {open ? (
+        <div
+          className={cn(
+            'bg-card text-foreground border-input absolute top-[calc(100%+4px)] left-0 z-50 w-full rounded-md border shadow-md',
+            panelClassName,
+          )}
+        >
+          <div
+            id={listboxId}
+            role="listbox"
+            className="max-h-60 overflow-y-auto p-1"
+          >
+            {filteredOptions.length === 0 ? (
+              <p className="text-muted-foreground px-3 py-2 text-sm">
+                {noResultsText}
+              </p>
+            ) : (
+              filteredOptions.map((option, index) => {
+                const isSelected = option.value === currentValue
+                const isHighlighted = index === highlightedIndex
+
+                return (
+                  <button
+                    key={`${option.value}-${index}`}
+                    id={`${inputId}-option-${index}`}
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    disabled={option.disabled}
+                    className={cn(
+                      'flex min-h-9 w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-sm outline-none transition-colors',
+                      'hover:bg-secondary focus-visible:bg-secondary focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                      (isHighlighted || isSelected) && 'bg-secondary',
+                      isSelected && 'font-medium',
+                      option.disabled && 'cursor-not-allowed opacity-50',
+                      optionClassName,
+                    )}
+                    onMouseDown={(event) => {
+                      event.preventDefault()
+                    }}
+                    onMouseEnter={() => {
+                      if (!option.disabled) {
+                        setHighlightedIndex(index)
+                      }
+                    }}
+                    onClick={() => selectOption(option)}
+                  >
+                    <span className="truncate">{option.label}</span>
+                    <CheckIcon
+                      className={cn(
+                        'text-muted-foreground size-4 shrink-0',
+                        isSelected ? 'opacity-100' : 'opacity-0',
+                      )}
+                      aria-hidden="true"
+                    />
+                  </button>
+                )
+              })
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 export {
+  FilterSelect,
   Select,
   SelectContent,
   SelectGroup,
@@ -183,3 +787,5 @@ export {
   SelectTrigger,
   SelectValue,
 }
+
+export type { FilterSelectOption, FilterSelectOptionInput, FilterSelectProps }
