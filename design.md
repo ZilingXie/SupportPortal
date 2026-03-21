@@ -51,6 +51,7 @@
 | `--ink-muted` | `#6e7882` | 标签、辅助信息 |
 | `--danger` | `#ba1a1a` | 高风险 / 错误 / 告警 |
 | `--warning` | `#9f5d12` | 处理中 / 风险上升 |
+| `--success` | `#006875` | resolved / healthy / positive 文本与图标 |
 | `--ghost-border` | `rgba(110,120,130,0.16)` | 可感知但不抢眼的边界 |
 
 ### 3.2 Surface Philosophy

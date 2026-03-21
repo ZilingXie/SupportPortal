@@ -4,18 +4,16 @@ const LOGIN_PASS = "eng";
 const ENGINEER_ID = "eng";
 
 const loginScreenEl = document.getElementById("login-screen");
-const boardScreenEl = document.getElementById("board-screen");
+const engineerScreenEl = document.getElementById("engineer-screen");
 const loginFormEl = document.getElementById("login-form");
 const loginErrorEl = document.getElementById("login-error");
 const filterControlsEl = document.getElementById("filter-controls");
 const headerUserControlsEl = document.getElementById("header-user-controls");
 const wsStatusEl = document.getElementById("ws-status");
-const ticketCountEl = document.getElementById("ticket-count");
-const ticketTableBodyEl = document.getElementById("ticket-table-body");
-const detailModalEl = document.getElementById("detail-modal");
-const detailTitleEl = document.getElementById("detail-title");
-const detailBodyEl = document.getElementById("detail-body");
-const detailCloseBtnEl = document.getElementById("detail-close-btn");
+const workspaceRegionEl = document.getElementById("workspace-region");
+const workspaceTitleEl = document.getElementById("workspace-title");
+const workspaceSubtitleEl = document.getElementById("workspace-subtitle");
+const railNavEl = document.getElementById("rail-nav");
 
 let tickets = [];
 let selectedTicketId = null;
@@ -42,6 +40,10 @@ let reconnectTimer = null;
 let storageMode = "unknown";
 let logoutLoading = false;
 const ticketSummaryCache = new Map();
+const routeState = {
+  view: "pool",
+  ticketId: null,
+};
 
 const PRIORITY_RANK = {
   urgent: 4,
@@ -115,8 +117,19 @@ function userInitial(username) {
 }
 
 function UserProfileChip({ username, role }) {
-  const roleLabel = String(role || "OPERATOR").toUpperCase() === "ADMIN" ? "ADMIN" : "OPERATOR";
-  const roleClass = roleLabel === "ADMIN" ? "user-role-admin" : "user-role-operator";
+  const normalizedRole = String(role || "ENGINEER").trim().toUpperCase();
+  const roleLabel =
+    normalizedRole === "ADMIN"
+      ? "ADMIN"
+      : normalizedRole === "OPERATOR"
+      ? "OPERATOR"
+      : "ENGINEER";
+  const roleClass =
+    roleLabel === "ADMIN"
+      ? "user-role-admin"
+      : roleLabel === "OPERATOR"
+      ? "user-role-operator"
+      : "user-role-engineer";
   return `
     <div class="user-profile-chip" aria-label="Current user">
       <span class="user-avatar" aria-hidden="true">${escapeHtml(userInitial(username))}</span>
@@ -152,7 +165,7 @@ function renderHeaderUserControls() {
     return;
   }
   headerUserControlsEl.innerHTML = [
-    UserProfileChip({ username: LOGIN_USER, role: "OPERATOR" }),
+    UserProfileChip({ username: LOGIN_USER, role: "ENGINEER" }),
     LogoutButton({ loading: logoutLoading }),
   ].join("");
   const logoutBtn = document.getElementById("logout-btn");
@@ -161,6 +174,110 @@ function renderHeaderUserControls() {
       window.alert(`Logout failed: ${error.message}`);
     });
   });
+}
+
+function parseRoute() {
+  const hash = String(window.location.hash || "#/tickets").trim();
+  const path = hash.replace(/^#/, "") || "/tickets";
+
+  if (path === "/" || path === "/tickets") {
+    routeState.view = "pool";
+    routeState.ticketId = null;
+    return routeState;
+  }
+
+  if (path.startsWith("/tickets/")) {
+    const ticketId = decodeURIComponent(path.split("/")[2] || "").trim();
+    if (ticketId) {
+      routeState.view = "detail";
+      routeState.ticketId = ticketId;
+      return routeState;
+    }
+  }
+
+  routeState.view = "pool";
+  routeState.ticketId = null;
+  return routeState;
+}
+
+function navigate(path) {
+  const target = `#${path}`;
+  if (window.location.hash === target) {
+    void syncRouteToWorkspace({ silent: true, showLoading: false });
+    return false;
+  }
+  window.location.hash = target;
+  return true;
+}
+
+function renderRailNav() {
+  if (!railNavEl) {
+    return;
+  }
+
+  const isPool = routeState.view === "pool";
+  const detailLabel = selectedTicket
+    ? String(selectedTicket.subject || selectedTicket.ticket_id || "Active Ticket").trim()
+    : routeState.ticketId
+    ? `Ticket ${routeState.ticketId}`
+    : "Active Ticket";
+
+  railNavEl.innerHTML = `
+    <button
+      class="rail-nav-item ${isPool ? "is-active" : ""}"
+      type="button"
+      data-nav-action="go-pool"
+    >
+      <span class="material-symbols-outlined" aria-hidden="true">confirmation_number</span>
+      <span class="rail-nav-label">Ticket Pool</span>
+    </button>
+    ${
+      routeState.view === "detail"
+        ? `
+      <button
+        class="rail-nav-item is-active"
+        type="button"
+        data-nav-action="go-detail"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
+        <span class="rail-nav-label">${escapeHtml(detailLabel)}</span>
+      </button>
+    `
+        : ""
+    }
+  `;
+}
+
+function renderWorkspaceChrome() {
+  if (routeState.view === "detail" && routeState.ticketId) {
+    const detailStatus = selectedTicket
+      ? `${statusLabel(String(selectedTicket.status || "open").toLowerCase())} · ${modeLabel(
+          String(selectedTicket.engineer_mode || "managed").toLowerCase()
+        )}`
+      : "Loading ticket context...";
+    if (workspaceTitleEl) {
+      workspaceTitleEl.textContent = "Active Ticket Workspace";
+    }
+    if (workspaceSubtitleEl) {
+      workspaceSubtitleEl.textContent = detailStatus;
+    }
+    filterControlsEl?.classList.add("hidden");
+    if (filterControlsEl) {
+      filterControlsEl.innerHTML = "";
+    }
+  } else {
+    if (workspaceTitleEl) {
+      workspaceTitleEl.textContent = "Engineer Command Center";
+    }
+    if (workspaceSubtitleEl) {
+      workspaceSubtitleEl.textContent = `${tickets.length} tickets across AI-managing and direct-response workflows.`;
+    }
+    filterControlsEl?.classList.remove("hidden");
+    renderFilterControls();
+  }
+
+  renderHeaderUserControls();
+  renderRailNav();
 }
 
 function formatMultiline(value) {
@@ -939,8 +1056,53 @@ function setAuthenticated(value) {
 
 function toggleScreens() {
   const authed = isAuthenticated();
-  loginScreenEl.classList.toggle("hidden", authed);
-  boardScreenEl.classList.toggle("hidden", !authed);
+  loginScreenEl?.classList.toggle("hidden", authed);
+  engineerScreenEl?.classList.toggle("hidden", !authed);
+}
+
+function renderWorkspace() {
+  parseRoute();
+
+  if (routeState.view === "detail" && routeState.ticketId) {
+    if (!selectedTicketId) {
+      selectedTicketId = routeState.ticketId;
+      detailLoading = true;
+    }
+    if (selectedTicketId === routeState.ticketId && !selectedTicket) {
+      detailLoading = true;
+    }
+    renderTicketDetail();
+    return;
+  }
+
+  renderTickets();
+}
+
+async function syncRouteToWorkspace(options = {}) {
+  const { silent = true, showLoading = true } = options;
+  parseRoute();
+
+  if (routeState.view === "detail" && routeState.ticketId) {
+    const nextTicketId = routeState.ticketId;
+    const routeChanged = selectedTicketId !== nextTicketId;
+
+    if (routeChanged) {
+      resetDetailWorkspaceState();
+      selectedTicketId = nextTicketId;
+      detailLoading = true;
+    }
+
+    renderTicketDetail();
+    if (routeChanged || !selectedTicket) {
+      await refreshSelectedTicket({ silent, showLoading });
+    }
+    return;
+  }
+
+  if (selectedTicketId || selectedTicket || detailLoading) {
+    resetDetailWorkspaceState();
+  }
+  renderTickets();
 }
 
 async function fetchJson(url, options = undefined) {
@@ -1025,68 +1187,120 @@ function sortTicketsByPriority(items) {
   });
 }
 
-function renderTickets() {
+function renderTicketPoolView() {
   const rows = sortTicketsByPriority(applyTicketFilters(tickets));
-  ticketCountEl.textContent = `${rows.length} tickets`;
+  const allCount = tickets.length;
+  const managedCount = tickets.filter(
+    (ticket) => String(ticket.engineer_mode || "managed").toLowerCase() === "managed"
+  ).length;
+  const takeoverCount = tickets.filter(
+    (ticket) => String(ticket.engineer_mode || "managed").toLowerCase() === "takeover"
+  ).length;
+  const waitingCount = tickets.filter(
+    (ticket) => String(ticket.status || "open").toLowerCase() === "waiting_for_engineer"
+  ).length;
 
-  if (rows.length === 0) {
-    ticketTableBodyEl.innerHTML = '<tr><td colspan="8" class="empty-row">No tickets.</td></tr>';
-    return;
-  }
+  return `
+    <section class="ticket-pool-page">
+      <section class="pool-metrics" aria-label="Engineer queue metrics">
+        <article class="metric-card">
+          <span class="metric-label">Total Tickets</span>
+          <strong>${allCount}</strong>
+          <p>Across AI-managed and human-owned workflows.</p>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">AI Managing</span>
+          <strong>${managedCount}</strong>
+          <p>Tickets currently staying in AI-guided handling.</p>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Human Takeover</span>
+          <strong>${takeoverCount}</strong>
+          <p>Tickets with direct engineer ownership right now.</p>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Waiting Engineer</span>
+          <strong>${waitingCount}</strong>
+          <p>Requests that need engineer review or direct reply.</p>
+        </article>
+      </section>
 
-  ticketTableBodyEl.innerHTML = rows
-    .map((ticket) => {
-      const ticketId = String(ticket.ticket_id || "-");
-      const priority = String(ticket.priority || "normal").toLowerCase();
-      const status = String(ticket.status || "open").toLowerCase();
-      const mode = String(ticket.engineer_mode || "managed").toLowerCase();
-      const subject = String(ticket.subject || "(No subject)");
-      const requester = String(ticket.requester || ticket.customer_id || "Unknown");
-      const pendingQuestion = String(ticket.pending_engineer_question || "").trim();
-      const parsedEngineerRequest = parseEngineerRequest(pendingQuestion);
-      const showPendingQuestion = Boolean(pendingQuestion);
-      const previewSource = parsedEngineerRequest.issue
-        ? `Issue: ${parsedEngineerRequest.issue}`
-        : parsedEngineerRequest.formatted || pendingQuestion;
-      const pendingPreview =
-        previewSource.length > 140 ? `${previewSource.slice(0, 140)}...` : previewSource;
+      ${
+        rows.length === 0
+          ? '<div class="empty-state">No tickets match the current filters.</div>'
+          : `
+      <section class="ticket-pool-grid">
+        ${rows
+          .map((ticket) => {
+            const ticketId = String(ticket.ticket_id || "-");
+            const priority = String(ticket.priority || "normal").toLowerCase();
+            const status = String(ticket.status || "open").toLowerCase();
+            const mode = String(ticket.engineer_mode || "managed").toLowerCase();
+            const subject = String(ticket.subject || "(No subject)");
+            const requester = String(ticket.requester || ticket.customer_id || "Unknown");
+            const pendingQuestion = String(ticket.pending_engineer_question || "").trim();
+            const parsedEngineerRequest = parseEngineerRequest(pendingQuestion);
+            const previewSource = parsedEngineerRequest.issue
+              ? `Issue: ${parsedEngineerRequest.issue}`
+              : parsedEngineerRequest.formatted || pendingQuestion;
+            const pendingPreview =
+              previewSource.length > 180 ? `${previewSource.slice(0, 180)}...` : previewSource;
 
-      const isSelected = selectedTicketId === ticketId;
+            return `
+              <article class="ticket-card">
+                <div class="ticket-card-head">
+                  <div>
+                    <p class="ticket-card-label mono">${escapeHtml(ticketId)}</p>
+                    <h3 class="ticket-card-title">${escapeHtml(subject)}</h3>
+                  </div>
+                  <div class="ticket-card-badges">
+                    <span class="priority-badge priority-${escapeHtml(priority)}">${escapeHtml(
+                      priorityLabel(priority)
+                    )}</span>
+                    <span class="status-badge ${statusClass(status)}">${escapeHtml(statusLabel(status))}</span>
+                  </div>
+                </div>
 
-      return `
-        <tr class="${isSelected ? "row-selected" : ""}">
-          <td class="ticket-id">
-            <button class="ticket-link action-btn" data-action="view-detail" data-ticket-id="${escapeHtml(
-              ticketId
-            )}">${escapeHtml(ticketId)}</button>
-          </td>
-          <td>
-            <span class="priority-badge priority-${escapeHtml(priority)}">${escapeHtml(
-              priorityLabel(priority)
-            )}</span>
-          </td>
-          <td><span class="mode-text">${escapeHtml(modeLabel(mode))}</span></td>
-          <td>
-            <span class="status-badge ${statusClass(status)}">${escapeHtml(statusLabel(status))}</span>
-          </td>
-          <td>
-            <div class="subject-cell">${escapeHtml(subject)}</div>
-            ${
-              showPendingQuestion
-                ? `<div class="pending-note pending-note-preview">${escapeHtml(pendingPreview)}</div>`
-                : ""
-            }
-          </td>
-          <td>${escapeHtml(requester)}</td>
-          <td>${escapeHtml(formatDateTime(ticket.created_at))}</td>
-          <td>${escapeHtml(formatDateTime(ticket.updated_at))}</td>
-        </tr>
-      `;
-    })
-    .join("");
+                <div class="ticket-card-meta">
+                  <span><strong>Requester</strong> ${escapeHtml(requester)}</span>
+                  <span><strong>Updated</strong> ${escapeHtml(formatDateTime(ticket.updated_at))}</span>
+                  <span><strong>Created</strong> ${escapeHtml(formatDateTime(ticket.created_at))}</span>
+                </div>
+
+                ${
+                  pendingQuestion
+                    ? `
+                  <div class="ticket-card-snippet">
+                    <span class="ticket-card-snippet-label">Engineer Request</span>
+                    <p>${escapeHtml(pendingPreview)}</p>
+                  </div>
+                `
+                    : ""
+                }
+
+                <div class="ticket-card-footer">
+                  <span class="mode-pill mode-pill-${escapeHtml(mode)}">${escapeHtml(modeLabel(mode))}</span>
+                  <button
+                    class="btn btn-primary action-btn"
+                    data-action="view-detail"
+                    data-ticket-id="${escapeHtml(ticketId)}"
+                    type="button"
+                  >
+                    Open Workspace
+                  </button>
+                </div>
+              </article>
+            `;
+          })
+          .join("")}
+      </section>
+    `
+      }
+    </section>
+  `;
 }
 
-function closeTicketDetail() {
+function resetDetailWorkspaceState() {
   clearStatusComboboxBlurTimer();
   clearModeComboboxBlurTimer();
   selectedTicketId = null;
@@ -1104,43 +1318,61 @@ function closeTicketDetail() {
   modeComboboxOpen = false;
   statusComboboxQuery = "";
   modeComboboxQuery = "";
-  detailModalEl.classList.add("hidden");
-  detailTitleEl.textContent = "Ticket Detail";
-  detailBodyEl.innerHTML = "";
-  renderTickets();
 }
 
-function renderTicketDetail() {
+function renderConversationHtml(messages) {
+  if (!messages.length) {
+    return '<div class="empty-state">No messages on this ticket yet.</div>';
+  }
+
+  return `
+    <div class="message-list">
+      ${messages
+        .map((message) => {
+          const role = String(message.role || "system").toLowerCase();
+          const createdAt = formatDateTime(message.created_at);
+          return `
+            <article class="message-item ${roleClass(role)}">
+              <header>
+                <span class="message-role">${escapeHtml(roleLabel(role))}</span>
+                <span class="message-time">${escapeHtml(createdAt)}</span>
+              </header>
+              <div class="message-content">${formatMultiline(String(message.content || ""))}</div>
+              ${buildMessageReferences(message)}
+            </article>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderTicketDetailView() {
   if (!selectedTicketId) {
-    detailModalEl.classList.add("hidden");
-    detailTitleEl.textContent = "Ticket Detail";
-    detailBodyEl.innerHTML = "";
-    return;
+    return '<div class="empty-state">Select a ticket to open the active workspace.</div>';
   }
 
   if (detailLoading) {
-    detailTitleEl.textContent = `Ticket ${selectedTicketId}`;
-    detailBodyEl.innerHTML = `
-      <section class="detail-loading" role="status" aria-live="polite" aria-busy="true">
-        <span class="loading-spinner" aria-hidden="true"></span>
-        <p>Loading ticket detail...</p>
+    return `
+      <section class="ticket-workspace">
+        <section class="detail-loading" role="status" aria-live="polite" aria-busy="true">
+          <span class="loading-spinner" aria-hidden="true"></span>
+          <p>Loading ticket workspace...</p>
+        </section>
       </section>
     `;
-    detailModalEl.classList.remove("hidden");
-    return;
   }
 
   if (!selectedTicket) {
-    detailModalEl.classList.add("hidden");
-    detailTitleEl.textContent = "Ticket Detail";
-    detailBodyEl.innerHTML = "";
-    return;
+    return '<div class="empty-state">Ticket detail is unavailable.</div>';
   }
 
   const ticket = selectedTicket;
   const ticketId = String(ticket.ticket_id || selectedTicketId || "-");
   const status = String(ticket.status || "open").toLowerCase();
   const mode = String(ticket.engineer_mode || "managed").toLowerCase();
+  const priority = String(ticket.priority || "normal").toLowerCase();
+  const requester = String(ticket.requester || ticket.customer_id || "Unknown");
   const pendingQuestion = String(ticket.pending_engineer_question || "").trim();
   const parsedEngineerRequest = parseEngineerRequest(pendingQuestion);
   const showPendingQuestion = Boolean(pendingQuestion);
@@ -1190,14 +1422,14 @@ function renderTicketDetail() {
       : `<div class="request-record-list">${engineerRequestRecords
           .map((record) => {
             const statusText = engineerRequestStatusLabel(record.status);
-            const statusClass = engineerRequestStatusClass(record.status);
+            const statusClassName = engineerRequestStatusClass(record.status);
             const detailText = String(record.detail || "").trim();
             const engineerText = String(record.engineer_id || "").trim();
             const createdAt = formatDateTime(record.created_at);
             return `
               <article class="request-record-item">
                 <header>
-                  <span class="request-record-status ${statusClass}">${escapeHtml(statusText)}</span>
+                  <span class="request-record-status ${statusClassName}">${escapeHtml(statusText)}</span>
                   <span class="request-record-time">${escapeHtml(createdAt)}</span>
                 </header>
                 ${
@@ -1215,168 +1447,232 @@ function renderTicketDetail() {
           })
           .join("")}</div>`;
 
-  const messageItems =
-    messages.length === 0
-      ? '<p>No messages on this ticket.</p>'
-      : `<div class="message-list">${messages
-          .map((message) => {
-            const role = String(message.role || "system").toLowerCase();
-            const createdAt = formatDateTime(message.created_at);
-            return `
-              <article class="message-item ${roleClass(role)}">
-                <header>
-                  <span class="message-role">${escapeHtml(roleLabel(role))}</span>
-                  <span class="message-time">${escapeHtml(createdAt)}</span>
-                </header>
-                <div class="message-content">${formatMultiline(String(message.content || ""))}</div>
-                ${buildMessageReferences(message)}
-              </article>
-            `;
-          })
-          .join("")}</div>`;
-
-  detailTitleEl.textContent = `Ticket ${ticketId}`;
-  detailBodyEl.innerHTML = `
-    <div class="detail-grid">
-      <div class="detail-item"><span>ID</span><strong>${escapeHtml(ticketId)}</strong></div>
-      <div class="detail-item"><span>Priority</span><strong>${escapeHtml(priorityLabel(ticket.priority))}</strong></div>
-      <div class="detail-item detail-item-status">
-        <span>Status</span>
-        <div class="detail-status-row">
-          ${statusComboboxHtml}
+  return `
+    <section class="ticket-workspace">
+      <header class="workspace-header">
+        <div class="workspace-header-top">
+          <button class="btn btn-ghost" type="button" data-detail-action="back-to-pool">Back to Pool</button>
+          <span class="workspace-eyebrow">Ticket #${escapeHtml(ticketId)}</span>
         </div>
-      </div>
-      <div class="detail-item detail-item-mode">
-        <span>Mode</span>
-        ${modeComboboxHtml}
-        ${modeSwitchNotice}
-      </div>
-      <div class="detail-item"><span>Requester</span><strong>${escapeHtml(
-        String(ticket.requester || ticket.customer_id || "Unknown")
-      )}</strong></div>
-      <div class="detail-item"><span>Create</span><strong>${escapeHtml(
-        formatDateTime(ticket.created_at)
-      )}</strong></div>
-      <div class="detail-item"><span>Update</span><strong>${escapeHtml(
-        formatDateTime(ticket.updated_at)
-      )}</strong></div>
-    </div>
 
-    <section class="detail-block">
-      <h3>Subject</h3>
-      <p>${escapeHtml(String(ticket.subject || "(No subject)"))}</p>
-    </section>
-
-    ${
-      showPendingQuestion
-        ? `
-    <section class="detail-block detail-block-engineer-request">
-      <h3>Engineer Request</h3>
-      <p class="engineer-request-body">${formatMultiline(pendingDetailBodyText)}</p>
-      ${
-        isTakeoverMode
-          ? '<p class="mode-switch-hint" role="status" aria-live="polite">Human Takeover is active. Please reply to the customer directly in the composer below.</p>'
-          : `
-      <div class="engineer-request-actions">
-        <button
-          type="button"
-          class="btn btn-outline"
-          data-detail-action="toggle-tell-ai"
-          ${controlsDisabled ? "disabled" : ""}
-        >
-          Tell AI
-        </button>
-        <button
-          type="button"
-          class="btn btn-outline"
-          data-detail-action="takeover-mode"
-          ${controlsDisabled ? "disabled" : ""}
-        >
-          ${takeoverButtonLabel}
-        </button>
-      </div>
-      ${
-        modeSwitching
-          ? `<p class="mode-switch-hint" role="status" aria-live="polite">Takeover mode is being enabled. Please wait...</p>`
-          : ""
-      }
-      `
-      }
-      ${
-        showTellAiComposer && !isTakeoverMode
-          ? `
-      <div class="tell-ai-composer">
-        <textarea
-          id="detail-tell-ai-input"
-          class="detail-textarea"
-          rows="4"
-          placeholder="Tell AI what to say or what guidance to provide..."
-          ${controlsDisabled ? "disabled" : ""}
-        >${escapeHtml(tellAiDraft)}</textarea>
-        <div class="detail-inline-actions">
-          <button
-            type="button"
-            class="btn btn-primary"
-            data-detail-action="send-tell-ai"
-            ${controlsDisabled ? "disabled" : ""}
-          >${tellAiSubmitting ? "Sending..." : "Send to AI"}</button>
-          <button
-            type="button"
-            class="btn btn-ghost"
-            data-detail-action="cancel-tell-ai"
-            ${controlsDisabled ? "disabled" : ""}
-          >Cancel</button>
+        <div class="workspace-header-main">
+          <div>
+            <div class="workspace-header-badges">
+              <span class="priority-badge priority-${escapeHtml(priority)}">${escapeHtml(
+                priorityLabel(priority)
+              )}</span>
+              <span class="status-badge ${statusClass(status)}">${escapeHtml(statusLabel(status))}</span>
+              <span class="mode-pill mode-pill-${escapeHtml(mode)}">${escapeHtml(modeLabel(mode))}</span>
+            </div>
+            <h2 class="workspace-ticket-title">${escapeHtml(
+              String(ticket.subject || "(No subject)")
+            )}</h2>
+            <div class="workspace-header-meta">
+              <span>Requester ${escapeHtml(requester)}</span>
+              <span>Created ${escapeHtml(formatDateTime(ticket.created_at))}</span>
+              <span>Updated ${escapeHtml(formatDateTime(ticket.updated_at))}</span>
+            </div>
+          </div>
+          <div class="workspace-header-actions">
+            <button class="btn btn-outline" type="button" data-detail-action="refresh-ticket">Sync Ticket</button>
+          </div>
         </div>
-      </div>
-      `
-          : ""
-      }
-    </section>
-    `
-        : ""
-    }
+      </header>
 
-    <section class="detail-block">
-      <h3>Summary</h3>
-      <p class="summary-text">${formatMultiline(selectedTicketSummary || "Generating summary...")}</p>
-      <p class="summary-next-title">Next Action Needed</p>
-      <p class="summary-text">${formatMultiline(selectedTicketNextAction || "Analyzing next action needed...")}</p>
-    </section>
+      <div class="workspace-layout">
+        <section class="panel-card conversation-panel">
+          <div class="panel-card-head">
+            <div>
+              <p class="panel-card-kicker">Conversation Timeline</p>
+              <h3 class="panel-card-title">Evidence-Aware Message History</h3>
+            </div>
+          </div>
+          ${renderConversationHtml(messages)}
+        </section>
 
-    <section class="detail-block">
-      <h3>Engineer Request Records</h3>
-      ${engineerRequestRecordsHtml}
-    </section>
+        <aside class="insight-panel">
+          <section class="panel-card">
+            <div class="panel-card-head">
+              <div>
+                <p class="panel-card-kicker">AI Summary</p>
+                <h3 class="panel-card-title">Next Action Needed</h3>
+              </div>
+            </div>
+            <p class="summary-text">${formatMultiline(selectedTicketSummary || "Generating summary...")}</p>
+            <p class="summary-next-title">Next Action Needed</p>
+            <p class="summary-text">${formatMultiline(
+              selectedTicketNextAction || "Analyzing next action needed..."
+            )}</p>
+          </section>
 
-    <section class="detail-block">
-      <h3>Conversation</h3>
-      ${messageItems}
-      <div class="takeover-composer">
-        <h4>Direct Reply to Customer</h4>
-        <textarea
-          id="detail-takeover-input"
-          class="detail-textarea"
-          rows="4"
-          placeholder="Type your direct reply to the customer..."
-          ${takeoverComposerDisabled ? "disabled" : ""}
-        >${escapeHtml(takeoverReplyDraft)}</textarea>
-        <div class="detail-inline-actions">
-          <button
-            type="button"
-            class="btn btn-primary"
-            data-detail-action="send-takeover-reply"
-            ${takeoverComposerDisabled ? "disabled" : ""}
-          >${
-            takeoverSubmitting
-              ? "Sending..."
-              : "Send to Customer"
-          }</button>
-        </div>
+          <section class="panel-card">
+            <div class="panel-card-head">
+              <div>
+                <p class="panel-card-kicker">Ticket Controls</p>
+                <h3 class="panel-card-title">Mode, Status, and Routing</h3>
+              </div>
+            </div>
+            <div class="detail-grid">
+              <div class="detail-item">
+                <span>Priority</span>
+                <strong>${escapeHtml(priorityLabel(ticket.priority))}</strong>
+              </div>
+              <div class="detail-item detail-item-status">
+                <span>Status</span>
+                ${statusComboboxHtml}
+              </div>
+              <div class="detail-item detail-item-mode">
+                <span>Mode</span>
+                ${modeComboboxHtml}
+                ${modeSwitchNotice}
+              </div>
+              <div class="detail-item">
+                <span>Requester</span>
+                <strong>${escapeHtml(requester)}</strong>
+              </div>
+            </div>
+          </section>
+
+          ${
+            showPendingQuestion
+              ? `
+            <section class="panel-card detail-block-engineer-request">
+              <div class="panel-card-head">
+                <div>
+                  <p class="panel-card-kicker">Engineer Request</p>
+                  <h3 class="panel-card-title">Pending AI Guidance</h3>
+                </div>
+              </div>
+              <p class="engineer-request-body">${formatMultiline(pendingDetailBodyText)}</p>
+              ${
+                isTakeoverMode
+                  ? '<p class="mode-switch-hint" role="status" aria-live="polite">Human Takeover is active. Please reply to the customer directly.</p>'
+                  : `
+                <div class="engineer-request-actions">
+                  <button
+                    type="button"
+                    class="btn btn-outline"
+                    data-detail-action="toggle-tell-ai"
+                    ${controlsDisabled ? "disabled" : ""}
+                  >
+                    Tell AI
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-outline"
+                    data-detail-action="takeover-mode"
+                    ${controlsDisabled ? "disabled" : ""}
+                  >
+                    ${takeoverButtonLabel}
+                  </button>
+                </div>
+              `
+              }
+              ${
+                showTellAiComposer && !isTakeoverMode
+                  ? `
+                <div class="tell-ai-composer">
+                  <textarea
+                    id="detail-tell-ai-input"
+                    class="detail-textarea"
+                    rows="4"
+                    placeholder="Tell AI what to say or what guidance to provide..."
+                    ${controlsDisabled ? "disabled" : ""}
+                  >${escapeHtml(tellAiDraft)}</textarea>
+                  <div class="detail-inline-actions">
+                    <button
+                      type="button"
+                      class="btn btn-primary"
+                      data-detail-action="send-tell-ai"
+                      ${controlsDisabled ? "disabled" : ""}
+                    >${tellAiSubmitting ? "Sending..." : "Send to AI"}</button>
+                    <button
+                      type="button"
+                      class="btn btn-ghost"
+                      data-detail-action="cancel-tell-ai"
+                      ${controlsDisabled ? "disabled" : ""}
+                    >Cancel</button>
+                  </div>
+                </div>
+              `
+                  : ""
+              }
+            </section>
+          `
+              : ""
+          }
+
+          <section class="panel-card">
+            <div class="panel-card-head">
+              <div>
+                <p class="panel-card-kicker">Request Records</p>
+                <h3 class="panel-card-title">Completed Engineer Actions</h3>
+              </div>
+            </div>
+            ${engineerRequestRecordsHtml}
+          </section>
+
+          <section class="panel-card">
+            <div class="panel-card-head">
+              <div>
+                <p class="panel-card-kicker">Direct Reply</p>
+                <h3 class="panel-card-title">Customer Response Channel</h3>
+              </div>
+            </div>
+            <p class="mode-switch-hint">
+              ${
+                isTakeoverMode
+                  ? "Human Takeover is active. Replies will be sent as direct engineer responses."
+                  : "You can still send a direct response. In managed mode it will be logged as a direct reply."
+              }
+            </p>
+            <div class="takeover-composer">
+              <textarea
+                id="detail-takeover-input"
+                class="detail-textarea"
+                rows="4"
+                placeholder="Type your direct reply to the customer..."
+                ${takeoverComposerDisabled ? "disabled" : ""}
+              >${escapeHtml(takeoverReplyDraft)}</textarea>
+              <div class="detail-inline-actions">
+                <button
+                  type="button"
+                  class="btn btn-primary"
+                  data-detail-action="send-takeover-reply"
+                  ${takeoverComposerDisabled ? "disabled" : ""}
+                >${takeoverSubmitting ? "Sending..." : "Send to Customer"}</button>
+              </div>
+            </div>
+          </section>
+        </aside>
       </div>
     </section>
   `;
+}
 
-  detailModalEl.classList.remove("hidden");
+function renderTickets() {
+  if (!workspaceRegionEl || routeState.view !== "pool") {
+    return;
+  }
+  renderWorkspaceChrome();
+  workspaceRegionEl.innerHTML = renderTicketPoolView();
+}
+
+function closeTicketDetail() {
+  resetDetailWorkspaceState();
+  if (isAuthenticated()) {
+    navigate("/tickets");
+    return;
+  }
+  renderWorkspace();
+}
+
+function renderTicketDetail() {
+  if (!workspaceRegionEl || routeState.view !== "detail") {
+    return;
+  }
+  renderWorkspaceChrome();
+  workspaceRegionEl.innerHTML = renderTicketDetailView();
 }
 
 function focusTakeoverComposerInput(retries = 8) {
@@ -1416,8 +1712,9 @@ async function refreshSelectedSummary(options = {}) {
     return;
   }
 
+  const requestedTicketId = selectedTicketId;
   const cacheKey = summaryCacheKey(selectedTicket);
-  const cached = ticketSummaryCache.get(selectedTicketId);
+  const cached = ticketSummaryCache.get(requestedTicketId);
   if (cached && cached.cacheKey === cacheKey) {
     selectedTicketSummary = cached.summary;
     selectedTicketNextAction = cached.nextAction;
@@ -1427,8 +1724,11 @@ async function refreshSelectedSummary(options = {}) {
 
   try {
     const payload = await fetchJson(
-      `/api/engineer/tickets/${encodeURIComponent(selectedTicketId)}/summary`
+      `/api/engineer/tickets/${encodeURIComponent(requestedTicketId)}/summary`
     );
+    if (selectedTicketId !== requestedTicketId) {
+      return;
+    }
     const summary = String(payload?.summary || "").trim();
     const nextAction = String(payload?.next_action_needed || "").trim();
     if (!summary || !nextAction) {
@@ -1440,13 +1740,16 @@ async function refreshSelectedSummary(options = {}) {
     }
     selectedTicketSummary = summary;
     selectedTicketNextAction = nextAction;
-    ticketSummaryCache.set(selectedTicketId, {
+    ticketSummaryCache.set(requestedTicketId, {
       cacheKey,
       summary,
       nextAction,
     });
     renderTicketDetail();
   } catch (error) {
+    if (selectedTicketId !== requestedTicketId) {
+      return;
+    }
     const fallback = buildLocalSummaryFallback(selectedTicket);
     selectedTicketSummary = fallback.summary;
     selectedTicketNextAction = fallback.nextAction;
@@ -1468,13 +1771,17 @@ async function refreshSelectedTicket(options = {}) {
     return;
   }
 
+  const requestedTicketId = selectedTicketId;
   if (showLoading) {
     detailLoading = true;
     renderTicketDetail();
   }
 
   try {
-    const payload = await fetchJson(`/api/engineer/tickets/${encodeURIComponent(selectedTicketId)}`);
+    const payload = await fetchJson(`/api/engineer/tickets/${encodeURIComponent(requestedTicketId)}`);
+    if (selectedTicketId !== requestedTicketId) {
+      return;
+    }
     selectedTicket = payload.ticket || null;
     if (selectedTicket) {
       selectedTicketSummary = "Generating AI summary for this ticket...";
@@ -1489,6 +1796,9 @@ async function refreshSelectedTicket(options = {}) {
       // Keep local summary if async summary fails.
     });
   } catch (error) {
+    if (selectedTicketId !== requestedTicketId) {
+      return;
+    }
     detailLoading = false;
     if (String(error.message || "").toLowerCase().includes("not found")) {
       closeTicketDetail();
@@ -1502,23 +1812,22 @@ async function refreshSelectedTicket(options = {}) {
 }
 
 async function openTicketDetail(ticketId) {
-  if (selectedTicketId !== ticketId) {
-    clearStatusComboboxBlurTimer();
-    clearModeComboboxBlurTimer();
-    showTellAiComposer = false;
-    tellAiDraft = "";
-    takeoverReplyDraft = "";
-    tellAiSubmitting = false;
-    takeoverSubmitting = false;
-    modeSwitching = false;
-    statusComboboxOpen = false;
-    modeComboboxOpen = false;
-    statusComboboxQuery = "";
-    modeComboboxQuery = "";
+  const normalizedId = String(ticketId || "").trim();
+  if (!normalizedId) {
+    return;
   }
-  selectedTicketId = ticketId;
-  renderTickets();
-  await refreshSelectedTicket({ showLoading: true });
+  if (selectedTicketId !== normalizedId) {
+    resetDetailWorkspaceState();
+    selectedTicketId = normalizedId;
+    detailLoading = true;
+  }
+  routeState.view = "detail";
+  routeState.ticketId = normalizedId;
+  renderTicketDetail();
+  const hashChanged = navigate(`/tickets/${normalizedId}`);
+  if (!hashChanged) {
+    await refreshSelectedTicket({ showLoading: true, silent: true });
+  }
 }
 
 async function loadTickets(options = {}) {
@@ -1526,7 +1835,12 @@ async function loadTickets(options = {}) {
   const params = new URLSearchParams({ status: "all" });
   const payload = await fetchJson(`/api/engineer/tickets?${params.toString()}`);
   tickets = Array.isArray(payload.tickets) ? payload.tickets : [];
-  renderTickets();
+  parseRoute();
+  if (routeState.view === "pool") {
+    renderTickets();
+  } else {
+    renderWorkspaceChrome();
+  }
 
   if (refreshDetail && selectedTicketId) {
     await refreshSelectedTicket({ silent: true });
@@ -1534,8 +1848,16 @@ async function loadTickets(options = {}) {
 }
 
 function showBoardError(message) {
-  ticketTableBodyEl.innerHTML = `<tr><td colspan="8" class="empty-row">${escapeHtml(message)}</td></tr>`;
-  ticketCountEl.textContent = "0 tickets";
+  renderWorkspaceChrome();
+  if (!workspaceRegionEl) {
+    return;
+  }
+  workspaceRegionEl.innerHTML = `
+    <section class="workspace-feedback workspace-feedback-error" role="alert">
+      <strong>Workspace Unavailable</strong>
+      <p>${escapeHtml(message)}</p>
+    </section>
+  `;
 }
 
 async function updateTicketMode(ticketId, mode) {
@@ -1717,6 +2039,24 @@ async function handleDetailClick(event) {
 
   const action = button.dataset.detailAction;
   if (!action) {
+    return;
+  }
+
+  if (action === "back-to-pool") {
+    closeTicketDetail();
+    return;
+  }
+
+  if (action === "refresh-ticket") {
+    button.disabled = true;
+    try {
+      await loadTickets({ refreshDetail: false });
+      await refreshSelectedTicket({ silent: true, showLoading: true });
+    } catch (error) {
+      window.alert(`Sync failed: ${error.message}`);
+    } finally {
+      button.disabled = false;
+    }
     return;
   }
 
@@ -1984,7 +2324,7 @@ function closeStatusComboboxWithDelay() {
   clearStatusComboboxBlurTimer();
   statusComboboxBlurTimer = setTimeout(() => {
     statusComboboxBlurTimer = null;
-    const root = detailBodyEl.querySelector('[data-combobox-root="status"]');
+    const root = workspaceRegionEl?.querySelector('[data-combobox-root="status"]');
     const active = document.activeElement;
     if (root && active && root.contains(active)) {
       return;
@@ -2002,7 +2342,7 @@ function closeModeComboboxWithDelay() {
   clearModeComboboxBlurTimer();
   modeComboboxBlurTimer = setTimeout(() => {
     modeComboboxBlurTimer = null;
-    const root = detailBodyEl.querySelector('[data-combobox-root="mode"]');
+    const root = workspaceRegionEl?.querySelector('[data-combobox-root="mode"]');
     const active = document.activeElement;
     if (root && active && root.contains(active)) {
       return;
@@ -2355,10 +2695,13 @@ function setupWebSocket() {
 
 async function enterBoard() {
   toggleScreens();
+  parseRoute();
+  renderWorkspace();
   await detectStorageMode();
   setRealtimeStatus("Realtime: connecting...");
   try {
-    await loadTickets({ refreshDetail: true });
+    await loadTickets({ refreshDetail: false });
+    await syncRouteToWorkspace({ silent: true, showLoading: true });
   } catch (error) {
     showBoardError(`Failed to load tickets: ${error.message}`);
   }
@@ -2395,8 +2738,11 @@ function handleLocalLogout() {
   filterValues.mode = "all";
   filterValues.status = "all";
   closeAllHeaderFilterComboboxes({ render: false });
-  closeTicketDetail();
+  resetDetailWorkspaceState();
+  window.location.hash = "#/tickets";
+  parseRoute();
   renderFilterControls();
+  renderWorkspace();
   toggleScreens();
   resetLoginForm();
 }
@@ -2429,36 +2775,51 @@ filterControlsEl?.addEventListener("input", handleFilterControlsInput);
 filterControlsEl?.addEventListener("focusin", handleFilterControlsFocusIn);
 filterControlsEl?.addEventListener("focusout", handleFilterControlsFocusOut);
 filterControlsEl?.addEventListener("keydown", handleFilterControlsKeydown);
-ticketTableBodyEl.addEventListener("click", (event) => {
-  handleTableClick(event).catch((error) => {
-    showBoardError(`Operation failed: ${error.message}`);
-  });
+workspaceRegionEl?.addEventListener("click", (event) => {
+  if (event.target.closest("button[data-detail-action]")) {
+    handleDetailClick(event).catch((error) => {
+      window.alert(`Operation failed: ${error.message}`);
+    });
+    return;
+  }
+
+  if (event.target.closest("button.action-btn")) {
+    handleTableClick(event).catch((error) => {
+      showBoardError(`Operation failed: ${error.message}`);
+    });
+  }
 });
-detailBodyEl.addEventListener("click", (event) => {
-  handleDetailClick(event).catch((error) => {
-    window.alert(`Operation failed: ${error.message}`);
-  });
-});
-detailBodyEl.addEventListener("input", handleDetailInput);
-detailBodyEl.addEventListener("focusin", handleDetailFocusIn);
-detailBodyEl.addEventListener("focusout", handleDetailFocusOut);
-detailBodyEl.addEventListener("keydown", handleDetailKeydown);
-detailBodyEl.addEventListener("change", (event) => {
+workspaceRegionEl?.addEventListener("input", handleDetailInput);
+workspaceRegionEl?.addEventListener("focusin", handleDetailFocusIn);
+workspaceRegionEl?.addEventListener("focusout", handleDetailFocusOut);
+workspaceRegionEl?.addEventListener("keydown", handleDetailKeydown);
+workspaceRegionEl?.addEventListener("change", (event) => {
   handleDetailChange(event).catch((error) => {
     window.alert(`Operation failed: ${error.message}`);
   });
 });
-detailCloseBtnEl.addEventListener("click", closeTicketDetail);
-detailModalEl.addEventListener("click", (event) => {
-  if (event.target === detailModalEl) {
-    closeTicketDetail();
+railNavEl?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-nav-action]");
+  if (!button) {
+    return;
+  }
+  const action = String(button.dataset.navAction || "").trim();
+  if (action === "go-pool") {
+    navigate("/tickets");
+    return;
+  }
+  if (action === "go-detail" && selectedTicketId) {
+    navigate(`/tickets/${encodeURIComponent(selectedTicketId)}`);
   }
 });
-
-document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !detailModalEl.classList.contains("hidden")) {
-    closeTicketDetail();
+window.addEventListener("hashchange", () => {
+  if (!isAuthenticated()) {
+    parseRoute();
+    return;
   }
+  syncRouteToWorkspace({ silent: true, showLoading: true }).catch((error) => {
+    showBoardError(`Route update failed: ${error.message}`);
+  });
 });
 document.addEventListener("pointerdown", handleDocumentPointerDown);
 
@@ -2466,8 +2827,11 @@ renderHeaderUserControls();
 renderFilterControls();
 
 if (isAuthenticated()) {
-  enterBoard();
+  enterBoard().catch((error) => {
+    showBoardError(`Failed to initialize engineer workspace: ${error.message}`);
+  });
 } else {
   toggleScreens();
+  parseRoute();
   setRealtimeStatus("Realtime: signed out");
 }
