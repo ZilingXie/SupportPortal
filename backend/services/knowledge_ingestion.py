@@ -118,6 +118,17 @@ def _safe_int_env(name: str, default: int) -> int:
     return parsed if parsed > 0 else default
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw not in {"0", "false", "no", "off"}
+
+
+def metadata_enrichment_enabled() -> bool:
+    return _env_flag("KNOWLEDGE_METADATA_ENRICHMENT_ENABLED", True)
+
+
 def _safe_float_env(name: str, default: float) -> float:
     raw = (os.getenv(name) or "").strip()
     if not raw:
@@ -994,6 +1005,9 @@ def _enrich_metadata_with_llm(
         "metadata_generated_at": None,
         "metadata_version": _PARSER_VERSION,
     }
+    if not metadata_enrichment_enabled():
+        base_metadata.update(fallback_meta)
+        return base_metadata, fallback_meta
     if not api_key:
         base_metadata.update(fallback_meta)
         return base_metadata, fallback_meta

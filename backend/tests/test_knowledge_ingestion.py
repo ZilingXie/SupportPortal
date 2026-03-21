@@ -8,6 +8,7 @@ from unittest.mock import patch
 from backend.services.knowledge_ingestion import (
     _build_chunk_rows,
     _build_shadow_chunk_rows,
+    _enrich_metadata_with_llm,
     parse_official_markdown_file,
     parse_official_markdown_content,
     parse_technical_article,
@@ -215,6 +216,28 @@ class KnowledgeIngestionParsingTests(unittest.TestCase):
         warnings = document.cleaning_report.get("warnings") if isinstance(document.cleaning_report.get("warnings"), list) else []
         self.assertTrue(any(str(item).startswith("missing_section:") for item in warnings))
         self.assertIn("issue_description", document.metadata["section_names"])
+
+    def test_metadata_enrichment_can_be_disabled_via_env(self) -> None:
+        document = parse_official_markdown_content(
+            raw_markdown=SAMPLE_OFFICIAL_MARKDOWN,
+            file_name="agora-console-rest-api.md",
+            ingestion_id="KI-TEST-OFFICIAL-META-DISABLED",
+        )
+
+        with patch.dict(
+            "os.environ",
+            {
+                "OPENAI_API_KEY": "test-key",
+                "KNOWLEDGE_METADATA_ENRICHMENT_ENABLED": "false",
+            },
+            clear=True,
+        ):
+            with patch("backend.services.knowledge_ingestion._import_langchain") as import_langchain:
+                metadata, meta_info = _enrich_metadata_with_llm(document)
+
+        self.assertEqual(meta_info["metadata_source"], "rule")
+        self.assertEqual(metadata["metadata_source"], "rule")
+        import_langchain.assert_not_called()
 
 
 if __name__ == "__main__":

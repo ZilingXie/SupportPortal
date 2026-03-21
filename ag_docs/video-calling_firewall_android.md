@@ -1,0 +1,133 @@
+---
+title: Firewall requirements
+description: use Agora products in environments with restricted network access
+sidebar_position: 8
+platform: android
+exported_from: https://docs.agora.io/en/video-calling/reference/firewall?platform=android
+exported_on: '2026-01-20T05:58:45.681461Z'
+exported_file: firewall_android.md
+---
+
+[HTML Version](https://docs.agora.io/en/video-calling/reference/firewall?platform=android)
+
+# Firewall requirements
+
+To allow you to use Agora products in environments with restricted network access, Agora provides the following solutions: the firewall whitelist and the Agora cloud proxy.
+
+The following table lists the support of Agora products for the two solutions:
+
+|Agora Products |Firewall Whitelist |Agora Cloud Proxy|
+|---|:---:|:---:|
+|Video SDK (Native, third-party frameworks) |✘ |✔|
+|Video SDK (Web) |✔ |✔|
+|Signalling SDK (Native) | ✔ | ✘ |
+|Signalling SDK (Web) | ✔ | ✔ |
+|On-Premise Recording SDK | ✘ |✔| 
+|Interactive Gaming SDK | ✘ |✘|
+
+- When using the firewall whitelist, add the domains and ports to the firewall whitelist, and do not set restrictions on IP addresses.
+- When using Agora cloud proxy, refer to [Connect to Agora through a restricted network](https://docs-md.agora.io/en/video-calling/advanced-features/cloud-proxy.md)
+
+###  Video SDK (Web)
+
+Add the following destination domains and the corresponding ports to your firewall whitelist.
+
+#### Domains
+
+```
+.agora.io
+.edge.agora.io
+.sd-rtn.com
+.edge.sd-rtn.com
+.ap.sd-rtn.com
+.statscollector.sd-rtn.com
+.webrtc-cloud-proxy.sd-rtn.com
+```
+
+#### Ports
+
+| Destination ports | Port type | Operation|
+|---|---|---|
+| 80; 443; 3433; 4700 - 5000; 5668; 5669; 6080; 6443; 8667; 9667; 30011 - 30013 (for RTMP converter)| TCP|  Allow|
+| 3478; 4700 - 5000 (2.9.0 or later); 10000 - 65535 (before 2.9.0)   |  UDP  | Allow|
+
+### Signaling SDK (Web)
+
+#### Message channel
+
+For a message channel, you need to add the following content to the firewall whitelist:
+
+- **Domains**: 
+    ```
+    .edge.agora.io
+    .edge.sd-rtn.com
+    web-1.ap.sd-rtn.com
+    web-2.ap.sd-rtn.com
+    web-3.ap.sd-rtn.com
+    web-4.ap.sd-rtn.com
+    ap-web-1.agora.io
+    ap-web-2.agora.io
+    ap-web-3.agora.io
+    ap-web-4.agora.io
+    webcollector-rtm.agora.io
+    logservice-rtm.agora.io
+    rtm.statscollector.sd-rtn.com
+    rtm.logservice.sd-rtn.com
+    ```
+
+- **Ports**: 
+    | **Destination port**               | **Protocol** | **Operate** |
+    |------------------------------------------------|----------|---------|
+    | 443; 9591; 9593; 27387 | TCP      | Allow   |
+
+    > ℹ️ **Info**
+    > If you are using Signaling 1.x, also add port 9601.
+
+#### Stream channel
+
+For a stream channel, you need to add the following to your firewall whitelist:
+
+- **Domains**:
+
+    ```
+    .agora.io
+    .edge.agora.io
+    .sd-rtn.com
+    .edge.sd-rtn.com
+    ```
+
+- **Ports**: 
+
+    | **Destination port**            | **Protocol** | **Operate** |
+    |-----------------------------|----------|---------|
+    | 80; 3433; 4700 - 5000; 5668; 5669; 6080; 6443; 8667; 9667 | TCP      | Allow   |
+    | 3478; 4700 - 5000           | UDP      | Allow   |
+
+### Signaling SDK (Native)
+
+#### Message channel
+
+For a message channel, you need to add the following content to the firewall whitelist:
+
+- **Domains**: 
+    ```
+    .agora.io
+    ```
+- **Ports**: 
+    | **Destination port**                               | **Protocol** | **Operate** |
+    |------------------------------------------------|----------|---------|
+    | 443; 7384; 8443; 9130; 9131; 9136; 9137; 9140; 9141 | TCP      | Allow   |
+    | 1080; 3000; 8000; 8130; 8443; 9120; 9121; 9700; 25000 | UDP      | Allow   |
+
+#### Stream channel
+
+For a stream channel, you need to add the following to your firewall whitelist:
+
+- **Ports**: 
+
+    | **Destination port** | **Protocol** | **Operate** |
+    |------------------|----------|---------|
+    | 4001 - 4150      | UDP      | Allow   |
+
+> ℹ️ **Info**
+> The target ports listed in this section may be adjusted according to actual conditions. If you encounter any issues, contact [rtm@agora.io](https://docs-md.agora.io/en/mailto:rtm@agora.io.md).

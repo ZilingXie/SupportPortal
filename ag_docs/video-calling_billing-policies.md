@@ -1,0 +1,233 @@
+---
+title: Policies
+description: Provides you with information on billing, fee deductions, free-of-charge
+  policy and any suspension to your account based on the account type.
+sidebar_position: 4
+platform: android
+exported_from: https://docs.agora.io/en/video-calling/reference/billing-policies
+exported_on: '2026-01-20T05:58:36.051804Z'
+exported_file: billing-policies.md
+---
+
+[HTML Version](https://docs.agora.io/en/video-calling/reference/billing-policies)
+
+# Policies
+
+
+This page explains:
+
+- [Billing, fee deductions, and account suspension policies](#billing-fee-deductions-and-account-suspension-policies)
+- [Agora's free of charge policy](#agoras-free-of-charge-policy-for-the-first-10000-minutes)
+- [Agora's end-of-life policy](#end-of-life-policy)
+
+## Billing, fee deductions, and account suspension policies
+
+Agora Console provides you with information on billing, fee deductions, and any suspension to your account based on the account type.
+
+None of this applies if you have signed a contract with Agora. The contract overrides all finance information such as billing, deductions, and suspension details.
+
+### Paid account
+
+You have a paid account if you have registered with Agora and done any of the following:
+
+-   Added a credit card to your account or topped up your balance using a bank account.
+
+-   You have recently made a payment.
+
+-   Signed a contract with Agora.
+
+Agora provides each paid account with [10,000 free minutes](#agoras-free-of-charge-policy-for-the-first-10000-minutes) for any outstanding billing amount after a fee deduction.
+
+### Billing
+
+On the first day of each month, Agora Console issues your bill. The billing period is for the previous calendar month. To view billing information for your projects:
+
+1.  In [Agora Console](https://console.agora.io/v2), click home.
+
+2.  Click **Billing**.
+
+    You see the detailed billing information for your projects, including billing period, due date, and amount.
+
+    ![View bills](https://docs-md.agora.io/images/video-sdk/bills.png)
+
+#### Additional charges
+
+This section describes the additional charges applicable to your account.
+
+#### Charging 9% Singapore Goods and Services Tax
+
+As of November 2021, Agora Singapore charges [9% Singapore Goods and Services Tax (GST)](https://www.iras.gov.sg/taxes/goods-services-tax-(gst)/basics-of-gst/goods-and-services-tax-(gst)-what-it-is-and-how-it-works) on invoices for all Agora services provided to accounts located in Singapore. Agora determines the account location based on the tax identification number, contact address, or billing address that you have provided. All GST collected from Singapore accounts is paid to the Singapore tax authority.
+
+If you have any questions, contact support@agora.io.
+
+#### Fee deduction
+
+On the sixth day of each month, Agora Console automatically deducts the fee for the previous month and notifies you by email. The services are free of charge, and Agora does not deduct any fee when you meet both of the following requirements:
+
+-   Your monthly total service minutes of Agora Video Calling do not exceed 10,000 charge-free minutes; and
+
+-   You do not use any other charged Agora services or products.
+
+If your account balance is negative after the deduction, Agora sends you an email, reminding you to [top up your account](https://docs-md.agora.io/en/video-calling/get-started/manage-agora-account.md) at your earliest convenience and avoid account suspension.
+
+#### Account suspension
+
+If your account balance remains negative for 5 days after the deduction date, Agora suspends your account and notifies you by email. During this suspension, none of your projects can access Agora services.
+
+If this happens, please top up your account at your earliest convenience. Once your balance is greater than or equal to zero, Agora unfreezes your account.
+
+Agora suspends your account on the second day after any of the following happens:
+
+-   Your total service minutes using Video Calling exceed 10,000 charge-free minutes.
+
+-   You use any Agora services or products not included in the 10,000 charge-free minutes and the usage exceeds the free quota of the services or products.
+
+After account suspension, none of your projects can access Agora services.
+
+Please top up your account at your earliest convenience. Once you top up your account, Agora unfreezes your account and upgrades your account to a paid account.
+
+### Free account
+
+You have a free account if you have registered with Agora and *not* done any of the following:
+
+-   Added a credit card to your account or topped up your balance using a bank account.
+
+-   You have recently made a payment.
+
+-   Signed a contract with Agora.
+
+With a free Agora account, you have [the first 10000 minutes free](#agoras-free-of-charge-policy-for-the-first-10000-minutes).
+
+## Agora’s free-of-charge policy for the first 10,000 minutes
+
+Agora gives each [Agora Account](https://console.agora.io/v2) 10,000 free-of-charge minutes each month, and deducts the minutes in the following sequence:
+
+-   Broadcast Streaming audio minutes
+-   Voice call, video call, and Interactive Live Streaming audio minutes
+-   On-premise recording audio minutes
+-   Cloud recording audio non-transcoding minutes
+-   Cloud recording audio minutes
+-   Web page recording audio minutes
+-   Cloud Proxy audio minutes
+-   Broadcast Streaming HD video minutes
+-   Voice call, video call, and Interactive Live Streaming HD video minutes
+-   On-premise recording HD video minutes
+-   Cloud recording HD video minutes
+-   Web page recording HD video minutes
+-   Cloud Proxy HD video minutes
+-   Broadcast Streaming Full HD* video minutes
+-   Voice call, video call, and Interactive Live Streaming Full HD* video minutes
+-   On-premise recording Full HD* video minutes
+-   Cloud recording Full HD* video minutes
+-   Web page recording Full HD* video minutes
+-   Cloud Proxy Full HD* video minutes
+-   Broadcast Streaming 2K video minutes
+-   Voice call, video call, and Interactive Live Streaming  2K video minutes
+-   On-premise recording 2K video minutes
+-   Cloud recording 2K video minutes
+-    Broadcast Streaming 2K+ video minutes
+-   Voice call, video call, Interactive Live Streaming 2K+ video minutes
+-   On-premise recording 2K+ video minutes
+-   Cloud recording 2K+ video minutes
+-   Cloud proxy 2K+ video minutes
+
+\*  HD+ minutes are also included in the shared 10,000 free minutes
+
+If your total service minutes do not exceed 10,000 minutes, the service is free of charge. After the 10,000 free-of-charge minutes are fully deducted, Agora charges you for the additional service minutes. **The remaining free-of-charge minutes will be cleared at the end of each calendar month.
+
+**Note:** The 10,000 free-of-charge minutes policy does not apply to the Agora Signaling SDK, the Chat SDK, or the IoT SDK.
+
+### How does Agora calculate service minutes?
+
+In Video Calling, service minutes are calculated either by the number of users or by the number of streams. Agora calculates service minutes **by the number of users**.
+
+#### Approach 1: calculate by the number of users
+
+Suppose N users talk for M minutes in a channel, the total service minutes = N \* M.
+
+-   If two users talk for 10 minutes, the total service minutes are: 2 \* 10 = 20.
+
+-   If five users talk for 10 minutes, the total service minutes are: 5 \* 10 = 50.
+
+-   If 10 users talk for 10 minutes, the total service minutes are: 10 \* 10 = 100.
+
+In this approach, the service minutes purely depend on the number of the users in the channel, regardless of how many streams each user subscribes to.
+
+#### Approach 2: calculate by the number of streams
+
+Suppose N users talk for M minutes in a channel, and each user subscribes to all remote streams in the channel, the total service minutes = N \* (N-1) \* M.
+
+-   If two users talk for 10 minutes, the total service minutes are: 2 \* (2-1) \* 10 = 20.
+
+-   If five users talk for 10 minutes, the total service minutes are: 5 \* (5-1) \* 10 = 200.
+
+-   If 10 users talk for 10 minutes, the total service minutes are: 10 \* (10-1) \* 10 = 900.
+
+In this approach, if a user subscribes to multiple streams, every remote stream the user subscribes to is counted.
+
+#### Difference between the two approaches
+
+See the table below for the difference between the two approaches:
+
+| Use-case                        | Service minutes by the number of users | Service minutes by the number of streams |
+|---------------------------------|----------------------------------------|------------------------------------------|
+| Two users talk for 10 minutes.  | 20 minutes                             | 20 minutes                               |
+| Five users talk for 10 minutes. | 50 minutes                             | 200 minutes                              |
+| 10 users talk for 10 minutes.   | 100 minutes                            | 900 minutes                              |
+
+The difference between the two approaches become greater when more people join the channel.
+
+### Calculation approach by Agora
+
+Agora calculates service minutes **by the number of users**, which is easier and more straightforward. Note that service minutes are calculated for aggregate video resolution. See [Calculate aggregate video resolution](https://docs-md.agora.io/en/video-calling/overview/pricing.md).
+
+## End-of-life policy
+
+Agora is committed to providing regular updates to our Core Products, Extensions, and Tools. These updates encompass a range of improvements, such as new features, updated APIs (Application Programming Interfaces), bug fixes, security patches, and updated documentation. We strongly encourage developers to keep pace with our latest product releases to take advantage of the newest features, security enhancements, and improvements.
+
+This policy statement outlines the stages an Agora product or service moves through, from pre-GA Beta to introduction to retirement, as well as the support Agora provides during each phase.
+
+### Default production introduction period
+
+Agora maintains a default introduction duration of at least 12 months from the release of a product on [Agora.io Developer Center](https://docs-md.agora.io/en/.md). During this initial 12-month period, no end-of-support or end-of-life actions will be initiated. However, after this initial 12-month period, Agora reserves the right to transition a product into the Maintenance phase, which marks the beginning of the end-of-support phase.
+
+### Lifecycle of Agora’s SDK
+
+|Phase | Description|
+|------|------------|
+|Beta | During this phase, SDKs are intended solely for early access and feedback purposes. They are not recommended for use in production environments. Beta products fall outside of Agora’s EOL Policy and are intended for evaluation purposes. See Agora’s Beta Service Agreement for further information.|
+|General Availability (GA)|SDKs in this phase are fully supported by Agora. Agora provides support for new services, API updates, feature enhancements, bug fixes, and security patches. As mentioned earlier, Agora guarantees a minimum of 12 months' support for Generally Available (GA) product SDKs. See additional information below regarding specific support on Client SDKs.|
+|Retirement (EOL) SDKs: (Maintenance)|When an SDK enters the Retirement phase, Agora will announce its retirement with a minimum notice of 60 days (approximately 2 months). This announcement will include crucial timelines and guidelines to assist developers in migrating to the latest recommended SDK version. Communication regarding retirement announcements will be conveyed through emails, the Agora Console/Dashboard Notifications center, SDK Documentation, and may also involve social media or Agora blog posts. When an Agora product or service reaches the end-of-support (EOS) or end-of-life (EOL) stage, Agora will cease providing security updates, non-security updates, or assisted support.|
+
+### Standard support periods for client SDKs
+
+For Client SDKs, Agora strives to offer robust support for the periods defined as follows:
+
+|Release|Support|
+|-------|-------|
+| Major release| We guarantee support for at least 12 months starting from the date of a major release.  |
+| Minor release| For minor releases, we ensure support for at least 6 months from the release date.  |
+
+### Maintenance on retirement SDKs
+
+Occasionally, we may transition a product SDK into a maintenance support phase, primarily focused on addressing bugs and providing security patches. In such instances, we will notify our customers at least 60 days (approximately 2 months) in advance of the retirement (end-of-life) period for the affected SDK.
+
+During the Retirement phase, products entering the EOS/EOL phase will continue to be supported as follows:
+
+|Duration | Support |
+|---------|---------|
+|EOL Announcement Date + 6 months|For the first six months, Agora will provide support for bug fixes and security updates for the old product or service. However, no new requirements for the old product or service will be accepted.|
+|EOL Announcement Date + 12 months|For the subsequent six months, Agora will exclusively provide security updates for the old product or service.|
+|EOL Announcement Date > 12 months|After the 12-month service ending period, Agora will no longer support the old product or service, unless a pre-arranged Support Extension Request is granted prior to EOL Announcement < 12 months.|
+
+**Note**: While we provide this maintenance support phase, it is essential to understand that using an SDK beyond its product maintenance support cycle is not recommended. Doing so is entirely at the discretion and risk of the developer. We are dedicated to delivering the best SDK experience to our developers, and this policy ensures that you have access to the latest features and security updates while also giving you clear guidance on our support timelines.
+
+### Support extension requests
+
+Customers may apply to extend support for a retired SDK for a temporary period, subject to Agora’s discretion and defined under commercial terms. Agora will review a customer’s requirements and decide whether to license the customer to use the Agora product or service for a limited period outside of the EOL timeline.
+
+### Additional information
+
+For customers requiring more time to transition to the latest version of a product or service, please reach out to your Agora Account Manager, Agora Partnership Manager, or device manufacturer for further information and assistance.
+
+We are committed to providing a smooth transition and support experience throughout the lifecycle of our products and services to ensure the best possible developer experience.
