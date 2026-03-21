@@ -7,6 +7,7 @@ import math
 import os
 import re
 import statistics
+import time
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Protocol
@@ -108,6 +109,11 @@ def _safe_float(value: Any, default_value: float = 0.0) -> float:
         return float(value or default_value)
     except (TypeError, ValueError):
         return default_value
+
+
+def _safe_positive_float(value: Any, default_value: float) -> float:
+    parsed = _safe_float(value, default_value)
+    return parsed if parsed > 0 else default_value
 
 
 def _estimate_token_count(text: Any) -> int:
@@ -1153,11 +1159,15 @@ class PostgresKnowledgeRepository:
         schema: str = "supportportal",
         vector_table: str = DEFAULT_PGVECTOR_TABLE,
         connect_timeout: int = 10,
+        connect_retries: int = 0,
+        connect_retry_delay_seconds: float = 1.0,
         default_vector_dim: int = 1024,
     ) -> None:
         self._dsn = dsn.strip()
         self._schema = (schema or "supportportal").strip() or "supportportal"
         self._connect_timeout = _safe_positive_int(connect_timeout, 5)
+        self._connect_retries = _safe_positive_int(connect_retries, 0)
+        self._connect_retry_delay_seconds = _safe_positive_float(connect_retry_delay_seconds, 1.0)
         self._default_vector_dim = _safe_positive_int(default_vector_dim, 1024)
         self._vector_schema, self._vector_table_name = _split_table_name(vector_table, self._schema)
 
@@ -1168,7 +1178,25 @@ class PostgresKnowledgeRepository:
         return bool(self._dsn)
 
     def _connect(self) -> psycopg.Connection[Any]:
-        return psycopg.connect(self._dsn, connect_timeout=self._connect_timeout)
+        attempts = max(1, self._connect_retries + 1)
+        last_error: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                return psycopg.connect(self._dsn, connect_timeout=self._connect_timeout)
+            except (psycopg.OperationalError, psycopg.Error, OSError, TimeoutError) as exc:
+                last_error = exc
+                if attempt >= attempts:
+                    raise
+                LOGGER.warning(
+                    "Knowledge repository connection failed attempt %s/%s: %s",
+                    attempt,
+                    attempts,
+                    exc,
+                )
+                time.sleep(self._connect_retry_delay_seconds)
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Knowledge repository connection failed without an exception")
 
     def _table(self, table_name: str) -> sql.Identifier:
         return sql.Identifier(self._schema, table_name)
@@ -7762,10 +7790,17 @@ def create_knowledge_repository() -> KnowledgeRepository:
     schema = (os.getenv("PGVECTOR_SCHEMA") or "supportportal").strip() or "supportportal"
     vector_table = (os.getenv("PGVECTOR_TABLE") or DEFAULT_PGVECTOR_TABLE).strip() or DEFAULT_PGVECTOR_TABLE
     connect_timeout = _safe_positive_int(os.getenv("PGVECTOR_CONNECT_TIMEOUT"), 10)
+    connect_retries = _safe_positive_int(os.getenv("PGVECTOR_CONNECT_RETRIES"), 0)
+    connect_retry_delay_seconds = _safe_positive_float(
+        os.getenv("PGVECTOR_CONNECT_RETRY_DELAY_SECONDS"),
+        1.0,
+    )
     return PostgresKnowledgeRepository(
         dsn=dsn,
         schema=schema,
         vector_table=vector_table,
         connect_timeout=connect_timeout,
+        connect_retries=connect_retries,
+        connect_retry_delay_seconds=connect_retry_delay_seconds,
         default_vector_dim=_default_vector_dim(),
     )

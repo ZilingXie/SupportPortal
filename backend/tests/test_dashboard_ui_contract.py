@@ -6,22 +6,42 @@ from pathlib import Path
 
 
 class DashboardUiContractTests(unittest.TestCase):
-    def test_root_dashboard_is_ticket_operations_page(self) -> None:
+    def test_root_dashboard_is_ticket_operations_admin_surface(self) -> None:
         source = Path("ui/dashboard-ui/index.html").read_text(encoding="utf-8")
+        css = Path("ui/dashboard-ui/styles.css").read_text(encoding="utf-8")
 
         for required_id in [
             'id="ticket-volume"',
             'id="resolution-rate"',
             'id="sentiment-alerts"',
+            'id="waiting-for-engineer"',
             'id="event-stream"',
             'id="header-user-controls"',
             'id="ws-status"',
+            'id="event-volume-bars"',
         ]:
             self.assertIn(required_id, source)
 
+        for required_copy in [
+            "Admin Operations",
+            "AI Managing",
+            "Queue Health &amp; Throughput",
+            "Escalation Watch",
+            "Operator Summary",
+            "Live Ticket Feed",
+            "Waiting for Engineer",
+        ]:
+            self.assertIn(required_copy, source)
+
+        self.assertIn('class="dashboard-rail"', source)
+        self.assertIn('class="rail-footer"', source)
         self.assertIn('href="/dashboard/rag/"', source)
         self.assertNotIn('data-dashboard-tab="experiments"', source)
         self.assertNotIn('data-dashboard-tab="overview"', source)
+        self.assertIn(".dashboard-rail", css)
+        self.assertIn(".rail-footer", css)
+        self.assertIn(".queue-health-card", css)
+        self.assertIn(".feed-card", css)
 
     def test_rag_dashboard_nav_uses_task_workbench_pages(self) -> None:
         source = Path("ui/dashboard-ui/rag/index.html").read_text(encoding="utf-8")

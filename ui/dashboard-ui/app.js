@@ -1,19 +1,29 @@
 const wsStatusEl = document.getElementById("ws-status");
 const headerUserControlsEl = document.getElementById("header-user-controls");
+const refreshButtonEl = document.getElementById("refresh-button");
 const ticketVolumeEl = document.getElementById("ticket-volume");
 const resolutionRateEl = document.getElementById("resolution-rate");
 const sentimentAlertsEl = document.getElementById("sentiment-alerts");
-const refreshButtonEl = document.getElementById("refresh-button");
+const waitingForEngineerEl = document.getElementById("waiting-for-engineer");
+const queueHealthTitleEl = document.getElementById("queue-health-title");
+const queueHealthDetailEl = document.getElementById("queue-health-detail");
+const openTicketCountEl = document.getElementById("open-ticket-count");
+const resolvedTicketCountEl = document.getElementById("resolved-ticket-count");
+const managedTicketCountEl = document.getElementById("managed-ticket-count");
+const takeoverTicketCountEl = document.getElementById("takeover-ticket-count");
+const urgentTicketCountEl = document.getElementById("urgent-ticket-count");
+const waitingTicketChipEl = document.getElementById("waiting-ticket-chip");
+const managedTicketChipEl = document.getElementById("managed-ticket-chip");
+const takeoverTicketChipEl = document.getElementById("takeover-ticket-chip");
+const escalationWatchTitleEl = document.getElementById("escalation-watch-title");
+const escalationWatchDetailEl = document.getElementById("escalation-watch-detail");
+const operatorSummaryTitleEl = document.getElementById("operator-summary-title");
+const operatorSummaryDetailEl = document.getElementById("operator-summary-detail");
+const eventVolumeBarsEl = document.getElementById("event-volume-bars");
+const statusBreakdownEl = document.getElementById("status-breakdown");
+const priorityBreakdownEl = document.getElementById("priority-breakdown");
+const modeBreakdownEl = document.getElementById("mode-breakdown");
 const eventStreamEl = document.getElementById("event-stream");
-const latestEventLabelEl = document.getElementById("latest-event-label");
-const prioritySignalEl = document.getElementById("priority-signal");
-const opsBriefBodyEl = document.getElementById("ops-brief-body");
-const opsBriefTitleEl = document.getElementById("ops-brief-title");
-const opsBriefDetailEl = document.getElementById("ops-brief-detail");
-const activeFocusEl = document.getElementById("active-focus");
-const activeFocusDetailEl = document.getElementById("active-focus-detail");
-const liveHealthTitleEl = document.getElementById("live-health-title");
-const liveHealthDetailEl = document.getElementById("live-health-detail");
 
 const DASHBOARD_USER = {
   username: "admin",
@@ -26,7 +36,7 @@ let socket = null;
 let heartbeatTimer = null;
 let reconnectTimer = null;
 let logoutLoading = false;
-let latestTicketEvent = null;
+let refreshLoading = false;
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -45,11 +55,11 @@ async function fetchJson(url, options = undefined) {
       const payload = await response.json();
       if (typeof payload?.detail === "string") {
         reason = payload.detail;
-      } else if (payload?.detail?.message) {
+      } else if (typeof payload?.detail?.message === "string") {
         reason = payload.detail.message;
       }
     } catch {
-      // Keep fallback error.
+      // Keep fallback error reason.
     }
     throw new Error(reason);
   }
@@ -79,32 +89,54 @@ function normalizeString(value) {
   return String(value ?? "").trim();
 }
 
-function userInitial(username) {
-  const normalized = normalizeString(username);
-  return normalized ? normalized[0].toUpperCase() : "A";
-}
-
 function humanizeToken(value) {
   const normalized = normalizeString(value);
   if (!normalized) {
     return "-";
   }
-  return normalized
-    .replaceAll("_", " ")
-    .replace(/\b\w/g, (match) => match.toUpperCase());
+  return normalized.replaceAll("_", " ").replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function userInitial(username) {
+  const normalized = normalizeString(username);
+  return normalized ? normalized[0].toUpperCase() : "A";
+}
+
+function setText(element, value) {
+  if (element) {
+    element.textContent = value;
+  }
+}
+
+function setRefreshLoading(isLoading) {
+  refreshLoading = isLoading;
+  if (!refreshButtonEl) {
+    return;
+  }
+  refreshButtonEl.disabled = isLoading;
+  refreshButtonEl.textContent = isLoading ? "Refreshing..." : "Refresh Feed";
+}
+
+function setRealtimeStatus(text) {
+  setText(wsStatusEl, text);
 }
 
 function isTicketEvent(payload) {
-  return !normalizeString(payload?.ingestion_id) && !normalizeString(payload?.event).startsWith("knowledge_ingestion_");
+  return !normalizeString(payload?.ingestion_id) && !normalizeString(payload?.event).toLowerCase().startsWith("knowledge_ingestion_");
 }
 
 function eventTone(payload) {
   const priority = normalizeString(payload?.priority).toLowerCase();
+  const status = normalizeString(payload?.status).toLowerCase();
   const mode = normalizeString(payload?.engineer_mode).toLowerCase();
+
   if (priority === "urgent" || priority === "high") {
     return priority;
   }
-  if (mode === "managed" || mode === "takeover") {
+  if (status === "waiting_for_engineer") {
+    return "waiting";
+  }
+  if (mode === "takeover" || mode === "managed") {
     return mode;
   }
   return "default";
@@ -114,13 +146,16 @@ function renderHeaderUserControls() {
   if (!headerUserControlsEl) {
     return;
   }
+
   const role = normalizeString(DASHBOARD_USER.role || "ADMIN").toUpperCase();
+  const roleClass = `user-role-${escapeHtml(role.toLowerCase())}`;
+
   headerUserControlsEl.innerHTML = `
     <div class="user-profile-chip" aria-label="Current user">
       <span class="user-avatar" aria-hidden="true">${escapeHtml(userInitial(DASHBOARD_USER.username))}</span>
       <div class="user-meta">
         <p class="user-name">${escapeHtml(DASHBOARD_USER.username)}</p>
-        <p class="user-role">${escapeHtml(role)}</p>
+        <p class="user-role ${roleClass}">${escapeHtml(role)}</p>
       </div>
     </div>
     <button
@@ -138,6 +173,7 @@ function renderHeaderUserControls() {
       </svg>
     </button>
   `;
+
   document.getElementById("logout-btn")?.addEventListener("click", () => {
     handleLogoutClick().catch((error) => {
       setRealtimeStatus(`Logout failed: ${error.message}`);
@@ -145,32 +181,95 @@ function renderHeaderUserControls() {
   });
 }
 
-function setRealtimeStatus(text) {
-  if (wsStatusEl) {
-    wsStatusEl.textContent = text;
+function renderBreakdownList(element, items) {
+  if (!element) {
+    return;
   }
+
+  const safeItems = Array.isArray(items) ? items : [];
+  if (!safeItems.length) {
+    element.innerHTML = '<li class="breakdown-empty">No live signal yet.</li>';
+    return;
+  }
+
+  const maxValue = safeItems.reduce((largest, item) => Math.max(largest, Number(item?.value || 0)), 0);
+  element.innerHTML = safeItems
+    .map((item) => {
+      const label = normalizeString(item?.label) || "-";
+      const value = Number(item?.value || 0);
+      const meterWidth = maxValue > 0 ? Math.max((value / maxValue) * 100, value > 0 ? 14 : 0) : 0;
+
+      return `
+        <li class="breakdown-item">
+          <div class="breakdown-row">
+            <span class="breakdown-label">${escapeHtml(label)}</span>
+            <span class="breakdown-value">${escapeHtml(formatNumber(value))}</span>
+          </div>
+          <div class="breakdown-meter" aria-hidden="true">
+            <span class="breakdown-meter-fill" style="width: ${meterWidth}%;"></span>
+          </div>
+        </li>
+      `;
+    })
+    .join("");
+}
+
+function renderEventVolumeBars(points) {
+  if (!eventVolumeBarsEl) {
+    return;
+  }
+
+  const safePoints = Array.isArray(points) ? points : [];
+  if (!safePoints.length) {
+    eventVolumeBarsEl.innerHTML = '<p class="throughput-empty">No event volume yet.</p>';
+    return;
+  }
+
+  const maxValue = safePoints.reduce((largest, item) => Math.max(largest, Number(item?.value || 0)), 0);
+  eventVolumeBarsEl.innerHTML = safePoints
+    .map((point) => {
+      const label = normalizeString(point?.label) || "--";
+      const value = Number(point?.value || 0);
+      const height = maxValue > 0 ? Math.round((value / maxValue) * 100) : 0;
+
+      return `
+        <div class="throughput-bar ${value === 0 ? "is-empty" : ""}">
+          <span class="throughput-bar-value">${escapeHtml(formatNumber(value))}</span>
+          <div class="throughput-bar-track" aria-hidden="true">
+            <span
+              class="throughput-bar-fill"
+              style="height: ${height}%; ${value > 0 ? `min-height: 14px;` : ""}"
+            ></span>
+          </div>
+          <span class="throughput-bar-label timestamp">${escapeHtml(label)}</span>
+        </div>
+      `;
+    })
+    .join("");
 }
 
 function renderEventItem(event) {
   const eventName = humanizeToken(event?.event || "ticket_updated");
-  const eventMessage = normalizeString(event?.message) || normalizeString(event?.title) || "Ticket activity updated.";
+  const eventMessage =
+    normalizeString(event?.message) || normalizeString(event?.title) || "Ticket activity updated.";
   const ticketId = normalizeString(event?.ticket_id) || "-";
   const status = normalizeString(event?.status);
   const priority = normalizeString(event?.priority);
   const mode = normalizeString(event?.engineer_mode);
   const createdAt = formatDateTime(event?.created_at);
   const tone = eventTone(event);
+  const title = ticketId === "-" ? eventName : ticketId;
 
   return `
     <li class="event-item">
       <div class="event-topline">
         <span class="event-chip event-chip-${escapeHtml(tone)}">${escapeHtml(eventName)}</span>
-        <span>${escapeHtml(createdAt)}</span>
+        <span class="event-time timestamp">${escapeHtml(createdAt)}</span>
       </div>
-      <h3 class="event-title">${escapeHtml(ticketId === "-" ? eventName : ticketId)}</h3>
+      <h3 class="event-title">${escapeHtml(title)}</h3>
       <p class="event-copy">${escapeHtml(eventMessage)}</p>
       <div class="event-meta">
-        <span>Ticket ${escapeHtml(ticketId)}</span>
+        <span class="timestamp">${escapeHtml(ticketId)}</span>
         ${status ? `<span>Status ${escapeHtml(humanizeToken(status))}</span>` : ""}
         ${priority ? `<span>Priority ${escapeHtml(humanizeToken(priority))}</span>` : ""}
         ${mode ? `<span>Mode ${escapeHtml(humanizeToken(mode))}</span>` : ""}
@@ -180,68 +279,83 @@ function renderEventItem(event) {
 }
 
 function renderEventStream(events) {
+  if (!eventStreamEl) {
+    return;
+  }
+
   const items = (Array.isArray(events) ? events : []).filter(isTicketEvent);
   if (!items.length) {
     eventStreamEl.innerHTML = '<li class="event-empty">No ticket events yet. New dashboard traffic will appear here.</li>';
-    syncCallouts(null);
     return;
   }
+
   eventStreamEl.innerHTML = items.map(renderEventItem).join("");
-  latestTicketEvent = items[0];
-  syncCallouts(latestTicketEvent);
 }
 
 function prependEvent(event) {
   if (!eventStreamEl || !isTicketEvent(event)) {
     return;
   }
+
   if (eventStreamEl.firstElementChild?.classList.contains("event-empty")) {
     eventStreamEl.innerHTML = "";
   }
+
   eventStreamEl.insertAdjacentHTML("afterbegin", renderEventItem(event));
   while (eventStreamEl.children.length > EVENT_STREAM_LIMIT) {
     eventStreamEl.removeChild(eventStreamEl.lastElementChild);
   }
-  latestTicketEvent = event;
-  syncCallouts(event);
-}
-
-function syncCallouts(event) {
-  const message = normalizeString(event?.message) || normalizeString(event?.title) || "No live events yet.";
-  const eventLabel = humanizeToken(event?.event || "queue_idle");
-  const priority = normalizeString(event?.priority);
-  const status = normalizeString(event?.status);
-  const mode = normalizeString(event?.engineer_mode);
-  const ticketId = normalizeString(event?.ticket_id);
-
-  latestEventLabelEl.textContent = eventLabel;
-  prioritySignalEl.textContent = priority ? humanizeToken(priority) : "Stable";
-  opsBriefBodyEl.textContent = message;
-  opsBriefTitleEl.textContent = ticketId ? `${ticketId} is the latest active signal.` : "Ticket ops stays operational.";
-  opsBriefDetailEl.textContent = event
-    ? `${eventLabel} arrived ${formatDateTime(event.created_at)}. Open the RAG workbench only when you need retrieval or eval detail.`
-    : "Use this page for workload, websocket health, and event triage. The RAG workbench now lives on a separate page.";
-  activeFocusEl.textContent = ticketId || "Watching the queue.";
-  activeFocusDetailEl.textContent = event
-    ? `${message}${mode ? ` Current mode: ${humanizeToken(mode)}.` : ""}`
-    : "The dashboard will summarize the newest customer-facing movement here.";
-  liveHealthTitleEl.textContent = status
-    ? `Latest status: ${humanizeToken(status)}`
-    : "Waiting for dashboard traffic.";
-  liveHealthDetailEl.textContent = event
-    ? `${ticketId || "Ticket"} updated ${formatDateTime(event.created_at)}.${priority ? ` Priority is ${humanizeToken(priority)}.` : ""}`
-    : "Once events arrive, this card will call out the strongest current operational signal.";
 }
 
 async function loadMetrics() {
   const payload = await fetchJson("/api/dashboard/metrics");
-  ticketVolumeEl.textContent = formatNumber(payload.today_ticket_count);
-  resolutionRateEl.textContent = `${formatDecimal(payload.resolution_rate)}%`;
-  sentimentAlertsEl.textContent = formatNumber(payload.sentiment_alert_count);
+  const cards = payload?.cards || {};
+  const summaries = payload?.summaries || {};
+  const charts = payload?.charts || {};
+
+  setText(ticketVolumeEl, formatNumber(payload?.today_ticket_count));
+  setText(resolutionRateEl, `${formatDecimal(payload?.resolution_rate)}%`);
+  setText(sentimentAlertsEl, formatNumber(payload?.sentiment_alert_count));
+  setText(waitingForEngineerEl, formatNumber(cards?.waiting_for_engineer_count));
+
+  setText(queueHealthTitleEl, normalizeString(summaries?.queue_health_label) || "Monitoring live queue balance.");
+  setText(
+    queueHealthDetailEl,
+    normalizeString(summaries?.queue_health_detail) || "Loading the newest queue health summary and throughput pattern.",
+  );
+  setText(openTicketCountEl, formatNumber(cards?.open_ticket_count));
+  setText(resolvedTicketCountEl, formatNumber(cards?.resolved_ticket_count));
+  setText(managedTicketCountEl, formatNumber(cards?.managed_ticket_count));
+  setText(takeoverTicketCountEl, formatNumber(cards?.takeover_ticket_count));
+  setText(urgentTicketCountEl, formatNumber(cards?.urgent_ticket_count));
+  setText(waitingTicketChipEl, formatNumber(cards?.waiting_for_engineer_count));
+  setText(managedTicketChipEl, formatNumber(cards?.managed_ticket_count));
+  setText(takeoverTicketChipEl, formatNumber(cards?.takeover_ticket_count));
+  setText(
+    escalationWatchTitleEl,
+    normalizeString(summaries?.escalation_summary_title) || "Watching live queue pressure.",
+  );
+  setText(
+    escalationWatchDetailEl,
+    normalizeString(summaries?.escalation_summary_detail) || "Loading the latest escalation signal.",
+  );
+  setText(
+    operatorSummaryTitleEl,
+    normalizeString(summaries?.operator_summary_title) || "Reading operator workload.",
+  );
+  setText(
+    operatorSummaryDetailEl,
+    normalizeString(summaries?.operator_summary_detail) || "Loading managed and takeover balance.",
+  );
+
+  renderEventVolumeBars(charts?.event_volume_12h);
+  renderBreakdownList(statusBreakdownEl, charts?.status_breakdown);
+  renderBreakdownList(priorityBreakdownEl, charts?.priority_breakdown);
+  renderBreakdownList(modeBreakdownEl, charts?.mode_breakdown);
 }
 
 async function loadRecentEvents() {
-  const payload = await fetchJson("/api/dashboard/events?limit=16");
+  const payload = await fetchJson(`/api/dashboard/events?limit=${EVENT_STREAM_LIMIT}`);
   renderEventStream(payload?.events || []);
 }
 
@@ -265,6 +379,7 @@ function stopDashboardSocket() {
 
 function setupWebSocket() {
   stopDashboardSocket();
+
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
   socket = new WebSocket(`${protocol}://${window.location.host}/ws/dashboard`);
 
@@ -282,10 +397,17 @@ function setupWebSocket() {
   };
 
   socket.onmessage = async (event) => {
-    const payload = JSON.parse(event.data);
+    let payload = null;
+    try {
+      payload = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+
     if (!isTicketEvent(payload)) {
       return;
     }
+
     prependEvent(payload);
     try {
       await loadMetrics();
@@ -305,6 +427,7 @@ async function handleLogoutClick() {
   if (logoutLoading) {
     return;
   }
+
   logoutLoading = true;
   renderHeaderUserControls();
   try {
@@ -319,7 +442,16 @@ async function handleLogoutClick() {
 }
 
 async function refreshDashboard() {
-  await Promise.all([loadMetrics(), loadRecentEvents()]);
+  if (refreshLoading) {
+    return;
+  }
+
+  setRefreshLoading(true);
+  try {
+    await Promise.all([loadMetrics(), loadRecentEvents()]);
+  } finally {
+    setRefreshLoading(false);
+  }
 }
 
 async function initializeDashboard() {
@@ -339,6 +471,10 @@ async function initializeDashboard() {
   setRealtimeStatus("Realtime: connecting...");
   setupWebSocket();
 }
+
+window.addEventListener("beforeunload", () => {
+  stopDashboardSocket();
+});
 
 initializeDashboard().catch((error) => {
   setRealtimeStatus(`Dashboard failed to initialize: ${error.message}`);

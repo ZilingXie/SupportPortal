@@ -8,6 +8,8 @@ from unittest.mock import patch
 if importlib.util.find_spec("psycopg") is None:
     raise unittest.SkipTest("psycopg is not installed in the local test environment")
 
+import psycopg
+
 from backend.repositories.event_repository import PostgresEventRepository, create_event_repository
 from backend.repositories.knowledge_repository import (
     PostgresKnowledgeRepository,
@@ -65,6 +67,46 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertEqual(repository._schema, "supportportal")
         self.assertEqual(repository._vector_schema, "supportportal")
         self.assertEqual(repository._vector_table_name, "docagent_chunks_bge_large_en_v1_5_1024")
+
+    def test_knowledge_repository_reads_connect_retry_settings(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "PGVECTOR_DSN": "postgresql://example",
+                "PGVECTOR_DIM": "1024",
+                "PGVECTOR_CONNECT_TIMEOUT": "15",
+                "PGVECTOR_CONNECT_RETRIES": "3",
+                "PGVECTOR_CONNECT_RETRY_DELAY_SECONDS": "0.25",
+                "SILICONFLOW_EMBEDDING_DIMENSIONS": "1024",
+            },
+            clear=True,
+        ):
+            repository = create_knowledge_repository()
+        self.assertIsInstance(repository, PostgresKnowledgeRepository)
+        self.assertEqual(repository._connect_timeout, 15)
+        self.assertEqual(repository._connect_retries, 3)
+        self.assertAlmostEqual(repository._connect_retry_delay_seconds, 0.25)
+
+    def test_knowledge_repository_retries_connect_timeout(self) -> None:
+        repository = PostgresKnowledgeRepository(
+            dsn="postgresql://example",
+            connect_timeout=5,
+            connect_retries=1,
+            connect_retry_delay_seconds=0.1,
+        )
+        sentinel_connection = object()
+        with patch(
+            "backend.repositories.knowledge_repository.psycopg.connect",
+            side_effect=[
+                psycopg.OperationalError("connection timeout expired"),
+                sentinel_connection,
+            ],
+        ) as connect_mock:
+            with patch("backend.repositories.knowledge_repository.time.sleep") as sleep_mock:
+                connection = repository._connect()
+        self.assertIs(connection, sentinel_connection)
+        self.assertEqual(connect_mock.call_count, 2)
+        sleep_mock.assert_called_once_with(0.1)
 
     def test_vector_type_dimension_extracts_pgvector_dim(self) -> None:
         self.assertEqual(_vector_type_dimension("vector(1024)"), 1024)

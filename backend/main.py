@@ -26,6 +26,10 @@ from backend.services.embedding_provider import (
     embedding_model_id,
 )
 from backend.services.emotion_reply import generate_emotion_reply
+from backend.services.dashboard_ticket_ops import (
+    build_ticket_dashboard_metrics,
+    normalize_ticket_dashboard_events,
+)
 from backend.services.event_bus import AsyncRedisEventBus
 from backend.services.knowledge_monitoring import build_empty_knowledge_metrics
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
@@ -1543,15 +1547,9 @@ async def submit_takeover_reply(ticket_id: str, request: TakeoverReplyRequest) -
 @app.get("/api/dashboard/metrics")
 def dashboard_metrics() -> dict[str, Any]:
     tickets = ticket_repository.list_tickets(include_messages=False)
-    total = len(tickets)
-    resolved = sum(ticket.get("status") == "resolved" for ticket in tickets)
-    alerts = sum(ticket.get("priority") == "high" for ticket in tickets)
-    resolution_rate = round((resolved / total) * 100, 1) if total else 0.0
-    return {
-        "today_ticket_count": total,
-        "resolution_rate": resolution_rate,
-        "sentiment_alert_count": alerts,
-    }
+    recent_event_rows = ticket_repository.list_events(limit=240)
+    recent_events = normalize_ticket_dashboard_events(recent_event_rows)
+    return build_ticket_dashboard_metrics(tickets, recent_events)
 
 
 @app.get("/api/dashboard/knowledge-metrics")
@@ -1698,30 +1696,7 @@ def dashboard_update_review_sample(
 @app.get("/api/dashboard/events")
 def dashboard_events(limit: int = Query(default=20, ge=1, le=100)) -> dict[str, Any]:
     rows = ticket_repository.list_events(limit=limit)
-    events: list[dict[str, Any]] = []
-    for row in rows:
-        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
-        event_type = str(row.get("event_type") or payload.get("event") or "ticket_updated")
-        ticket_id = row.get("ticket_id") or payload.get("ticket_id")
-        ingestion_id = payload.get("ingestion_id")
-        normalized = {
-            "event": payload.get("event") or event_type,
-            "ticket_id": str(ticket_id) if ticket_id is not None else "-",
-            "ingestion_id": str(ingestion_id) if ingestion_id is not None else None,
-            "title": payload.get("title"),
-            "message": payload.get("message"),
-            "status": payload.get("status"),
-            "priority": payload.get("priority"),
-            "engineer_mode": payload.get("engineer_mode"),
-            "knowledge_type": payload.get("knowledge_type"),
-            "source_type": payload.get("source_type"),
-            "chunk_count": payload.get("chunk_count"),
-            "dedupe_action": payload.get("dedupe_action"),
-            "error_message": payload.get("error_message"),
-            "created_at": payload.get("created_at") or row.get("created_at") or now_iso(),
-        }
-        events.append(normalized)
-    return {"events": events}
+    return {"events": normalize_ticket_dashboard_events(rows)}
 
 
 @app.websocket("/ws/client")

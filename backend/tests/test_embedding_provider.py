@@ -12,6 +12,8 @@ from backend.services.embedding_provider import (
     _disable_torch_load_mmap,
     _model_dim_from_config,
     _resolve_embedding_device,
+    EmbeddingRuntimeConfig,
+    OpenAIEmbeddingProvider,
     embedding_model_id,
     embedding_provider_name,
     siliconflow_api_key,
@@ -122,6 +124,38 @@ class EmbeddingProviderConfigTests(unittest.TestCase):
             )
         self.assertEqual(payload["usage"]["prompt_tokens"], 12)
         self.assertEqual(headers["x-siliconcloud-trace-id"], "trace-1")
+
+    def test_openai_embedding_provider_passes_configured_dimensions(self) -> None:
+        captured: dict[str, object] = {}
+
+        class _FakeOpenAIEmbeddings:
+            def __init__(self, **kwargs: object) -> None:
+                captured.update(kwargs)
+
+            def embed_documents(self, texts: list[str]) -> list[list[float]]:
+                return [[0.0] for _ in texts]
+
+            def embed_query(self, text: str) -> list[float]:
+                return [0.0]
+
+        fake_module = types.SimpleNamespace(OpenAIEmbeddings=_FakeOpenAIEmbeddings)
+        config = EmbeddingRuntimeConfig(
+            provider="openai",
+            model_id="text-embedding-3-large",
+            device="cpu",
+            batch_size=16,
+            cache_dir=None,
+            request_timeout_seconds=20.0,
+            max_retries=1,
+            configured_vector_dim=1024,
+        )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "secret"}, clear=True):
+            with patch.dict(sys.modules, {"langchain_openai": fake_module}):
+                provider = OpenAIEmbeddingProvider(config)
+
+        self.assertEqual(provider.vector_dim, 1024)
+        self.assertEqual(captured["dimensions"], 1024)
 
 
 if __name__ == "__main__":

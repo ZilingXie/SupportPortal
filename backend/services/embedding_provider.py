@@ -544,11 +544,16 @@ class OpenAIEmbeddingProvider:
         self.provider_name = "openai"
         self.model_id = config.model_id
         self.vector_dim = config.configured_vector_dim
+        client_kwargs: dict[str, Any] = {
+            "model": self.model_id,
+            "api_key": api_key,
+            "request_timeout": config.request_timeout_seconds,
+            "max_retries": int(config.max_retries),
+        }
+        if self.model_id.startswith("text-embedding-3"):
+            client_kwargs["dimensions"] = config.configured_vector_dim
         self._client = OpenAIEmbeddings(
-            model=self.model_id,
-            api_key=api_key,
-            request_timeout=config.request_timeout_seconds,
-            max_retries=int(config.max_retries),
+            **client_kwargs,
         )
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
