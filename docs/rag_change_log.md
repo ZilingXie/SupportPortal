@@ -200,3 +200,43 @@ For each new entry, record:
   - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
   - `podman-compose -f deployment/docker-compose.single-host.yml ps`
   - Live `POST /internal/rag/query` validation confirms reranker candidates now persist `rerank_rank` in `candidate_trace` when `silliconflow_key` is supplied from `.env`
+
+## 2026-03-22 - RAG eval dataset factory and snapshot benchmark loop
+
+- Summary: Added a database-backed RAG evaluation dataset factory with dataset generation runs, silver/gold dataset items, dataset candidate review promotion, dataset snapshot export, and queued benchmark execution from fixed gold snapshots; extended offline benchmark metrics with answer accuracy, answer logic, and evidence-hit signals; and wired the RAG workbench `Datasets` page plus review queue to the new flow.
+- Reason: The existing RAG stack had ingestion, chunking, and retrieval/answer paths, but it still lacked a reproducible evaluation dataset pipeline and a closed loop from generated QA -> voting -> human review -> gold snapshot -> benchmark -> diagnosis.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/rag_api.py`
+  - `backend/rag_worker.py`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/services/rag_benchmark.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/services/rag_eval_dataset_factory.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_rag_benchmark.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_dashboard_contract.py`
+  - `backend/tests/test_rag_eval_dataset_factory.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `scripts/run_rag_benchmark.py`
+  - `ui/dashboard-ui/rag/app.js`
+  - `ui/dashboard-ui/rag/index.html`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Added `support_rag_datasets`, `support_rag_dataset_generation_runs`, `support_rag_dataset_items`, and `support_rag_dataset_item_reviews`
+  - Extended `support_rag_review_samples` with `dataset_item_id`, `logic_ok`, `hallucination_present`, `dataset_decision`, `corrected_reference_answer`, and `corrected_citation_targets`
+  - Extended `support_rag_eval_results` with `expected_evidence_refs`, `evidence_hit_at_1/3/5`, `answer_accuracy_score`, and `answer_logic_score`
+  - Dataset generation now persists silver/gold candidate items and queues `dataset_candidate` review samples into the existing unified review queue
+  - RAG worker now supports `dataset_generation` and `dataset_benchmark` tasks in addition to `knowledge_ingest`
+  - Benchmark execution can now load cases directly from a Postgres dataset snapshot or export that snapshot as JSONL
+- Verification:
+  - `./.venv/bin/python -m unittest backend.tests.test_rag_benchmark backend.tests.test_rag_benchmark_runner backend.tests.test_rag_eval_dataset_factory backend.tests.test_rag_service_client backend.tests.test_rag_dashboard_contract backend.tests.test_dashboard_ui_contract`
+  - `./.venv/bin/python -m unittest backend.tests.test_rag_reset`
+  - `./.venv/bin/python -m py_compile backend/main.py backend/rag_api.py backend/rag_worker.py backend/repositories/knowledge_repository.py backend/services/rag_service_client.py backend/services/rag_eval_dataset_factory.py backend/services/rag_benchmark.py backend/services/rag_benchmark_runner.py scripts/run_rag_benchmark.py`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health` returned `ticket_storage=postgres`, `knowledge_storage=postgres`, and `rag_service=ok` after restart
+  - Restart verification required terminating one stale Postgres initializer backend holding an idle transaction during concurrent repository bootstrap; after that, `deployment_rag_api_1` and `deployment_rag_worker_1` both completed startup successfully

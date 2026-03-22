@@ -230,6 +230,11 @@ class RagServiceClientTests(unittest.TestCase):
                 retrieval_ok=True,
                 answer_ok=False,
                 citation_ok=True,
+                logic_ok=False,
+                hallucination_present=True,
+                dataset_decision="needs_fix",
+                corrected_reference_answer="Use the backend token server.",
+                corrected_citation_targets=[{"chunk_id": "chunk-1"}],
                 note="Needs retrieval follow-up.",
             )
 
@@ -240,7 +245,112 @@ class RagServiceClientTests(unittest.TestCase):
         self.assertEqual(captured["authorization"], "Bearer token")
         self.assertEqual(captured["body"]["review_status"], "reviewed")
         self.assertEqual(captured["body"]["retrieval_ok"], True)
+        self.assertEqual(captured["body"]["logic_ok"], False)
+        self.assertEqual(captured["body"]["hallucination_present"], True)
+        self.assertEqual(captured["body"]["dataset_decision"], "needs_fix")
+        self.assertEqual(captured["body"]["corrected_reference_answer"], "Use the backend token server.")
         self.assertEqual(payload["updated"], True)
+
+    def test_create_dataset_generation_run_uses_internal_endpoint(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+        captured = {}
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"generation_run_id":"GR-1","queued":true}'
+
+        def _fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["authorization"] = request.headers.get("Authorization")
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return _FakeResponse()
+
+        with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            payload = client.create_dataset_generation_run(
+                dataset_name="golden-set",
+                source_types=["official_markdown_upload", "technical_article_api"],
+                question_language="en",
+            )
+
+        self.assertEqual(
+            captured["url"],
+            "http://rag-api.internal/internal/dashboard/rag/datasets/generation-runs",
+        )
+        self.assertEqual(captured["body"]["dataset_name"], "golden-set")
+        self.assertEqual(captured["body"]["question_language"], "en")
+        self.assertEqual(payload["generation_run_id"], "GR-1")
+
+    def test_create_dataset_benchmark_run_uses_internal_endpoint(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+        captured = {}
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"eval_run_id":"EVAL-1","queued":true}'
+
+        def _fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["authorization"] = request.headers.get("Authorization")
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return _FakeResponse()
+
+        with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            payload = client.create_dataset_benchmark_run(
+                "DS-1",
+                experiment_id="exp-dataset-1",
+                top_k=6,
+                tier="gold",
+            )
+
+        self.assertEqual(
+            captured["url"],
+            "http://rag-api.internal/internal/dashboard/rag/datasets/DS-1/benchmark-runs",
+        )
+        self.assertEqual(captured["body"]["experiment_id"], "exp-dataset-1")
+        self.assertEqual(captured["body"]["top_k"], 6)
+        self.assertEqual(captured["body"]["tier"], "gold")
+        self.assertEqual(payload["eval_run_id"], "EVAL-1")
+
+    def test_export_dataset_snapshot_uses_internal_endpoint(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+        captured = {}
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"test_case_id":"case-1"}\n'
+
+        def _fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["authorization"] = request.headers.get("Authorization")
+            return _FakeResponse()
+
+        with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            payload = client.export_dataset_snapshot("DS-1", tier="gold")
+
+        parsed = urllib.parse.urlparse(captured["url"])
+        query = urllib.parse.parse_qs(parsed.query)
+        self.assertEqual(parsed.path, "/internal/dashboard/rag/datasets/DS-1/export")
+        self.assertEqual(query["tier"], ["gold"])
+        self.assertEqual(captured["authorization"], "Bearer token")
+        self.assertEqual(payload, '{"test_case_id":"case-1"}\n')
 
 
 if __name__ == "__main__":

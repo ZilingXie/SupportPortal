@@ -33,6 +33,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to the benchmark JSONL dataset.",
     )
     parser.add_argument(
+        "--dataset-id",
+        default=None,
+        help="Dataset snapshot id from support_rag_datasets. When provided, benchmark cases load from Postgres instead of JSONL.",
+    )
+    parser.add_argument(
+        "--tier",
+        choices=["gold", "silver"],
+        default="gold",
+        help="Dataset snapshot tier to benchmark when --dataset-id is used.",
+    )
+    parser.add_argument(
         "--experiment-id",
         default=None,
         help="Optional experiment id used to group this benchmark run in the dashboard.",
@@ -55,7 +66,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     summary = run_benchmark(
-        dataset_path=Path(args.dataset).expanduser().resolve(),
+        dataset_path=None if args.dataset_id else Path(args.dataset).expanduser().resolve(),
+        dataset_id=args.dataset_id,
+        dataset_tier=args.tier,
         experiment_id=args.experiment_id,
         limit=args.limit,
         top_k=args.top_k,

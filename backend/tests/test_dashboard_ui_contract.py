@@ -48,6 +48,7 @@ class DashboardUiContractTests(unittest.TestCase):
 
         expected_tabs = {
             "experiments": "Experiments",
+            "datasets": "Datasets",
             "diagnosis": "Diagnosis",
             "knowledge-supply": "Knowledge Supply",
             "production-signals": "Production Signals",
@@ -79,6 +80,7 @@ class DashboardUiContractTests(unittest.TestCase):
 
         for page_name in [
             "experiments",
+            "datasets",
             "diagnosis",
             "knowledge-supply",
             "production-signals",
@@ -88,6 +90,18 @@ class DashboardUiContractTests(unittest.TestCase):
                 source,
                 rf'["\']{re.escape(page_name)}["\']\s*:\s*\{{',
             )
+
+    def test_rag_datasets_page_exposes_generation_and_benchmark_actions(self) -> None:
+        source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
+        for marker in [
+            "data-create-dataset-generation",
+            "data-run-dataset-benchmark",
+            "data-export-dataset",
+            "Start Generation",
+            "Run Benchmark",
+            "Export Gold",
+        ]:
+            self.assertIn(marker, source)
 
 
 if __name__ == "__main__":

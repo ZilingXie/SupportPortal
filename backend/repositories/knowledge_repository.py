@@ -45,6 +45,11 @@ _VALID_INGESTION_STATUSES = {"queued", "processing", "completed", "failed"}
 _VALID_NORMALIZATION_STATUSES = {"pending", "normalized", "failed"}
 _VALID_DEDUPE_ACTIONS = {"new_document", "skipped_duplicate", "reindexed"}
 _VALID_SOURCE_SYNC_STATUSES = {"pending", "claimed", "processed", "failed"}
+_VALID_DATASET_RUN_STATUSES = {"queued", "processing", "completed", "failed"}
+_VALID_DATASET_STATUSES = {"draft", "silver_only", "gold_ready", "failed"}
+_VALID_DATASET_ITEM_STATUSES = {"draft", "silver", "gold", "needs_fix", "rejected"}
+_VALID_DATASET_DECISIONS = {"promote_gold", "keep_silver", "needs_fix", "reject"}
+_VALID_DATASET_TIERS = {"silver", "gold"}
 _VALID_DASHBOARD_PAGES = {
     "overview",
     "ingestion",
@@ -56,6 +61,7 @@ _VALID_DASHBOARD_PAGES = {
     "performance-cost",
     "failures",
     "experiments",
+    "datasets",
     "diagnosis",
     "knowledge-supply",
     "production-signals",
@@ -63,6 +69,7 @@ _VALID_DASHBOARD_PAGES = {
 }
 _WORKBENCH_DASHBOARD_PAGES = {
     "experiments",
+    "datasets",
     "diagnosis",
     "knowledge-supply",
     "production-signals",
@@ -184,10 +191,13 @@ def _json_dict(value: Any) -> dict[str, Any]:
 
 def _experiment_quality_score(row: dict[str, Any]) -> float:
     return round(
-        (_safe_float(row.get("faithfulness_score_avg")) * 0.4)
-        + (_safe_float(row.get("groundedness_score_avg")) * 0.25)
-        + (_safe_float(row.get("citation_correctness_score_avg")) * 0.2)
-        + (_safe_float(row.get("hit_at_5")) * 0.15),
+        (_safe_float(row.get("faithfulness_score_avg")) * 0.25)
+        + (_safe_float(row.get("groundedness_score_avg")) * 0.2)
+        + (_safe_float(row.get("citation_correctness_score_avg")) * 0.15)
+        + (_safe_float(row.get("answer_accuracy_score_avg")) * 0.2)
+        + (_safe_float(row.get("answer_logic_score_avg")) * 0.1)
+        + (_safe_float(row.get("evidence_hit_at_5")) * 0.05)
+        + (_safe_float(row.get("hit_at_5")) * 0.05),
         6,
     )
 
@@ -195,10 +205,13 @@ def _experiment_quality_score(row: dict[str, Any]) -> float:
 def _case_quality_score(row: dict[str, Any] | None) -> float:
     payload = row if isinstance(row, dict) else {}
     return round(
-        (_safe_float(payload.get("faithfulness_score")) * 0.4)
-        + (_safe_float(payload.get("groundedness_score")) * 0.25)
-        + (_safe_float(payload.get("citation_correctness_score")) * 0.2)
-        + (_safe_float(payload.get("hit_at_5")) * 0.15),
+        (_safe_float(payload.get("faithfulness_score")) * 0.25)
+        + (_safe_float(payload.get("groundedness_score")) * 0.2)
+        + (_safe_float(payload.get("citation_correctness_score")) * 0.15)
+        + (_safe_float(payload.get("answer_accuracy_score")) * 0.2)
+        + (_safe_float(payload.get("answer_logic_score")) * 0.1)
+        + (_safe_float(payload.get("evidence_hit_at_5")) * 0.05)
+        + (_safe_float(payload.get("hit_at_5")) * 0.05),
         6,
     )
 
@@ -317,6 +330,33 @@ def _normalize_status_filter(value: Any) -> str:
 def _normalize_review_status(value: Any) -> str:
     normalized = str(value or "pending").strip().lower()
     return normalized if normalized in {"pending", "reviewed", "dismissed"} else "pending"
+
+
+def _normalize_dataset_run_status(value: Any) -> str:
+    normalized = str(value or "queued").strip().lower()
+    return normalized if normalized in _VALID_DATASET_RUN_STATUSES else "queued"
+
+
+def _normalize_dataset_status(value: Any) -> str:
+    normalized = str(value or "draft").strip().lower()
+    return normalized if normalized in _VALID_DATASET_STATUSES else "draft"
+
+
+def _normalize_dataset_item_status(value: Any) -> str:
+    normalized = str(value or "draft").strip().lower()
+    return normalized if normalized in _VALID_DATASET_ITEM_STATUSES else "draft"
+
+
+def _normalize_dataset_decision(value: Any) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return None
+    return normalized if normalized in _VALID_DATASET_DECISIONS else None
+
+
+def _normalize_dataset_tier(value: Any) -> str:
+    normalized = str(value or "gold").strip().lower()
+    return normalized if normalized in _VALID_DATASET_TIERS else "gold"
 
 
 def _vector_literal(values: list[float]) -> str:
@@ -698,8 +738,72 @@ class KnowledgeRepository(Protocol):
         retrieval_ok: bool | None = None,
         answer_ok: bool | None = None,
         citation_ok: bool | None = None,
+        logic_ok: bool | None = None,
+        hallucination_present: bool | None = None,
+        dataset_decision: str | None = None,
+        corrected_reference_answer: str | None = None,
+        corrected_citation_targets: list[dict[str, Any]] | None = None,
         note: str | None = None,
     ) -> None:
+        ...
+
+    def create_dataset_generation_run(
+        self,
+        *,
+        dataset_name: str,
+        source_types: list[str],
+        question_language: str = "en",
+    ) -> dict[str, Any]:
+        ...
+
+    def get_dataset_generation_run(self, generation_run_id: str) -> dict[str, Any] | None:
+        ...
+
+    def update_dataset_generation_run(
+        self,
+        generation_run_id: str,
+        *,
+        status: str | None = None,
+        error_message: str | None = None,
+        started_at: str | None = None,
+        finished_at: str | None = None,
+    ) -> None:
+        ...
+
+    def list_dataset_generation_source_chunks(
+        self,
+        *,
+        source_types: list[str],
+        question_language: str = "en",
+    ) -> list[dict[str, Any]]:
+        ...
+
+    def save_dataset_generation_results(
+        self,
+        *,
+        generation_run_id: str,
+        items: list[dict[str, Any]],
+        review_samples: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        ...
+
+    def get_dataset_snapshot(self, dataset_id: str) -> dict[str, Any] | None:
+        ...
+
+    def load_dataset_benchmark_cases(
+        self,
+        dataset_id: str,
+        *,
+        tier: str = "gold",
+    ) -> list[dict[str, Any]]:
+        ...
+
+    def export_dataset_snapshot(
+        self,
+        dataset_id: str,
+        *,
+        tier: str = "gold",
+    ) -> str:
         ...
 
     def rag_dashboard_page(
@@ -1121,6 +1225,11 @@ class DisabledKnowledgeRepository:
         retrieval_ok: bool | None = None,
         answer_ok: bool | None = None,
         citation_ok: bool | None = None,
+        logic_ok: bool | None = None,
+        hallucination_present: bool | None = None,
+        dataset_decision: str | None = None,
+        corrected_reference_answer: str | None = None,
+        corrected_citation_targets: list[dict[str, Any]] | None = None,
         note: str | None = None,
     ) -> None:
         _ = sample_id
@@ -1128,7 +1237,90 @@ class DisabledKnowledgeRepository:
         _ = retrieval_ok
         _ = answer_ok
         _ = citation_ok
+        _ = logic_ok
+        _ = hallucination_present
+        _ = dataset_decision
+        _ = corrected_reference_answer
+        _ = corrected_citation_targets
         _ = note
+        self._raise()
+
+    def create_dataset_generation_run(
+        self,
+        *,
+        dataset_name: str,
+        source_types: list[str],
+        question_language: str = "en",
+    ) -> dict[str, Any]:
+        _ = dataset_name
+        _ = source_types
+        _ = question_language
+        self._raise()
+
+    def get_dataset_generation_run(self, generation_run_id: str) -> dict[str, Any] | None:
+        _ = generation_run_id
+        return None
+
+    def update_dataset_generation_run(
+        self,
+        generation_run_id: str,
+        *,
+        status: str | None = None,
+        error_message: str | None = None,
+        started_at: str | None = None,
+        finished_at: str | None = None,
+    ) -> None:
+        _ = generation_run_id
+        _ = status
+        _ = error_message
+        _ = started_at
+        _ = finished_at
+        self._raise()
+
+    def list_dataset_generation_source_chunks(
+        self,
+        *,
+        source_types: list[str],
+        question_language: str = "en",
+    ) -> list[dict[str, Any]]:
+        _ = source_types
+        _ = question_language
+        self._raise()
+
+    def save_dataset_generation_results(
+        self,
+        *,
+        generation_run_id: str,
+        items: list[dict[str, Any]],
+        review_samples: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        _ = generation_run_id
+        _ = items
+        _ = review_samples
+        self._raise()
+
+    def get_dataset_snapshot(self, dataset_id: str) -> dict[str, Any] | None:
+        _ = dataset_id
+        return None
+
+    def load_dataset_benchmark_cases(
+        self,
+        dataset_id: str,
+        *,
+        tier: str = "gold",
+    ) -> list[dict[str, Any]]:
+        _ = dataset_id
+        _ = tier
+        self._raise()
+
+    def export_dataset_snapshot(
+        self,
+        dataset_id: str,
+        *,
+        tier: str = "gold",
+    ) -> str:
+        _ = dataset_id
+        _ = tier
         self._raise()
 
     def rag_dashboard_page(
@@ -1706,6 +1898,7 @@ class PostgresKnowledgeRepository:
                             answer_preview TEXT,
                             expected_document_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
                             expected_heading_paths JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            expected_evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
                             trace_payload JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                             hit_at_1 DOUBLE PRECISION,
                             hit_at_3 DOUBLE PRECISION,
@@ -1713,12 +1906,17 @@ class PostgresKnowledgeRepository:
                             recall_at_5 DOUBLE PRECISION,
                             mrr DOUBLE PRECISION,
                             ndcg_at_5 DOUBLE PRECISION,
+                            evidence_hit_at_1 DOUBLE PRECISION,
+                            evidence_hit_at_3 DOUBLE PRECISION,
+                            evidence_hit_at_5 DOUBLE PRECISION,
                             document_relevance_score DOUBLE PRECISION,
                             faithfulness_score DOUBLE PRECISION,
                             groundedness_score DOUBLE PRECISION,
                             response_relevance_score DOUBLE PRECISION,
                             response_completeness_score DOUBLE PRECISION,
                             citation_correctness_score DOUBLE PRECISION,
+                            answer_accuracy_score DOUBLE PRECISION,
+                            answer_logic_score DOUBLE PRECISION,
                             hallucination_flag BOOLEAN,
                             needs_human BOOLEAN,
                             failure_type TEXT,
@@ -1762,8 +1960,96 @@ class PostgresKnowledgeRepository:
                     sql.SQL(
                         """
                         CREATE TABLE IF NOT EXISTS {} (
+                            dataset_id TEXT PRIMARY KEY,
+                            dataset_name TEXT NOT NULL,
+                            benchmark_version TEXT NOT NULL UNIQUE,
+                            question_language TEXT NOT NULL DEFAULT 'en',
+                            source_types JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            status TEXT NOT NULL DEFAULT 'draft',
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    ).format(self._table("support_rag_datasets"))
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            generation_run_id TEXT PRIMARY KEY,
+                            dataset_id TEXT NOT NULL REFERENCES {}(dataset_id) ON DELETE CASCADE,
+                            dataset_name TEXT NOT NULL,
+                            benchmark_version TEXT NOT NULL,
+                            question_language TEXT NOT NULL DEFAULT 'en',
+                            source_types JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            status TEXT NOT NULL DEFAULT 'queued',
+                            candidate_count_total INTEGER NOT NULL DEFAULT 0,
+                            silver_item_count INTEGER NOT NULL DEFAULT 0,
+                            gold_item_count INTEGER NOT NULL DEFAULT 0,
+                            review_required_count INTEGER NOT NULL DEFAULT 0,
+                            reviewed_item_count INTEGER NOT NULL DEFAULT 0,
+                            error_message TEXT,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            started_at TIMESTAMPTZ,
+                            finished_at TIMESTAMPTZ,
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    ).format(
+                        self._table("support_rag_dataset_generation_runs"),
+                        self._table("support_rag_datasets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            dataset_item_id TEXT PRIMARY KEY,
+                            dataset_id TEXT NOT NULL REFERENCES {}(dataset_id) ON DELETE CASCADE,
+                            generation_run_id TEXT NOT NULL REFERENCES {}(generation_run_id) ON DELETE CASCADE,
+                            document_id TEXT NOT NULL,
+                            chunk_id TEXT NOT NULL,
+                            source_path TEXT,
+                            source_type TEXT NOT NULL,
+                            query_type TEXT NOT NULL,
+                            difficulty TEXT NOT NULL,
+                            language TEXT NOT NULL DEFAULT 'en',
+                            product TEXT,
+                            question TEXT NOT NULL,
+                            reference_answer TEXT NOT NULL,
+                            answer_key_points JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            expected_document_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            expected_heading_paths JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            expected_evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            expected_citation_targets JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            item_status TEXT NOT NULL DEFAULT 'draft',
+                            dataset_quality_score DOUBLE PRECISION,
+                            judge_disagreement_flag BOOLEAN NOT NULL DEFAULT FALSE,
+                            ambiguity_flag BOOLEAN NOT NULL DEFAULT FALSE,
+                            answer_leakage_flag BOOLEAN NOT NULL DEFAULT FALSE,
+                            citation_bindable_flag BOOLEAN NOT NULL DEFAULT FALSE,
+                            logic_eval_applicable BOOLEAN NOT NULL DEFAULT FALSE,
+                            sampling_reasons JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            judge_votes JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            promoted_at TIMESTAMPTZ
+                        )
+                        """
+                    ).format(
+                        self._table("support_rag_dataset_items"),
+                        self._table("support_rag_datasets"),
+                        self._table("support_rag_dataset_generation_runs"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
                             sample_id TEXT PRIMARY KEY,
                             sample_source TEXT NOT NULL,
+                            dataset_item_id TEXT REFERENCES {}(dataset_item_id) ON DELETE SET NULL,
                             request_id TEXT REFERENCES {}(request_id) ON DELETE SET NULL,
                             eval_run_id TEXT REFERENCES {}(eval_run_id) ON DELETE CASCADE,
                             test_case_id TEXT,
@@ -1773,6 +2059,11 @@ class PostgresKnowledgeRepository:
                             retrieval_ok BOOLEAN,
                             answer_ok BOOLEAN,
                             citation_ok BOOLEAN,
+                            logic_ok BOOLEAN,
+                            hallucination_present BOOLEAN,
+                            dataset_decision TEXT,
+                            corrected_reference_answer TEXT,
+                            corrected_citation_targets JSONB NOT NULL DEFAULT '[]'::jsonb,
                             note TEXT,
                             sample_payload JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1781,8 +2072,35 @@ class PostgresKnowledgeRepository:
                         """
                     ).format(
                         self._table("support_rag_review_samples"),
+                        self._table("support_rag_dataset_items"),
                         self._table("support_rag_query_runs"),
                         self._table("support_rag_eval_runs"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            sample_id TEXT PRIMARY KEY REFERENCES {}(sample_id) ON DELETE CASCADE,
+                            dataset_item_id TEXT NOT NULL REFERENCES {}(dataset_item_id) ON DELETE CASCADE,
+                            review_status TEXT NOT NULL DEFAULT 'pending',
+                            retrieval_ok BOOLEAN,
+                            answer_ok BOOLEAN,
+                            citation_ok BOOLEAN,
+                            logic_ok BOOLEAN,
+                            hallucination_present BOOLEAN,
+                            dataset_decision TEXT,
+                            corrected_reference_answer TEXT,
+                            corrected_citation_targets JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            note TEXT,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    ).format(
+                        self._table("support_rag_dataset_item_reviews"),
+                        self._table("support_rag_review_samples"),
+                        self._table("support_rag_dataset_items"),
                     )
                 )
                 eval_run_alters = [
@@ -1798,7 +2116,11 @@ class PostgresKnowledgeRepository:
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS answer_preview TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS expected_document_ids JSONB NOT NULL DEFAULT '[]'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS expected_heading_paths JSONB NOT NULL DEFAULT '[]'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS expected_evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS trace_payload JSONB NOT NULL DEFAULT '{{}}'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS evidence_hit_at_1 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS evidence_hit_at_3 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS evidence_hit_at_5 DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS judge_votes JSONB NOT NULL DEFAULT '[]'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS judge_disagreement_flag BOOLEAN NOT NULL DEFAULT FALSE",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS root_cause_label TEXT",
@@ -1809,10 +2131,59 @@ class PostgresKnowledgeRepository:
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS top1_similarity_score DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS avg_selected_similarity_score DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS avg_cost_per_query DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS answer_accuracy_score DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS answer_logic_score DOUBLE PRECISION",
                 ]
                 for statement in eval_result_alters:
                     cur.execute(sql.SQL(statement).format(self._table("support_rag_eval_results")))
+                dataset_alters = [
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS question_language TEXT NOT NULL DEFAULT 'en'",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS source_types JSONB NOT NULL DEFAULT '[]'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'draft'",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+                ]
+                for statement in dataset_alters:
+                    cur.execute(sql.SQL(statement).format(self._table("support_rag_datasets")))
+                dataset_generation_run_alters = [
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS question_language TEXT NOT NULL DEFAULT 'en'",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS source_types JSONB NOT NULL DEFAULT '[]'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS candidate_count_total INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS silver_item_count INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS gold_item_count INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS review_required_count INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS reviewed_item_count INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS error_message TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+                ]
+                for statement in dataset_generation_run_alters:
+                    cur.execute(sql.SQL(statement).format(self._table("support_rag_dataset_generation_runs")))
+                dataset_item_alters = [
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS source_path TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS difficulty TEXT NOT NULL DEFAULT 'basic'",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS expected_evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS expected_citation_targets JSONB NOT NULL DEFAULT '[]'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS item_status TEXT NOT NULL DEFAULT 'draft'",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS dataset_quality_score DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS judge_disagreement_flag BOOLEAN NOT NULL DEFAULT FALSE",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS ambiguity_flag BOOLEAN NOT NULL DEFAULT FALSE",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS answer_leakage_flag BOOLEAN NOT NULL DEFAULT FALSE",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS citation_bindable_flag BOOLEAN NOT NULL DEFAULT FALSE",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS logic_eval_applicable BOOLEAN NOT NULL DEFAULT FALSE",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS sampling_reasons JSONB NOT NULL DEFAULT '[]'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS judge_votes JSONB NOT NULL DEFAULT '[]'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS promoted_at TIMESTAMPTZ",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+                ]
+                for statement in dataset_item_alters:
+                    cur.execute(sql.SQL(statement).format(self._table("support_rag_dataset_items")))
                 review_sample_alters = [
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS dataset_item_id TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS request_id TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS eval_run_id TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS test_case_id TEXT",
@@ -1822,6 +2193,11 @@ class PostgresKnowledgeRepository:
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS retrieval_ok BOOLEAN",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS answer_ok BOOLEAN",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS citation_ok BOOLEAN",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS logic_ok BOOLEAN",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS hallucination_present BOOLEAN",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS dataset_decision TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS corrected_reference_answer TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS corrected_citation_targets JSONB NOT NULL DEFAULT '[]'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS note TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS sample_payload JSONB NOT NULL DEFAULT '{{}}'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
@@ -1829,6 +2205,22 @@ class PostgresKnowledgeRepository:
                 ]
                 for statement in review_sample_alters:
                     cur.execute(sql.SQL(statement).format(self._table("support_rag_review_samples")))
+                dataset_item_review_alters = [
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS review_status TEXT NOT NULL DEFAULT 'pending'",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS retrieval_ok BOOLEAN",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS answer_ok BOOLEAN",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS citation_ok BOOLEAN",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS logic_ok BOOLEAN",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS hallucination_present BOOLEAN",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS dataset_decision TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS corrected_reference_answer TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS corrected_citation_targets JSONB NOT NULL DEFAULT '[]'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS note TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+                ]
+                for statement in dataset_item_review_alters:
+                    cur.execute(sql.SQL(statement).format(self._table("support_rag_dataset_item_reviews")))
                 cur.execute(
                     sql.SQL(
                         "CREATE INDEX IF NOT EXISTS {} ON {} (source_url, updated_at DESC)"
@@ -1947,6 +2339,42 @@ class PostgresKnowledgeRepository:
                     sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (sample_source, created_at DESC)").format(
                         sql.Identifier("idx_support_rag_review_samples_source_created"),
                         self._table("support_rag_review_samples"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (dataset_item_id)").format(
+                        sql.Identifier("idx_support_rag_review_samples_dataset_item"),
+                        self._table("support_rag_review_samples"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (status, updated_at DESC)").format(
+                        sql.Identifier("idx_support_rag_dataset_generation_runs_status_updated"),
+                        self._table("support_rag_dataset_generation_runs"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (created_at DESC)").format(
+                        sql.Identifier("idx_support_rag_datasets_created"),
+                        self._table("support_rag_datasets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (dataset_id, item_status, updated_at DESC)").format(
+                        sql.Identifier("idx_support_rag_dataset_items_dataset_status"),
+                        self._table("support_rag_dataset_items"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (source_type, query_type, difficulty, language)").format(
+                        sql.Identifier("idx_support_rag_dataset_items_dimensions"),
+                        self._table("support_rag_dataset_items"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (review_status, updated_at DESC)").format(
+                        sql.Identifier("idx_support_rag_dataset_item_reviews_status_updated"),
+                        self._table("support_rag_dataset_item_reviews"),
                     )
                 )
                 self._backfill_bm25_index_if_needed(cur=cur)
@@ -4499,6 +4927,7 @@ class PostgresKnowledgeRepository:
             "answer_preview",
             "expected_document_ids",
             "expected_heading_paths",
+            "expected_evidence_refs",
             "trace_payload",
             "hit_at_1",
             "hit_at_3",
@@ -4506,12 +4935,17 @@ class PostgresKnowledgeRepository:
             "recall_at_5",
             "mrr",
             "ndcg_at_5",
+            "evidence_hit_at_1",
+            "evidence_hit_at_3",
+            "evidence_hit_at_5",
             "document_relevance_score",
             "faithfulness_score",
             "groundedness_score",
             "response_relevance_score",
             "response_completeness_score",
             "citation_correctness_score",
+            "answer_accuracy_score",
+            "answer_logic_score",
             "hallucination_flag",
             "needs_human",
             "failure_type",
@@ -4540,6 +4974,7 @@ class PostgresKnowledgeRepository:
                 _clean_text(row.get("answer_preview")),
                 Json(_json_list(row.get("expected_document_ids"))),
                 Json(_json_list(row.get("expected_heading_paths"))),
+                Json(_json_list(row.get("expected_evidence_refs"))),
                 Json(_json_dict(row.get("trace_payload"))),
                 _safe_float(row.get("hit_at_1"), 0.0) if row.get("hit_at_1") is not None else None,
                 _safe_float(row.get("hit_at_3"), 0.0) if row.get("hit_at_3") is not None else None,
@@ -4547,12 +4982,17 @@ class PostgresKnowledgeRepository:
                 _safe_float(row.get("recall_at_5"), 0.0) if row.get("recall_at_5") is not None else None,
                 _safe_float(row.get("mrr"), 0.0) if row.get("mrr") is not None else None,
                 _safe_float(row.get("ndcg_at_5"), 0.0) if row.get("ndcg_at_5") is not None else None,
+                _safe_float(row.get("evidence_hit_at_1"), 0.0) if row.get("evidence_hit_at_1") is not None else None,
+                _safe_float(row.get("evidence_hit_at_3"), 0.0) if row.get("evidence_hit_at_3") is not None else None,
+                _safe_float(row.get("evidence_hit_at_5"), 0.0) if row.get("evidence_hit_at_5") is not None else None,
                 _safe_float(row.get("document_relevance_score"), 0.0) if row.get("document_relevance_score") is not None else None,
                 _safe_float(row.get("faithfulness_score"), 0.0) if row.get("faithfulness_score") is not None else None,
                 _safe_float(row.get("groundedness_score"), 0.0) if row.get("groundedness_score") is not None else None,
                 _safe_float(row.get("response_relevance_score"), 0.0) if row.get("response_relevance_score") is not None else None,
                 _safe_float(row.get("response_completeness_score"), 0.0) if row.get("response_completeness_score") is not None else None,
                 _safe_float(row.get("citation_correctness_score"), 0.0) if row.get("citation_correctness_score") is not None else None,
+                _safe_float(row.get("answer_accuracy_score"), 0.0) if row.get("answer_accuracy_score") is not None else None,
+                _safe_float(row.get("answer_logic_score"), 0.0) if row.get("answer_logic_score") is not None else None,
                 row.get("hallucination_flag") if isinstance(row.get("hallucination_flag"), bool) else None,
                 row.get("needs_human") if isinstance(row.get("needs_human"), bool) else None,
                 _clean_text(row.get("failure_type")),
@@ -4595,7 +5035,14 @@ class PostgresKnowledgeRepository:
                             columns=sql.SQL(", ").join(sql.Identifier(column) for column in columns),
                             placeholders=sql.SQL(", ").join(
                                 sql.SQL("%s::jsonb")
-                                if column in {"expected_document_ids", "expected_heading_paths", "trace_payload", "judge_votes"}
+                                if column
+                                in {
+                                    "expected_document_ids",
+                                    "expected_heading_paths",
+                                    "expected_evidence_refs",
+                                    "trace_payload",
+                                    "judge_votes",
+                                }
                                 else sql.SQL("%s")
                                 for column in columns
                             ),
@@ -4688,6 +5135,7 @@ class PostgresKnowledgeRepository:
         columns = [
             "sample_id",
             "sample_source",
+            "dataset_item_id",
             "request_id",
             "eval_run_id",
             "test_case_id",
@@ -4697,6 +5145,11 @@ class PostgresKnowledgeRepository:
             "retrieval_ok",
             "answer_ok",
             "citation_ok",
+            "logic_ok",
+            "hallucination_present",
+            "dataset_decision",
+            "corrected_reference_answer",
+            "corrected_citation_targets",
             "note",
             "sample_payload",
             "created_at",
@@ -4706,6 +5159,7 @@ class PostgresKnowledgeRepository:
         values = (
             sample_id,
             _clean_text(sample.get("sample_source")) or "live_query",
+            _clean_text(sample.get("dataset_item_id")),
             _clean_text(sample.get("request_id")),
             _clean_text(sample.get("eval_run_id")),
             _clean_text(sample.get("test_case_id")),
@@ -4715,6 +5169,11 @@ class PostgresKnowledgeRepository:
             sample.get("retrieval_ok") if isinstance(sample.get("retrieval_ok"), bool) else None,
             sample.get("answer_ok") if isinstance(sample.get("answer_ok"), bool) else None,
             sample.get("citation_ok") if isinstance(sample.get("citation_ok"), bool) else None,
+            sample.get("logic_ok") if isinstance(sample.get("logic_ok"), bool) else None,
+            sample.get("hallucination_present") if isinstance(sample.get("hallucination_present"), bool) else None,
+            _normalize_dataset_decision(sample.get("dataset_decision")),
+            str(sample.get("corrected_reference_answer") or "").strip() or None,
+            Json(sample.get("corrected_citation_targets") or []),
             str(sample.get("note") or "").strip() or None,
             Json(sample.get("sample_payload") or {}),
             created_at,
@@ -4735,7 +5194,9 @@ class PostgresKnowledgeRepository:
                         self._table("support_rag_review_samples"),
                         columns=sql.SQL(", ").join(sql.Identifier(column) for column in columns),
                         placeholders=sql.SQL(", ").join(
-                            sql.SQL("%s::jsonb") if column in {"sampling_reasons", "sample_payload"} else sql.SQL("%s")
+                            sql.SQL("%s::jsonb")
+                            if column in {"sampling_reasons", "corrected_citation_targets", "sample_payload"}
+                            else sql.SQL("%s")
                             for column in columns
                         ),
                         updates=sql.SQL(", ").join(
@@ -4755,6 +5216,11 @@ class PostgresKnowledgeRepository:
         retrieval_ok: bool | None = None,
         answer_ok: bool | None = None,
         citation_ok: bool | None = None,
+        logic_ok: bool | None = None,
+        hallucination_present: bool | None = None,
+        dataset_decision: str | None = None,
+        corrected_reference_answer: str | None = None,
+        corrected_citation_targets: list[dict[str, Any]] | None = None,
         note: str | None = None,
     ) -> None:
         normalized_sample_id = _clean_text(sample_id)
@@ -4775,6 +5241,21 @@ class PostgresKnowledgeRepository:
         if citation_ok is not None:
             assignments.append(sql.SQL("citation_ok = %s"))
             params.append(bool(citation_ok))
+        if logic_ok is not None:
+            assignments.append(sql.SQL("logic_ok = %s"))
+            params.append(bool(logic_ok))
+        if hallucination_present is not None:
+            assignments.append(sql.SQL("hallucination_present = %s"))
+            params.append(bool(hallucination_present))
+        if dataset_decision is not None:
+            assignments.append(sql.SQL("dataset_decision = %s"))
+            params.append(_normalize_dataset_decision(dataset_decision))
+        if corrected_reference_answer is not None:
+            assignments.append(sql.SQL("corrected_reference_answer = %s"))
+            params.append(str(corrected_reference_answer).strip() or None)
+        if corrected_citation_targets is not None:
+            assignments.append(sql.SQL("corrected_citation_targets = %s::jsonb"))
+            params.append(Json(corrected_citation_targets or []))
         if note is not None:
             assignments.append(sql.SQL("note = %s"))
             params.append(str(note).strip() or None)
@@ -4800,6 +5281,772 @@ class PostgresKnowledgeRepository:
             conn.commit()
         if updated <= 0:
             raise LookupError(f"Review sample not found: {normalized_sample_id}")
+        self._sync_dataset_item_review(normalized_sample_id)
+
+    def create_dataset_generation_run(
+        self,
+        *,
+        dataset_name: str,
+        source_types: list[str],
+        question_language: str = "en",
+    ) -> dict[str, Any]:
+        normalized_name = str(dataset_name or "").strip()
+        if not normalized_name:
+            raise ValueError("dataset_name is required")
+        normalized_sources = sorted(
+            {
+                _normalize_source_type(source_type)
+                for source_type in source_types
+                if _clean_text(source_type)
+            }
+        )
+        if not normalized_sources:
+            raise ValueError("source_types must include at least one supported source type")
+        normalized_language = _clean_text(question_language).lower() or "en"
+        if normalized_language != "en":
+            raise ValueError("question_language only supports 'en' in v1")
+        created_at = _utc_now()
+        dataset_id = f"DS-{uuid4().hex[:12].upper()}"
+        generation_run_id = f"DGR-{uuid4().hex[:12].upper()}"
+        slug = re.sub(r"[^a-z0-9]+", "_", normalized_name.lower()).strip("_") or "dataset"
+        benchmark_version = f"{slug}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} (
+                            dataset_id,
+                            dataset_name,
+                            benchmark_version,
+                            question_language,
+                            source_types,
+                            status,
+                            created_at,
+                            updated_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s)
+                        """
+                    ).format(self._table("support_rag_datasets")),
+                    (
+                        dataset_id,
+                        normalized_name,
+                        benchmark_version,
+                        normalized_language,
+                        Json(normalized_sources),
+                        _normalize_dataset_status("draft"),
+                        created_at,
+                        created_at,
+                    ),
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} (
+                            generation_run_id,
+                            dataset_id,
+                            dataset_name,
+                            benchmark_version,
+                            question_language,
+                            source_types,
+                            status,
+                            candidate_count_total,
+                            silver_item_count,
+                            gold_item_count,
+                            review_required_count,
+                            reviewed_item_count,
+                            error_message,
+                            created_at,
+                            updated_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, 0, 0, 0, 0, 0, NULL, %s, %s)
+                        """
+                    ).format(self._table("support_rag_dataset_generation_runs")),
+                    (
+                        generation_run_id,
+                        dataset_id,
+                        normalized_name,
+                        benchmark_version,
+                        normalized_language,
+                        Json(normalized_sources),
+                        _normalize_dataset_run_status("queued"),
+                        created_at,
+                        created_at,
+                    ),
+                )
+            conn.commit()
+        return {
+            "generation_run_id": generation_run_id,
+            "dataset_id": dataset_id,
+            "dataset_name": normalized_name,
+            "benchmark_version": benchmark_version,
+            "question_language": normalized_language,
+            "source_types": normalized_sources,
+            "status": "queued",
+            "created_at": created_at,
+            "updated_at": created_at,
+        }
+
+    def get_dataset_generation_run(self, generation_run_id: str) -> dict[str, Any] | None:
+        normalized_generation_run_id = _clean_text(generation_run_id)
+        if not normalized_generation_run_id:
+            return None
+        rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    generation_run_id,
+                    dataset_id,
+                    dataset_name,
+                    benchmark_version,
+                    question_language,
+                    source_types,
+                    status,
+                    candidate_count_total,
+                    silver_item_count,
+                    gold_item_count,
+                    review_required_count,
+                    reviewed_item_count,
+                    error_message,
+                    created_at,
+                    started_at,
+                    finished_at,
+                    updated_at
+                FROM {}
+                WHERE generation_run_id = %s
+                LIMIT 1
+                """
+            ).format(self._table("support_rag_dataset_generation_runs")),
+            (normalized_generation_run_id,),
+        )
+        if not rows:
+            return None
+        row = rows[0]
+        return {
+            "generation_run_id": row[0],
+            "dataset_id": row[1],
+            "dataset_name": row[2],
+            "benchmark_version": row[3],
+            "question_language": row[4],
+            "source_types": _json_list(row[5]),
+            "status": row[6],
+            "candidate_count_total": int(row[7] or 0),
+            "silver_item_count": int(row[8] or 0),
+            "gold_item_count": int(row[9] or 0),
+            "review_required_count": int(row[10] or 0),
+            "reviewed_item_count": int(row[11] or 0),
+            "error_message": row[12],
+            "created_at": _to_iso(row[13]) if row[13] is not None else None,
+            "started_at": _to_iso(row[14]) if row[14] is not None else None,
+            "finished_at": _to_iso(row[15]) if row[15] is not None else None,
+            "updated_at": _to_iso(row[16]) if row[16] is not None else None,
+        }
+
+    def update_dataset_generation_run(
+        self,
+        generation_run_id: str,
+        *,
+        status: str | None = None,
+        error_message: str | None = None,
+        started_at: str | None = None,
+        finished_at: str | None = None,
+    ) -> None:
+        normalized_generation_run_id = _clean_text(generation_run_id)
+        if not normalized_generation_run_id:
+            raise ValueError("generation_run_id is required")
+        assignments: list[sql.SQL] = [sql.SQL("updated_at = NOW()")]
+        params: list[Any] = []
+        if status is not None:
+            assignments.append(sql.SQL("status = %s"))
+            params.append(_normalize_dataset_run_status(status))
+        if error_message is not None:
+            assignments.append(sql.SQL("error_message = %s"))
+            params.append(str(error_message).strip() or None)
+        if started_at is not None:
+            assignments.append(sql.SQL("started_at = %s"))
+            params.append(_clean_text(started_at) or None)
+        if finished_at is not None:
+            assignments.append(sql.SQL("finished_at = %s"))
+            params.append(_clean_text(finished_at) or None)
+        params.append(normalized_generation_run_id)
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {}
+                        SET {assignments}
+                        WHERE generation_run_id = %s
+                        """
+                    ).format(
+                        self._table("support_rag_dataset_generation_runs"),
+                        assignments=sql.SQL(", ").join(assignments),
+                    ),
+                    tuple(params),
+                )
+                updated = cur.rowcount
+                if updated > 0 and status is not None and _normalize_dataset_run_status(status) == "failed":
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            UPDATE {} AS d
+                            SET status = %s, updated_at = NOW()
+                            FROM {} AS g
+                            WHERE g.generation_run_id = %s
+                              AND d.dataset_id = g.dataset_id
+                            """
+                        ).format(
+                            self._table("support_rag_datasets"),
+                            self._table("support_rag_dataset_generation_runs"),
+                        ),
+                        ("failed", normalized_generation_run_id),
+                    )
+            conn.commit()
+        if updated <= 0:
+            raise LookupError(f"Dataset generation run not found: {normalized_generation_run_id}")
+
+    def list_dataset_generation_source_chunks(
+        self,
+        *,
+        source_types: list[str],
+        question_language: str = "en",
+    ) -> list[dict[str, Any]]:
+        normalized_sources = sorted(
+            {
+                _normalize_source_type(source_type)
+                for source_type in source_types
+                if _clean_text(source_type)
+            }
+        )
+        if not normalized_sources:
+            return []
+        normalized_language = _clean_text(question_language).lower() or "en"
+        rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    c.id,
+                    d.document_id,
+                    d.source_type,
+                    c.source_path,
+                    COALESCE(NULLIF(CONCAT_WS(' > ', c.h1, c.h2, c.h3), ''), d.title, c.id) AS heading,
+                    COALESCE(t.parent_section_type, t.parent_block_type, t.boundary_reason, c.chunk_strategy, 'reference') AS chunk_type,
+                    COALESCE(t.heading_path, '[]'::jsonb),
+                    COALESCE(NULLIF(t.retrieval_text, ''), NULLIF(c.content, ''), '') AS chunk_text,
+                    d.language,
+                    d.product,
+                    d.title,
+                    t.metadata
+                FROM {} AS c
+                JOIN {} AS d
+                  ON d.document_id = c.doc_id
+                LEFT JOIN {} AS t
+                  ON t.chunk_id = c.id
+                 AND t.index_role = c.index_role
+                WHERE c.index_role = 'primary'
+                  AND d.is_active
+                  AND d.source_type = ANY(%s)
+                  AND COALESCE(NULLIF(COALESCE(t.retrieval_text, c.content), ''), '') <> ''
+                  AND (%s = 'all' OR COALESCE(NULLIF(LOWER(d.language), ''), 'en') = %s)
+                ORDER BY d.updated_at DESC NULLS LAST, d.document_id ASC, c.id ASC
+                """
+            ).format(
+                self._vector_table(),
+                self._table("support_knowledge_documents"),
+                self._table("support_knowledge_chunk_traces"),
+            ),
+            (normalized_sources, normalized_language, normalized_language),
+        )
+        chunks: list[dict[str, Any]] = []
+        for row in rows:
+            section_path = _json_list(row[6])
+            if not section_path:
+                section_path = [part for part in str(row[4] or "").split(" > ") if _clean_text(part)]
+            chunks.append(
+                {
+                    "chunk_id": row[0],
+                    "document_id": row[1],
+                    "source_type": row[2],
+                    "source_path": row[3],
+                    "heading": row[4],
+                    "chunk_type": row[5],
+                    "section_path": section_path,
+                    "text": row[7],
+                    "language": row[8],
+                    "product": row[9],
+                    "metadata": {
+                        "title": row[10],
+                        "chunk_trace": _json_dict(row[11]),
+                    },
+                }
+            )
+        return chunks
+
+    def save_dataset_generation_results(
+        self,
+        *,
+        generation_run_id: str,
+        items: list[dict[str, Any]],
+        review_samples: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        run = self.get_dataset_generation_run(generation_run_id)
+        if run is None:
+            raise LookupError(f"Dataset generation run not found: {_clean_text(generation_run_id)}")
+        dataset_id = _clean_text(run.get("dataset_id"))
+        normalized_generation_run_id = _clean_text(generation_run_id)
+        if not dataset_id or not normalized_generation_run_id:
+            raise ValueError("Dataset generation run is missing dataset metadata")
+        columns = [
+            "dataset_item_id",
+            "dataset_id",
+            "generation_run_id",
+            "document_id",
+            "chunk_id",
+            "source_path",
+            "source_type",
+            "query_type",
+            "difficulty",
+            "language",
+            "product",
+            "question",
+            "reference_answer",
+            "answer_key_points",
+            "expected_document_ids",
+            "expected_heading_paths",
+            "expected_evidence_refs",
+            "expected_citation_targets",
+            "item_status",
+            "dataset_quality_score",
+            "judge_disagreement_flag",
+            "ambiguity_flag",
+            "answer_leakage_flag",
+            "citation_bindable_flag",
+            "logic_eval_applicable",
+            "sampling_reasons",
+            "judge_votes",
+            "metadata",
+            "created_at",
+            "updated_at",
+            "promoted_at",
+        ]
+        created_at = _utc_now()
+        payload = [
+            (
+                _clean_text(item.get("dataset_item_id")),
+                dataset_id,
+                normalized_generation_run_id,
+                _clean_text(item.get("document_id")),
+                _clean_text(item.get("chunk_id")),
+                _clean_text(item.get("source_path")),
+                _normalize_source_type(item.get("source_type")),
+                _clean_text(item.get("query_type")) or "faq",
+                _clean_text(item.get("difficulty")) or "basic",
+                _clean_text(item.get("language")) or "en",
+                _clean_text(item.get("product")),
+                str(item.get("question") or "").strip(),
+                str(item.get("reference_answer") or "").strip(),
+                Json(_json_list(item.get("answer_key_points"))),
+                Json(_json_list(item.get("expected_document_ids"))),
+                Json(_json_list(item.get("expected_heading_paths"))),
+                Json(_json_list(item.get("expected_evidence_refs"))),
+                Json(_json_list(item.get("expected_citation_targets"))),
+                _normalize_dataset_item_status(item.get("item_status")),
+                _safe_float(item.get("dataset_quality_score"), 0.0) if item.get("dataset_quality_score") is not None else None,
+                bool(item.get("judge_disagreement_flag")),
+                bool(item.get("ambiguity_flag")),
+                bool(item.get("answer_leakage_flag")),
+                bool(item.get("citation_bindable_flag")),
+                bool(item.get("logic_eval_applicable")),
+                Json(_json_list(item.get("sampling_reasons"))),
+                Json(_json_list(item.get("judge_votes"))),
+                Json(_json_dict(item.get("metadata"))),
+                _clean_text(item.get("created_at")) or created_at,
+                _clean_text(item.get("updated_at")) or created_at,
+                _clean_text(item.get("promoted_at")) or None,
+            )
+            for item in items
+            if _clean_text(item.get("dataset_item_id"))
+        ]
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        DELETE FROM {}
+                        WHERE sample_source = 'dataset_candidate'
+                          AND dataset_item_id IN (
+                              SELECT dataset_item_id
+                              FROM {}
+                              WHERE generation_run_id = %s
+                          )
+                        """
+                    ).format(
+                        self._table("support_rag_review_samples"),
+                        self._table("support_rag_dataset_items"),
+                    ),
+                    (normalized_generation_run_id,),
+                )
+                cur.execute(
+                    sql.SQL("DELETE FROM {} WHERE generation_run_id = %s").format(self._table("support_rag_dataset_items")),
+                    (normalized_generation_run_id,),
+                )
+                if payload:
+                    cur.executemany(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} ({columns})
+                            VALUES ({placeholders})
+                            """
+                        ).format(
+                            self._table("support_rag_dataset_items"),
+                            columns=sql.SQL(", ").join(sql.Identifier(column) for column in columns),
+                            placeholders=sql.SQL(", ").join(
+                                sql.SQL("%s::jsonb")
+                                if column
+                                in {
+                                    "answer_key_points",
+                                    "expected_document_ids",
+                                    "expected_heading_paths",
+                                    "expected_evidence_refs",
+                                    "expected_citation_targets",
+                                    "sampling_reasons",
+                                    "judge_votes",
+                                    "metadata",
+                                }
+                                else sql.SQL("%s")
+                                for column in columns
+                            ),
+                        ),
+                        payload,
+                    )
+            conn.commit()
+        for sample in review_samples:
+            self.upsert_review_sample(sample=sample)
+        self._refresh_dataset_rollups(dataset_id=dataset_id, generation_run_id=normalized_generation_run_id)
+        return self._dataset_generation_rollups(normalized_generation_run_id)
+
+    def get_dataset_snapshot(self, dataset_id: str) -> dict[str, Any] | None:
+        normalized_dataset_id = _clean_text(dataset_id)
+        if not normalized_dataset_id:
+            return None
+        rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    d.dataset_id,
+                    d.dataset_name,
+                    d.benchmark_version,
+                    d.question_language,
+                    d.source_types,
+                    d.status,
+                    d.created_at,
+                    d.updated_at,
+                    COALESCE(MAX(g.generation_run_id), NULL) AS generation_run_id
+                FROM {} AS d
+                LEFT JOIN {} AS g
+                  ON g.dataset_id = d.dataset_id
+                WHERE d.dataset_id = %s
+                GROUP BY d.dataset_id, d.dataset_name, d.benchmark_version, d.question_language, d.source_types, d.status, d.created_at, d.updated_at
+                LIMIT 1
+                """
+            ).format(
+                self._table("support_rag_datasets"),
+                self._table("support_rag_dataset_generation_runs"),
+            ),
+            (normalized_dataset_id,),
+        )
+        if not rows:
+            return None
+        row = rows[0]
+        return {
+            "dataset_id": row[0],
+            "dataset_name": row[1],
+            "benchmark_version": row[2],
+            "question_language": row[3],
+            "source_types": _json_list(row[4]),
+            "status": row[5],
+            "created_at": _to_iso(row[6]) if row[6] is not None else None,
+            "updated_at": _to_iso(row[7]) if row[7] is not None else None,
+            "generation_run_id": row[8],
+        }
+
+    def load_dataset_benchmark_cases(
+        self,
+        dataset_id: str,
+        *,
+        tier: str = "gold",
+    ) -> list[dict[str, Any]]:
+        normalized_dataset_id = _clean_text(dataset_id)
+        if not normalized_dataset_id:
+            raise ValueError("dataset_id is required")
+        normalized_tier = _normalize_dataset_tier(tier)
+        status_values = ["gold"] if normalized_tier == "gold" else ["gold", "silver"]
+        rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    dataset_item_id,
+                    question,
+                    query_type,
+                    source_type,
+                    product,
+                    language,
+                    expected_document_ids,
+                    expected_heading_paths,
+                    expected_evidence_refs,
+                    answer_key_points,
+                    difficulty
+                FROM {}
+                WHERE dataset_id = %s
+                  AND item_status = ANY(%s)
+                ORDER BY dataset_item_id ASC
+                """
+            ).format(self._table("support_rag_dataset_items")),
+            (normalized_dataset_id, status_values),
+        )
+        return [
+            {
+                "test_case_id": row[0],
+                "question": row[1],
+                "query_type": row[2],
+                "source_type": row[3],
+                "product": row[4],
+                "language": row[5],
+                "expected_document_ids": _json_list(row[6]),
+                "expected_heading_paths": _json_list(row[7]),
+                "expected_evidence_refs": _json_list(row[8]),
+                "answer_key_points": _json_list(row[9]),
+                "expected_handoff": False,
+                "tags": [_clean_text(row[10]), _clean_text(row[2]), _clean_text(row[3])],
+            }
+            for row in rows
+        ]
+
+    def export_dataset_snapshot(
+        self,
+        dataset_id: str,
+        *,
+        tier: str = "gold",
+    ) -> str:
+        payloads = self.load_dataset_benchmark_cases(dataset_id, tier=tier)
+        lines = [json.dumps(payload, ensure_ascii=False) for payload in payloads]
+        return "\n".join(lines) + ("\n" if lines else "")
+
+    def _dataset_generation_rollups(self, generation_run_id: str) -> dict[str, Any]:
+        rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    COUNT(*) AS candidate_count_total,
+                    COUNT(*) FILTER (WHERE i.item_status = 'silver') AS silver_item_count,
+                    COUNT(*) FILTER (WHERE i.item_status = 'gold') AS gold_item_count,
+                    COUNT(*) FILTER (WHERE s.sample_id IS NOT NULL) AS review_required_count,
+                    COUNT(*) FILTER (WHERE s.review_status = 'reviewed') AS reviewed_item_count
+                FROM {} AS i
+                LEFT JOIN {} AS s
+                  ON s.dataset_item_id = i.dataset_item_id
+                 AND s.sample_source = 'dataset_candidate'
+                WHERE i.generation_run_id = %s
+                """
+            ).format(
+                self._table("support_rag_dataset_items"),
+                self._table("support_rag_review_samples"),
+            ),
+            (generation_run_id,),
+        )
+        row = rows[0] if rows else (0, 0, 0, 0, 0)
+        return {
+            "candidate_count_total": int(row[0] or 0),
+            "silver_item_count": int(row[1] or 0),
+            "gold_item_count": int(row[2] or 0),
+            "review_required_count": int(row[3] or 0),
+            "reviewed_item_count": int(row[4] or 0),
+        }
+
+    def _refresh_dataset_rollups(self, *, dataset_id: str, generation_run_id: str) -> None:
+        normalized_dataset_id = _clean_text(dataset_id)
+        normalized_generation_run_id = _clean_text(generation_run_id)
+        if not normalized_dataset_id or not normalized_generation_run_id:
+            return
+        rollups = self._dataset_generation_rollups(normalized_generation_run_id)
+        dataset_status = "gold_ready"
+        if rollups["gold_item_count"] <= 0:
+            dataset_status = "silver_only" if rollups["silver_item_count"] > 0 else "draft"
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {}
+                        SET
+                            candidate_count_total = %s,
+                            silver_item_count = %s,
+                            gold_item_count = %s,
+                            review_required_count = %s,
+                            reviewed_item_count = %s,
+                            updated_at = NOW()
+                        WHERE generation_run_id = %s
+                        """
+                    ).format(self._table("support_rag_dataset_generation_runs")),
+                    (
+                        rollups["candidate_count_total"],
+                        rollups["silver_item_count"],
+                        rollups["gold_item_count"],
+                        rollups["review_required_count"],
+                        rollups["reviewed_item_count"],
+                        normalized_generation_run_id,
+                    ),
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {}
+                        SET status = %s, updated_at = NOW()
+                        WHERE dataset_id = %s
+                          AND status <> 'failed'
+                        """
+                    ).format(self._table("support_rag_datasets")),
+                    (dataset_status, normalized_dataset_id),
+                )
+            conn.commit()
+
+    def _sync_dataset_item_review(self, sample_id: str) -> None:
+        normalized_sample_id = _clean_text(sample_id)
+        if not normalized_sample_id:
+            return
+        rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    s.sample_source,
+                    s.dataset_item_id,
+                    s.review_status,
+                    s.retrieval_ok,
+                    s.answer_ok,
+                    s.citation_ok,
+                    s.logic_ok,
+                    s.hallucination_present,
+                    s.dataset_decision,
+                    s.corrected_reference_answer,
+                    s.corrected_citation_targets,
+                    s.note,
+                    i.dataset_id,
+                    i.generation_run_id
+                FROM {} AS s
+                LEFT JOIN {} AS i
+                  ON i.dataset_item_id = s.dataset_item_id
+                WHERE s.sample_id = %s
+                LIMIT 1
+                """
+            ).format(
+                self._table("support_rag_review_samples"),
+                self._table("support_rag_dataset_items"),
+            ),
+            (normalized_sample_id,),
+        )
+        if not rows:
+            return
+        row = rows[0]
+        if row[0] != "dataset_candidate" or not _clean_text(row[1]):
+            return
+        dataset_item_id = _clean_text(row[1])
+        review_status_value = _normalize_review_status(row[2])
+        dataset_decision_value = _normalize_dataset_decision(row[8])
+        corrected_citation_targets = _json_list(row[10])
+        normalized_item_status: str | None = None
+        if review_status_value == "reviewed":
+            if dataset_decision_value == "promote_gold":
+                normalized_item_status = "gold"
+            elif dataset_decision_value == "reject":
+                normalized_item_status = "rejected"
+            elif dataset_decision_value == "needs_fix":
+                normalized_item_status = "needs_fix"
+            elif any(value is False for value in [row[3], row[4], row[5], row[6]]) or row[7] is True:
+                normalized_item_status = "needs_fix"
+            else:
+                normalized_item_status = "silver"
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} (
+                            sample_id,
+                            dataset_item_id,
+                            review_status,
+                            retrieval_ok,
+                            answer_ok,
+                            citation_ok,
+                            logic_ok,
+                            hallucination_present,
+                            dataset_decision,
+                            corrected_reference_answer,
+                            corrected_citation_targets,
+                            note,
+                            created_at,
+                            updated_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, NOW(), NOW())
+                        ON CONFLICT (sample_id) DO UPDATE SET
+                            review_status = EXCLUDED.review_status,
+                            retrieval_ok = EXCLUDED.retrieval_ok,
+                            answer_ok = EXCLUDED.answer_ok,
+                            citation_ok = EXCLUDED.citation_ok,
+                            logic_ok = EXCLUDED.logic_ok,
+                            hallucination_present = EXCLUDED.hallucination_present,
+                            dataset_decision = EXCLUDED.dataset_decision,
+                            corrected_reference_answer = EXCLUDED.corrected_reference_answer,
+                            corrected_citation_targets = EXCLUDED.corrected_citation_targets,
+                            note = EXCLUDED.note,
+                            updated_at = NOW()
+                        """
+                    ).format(self._table("support_rag_dataset_item_reviews")),
+                    (
+                        normalized_sample_id,
+                        dataset_item_id,
+                        review_status_value,
+                        row[3] if isinstance(row[3], bool) else None,
+                        row[4] if isinstance(row[4], bool) else None,
+                        row[5] if isinstance(row[5], bool) else None,
+                        row[6] if isinstance(row[6], bool) else None,
+                        row[7] if isinstance(row[7], bool) else None,
+                        dataset_decision_value,
+                        str(row[9] or "").strip() or None,
+                        Json(corrected_citation_targets),
+                        str(row[11] or "").strip() or None,
+                    ),
+                )
+                if normalized_item_status is not None:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            UPDATE {}
+                            SET
+                                item_status = %s,
+                                reference_answer = COALESCE(%s, reference_answer),
+                                expected_citation_targets = CASE
+                                    WHEN %s::jsonb = '[]'::jsonb THEN expected_citation_targets
+                                    ELSE %s::jsonb
+                                END,
+                                promoted_at = CASE
+                                    WHEN %s = 'gold' THEN COALESCE(promoted_at, NOW())
+                                    ELSE NULL
+                                END,
+                                updated_at = NOW()
+                            WHERE dataset_item_id = %s
+                            """
+                        ).format(self._table("support_rag_dataset_items")),
+                        (
+                            normalized_item_status,
+                            str(row[9] or "").strip() or None,
+                            Json(corrected_citation_targets),
+                            Json(corrected_citation_targets),
+                            normalized_item_status,
+                            dataset_item_id,
+                        ),
+                    )
+            conn.commit()
+        self._refresh_dataset_rollups(dataset_id=_clean_text(row[12]), generation_run_id=_clean_text(row[13]))
 
     def _normalize_dashboard_filters(self, filters: dict[str, Any] | None) -> dict[str, Any]:
         raw = filters if isinstance(filters, dict) else {}
@@ -4911,12 +6158,17 @@ class PostgresKnowledgeRepository:
                     AVG(r.recall_at_5),
                     AVG(r.mrr),
                     AVG(r.ndcg_at_5),
+                    AVG(r.evidence_hit_at_1),
+                    AVG(r.evidence_hit_at_3),
+                    AVG(r.evidence_hit_at_5),
                     AVG(r.document_relevance_score),
                     AVG(r.faithfulness_score),
                     AVG(r.groundedness_score),
                     AVG(r.response_relevance_score),
                     AVG(r.response_completeness_score),
                     AVG(r.citation_correctness_score),
+                    AVG(r.answer_accuracy_score),
+                    AVG(r.answer_logic_score),
                     AVG(CASE WHEN r.hallucination_flag THEN 1.0 ELSE 0.0 END),
                     AVG(CASE WHEN r.needs_human THEN 1.0 ELSE 0.0 END)
                 FROM {} AS r
@@ -4932,7 +6184,7 @@ class PostgresKnowledgeRepository:
             ),
             tuple([days, *params]),
         )
-        row = rows[0] if rows else (None,) * 14
+        row = rows[0] if rows else (None,) * 19
         return {
             "retrieval_hit_at_1": _coalesce_metric(row[0]),
             "retrieval_hit_at_3": _coalesce_metric(row[1]),
@@ -4940,14 +6192,19 @@ class PostgresKnowledgeRepository:
             "retrieval_recall_at_5": _coalesce_metric(row[3]),
             "mrr": _coalesce_metric(row[4]),
             "ndcg_at_5": _coalesce_metric(row[5]),
-            "document_relevance_score_avg": _coalesce_metric(row[6]),
-            "faithfulness_score_avg": _coalesce_metric(row[7]),
-            "groundedness_score_avg": _coalesce_metric(row[8]),
-            "response_relevance_score_avg": _coalesce_metric(row[9]),
-            "response_completeness_score_avg": _coalesce_metric(row[10]),
-            "citation_correctness_score_avg": _coalesce_metric(row[11]),
-            "hallucination_rate": _coalesce_metric(row[12]),
-            "needs_human_rate": _coalesce_metric(row[13]),
+            "evidence_hit_at_1": _coalesce_metric(row[6]),
+            "evidence_hit_at_3": _coalesce_metric(row[7]),
+            "evidence_hit_at_5": _coalesce_metric(row[8]),
+            "document_relevance_score_avg": _coalesce_metric(row[9]),
+            "faithfulness_score_avg": _coalesce_metric(row[10]),
+            "groundedness_score_avg": _coalesce_metric(row[11]),
+            "response_relevance_score_avg": _coalesce_metric(row[12]),
+            "response_completeness_score_avg": _coalesce_metric(row[13]),
+            "citation_correctness_score_avg": _coalesce_metric(row[14]),
+            "answer_accuracy_score_avg": _coalesce_metric(row[15]),
+            "answer_logic_score_avg": _coalesce_metric(row[16]),
+            "hallucination_rate": _coalesce_metric(row[17]),
+            "needs_human_rate": _coalesce_metric(row[18]),
         }
 
     def _daily_metric_overlays(self, days: int, filters: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -5053,31 +6310,32 @@ class PostgresKnowledgeRepository:
             "last_refreshed_at": _utc_now(),
         }
 
-    def _review_queue_summary(self, days: int) -> tuple[int, int, int]:
+    def _review_queue_summary(self, days: int) -> tuple[int, int, int, int]:
         row = self._query_rows(
             sql.SQL(
                 """
                 SELECT
                     COUNT(*) FILTER (WHERE review_status = 'pending') AS pending_count,
                     COUNT(*) FILTER (WHERE sample_source = 'live_query') AS live_query_count,
-                    COUNT(*) FILTER (WHERE sample_source = 'benchmark') AS benchmark_count
+                    COUNT(*) FILTER (WHERE sample_source = 'benchmark') AS benchmark_count,
+                    COUNT(*) FILTER (WHERE sample_source = 'dataset_candidate') AS dataset_candidate_count
                 FROM {}
                 WHERE created_at >= NOW() - (%s * INTERVAL '1 day')
                 """
             ).format(self._table("support_rag_review_samples")),
             (days,),
         )[0]
-        return int(row[0] or 0), int(row[1] or 0), int(row[2] or 0)
+        return int(row[0] or 0), int(row[1] or 0), int(row[2] or 0), int(row[3] or 0)
 
     def _review_queue_rows(self, days: int, filters: dict[str, Any]) -> list[dict[str, Any]]:
         review_filter_sql, review_filter_params = self._build_filter_clause(
             filters,
             {
-                "query_type": "COALESCE(q.query_type, r.query_type, s.sample_payload ->> 'query_type')",
+                "query_type": "COALESCE(di.query_type, q.query_type, r.query_type, s.sample_payload ->> 'query_type')",
                 "retrieval_strategy": "COALESCE(q.retrieval_strategy, r.retrieval_strategy, s.sample_payload ->> 'retrieval_strategy')",
-                "source_type": "COALESCE(q.primary_source_type, r.source_type, s.sample_payload ->> 'source_type')",
-                "product": "COALESCE(r.product, s.sample_payload ->> 'product')",
-                "language": "COALESCE(r.language, s.sample_payload ->> 'language')",
+                "source_type": "COALESCE(di.source_type, q.primary_source_type, r.source_type, s.sample_payload ->> 'source_type')",
+                "product": "COALESCE(di.product, r.product, s.sample_payload ->> 'product')",
+                "language": "COALESCE(di.language, r.language, s.sample_payload ->> 'language')",
                 "chunk_strategy": "COALESCE(q.primary_chunk_strategy, r.chunk_strategy, s.sample_payload ->> 'chunk_strategy')",
             },
         )
@@ -5087,6 +6345,7 @@ class PostgresKnowledgeRepository:
                 SELECT
                     s.sample_id,
                     s.sample_source,
+                    s.dataset_item_id,
                     s.request_id,
                     s.eval_run_id,
                     s.test_case_id,
@@ -5096,13 +6355,18 @@ class PostgresKnowledgeRepository:
                     s.retrieval_ok,
                     s.answer_ok,
                     s.citation_ok,
+                    s.logic_ok,
+                    s.hallucination_present,
+                    s.dataset_decision,
+                    s.corrected_reference_answer,
+                    s.corrected_citation_targets,
                     s.note,
-                    COALESCE(q.user_query, s.sample_payload ->> 'question') AS sample_question,
-                    COALESCE(q.query_type, r.query_type, s.sample_payload ->> 'query_type') AS query_type,
+                    COALESCE(q.user_query, di.question, s.sample_payload ->> 'question') AS sample_question,
+                    COALESCE(di.query_type, q.query_type, r.query_type, s.sample_payload ->> 'query_type') AS query_type,
                     COALESCE(q.retrieval_strategy, r.retrieval_strategy, s.sample_payload ->> 'retrieval_strategy') AS retrieval_strategy,
-                    COALESCE(q.primary_source_type, r.source_type, s.sample_payload ->> 'source_type') AS source_type,
-                    COALESCE(r.product, s.sample_payload ->> 'product') AS product,
-                    COALESCE(r.language, s.sample_payload ->> 'language') AS language,
+                    COALESCE(di.source_type, q.primary_source_type, r.source_type, s.sample_payload ->> 'source_type') AS source_type,
+                    COALESCE(di.product, r.product, s.sample_payload ->> 'product') AS product,
+                    COALESCE(di.language, r.language, s.sample_payload ->> 'language') AS language,
                     COALESCE(q.primary_chunk_strategy, r.chunk_strategy, s.sample_payload ->> 'chunk_strategy') AS chunk_strategy,
                     COALESCE(r.failure_type, s.sample_payload ->> 'failure_type') AS failure_type,
                     r.document_relevance_score,
@@ -5111,13 +6375,19 @@ class PostgresKnowledgeRepository:
                     r.response_relevance_score,
                     r.response_completeness_score,
                     r.citation_correctness_score,
+                    r.answer_accuracy_score,
+                    r.answer_logic_score,
                     r.judge_disagreement_flag,
                     COALESCE(q.generation_mode, s.sample_payload ->> 'generation_mode') AS generation_mode,
                     q.confidence_score,
                     q.citation_count,
+                    di.item_status,
+                    di.difficulty,
                     s.sample_payload,
                     s.updated_at
                 FROM {} AS s
+                LEFT JOIN {} AS di
+                  ON di.dataset_item_id = s.dataset_item_id
                 LEFT JOIN {} AS q
                   ON q.request_id = s.request_id
                 LEFT JOIN {} AS r
@@ -5133,6 +6403,7 @@ class PostgresKnowledgeRepository:
                 """
             ).format(
                 self._table("support_rag_review_samples"),
+                self._table("support_rag_dataset_items"),
                 self._table("support_rag_query_runs"),
                 self._table("support_rag_eval_results"),
                 filters=sql.SQL(review_filter_sql),
@@ -5143,36 +6414,46 @@ class PostgresKnowledgeRepository:
             {
                 "sample_id": row[0],
                 "sample_source": row[1],
-                "request_id": row[2],
-                "eval_run_id": row[3],
-                "test_case_id": row[4],
-                "risk_score": _coalesce_metric(row[5]),
-                "sampling_reasons": row[6] if isinstance(row[6], list) else [],
-                "review_status": row[7],
-                "retrieval_ok": row[8],
-                "answer_ok": row[9],
-                "citation_ok": row[10],
-                "note": row[11],
-                "sample_question": row[12],
-                "query_type": row[13],
-                "retrieval_strategy": row[14],
-                "source_type": row[15],
-                "product": row[16],
-                "language": row[17],
-                "chunk_strategy": row[18],
-                "failure_type": row[19],
-                "document_relevance_score": _coalesce_metric(row[20]),
-                "faithfulness_score": _coalesce_metric(row[21]),
-                "groundedness_score": _coalesce_metric(row[22]),
-                "response_relevance_score": _coalesce_metric(row[23]),
-                "response_completeness_score": _coalesce_metric(row[24]),
-                "citation_correctness_score": _coalesce_metric(row[25]),
-                "judge_disagreement_flag": bool(row[26]) if row[26] is not None else None,
-                "generation_mode": row[27],
-                "confidence_score": _coalesce_metric(row[28]),
-                "citation_count": int(row[29] or 0) if row[29] is not None else 0,
-                "review_context": row[30] if isinstance(row[30], dict) else {},
-                "updated_at": _to_iso(row[31]),
+                "dataset_item_id": row[2],
+                "request_id": row[3],
+                "eval_run_id": row[4],
+                "test_case_id": row[5],
+                "risk_score": _coalesce_metric(row[6]),
+                "sampling_reasons": row[7] if isinstance(row[7], list) else [],
+                "review_status": row[8],
+                "retrieval_ok": row[9],
+                "answer_ok": row[10],
+                "citation_ok": row[11],
+                "logic_ok": row[12],
+                "hallucination_present": row[13],
+                "dataset_decision": row[14],
+                "corrected_reference_answer": row[15],
+                "corrected_citation_targets": row[16] if isinstance(row[16], list) else [],
+                "note": row[17],
+                "sample_question": row[18],
+                "query_type": row[19],
+                "retrieval_strategy": row[20],
+                "source_type": row[21],
+                "product": row[22],
+                "language": row[23],
+                "chunk_strategy": row[24],
+                "failure_type": row[25],
+                "document_relevance_score": _coalesce_metric(row[26]),
+                "faithfulness_score": _coalesce_metric(row[27]),
+                "groundedness_score": _coalesce_metric(row[28]),
+                "response_relevance_score": _coalesce_metric(row[29]),
+                "response_completeness_score": _coalesce_metric(row[30]),
+                "citation_correctness_score": _coalesce_metric(row[31]),
+                "answer_accuracy_score": _coalesce_metric(row[32]),
+                "answer_logic_score": _coalesce_metric(row[33]),
+                "judge_disagreement_flag": bool(row[34]) if row[34] is not None else None,
+                "generation_mode": row[35],
+                "confidence_score": _coalesce_metric(row[36]),
+                "citation_count": int(row[37] or 0) if row[37] is not None else 0,
+                "dataset_item_status": row[38],
+                "difficulty": row[39],
+                "review_context": row[40] if isinstance(row[40], dict) else {},
+                "updated_at": _to_iso(row[41]),
                 "review_action": "Review",
             }
             for row in rows
@@ -6961,12 +8242,17 @@ class PostgresKnowledgeRepository:
                     AVG(r.recall_at_5),
                     AVG(r.mrr),
                     AVG(r.ndcg_at_5),
+                    AVG(r.evidence_hit_at_1),
+                    AVG(r.evidence_hit_at_3),
+                    AVG(r.evidence_hit_at_5),
                     AVG(r.document_relevance_score),
                     AVG(r.faithfulness_score),
                     AVG(r.groundedness_score),
                     AVG(r.response_relevance_score),
                     AVG(r.response_completeness_score),
                     AVG(r.citation_correctness_score),
+                    AVG(r.answer_accuracy_score),
+                    AVG(r.answer_logic_score),
                     AVG(CASE WHEN r.hallucination_flag THEN 1.0 ELSE 0.0 END),
                     AVG(CASE WHEN r.judge_disagreement_flag THEN 1.0 ELSE 0.0 END),
                     AVG(r.retrieval_latency_ms),
@@ -6997,13 +8283,13 @@ class PostgresKnowledgeRepository:
         experiments: list[dict[str, Any]] = []
         for row in rows:
             strategy_snapshot = _json_dict(row[4])
-            retrieval_strategy = _clean_text(row[30]) or _clean_text(strategy_snapshot.get("retrieval_strategy")) or "unknown"
+            retrieval_strategy = _clean_text(row[35]) or _clean_text(strategy_snapshot.get("retrieval_strategy")) or "unknown"
             experiment = {
                 "eval_run_id": row[0],
                 "experiment_id": row[1],
                 "benchmark_version": row[2],
                 "judge_models": _json_list(row[3]),
-                "chunk_strategy": _clean_text(row[29]),
+                "chunk_strategy": _clean_text(row[34]),
                 "embedding_model": _clean_text(strategy_snapshot.get("embedding_model")),
                 "retrieval_strategy": retrieval_strategy,
                 "reranker_model": _clean_text(strategy_snapshot.get("reranker_model")),
@@ -7017,23 +8303,28 @@ class PostgresKnowledgeRepository:
                 "recall_at_5": _coalesce_metric(row[10]),
                 "mrr": _coalesce_metric(row[11]),
                 "ndcg_at_5": _coalesce_metric(row[12]),
-                "document_relevance_score_avg": _coalesce_metric(row[13]),
-                "faithfulness_score_avg": _coalesce_metric(row[14]),
-                "groundedness_score_avg": _coalesce_metric(row[15]),
-                "response_relevance_score_avg": _coalesce_metric(row[16]),
-                "response_completeness_score_avg": _coalesce_metric(row[17]),
-                "citation_correctness_score_avg": _coalesce_metric(row[18]),
-                "hallucination_rate": _coalesce_metric(row[19]),
-                "judge_disagreement_rate": _coalesce_metric(row[20]),
-                "avg_retrieval_latency_ms": _coalesce_metric(row[21]),
-                "avg_generation_latency_ms": _coalesce_metric(row[22]),
-                "avg_total_latency_ms": _coalesce_metric(row[23]),
-                "p95_latency_ms": _coalesce_metric(row[24]),
-                "avg_cost_per_query": _coalesce_metric(row[25]),
-                "avg_selected_doc_count": _coalesce_metric(row[26]),
-                "avg_top1_similarity_score": _coalesce_metric(row[27]),
-                "avg_selected_similarity_score": _coalesce_metric(row[28]),
-                "case_count": int(row[31] or 0),
+                "evidence_hit_at_1": _coalesce_metric(row[13]),
+                "evidence_hit_at_3": _coalesce_metric(row[14]),
+                "evidence_hit_at_5": _coalesce_metric(row[15]),
+                "document_relevance_score_avg": _coalesce_metric(row[16]),
+                "faithfulness_score_avg": _coalesce_metric(row[17]),
+                "groundedness_score_avg": _coalesce_metric(row[18]),
+                "response_relevance_score_avg": _coalesce_metric(row[19]),
+                "response_completeness_score_avg": _coalesce_metric(row[20]),
+                "citation_correctness_score_avg": _coalesce_metric(row[21]),
+                "answer_accuracy_score_avg": _coalesce_metric(row[22]),
+                "answer_logic_score_avg": _coalesce_metric(row[23]),
+                "hallucination_rate": _coalesce_metric(row[24]),
+                "judge_disagreement_rate": _coalesce_metric(row[25]),
+                "avg_retrieval_latency_ms": _coalesce_metric(row[26]),
+                "avg_generation_latency_ms": _coalesce_metric(row[27]),
+                "avg_total_latency_ms": _coalesce_metric(row[28]),
+                "p95_latency_ms": _coalesce_metric(row[29]),
+                "avg_cost_per_query": _coalesce_metric(row[30]),
+                "avg_selected_doc_count": _coalesce_metric(row[31]),
+                "avg_top1_similarity_score": _coalesce_metric(row[32]),
+                "avg_selected_similarity_score": _coalesce_metric(row[33]),
+                "case_count": int(row[36] or 0),
             }
             experiment["quality_rank_score"] = _experiment_quality_score(experiment)
             experiments.append(experiment)
@@ -7107,6 +8398,7 @@ class PostgresKnowledgeRepository:
                     answer_preview,
                     expected_document_ids,
                     expected_heading_paths,
+                    expected_evidence_refs,
                     trace_payload,
                     hit_at_1,
                     hit_at_3,
@@ -7114,12 +8406,17 @@ class PostgresKnowledgeRepository:
                     recall_at_5,
                     mrr,
                     ndcg_at_5,
+                    evidence_hit_at_1,
+                    evidence_hit_at_3,
+                    evidence_hit_at_5,
                     document_relevance_score,
                     faithfulness_score,
                     groundedness_score,
                     response_relevance_score,
                     response_completeness_score,
                     citation_correctness_score,
+                    answer_accuracy_score,
+                    answer_logic_score,
                     hallucination_flag,
                     needs_human,
                     failure_type,
@@ -7154,32 +8451,38 @@ class PostgresKnowledgeRepository:
                 "answer_preview": row[9],
                 "expected_document_ids": _json_list(row[10]),
                 "expected_heading_paths": _json_list(row[11]),
-                "trace_payload": _json_dict(row[12]),
-                "hit_at_1": _coalesce_metric(row[13]),
-                "hit_at_3": _coalesce_metric(row[14]),
-                "hit_at_5": _coalesce_metric(row[15]),
-                "recall_at_5": _coalesce_metric(row[16]),
-                "mrr": _coalesce_metric(row[17]),
-                "ndcg_at_5": _coalesce_metric(row[18]),
-                "document_relevance_score": _coalesce_metric(row[19]),
-                "faithfulness_score": _coalesce_metric(row[20]),
-                "groundedness_score": _coalesce_metric(row[21]),
-                "response_relevance_score": _coalesce_metric(row[22]),
-                "response_completeness_score": _coalesce_metric(row[23]),
-                "citation_correctness_score": _coalesce_metric(row[24]),
-                "hallucination_flag": bool(row[25]) if row[25] is not None else None,
-                "needs_human": bool(row[26]) if row[26] is not None else None,
-                "failure_type": row[27],
-                "root_cause_label": row[28],
-                "retrieval_latency_ms": _coalesce_metric(row[29]),
-                "generation_latency_ms": _coalesce_metric(row[30]),
-                "total_latency_ms": _coalesce_metric(row[31]),
-                "selected_doc_count": row[32],
-                "top1_similarity_score": _coalesce_metric(row[33]),
-                "avg_selected_similarity_score": _coalesce_metric(row[34]),
-                "avg_cost_per_query": _coalesce_metric(row[35]),
-                "judge_votes": _json_list(row[36]),
-                "judge_disagreement_flag": bool(row[37]) if row[37] is not None else None,
+                "expected_evidence_refs": _json_list(row[12]),
+                "trace_payload": _json_dict(row[13]),
+                "hit_at_1": _coalesce_metric(row[14]),
+                "hit_at_3": _coalesce_metric(row[15]),
+                "hit_at_5": _coalesce_metric(row[16]),
+                "recall_at_5": _coalesce_metric(row[17]),
+                "mrr": _coalesce_metric(row[18]),
+                "ndcg_at_5": _coalesce_metric(row[19]),
+                "evidence_hit_at_1": _coalesce_metric(row[20]),
+                "evidence_hit_at_3": _coalesce_metric(row[21]),
+                "evidence_hit_at_5": _coalesce_metric(row[22]),
+                "document_relevance_score": _coalesce_metric(row[23]),
+                "faithfulness_score": _coalesce_metric(row[24]),
+                "groundedness_score": _coalesce_metric(row[25]),
+                "response_relevance_score": _coalesce_metric(row[26]),
+                "response_completeness_score": _coalesce_metric(row[27]),
+                "citation_correctness_score": _coalesce_metric(row[28]),
+                "answer_accuracy_score": _coalesce_metric(row[29]),
+                "answer_logic_score": _coalesce_metric(row[30]),
+                "hallucination_flag": bool(row[31]) if row[31] is not None else None,
+                "needs_human": bool(row[32]) if row[32] is not None else None,
+                "failure_type": row[33],
+                "root_cause_label": row[34],
+                "retrieval_latency_ms": _coalesce_metric(row[35]),
+                "generation_latency_ms": _coalesce_metric(row[36]),
+                "total_latency_ms": _coalesce_metric(row[37]),
+                "selected_doc_count": row[38],
+                "top1_similarity_score": _coalesce_metric(row[39]),
+                "avg_selected_similarity_score": _coalesce_metric(row[40]),
+                "avg_cost_per_query": _coalesce_metric(row[41]),
+                "judge_votes": _json_list(row[42]),
+                "judge_disagreement_flag": bool(row[43]) if row[43] is not None else None,
             }
             grouped.setdefault(str(row[0]), {})[str(row[1])] = payload
         return grouped
@@ -7701,15 +9004,21 @@ class PostgresKnowledgeRepository:
             "extractive_fallback_used": bool(trace_payload.get("extractive_fallback_used")),
             "expected_document_ids": _json_list(row.get("expected_document_ids")),
             "expected_heading_paths": _json_list(row.get("expected_heading_paths")),
+            "expected_evidence_refs": _json_list(row.get("expected_evidence_refs")),
             "missed_expected_docs": _json_list(trace_payload.get("missed_expected_docs")),
             "candidates": candidates,
             "selected_contexts": selected_contexts,
+            "evidence_hit_at_1": row.get("evidence_hit_at_1"),
+            "evidence_hit_at_3": row.get("evidence_hit_at_3"),
+            "evidence_hit_at_5": row.get("evidence_hit_at_5"),
             "document_relevance_score": row.get("document_relevance_score"),
             "faithfulness_score": row.get("faithfulness_score"),
             "groundedness_score": row.get("groundedness_score"),
             "response_relevance_score": row.get("response_relevance_score"),
             "response_completeness_score": row.get("response_completeness_score"),
             "citation_correctness_score": row.get("citation_correctness_score"),
+            "answer_accuracy_score": row.get("answer_accuracy_score"),
+            "answer_logic_score": row.get("answer_logic_score"),
             "hallucination_flag": row.get("hallucination_flag"),
             "failure_type": row.get("failure_type"),
             "judge_votes": _json_list(row.get("judge_votes")),
@@ -7746,6 +9055,9 @@ class PostgresKnowledgeRepository:
             ("hit_at_1", "Hit@1"),
             ("hit_at_3", "Hit@3"),
             ("hit_at_5", "Hit@5"),
+            ("evidence_hit_at_1", "Evidence Hit@1"),
+            ("evidence_hit_at_3", "Evidence Hit@3"),
+            ("evidence_hit_at_5", "Evidence Hit@5"),
             ("recall_at_5", "Recall@5"),
             ("mrr", "MRR"),
             ("ndcg_at_5", "NDCG@5"),
@@ -7755,6 +9067,8 @@ class PostgresKnowledgeRepository:
             ("response_relevance_score_avg", "Response Relevance"),
             ("response_completeness_score_avg", "Response Completeness"),
             ("citation_correctness_score_avg", "Citation Correctness"),
+            ("answer_accuracy_score_avg", "Answer Accuracy"),
+            ("answer_logic_score_avg", "Answer Logic"),
             ("hallucination_rate", "Hallucination Rate"),
             ("judge_disagreement_rate", "Judge Disagreement Rate"),
             ("p95_latency_ms", "P95 Latency (ms)"),
@@ -7791,10 +9105,13 @@ class PostgresKnowledgeRepository:
                 ],
                 "cards": {
                     "candidate_quality_rank_score": (candidate or {}).get("quality_rank_score"),
+                    "candidate_answer_accuracy_score_avg": (candidate or {}).get("answer_accuracy_score_avg"),
+                    "candidate_answer_logic_score_avg": (candidate or {}).get("answer_logic_score_avg"),
                     "candidate_faithfulness_score_avg": (candidate or {}).get("faithfulness_score_avg"),
                     "candidate_groundedness_score_avg": (candidate or {}).get("groundedness_score_avg"),
                     "candidate_citation_correctness_score_avg": (candidate or {}).get("citation_correctness_score_avg"),
                     "candidate_hit_at_5": (candidate or {}).get("hit_at_5"),
+                    "candidate_evidence_hit_at_5": (candidate or {}).get("evidence_hit_at_5"),
                     "baseline_quality_rank_score": (baseline or {}).get("quality_rank_score"),
                 },
             },
@@ -7906,6 +9223,18 @@ class PostgresKnowledgeRepository:
                 "citation_correctness_score": _round_delta(
                     primary_row.get("citation_correctness_score"),
                     baseline_row.get("citation_correctness_score"),
+                ),
+                "answer_accuracy_score": _round_delta(
+                    primary_row.get("answer_accuracy_score"),
+                    baseline_row.get("answer_accuracy_score"),
+                ),
+                "answer_logic_score": _round_delta(
+                    primary_row.get("answer_logic_score"),
+                    baseline_row.get("answer_logic_score"),
+                ),
+                "evidence_hit_at_5": _round_delta(
+                    primary_row.get("evidence_hit_at_5"),
+                    baseline_row.get("evidence_hit_at_5"),
                 ),
                 "hit_at_5": _round_delta(primary_row.get("hit_at_5"), baseline_row.get("hit_at_5")),
             }
@@ -8063,16 +9392,19 @@ class PostgresKnowledgeRepository:
 
     def _review_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
         review_rows = self._review_queue_rows(days, filters)
-        pending_review_count, live_review_count, benchmark_review_count = self._review_queue_summary(days)
+        pending_review_count, live_review_count, benchmark_review_count, dataset_review_count = self._review_queue_summary(
+            days
+        )
         reviewed_count = sum(1 for row in review_rows if row.get("review_status") == "reviewed")
         sections = {
             "summary": {
                 "title": "Review Queue",
-                "subtitle": "Close the loop on risky live traffic and disputed benchmark samples.",
+                "subtitle": "Close the loop on risky live traffic, disputed benchmark samples, and dataset promotion decisions.",
                 "cards": {
                     "pending_review_count": pending_review_count,
                     "live_review_sample_count": live_review_count,
                     "benchmark_review_sample_count": benchmark_review_count,
+                    "dataset_review_sample_count": dataset_review_count,
                     "reviewed_throughput": reviewed_count,
                 },
             },
@@ -8081,6 +9413,7 @@ class PostgresKnowledgeRepository:
                 "pending_rows": [row for row in review_rows if row.get("review_status") == "pending"],
                 "benchmark_rows": [row for row in review_rows if row.get("sample_source") == "benchmark"],
                 "live_rows": [row for row in review_rows if row.get("sample_source") == "live_query"],
+                "dataset_rows": [row for row in review_rows if row.get("sample_source") == "dataset_candidate"],
             },
         }
         return self._build_workbench_envelope(
@@ -8089,6 +9422,227 @@ class PostgresKnowledgeRepository:
             filters=filters,
             sections=sections,
             has_eval_data=True,
+        )
+
+    def _datasets_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
+        source_type_value = _clean_text(filters.get("source_type"))
+        source_clause = ""
+        source_params: list[Any] = []
+        if source_type_value and source_type_value != "all":
+            source_clause = """
+              AND EXISTS (
+                  SELECT 1
+                  FROM jsonb_array_elements_text(g.source_types) AS source_type_value
+                  WHERE source_type_value = %s
+              )
+            """
+            source_params.append(source_type_value)
+        language_value = _clean_text(filters.get("language"))
+        language_clause = ""
+        language_params: list[Any] = []
+        if language_value and language_value != "all":
+            language_clause = " AND g.question_language = %s "
+            language_params.append(language_value)
+        generation_rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    g.generation_run_id,
+                    g.dataset_id,
+                    g.dataset_name,
+                    g.benchmark_version,
+                    g.question_language,
+                    g.source_types,
+                    g.status,
+                    g.candidate_count_total,
+                    g.silver_item_count,
+                    g.gold_item_count,
+                    g.review_required_count,
+                    g.reviewed_item_count,
+                    g.error_message,
+                    g.created_at,
+                    g.started_at,
+                    g.finished_at,
+                    d.status AS dataset_status
+                FROM {} AS g
+                JOIN {} AS d
+                  ON d.dataset_id = g.dataset_id
+                WHERE g.created_at >= NOW() - (%s * INTERVAL '1 day')
+                {source_clause}
+                {language_clause}
+                ORDER BY g.created_at DESC
+                LIMIT %s
+                """
+            ).format(
+                self._table("support_rag_dataset_generation_runs"),
+                self._table("support_rag_datasets"),
+                source_clause=sql.SQL(source_clause),
+                language_clause=sql.SQL(language_clause),
+            ),
+            tuple([days, *source_params, *language_params, filters["limit"]]),
+        )
+        item_filter_sql, item_filter_params = self._build_filter_clause(
+            filters,
+            {
+                "source_type": "i.source_type",
+                "product": "i.product",
+                "language": "i.language",
+                "query_type": "i.query_type",
+            },
+        )
+        dataset_rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    d.dataset_id,
+                    d.dataset_name,
+                    d.benchmark_version,
+                    d.question_language,
+                    d.source_types,
+                    d.status,
+                    d.created_at,
+                    d.updated_at,
+                    COALESCE(MAX(g.generation_run_id), NULL) AS generation_run_id,
+                    COUNT(i.dataset_item_id) AS item_count_total,
+                    COUNT(*) FILTER (WHERE i.item_status = 'silver') AS silver_item_count,
+                    COUNT(*) FILTER (WHERE i.item_status = 'gold') AS gold_item_count,
+                    COUNT(*) FILTER (
+                        WHERE s.sample_id IS NOT NULL
+                          AND s.review_status = 'pending'
+                    ) AS pending_review_count
+                FROM {} AS d
+                LEFT JOIN {} AS g
+                  ON g.dataset_id = d.dataset_id
+                LEFT JOIN {} AS i
+                  ON i.dataset_id = d.dataset_id
+                LEFT JOIN {} AS s
+                  ON s.dataset_item_id = i.dataset_item_id
+                 AND s.sample_source = 'dataset_candidate'
+                WHERE d.created_at >= NOW() - (%s * INTERVAL '1 day')
+                {filters}
+                GROUP BY d.dataset_id, d.dataset_name, d.benchmark_version, d.question_language, d.source_types, d.status, d.created_at, d.updated_at
+                ORDER BY d.created_at DESC
+                LIMIT %s
+                """
+            ).format(
+                self._table("support_rag_datasets"),
+                self._table("support_rag_dataset_generation_runs"),
+                self._table("support_rag_dataset_items"),
+                self._table("support_rag_review_samples"),
+                filters=sql.SQL(item_filter_sql),
+            ),
+            tuple([days, *item_filter_params, filters["limit"]]),
+        )
+        coverage_rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    d.dataset_id,
+                    d.dataset_name,
+                    d.benchmark_version,
+                    i.source_type,
+                    i.query_type,
+                    i.difficulty,
+                    i.language,
+                    COUNT(*) FILTER (WHERE i.item_status = 'silver') AS silver_item_count,
+                    COUNT(*) FILTER (WHERE i.item_status = 'gold') AS gold_item_count
+                FROM {} AS i
+                JOIN {} AS d
+                  ON d.dataset_id = i.dataset_id
+                WHERE d.created_at >= NOW() - (%s * INTERVAL '1 day')
+                {filters}
+                GROUP BY d.dataset_id, d.dataset_name, d.benchmark_version, i.source_type, i.query_type, i.difficulty, i.language
+                ORDER BY gold_item_count DESC, silver_item_count DESC, d.created_at DESC, i.source_type ASC, i.query_type ASC
+                LIMIT %s
+                """
+            ).format(
+                self._table("support_rag_dataset_items"),
+                self._table("support_rag_datasets"),
+                filters=sql.SQL(item_filter_sql),
+            ),
+            tuple([days, *item_filter_params, max(filters["limit"] * 3, 30)]),
+        )
+        generation_run_rows = [
+            {
+                "generation_run_id": row[0],
+                "dataset_id": row[1],
+                "dataset_name": row[2],
+                "benchmark_version": row[3],
+                "question_language": row[4],
+                "source_types": _json_list(row[5]),
+                "status": row[6],
+                "candidate_count_total": int(row[7] or 0),
+                "silver_item_count": int(row[8] or 0),
+                "gold_item_count": int(row[9] or 0),
+                "review_required_count": int(row[10] or 0),
+                "reviewed_item_count": int(row[11] or 0),
+                "error_message": row[12],
+                "created_at": _to_iso(row[13]) if row[13] is not None else None,
+                "started_at": _to_iso(row[14]) if row[14] is not None else None,
+                "finished_at": _to_iso(row[15]) if row[15] is not None else None,
+                "dataset_status": row[16],
+            }
+            for row in generation_rows
+        ]
+        dataset_version_rows = [
+            {
+                "dataset_id": row[0],
+                "dataset_name": row[1],
+                "benchmark_version": row[2],
+                "question_language": row[3],
+                "source_types": _json_list(row[4]),
+                "status": row[5],
+                "created_at": _to_iso(row[6]) if row[6] is not None else None,
+                "updated_at": _to_iso(row[7]) if row[7] is not None else None,
+                "generation_run_id": row[8],
+                "item_count_total": int(row[9] or 0),
+                "silver_item_count": int(row[10] or 0),
+                "gold_item_count": int(row[11] or 0),
+                "pending_review_count": int(row[12] or 0),
+            }
+            for row in dataset_rows
+        ]
+        coverage_table_rows = [
+            {
+                "dataset_id": row[0],
+                "dataset_name": row[1],
+                "benchmark_version": row[2],
+                "source_type": row[3],
+                "query_type": row[4],
+                "difficulty": row[5],
+                "language": row[6],
+                "silver_item_count": int(row[7] or 0),
+                "gold_item_count": int(row[8] or 0),
+            }
+            for row in coverage_rows
+        ]
+        summary_cards = {
+            "generation_run_count": len(generation_run_rows),
+            "queued_or_processing_run_count": sum(
+                1 for row in generation_run_rows if row.get("status") in {"queued", "processing"}
+            ),
+            "dataset_version_count": len(dataset_version_rows),
+            "silver_item_count": sum(int(row.get("silver_item_count") or 0) for row in dataset_version_rows),
+            "gold_item_count": sum(int(row.get("gold_item_count") or 0) for row in dataset_version_rows),
+            "pending_review_count": sum(int(row.get("pending_review_count") or 0) for row in dataset_version_rows),
+            "coverage_row_count": len(coverage_table_rows),
+        }
+        sections = {
+            "summary": {
+                "title": "Datasets",
+                "subtitle": "Generate benchmark candidates, review risky samples, and promote gold items for fixed eval snapshots.",
+                "cards": summary_cards,
+            },
+            "generation_runs": {"rows": generation_run_rows},
+            "dataset_versions": {"rows": dataset_version_rows},
+            "coverage": {"rows": coverage_table_rows},
+        }
+        return self._build_workbench_envelope(
+            layout="datasets",
+            range_value=range_value,
+            filters=filters,
+            sections=sections,
+            has_eval_data=bool(generation_run_rows or dataset_version_rows or coverage_table_rows),
         )
 
     def rag_dashboard_page(
@@ -8103,6 +9657,8 @@ class PostgresKnowledgeRepository:
         normalized_filters = self._normalize_dashboard_filters(filters)
         if normalized_page == "experiments":
             return self._experiments_workbench_page(normalized_range, days, normalized_filters)
+        if normalized_page == "datasets":
+            return self._datasets_workbench_page(normalized_range, days, normalized_filters)
         if normalized_page == "diagnosis":
             return self._diagnosis_workbench_page(normalized_range, days, normalized_filters)
         if normalized_page == "knowledge-supply":

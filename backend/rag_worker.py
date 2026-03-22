@@ -5,10 +5,13 @@ import os
 import signal
 import sys
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from backend.repositories.event_repository import create_event_repository
 from backend.repositories.knowledge_repository import create_knowledge_repository
+from backend.services.rag_benchmark_runner import run_benchmark
+from backend.services.rag_eval_dataset_factory import process_dataset_generation
 from backend.services.event_bus import SyncRedisEventBus
 from backend.services.knowledge_ingestion import process_knowledge_ingestion
 from backend.services.knowledge_monitoring import build_knowledge_event_payload
@@ -20,6 +23,10 @@ SHUTTING_DOWN = False
 knowledge_repository = create_knowledge_repository()
 event_repository = create_event_repository()
 task_queue = SyncRedisTaskQueue(queue_name=(os.getenv("RAG_QUEUE_NAME") or "support.rag.tasks").strip())
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _install_signal_handlers() -> None:
@@ -86,6 +93,86 @@ def _process_knowledge_ingest(bus: SyncRedisEventBus, task: dict[str, Any]) -> N
     _publish(bus, ["dashboard"], completed_payload)
 
 
+def _process_dataset_generation(task: dict[str, Any]) -> None:
+    generation_run_id = str(task.get("generation_run_id") or "").strip()
+    if not generation_run_id:
+        LOGGER.warning("RAG worker skipped dataset_generation task without generation_run_id")
+        return
+    if not knowledge_repository.is_enabled():
+        LOGGER.warning("RAG worker skipped dataset_generation %s because repository is disabled", generation_run_id)
+        return
+    try:
+        knowledge_repository.update_dataset_generation_run(
+            generation_run_id,
+            status="processing",
+            error_message="",
+            started_at=_utc_now(),
+        )
+        process_dataset_generation(knowledge_repository, generation_run_id)
+    except Exception as exc:
+        knowledge_repository.update_dataset_generation_run(
+            generation_run_id,
+            status="failed",
+            error_message=str(exc),
+            finished_at=_utc_now(),
+        )
+        raise
+
+
+def _process_dataset_benchmark(task: dict[str, Any]) -> None:
+    dataset_id = str(task.get("dataset_id") or "").strip()
+    eval_run_id = str(task.get("eval_run_id") or "").strip()
+    if not dataset_id or not eval_run_id:
+        LOGGER.warning("RAG worker skipped dataset_benchmark task without dataset_id/eval_run_id")
+        return
+    if not knowledge_repository.is_enabled():
+        LOGGER.warning("RAG worker skipped dataset_benchmark %s because repository is disabled", eval_run_id)
+        return
+    snapshot = knowledge_repository.get_dataset_snapshot(dataset_id)
+    experiment_id = str(task.get("experiment_id") or "").strip() or eval_run_id
+    if snapshot is not None:
+        knowledge_repository.upsert_rag_eval_run(
+            eval_run={
+                "eval_run_id": eval_run_id,
+                "dataset_name": snapshot.get("dataset_name"),
+                "eval_type": "dataset_snapshot_benchmark",
+                "experiment_id": experiment_id,
+                "strategy_snapshot": {},
+                "judge_models": [],
+                "benchmark_version": snapshot.get("benchmark_version"),
+                "status": "running",
+                "started_at": _utc_now(),
+                "finished_at": None,
+            }
+        )
+    try:
+        run_benchmark(
+            dataset_id=dataset_id,
+            dataset_tier=str(task.get("tier") or "gold").strip() or "gold",
+            experiment_id=experiment_id,
+            top_k=int(task.get("top_k")) if task.get("top_k") is not None else None,
+            repository=knowledge_repository,
+            eval_run_id=eval_run_id,
+        )
+    except Exception:
+        if snapshot is not None:
+            knowledge_repository.upsert_rag_eval_run(
+                eval_run={
+                    "eval_run_id": eval_run_id,
+                    "dataset_name": snapshot.get("dataset_name"),
+                    "eval_type": "dataset_snapshot_benchmark",
+                    "experiment_id": experiment_id,
+                    "strategy_snapshot": {},
+                    "judge_models": [],
+                    "benchmark_version": snapshot.get("benchmark_version"),
+                    "status": "failed",
+                    "started_at": _utc_now(),
+                    "finished_at": _utc_now(),
+                }
+            )
+        raise
+
+
 def main() -> int:
     logging.basicConfig(
         level=logging.INFO,
@@ -115,13 +202,17 @@ def main() -> int:
         if task is None:
             continue
         task_type = str(task.get("task_type") or "").strip()
-        if task_type != "knowledge_ingest":
-            LOGGER.info("RAG worker skipped unsupported task type: %s", task_type or "(missing)")
-            continue
         try:
-            _process_knowledge_ingest(bus, task)
+            if task_type == "knowledge_ingest":
+                _process_knowledge_ingest(bus, task)
+            elif task_type == "dataset_generation":
+                _process_dataset_generation(task)
+            elif task_type == "dataset_benchmark":
+                _process_dataset_benchmark(task)
+            else:
+                LOGGER.info("RAG worker skipped unsupported task type: %s", task_type or "(missing)")
         except Exception as exc:
-            LOGGER.exception("RAG worker failed to process knowledge ingestion task: %s", exc)
+            LOGGER.exception("RAG worker failed to process task type %s: %s", task_type or "(missing)", exc)
         time.sleep(0.05)
 
     task_queue.close()
