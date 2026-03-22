@@ -140,3 +140,63 @@ For each new entry, record:
   - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
   - `podman-compose -f deployment/docker-compose.single-host.yml ps`
   - Async ticket verification with `TECH-WORKER-RETRY`, including recovery from delayed ticket/message persistence and final citation-backed assistant reply
+
+## 2026-03-22 - True BM25 + hybrid rerank retrieval chain
+
+- Summary: Replaced the online `vector + FTS` retrieval path with `vector + true BM25 + RRF + metadata prune/pre-rank + rerank-ready final selection`, added BM25 index tables and shared tokenization, persisted richer retrieval telemetry, added automatic BM25 backfill for existing primary chunks, and published a single canonical retrieval-chain document.
+- Reason: The old lexical path was still PostgreSQL FTS instead of true BM25, candidate telemetry did not capture cross-stage rank transitions, and existing corpora needed a safe backfill path so the new lexical route would work immediately after deployment.
+- Affected files or config:
+  - `backend/services/rag_qa.py`
+  - `backend/services/rag_tokenizer.py`
+  - `backend/services/bm25_index.py`
+  - `backend/rag_api.py`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_rag_tokenizer.py`
+  - `backend/tests/test_bm25_index.py`
+  - `backend/tests/test_knowledge_repository_bm25.py`
+  - `backend/tests/test_rag_reset.py`
+  - `docs/rag_retrieval_chain.md`
+  - `docs/official_doc_chunking_rules.md`
+  - `docs/technical_doc_chunking_rules.md`
+  - `docs/rag_change_log.md`
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `README.md`
+- Data impact:
+  - Added `support_knowledge_bm25_docs`, `support_knowledge_bm25_postings`, `support_knowledge_bm25_terms`, and `support_knowledge_bm25_stats`
+  - Primary chunk upsert/delete now synchronizes BM25 index state
+  - Repository startup now backfills BM25 docs from the current primary vector table when lexical stats are missing or stale
+  - `support_rag_query_runs` now persists `reranker_provider` and `reranker_model`
+  - `support_rag_query_candidates` now persists `candidate_trace JSONB`, including `vector_rank`, `bm25_rank`, `rrf_rank`, `metadata_rank`, `rerank_rank`, and `retrieval_sources`
+  - Existing retrieval docs were updated to point to the central `docs/rag_retrieval_chain.md`
+- Verification:
+  - `./.venv/bin/python -m unittest backend.tests.test_rag_tokenizer backend.tests.test_bm25_index backend.tests.test_knowledge_repository_bm25 backend.tests.test_rag_qa backend.tests.test_rag_reset`
+  - `./.venv/bin/python -m unittest backend.tests.test_rag_benchmark_runner backend.tests.test_rag_benchmark`
+  - `./.venv/bin/python -m unittest backend.tests.test_knowledge_ingestion backend.tests.test_repository_configuration backend.tests.test_local_source_sync`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health` returned `knowledge_storage=postgres` and `rag_service=ok` after restart
+  - Live official-doc validation through `POST /internal/rag/query` returned a grounded answer for `VERIFY-OFFICIAL-BM25-20260322`
+  - Live technical-case validation through `POST /internal/rag/query` returned a grounded answer for `VERIFY-TECH-BM25-20260322`
+  - Post-deploy BM25 stats showed `support_knowledge_bm25_docs=124` and `support_knowledge_bm25_stats=('primary', 124, 120.5241935483871)`
+  - Post-deploy query telemetry showed `retrieval_strategy='hybrid_rrf_bm25'`, `bm25_candidates_count=47` for `VERIFY-OFFICIAL-BM25-20260322`, and `bm25_candidates_count=5` for `VERIFY-TECH-BM25-20260322`
+
+## 2026-03-22 - SiliconFlow reranker key compatibility follow-up
+
+- Summary: Extended the reranker API key fallback chain to read lowercase `.env` aliases, including the deployed `silliconflow_key` variable, and added a regression test for that path.
+- Reason: Embedding requests already accepted lowercase SiliconFlow key aliases, but the reranker config still only checked uppercase names, which caused the hybrid retrieval chain to silently fall back to metadata ordering even when the key was present in `.env`.
+- Affected files or config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema or corpus changes
+  - Reranker requests can now authenticate from lowercase `.env` aliases without requiring duplicate uppercase entries
+- Verification:
+  - `./.venv/bin/python -m unittest backend.tests.test_rag_qa`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - Live `POST /internal/rag/query` validation confirms reranker candidates now persist `rerank_rank` in `candidate_trace` when `silliconflow_key` is supplied from `.env`

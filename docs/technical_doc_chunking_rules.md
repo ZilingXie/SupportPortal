@@ -121,27 +121,27 @@ Each technical-case chunk must store these metadata fields in `metadata`:
 
 Existing common metadata such as `source_type`, `knowledge_type`, `title`, `source_url`, `platform`, `product`, `language`, and `tags` must remain populated.
 
-## Retrieval Rules
+## Retrieval Integration
 
-Retrieval remains:
-- vector retrieval
-- FTS retrieval
-- RRF merge
+The canonical online retrieval chain now lives in:
+- [docs/rag_retrieval_chain.md](/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/rag_retrieval_chain.md)
 
-After merge, a metadata-aware rerank/filter layer uses technical-case metadata.
+This document only defines the technical-case metadata contract that retrieval consumes.
+
+Technical-case metadata is used during the metadata prune / pre-rank stage before external reranking.
 
 ### Technical Query Intents
 
-The rerank layer recognizes:
+The technical metadata layer recognizes:
 - `root_cause`
 - `troubleshooting`
 - `decision_logic`
 - `best_practice`
 - default `symptom_lookup`
 
-### Technical Rerank Signals
+### Technical Metadata Signals
 
-Soft boosts apply on:
+Technical metadata prune / pre-rank can use:
 - `chunk_type`
 - `issue_category`
 - `symptoms`
@@ -156,7 +156,7 @@ Strong intent filtering is enabled for:
 - `best_practice` -> `best_practice`
 - `root_cause` -> `root_cause_summary`, `issue_summary`
 
-If no matching technical intent chunk exists, the reranker falls back to the full candidate pool.
+If no matching technical intent chunk exists, the metadata layer falls back to the full candidate pool before external reranking.
 
 ## Shadow Strategy
 
@@ -215,7 +215,7 @@ Implemented changes:
 - technical articles are now parsed into semantic case sections
 - technical primary chunking now uses `technical_case_units_v1`
 - technical metadata now includes troubleshooting-case retrieval fields
-- technical retrieval now uses intent-aware rerank/filter
+- technical retrieval now uses the central hybrid chain in `docs/rag_retrieval_chain.md`, with technical metadata used for prune / pre-rank
 - technical shadow remains on the legacy semantic strategy
 
 Verification targets:

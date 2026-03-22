@@ -127,6 +127,14 @@ def _knowledge_vector_table() -> str:
     return f"{schema}.{raw_table}"
 
 
+def _knowledge_reranker_provider() -> str:
+    return (os.getenv("RAG_RERANK_PROVIDER") or "siliconflow").strip() or "siliconflow"
+
+
+def _knowledge_reranker_model() -> str:
+    return (os.getenv("RAG_RERANK_MODEL") or "BAAI/bge-reranker-v2-m3").strip() or "BAAI/bge-reranker-v2-m3"
+
+
 def _query_cost(
     *,
     model_name: str | None,
@@ -341,7 +349,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
                     "user_query": request.question,
                     "intent": "knowledge_qa",
                     "query_type": "unclear_query",
-                    "retrieval_strategy": "hybrid_rrf",
+                    "retrieval_strategy": "hybrid_rrf_bm25",
                     "top_k": request.top_k or 6,
                     "vector_candidates_count": 0,
                     "bm25_candidates_count": 0,
@@ -367,6 +375,8 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
                     "embedding_request_meta": [],
                     "primary_source_type": None,
                     "primary_chunk_strategy": None,
+                    "reranker_provider": _knowledge_reranker_provider(),
+                    "reranker_model": _knowledge_reranker_model(),
                     "generation_mode": "insufficient_evidence",
                     "structured_retry_used": False,
                     "extractive_fallback_used": False,
@@ -407,7 +417,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
                     "user_query": request.question,
                     "intent": "knowledge_qa",
                     "query_type": "unclear_query",
-                    "retrieval_strategy": "hybrid_rrf",
+                    "retrieval_strategy": "hybrid_rrf_bm25",
                     "top_k": request.top_k or 6,
                     "vector_candidates_count": 0,
                     "bm25_candidates_count": 0,
@@ -433,6 +443,8 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
                     "embedding_request_meta": [],
                     "primary_source_type": None,
                     "primary_chunk_strategy": None,
+                    "reranker_provider": _knowledge_reranker_provider(),
+                    "reranker_model": _knowledge_reranker_model(),
                     "generation_mode": "insufficient_evidence",
                     "structured_retry_used": False,
                     "extractive_fallback_used": False,
@@ -505,6 +517,8 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             "embedding_request_meta": trace.embedding_request_meta,
             "primary_source_type": trace.primary_source_type,
             "primary_chunk_strategy": trace.primary_chunk_strategy,
+            "reranker_provider": trace.reranker_provider,
+            "reranker_model": trace.reranker_model,
             "generation_mode": trace.generation_mode,
             "structured_retry_used": trace.structured_retry_used,
             "extractive_fallback_used": trace.extractive_fallback_used,

@@ -1,0 +1,249 @@
+# RAG Retrieval Chain
+
+## Scope
+
+This document is the canonical specification for the online SupportPortal retrieval chain.
+
+It applies to:
+- `backend/services/rag_qa.py`
+- `backend/rag_api.py`
+- `backend/repositories/knowledge_repository.py`
+- `backend/services/knowledge_ingestion.py`
+
+It does not redefine source-specific chunking rules. Chunk structure and metadata contracts remain in:
+- [docs/official_doc_chunking_rules.md](/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/official_doc_chunking_rules.md)
+- [docs/technical_doc_chunking_rules.md](/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/technical_doc_chunking_rules.md)
+
+## Overview
+
+Current online retrieval chain:
+
+`query -> vector recall + BM25 recall -> RRF fusion -> metadata prune/boost -> SiliconFlow rerank -> topK context -> generation`
+
+Only `index_role='primary'` chunks participate in online retrieval.
+
+## Stage Graph
+
+```text
+user query
+  -> vector coarse recall (pgvector)
+  -> BM25 coarse recall (PostgreSQL BM25 tables)
+  -> RRF fusion
+  -> metadata-aware prune / pre-rank
+  -> external rerank (SiliconFlow BAAI/bge-reranker-v2-m3)
+  -> final topK chunks
+  -> answer generation
+```
+
+## Stage Inputs And Outputs
+
+### 1. Vector Coarse Recall
+
+Input:
+- raw query text
+- query embedding
+
+Output:
+- up to `RAG_VECTOR_CANDIDATE_K` primary chunks
+- per-candidate trace fields such as `vector_rank` and `vector_similarity`
+
+### 2. BM25 Coarse Recall
+
+Input:
+- raw query text
+- shared BM25 tokenizer output
+
+Output:
+- up to `RAG_BM25_CANDIDATE_K` primary chunks
+- per-candidate trace fields such as `bm25_rank` and `bm25_score`
+
+BM25 implementation details:
+- document text is built as `h1 x3 + h2 x2 + h3 x2 + content x1`
+- tokenizer preserves lowercased ASCII technical identifiers
+- tokenizer also emits CJK segments and CJK 2-grams
+- formula uses Robertson/Sparck Jones BM25:
+  - `idf = ln(1 + (N - df + 0.5) / (df + 0.5))`
+  - default `k1=1.2`
+  - default `b=0.75`
+
+Backing tables:
+- `support_knowledge_bm25_docs`
+- `support_knowledge_bm25_postings`
+- `support_knowledge_bm25_terms`
+- `support_knowledge_bm25_stats`
+
+### 3. Fusion
+
+Input:
+- vector candidate list
+- BM25 candidate list
+
+Output:
+- one fused candidate list ordered by Reciprocal Rank Fusion
+- per-candidate trace fields such as `rrf_rank` and `rrf_score`
+
+Default behavior:
+- use RRF as the main fusion path
+- if RRF receives no fused output, fall back to ordered dedupe merge
+
+### 4. Metadata Prune / Pre-Rank
+
+Input:
+- fused candidate list
+- source-specific chunk metadata
+
+Output:
+- filtered or boosted candidate list
+- per-candidate trace fields such as `metadata_rank` and `metadata_score`
+
+Responsibilities:
+- apply hard filters only when the query contains strong explicit hints
+- apply source-aware soft boosts before external rerank
+- keep official-doc and technical-case metadata logic in the source-specific chunking specs
+
+### 5. External Rerank
+
+Input:
+- metadata-pruned candidate list
+- query text
+- candidate document text formatted as:
+  - `source_path`
+  - heading breadcrumb
+  - chunk text
+
+Output:
+- final ranked candidate list
+- per-candidate trace fields such as `rerank_rank` and `external_rerank_score`
+
+Current provider:
+- `SiliconFlow`
+
+Current model:
+- `BAAI/bge-reranker-v2-m3`
+
+### 6. Final Context Selection
+
+Input:
+- reranked candidate list
+
+Output:
+- first `top_k` chunks
+- citation pool for generation
+
+Default:
+- `top_k = 6`
+
+### 7. Generation
+
+Input:
+- final `top_k` chunks
+- original query
+
+Output:
+- same external response contract as before
+- `answer`
+- `citations`
+- `insufficient_evidence`
+
+## Runtime Config
+
+Primary retrieval config:
+- `RAG_TOP_K`: default `6`
+- `RAG_VECTOR_CANDIDATE_K`: default `max(40, top_k * 10)`
+- `RAG_BM25_CANDIDATE_K`: default `max(40, top_k * 10)`
+- `RAG_FUSION_CANDIDATE_K`: default `max(30, top_k * 8)`
+- `RAG_RERANK_TOP_N`: default `max(20, top_k * 4)`
+- `RAG_BM25_K1`: default `1.2`
+- `RAG_BM25_B`: default `0.75`
+
+External rerank config:
+- `RAG_RERANK_PROVIDER`: default `siliconflow`
+- `RAG_RERANK_MODEL`: default `BAAI/bge-reranker-v2-m3`
+- `RAG_RERANK_API_KEY`: falls back to `SILICONFLOW_API_KEY`
+- `RAG_RERANK_BASE_URL`: falls back to `SILICONFLOW_BASE_URL`
+- `RAG_RERANK_TIMEOUT_SECONDS`: default `10`
+- `RAG_RERANK_MAX_RETRIES`: default `1`
+
+## Degradation Behavior
+
+Normal path:
+- vector recall + true BM25 recall + RRF + metadata prune + external rerank
+
+Fallback behavior:
+- PostgreSQL FTS is no longer part of the online main path
+- if BM25 retrieval fails or returns nothing, a keyword `LIKE` fallback can still be used as a degraded recovery path
+- keyword fallback does not populate `bm25_candidates_count`
+- keyword fallback does not populate `bm25_retrieval_latency_ms`
+- if external rerank fails, the system falls back to metadata ordering
+- if no grounded candidate survives, generation returns insufficient evidence and the ticket can be escalated
+
+## Telemetry Contract
+
+Run-level telemetry:
+- `retrieval_strategy`
+- `vector_candidates_count`
+- `bm25_candidates_count`
+- `vector_retrieval_latency_ms`
+- `bm25_retrieval_latency_ms`
+- `retrieval_latency_ms`
+- `rerank_latency_ms`
+- `reranker_provider`
+- `reranker_model`
+- `retrieved_chunk_ids`
+- `selected_chunk_ids`
+
+Candidate-level telemetry in `support_rag_query_candidates.candidate_trace`:
+- `vector_rank`
+- `vector_similarity`
+- `bm25_rank`
+- `bm25_score`
+- `rrf_rank`
+- `rrf_score`
+- `metadata_rank`
+- `metadata_score`
+- `rerank_rank`
+- `external_rerank_score`
+- `retrieval_sources`
+
+`retrieval_sources` records which recall routes introduced the candidate, for example:
+- `["vector"]`
+- `["bm25"]`
+- `["vector", "bm25"]`
+- `["keyword_fallback"]`
+
+## Differences From The Previous Chain
+
+Old chain:
+- vector recall
+- PostgreSQL FTS recall
+- RRF
+- metadata-aware rerank/filter
+
+Current chain:
+- vector recall
+- true BM25 recall backed by PostgreSQL BM25 tables
+- RRF
+- metadata-aware prune / pre-rank
+- external rerank by `BAAI/bge-reranker-v2-m3`
+
+Main differences:
+- FTS is removed from the online main path
+- lexical retrieval now uses a real BM25 implementation
+- reranking is now split into metadata pre-rank and model rerank
+- candidate telemetry records stage-by-stage rank transitions
+
+## Representative Queries
+
+Official-doc style:
+- `Node.js 的 BuildTokenWithUidAndPrivilege 参数是什么`
+- `怎么用 Docker 部署 token server`
+
+Technical-case style:
+- `怎么判断延迟发生在 Agora 还是客户自己的 queue`
+- `AWS IVS 第一帧晚到怎么排查`
+
+Expected behavior:
+- vector and BM25 both over-recall candidates
+- RRF merges them into one pool
+- metadata narrows obvious mismatch
+- external rerank pushes the best grounded chunk to the top

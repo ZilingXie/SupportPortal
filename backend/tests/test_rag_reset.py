@@ -11,6 +11,10 @@ from backend.services.rag_reset import TableRef, select_rag_reset_targets
 class RagResetTests(unittest.TestCase):
     def test_select_rag_reset_targets_only_includes_rag_tables_and_vector_table(self) -> None:
         tables = [
+            TableRef(schema="supportportal", name="support_knowledge_bm25_docs"),
+            TableRef(schema="supportportal", name="support_knowledge_bm25_postings"),
+            TableRef(schema="supportportal", name="support_knowledge_bm25_stats"),
+            TableRef(schema="supportportal", name="support_knowledge_bm25_terms"),
             TableRef(schema="supportportal", name="support_knowledge_ingestions"),
             TableRef(schema="supportportal", name="support_knowledge_documents"),
             TableRef(schema="supportportal", name="support_rag_query_runs"),
@@ -29,6 +33,10 @@ class RagResetTests(unittest.TestCase):
             [target.qualified_name for target in targets],
             [
                 "supportportal.docagent_chunks_ag_docs_test_1024",
+                "supportportal.support_knowledge_bm25_docs",
+                "supportportal.support_knowledge_bm25_postings",
+                "supportportal.support_knowledge_bm25_stats",
+                "supportportal.support_knowledge_bm25_terms",
                 "supportportal.support_knowledge_documents",
                 "supportportal.support_knowledge_ingestions",
                 "supportportal.support_rag_query_runs",

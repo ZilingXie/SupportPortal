@@ -5,6 +5,8 @@ import logging
 import os
 import re
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -14,6 +16,7 @@ from backend.services.embedding_provider import (
     embedding_provider_name,
     get_embedding_provider,
 )
+from backend.services.rag_tokenizer import tokenize_bm25_query
 
 logger = logging.getLogger(__name__)
 _UNAVAILABLE_MODELS: set[str] = set()
@@ -81,6 +84,8 @@ class RetrievedChunk:
     metadata: dict[str, Any] = field(default_factory=dict)
     rerank_score: float | None = None
     rerank_reasons: list[str] = field(default_factory=list)
+    retrieval_sources: list[str] = field(default_factory=list)
+    candidate_trace: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -130,6 +135,8 @@ class RagQueryTrace:
     confidence_score: float
     primary_source_type: str | None
     primary_chunk_strategy: str | None
+    reranker_provider: str | None = None
+    reranker_model: str | None = None
     generation_mode: str = "structured_answer"
     structured_retry_used: bool = False
     extractive_fallback_used: bool = False
@@ -499,6 +506,14 @@ def _metadata_rerank(
         ),
         reverse=True,
     )
+    ordered_chunk_ids = {chunk.chunk_id for chunk in ordered if chunk.chunk_id}
+    for rank, chunk in enumerate(ordered, start=1):
+        chunk.candidate_trace["metadata_rank"] = rank
+        chunk.candidate_trace["metadata_score"] = chunk.rerank_score
+    if filter_type is not None:
+        for chunk in chunks:
+            if chunk.chunk_id and chunk.chunk_id not in ordered_chunk_ids:
+                chunk.candidate_trace["metadata_filtered_out"] = True
     return ordered, {
         "hints": {
             "language": normalized_language,
@@ -518,23 +533,45 @@ def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
     dsn = (os.getenv("PGVECTOR_DSN") or "").strip()
     api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
     final_top_k = max(1, int(top_k)) if top_k is not None else _safe_int_env("RAG_TOP_K", 6)
-    vector_candidate_k = max(20, final_top_k * 4)
-    keyword_candidate_k = max(20, final_top_k * 4)
-    fusion_candidate_k = max(30, final_top_k * 5)
+    vector_candidate_k = _safe_int_env("RAG_VECTOR_CANDIDATE_K", max(40, final_top_k * 10))
+    bm25_candidate_k = _safe_int_env("RAG_BM25_CANDIDATE_K", max(40, final_top_k * 10))
+    fusion_candidate_k = _safe_int_env("RAG_FUSION_CANDIDATE_K", max(30, final_top_k * 8))
+    rerank_top_n = _safe_int_env("RAG_RERANK_TOP_N", max(20, final_top_k * 4))
     schema = (os.getenv("PGVECTOR_SCHEMA") or "supportportal").strip() or "supportportal"
     raw_table = (os.getenv("PGVECTOR_TABLE") or DEFAULT_PGVECTOR_TABLE).strip() or DEFAULT_PGVECTOR_TABLE
     table_name = raw_table if "." in raw_table else f"{schema}.{raw_table}"
     return {
         "dsn": dsn,
         "api_key": api_key,
+        "app_schema": schema,
         "table": table_name,
         "top_k": final_top_k,
         "vector_candidate_k": vector_candidate_k,
-        "keyword_candidate_k": keyword_candidate_k,
+        "bm25_candidate_k": bm25_candidate_k,
+        "keyword_candidate_k": bm25_candidate_k,
         "fusion_candidate_k": fusion_candidate_k,
+        "rerank_top_n": rerank_top_n,
+        "bm25_k1": _safe_float_env("RAG_BM25_K1", 1.2),
+        "bm25_b": _safe_float_env("RAG_BM25_B", 0.75),
         "chat_model": (os.getenv("OPENAI_CHAT_MODEL") or "gpt-4.1").strip(),
         "embedding_provider": embedding_provider_name(),
         "embedding_model": embedding_model_id(),
+        "rerank_provider": (os.getenv("RAG_RERANK_PROVIDER") or "siliconflow").strip() or "siliconflow",
+        "rerank_model": (os.getenv("RAG_RERANK_MODEL") or "BAAI/bge-reranker-v2-m3").strip() or "BAAI/bge-reranker-v2-m3",
+        "rerank_api_key": (
+            (os.getenv("RAG_RERANK_API_KEY") or "").strip()
+            or (os.getenv("SILICONFLOW_API_KEY") or "").strip()
+            or (os.getenv("SILICONFLOW_KEY") or "").strip()
+            or (os.getenv("SILLICONFLOW_KEY") or "").strip()
+            or (os.getenv("siliconflow_key") or "").strip()
+            or (os.getenv("silliconflow_key") or "").strip()
+        ),
+        "rerank_base_url": (
+            (os.getenv("RAG_RERANK_BASE_URL") or "").strip()
+            or (os.getenv("SILICONFLOW_BASE_URL") or "https://api.siliconflow.cn/v1").strip()
+        ),
+        "rerank_timeout_seconds": _safe_float_env("RAG_RERANK_TIMEOUT_SECONDS", 10.0),
+        "rerank_max_retries": _safe_int_env("RAG_RERANK_MAX_RETRIES", 1),
         "request_timeout_seconds": _safe_float_env("RAG_REQUEST_TIMEOUT_SECONDS", 20.0),
         "max_retries": _safe_int_env("RAG_OPENAI_MAX_RETRIES", 1),
     }
@@ -542,6 +579,10 @@ def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
 
 def _table_identifier(sql: Any, raw_table: str) -> Any:
     schema, table_name = _split_table_name(raw_table)
+    return sql.Identifier(schema, table_name)
+
+
+def _app_table_identifier(sql: Any, schema: str, table_name: str) -> Any:
     return sql.Identifier(schema, table_name)
 
 
@@ -596,6 +637,123 @@ def _retrieve_chunks(message: str, config: dict[str, Any], *, limit: int | None 
                 source_type=(str(row[9]).strip() or None) if row[9] is not None else None,
                 chunk_strategy=(str(row[10]).strip() or None) if row[10] is not None else None,
                 similarity=float(row[11]) if row[11] is not None else 0.0,
+                retrieval_sources=["vector"],
+                candidate_trace={"vector_similarity": float(row[11]) if row[11] is not None else 0.0},
+            )
+        )
+    return chunks
+
+
+def _retrieve_bm25_chunks(message: str, config: dict[str, Any], *, limit: int | None = None) -> list[RetrievedChunk]:
+    terms = tokenize_bm25_query(message)
+    if not terms:
+        return []
+
+    psycopg = _import_psycopg()
+    sql = psycopg.sql
+    app_schema = str(config.get("app_schema") or "supportportal").strip() or "supportportal"
+    query = sql.SQL(
+        """
+        WITH query_terms AS (
+            SELECT unnest(%s::text[]) AS term
+        ),
+        stats AS (
+            SELECT doc_count, avg_doc_length
+            FROM {}
+            WHERE index_role = 'primary'
+        ),
+        scored AS (
+            SELECT
+                p.chunk_id,
+                SUM(
+                    LN(1 + ((stats.doc_count - t.doc_freq + 0.5) / (t.doc_freq + 0.5))) *
+                    (
+                        (p.tf * (%s + 1.0))
+                        /
+                        (
+                            p.tf
+                            + (%s * (1.0 - %s + (%s * (d.doc_length / NULLIF(stats.avg_doc_length, 0.0)))))
+                        )
+                    )
+                ) AS bm25_score
+            FROM query_terms AS q
+            JOIN {} AS p
+              ON p.term = q.term
+             AND p.index_role = 'primary'
+            JOIN {} AS t
+              ON t.term = q.term
+             AND t.index_role = 'primary'
+            JOIN {} AS d
+              ON d.chunk_id = p.chunk_id
+             AND d.index_role = 'primary'
+            CROSS JOIN stats
+            GROUP BY p.chunk_id
+        )
+        SELECT
+            v.id,
+            v.doc_id,
+            v.content,
+            v.source_path,
+            v.h1,
+            v.h2,
+            v.h3,
+            v.source_url,
+            v.metadata,
+            v.metadata ->> 'source_type' AS source_type,
+            v.chunk_strategy,
+            scored.bm25_score
+        FROM scored
+        JOIN {} AS v
+          ON v.id = scored.chunk_id
+        WHERE v.index_role = 'primary'
+        ORDER BY scored.bm25_score DESC, v.updated_at DESC
+        LIMIT %s
+        """
+    ).format(
+        _app_table_identifier(sql, app_schema, "support_knowledge_bm25_stats"),
+        _app_table_identifier(sql, app_schema, "support_knowledge_bm25_postings"),
+        _app_table_identifier(sql, app_schema, "support_knowledge_bm25_terms"),
+        _app_table_identifier(sql, app_schema, "support_knowledge_bm25_docs"),
+        _table_identifier(sql, config["table"]),
+    )
+
+    with psycopg.connect(config["dsn"]) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                query,
+                (
+                    terms,
+                    float(config["bm25_k1"]),
+                    float(config["bm25_k1"]),
+                    float(config["bm25_b"]),
+                    float(config["bm25_b"]),
+                    int(limit or config["bm25_candidate_k"]),
+                ),
+            )
+            rows = cur.fetchall()
+
+    raw_scores = [float(row[11]) for row in rows if row[11] is not None]
+    max_score = max(raw_scores) if raw_scores else 0.0
+    chunks: list[RetrievedChunk] = []
+    for row in rows:
+        raw_score = float(row[11]) if row[11] is not None else 0.0
+        normalized_score = (raw_score / max_score) if max_score > 0 else 0.0
+        chunks.append(
+            RetrievedChunk(
+                chunk_id=str(row[0]),
+                doc_id=(str(row[1]).strip() or None) if row[1] is not None else None,
+                text=str(row[2]),
+                source_path=str(row[3]),
+                h1=(str(row[4]).strip() or None) if row[4] is not None else None,
+                h2=(str(row[5]).strip() or None) if row[5] is not None else None,
+                h3=(str(row[6]).strip() or None) if row[6] is not None else None,
+                source_url=(str(row[7]).strip() or None) if row[7] is not None else None,
+                metadata=row[8] if isinstance(row[8], dict) else {},
+                source_type=(str(row[9]).strip() or None) if row[9] is not None else None,
+                chunk_strategy=(str(row[10]).strip() or None) if row[10] is not None else None,
+                similarity=max(0.0, min(1.0, normalized_score)),
+                retrieval_sources=["bm25"],
+                candidate_trace={"bm25_score": raw_score},
             )
         )
     return chunks
@@ -766,6 +924,10 @@ def _retrieve_keyword_chunks(
         if hits <= 0:
             continue
         chunk.similarity = min(1.0, hits / max(1, len(terms)))
+        chunk.retrieval_sources = ["keyword_fallback"]
+        chunk.candidate_trace = {
+            "keyword_fallback_hits": hits,
+        }
         scored_chunks.append((hits, chunk))
 
     scored_chunks.sort(key=lambda item: (item[0], item[1].similarity), reverse=True)
@@ -785,7 +947,7 @@ def _retrieve_keyword_chunks(
 
 def _rrf_merge(
     vector_chunks: list[RetrievedChunk],
-    keyword_chunks: list[RetrievedChunk],
+    bm25_chunks: list[RetrievedChunk],
     *,
     limit: int,
 ) -> list[RetrievedChunk]:
@@ -793,13 +955,24 @@ def _rrf_merge(
     merged_scores: dict[str, float] = {}
     merged_chunks: dict[str, RetrievedChunk] = {}
 
-    for ranked_chunks in [vector_chunks, keyword_chunks]:
+    for ranked_chunks in [vector_chunks, bm25_chunks]:
         for index, chunk in enumerate(ranked_chunks, start=1):
             dedupe_key = chunk.chunk_id or f"{chunk.source_path}:{chunk.text[:120]}"
             merged_scores[dedupe_key] = merged_scores.get(dedupe_key, 0.0) + (1.0 / (rrf_k + index))
             existing = merged_chunks.get(dedupe_key)
             if existing is None or chunk.similarity > existing.similarity:
                 merged_chunks[dedupe_key] = chunk
+            merged_chunk = merged_chunks[dedupe_key]
+            if ranked_chunks is vector_chunks:
+                merged_chunk.candidate_trace["vector_rank"] = index
+                merged_chunk.candidate_trace["vector_similarity"] = float(chunk.similarity or 0.0)
+                if "vector" not in merged_chunk.retrieval_sources:
+                    merged_chunk.retrieval_sources.append("vector")
+            else:
+                merged_chunk.candidate_trace["bm25_rank"] = index
+                merged_chunk.candidate_trace["bm25_score"] = chunk.candidate_trace.get("bm25_score")
+                if "bm25" not in merged_chunk.retrieval_sources:
+                    merged_chunk.retrieval_sources.append("bm25")
 
     ordered = sorted(
         merged_scores.items(),
@@ -807,8 +980,11 @@ def _rrf_merge(
         reverse=True,
     )
     results: list[RetrievedChunk] = []
-    for dedupe_key, _score in ordered[: max(1, int(limit))]:
-        results.append(merged_chunks[dedupe_key])
+    for rank, (dedupe_key, score) in enumerate(ordered[: max(1, int(limit))], start=1):
+        chunk = merged_chunks[dedupe_key]
+        chunk.candidate_trace["rrf_rank"] = rank
+        chunk.candidate_trace["rrf_score"] = round(float(score), 6)
+        results.append(chunk)
     return results
 
 
@@ -1197,6 +1373,9 @@ def _candidate_rows(
     rerank_reasons = {chunk.chunk_id: list(chunk.rerank_reasons) for chunk in reranked_chunks if chunk.chunk_id}
     rows: list[dict[str, Any]] = []
     for index, chunk in enumerate(chunks, start=1):
+        candidate_trace = dict(chunk.candidate_trace) if isinstance(chunk.candidate_trace, dict) else {}
+        candidate_trace["retrieval_sources"] = list(dict.fromkeys(chunk.retrieval_sources))
+        candidate_trace["metadata_reasons"] = rerank_reasons.get(chunk.chunk_id, [])
         rows.append(
             {
                 "chunk_id": chunk.chunk_id,
@@ -1209,9 +1388,111 @@ def _candidate_rows(
                 "title": _build_heading(chunk),
                 "source_url": chunk.source_url,
                 "used_in_final_answer": chunk.chunk_id in selected_chunk_ids,
+                "candidate_trace": candidate_trace,
             }
         )
     return rows
+
+
+def _rerank_document_text(chunk: RetrievedChunk) -> str:
+    return "\n".join(
+        part
+        for part in [
+            chunk.source_path,
+            _build_heading(chunk),
+            chunk.text.strip(),
+        ]
+        if str(part or "").strip()
+    ).strip()
+
+
+def _rerank_chunks(
+    query: str,
+    chunks: list[RetrievedChunk],
+    config: dict[str, Any],
+    *,
+    limit: int | None = None,
+) -> list[RetrievedChunk]:
+    if not chunks:
+        return []
+    provider = str(config.get("rerank_provider") or "").strip().lower()
+    if provider != "siliconflow":
+        return chunks
+    api_key = str(config.get("rerank_api_key") or "").strip()
+    base_url = str(config.get("rerank_base_url") or "").strip().rstrip("/")
+    model = str(config.get("rerank_model") or "").strip()
+    if not api_key or not base_url or not model:
+        return chunks
+
+    rerank_limit = min(len(chunks), max(1, int(limit or config.get("rerank_top_n") or len(chunks))))
+    rerank_candidates = list(chunks[:rerank_limit])
+    tail_chunks = list(chunks[rerank_limit:])
+    payload = json.dumps(
+        {
+            "model": model,
+            "query": query,
+            "documents": [_rerank_document_text(chunk) for chunk in rerank_candidates],
+            "top_n": rerank_limit,
+            "return_documents": False,
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        url=f"{base_url}/rerank",
+        data=payload,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+    )
+    max_retries = max(0, int(config.get("rerank_max_retries") or 0))
+    raw_payload: dict[str, Any] | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=float(config.get("rerank_timeout_seconds") or 10.0)) as response:
+                raw_payload = json.loads(response.read().decode("utf-8", errors="replace") or "{}")
+            break
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            logger.warning("RAG rerank request failed attempt=%s error=%s", attempt + 1, exc)
+            raw_payload = None
+    if raw_payload is None:
+        return chunks
+
+    results = raw_payload.get("results") if isinstance(raw_payload, dict) else None
+    if not isinstance(results, list) or not results:
+        return chunks
+
+    ranked_items: list[tuple[int, float]] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        try:
+            index = int(item.get("index"))
+        except (TypeError, ValueError):
+            continue
+        if index < 0 or index >= len(rerank_candidates):
+            continue
+        score = float(item.get("relevance_score") or item.get("score") or 0.0)
+        ranked_items.append((index, score))
+    if not ranked_items:
+        return chunks
+
+    ordered: list[RetrievedChunk] = []
+    seen_indexes: set[int] = set()
+    for rank, (index, score) in enumerate(sorted(ranked_items, key=lambda item: item[1], reverse=True), start=1):
+        chunk = rerank_candidates[index]
+        chunk.rerank_score = score
+        chunk.candidate_trace["rerank_rank"] = rank
+        chunk.candidate_trace["external_rerank_score"] = score
+        ordered.append(chunk)
+        seen_indexes.add(index)
+    for index, chunk in enumerate(rerank_candidates):
+        if index in seen_indexes:
+            continue
+        ordered.append(chunk)
+    return ordered + tail_chunks
 
 
 def _estimate_embedding_tokens(message: str) -> int:
@@ -1231,7 +1512,8 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
 
     provider = get_embedding_provider()
     vector_chunks: list[RetrievedChunk] = []
-    keyword_chunks: list[RetrievedChunk] = []
+    bm25_chunks: list[RetrievedChunk] = []
+    keyword_fallback_chunks: list[RetrievedChunk] = []
     chunks: list[RetrievedChunk] = []
     embedding_request_meta: list[dict[str, Any]] = []
     embedding_dimensions = getattr(provider, "vector_dim", None)
@@ -1239,6 +1521,7 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
     total_started_at = time.perf_counter()
     vector_latency_ms = 0.0
     bm25_latency_ms = 0.0
+    keyword_fallback_latency_ms = 0.0
     generation_latency_ms = 0.0
     rerank_latency_ms = 0.0
     prompt_tokens = 0
@@ -1273,61 +1556,77 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
 
     try:
         bm25_started_at = time.perf_counter()
-        keyword_chunks = _retrieve_fts_chunks(
+        bm25_chunks = _retrieve_bm25_chunks(
             message,
             config,
-            limit=int(config["keyword_candidate_k"]),
+            limit=int(config["bm25_candidate_k"]),
         )
         bm25_latency_ms = round((time.perf_counter() - bm25_started_at) * 1000, 2)
     except Exception as exc:
-        logger.warning("RAG FTS retrieval failed: %s", exc)
+        logger.warning("RAG BM25 retrieval failed: %s", exc)
         try:
-            bm25_started_at = time.perf_counter()
-            keyword_chunks = _retrieve_keyword_chunks(
+            keyword_started_at = time.perf_counter()
+            keyword_fallback_chunks = _retrieve_keyword_chunks(
                 message,
                 config,
-                limit=int(config["keyword_candidate_k"]),
+                limit=int(config["bm25_candidate_k"]),
             )
-            bm25_latency_ms = round((time.perf_counter() - bm25_started_at) * 1000, 2)
+            keyword_fallback_latency_ms = round((time.perf_counter() - keyword_started_at) * 1000, 2)
         except Exception as keyword_exc:
             logger.warning("RAG keyword retrieval failed: %s", keyword_exc)
-            keyword_chunks = []
+            keyword_fallback_chunks = []
 
-    if not vector_chunks and not keyword_chunks:
+    if not vector_chunks and not bm25_chunks:
         try:
-            bm25_started_at = time.perf_counter()
-            keyword_chunks = _retrieve_keyword_chunks(
+            keyword_started_at = time.perf_counter()
+            keyword_fallback_chunks = _retrieve_keyword_chunks(
                 message,
                 config,
-                limit=int(config["keyword_candidate_k"]),
+                limit=int(config["bm25_candidate_k"]),
             )
-            bm25_latency_ms = round((time.perf_counter() - bm25_started_at) * 1000, 2)
+            keyword_fallback_latency_ms = round((time.perf_counter() - keyword_started_at) * 1000, 2)
         except Exception as exc:
             logger.warning("RAG keyword retrieval failed: %s", exc)
-            keyword_chunks = []
+            keyword_fallback_chunks = []
 
-    if vector_chunks or keyword_chunks:
+    def _retrieval_strategy_for(*, keyword_fallback_used: bool) -> str:
+        if keyword_fallback_used and vector_chunks:
+            return "vector_keyword_fallback"
+        if keyword_fallback_used:
+            return "keyword_fallback"
+        return "hybrid_rrf_bm25"
+
+    if vector_chunks and not bm25_chunks and keyword_fallback_chunks:
+        chunks = _merge_chunks(
+            vector_chunks,
+            keyword_fallback_chunks,
+            limit=int(config["fusion_candidate_k"]),
+        )
+    elif vector_chunks or bm25_chunks:
         chunks = _rrf_merge(
             vector_chunks,
-            keyword_chunks,
+            bm25_chunks,
             limit=int(config["fusion_candidate_k"]),
         )
         if not chunks:
             chunks = _merge_chunks(
                 vector_chunks,
-                keyword_chunks,
+                bm25_chunks,
                 limit=int(config["fusion_candidate_k"]),
             )
+    elif keyword_fallback_chunks:
+        chunks = _merge_chunks(
+            vector_chunks,
+            keyword_fallback_chunks,
+            limit=int(config["fusion_candidate_k"]),
+        )
 
     if not chunks:
         try:
-            bm25_started_at = time.perf_counter()
-            chunks = _retrieve_keyword_chunks(
-                message,
-                config,
-                limit=int(config["top_k"]),
-            )
-            bm25_latency_ms = round((time.perf_counter() - bm25_started_at) * 1000, 2)
+            keyword_started_at = time.perf_counter()
+            keyword_fallback_chunks = _retrieve_keyword_chunks(message, config, limit=int(config["top_k"]))
+            keyword_fallback_latency_ms = round((time.perf_counter() - keyword_started_at) * 1000, 2)
+            chunks = list(keyword_fallback_chunks)
         except Exception as exc:
             logger.warning("RAG keyword retrieval failed: %s", exc)
             chunks = []
@@ -1340,15 +1639,15 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
             )
             trace = RagQueryTrace(
                 query_type=query_type,
-                retrieval_strategy="bm25_only" if keyword_chunks else "vector_only",
+                retrieval_strategy=_retrieval_strategy_for(keyword_fallback_used=bool(keyword_fallback_chunks)),
                 vector_candidates_count=len(vector_chunks),
-                bm25_candidates_count=len(keyword_chunks),
+                bm25_candidates_count=len(bm25_chunks),
                 reranked_candidates_count=0,
                 retrieved_chunk_ids=[],
                 selected_chunk_ids=[],
                 vector_retrieval_latency_ms=vector_latency_ms,
                 bm25_retrieval_latency_ms=bm25_latency_ms,
-                retrieval_latency_ms=round(vector_latency_ms + bm25_latency_ms, 2),
+                retrieval_latency_ms=round(vector_latency_ms + bm25_latency_ms + keyword_fallback_latency_ms, 2),
                 rerank_latency_ms=0.0,
                 generation_latency_ms=0.0,
                 total_latency_ms=round((time.perf_counter() - total_started_at) * 1000, 2),
@@ -1368,6 +1667,8 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
                 confidence_score=0.55,
                 primary_source_type=None,
                 primary_chunk_strategy=None,
+                reranker_provider=config.get("rerank_provider"),
+                reranker_model=config.get("rerank_model"),
                 generation_mode="insufficient_evidence",
                 selected_doc_count=0,
                 top1_similarity_score=None,
@@ -1391,6 +1692,15 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
         )
         rerank_latency_ms = round((time.perf_counter() - rerank_started_at) * 1000, 2)
         chunks = reranked_chunks or chunks
+        rerank_started_at = time.perf_counter()
+        externally_reranked = _rerank_chunks(
+            message,
+            chunks,
+            config,
+            limit=int(config["rerank_top_n"]),
+        )
+        rerank_latency_ms = round(rerank_latency_ms + ((time.perf_counter() - rerank_started_at) * 1000), 2)
+        chunks = externally_reranked or chunks
 
     final_chunks = chunks[: int(config["top_k"])] or chunks
     allowed_chunk_ids = {chunk.chunk_id for chunk in final_chunks}
@@ -1439,15 +1749,15 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
         )
         return RagQueryTrace(
             query_type=query_type,
-            retrieval_strategy="hybrid_rrf" if vector_chunks and keyword_chunks else ("vector_only" if vector_chunks else "bm25_only"),
+            retrieval_strategy=_retrieval_strategy_for(keyword_fallback_used=bool(keyword_fallback_chunks)),
             vector_candidates_count=len(vector_chunks),
-            bm25_candidates_count=len(keyword_chunks),
+            bm25_candidates_count=len(bm25_chunks),
             reranked_candidates_count=int(rerank_info.get("post_rerank_count") or 0),
             retrieved_chunk_ids=[chunk.chunk_id for chunk in retrieved_chunks if chunk.chunk_id],
             selected_chunk_ids=selected_chunk_ids,
             vector_retrieval_latency_ms=vector_latency_ms,
             bm25_retrieval_latency_ms=bm25_latency_ms,
-            retrieval_latency_ms=round(vector_latency_ms + bm25_latency_ms, 2),
+            retrieval_latency_ms=round(vector_latency_ms + bm25_latency_ms + keyword_fallback_latency_ms, 2),
             rerank_latency_ms=rerank_latency_ms,
             generation_latency_ms=generation_latency_ms,
             total_latency_ms=round((time.perf_counter() - total_started_at) * 1000, 2),
@@ -1467,6 +1777,8 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
             confidence_score=answer.confidence,
             primary_source_type=_dominant_value(final_chunks, "source_type"),
             primary_chunk_strategy=_dominant_value(final_chunks, "chunk_strategy"),
+            reranker_provider=str(config.get("rerank_provider") or "").strip() or None,
+            reranker_model=str(config.get("rerank_model") or "").strip() or None,
             generation_mode=generation_mode,
             structured_retry_used=structured_retry_used,
             extractive_fallback_used=extractive_fallback_used,

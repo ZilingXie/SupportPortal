@@ -153,25 +153,25 @@ Rules:
 Current strategy name:
 - `official_section_token_v1`
 
-## Retrieval Rules
+## Retrieval Integration
 
-Retrieval remains:
-- vector retrieval
-- FTS retrieval
-- RRF merge
+The canonical online retrieval chain now lives in:
+- [docs/rag_retrieval_chain.md](/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/rag_retrieval_chain.md)
 
-After candidate merge, a metadata-aware rerank/filter layer runs.
+This document only defines the official-doc metadata contract that retrieval consumes.
 
-### Query Hints
+Official-doc metadata is used during the metadata prune / pre-rank stage before external reranking.
 
-The rerank layer extracts explicit hints for:
+### Official-Doc Query Hints
+
+The official-doc metadata layer extracts hints for:
 - language: `go`, `golang`, `node.js`, `nodejs`, `php`, `python`, `java`, `c++`, `cpp`
 - method: `BuildTokenWithUid`, `BuildTokenWithUidAndPrivilege`
 - structure / intent: `docker`, `npm`, `faq`, `compatibility`, `parameter`, `wildcard`, `uid=0`, `api reference`
 
-### Ranking Rules
+### Official-Doc Metadata Signals
 
-Soft boosts apply on:
+Official-doc metadata prune / pre-rank can use:
 - `language`
 - `method_name`
 - `chunk_type`
@@ -179,22 +179,9 @@ Soft boosts apply on:
 - `topic`
 - `use_case`
 
-Explicit filtering applies only when the query contains:
-- an exact language hint
-- an exact method-name hint
+Hard filtering is allowed only for strong explicit hints such as exact language or method-name matches.
 
-Fallback rule:
-- use the filtered pool only when it yields at least `min(top_k, 2)` candidates
-- otherwise fall back to the full merged pool and keep soft boosts only
-
-### Trace Requirements
-
-The retrieval trace must record:
-- extracted metadata hints
-- whether metadata filtering was applied
-- filter type
-- post-rerank candidate count
-- per-candidate metadata boost reasons
+Per-candidate trace and run-level telemetry requirements are documented centrally in [docs/rag_retrieval_chain.md](/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/rag_retrieval_chain.md).
 
 ## Gold Acceptance Set
 
@@ -244,7 +231,7 @@ Implemented changes:
 - official primary chunking now uses structure-aware chunking
 - official shadow chunking now uses section-scoped fixed token windows
 - official chunk metadata now includes `doc_title`, `section_path`, `chunk_type`, `language`, `method_name`, `topic`, `runtime`, and `use_case`
-- retrieval now applies metadata-aware rerank/filter for official-doc cues
+- retrieval now uses the central hybrid chain in `docs/rag_retrieval_chain.md`, with official-doc metadata used for prune / pre-rank
 
 Verification targets:
 - unit tests for parser correctness
