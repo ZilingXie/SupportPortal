@@ -20,6 +20,8 @@ NUMERIC_JUDGE_FIELDS = [
     "response_relevance_score",
     "response_completeness_score",
     "citation_correctness_score",
+    "answer_accuracy_score",
+    "answer_logic_score",
 ]
 BOOLEAN_JUDGE_FIELDS = [
     "hallucination_flag",
@@ -32,6 +34,8 @@ CORE_QUALITY_FIELDS = [
     "response_relevance_score",
     "response_completeness_score",
     "citation_correctness_score",
+    "answer_accuracy_score",
+    "answer_logic_score",
 ]
 
 
@@ -45,6 +49,7 @@ class BenchmarkCase:
     language: str | None
     expected_document_ids: list[str]
     expected_heading_paths: list[str]
+    expected_evidence_refs: list[dict[str, str]]
     answer_key_points: list[str]
     expected_handoff: bool
     tags: list[str]
@@ -79,6 +84,23 @@ def _normalize_heading_path(value: Any) -> str:
     return _clean_text(value)
 
 
+def _normalize_evidence_refs(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    items: list[dict[str, str]] = []
+    for raw_item in value:
+        if not isinstance(raw_item, dict):
+            continue
+        item = {
+            "chunk_id": _clean_text(raw_item.get("chunk_id")),
+            "doc_id": _clean_text(raw_item.get("doc_id")),
+            "heading": _normalize_heading_path(raw_item.get("heading")),
+        }
+        if any(item.values()):
+            items.append({key: value for key, value in item.items() if value})
+    return items
+
+
 def _normalize_bool(value: Any, *, field_name: str) -> bool:
     if isinstance(value, bool):
         return value
@@ -105,8 +127,7 @@ def load_benchmark_cases(dataset_path: str | Path) -> list[BenchmarkCase]:
     if not path.exists():
         raise FileNotFoundError(f"Benchmark dataset not found: {path}")
 
-    cases: list[BenchmarkCase] = []
-    seen_ids: set[str] = set()
+    raw_payloads: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as handle:
         for line_number, raw_line in enumerate(handle, start=1):
             stripped = raw_line.strip()
@@ -118,13 +139,23 @@ def load_benchmark_cases(dataset_path: str | Path) -> list[BenchmarkCase]:
                 raise ValueError(f"Invalid JSON on line {line_number}: {exc}") from exc
             if not isinstance(payload, dict):
                 raise ValueError(f"Benchmark case on line {line_number} must be a JSON object")
-            case = _parse_benchmark_case(payload, line_number=line_number)
-            if case.test_case_id in seen_ids:
-                raise ValueError(f"Duplicate test_case_id detected: {case.test_case_id}")
-            seen_ids.add(case.test_case_id)
-            cases.append(case)
+            raw_payloads.append(payload)
+    return parse_benchmark_cases(raw_payloads, source_label=str(path))
+
+
+def parse_benchmark_cases(payloads: list[dict[str, Any]], *, source_label: str = "inline payloads") -> list[BenchmarkCase]:
+    cases: list[BenchmarkCase] = []
+    seen_ids: set[str] = set()
+    for line_number, payload in enumerate(payloads, start=1):
+        if not isinstance(payload, dict):
+            raise ValueError(f"Benchmark case {line_number} from {source_label} must be a JSON object")
+        case = _parse_benchmark_case(payload, line_number=line_number)
+        if case.test_case_id in seen_ids:
+            raise ValueError(f"Duplicate test_case_id detected: {case.test_case_id}")
+        seen_ids.add(case.test_case_id)
+        cases.append(case)
     if not cases:
-        raise ValueError(f"Benchmark dataset is empty: {path}")
+        raise ValueError(f"Benchmark dataset is empty: {source_label}")
     return cases
 
 
@@ -137,6 +168,7 @@ def _parse_benchmark_case(payload: dict[str, Any], *, line_number: int) -> Bench
     language = _clean_text(payload.get("language"))
     expected_document_ids = _normalize_string_list(payload.get("expected_document_ids"))
     expected_heading_paths = [_normalize_heading_path(item) for item in _normalize_string_list(payload.get("expected_heading_paths"))]
+    expected_evidence_refs = _normalize_evidence_refs(payload.get("expected_evidence_refs"))
     answer_key_points = _normalize_string_list(payload.get("answer_key_points"))
     tags = _normalize_string_list(payload.get("tags"))
 
@@ -162,6 +194,7 @@ def _parse_benchmark_case(payload: dict[str, Any], *, line_number: int) -> Bench
         language=language,
         expected_document_ids=expected_document_ids,
         expected_heading_paths=[item for item in expected_heading_paths if item],
+        expected_evidence_refs=expected_evidence_refs,
         answer_key_points=answer_key_points,
         expected_handoff=expected_handoff,
         tags=tags,
@@ -305,6 +338,7 @@ def build_benchmark_review_sample(
             "answer_preview": _clean_text(result_row.get("answer_preview")),
             "expected_document_ids": _normalize_string_list(result_row.get("expected_document_ids")),
             "expected_heading_paths": _normalize_string_list(result_row.get("expected_heading_paths")),
+            "expected_evidence_refs": _normalize_evidence_refs(result_row.get("expected_evidence_refs")),
             "judge_disagreement_flag": bool(result_row.get("judge_disagreement_flag")),
             "trace_payload": result_row.get("trace_payload") if isinstance(result_row.get("trace_payload"), dict) else {},
             "scores": {
@@ -320,10 +354,12 @@ def compute_retrieval_metrics(
     *,
     expected_document_ids: list[str],
     expected_heading_paths: list[str] | None = None,
+    expected_evidence_refs: list[dict[str, str]] | None = None,
     top_ks: tuple[int, ...] = (1, 3, 5),
 ) -> dict[str, Any]:
     expected_docs = {_clean_text(item) for item in expected_document_ids if _clean_text(item)}
     expected_headings = {_normalize_heading_path(item) for item in (expected_heading_paths or []) if _normalize_heading_path(item)}
+    evidence_refs = expected_evidence_refs or []
     ordered_candidates = candidate_rows or []
 
     relevance_scores: list[int] = []
@@ -345,6 +381,7 @@ def compute_retrieval_metrics(
     for top_k in top_ks:
         sliced = relevance_scores[:top_k]
         metrics[f"hit_at_{top_k}"] = 1.0 if any(sliced) else 0.0
+        metrics[f"evidence_hit_at_{top_k}"] = 1.0 if _evidence_hit(ordered_candidates[:top_k], evidence_refs) else 0.0
     expected_doc_count = max(1, len(expected_docs))
     matched_docs_at_5 = {
         _clean_text(candidate.get("doc_id"))
@@ -359,6 +396,31 @@ def compute_retrieval_metrics(
         4,
     )
     return metrics
+
+
+def _evidence_hit(candidate_rows: list[dict[str, Any]], evidence_refs: list[dict[str, str]]) -> bool:
+    if not candidate_rows or not evidence_refs:
+        return False
+    normalized_refs = [
+        {
+            "chunk_id": _clean_text(item.get("chunk_id")),
+            "doc_id": _clean_text(item.get("doc_id")),
+            "heading": _normalize_heading_path(item.get("heading")),
+        }
+        for item in evidence_refs
+        if isinstance(item, dict)
+    ]
+    for candidate in candidate_rows:
+        chunk_id = _clean_text(candidate.get("chunk_id"))
+        doc_id = _clean_text(candidate.get("doc_id"))
+        heading = _normalize_heading_path(candidate.get("title"))
+        for ref in normalized_refs:
+            if ref.get("chunk_id") and ref.get("chunk_id") == chunk_id:
+                return True
+            if ref.get("doc_id") and ref.get("heading"):
+                if ref.get("doc_id") == doc_id and ref.get("heading") == heading:
+                    return True
+    return False
 
 
 def aggregate_judge_votes(votes: list[dict[str, Any]]) -> dict[str, Any]:
@@ -404,6 +466,9 @@ def summarize_eval_daily_metrics(result_rows: list[dict[str, Any]]) -> dict[str,
         "hit_at_1",
         "hit_at_3",
         "hit_at_5",
+        "evidence_hit_at_1",
+        "evidence_hit_at_3",
+        "evidence_hit_at_5",
         "recall_at_5",
         "mrr",
         "ndcg_at_5",
@@ -413,6 +478,8 @@ def summarize_eval_daily_metrics(result_rows: list[dict[str, Any]]) -> dict[str,
         "response_relevance_score",
         "response_completeness_score",
         "citation_correctness_score",
+        "answer_accuracy_score",
+        "answer_logic_score",
         "retrieval_latency_ms",
         "generation_latency_ms",
         "total_latency_ms",

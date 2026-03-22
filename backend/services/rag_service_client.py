@@ -198,6 +198,36 @@ class RagServiceClient:
         except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as exc:
             raise RagServiceError("RAG service request failed") from exc
 
+    def _request_text(
+        self,
+        method: str,
+        path: str,
+        *,
+        query: dict[str, Any] | None = None,
+        timeout_seconds: float | None = None,
+    ) -> str:
+        if not self.is_configured():
+            raise RagServiceError("RAG service is not configured")
+
+        timeout = timeout_seconds if timeout_seconds is not None else self._timeout_seconds
+        request = urllib.request.Request(
+            url=self._build_url(path, query=query),
+            headers=self._headers(),
+            method=method.upper(),
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as exc:
+            payload = _json_loads(exc.read())
+            raise RagServiceError(
+                f"RAG service returned HTTP {exc.code}",
+                status_code=int(exc.code),
+                payload=payload,
+            ) from exc
+        except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as exc:
+            raise RagServiceError("RAG service request failed") from exc
+
     def query(
         self,
         *,
@@ -300,6 +330,11 @@ class RagServiceClient:
         retrieval_ok: bool | None = None,
         answer_ok: bool | None = None,
         citation_ok: bool | None = None,
+        logic_ok: bool | None = None,
+        hallucination_present: bool | None = None,
+        dataset_decision: str | None = None,
+        corrected_reference_answer: str | None = None,
+        corrected_citation_targets: list[dict[str, Any]] | None = None,
         note: str | None = None,
     ) -> dict[str, Any]:
         quoted = urllib.parse.quote(str(sample_id or "").strip(), safe="")
@@ -308,12 +343,63 @@ class RagServiceClient:
             "retrieval_ok": retrieval_ok,
             "answer_ok": answer_ok,
             "citation_ok": citation_ok,
+            "logic_ok": logic_ok,
+            "hallucination_present": hallucination_present,
+            "dataset_decision": dataset_decision,
+            "corrected_reference_answer": corrected_reference_answer,
+            "corrected_citation_targets": corrected_citation_targets,
             "note": note,
         }
         return self._request(
             "POST",
             f"/internal/dashboard/rag/review-samples/{quoted}",
             json_body=payload,
+        )
+
+    def create_dataset_generation_run(
+        self,
+        *,
+        dataset_name: str,
+        source_types: list[str],
+        question_language: str = "en",
+    ) -> dict[str, Any]:
+        payload = {
+            "dataset_name": dataset_name,
+            "source_types": source_types,
+            "question_language": question_language,
+        }
+        return self._request(
+            "POST",
+            "/internal/dashboard/rag/datasets/generation-runs",
+            json_body=payload,
+        )
+
+    def create_dataset_benchmark_run(
+        self,
+        dataset_id: str,
+        *,
+        experiment_id: str | None = None,
+        top_k: int | None = None,
+        tier: str = "gold",
+    ) -> dict[str, Any]:
+        quoted = urllib.parse.quote(str(dataset_id or "").strip(), safe="")
+        payload = {
+            "experiment_id": experiment_id,
+            "top_k": top_k,
+            "tier": tier,
+        }
+        return self._request(
+            "POST",
+            f"/internal/dashboard/rag/datasets/{quoted}/benchmark-runs",
+            json_body=payload,
+        )
+
+    def export_dataset_snapshot(self, dataset_id: str, *, tier: str = "gold") -> str:
+        quoted = urllib.parse.quote(str(dataset_id or "").strip(), safe="")
+        return self._request_text(
+            "GET",
+            f"/internal/dashboard/rag/datasets/{quoted}/export",
+            query={"tier": tier},
         )
 
     def health(self, *, timeout_seconds: float | None = None) -> dict[str, Any]:

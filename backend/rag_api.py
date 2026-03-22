@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from backend.repositories.event_repository import EventRepository, create_event_repository
@@ -43,6 +44,7 @@ KNOWLEDGE_OFFICIAL_MAX_BYTES = max(1, int(os.getenv("KNOWLEDGE_OFFICIAL_MAX_BYTE
 KNOWLEDGE_ARTICLE_MAX_CHARS = max(1, int(os.getenv("KNOWLEDGE_ARTICLE_MAX_CHARS") or 120000))
 PRIMARY_RAG_WORKBENCH_PAGES = (
     "experiments",
+    "datasets",
     "diagnosis",
     "knowledge-supply",
     "production-signals",
@@ -67,6 +69,11 @@ class ReviewSampleUpdateRequest(BaseModel):
     retrieval_ok: bool | None = None
     answer_ok: bool | None = None
     citation_ok: bool | None = None
+    logic_ok: bool | None = None
+    hallucination_present: bool | None = None
+    dataset_decision: str | None = Field(default=None, pattern="^(promote_gold|keep_silver|needs_fix|reject)$")
+    corrected_reference_answer: str | None = Field(default=None, max_length=12000)
+    corrected_citation_targets: list[dict[str, Any]] | None = None
     note: str | None = Field(default=None, max_length=4000)
 
 
@@ -74,6 +81,18 @@ class TechnicalKnowledgeArticleRequest(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     content: str = Field(min_length=1, max_length=200000)
     source_url: str = Field(min_length=1, max_length=2000)
+
+
+class DatasetGenerationRunRequest(BaseModel):
+    dataset_name: str = Field(min_length=1, max_length=160)
+    source_types: list[str]
+    question_language: str = Field(default="en", pattern="^(en)$")
+
+
+class DatasetBenchmarkRunRequest(BaseModel):
+    experiment_id: str | None = Field(default=None, max_length=160)
+    top_k: int | None = Field(default=None, ge=1, le=20)
+    tier: str = Field(default="gold", pattern="^(gold|silver)$")
 
 
 app = FastAPI(title="SupportPortal RAG API", version="0.1.0")
@@ -202,6 +221,33 @@ def _build_knowledge_ingest_task(ingestion_id: str) -> dict[str, str]:
     return {
         "task_type": "knowledge_ingest",
         "ingestion_id": ingestion_id,
+        "created_at": now_iso(),
+    }
+
+
+def _build_dataset_generation_task(generation_run_id: str) -> dict[str, str]:
+    return {
+        "task_type": "dataset_generation",
+        "generation_run_id": generation_run_id,
+        "created_at": now_iso(),
+    }
+
+
+def _build_dataset_benchmark_task(
+    *,
+    eval_run_id: str,
+    dataset_id: str,
+    experiment_id: str | None,
+    top_k: int | None,
+    tier: str,
+) -> dict[str, Any]:
+    return {
+        "task_type": "dataset_benchmark",
+        "eval_run_id": eval_run_id,
+        "dataset_id": dataset_id,
+        "experiment_id": experiment_id,
+        "top_k": top_k,
+        "tier": tier,
         "created_at": now_iso(),
     }
 
@@ -623,6 +669,11 @@ def internal_update_review_sample(
             retrieval_ok=request.retrieval_ok,
             answer_ok=request.answer_ok,
             citation_ok=request.citation_ok,
+            logic_ok=request.logic_ok,
+            hallucination_present=request.hallucination_present,
+            dataset_decision=request.dataset_decision,
+            corrected_reference_answer=request.corrected_reference_answer,
+            corrected_citation_targets=request.corrected_citation_targets,
             note=request.note,
         )
     except LookupError as exc:
@@ -632,6 +683,117 @@ def internal_update_review_sample(
         "updated": True,
         "updated_at": now_iso(),
     }
+
+
+@app.post("/internal/dashboard/rag/datasets/generation-runs", status_code=202)
+async def internal_create_dataset_generation_run(
+    request: DatasetGenerationRunRequest,
+    _: None = Depends(_require_internal_auth),
+) -> dict[str, Any]:
+    repository = _require_knowledge_repository()
+    if not request.source_types:
+        raise HTTPException(status_code=400, detail="source_types must include at least one supported source type")
+    try:
+        generation_run = repository.create_dataset_generation_run(
+            dataset_name=request.dataset_name,
+            source_types=request.source_types,
+            question_language=request.question_language,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    enqueued = await task_queue.enqueue(_build_dataset_generation_task(generation_run["generation_run_id"]))
+    if not enqueued:
+        repository.update_dataset_generation_run(
+            generation_run["generation_run_id"],
+            status="failed",
+            error_message="RAG dataset generation queue is unavailable",
+            finished_at=now_iso(),
+        )
+        raise HTTPException(status_code=503, detail="RAG dataset generation queue is unavailable")
+    payload = dict(generation_run)
+    payload["queued"] = True
+    payload["processing_mode"] = "async_worker"
+    return payload
+
+
+@app.post("/internal/dashboard/rag/datasets/{dataset_id}/benchmark-runs", status_code=202)
+async def internal_create_dataset_benchmark_run(
+    dataset_id: str,
+    request: DatasetBenchmarkRunRequest,
+    _: None = Depends(_require_internal_auth),
+) -> dict[str, Any]:
+    repository = _require_knowledge_repository()
+    snapshot = repository.get_dataset_snapshot(dataset_id)
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail=f"Dataset snapshot not found: {dataset_id}")
+    eval_run_id = f"EVAL-{uuid4().hex[:12].upper()}"
+    experiment_id = _clean_text(request.experiment_id) or eval_run_id
+    repository.upsert_rag_eval_run(
+        eval_run={
+            "eval_run_id": eval_run_id,
+            "dataset_name": snapshot.get("dataset_name"),
+            "eval_type": "dataset_snapshot_benchmark",
+            "experiment_id": experiment_id,
+            "strategy_snapshot": {},
+            "judge_models": [],
+            "benchmark_version": snapshot.get("benchmark_version"),
+            "status": "queued",
+            "started_at": now_iso(),
+            "finished_at": None,
+        }
+    )
+    enqueued = await task_queue.enqueue(
+        _build_dataset_benchmark_task(
+            eval_run_id=eval_run_id,
+            dataset_id=_clean_text(snapshot.get("dataset_id")) or _clean_text(dataset_id),
+            experiment_id=experiment_id,
+            top_k=request.top_k,
+            tier=request.tier,
+        )
+    )
+    if not enqueued:
+        repository.upsert_rag_eval_run(
+            eval_run={
+                "eval_run_id": eval_run_id,
+                "dataset_name": snapshot.get("dataset_name"),
+                "eval_type": "dataset_snapshot_benchmark",
+                "experiment_id": experiment_id,
+                "strategy_snapshot": {},
+                "judge_models": [],
+                "benchmark_version": snapshot.get("benchmark_version"),
+                "status": "failed",
+                "started_at": now_iso(),
+                "finished_at": now_iso(),
+            }
+        )
+        raise HTTPException(status_code=503, detail="RAG dataset benchmark queue is unavailable")
+    return {
+        "eval_run_id": eval_run_id,
+        "dataset_id": snapshot.get("dataset_id"),
+        "dataset_name": snapshot.get("dataset_name"),
+        "benchmark_version": snapshot.get("benchmark_version"),
+        "queued": True,
+        "processing_mode": "async_worker",
+    }
+
+
+@app.get("/internal/dashboard/rag/datasets/{dataset_id}/export", response_class=PlainTextResponse)
+def internal_export_dataset_snapshot(
+    dataset_id: str,
+    tier: str = Query(default="gold", pattern="^(gold|silver)$"),
+    _: None = Depends(_require_internal_auth),
+) -> PlainTextResponse:
+    repository = _require_knowledge_repository()
+    snapshot = repository.get_dataset_snapshot(dataset_id)
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail=f"Dataset snapshot not found: {dataset_id}")
+    body = repository.export_dataset_snapshot(dataset_id, tier=tier)
+    benchmark_version = _clean_text(snapshot.get("benchmark_version")) or _clean_text(dataset_id) or "dataset"
+    return PlainTextResponse(
+        content=body,
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": f'attachment; filename="{benchmark_version}_{tier}.jsonl"'},
+    )
 
 
 @app.post("/internal/knowledge/official-documents", status_code=202)

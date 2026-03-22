@@ -20,6 +20,7 @@ const reportDrawerBodyEl = document.getElementById("report-drawer-body");
 
 const ragPageContainers = {
   "experiments": { root: document.getElementById("rag-experiments-page") },
+  "datasets": { root: document.getElementById("rag-datasets-page") },
   "diagnosis": { root: document.getElementById("rag-diagnosis-page") },
   "knowledge-supply": { root: document.getElementById("rag-knowledge-supply-page") },
   "production-signals": { root: document.getElementById("rag-production-signals-page") },
@@ -28,6 +29,7 @@ const ragPageContainers = {
 
 const PAGE_LABELS = {
   experiments: "Experiments",
+  datasets: "Datasets",
   diagnosis: "Diagnosis",
   "knowledge-supply": "Knowledge Supply",
   "production-signals": "Production Signals",
@@ -326,6 +328,17 @@ function buildExperimentOption(option) {
 }
 
 function buildSampleAction(item) {
+  if (item.sample_source === "dataset_candidate") {
+    return `
+      <button
+        type="button"
+        class="table-action-button"
+        data-open-datasets-review="${escapeHtml(item.dataset_item_id || "")}"
+      >
+        Open Dataset
+      </button>
+    `;
+  }
   if (item.sample_source === "live_query") {
     return `
       <button
@@ -346,6 +359,107 @@ function buildSampleAction(item) {
     >
       Inspect
     </button>
+  `;
+}
+
+function buildDatasetGenerationRuns(rows) {
+  const items = Array.isArray(rows) ? rows : [];
+  return `
+    <section class="panel-card">
+      <div class="panel-header">
+        <div>
+          <h3>Generation Runs</h3>
+          <p>Queued and completed dataset factory runs across the current scope.</p>
+        </div>
+      </div>
+      ${
+        items.length
+          ? `<div class="sample-list">
+              ${items
+                .map(
+                  (row) => `
+                    <article class="sample-item">
+                      <div class="sample-item-header">
+                        <span class="chip chip-neutral">${escapeHtml(row.status || "queued")}</span>
+                        ${buildChipList(row.source_types || [], "neutral")}
+                      </div>
+                      <h4>${escapeHtml(row.dataset_name || row.generation_run_id || "Dataset Generation")}</h4>
+                      <div class="sample-meta">
+                        <span>${escapeHtml(row.benchmark_version || "-")}</span>
+                        <span>${escapeHtml(row.question_language || "en")}</span>
+                        <span>${escapeHtml(formatDateTime(row.created_at || ""))}</span>
+                      </div>
+                      ${buildDefinitionGrid([
+                        { label: "Candidates", value: row.candidate_count_total },
+                        { label: "Silver", value: row.silver_item_count },
+                        { label: "Gold", value: row.gold_item_count },
+                        { label: "Review Required", value: row.review_required_count },
+                        { label: "Reviewed", value: row.reviewed_item_count },
+                      ])}
+                      ${row.error_message ? `<p>${escapeHtml(row.error_message)}</p>` : ""}
+                    </article>
+                  `
+                )
+                .join("")}
+            </div>`
+          : `<div class="empty-state">No dataset generation runs available yet.</div>`
+      }
+    </section>
+  `;
+}
+
+function buildDatasetVersionCards(rows) {
+  const items = Array.isArray(rows) ? rows : [];
+  return `
+    <section class="panel-card">
+      <div class="panel-header">
+        <div>
+          <h3>Dataset Versions</h3>
+          <p>Gold is the fixed benchmark source. Silver stays available for quicker regression loops.</p>
+        </div>
+      </div>
+      ${
+        items.length
+          ? `<div class="sample-list">
+              ${items
+                .map(
+                  (row) => `
+                    <article class="sample-item">
+                      <div class="sample-item-header">
+                        <span class="chip chip-neutral">${escapeHtml(row.status || "draft")}</span>
+                        ${buildChipList(row.source_types || [], "neutral")}
+                      </div>
+                      <h4>${escapeHtml(row.dataset_name || row.dataset_id || "Dataset")}</h4>
+                      <div class="sample-meta">
+                        <span>${escapeHtml(row.benchmark_version || "-")}</span>
+                        <span>${escapeHtml(row.question_language || "en")}</span>
+                        <span>${escapeHtml(formatDateTime(row.updated_at || row.created_at || ""))}</span>
+                      </div>
+                      ${buildDefinitionGrid([
+                        { label: "Items", value: row.item_count_total },
+                        { label: "Silver", value: row.silver_item_count },
+                        { label: "Gold", value: row.gold_item_count },
+                        { label: "Pending Review", value: row.pending_review_count },
+                      ])}
+                      <div class="sample-item-actions">
+                        <button type="button" class="table-action-button" data-export-dataset="${escapeHtml(row.dataset_id || "")}">
+                          Export Gold
+                        </button>
+                        <button type="button" class="table-action-button" data-run-dataset-benchmark="${escapeHtml(row.dataset_id || "")}">
+                          Run Benchmark
+                        </button>
+                        <button type="button" class="table-action-button" data-open-review-page>
+                          Open Review
+                        </button>
+                      </div>
+                    </article>
+                  `
+                )
+                .join("")}
+            </div>`
+          : `<div class="empty-state">No dataset versions available yet.</div>`
+      }
+    </section>
   `;
 }
 
@@ -450,6 +564,9 @@ function buildComparisonCards(primary, baseline, deltas) {
     { label: "Faithfulness", primary: primary.faithfulness_score, baseline: baseline?.faithfulness_score, delta: deltas?.faithfulness_score },
     { label: "Groundedness", primary: primary.groundedness_score, baseline: baseline?.groundedness_score, delta: deltas?.groundedness_score },
     { label: "Citation Correctness", primary: primary.citation_correctness_score, baseline: baseline?.citation_correctness_score, delta: deltas?.citation_correctness_score },
+    { label: "Answer Accuracy", primary: primary.answer_accuracy_score, baseline: baseline?.answer_accuracy_score, delta: deltas?.answer_accuracy_score },
+    { label: "Answer Logic", primary: primary.answer_logic_score, baseline: baseline?.answer_logic_score, delta: deltas?.answer_logic_score },
+    { label: "Evidence Hit@5", primary: primary.evidence_hit_at_5, baseline: baseline?.evidence_hit_at_5, delta: deltas?.evidence_hit_at_5 },
     { label: "Hit@5", primary: primary.hit_at_5, baseline: baseline?.hit_at_5, delta: deltas?.hit_at_5 },
   ];
   return `
@@ -594,6 +711,9 @@ function renderExperimentsPage(payload) {
             "retrieval_strategy",
             "reranker_model",
             "query_rewrite_enabled",
+            "answer_accuracy_score_avg",
+            "answer_logic_score_avg",
+            "evidence_hit_at_5",
             "faithfulness_score_avg",
             "groundedness_score_avg",
             "citation_correctness_score_avg",
@@ -634,6 +754,69 @@ function renderExperimentsPage(payload) {
   if (candidateSelect) {
     candidateSelect.value = summary.candidate_experiment_id || "";
   }
+}
+
+function renderDatasetsPage(payload) {
+  const root = ragPageContainers.datasets.root;
+  const sections = payload.sections || {};
+  const summary = sections.summary || {};
+  const generationRuns = sections.generation_runs || {};
+  const datasetVersions = sections.dataset_versions || {};
+  const coverage = sections.coverage || {};
+
+  root.innerHTML = `
+    <section class="hero-card">
+      <div class="hero-copy">
+        <p class="eyebrow">Eval Dataset Factory</p>
+        <h2>${escapeHtml(summary.title || "Datasets")}</h2>
+        <p>${escapeHtml(summary.subtitle || "Generate silver candidates, promote gold items through review, and launch benchmark runs from a fixed snapshot.")}</p>
+      </div>
+      ${buildMetricCards(summary.cards || {})}
+    </section>
+    <section class="panel-card">
+      <div class="panel-header">
+        <div>
+          <h3>New Generation Run</h3>
+          <p>Create a fresh dataset snapshot from active official and technical knowledge sources.</p>
+        </div>
+      </div>
+      <div class="filter-grid">
+        <label class="filter-field">
+          <span>Dataset Name</span>
+          <input id="dataset-generation-name" type="text" placeholder="supportportal_gold_v1" />
+        </label>
+        <label class="filter-field">
+          <span>Question Language</span>
+          <select id="dataset-generation-language">
+            <option value="en" selected>English</option>
+          </select>
+        </label>
+        <label class="filter-field">
+          <span>Source Types</span>
+          <div class="chip-row">
+            <label class="chip chip-neutral">
+              <input id="dataset-source-official" type="checkbox" checked />
+              Official Markdown
+            </label>
+            <label class="chip chip-neutral">
+              <input id="dataset-source-technical" type="checkbox" checked />
+              Technical Article
+            </label>
+          </div>
+        </label>
+        <div class="button-row">
+          <button type="button" class="primary-button" data-create-dataset-generation>
+            Start Generation
+          </button>
+        </div>
+      </div>
+    </section>
+    ${buildDatasetGenerationRuns(generationRuns.rows || [])}
+    ${buildDatasetVersionCards(datasetVersions.rows || [])}
+    ${buildTableSection("Coverage", coverage.rows || [], {
+      emptyLabel: "No dataset coverage available yet.",
+    })}
+  `;
 }
 
 function renderDiagnosisPage(payload) {
@@ -839,10 +1022,14 @@ function buildReviewQueue(rows, title) {
                         { label: "Risk Score", value: row.risk_score },
                         { label: "Query Type", value: row.query_type },
                         { label: "Source Type", value: row.source_type },
+                        { label: "Difficulty", value: row.difficulty },
+                        { label: "Dataset Item Status", value: row.dataset_item_status },
                         { label: "Retrieval Strategy", value: row.retrieval_strategy },
                         { label: "Faithfulness", value: row.faithfulness_score },
                         { label: "Groundedness", value: row.groundedness_score },
                         { label: "Citation Correctness", value: row.citation_correctness_score },
+                        { label: "Answer Accuracy", value: row.answer_accuracy_score },
+                        { label: "Answer Logic", value: row.answer_logic_score },
                         { label: "Confidence", value: row.confidence_score },
                         { label: "Citation Count", value: row.citation_count },
                       ])}
@@ -879,7 +1066,45 @@ function buildReviewQueue(rows, title) {
                             <option value="false" ${row.citation_ok === false ? "selected" : ""}>No</option>
                           </select>
                         </label>
+                        <label class="filter-field">
+                          <span>Logic OK</span>
+                          <select data-review-logic="${escapeHtml(row.sample_id || "")}">
+                            <option value="" ${row.logic_ok === null || row.logic_ok === undefined ? "selected" : ""}>Unset</option>
+                            <option value="true" ${row.logic_ok === true ? "selected" : ""}>Yes</option>
+                            <option value="false" ${row.logic_ok === false ? "selected" : ""}>No</option>
+                          </select>
+                        </label>
+                        <label class="filter-field">
+                          <span>Hallucination Present</span>
+                          <select data-review-hallucination="${escapeHtml(row.sample_id || "")}">
+                            <option value="" ${row.hallucination_present === null || row.hallucination_present === undefined ? "selected" : ""}>Unset</option>
+                            <option value="true" ${row.hallucination_present === true ? "selected" : ""}>Yes</option>
+                            <option value="false" ${row.hallucination_present === false ? "selected" : ""}>No</option>
+                          </select>
+                        </label>
+                        <label class="filter-field">
+                          <span>Dataset Decision</span>
+                          <select data-review-dataset-decision="${escapeHtml(row.sample_id || "")}">
+                            <option value="" ${!row.dataset_decision ? "selected" : ""}>Unset</option>
+                            <option value="promote_gold" ${row.dataset_decision === "promote_gold" ? "selected" : ""}>Promote Gold</option>
+                            <option value="keep_silver" ${row.dataset_decision === "keep_silver" ? "selected" : ""}>Keep Silver</option>
+                            <option value="needs_fix" ${row.dataset_decision === "needs_fix" ? "selected" : ""}>Needs Fix</option>
+                            <option value="reject" ${row.dataset_decision === "reject" ? "selected" : ""}>Reject</option>
+                          </select>
+                        </label>
                       </div>
+                      <label class="review-note-field">
+                        <span>Corrected Reference Answer</span>
+                        <textarea data-review-reference-answer="${escapeHtml(row.sample_id || "")}" rows="4">${escapeHtml(
+                          row.corrected_reference_answer || ""
+                        )}</textarea>
+                      </label>
+                      <label class="review-note-field">
+                        <span>Corrected Citation Targets (JSON array)</span>
+                        <textarea data-review-citation-targets="${escapeHtml(row.sample_id || "")}" rows="3">${escapeHtml(
+                          JSON.stringify(row.corrected_citation_targets || [])
+                        )}</textarea>
+                      </label>
                       <label class="review-note-field">
                         <span>Note</span>
                         <textarea data-review-note="${escapeHtml(row.sample_id || "")}" rows="4">${escapeHtml(row.note || "")}</textarea>
@@ -920,11 +1145,13 @@ function renderReviewPage(payload) {
       ${buildReviewQueue(reviewQueue.benchmark_rows || [], "Benchmark Samples")}
       ${buildReviewQueue(reviewQueue.live_rows || [], "Live Query Samples")}
     </div>
+    ${buildReviewQueue(reviewQueue.dataset_rows || [], "Dataset Candidates")}
   `;
 }
 
 const pageRenderers = {
   experiments: { render: renderExperimentsPage },
+  datasets: { render: renderDatasetsPage },
   diagnosis: { render: renderDiagnosisPage },
   "knowledge-supply": { render: renderKnowledgeSupplyPage },
   "production-signals": { render: renderProductionSignalsPage },
@@ -1183,12 +1410,32 @@ async function saveReviewSample(sampleId) {
   const retrievalEl = document.querySelector(`[data-review-retrieval="${CSS.escape(normalizedSampleId)}"]`);
   const answerEl = document.querySelector(`[data-review-answer="${CSS.escape(normalizedSampleId)}"]`);
   const citationEl = document.querySelector(`[data-review-citation="${CSS.escape(normalizedSampleId)}"]`);
+  const logicEl = document.querySelector(`[data-review-logic="${CSS.escape(normalizedSampleId)}"]`);
+  const hallucinationEl = document.querySelector(`[data-review-hallucination="${CSS.escape(normalizedSampleId)}"]`);
+  const datasetDecisionEl = document.querySelector(`[data-review-dataset-decision="${CSS.escape(normalizedSampleId)}"]`);
+  const referenceAnswerEl = document.querySelector(`[data-review-reference-answer="${CSS.escape(normalizedSampleId)}"]`);
+  const citationTargetsEl = document.querySelector(`[data-review-citation-targets="${CSS.escape(normalizedSampleId)}"]`);
   const noteEl = document.querySelector(`[data-review-note="${CSS.escape(normalizedSampleId)}"]`);
+  let correctedCitationTargets = null;
+  if (citationTargetsEl && normalizeString(citationTargetsEl.value)) {
+    try {
+      const parsed = JSON.parse(citationTargetsEl.value);
+      correctedCitationTargets = Array.isArray(parsed) ? parsed : null;
+    } catch (error) {
+      setStatus(`Failed to save review ${normalizedSampleId}: citation targets must be valid JSON.`);
+      return;
+    }
+  }
   const payload = {
     review_status: statusEl?.value || "pending",
     retrieval_ok: retrievalEl?.value === "" ? null : retrievalEl?.value === "true",
     answer_ok: answerEl?.value === "" ? null : answerEl?.value === "true",
     citation_ok: citationEl?.value === "" ? null : citationEl?.value === "true",
+    logic_ok: logicEl?.value === "" ? null : logicEl?.value === "true",
+    hallucination_present: hallucinationEl?.value === "" ? null : hallucinationEl?.value === "true",
+    dataset_decision: datasetDecisionEl?.value || null,
+    corrected_reference_answer: referenceAnswerEl?.value || null,
+    corrected_citation_targets: correctedCitationTargets,
     note: noteEl?.value || "",
   };
   setStatus(`Saving review for ${normalizedSampleId}...`);
@@ -1205,6 +1452,95 @@ async function saveReviewSample(sampleId) {
   } catch (error) {
     setStatus(`Failed to save review ${normalizedSampleId}: ${error.message}`);
   }
+}
+
+async function createDatasetGenerationRun() {
+  const datasetNameEl = document.getElementById("dataset-generation-name");
+  const languageEl = document.getElementById("dataset-generation-language");
+  const officialSourceEl = document.getElementById("dataset-source-official");
+  const technicalSourceEl = document.getElementById("dataset-source-technical");
+  const sourceTypes = [];
+  if (officialSourceEl?.checked) {
+    sourceTypes.push("official_markdown_upload");
+  }
+  if (technicalSourceEl?.checked) {
+    sourceTypes.push("technical_article_api");
+  }
+  const datasetName = normalizeString(datasetNameEl?.value);
+  if (!datasetName) {
+    setStatus("Dataset name is required.");
+    return;
+  }
+  if (!sourceTypes.length) {
+    setStatus("Select at least one source type.");
+    return;
+  }
+  setStatus(`Starting dataset generation ${datasetName}...`);
+  try {
+    await fetchJson("/api/dashboard/rag/datasets/generation-runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        dataset_name: datasetName,
+        source_types: sourceTypes,
+        question_language: languageEl?.value || "en",
+      }),
+    });
+    invalidatePageCache("datasets");
+    invalidatePageCache("review");
+    await loadCurrentPage({ force: true });
+    setStatus(`Dataset generation ${datasetName} queued.`);
+  } catch (error) {
+    setStatus(`Failed to create dataset generation run: ${error.message}`);
+  }
+}
+
+async function runDatasetBenchmark(datasetId) {
+  const normalizedDatasetId = normalizeString(datasetId);
+  if (!normalizedDatasetId) {
+    return;
+  }
+  setStatus(`Queueing benchmark for ${normalizedDatasetId}...`);
+  try {
+    await fetchJson(`/api/dashboard/rag/datasets/${encodeURIComponent(normalizedDatasetId)}/benchmark-runs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        experiment_id: ragFilters.experiment_id === "all" ? null : ragFilters.experiment_id,
+        tier: "gold",
+      }),
+    });
+    invalidatePageCache("datasets");
+    invalidatePageCache("experiments");
+    setActiveDashboardTab("experiments");
+    await loadCurrentPage({ force: true });
+    setStatus(`Benchmark for ${normalizedDatasetId} queued.`);
+  } catch (error) {
+    setStatus(`Failed to queue benchmark ${normalizedDatasetId}: ${error.message}`);
+  }
+}
+
+function exportDatasetSnapshot(datasetId) {
+  const normalizedDatasetId = normalizeString(datasetId);
+  if (!normalizedDatasetId) {
+    return;
+  }
+  window.open(`/api/dashboard/rag/datasets/${encodeURIComponent(normalizedDatasetId)}/export?tier=gold`, "_blank", "noopener");
+  setStatus(`Exporting gold snapshot for ${normalizedDatasetId}...`);
+}
+
+function openReviewPage() {
+  setActiveDashboardTab("review");
+  loadCurrentPage({ force: true }).catch((error) => {
+    setStatus(`Failed to open review queue: ${error.message}`);
+  });
+}
+
+function openDatasetsPage() {
+  setActiveDashboardTab("datasets");
+  loadCurrentPage({ force: true }).catch((error) => {
+    setStatus(`Failed to open datasets page: ${error.message}`);
+  });
 }
 
 function handleDocumentClick(event) {
@@ -1241,6 +1577,29 @@ function handleDocumentClick(event) {
   const saveReviewButton = event.target.closest("[data-save-review]");
   if (saveReviewButton) {
     saveReviewSample(saveReviewButton.dataset.saveReview);
+    return;
+  }
+  const createDatasetButton = event.target.closest("[data-create-dataset-generation]");
+  if (createDatasetButton) {
+    createDatasetGenerationRun();
+    return;
+  }
+  const runDatasetBenchmarkButton = event.target.closest("[data-run-dataset-benchmark]");
+  if (runDatasetBenchmarkButton) {
+    runDatasetBenchmark(runDatasetBenchmarkButton.dataset.runDatasetBenchmark);
+    return;
+  }
+  const exportDatasetButton = event.target.closest("[data-export-dataset]");
+  if (exportDatasetButton) {
+    exportDatasetSnapshot(exportDatasetButton.dataset.exportDataset);
+    return;
+  }
+  if (event.target.closest("[data-open-review-page]")) {
+    openReviewPage();
+    return;
+  }
+  if (event.target.closest("[data-open-datasets-review]")) {
+    openDatasetsPage();
     return;
   }
 }

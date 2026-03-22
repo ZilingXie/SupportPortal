@@ -30,6 +30,31 @@ class _FakeRepository:
         payload.update(dimensions)
         self.daily_metrics.append(payload)
 
+    def get_dataset_snapshot(self, dataset_id: str) -> dict[str, object] | None:
+        return {
+            "dataset_id": dataset_id,
+            "dataset_name": "golden-support-set",
+            "benchmark_version": "golden_support_set_20260322T100000Z",
+        }
+
+    def load_dataset_benchmark_cases(self, dataset_id: str, *, tier: str = "gold") -> list[dict[str, object]]:
+        _ = dataset_id
+        _ = tier
+        return [
+            {
+                "test_case_id": "case-snapshot-1",
+                "question": "How do I use it?",
+                "query_type": "faq",
+                "source_type": "official_markdown_upload",
+                "expected_document_ids": ["official-doc-1"],
+                "expected_heading_paths": ["Setup"],
+                "expected_evidence_refs": [{"chunk_id": "chunk-1", "doc_id": "official-doc-1", "heading": "Setup"}],
+                "answer_key_points": ["Use the official guide."],
+                "expected_handoff": False,
+                "tags": ["gold"],
+            }
+        ]
+
 
 def _fake_query_runner(question: str, top_k: int | None = None) -> RagQueryResult:
     _ = question
@@ -142,6 +167,8 @@ def _fake_judge_runner(
         "response_relevance_score": 0.91,
         "response_completeness_score": 0.9,
         "citation_correctness_score": 0.93,
+        "answer_accuracy_score": 0.95,
+        "answer_logic_score": 0.86,
         "hallucination_flag": False,
         "needs_human": False,
         "failure_type": "grounded_answer",
@@ -165,6 +192,7 @@ class RagBenchmarkRunnerTests(unittest.TestCase):
                         "source_type": "official_markdown_upload",
                         "expected_document_ids": ["official-doc-1"],
                         "expected_heading_paths": ["Setup"],
+                        "expected_evidence_refs": [{"chunk_id": "chunk-1", "doc_id": "official-doc-1", "heading": "Setup"}],
                         "answer_key_points": ["Use the official guide."],
                         "expected_handoff": False,
                         "tags": ["faq"],
@@ -195,17 +223,44 @@ class RagBenchmarkRunnerTests(unittest.TestCase):
         self.assertTrue(any("error" in vote for vote in first_row["judge_votes"]))
         self.assertEqual(first_row["expected_document_ids"], ["official-doc-1"])
         self.assertEqual(first_row["expected_heading_paths"], ["Setup"])
+        self.assertEqual(first_row["expected_evidence_refs"][0]["chunk_id"], "chunk-1")
         self.assertEqual(first_row["selected_doc_count"], 1)
         self.assertEqual(first_row["top1_similarity_score"], 0.93)
         self.assertEqual(first_row["avg_selected_similarity_score"], 0.93)
+        self.assertEqual(first_row["answer_accuracy_score"], 0.95)
+        self.assertEqual(first_row["answer_logic_score"], 0.86)
+        self.assertEqual(first_row["evidence_hit_at_5"], 1.0)
         self.assertIsInstance(first_row["trace_payload"], dict)
         self.assertEqual(first_row["trace_payload"]["question"], "How do I use it?")
         self.assertEqual(first_row["trace_payload"]["answer_text"], "Use the official setup guide.")
         self.assertEqual(first_row["trace_payload"]["citation_count"], 1)
         self.assertEqual(first_row["trace_payload"]["selected_contexts"][0]["chunk_id"], "chunk-1")
         self.assertEqual(first_row["trace_payload"]["expected_document_ids"], ["official-doc-1"])
+        self.assertEqual(first_row["trace_payload"]["expected_evidence_refs"][0]["chunk_id"], "chunk-1")
         self.assertEqual(first_row["trace_payload"]["missed_expected_docs"], [])
         self.assertIsNotNone(first_row["avg_cost_per_query"])
+        self.assertEqual(summary["metrics"]["answer_accuracy_score"], 0.95)
+        self.assertEqual(summary["metrics"]["answer_logic_score"], 0.86)
+
+    def test_run_benchmark_supports_dataset_snapshot_source(self) -> None:
+        repository = _FakeRepository()
+
+        summary = run_benchmark(
+            dataset_id="DS-123",
+            dataset_tier="gold",
+            experiment_id="exp-dataset-gold",
+            repository=repository,
+            query_runner=_fake_query_runner,
+            judge_runner=_fake_judge_runner,
+            eval_run_id="EVAL-SNAPSHOT-1",
+        )
+
+        self.assertTrue(repository.initialized)
+        self.assertEqual(summary["eval_run_id"], "EVAL-SNAPSHOT-1")
+        self.assertEqual(summary["dataset_name"], "golden-support-set")
+        self.assertEqual(summary["benchmark_version"], "golden_support_set_20260322T100000Z")
+        self.assertEqual(repository.eval_results[0]["eval_run_id"], "EVAL-SNAPSHOT-1")
+        self.assertEqual(repository.eval_results[0]["rows"][0]["test_case_id"], "case-snapshot-1")
 
 
 if __name__ == "__main__":

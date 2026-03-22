@@ -25,6 +25,7 @@
 
       <nav class="dashboard-tabs" aria-label="RAG workbench pages">
         <button type="button" class="dashboard-tab active" data-dashboard-tab="experiments">Experiments</button>
+        <button type="button" class="dashboard-tab" data-dashboard-tab="datasets">Datasets</button>
         <button type="button" class="dashboard-tab" data-dashboard-tab="diagnosis">Diagnosis</button>
         <button type="button" class="dashboard-tab" data-dashboard-tab="knowledge-supply">Knowledge Supply</button>
         <button type="button" class="dashboard-tab" data-dashboard-tab="production-signals">Production Signals</button>
@@ -108,6 +109,10 @@
 
       <section class="dashboard-panel" data-dashboard-panel="diagnosis">
         <div id="rag-diagnosis-page" class="page-shell"></div>
+      </section>
+
+      <section class="dashboard-panel" data-dashboard-panel="datasets">
+        <div id="rag-datasets-page" class="page-shell"></div>
       </section>
 
       <section class="dashboard-panel" data-dashboard-panel="knowledge-supply">

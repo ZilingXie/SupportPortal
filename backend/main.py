@@ -13,7 +13,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -50,6 +50,7 @@ DASHBOARD_DIR = UI_DIR / "dashboard-ui"
 
 PRIMARY_RAG_WORKBENCH_PAGES = (
     "experiments",
+    "datasets",
     "diagnosis",
     "knowledge-supply",
     "production-signals",
@@ -131,7 +132,24 @@ class ReviewSampleUpdateRequest(BaseModel):
     retrieval_ok: bool | None = None
     answer_ok: bool | None = None
     citation_ok: bool | None = None
+    logic_ok: bool | None = None
+    hallucination_present: bool | None = None
+    dataset_decision: str | None = Field(default=None, pattern="^(promote_gold|keep_silver|needs_fix|reject)$")
+    corrected_reference_answer: str | None = Field(default=None, max_length=12000)
+    corrected_citation_targets: list[dict[str, Any]] | None = None
     note: str | None = Field(default=None, max_length=4000)
+
+
+class DatasetGenerationRunRequest(BaseModel):
+    dataset_name: str = Field(min_length=1, max_length=160)
+    source_types: list[str]
+    question_language: str = Field(default="en", pattern="^(en)$")
+
+
+class DatasetBenchmarkRunRequest(BaseModel):
+    experiment_id: str | None = Field(default=None, max_length=160)
+    top_k: int | None = Field(default=None, ge=1, le=20)
+    tier: str = Field(default="gold", pattern="^(gold|silver)$")
 
 
 class ManagedResponseRequest(BaseModel):
@@ -1655,7 +1673,7 @@ def dashboard_rag_page(
             "limit": limit,
             "cursor": cursor,
         }
-        if page in {"experiments", "diagnosis", "knowledge-supply", "production-signals", "review"}:
+        if page in {"experiments", "datasets", "diagnosis", "knowledge-supply", "production-signals", "review"}:
             return {
                 "layout": page,
                 "range": range,
@@ -1687,10 +1705,57 @@ def dashboard_update_review_sample(
             retrieval_ok=request.retrieval_ok,
             answer_ok=request.answer_ok,
             citation_ok=request.citation_ok,
+            logic_ok=request.logic_ok,
+            hallucination_present=request.hallucination_present,
+            dataset_decision=request.dataset_decision,
+            corrected_reference_answer=request.corrected_reference_answer,
+            corrected_citation_targets=request.corrected_citation_targets,
             note=request.note,
         )
     except RagServiceError as exc:
         _raise_rag_service_http_error(exc)
+
+
+@app.post("/api/dashboard/rag/datasets/generation-runs")
+def dashboard_create_dataset_generation_run(
+    request: DatasetGenerationRunRequest,
+) -> dict[str, Any]:
+    try:
+        return rag_service_client.create_dataset_generation_run(
+            dataset_name=request.dataset_name,
+            source_types=request.source_types,
+            question_language=request.question_language,
+        )
+    except RagServiceError as exc:
+        _raise_rag_service_http_error(exc)
+
+
+@app.post("/api/dashboard/rag/datasets/{dataset_id}/benchmark-runs")
+def dashboard_create_dataset_benchmark_run(
+    dataset_id: str,
+    request: DatasetBenchmarkRunRequest,
+) -> dict[str, Any]:
+    try:
+        return rag_service_client.create_dataset_benchmark_run(
+            dataset_id,
+            experiment_id=request.experiment_id,
+            top_k=request.top_k,
+            tier=request.tier,
+        )
+    except RagServiceError as exc:
+        _raise_rag_service_http_error(exc)
+
+
+@app.get("/api/dashboard/rag/datasets/{dataset_id}/export", response_class=PlainTextResponse)
+def dashboard_export_dataset_snapshot(
+    dataset_id: str,
+    tier: str = Query(default="gold", pattern="^(gold|silver)$"),
+) -> PlainTextResponse:
+    try:
+        body = rag_service_client.export_dataset_snapshot(dataset_id, tier=tier)
+    except RagServiceError as exc:
+        _raise_rag_service_http_error(exc)
+    return PlainTextResponse(content=body, media_type="application/x-ndjson")
 
 
 @app.get("/api/dashboard/events")

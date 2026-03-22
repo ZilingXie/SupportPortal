@@ -20,6 +20,7 @@ from backend.services.rag_benchmark import (
     aggregate_judge_votes,
     compute_retrieval_metrics,
     load_benchmark_cases,
+    parse_benchmark_cases,
     summarize_eval_daily_metrics,
 )
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, RagQueryResult, run_rag_query
@@ -153,6 +154,7 @@ def _build_trace_payload(
         "language": case.language,
         "expected_document_ids": case.expected_document_ids,
         "expected_heading_paths": case.expected_heading_paths,
+        "expected_evidence_refs": case.expected_evidence_refs,
         "missed_expected_docs": missed_expected_docs,
         "retrieval_metrics": retrieval_metrics,
         "generation_mode": trace.generation_mode,
@@ -241,6 +243,8 @@ Return JSON only with this exact schema:
   "response_relevance_score": 0.0,
   "response_completeness_score": 0.0,
   "citation_correctness_score": 0.0,
+  "answer_accuracy_score": 0.0,
+  "answer_logic_score": 0.0,
   "hallucination_flag": false,
   "needs_human": false,
   "failure_type": "string"
@@ -258,6 +262,7 @@ Scoring rules:
             "question": case.question,
             "expected_document_ids": case.expected_document_ids,
             "expected_heading_paths": case.expected_heading_paths,
+            "expected_evidence_refs": case.expected_evidence_refs,
             "answer_key_points": case.answer_key_points,
             "expected_handoff": case.expected_handoff,
             "retrieval_metrics": retrieval_metrics,
@@ -322,6 +327,7 @@ def _build_eval_row(
         result.trace.retrieval_candidates,
         expected_document_ids=case.expected_document_ids,
         expected_heading_paths=case.expected_heading_paths,
+        expected_evidence_refs=case.expected_evidence_refs,
     )
     judge_aggregate = aggregate_judge_votes(judge_votes)
     trace_payload = _build_trace_payload(
@@ -345,12 +351,17 @@ def _build_eval_row(
         "recall_at_5": retrieval_metrics.get("recall_at_5"),
         "mrr": retrieval_metrics.get("mrr"),
         "ndcg_at_5": retrieval_metrics.get("ndcg_at_5"),
+        "evidence_hit_at_1": retrieval_metrics.get("evidence_hit_at_1"),
+        "evidence_hit_at_3": retrieval_metrics.get("evidence_hit_at_3"),
+        "evidence_hit_at_5": retrieval_metrics.get("evidence_hit_at_5"),
         "document_relevance_score": judge_aggregate.get("document_relevance_score", retrieval_metrics.get("document_relevance_score")),
         "faithfulness_score": judge_aggregate.get("faithfulness_score"),
         "groundedness_score": judge_aggregate.get("groundedness_score"),
         "response_relevance_score": judge_aggregate.get("response_relevance_score"),
         "response_completeness_score": judge_aggregate.get("response_completeness_score"),
         "citation_correctness_score": judge_aggregate.get("citation_correctness_score"),
+        "answer_accuracy_score": judge_aggregate.get("answer_accuracy_score"),
+        "answer_logic_score": judge_aggregate.get("answer_logic_score"),
         "hallucination_flag": judge_aggregate.get("hallucination_flag"),
         "needs_human": (
             judge_aggregate.get("needs_human")
@@ -362,6 +373,7 @@ def _build_eval_row(
         "answer_preview": _clean_text(result.answer.answer)[:280],
         "expected_document_ids": case.expected_document_ids,
         "expected_heading_paths": case.expected_heading_paths,
+        "expected_evidence_refs": case.expected_evidence_refs,
         "trace_payload": trace_payload,
         "retrieval_latency_ms": result.trace.retrieval_latency_ms,
         "generation_latency_ms": result.trace.generation_latency_ms,
@@ -388,26 +400,45 @@ def _build_eval_row(
 
 def run_benchmark(
     *,
-    dataset_path: str | Path,
+    dataset_path: str | Path | None = None,
+    dataset_id: str | None = None,
+    dataset_tier: str = "gold",
     experiment_id: str | None = None,
     limit: int | None = None,
     repository: "KnowledgeRepository" | None = None,
     query_runner: Callable[[str, int | None], RagQueryResult | None] | None = None,
     judge_runner: Callable[..., dict[str, Any]] | None = None,
     top_k: int | None = None,
+    eval_run_id: str | None = None,
 ) -> dict[str, Any]:
     repo = repository or _create_repository()
     repo.initialize()
-    cases = load_benchmark_cases(dataset_path)
+    if dataset_path is None and not _clean_text(dataset_id):
+        raise ValueError("dataset_path or dataset_id is required")
+    dataset_name: str
+    benchmark_version: str
+    if _clean_text(dataset_id):
+        snapshot = repo.get_dataset_snapshot(_clean_text(dataset_id))
+        if snapshot is None:
+            raise ValueError(f"Dataset snapshot not found: {_clean_text(dataset_id)}")
+        cases = parse_benchmark_cases(
+            repo.load_dataset_benchmark_cases(_clean_text(dataset_id), tier=dataset_tier),
+            source_label=f"dataset:{_clean_text(dataset_id)}:{dataset_tier}",
+        )
+        dataset_name = _clean_text(snapshot.get("dataset_name")) or _clean_text(dataset_id)
+        benchmark_version = _clean_text(snapshot.get("benchmark_version")) or _clean_text(dataset_id)
+    else:
+        assert dataset_path is not None
+        cases = load_benchmark_cases(dataset_path)
+        benchmark_version = Path(dataset_path).stem
+        dataset_name = Path(dataset_path).name
     if limit is not None:
         cases = cases[: max(0, int(limit))]
     if not cases:
         raise ValueError("No benchmark cases to run")
 
     judge_models = resolve_judge_models()
-    benchmark_version = Path(dataset_path).stem
-    dataset_name = Path(dataset_path).name
-    eval_run_id = f"EVAL-{uuid4().hex[:12].upper()}"
+    eval_run_id = _clean_text(eval_run_id) or f"EVAL-{uuid4().hex[:12].upper()}"
     started_at = _utc_now()
     normalized_experiment_id = _clean_text(experiment_id) or eval_run_id
     runner = query_runner or run_rag_query
@@ -439,6 +470,7 @@ def run_benchmark(
                 result.trace.retrieval_candidates,
                 expected_document_ids=case.expected_document_ids,
                 expected_heading_paths=case.expected_heading_paths,
+                expected_evidence_refs=case.expected_evidence_refs,
             )
             for judge_model in judge_models:
                 try:

@@ -8,10 +8,12 @@ from pathlib import Path
 from backend.services.rag_benchmark import (
     BENCHMARK_QUALITY_THRESHOLD,
     aggregate_judge_votes,
+    compute_retrieval_metrics,
     build_benchmark_review_sample,
     build_live_review_sample,
     deterministic_sample,
     load_benchmark_cases,
+    summarize_eval_daily_metrics,
 )
 
 
@@ -52,6 +54,9 @@ class RagBenchmarkHelperTests(unittest.TestCase):
                                 "source_type": "official_markdown_upload",
                                 "expected_document_ids": ["official-doc-1"],
                                 "expected_heading_paths": ["Overview"],
+                                "expected_evidence_refs": [
+                                    {"chunk_id": "chunk-1", "doc_id": "official-doc-1", "heading": "Overview"}
+                                ],
                                 "answer_key_points": ["point-a"],
                                 "expected_handoff": False,
                                 "tags": ["faq"],
@@ -78,7 +83,56 @@ class RagBenchmarkHelperTests(unittest.TestCase):
 
         self.assertEqual(len(cases), 2)
         self.assertEqual(cases[0].expected_document_ids, ["official-doc-1"])
+        self.assertEqual(cases[0].expected_evidence_refs[0]["chunk_id"], "chunk-1")
         self.assertEqual(cases[1].expected_handoff, True)
+
+    def test_compute_retrieval_metrics_includes_evidence_hit_rates(self) -> None:
+        metrics = compute_retrieval_metrics(
+            [
+                {
+                    "chunk_id": "chunk-9",
+                    "doc_id": "official-doc-1",
+                    "title": "Wrong Heading",
+                },
+                {
+                    "chunk_id": "chunk-1",
+                    "doc_id": "official-doc-1",
+                    "title": "Overview",
+                },
+            ],
+            expected_document_ids=["official-doc-1"],
+            expected_heading_paths=["Overview"],
+            expected_evidence_refs=[{"chunk_id": "chunk-1", "doc_id": "official-doc-1", "heading": "Overview"}],
+        )
+
+        self.assertEqual(metrics["hit_at_1"], 0.0)
+        self.assertEqual(metrics["hit_at_3"], 1.0)
+        self.assertEqual(metrics["evidence_hit_at_1"], 0.0)
+        self.assertEqual(metrics["evidence_hit_at_3"], 1.0)
+        self.assertEqual(metrics["evidence_hit_at_5"], 1.0)
+
+    def test_summarize_eval_daily_metrics_includes_accuracy_and_logic_scores(self) -> None:
+        metrics = summarize_eval_daily_metrics(
+            [
+                {
+                    "answer_accuracy_score": 0.8,
+                    "answer_logic_score": 0.7,
+                    "evidence_hit_at_5": 1.0,
+                    "hallucination_flag": False,
+                },
+                {
+                    "answer_accuracy_score": 0.6,
+                    "answer_logic_score": 0.9,
+                    "evidence_hit_at_5": 0.0,
+                    "hallucination_flag": True,
+                },
+            ]
+        )
+
+        self.assertEqual(metrics["answer_accuracy_score"], 0.7)
+        self.assertEqual(metrics["answer_logic_score"], 0.8)
+        self.assertEqual(metrics["evidence_hit_at_5"], 0.5)
+        self.assertEqual(metrics["hallucination_rate"], 0.5)
 
     def test_aggregate_judge_votes_uses_median_and_majority_and_marks_disagreement(self) -> None:
         result = aggregate_judge_votes(
