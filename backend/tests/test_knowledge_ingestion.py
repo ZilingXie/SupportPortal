@@ -14,6 +14,10 @@ from backend.services.knowledge_ingestion import (
     parse_technical_article,
 )
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEPLOY_TOKEN_SERVER_DOC = REPO_ROOT / "ag_docs" / "video-calling_deploy-token-server.md"
+TECH_BLOG_DOC = REPO_ROOT / "tech_blog.md"
+
 
 SAMPLE_OFFICIAL_MARKDOWN = """---
 title: Agora Console REST API
@@ -146,7 +150,28 @@ class KnowledgeIngestionParsingTests(unittest.TestCase):
         self.assertEqual(document.source_type, "official_markdown_upload")
         self.assertTrue(any(section.h2 == "Create a project" for section in document.sections))
 
-    def test_parse_technical_article_groups_steps_and_links(self) -> None:
+    def test_parse_official_markdown_ignores_fenced_code_headings_and_preserves_heading_path(self) -> None:
+        document = parse_official_markdown_file(
+            DEPLOY_TOKEN_SERVER_DOC,
+            ingestion_id="KI-TEST-OFFICIAL-DEPLOY-TOKEN",
+        )
+
+        self.assertEqual({section.h1 for section in document.sections}, {"Deploy a token server"})
+        self.assertTrue(
+            any(
+                list(getattr(section, "heading_path", ())) == ["Token generation code", "Basic authentication"]
+                for section in document.sections
+            )
+        )
+        self.assertTrue(
+            any(
+                list(getattr(section, "heading_path", ()))
+                == ["Reference", "API Reference", "`BuildTokenWithUid`"]
+                for section in document.sections
+            )
+        )
+
+    def test_parse_technical_article_builds_case_sections_and_metadata(self) -> None:
         document = parse_technical_article(
             title="Livestream archive missing first 64 seconds",
             content=SAMPLE_TECHNICAL_ARTICLE,
@@ -162,11 +187,23 @@ class KnowledgeIngestionParsingTests(unittest.TestCase):
             "Agora Cloud Transcoder used with AWS IVS for RTMP livestreaming.",
         )
         self.assertEqual(len(document.metadata["reference_links"]), 3)
-        self.assertEqual(document.sections[0].section_type, "issue_overview")
-        solution_chunks = [section for section in document.sections if section.section_type == "solution_steps"]
-        self.assertEqual([section.h3 for section in solution_chunks], ["Steps 1-2", "Steps 3-4", "Steps 5-5"])
-        self.assertTrue(any(section.section_type == "root_cause" for section in document.sections))
-        self.assertTrue(any(section.section_type == "prevention_refs" for section in document.sections))
+        self.assertEqual(document.metadata["doc_subtype"], "troubleshooting_case")
+        self.assertEqual(
+            [section.section_type for section in document.sections],
+            [
+                "issue_summary",
+                "troubleshooting_procedure",
+                "decision_logic",
+                "root_cause_summary",
+                "best_practice",
+            ],
+        )
+        self.assertEqual(document.sections[0].heading_path, ("Issue Summary",))
+        self.assertEqual(document.sections[2].heading_path, ("Decision Logic",))
+        self.assertIn("startup_delay", document.metadata["issue_category"])
+        self.assertIn("AWS IVS", document.metadata["external_service"])
+        self.assertEqual(document.metadata["protocol"], "RTMP")
+        self.assertFalse(document.metadata["error_present"])
         self.assertGreater(len(document.content_blocks), 0)
 
     def test_chunk_rows_include_context_prefix_for_technical_articles(self) -> None:
@@ -178,12 +215,87 @@ class KnowledgeIngestionParsingTests(unittest.TestCase):
         )
 
         rows = _build_chunk_rows(document, document.metadata)
-        self.assertGreaterEqual(len(rows), 4)
+        self.assertEqual(len(rows), 5)
         self.assertEqual(rows[0]["knowledge_type"], "technical")
         self.assertEqual(rows[0]["metadata"]["source_type"], "technical_article_api")
         self.assertIn("Title: Livestream archive missing first 64 seconds", rows[0]["content"])
         self.assertIn("Platform: Agora Cloud Transcoder used with AWS IVS for RTMP livestreaming.", rows[0]["content"])
         self.assertIn("Section:", rows[0]["content"])
+        self.assertEqual(rows[0]["metadata"]["chunk_type"], "issue_summary")
+        self.assertEqual(rows[1]["metadata"]["chunk_type"], "troubleshooting_procedure")
+        self.assertEqual(rows[2]["metadata"]["chunk_type"], "decision_logic")
+        self.assertEqual(rows[3]["metadata"]["chunk_type"], "root_cause_summary")
+        self.assertEqual(rows[4]["metadata"]["chunk_type"], "best_practice")
+        self.assertEqual(rows[0]["metadata"]["doc_subtype"], "troubleshooting_case")
+        self.assertEqual(rows[0]["metadata"]["issue_category"], "startup_delay")
+        self.assertEqual(rows[0]["metadata"]["protocol"], "RTMP")
+        self.assertEqual(rows[0]["metadata"]["external_service"], "AWS IVS")
+        self.assertEqual(len(rows[0]["metadata"]["related_links"]), 3)
+        self.assertEqual(rows[0]["chunk_strategy"], "technical_case_units_v1")
+        self.assertEqual(rows[0]["metadata"]["section_path"], ["Issue Summary"])
+
+    def test_technical_case_primary_chunk_rows_keep_links_in_metadata_without_reference_chunk(self) -> None:
+        document = parse_technical_article(
+            title="Livestream archive missing first 64 seconds",
+            content=TECH_BLOG_DOC.read_text(encoding="utf-8"),
+            source_url="https://internal.example.com/kb/stream-start-delay",
+            ingestion_id="KI-TEST-TECHNICAL-GOLD",
+        )
+
+        rows = _build_chunk_rows(document, document.metadata)
+
+        self.assertEqual(len(rows), 5)
+        self.assertFalse(any(row["metadata"]["chunk_type"] == "references" for row in rows))
+        self.assertTrue(all(len(row["metadata"]["related_links"]) == 3 for row in rows))
+        self.assertTrue(any(row["metadata"]["chunk_type"] == "decision_logic" for row in rows))
+        self.assertTrue(
+            any(
+                row["metadata"]["chunk_type"] == "troubleshooting_procedure"
+                and row["metadata"]["section_path"] == ["Troubleshooting Procedure"]
+                for row in rows
+            )
+        )
+
+    def test_official_primary_chunk_rows_use_structured_chunking_and_metadata(self) -> None:
+        document = parse_official_markdown_file(
+            DEPLOY_TOKEN_SERVER_DOC,
+            ingestion_id="KI-TEST-OFFICIAL-PRIMARY-STRUCTURED",
+        )
+
+        rows = _build_chunk_rows(document, document.metadata, provider=self._FakeProvider())
+
+        self.assertGreaterEqual(len(rows), 35)
+        self.assertLessEqual(len(rows), 45)
+        code_languages = {
+            row["metadata"].get("language")
+            for row in rows
+            if row["metadata"].get("chunk_type") == "code"
+        }
+        self.assertTrue({"go", "nodejs", "php", "python", "java", "cpp"}.issubset(code_languages))
+        self.assertTrue(
+            any(
+                row["metadata"].get("chunk_type") == "rules_table"
+                and row["metadata"].get("use_case") == "wildcard_tokens"
+                for row in rows
+            )
+        )
+        self.assertTrue(
+            any(
+                row["metadata"].get("chunk_type") == "api_params"
+                and row["metadata"].get("method_name") == "BuildTokenWithUid"
+                for row in rows
+            )
+        )
+        self.assertTrue(
+            any(
+                row["metadata"].get("use_case") == "docker_deployment"
+                and row["metadata"].get("chunk_type") == "howto"
+                for row in rows
+            )
+        )
+        self.assertTrue(
+            all(isinstance(row["metadata"].get("section_path"), list) for row in rows)
+        )
 
     def test_shadow_chunk_rows_capture_shadow_role_and_strategy(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
@@ -201,9 +313,49 @@ class KnowledgeIngestionParsingTests(unittest.TestCase):
 
         self.assertGreaterEqual(len(result.rows), 1)
         self.assertEqual(result.index_role, "shadow")
-        self.assertEqual(result.chunk_strategy, "semantic_qwen3_v1")
+        self.assertEqual(result.chunk_strategy, "official_section_token_v1")
         self.assertTrue(all(row["index_role"] == "shadow" for row in result.rows))
         self.assertTrue(all(trace["index_role"] == "shadow" for trace in result.traces))
+        self.assertTrue(all(isinstance(row["metadata"].get("section_path"), list) for row in result.rows))
+
+    def test_technical_shadow_chunk_rows_keep_existing_semantic_strategy(self) -> None:
+        document = parse_technical_article(
+            title="Livestream archive missing first 64 seconds",
+            content=SAMPLE_TECHNICAL_ARTICLE,
+            source_url="https://internal.example.com/kb/stream-start-delay",
+            ingestion_id="KI-TEST-TECHNICAL-SHADOW",
+        )
+
+        with patch.dict("os.environ", {}, clear=True):
+            result = _build_shadow_chunk_rows(
+                document,
+                document.metadata,
+                provider=self._FakeProvider(),
+            )
+
+        self.assertEqual(result.index_role, "shadow")
+        self.assertEqual(result.chunk_strategy, "semantic_qwen3_v1")
+        self.assertTrue(all(row["index_role"] == "shadow" for row in result.rows))
+        self.assertGreaterEqual(len(result.rows), 1)
+
+    def test_official_shadow_chunk_rows_use_section_token_baseline(self) -> None:
+        document = parse_official_markdown_file(
+            DEPLOY_TOKEN_SERVER_DOC,
+            ingestion_id="KI-TEST-OFFICIAL-SHADOW-BASELINE",
+        )
+
+        with patch.dict("os.environ", {}, clear=True):
+            result = _build_shadow_chunk_rows(
+                document,
+                document.metadata,
+                provider=self._FakeProvider(),
+            )
+
+        self.assertEqual(result.index_role, "shadow")
+        self.assertEqual(result.chunk_strategy, "official_section_token_v1")
+        self.assertTrue(all(row["index_role"] == "shadow" for row in result.rows))
+        self.assertTrue(all(isinstance(row["metadata"].get("section_path"), list) for row in result.rows))
+        self.assertLess(len(result.rows), 80)
 
     def test_parse_technical_article_records_missing_sections_as_warnings(self) -> None:
         document = parse_technical_article(
@@ -216,6 +368,10 @@ class KnowledgeIngestionParsingTests(unittest.TestCase):
         warnings = document.cleaning_report.get("warnings") if isinstance(document.cleaning_report.get("warnings"), list) else []
         self.assertTrue(any(str(item).startswith("missing_section:") for item in warnings))
         self.assertIn("issue_description", document.metadata["section_names"])
+        self.assertEqual([section.section_type for section in document.sections], ["issue_summary"])
+        rows = _build_chunk_rows(document, document.metadata)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["metadata"]["chunk_type"], "issue_summary")
 
     def test_metadata_enrichment_can_be_disabled_via_env(self) -> None:
         document = parse_official_markdown_content(

@@ -78,6 +78,17 @@ class RetrievedChunk:
     source_url: str | None = None
     source_type: str | None = None
     chunk_strategy: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    rerank_score: float | None = None
+    rerank_reasons: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class MetadataHints:
+    language: str | None = None
+    method_name: str | None = None
+    intent_terms: tuple[str, ...] = ()
+    technical_terms: tuple[str, ...] = ()
 
 
 @dataclass
@@ -128,6 +139,9 @@ class RagQueryTrace:
     citation_coverage_ratio: float | None = None
     retrieval_candidates: list[dict[str, Any]] = field(default_factory=list)
     selected_contexts: list[dict[str, Any]] = field(default_factory=list)
+    metadata_hints: dict[str, Any] = field(default_factory=dict)
+    metadata_filter_applied: bool = False
+    metadata_filter_type: str | None = None
     error_flag: bool = False
     timeout_flag: bool = False
     error_type: str | None = None
@@ -204,6 +218,302 @@ def _build_heading(chunk: RetrievedChunk) -> str:
     return " > ".join(heading_items) if heading_items else "Unknown heading"
 
 
+def _normalize_language_hint(value: str | None) -> str | None:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return None
+    mapping = {
+        "go": "go",
+        "golang": "go",
+        "node.js": "nodejs",
+        "nodejs": "nodejs",
+        "javascript": "nodejs",
+        "php": "php",
+        "python": "python",
+        "python3": "python",
+        "java": "java",
+        "c++": "cpp",
+        "cpp": "cpp",
+    }
+    return mapping.get(raw, raw or None)
+
+
+def _chunk_metadata_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, tuple):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        normalized = value.strip()
+        return [normalized] if normalized else []
+    return []
+
+
+def _extract_technical_query_terms(query: str) -> tuple[str, ...]:
+    lower = str(query or "").lower()
+    terms: list[str] = []
+    for label, patterns in [
+        ("startup_delay", [r"延迟", r"late", r"delay", r"latency", r"startup"]),
+        ("missing initial content", [r"丢", r"缺失", r"missing", r"truncated", r"开头"]),
+        ("first frame delayed", [r"第一帧", r"first frame"]),
+        ("cloud transcoder", [r"cloud transcoder"]),
+        ("aws ivs", [r"aws ivs", r"\bivs\b"]),
+        ("rtmp", [r"\brtmp\b"]),
+        ("queue delay", [r"\bqueue\b", r"队列", r"background job", r"worker"]),
+        ("create request", [r"create request", r"\bcreate\b"]),
+    ]:
+        if any(re.search(pattern, lower) for pattern in patterns):
+            terms.append(label)
+    return tuple(terms)
+
+
+def _technical_intent_chunk_types(intent_terms: tuple[str, ...]) -> set[str]:
+    mapping = {
+        "troubleshooting": {"troubleshooting_procedure"},
+        "decision_logic": {"decision_logic"},
+        "best_practice": {"best_practice"},
+        "root_cause": {"root_cause_summary", "issue_summary"},
+    }
+    chunk_types: set[str] = set()
+    for term in intent_terms:
+        chunk_types.update(mapping.get(term, set()))
+    return chunk_types
+
+
+def _is_technical_case_chunk(metadata: dict[str, Any]) -> bool:
+    if not isinstance(metadata, dict):
+        return False
+    if str(metadata.get("doc_subtype") or "").strip() == "troubleshooting_case":
+        return True
+    return str(metadata.get("source_type") or "").strip() == "technical_article_api"
+
+
+def _extract_metadata_hints(query: str) -> MetadataHints:
+    text = str(query or "")
+    lower = text.lower()
+    language: str | None = None
+    for pattern, normalized in [
+        (r"\bnode\.js\b|\bnodejs\b", "nodejs"),
+        (r"\bgolang\b|\bgo\b", "go"),
+        (r"\bphp\b", "php"),
+        (r"\bpython3\b|\bpython\b", "python"),
+        (r"\bjava\b", "java"),
+        (r"\bc\+\+\b|\bcpp\b", "cpp"),
+    ]:
+        if re.search(pattern, lower):
+            language = normalized
+            break
+    method_name: str | None = None
+    if re.search(r"\bBuildTokenWithUidAndPrivilege\b", text, flags=re.IGNORECASE):
+        method_name = "BuildTokenWithUidAndPrivilege"
+    elif re.search(r"\bBuildTokenWithUid\b", text, flags=re.IGNORECASE):
+        method_name = "BuildTokenWithUid"
+    intents: list[str] = []
+    for label, patterns in [
+        ("docker", [r"\bdocker\b"]),
+        ("npm", [r"\bnpm\b"]),
+        ("faq", [r"\bfaq\b", r"frequently asked questions", r"常见问题"]),
+        ("compatibility", [r"\bcompatibility\b", r"兼容性"]),
+        ("parameter", [r"\bparameter\b", r"\bparameters\b", r"\bparam\b", r"参数"]),
+        ("wildcard", [r"\bwildcard\b"]),
+        ("uid=0", [r"uid\s*=\s*0"]),
+        ("api reference", [r"\bapi reference\b", r"\bapi\b"]),
+        ("troubleshooting", [r"怎么排查", r"如何排查", r"排查", r"\btroubleshoot\b", r"\binvestigate\b", r"\bdebug\b"]),
+        ("decision_logic", [r"怎么判断", r"如何判断", r"责任边界", r"说明什么", r"\bdetermine\b", r"\binterpret\b"]),
+        ("best_practice", [r"怎么避免", r"如何避免", r"预防", r"best practice", r"\bavoid\b"]),
+        ("root_cause", [r"为什么", r"原因", r"root cause", r"什么原因"]),
+    ]:
+        if any(re.search(pattern, lower) for pattern in patterns):
+            intents.append(label)
+    return MetadataHints(
+        language=language,
+        method_name=method_name,
+        intent_terms=tuple(intents),
+        technical_terms=_extract_technical_query_terms(text),
+    )
+
+
+def _mentioned_method_names(query: str) -> list[str]:
+    methods: list[str] = []
+    if re.search(r"\bBuildTokenWithUidAndPrivilege\b", str(query or ""), flags=re.IGNORECASE):
+        methods.append("BuildTokenWithUidAndPrivilege")
+    if re.search(r"\bBuildTokenWithUid\b", str(query or ""), flags=re.IGNORECASE):
+        methods.append("BuildTokenWithUid")
+    return methods
+
+
+def _metadata_rerank(
+    *,
+    query: str,
+    chunks: list[RetrievedChunk],
+    top_k: int,
+    hints: MetadataHints | None = None,
+) -> tuple[list[RetrievedChunk], dict[str, Any]]:
+    resolved_hints = hints or _extract_metadata_hints(query)
+    mentioned_methods = _mentioned_method_names(query)
+    comparison_mode = len(mentioned_methods) > 1 and any(
+        marker in str(query or "").lower()
+        for marker in ["区别", "difference", "compare", "vs", "versus", " and "]
+    )
+    filtered_chunks = list(chunks)
+    filter_type: str | None = None
+    normalized_language = _normalize_language_hint(resolved_hints.language)
+    method_filter_name = None if comparison_mode else resolved_hints.method_name
+    technical_intent_chunk_types = _technical_intent_chunk_types(resolved_hints.intent_terms)
+    if normalized_language or method_filter_name:
+        filtered_chunks = [
+            chunk
+            for chunk in chunks
+            if (
+                normalized_language is None
+                or _normalize_language_hint(chunk.metadata.get("language")) == normalized_language
+            )
+            and (
+                method_filter_name is None
+                or str(chunk.metadata.get("method_name") or "").strip() == method_filter_name
+            )
+        ]
+        if normalized_language and method_filter_name:
+            filter_type = "language+method"
+        elif normalized_language:
+            filter_type = "language"
+        elif method_filter_name:
+            filter_type = "method"
+        if len(filtered_chunks) < min(max(1, int(top_k)), 2):
+            filtered_chunks = list(chunks)
+            filter_type = None
+    if filter_type is None and technical_intent_chunk_types:
+        technical_filtered = [
+            chunk
+            for chunk in filtered_chunks
+            if _is_technical_case_chunk(chunk.metadata)
+            and str(chunk.metadata.get("chunk_type") or "").strip().lower() in technical_intent_chunk_types
+        ]
+        if technical_filtered:
+            filtered_chunks = technical_filtered
+            filter_type = "technical_intent"
+
+    candidate_reasons: dict[str, list[str]] = {}
+    for chunk in filtered_chunks:
+        reasons: list[str] = []
+        boost = 0.0
+        metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+        chunk_language = _normalize_language_hint(metadata.get("language"))
+        chunk_method_name = str(metadata.get("method_name") or "").strip() or None
+        chunk_type = str(metadata.get("chunk_type") or "").strip().lower()
+        section_path = " > ".join(_chunk_metadata_list(metadata.get("section_path"))).lower()
+        topics = [item.lower() for item in _chunk_metadata_list(metadata.get("topic"))]
+        use_case = str(metadata.get("use_case") or "").strip().lower()
+        issue_category = str(metadata.get("issue_category") or "").strip().lower()
+        symptoms = [item.lower() for item in _chunk_metadata_list(metadata.get("symptoms"))]
+        keywords = [item.lower() for item in _chunk_metadata_list(metadata.get("keywords"))]
+        external_service = str(metadata.get("external_service") or "").strip().lower()
+        protocol = str(metadata.get("protocol") or "").strip().lower()
+        technical_terms = {item.lower() for item in resolved_hints.technical_terms}
+        text_lower = chunk.text.lower()
+
+        if normalized_language and chunk_language == normalized_language:
+            boost += 2.0
+            reasons.append(f"language:{normalized_language}")
+        if comparison_mode and chunk_method_name in mentioned_methods:
+            boost += 1.5
+            reasons.append(f"method_compare:{chunk_method_name}")
+        elif resolved_hints.method_name and chunk_method_name == resolved_hints.method_name:
+            boost += 2.5
+            reasons.append(f"method_name:{resolved_hints.method_name}")
+        if "docker" in resolved_hints.intent_terms and (
+            use_case == "docker_deployment" or "docker" in topics or "docker" in section_path
+        ):
+            boost += 1.0
+            reasons.append("use_case:docker_deployment" if use_case == "docker_deployment" else "topic:docker")
+        if "npm" in resolved_hints.intent_terms and (
+            use_case == "npm_deployment" or "npm" in topics or "npm" in section_path
+        ):
+            boost += 1.0
+            reasons.append("use_case:npm_deployment" if use_case == "npm_deployment" else "topic:npm")
+        if "parameter" in resolved_hints.intent_terms and chunk_type == "api_params":
+            boost += 1.2
+            reasons.append("chunk_type:api_params")
+        if "wildcard" in resolved_hints.intent_terms and (
+            use_case == "wildcard_tokens" or "wildcard" in topics or "wildcard" in section_path
+        ):
+            boost += 1.0
+            reasons.append("use_case:wildcard_tokens")
+        if "uid=0" in resolved_hints.intent_terms and "uid=0" in text_lower:
+            boost += 1.2
+            reasons.append("text:uid=0")
+        if "compatibility" in resolved_hints.intent_terms and chunk_type == "compatibility":
+            boost += 1.0
+            reasons.append("chunk_type:compatibility")
+        if "faq" in resolved_hints.intent_terms and chunk_type == "faq_index":
+            boost += 1.0
+            reasons.append("chunk_type:faq_index")
+        if "api reference" in resolved_hints.intent_terms and (
+            chunk_type.startswith("api_") or "api reference" in section_path
+        ):
+            boost += 0.8
+            reasons.append(f"chunk_type:{chunk_type}" if chunk_type.startswith("api_") else "section_path:api reference")
+        if _is_technical_case_chunk(metadata):
+            if "troubleshooting" in resolved_hints.intent_terms and chunk_type == "troubleshooting_procedure":
+                boost += 2.0
+                reasons.append("intent:troubleshooting")
+            if "decision_logic" in resolved_hints.intent_terms and chunk_type == "decision_logic":
+                boost += 2.2
+                reasons.append("intent:decision_logic")
+            if "best_practice" in resolved_hints.intent_terms and chunk_type == "best_practice":
+                boost += 2.0
+                reasons.append("intent:best_practice")
+            if "root_cause" in resolved_hints.intent_terms and chunk_type == "root_cause_summary":
+                boost += 2.0
+                reasons.append("intent:root_cause")
+            if "root_cause" in resolved_hints.intent_terms and chunk_type == "issue_summary":
+                boost += 1.0
+                reasons.append("intent:root_cause_support")
+            if "startup_delay" in technical_terms and issue_category == "startup_delay":
+                boost += 1.0
+                reasons.append("issue_category:startup_delay")
+            for symptom in symptoms:
+                if symptom in technical_terms:
+                    boost += 1.1
+                    reasons.append(f"symptom:{symptom}")
+            for keyword in keywords:
+                if keyword in technical_terms:
+                    boost += 0.8
+                    reasons.append(f"keyword:{keyword}")
+            if external_service and external_service in technical_terms:
+                boost += 0.6
+                reasons.append(f"external_service:{metadata.get('external_service')}")
+            if protocol and protocol in technical_terms:
+                boost += 0.6
+                reasons.append(f"protocol:{str(metadata.get('protocol') or '').upper()}")
+
+        chunk.rerank_score = round(float(chunk.similarity) + boost, 4)
+        chunk.rerank_reasons = reasons
+        candidate_reasons[chunk.chunk_id] = list(reasons)
+
+    ordered = sorted(
+        filtered_chunks,
+        key=lambda chunk: (
+            float(chunk.rerank_score or chunk.similarity or 0.0),
+            float(chunk.similarity or 0.0),
+        ),
+        reverse=True,
+    )
+    return ordered, {
+        "hints": {
+            "language": normalized_language,
+            "method_name": resolved_hints.method_name,
+            "intent_terms": list(resolved_hints.intent_terms),
+            "technical_terms": list(resolved_hints.technical_terms),
+        },
+        "applied_filter": filter_type is not None,
+        "filter_type": filter_type,
+        "filtered_candidate_count": len(filtered_chunks),
+        "post_rerank_count": len(ordered),
+        "candidate_reasons": candidate_reasons,
+    }
+
+
 def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
     dsn = (os.getenv("PGVECTOR_DSN") or "").strip()
     api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
@@ -254,6 +564,7 @@ def _retrieve_chunks(message: str, config: dict[str, Any], *, limit: int | None 
             h2,
             h3,
             source_url,
+            metadata,
             metadata ->> 'source_type' AS source_type,
             chunk_strategy,
             1 - (embedding <=> %s::vector) AS similarity
@@ -281,9 +592,10 @@ def _retrieve_chunks(message: str, config: dict[str, Any], *, limit: int | None 
                 h2=(str(row[5]).strip() or None) if row[5] is not None else None,
                 h3=(str(row[6]).strip() or None) if row[6] is not None else None,
                 source_url=(str(row[7]).strip() or None) if row[7] is not None else None,
-                source_type=(str(row[8]).strip() or None) if row[8] is not None else None,
-                chunk_strategy=(str(row[9]).strip() or None) if row[9] is not None else None,
-                similarity=float(row[10]) if row[10] is not None else 0.0,
+                metadata=row[8] if isinstance(row[8], dict) else {},
+                source_type=(str(row[9]).strip() or None) if row[9] is not None else None,
+                chunk_strategy=(str(row[10]).strip() or None) if row[10] is not None else None,
+                similarity=float(row[11]) if row[11] is not None else 0.0,
             )
         )
     return chunks
@@ -304,6 +616,7 @@ def _retrieve_fts_chunks(message: str, config: dict[str, Any], *, limit: int | N
             h2,
             h3,
             source_url,
+            metadata,
             metadata ->> 'source_type' AS source_type,
             chunk_strategy,
             ts_rank_cd(
@@ -343,7 +656,7 @@ def _retrieve_fts_chunks(message: str, config: dict[str, Any], *, limit: int | N
 
     chunks: list[RetrievedChunk] = []
     for row in rows:
-        rank = float(row[10]) if row[10] is not None else 0.0
+        rank = float(row[11]) if row[11] is not None else 0.0
         chunks.append(
             RetrievedChunk(
                 chunk_id=str(row[0]),
@@ -354,8 +667,9 @@ def _retrieve_fts_chunks(message: str, config: dict[str, Any], *, limit: int | N
                 h2=(str(row[5]).strip() or None) if row[5] is not None else None,
                 h3=(str(row[6]).strip() or None) if row[6] is not None else None,
                 source_url=(str(row[7]).strip() or None) if row[7] is not None else None,
-                source_type=(str(row[8]).strip() or None) if row[8] is not None else None,
-                chunk_strategy=(str(row[9]).strip() or None) if row[9] is not None else None,
+                metadata=row[8] if isinstance(row[8], dict) else {},
+                source_type=(str(row[9]).strip() or None) if row[9] is not None else None,
+                chunk_strategy=(str(row[10]).strip() or None) if row[10] is not None else None,
                 similarity=max(0.0, min(1.0, rank)),
             )
         )
@@ -411,6 +725,7 @@ def _retrieve_keyword_chunks(
             h2,
             h3,
             source_url,
+            metadata,
             metadata ->> 'source_type' AS source_type,
             chunk_strategy
         FROM {}
@@ -442,8 +757,9 @@ def _retrieve_keyword_chunks(
             h2=(str(row[5]).strip() or None) if row[5] is not None else None,
             h3=(str(row[6]).strip() or None) if row[6] is not None else None,
             source_url=(str(row[7]).strip() or None) if row[7] is not None else None,
-            source_type=(str(row[8]).strip() or None) if row[8] is not None else None,
-            chunk_strategy=(str(row[9]).strip() or None) if row[9] is not None else None,
+            metadata=row[8] if isinstance(row[8], dict) else {},
+            source_type=(str(row[9]).strip() or None) if row[9] is not None else None,
+            chunk_strategy=(str(row[10]).strip() or None) if row[10] is not None else None,
             similarity=0.0,
         )
         hits = _keyword_hit_count(_chunk_search_text(chunk), terms)
@@ -861,6 +1177,9 @@ def _selected_contexts(chunks: list[RetrievedChunk]) -> list[dict[str, Any]]:
                 "source_type": chunk.source_type,
                 "chunk_strategy": chunk.chunk_strategy,
                 "similarity": round(max(0.0, min(1.0, float(chunk.similarity))), 4),
+                "metadata": chunk.metadata if isinstance(chunk.metadata, dict) else {},
+                "rerank_score": chunk.rerank_score,
+                "rerank_reasons": list(chunk.rerank_reasons),
                 "text": chunk.text,
             }
         )
@@ -869,9 +1188,13 @@ def _selected_contexts(chunks: list[RetrievedChunk]) -> list[dict[str, Any]]:
 
 def _candidate_rows(
     chunks: list[RetrievedChunk],
+    reranked_chunks: list[RetrievedChunk],
     *,
     selected_chunk_ids: set[str],
 ) -> list[dict[str, Any]]:
+    rerank_positions = {chunk.chunk_id: index for index, chunk in enumerate(reranked_chunks, start=1) if chunk.chunk_id}
+    rerank_scores = {chunk.chunk_id: chunk.rerank_score for chunk in reranked_chunks if chunk.chunk_id}
+    rerank_reasons = {chunk.chunk_id: list(chunk.rerank_reasons) for chunk in reranked_chunks if chunk.chunk_id}
     rows: list[dict[str, Any]] = []
     for index, chunk in enumerate(chunks, start=1):
         rows.append(
@@ -879,9 +1202,10 @@ def _candidate_rows(
                 "chunk_id": chunk.chunk_id,
                 "doc_id": chunk.doc_id,
                 "rank_before_rerank": index,
-                "rank_after_rerank": None,
+                "rank_after_rerank": rerank_positions.get(chunk.chunk_id),
                 "retrieval_score": round(max(0.0, min(1.0, float(chunk.similarity))), 4),
-                "rerank_score": None,
+                "rerank_score": rerank_scores.get(chunk.chunk_id),
+                "metadata_reasons": rerank_reasons.get(chunk.chunk_id, []),
                 "title": _build_heading(chunk),
                 "source_url": chunk.source_url,
                 "used_in_final_answer": chunk.chunk_id in selected_chunk_ids,
@@ -916,12 +1240,23 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
     vector_latency_ms = 0.0
     bm25_latency_ms = 0.0
     generation_latency_ms = 0.0
+    rerank_latency_ms = 0.0
     prompt_tokens = 0
     completion_tokens = 0
     model_name: str | None = None
     structured_retry_used = False
     generation_mode = "structured_answer"
     extractive_fallback_used = False
+    retrieved_chunks: list[RetrievedChunk] = []
+    reranked_chunks: list[RetrievedChunk] = []
+    rerank_info: dict[str, Any] = {
+        "hints": {"language": None, "method_name": None, "intent_terms": []},
+        "applied_filter": False,
+        "filter_type": None,
+        "filtered_candidate_count": 0,
+        "post_rerank_count": 0,
+        "candidate_reasons": {},
+    }
 
     try:
         vector_started_at = time.perf_counter()
@@ -1040,8 +1375,22 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
                 citation_coverage_ratio=None,
                 retrieval_candidates=[],
                 selected_contexts=[],
+                metadata_hints=rerank_info.get("hints") if isinstance(rerank_info.get("hints"), dict) else {},
+                metadata_filter_applied=bool(rerank_info.get("applied_filter")),
+                metadata_filter_type=(str(rerank_info.get("filter_type")).strip() or None) if rerank_info.get("filter_type") is not None else None,
             )
             return RagQueryResult(answer=answer, trace=trace)
+
+    retrieved_chunks = list(chunks)
+    if chunks:
+        rerank_started_at = time.perf_counter()
+        reranked_chunks, rerank_info = _metadata_rerank(
+            query=message,
+            chunks=chunks,
+            top_k=int(config["fusion_candidate_k"]),
+        )
+        rerank_latency_ms = round((time.perf_counter() - rerank_started_at) * 1000, 2)
+        chunks = reranked_chunks or chunks
 
     final_chunks = chunks[: int(config["top_k"])] or chunks
     allowed_chunk_ids = {chunk.chunk_id for chunk in final_chunks}
@@ -1093,13 +1442,13 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
             retrieval_strategy="hybrid_rrf" if vector_chunks and keyword_chunks else ("vector_only" if vector_chunks else "bm25_only"),
             vector_candidates_count=len(vector_chunks),
             bm25_candidates_count=len(keyword_chunks),
-            reranked_candidates_count=0,
-            retrieved_chunk_ids=[chunk.chunk_id for chunk in chunks if chunk.chunk_id],
+            reranked_candidates_count=int(rerank_info.get("post_rerank_count") or 0),
+            retrieved_chunk_ids=[chunk.chunk_id for chunk in retrieved_chunks if chunk.chunk_id],
             selected_chunk_ids=selected_chunk_ids,
             vector_retrieval_latency_ms=vector_latency_ms,
             bm25_retrieval_latency_ms=bm25_latency_ms,
             retrieval_latency_ms=round(vector_latency_ms + bm25_latency_ms, 2),
-            rerank_latency_ms=0.0,
+            rerank_latency_ms=rerank_latency_ms,
             generation_latency_ms=generation_latency_ms,
             total_latency_ms=round((time.perf_counter() - total_started_at) * 1000, 2),
             prompt_tokens=prompt_tokens,
@@ -1125,8 +1474,15 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
             top1_similarity_score=top1_similarity_score,
             avg_selected_similarity_score=avg_selected_similarity_score,
             citation_coverage_ratio=citation_coverage_ratio,
-            retrieval_candidates=_candidate_rows(chunks, selected_chunk_ids=unique_selected_chunk_ids),
+            retrieval_candidates=_candidate_rows(
+                retrieved_chunks,
+                reranked_chunks or chunks,
+                selected_chunk_ids=unique_selected_chunk_ids,
+            ),
             selected_contexts=_selected_contexts(final_chunks),
+            metadata_hints=rerank_info.get("hints") if isinstance(rerank_info.get("hints"), dict) else {},
+            metadata_filter_applied=bool(rerank_info.get("applied_filter")),
+            metadata_filter_type=(str(rerank_info.get("filter_type")).strip() or None) if rerank_info.get("filter_type") is not None else None,
         )
 
     if payload is not None and _is_valid_response(payload, allowed_chunk_ids):

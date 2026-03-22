@@ -52,6 +52,23 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIsInstance(repository, PostgresEventRepository)
         self.assertEqual(repository._schema, "supportportal")
 
+    def test_ticket_repository_reads_connect_retry_settings(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TICKET_DB_DSN": "postgresql://example",
+                "TICKET_DB_CONNECT_TIMEOUT": "12",
+                "TICKET_DB_CONNECT_RETRIES": "2",
+                "TICKET_DB_CONNECT_RETRY_DELAY_SECONDS": "0.15",
+            },
+            clear=True,
+        ):
+            repository = create_ticket_repository()
+        self.assertIsInstance(repository, PostgresTicketRepository)
+        self.assertEqual(repository._connect_timeout, 12)
+        self.assertEqual(repository._connect_retries, 2)
+        self.assertAlmostEqual(repository._connect_retry_delay_seconds, 0.15)
+
     def test_knowledge_repository_defaults_to_supportportal_vector_table(self) -> None:
         with patch.dict(
             os.environ,
@@ -107,6 +124,27 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIs(connection, sentinel_connection)
         self.assertEqual(connect_mock.call_count, 2)
         sleep_mock.assert_called_once_with(0.1)
+
+    def test_ticket_repository_retries_connect_timeout(self) -> None:
+        repository = PostgresTicketRepository(
+            dsn="postgresql://example",
+            connect_timeout=5,
+            connect_retries=1,
+            connect_retry_delay_seconds=0.2,
+        )
+        sentinel_connection = object()
+        with patch(
+            "backend.repositories.ticket_repository.psycopg.connect",
+            side_effect=[
+                psycopg.OperationalError("connection timeout expired"),
+                sentinel_connection,
+            ],
+        ) as connect_mock:
+            with patch("backend.repositories.ticket_repository.time.sleep") as sleep_mock:
+                connection = repository._connect()
+        self.assertIs(connection, sentinel_connection)
+        self.assertEqual(connect_mock.call_count, 2)
+        sleep_mock.assert_called_once_with(0.2)
 
     def test_vector_type_dimension_extracts_pgvector_dim(self) -> None:
         self.assertEqual(_vector_type_dimension("vector(1024)"), 1024)

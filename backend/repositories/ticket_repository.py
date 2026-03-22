@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
@@ -53,6 +54,14 @@ def _normalize_role(value: Any) -> str:
 def _safe_positive_int(value: Any, default_value: int) -> int:
     try:
         parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default_value
+    return parsed if parsed > 0 else default_value
+
+
+def _safe_positive_float(value: Any, default_value: float) -> float:
+    try:
+        parsed = float(str(value).strip())
     except (TypeError, ValueError):
         return default_value
     return parsed if parsed > 0 else default_value
@@ -157,10 +166,19 @@ class InMemoryTicketRepository:
 
 
 class PostgresTicketRepository:
-    def __init__(self, dsn: str, schema: str = "supportportal", connect_timeout: int = 10) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        schema: str = "supportportal",
+        connect_timeout: int = 10,
+        connect_retries: int = 0,
+        connect_retry_delay_seconds: float = 1.0,
+    ) -> None:
         self._dsn = dsn.strip()
         self._schema = (schema or "supportportal").strip() or "supportportal"
         self._connect_timeout = _safe_positive_int(connect_timeout, 5)
+        self._connect_retries = _safe_positive_int(connect_retries, 0)
+        self._connect_retry_delay_seconds = _safe_positive_float(connect_retry_delay_seconds, 1.0)
 
     def storage_mode(self) -> str:
         return "postgres"
@@ -169,7 +187,25 @@ class PostgresTicketRepository:
         return sql.Identifier(self._schema, table_name)
 
     def _connect(self) -> psycopg.Connection[Any]:
-        return psycopg.connect(self._dsn, connect_timeout=self._connect_timeout)
+        attempts = max(1, self._connect_retries + 1)
+        last_error: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                return psycopg.connect(self._dsn, connect_timeout=self._connect_timeout)
+            except (psycopg.OperationalError, psycopg.Error, OSError, TimeoutError) as exc:
+                last_error = exc
+                if attempt >= attempts:
+                    raise
+                LOGGER.warning(
+                    "Ticket repository connection failed attempt %s/%s: %s",
+                    attempt,
+                    attempts,
+                    exc,
+                )
+                time.sleep(self._connect_retry_delay_seconds)
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Ticket repository connection failed without an exception")
 
     def initialize(self) -> None:
         with self._connect() as conn:
@@ -563,8 +599,15 @@ def create_ticket_repository() -> TicketRepository:
         raise RuntimeError("TICKET_DB_DSN is required")
     schema = (os.getenv("TICKET_DB_SCHEMA") or "supportportal").strip() or "supportportal"
     connect_timeout = _safe_positive_int(os.getenv("TICKET_DB_CONNECT_TIMEOUT"), 10)
+    connect_retries = _safe_positive_int(os.getenv("TICKET_DB_CONNECT_RETRIES"), 0)
+    connect_retry_delay_seconds = _safe_positive_float(
+        os.getenv("TICKET_DB_CONNECT_RETRY_DELAY_SECONDS"),
+        1.0,
+    )
     return PostgresTicketRepository(
         dsn=dsn,
         schema=schema,
         connect_timeout=connect_timeout,
+        connect_retries=connect_retries,
+        connect_retry_delay_seconds=connect_retry_delay_seconds,
     )
