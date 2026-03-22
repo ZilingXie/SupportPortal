@@ -35,6 +35,25 @@ _TECHNICAL_MAX_CHARS = 2600
 _TECHNICAL_OVERLAP = 320
 _TECHNICAL_STEP_GROUP_SIZE = 2
 _PARSER_VERSION = "p0-1"
+_OFFICIAL_STRUCTURED_PRIMARY_STRATEGY = "official_structured_v1"
+_OFFICIAL_STRUCTURED_SHADOW_STRATEGY = "official_section_token_v1"
+_TECHNICAL_CASE_PRIMARY_STRATEGY = "technical_case_units_v1"
+_TECHNICAL_CASE_SUBTYPE = "troubleshooting_case"
+_OFFICIAL_NARRATIVE_MIN_TOKENS = 300
+_OFFICIAL_NARRATIVE_MAX_TOKENS = 600
+_OFFICIAL_NARRATIVE_OVERLAP_TOKENS = 80
+_OFFICIAL_CODE_MIN_TOKENS = 400
+_OFFICIAL_CODE_MAX_TOKENS = 900
+_OFFICIAL_CODE_OVERLAP_TOKENS = 30
+_OFFICIAL_TABLE_MIN_TOKENS = 200
+_OFFICIAL_TABLE_MAX_TOKENS = 400
+_OFFICIAL_TABLE_OVERLAP_TOKENS = 50
+_OFFICIAL_SHADOW_SECTION_TOKENS = 500
+_OFFICIAL_SHADOW_OVERLAP_TOKENS = 80
+_TECHNICAL_ISSUE_SUMMARY_MAX_TOKENS = 420
+_TECHNICAL_PROCEDURE_MAX_TOKENS = 700
+_TECHNICAL_DECISION_LOGIC_MAX_TOKENS = 360
+_TECHNICAL_SUMMARY_MAX_TOKENS = 280
 
 
 def _utc_now() -> str:
@@ -61,6 +80,7 @@ class DocumentSection:
     h1: str | None
     h2: str | None = None
     h3: str | None = None
+    heading_path: tuple[str, ...] = ()
 
 
 @dataclass
@@ -71,6 +91,7 @@ class ContentBlock:
     h2: str | None
     h3: str | None
     section_type: str
+    heading_path: tuple[str, ...] = ()
 
 
 @dataclass
@@ -105,6 +126,22 @@ class ChunkBuildResult:
     strategy_version: str
     rows: list[dict[str, Any]]
     traces: list[dict[str, Any]]
+
+
+@dataclass
+class StructuredChunkSpec:
+    anchor_block: ContentBlock
+    raw_text: str
+    chunk_type: str
+    language: str | None
+    method_name: str | None
+    section_path: tuple[str, ...]
+    topic: list[str]
+    runtime: str | None
+    use_case: str | None
+    overlap_tokens: int
+    boundary_reason: str
+    unit_count: int
 
 
 def _safe_int_env(name: str, default: int) -> int:
@@ -280,12 +317,16 @@ def _merge_string_lists(*collections: Any) -> list[str]:
 
 
 def _chunk_strategy_for(knowledge_type: str) -> str:
-    _ = knowledge_type
+    if knowledge_type == "official":
+        return _OFFICIAL_STRUCTURED_PRIMARY_STRATEGY
+    if knowledge_type == "technical":
+        return _TECHNICAL_CASE_PRIMARY_STRATEGY
     return primary_chunk_strategy_name()
 
 
 def _shadow_strategy_for(knowledge_type: str) -> str:
-    _ = knowledge_type
+    if knowledge_type == "official":
+        return _OFFICIAL_STRUCTURED_SHADOW_STRATEGY
     return shadow_chunk_strategy_name()
 
 
@@ -368,13 +409,90 @@ def _extract_html_version_url(markdown_text: str) -> str | None:
     return _clean_text(match.group(1)) or None
 
 
+def _compat_heading_fields(title: str, heading_path: tuple[str, ...]) -> tuple[str, str | None, str | None]:
+    normalized_title = _clean_text(title) or "Untitled Document"
+    if not heading_path:
+        return normalized_title, "Introduction", None
+    h2 = _clean_text(heading_path[0]) or "Introduction"
+    h3 = _clean_text(heading_path[-1]) if len(heading_path) > 1 else None
+    return normalized_title, h2, h3 or None
+
+
+def _normalize_heading_text(value: str) -> str:
+    text = str(value or "")
+    text = re.sub(r"[\u200b\u200c\u200d\ufeff]", "", text)
+    return _clean_text(text)
+
+
+def _markdown_heading_records(markdown_body: str, title: str) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    lines = markdown_body.splitlines()
+    in_code = False
+    fence_marker: str | None = None
+    heading_stack: dict[int, str] = {}
+    current_h1 = title
+
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        fence_match = re.match(r"^(```+|~~~+)", stripped)
+        if fence_match:
+            marker = fence_match.group(1)
+            if not in_code:
+                in_code = True
+                fence_marker = marker
+            elif fence_marker and stripped.startswith(fence_marker):
+                in_code = False
+                fence_marker = None
+            continue
+        if in_code:
+            continue
+        if stripped.startswith("[HTML Version]("):
+            continue
+        heading_match = re.match(r"^\s*(#{1,6})\s+(.+?)\s*$", raw_line)
+        if not heading_match:
+            continue
+        level = len(heading_match.group(1))
+        heading_text = _normalize_heading_text(heading_match.group(2))
+        if not heading_text:
+            continue
+        if level == 1:
+            current_h1 = heading_text or title
+            heading_stack = {}
+            records.append(
+                {
+                    "level": 1,
+                    "text": current_h1,
+                    "h1": current_h1,
+                    "heading_path": [],
+                }
+            )
+            continue
+        heading_stack = {
+            stack_level: stack_text
+            for stack_level, stack_text in heading_stack.items()
+            if stack_level < level
+        }
+        heading_stack[level] = heading_text
+        heading_path = [heading_stack[key] for key in sorted(heading_stack)]
+        records.append(
+            {
+                "level": level,
+                "text": heading_text,
+                "h1": current_h1 or title,
+                "heading_path": heading_path,
+            }
+        )
+    return records
+
+
 def _parse_markdown_sections(title: str, markdown_body: str) -> list[DocumentSection]:
     lines = markdown_body.splitlines()
     sections: list[DocumentSection] = []
     current_lines: list[str] = []
     current_h1 = title
-    current_h2: str | None = None
-    current_h3: str | None = None
+    current_path: tuple[str, ...] = ()
+    in_code = False
+    fence_marker: str | None = None
 
     def _flush_current() -> None:
         nonlocal current_lines
@@ -382,34 +500,48 @@ def _parse_markdown_sections(title: str, markdown_body: str) -> list[DocumentSec
         if not text:
             current_lines = []
             return
+        h1, h2, h3 = _compat_heading_fields(current_h1 or title, current_path)
         sections.append(
             DocumentSection(
                 section_type="markdown_section",
                 content=text,
-                h1=current_h1 or title,
-                h2=current_h2 or "Introduction",
-                h3=current_h3,
+                h1=h1,
+                h2=h2,
+                h3=h3,
+                heading_path=current_path,
             )
         )
         current_lines = []
 
     for raw_line in lines:
-        heading_match = re.match(r"^\s*(#{1,6})\s+(.+?)\s*$", raw_line)
+        stripped = raw_line.strip()
+        fence_match = re.match(r"^(```+|~~~+)", stripped)
+        if fence_match:
+            marker = fence_match.group(1)
+            if not in_code:
+                in_code = True
+                fence_marker = marker
+            elif fence_marker and stripped.startswith(fence_marker):
+                in_code = False
+                fence_marker = None
+            current_lines.append(raw_line)
+            continue
+        heading_match = None if in_code else re.match(r"^\s*(#{1,6})\s+(.+?)\s*$", raw_line)
         if heading_match:
             _flush_current()
             level = len(heading_match.group(1))
-            heading_text = heading_match.group(2).strip()
+            heading_text = _normalize_heading_text(heading_match.group(2))
             if level == 1:
                 current_h1 = heading_text or title
-                current_h2 = None
-                current_h3 = None
-            elif level == 2:
-                current_h2 = heading_text or current_h2
-                current_h3 = None
+                current_path = ()
             else:
-                current_h3 = heading_text or current_h3
+                parent_path = list(current_path)
+                parent_depth = max(0, level - 2)
+                parent_path = parent_path[:parent_depth]
+                parent_path.append(heading_text)
+                current_path = tuple(parent_path)
             continue
-        if raw_line.strip().startswith("[HTML Version]("):
+        if stripped.startswith("[HTML Version]("):
             continue
         current_lines.append(raw_line)
 
@@ -425,6 +557,7 @@ def _flush_block_buffer(
     h2: str | None,
     h3: str | None,
     section_type: str,
+    heading_path: tuple[str, ...] = (),
 ) -> None:
     normalized_lines = [line.rstrip() for line in lines if line.rstrip()]
     if not normalized_lines:
@@ -448,6 +581,7 @@ def _flush_block_buffer(
             h2=h2,
             h3=h3,
             section_type=section_type,
+            heading_path=heading_path,
         )
     )
 
@@ -472,6 +606,7 @@ def _blocks_from_sections(sections: list[DocumentSection]) -> list[ContentBlock]
                                 h2=section.h2,
                                 h3=section.h3,
                                 section_type=section.section_type,
+                                heading_path=section.heading_path,
                             )
                         )
                     code_buffer = []
@@ -484,6 +619,7 @@ def _blocks_from_sections(sections: list[DocumentSection]) -> list[ContentBlock]
                         h2=section.h2,
                         h3=section.h3,
                         section_type=section.section_type,
+                        heading_path=section.heading_path,
                     )
                     buffer = []
                     in_code = True
@@ -500,6 +636,7 @@ def _blocks_from_sections(sections: list[DocumentSection]) -> list[ContentBlock]
                     h2=section.h2,
                     h3=section.h3,
                     section_type=section.section_type,
+                    heading_path=section.heading_path,
                 )
                 buffer = []
                 continue
@@ -513,6 +650,7 @@ def _blocks_from_sections(sections: list[DocumentSection]) -> list[ContentBlock]
                     h2=section.h2,
                     h3=section.h3,
                     section_type=section.section_type,
+                    heading_path=section.heading_path,
                 )
             )
         _flush_block_buffer(
@@ -522,6 +660,7 @@ def _blocks_from_sections(sections: list[DocumentSection]) -> list[ContentBlock]
             h2=section.h2,
             h3=section.h3,
             section_type=section.section_type,
+            heading_path=section.heading_path,
         )
     return [block for block in blocks if block.text]
 
@@ -616,6 +755,266 @@ def _parse_solution_steps(solution_text: str) -> list[dict[str, Any]]:
     return [step for step in steps if step.get("content")]
 
 
+def _dedupe_text_items(values: list[str]) -> list[str]:
+    items: list[str] = []
+    for value in values:
+        normalized = _normalize_article_text(value)
+        if normalized and normalized not in items:
+            items.append(normalized)
+    return items
+
+
+def _split_bullet_lines(text: str) -> list[str]:
+    lines = []
+    for raw_line in str(text or "").splitlines():
+        stripped = raw_line.strip()
+        if re.match(r"^[-*+]\s+", stripped):
+            lines.append(re.sub(r"^[-*+]\s+", "", stripped).strip())
+    return _dedupe_text_items(lines)
+
+
+def _sentence_candidates(text: str) -> list[str]:
+    candidates: list[str] = []
+    for sentence in _split_sentences(_normalize_article_text(text)):
+        normalized = _normalize_article_text(sentence)
+        if normalized:
+            candidates.append(normalized)
+    return _dedupe_text_items(candidates)
+
+
+def _technical_source_sections(section_type: str) -> list[str]:
+    mapping = {
+        "issue_summary": ["issue_description", "platform_sdk", "error_message"],
+        "troubleshooting_procedure": ["step_by_step_solution"],
+        "decision_logic": ["issue_description", "step_by_step_solution", "root_cause"],
+        "root_cause_summary": ["root_cause"],
+        "best_practice": ["prevention_best_practice"],
+        "references": ["corresponding_document_link"],
+        "full_article": ["full_article"],
+    }
+    return mapping.get(section_type, [section_type])
+
+
+def _technical_section_heading(section_type: str) -> str:
+    mapping = {
+        "issue_summary": "Issue Summary",
+        "troubleshooting_procedure": "Troubleshooting Procedure",
+        "decision_logic": "Decision Logic",
+        "root_cause_summary": "Root Cause Summary",
+        "best_practice": "Best Practice",
+        "references": "References",
+        "full_article": "Article",
+    }
+    return mapping.get(section_type, _clean_text(section_type.replace("_", " ")).title())
+
+
+def _technical_section_max_tokens(section_type: str) -> int:
+    if section_type == "issue_summary":
+        return _TECHNICAL_ISSUE_SUMMARY_MAX_TOKENS
+    if section_type == "troubleshooting_procedure":
+        return _TECHNICAL_PROCEDURE_MAX_TOKENS
+    if section_type == "decision_logic":
+        return _TECHNICAL_DECISION_LOGIC_MAX_TOKENS
+    return _TECHNICAL_SUMMARY_MAX_TOKENS
+
+
+def _technical_issue_category(*parts: str) -> str:
+    haystack = " ".join(_normalize_article_text(part).lower() for part in parts if _normalize_article_text(part))
+    if any(token in haystack for token in ["first frame", "delay", "latency", "startup", "missing", "timestamp"]):
+        return "startup_delay"
+    return "technical_case"
+
+
+def _technical_external_service(*parts: str) -> str | None:
+    haystack = " ".join(_normalize_article_text(part).lower() for part in parts if _normalize_article_text(part))
+    for label, patterns in [
+        ("AWS IVS", ["aws ivs", "ivs"]),
+        ("YouTube", ["youtube"]),
+        ("Twitch", ["twitch"]),
+    ]:
+        if any(pattern in haystack for pattern in patterns):
+            return label
+    return None
+
+
+def _technical_protocol(*parts: str) -> str | None:
+    haystack = " ".join(_normalize_article_text(part).upper() for part in parts if _normalize_article_text(part))
+    for protocol in ["RTMP", "HLS", "HTTP-FLV", "WEBRTC"]:
+        if protocol in haystack:
+            return protocol
+    return None
+
+
+def _technical_product_name(platform_text: str | None, *parts: str) -> str | None:
+    normalized_platform = _normalize_article_text(platform_text or "")
+    if normalized_platform:
+        match = re.match(r"^(Agora [A-Za-z0-9 /+-]+?)(?: used with| with| for|$)", normalized_platform)
+        if match:
+            return _clean_text(match.group(1)) or None
+        if normalized_platform.lower().startswith("agora "):
+            return normalized_platform
+    haystack = " ".join(_normalize_article_text(part) for part in parts if _normalize_article_text(part))
+    match = re.search(r"\bAgora [A-Za-z0-9 /+-]+\b", haystack)
+    return _clean_text(match.group(0)) if match else None
+
+
+def _technical_error_present(error_message: str | None) -> bool:
+    normalized = _normalize_article_text(error_message or "").lower()
+    if not normalized:
+        return False
+    if any(marker in normalized for marker in ["no explicit error", "no error", "without error"]):
+        return False
+    return True
+
+
+def _technical_symptoms(issue_description: str | None, error_message: str | None) -> list[str]:
+    haystack = " ".join(
+        _normalize_article_text(part).lower()
+        for part in [issue_description or "", error_message or ""]
+        if _normalize_article_text(part)
+    )
+    symptoms: list[str] = []
+    if any(token in haystack for token in ["missing approximately the first 64 seconds", "missing first", "missing initial", "truncated at beginning"]):
+        symptoms.append("missing initial content")
+    if "first frame" in haystack and any(token in haystack for token in ["delay", "delayed", "late"]):
+        symptoms.append("first frame delayed")
+    if "stream start timestamp" in haystack or "timestamp differences" in haystack or "timestamp mismatch" in haystack:
+        symptoms.append("stream start timestamp mismatch")
+    return _dedupe_text_items(symptoms)
+
+
+def _technical_keywords(*parts: str) -> list[str]:
+    haystack = " ".join(_normalize_article_text(part).lower() for part in parts if _normalize_article_text(part))
+    keywords: list[str] = []
+    for label, patterns in [
+        ("cloud transcoder", ["cloud transcoder"]),
+        ("aws ivs", ["aws ivs", "ivs"]),
+        ("rtmp", ["rtmp"]),
+        ("create request", ["create request", '"create" api', "create api"]),
+        ("acquire", ["acquire"]),
+        ("queue delay", ["queue", "queued background job", "background job", "worker scheduling"]),
+        ("first frame", ["first frame"]),
+        ("startup latency", ["startup latency", "startup delay", "latency"]),
+        ("stream start timestamp mismatch", ["timestamp differences", "stream start timestamps", "timestamp mismatch"]),
+    ]:
+        if any(pattern in haystack for pattern in patterns):
+            keywords.append(label)
+    return _dedupe_text_items(keywords)
+
+
+def _technical_question_to_determine(issue_description: str | None) -> str | None:
+    for sentence in _sentence_candidates(issue_description or ""):
+        lower = sentence.lower()
+        if "needs to identify" in lower or "question to determine" in lower or "whether" in lower:
+            return sentence
+    return None
+
+
+def _format_bullets(title: str, lines: list[str]) -> str:
+    normalized = _dedupe_text_items(lines)
+    if not normalized:
+        return ""
+    return f"{title}:\n" + "\n".join(f"- {line}" for line in normalized)
+
+
+def _build_technical_issue_summary(
+    *,
+    issue_description: str,
+    platform_text: str | None,
+    error_message: str | None,
+) -> str:
+    parts: list[str] = []
+    normalized_issue = _normalize_article_text(issue_description)
+    if normalized_issue:
+        parts.append(f"Problem:\n{normalized_issue}")
+    question = _technical_question_to_determine(issue_description)
+    if question:
+        parts.append(f"Question to determine:\n{question}")
+    normalized_platform = _normalize_article_text(platform_text or "")
+    if normalized_platform:
+        parts.append(f"Platform:\n{normalized_platform}")
+    normalized_error = _normalize_article_text(error_message or "")
+    if normalized_error:
+        parts.append(f"Error:\n{normalized_error}")
+    return "\n\n".join(part for part in parts if part).strip()
+
+
+def _build_technical_troubleshooting_procedure(solution_steps: list[dict[str, Any]]) -> str:
+    lines = ["Procedure:"]
+    for step in solution_steps:
+        title = _normalize_article_text(str(step.get("title") or ""))
+        content = _normalize_article_text(str(step.get("content") or ""))
+        if title and content:
+            lines.append(f"{step['number']}. {title}: {content}")
+        elif title:
+            lines.append(f"{step['number']}. {title}")
+        elif content:
+            lines.append(f"{step['number']}. {content}")
+    return "\n".join(line for line in lines if line).strip()
+
+
+def _build_technical_decision_logic(
+    *,
+    issue_description: str | None,
+    solution_steps: list[dict[str, Any]],
+    root_cause: str | None,
+) -> str | None:
+    lines: list[str] = []
+    question = _technical_question_to_determine(issue_description)
+    if question:
+        lines.append(question)
+    for step in solution_steps:
+        combined = f"{step.get('title', '')}\n{step.get('content', '')}"
+        lower = combined.lower()
+        if any(
+            token in lower
+            for token in [
+                "determine whether",
+                "compare",
+                "delay between",
+                "delay exists before",
+                "likely due to",
+                "it likely occurred",
+                "start output",
+            ]
+        ):
+            lines.extend(_sentence_candidates(str(step.get("content") or "")))
+    for sentence in _sentence_candidates(root_cause or ""):
+        lower = sentence.lower()
+        if any(token in lower for token in ["caused by", "startup latency", "delay", "latency"]):
+            lines.append(sentence)
+    normalized = _dedupe_text_items(lines)
+    if len(normalized) < 2:
+        return None
+    return _format_bullets("Interpretation Rules", normalized)
+
+
+def _build_technical_root_cause_summary(root_cause: str | None) -> str | None:
+    lines = _sentence_candidates(root_cause or "")
+    if not lines:
+        return None
+    return _format_bullets("Common causes", lines)
+
+
+def _build_technical_best_practice(prevention_text: str | None) -> str | None:
+    bullets = _split_bullet_lines(prevention_text or "")
+    if not bullets:
+        bullets = _sentence_candidates(prevention_text or "")
+    if not bullets:
+        return None
+    return _format_bullets("Recommendations", bullets)
+
+
+def _technical_reference_chunk_text(reference_text: str | None) -> str | None:
+    normalized = _normalize_article_text(reference_text or "")
+    if not normalized:
+        return None
+    lines = [line.strip() for line in normalized.splitlines() if line.strip()]
+    if lines and all(re.match(r"^-?\s*\[.+\]\(.+\)$", line.lstrip("- ").strip()) for line in lines):
+        return None
+    return normalized
+
+
 def _paragraph_window_split(text: str, *, max_chars: int, overlap_chars: int) -> list[str]:
     normalized = _normalize_article_text(text)
     if not normalized:
@@ -669,13 +1068,7 @@ def parse_official_markdown_content(
     product, module = _infer_url_taxonomy(source_url)
     language = _infer_language(body)
     checksum = _sha256_text(raw_markdown)
-    headings = [
-        {
-            "level": int(len(match.group(1))),
-            "text": match.group(2).strip(),
-        }
-        for match in re.finditer(r"^\s*(#{1,6})\s+(.+?)\s*$", body, flags=re.MULTILINE)
-    ]
+    headings = _markdown_heading_records(body, title)
     sections = _parse_markdown_sections(title=title, markdown_body=body)
     content_blocks = _blocks_from_sections(sections)
     warnings: list[str] = []
@@ -767,7 +1160,18 @@ def parse_technical_article(
     sections_map = _parse_technical_sections(normalized_content)
     platform_text = sections_map.get("platform_sdk")
     reference_links = _parse_markdown_links(sections_map.get("corresponding_document_link", ""))
+    issue_description = sections_map.get("issue_description", "")
+    error_message = sections_map.get("error_message", "")
+    root_cause_text = sections_map.get("root_cause", "")
+    prevention_text = sections_map.get("prevention_best_practice", "")
     language = _infer_language(normalized_content)
+    product = _technical_product_name(platform_text, normalized_content)
+    external_service = _technical_external_service(platform_text or "", normalized_content)
+    protocol = _technical_protocol(platform_text or "", normalized_content)
+    issue_category = _technical_issue_category(normalized_content)
+    symptoms = _technical_symptoms(issue_description, error_message)
+    keywords = _technical_keywords(normalized_content)
+    error_present = _technical_error_present(error_message)
     missing_sections = [
         label
         for label in [
@@ -786,83 +1190,101 @@ def parse_technical_article(
     checksum = _sha256_text(f"{normalized_title}\n{normalized_content}\n{source_url or ''}")
 
     sections: list[DocumentSection] = []
-    overview_parts: list[str] = []
-    if sections_map.get("issue_description"):
-        overview_parts.append(f"Issue Description:\n{sections_map['issue_description']}")
-    if sections_map.get("platform_sdk"):
-        overview_parts.append(f"Platform/SDK:\n{sections_map['platform_sdk']}")
-    if sections_map.get("error_message"):
-        overview_parts.append(f"Error Message:\n{sections_map['error_message']}")
-    if overview_parts:
+    issue_summary_text = _build_technical_issue_summary(
+        issue_description=issue_description,
+        platform_text=platform_text,
+        error_message=error_message,
+    )
+    if issue_summary_text:
         sections.append(
             DocumentSection(
-                section_type="issue_overview",
-                content="\n\n".join(overview_parts).strip(),
+                section_type="issue_summary",
+                content=issue_summary_text,
                 h1=normalized_title,
-                h2="Issue Overview",
+                h2=_technical_section_heading("issue_summary"),
                 h3=None,
+                heading_path=(_technical_section_heading("issue_summary"),),
             )
         )
 
     solution_text = sections_map.get("step_by_step_solution", "")
     solution_steps = _parse_solution_steps(solution_text)
     if solution_steps:
-        for offset in range(0, len(solution_steps), _TECHNICAL_STEP_GROUP_SIZE):
-            group = solution_steps[offset : offset + _TECHNICAL_STEP_GROUP_SIZE]
-            group_lines: list[str] = []
-            for step in group:
-                group_lines.append(f"Step {step['number']}: {step['title']}")
-                group_lines.append(step["content"])
-            first_number = group[0]["number"]
-            last_number = group[-1]["number"]
-            sections.append(
-                DocumentSection(
-                    section_type="solution_steps",
-                    content="\n\n".join(group_lines).strip(),
-                    h1=normalized_title,
-                    h2="Step by Step Solution",
-                    h3=f"Steps {first_number}-{last_number}",
-                )
+        sections.append(
+            DocumentSection(
+                section_type="troubleshooting_procedure",
+                content=_build_technical_troubleshooting_procedure(solution_steps),
+                h1=normalized_title,
+                h2=_technical_section_heading("troubleshooting_procedure"),
+                h3=None,
+                heading_path=(_technical_section_heading("troubleshooting_procedure"),),
             )
+        )
     elif solution_text:
         sections.append(
             DocumentSection(
-                section_type="solution_steps",
-                content=solution_text,
+                section_type="troubleshooting_procedure",
+                content=f"Procedure:\n{solution_text}",
                 h1=normalized_title,
-                h2="Step by Step Solution",
+                h2=_technical_section_heading("troubleshooting_procedure"),
                 h3=None,
+                heading_path=(_technical_section_heading("troubleshooting_procedure"),),
             )
         )
 
-    if sections_map.get("root_cause"):
+    decision_logic_text = _build_technical_decision_logic(
+        issue_description=issue_description,
+        solution_steps=solution_steps,
+        root_cause=root_cause_text,
+    )
+    if decision_logic_text:
         sections.append(
             DocumentSection(
-                section_type="root_cause",
-                content=sections_map["root_cause"],
+                section_type="decision_logic",
+                content=decision_logic_text,
                 h1=normalized_title,
-                h2="Root Cause",
+                h2=_technical_section_heading("decision_logic"),
                 h3=None,
+                heading_path=(_technical_section_heading("decision_logic"),),
             )
         )
 
-    prevention_parts: list[str] = []
-    if sections_map.get("prevention_best_practice"):
-        prevention_parts.append(
-            f"Prevention/Best Practice:\n{sections_map['prevention_best_practice']}"
-        )
-    if sections_map.get("corresponding_document_link"):
-        prevention_parts.append(
-            f"Corresponding Document/Link:\n{sections_map['corresponding_document_link']}"
-        )
-    if prevention_parts:
+    root_cause_summary_text = _build_technical_root_cause_summary(root_cause_text)
+    if root_cause_summary_text:
         sections.append(
             DocumentSection(
-                section_type="prevention_refs",
-                content="\n\n".join(prevention_parts).strip(),
+                section_type="root_cause_summary",
+                content=root_cause_summary_text,
                 h1=normalized_title,
-                h2="Prevention and References",
+                h2=_technical_section_heading("root_cause_summary"),
                 h3=None,
+                heading_path=(_technical_section_heading("root_cause_summary"),),
+            )
+        )
+
+    best_practice_text = _build_technical_best_practice(prevention_text)
+    if best_practice_text:
+        sections.append(
+            DocumentSection(
+                section_type="best_practice",
+                content=best_practice_text,
+                h1=normalized_title,
+                h2=_technical_section_heading("best_practice"),
+                h3=None,
+                heading_path=(_technical_section_heading("best_practice"),),
+            )
+        )
+
+    reference_chunk_text = _technical_reference_chunk_text(sections_map.get("corresponding_document_link"))
+    if reference_chunk_text:
+        sections.append(
+            DocumentSection(
+                section_type="references",
+                content=reference_chunk_text,
+                h1=normalized_title,
+                h2=_technical_section_heading("references"),
+                h3=None,
+                heading_path=(_technical_section_heading("references"),),
             )
         )
 
@@ -872,20 +1294,30 @@ def parse_technical_article(
                 section_type="full_article",
                 content=normalized_content,
                 h1=normalized_title,
-                h2="Article",
+                h2=_technical_section_heading("full_article"),
                 h3=None,
+                heading_path=(_technical_section_heading("full_article"),),
             )
         )
 
     content_blocks = _blocks_from_sections(sections)
     metadata: dict[str, Any] = {
         "doc_type": "technical_article",
+        "doc_subtype": _TECHNICAL_CASE_SUBTYPE,
         "source": "technical",
         "title": normalized_title,
         "url": source_url.strip() if source_url else None,
         "updated_at": None,
         "platform_sdk": platform_text,
+        "product": product,
+        "external_service": external_service,
+        "protocol": protocol,
+        "issue_category": issue_category,
+        "symptoms": symptoms,
+        "keywords": keywords,
+        "error_present": error_present,
         "reference_links": reference_links,
+        "related_links": reference_links,
         "section_names": sorted(sections_map.keys()),
         "language": language,
     }
@@ -923,7 +1355,7 @@ def parse_technical_article(
         parser_name="technical_article_parser",
         parser_version=_PARSER_VERSION,
         platform=platform_text,
-        product=None,
+        product=product,
         module=None,
         language=language,
     )
@@ -1125,6 +1557,7 @@ def _normalized_payload(
                 "h1": section.h1,
                 "h2": section.h2,
                 "h3": section.h3,
+                "heading_path": list(section.heading_path),
                 "preview": section.content[:360],
             }
             for section in document.sections
@@ -1136,6 +1569,7 @@ def _normalized_payload(
                 "h1": block.h1,
                 "h2": block.h2,
                 "h3": block.h3,
+                "heading_path": list(block.heading_path),
                 "text": block.text,
             }
             for block in document.content_blocks
@@ -1165,6 +1599,7 @@ def _build_normalized_summary(
                 "section_type": section.section_type,
                 "h2": section.h2,
                 "h3": section.h3,
+                "heading_path": list(section.heading_path),
                 "preview": section.content[:240],
             }
             for section in document.sections
@@ -1313,6 +1748,7 @@ def _base_chunk_metadata(
     chunk_index: int,
     chunk_token_count: int,
 ) -> dict[str, Any]:
+    section_path = list(block.heading_path) if block.heading_path else [heading for heading in [block.h2, block.h3] if _clean_text(heading)]
     return {
         "doc_id": document.document_id,
         "doc_hash": document.checksum,
@@ -1332,6 +1768,8 @@ def _base_chunk_metadata(
         "module": module,
         "language": language,
         "tags": metadata.get("tags", []),
+        "doc_title": document.title,
+        "section_path": section_path,
         "chunk_strategy": chunk_strategy,
         "chunk_token_count": chunk_token_count,
         "chunk_run_id": chunk_run_id,
@@ -1365,6 +1803,7 @@ def _build_chunk_row(
     semantic_similarity_prev: float | None = None,
     semantic_similarity_next: float | None = None,
     seen_chunk_hashes: set[str] | None = None,
+    metadata_overrides: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     chunk_text = f"{prefix}\n\n{raw_piece}".strip()
     content_hash = _sha256_text(chunk_text)
@@ -1428,7 +1867,7 @@ def _build_chunk_row(
         "chunk_id": row["id"],
         "chunk_strategy": chunk_strategy,
         "index_role": index_role,
-        "heading_path": _heading_path(block.h1 or document.title, block.h2, block.h3),
+        "heading_path": [document.title, *list(block.heading_path)] if block.heading_path else _heading_path(block.h1 or document.title, block.h2, block.h3),
         "parent_block_id": f"{document.document_id}:block:{block_index}",
         "parent_block_type": block.block_type,
         "parent_section_type": block.section_type,
@@ -1449,6 +1888,33 @@ def _build_chunk_row(
             "source_url": document.url,
         },
     }
+    if metadata_overrides:
+        row["metadata"].update(metadata_overrides)
+        trace["metadata"].update(
+            {
+                key: value
+                for key, value in metadata_overrides.items()
+                if key
+                in {
+                    "doc_subtype",
+                    "chunk_type",
+                    "language",
+                    "method_name",
+                    "section_path",
+                    "source_sections",
+                    "topic",
+                    "runtime",
+                    "use_case",
+                    "issue_category",
+                    "symptoms",
+                    "keywords",
+                    "external_service",
+                    "protocol",
+                    "error_present",
+                    "related_links",
+                }
+            }
+        )
     return row, trace
 
 
@@ -1483,6 +1949,874 @@ def _semantic_units_from_block(text: str) -> list[str]:
     return [unit for unit in units if unit.strip()]
 
 
+def _join_chunk_text(blocks: list[ContentBlock]) -> str:
+    return "\n\n".join(block.text.strip() for block in blocks if block.text and block.text.strip()).strip()
+
+
+def _paragraph_token_window_split(
+    text: str,
+    *,
+    max_tokens: int,
+    overlap_tokens: int,
+    provider: EmbeddingProvider | None,
+) -> list[tuple[str, int]]:
+    normalized = _normalize_article_text(text)
+    if not normalized:
+        return []
+    paragraphs = [part.strip() for part in re.split(r"\n{2,}", normalized) if part.strip()]
+    if not paragraphs:
+        return [(normalized, 0)]
+    chunks: list[tuple[str, int]] = []
+    current: list[str] = []
+    current_tokens = 0
+    current_overlap = 0
+    for paragraph in paragraphs:
+        paragraph_tokens = _count_tokens(paragraph, provider)
+        if current and current_tokens + paragraph_tokens > max_tokens:
+            chunks.append(("\n\n".join(current).strip(), current_overlap))
+            overlap_parts: list[str] = []
+            overlap_count = 0
+            for previous in reversed(current):
+                previous_tokens = _count_tokens(previous, provider)
+                if overlap_parts and overlap_count + previous_tokens > overlap_tokens:
+                    break
+                overlap_parts.insert(0, previous)
+                overlap_count += previous_tokens
+            current = overlap_parts[:]
+            current_tokens = sum(_count_tokens(item, provider) for item in current)
+            current_overlap = overlap_count
+        current.append(paragraph)
+        current_tokens += paragraph_tokens
+    if current:
+        chunks.append(("\n\n".join(current).strip(), current_overlap))
+    return [item for item in chunks if item[0].strip()]
+
+
+def _section_path_for_block(block: ContentBlock) -> tuple[str, ...]:
+    if block.heading_path:
+        return tuple(item for item in block.heading_path if _clean_text(item))
+    fallback = [item for item in [block.h2, block.h3] if _clean_text(item)]
+    return tuple(fallback)
+
+
+def _group_blocks_by_section_path(blocks: list[ContentBlock]) -> list[tuple[tuple[str, ...], list[ContentBlock]]]:
+    groups: list[tuple[tuple[str, ...], list[ContentBlock]]] = []
+    current_path: tuple[str, ...] | None = None
+    current_blocks: list[ContentBlock] = []
+    for block in blocks:
+        section_path = _section_path_for_block(block)
+        if current_blocks and section_path != current_path:
+            groups.append((current_path or (), current_blocks))
+            current_blocks = []
+        current_path = section_path
+        current_blocks.append(block)
+    if current_blocks:
+        groups.append((current_path or (), current_blocks))
+    return groups
+
+
+def _normalize_programming_language(value: str | None) -> str | None:
+    raw = _clean_text(value).strip("*`").lower()
+    if not raw:
+        return None
+    mapping = {
+        "go": "go",
+        "golang": "go",
+        "node.js": "nodejs",
+        "nodejs": "nodejs",
+        "javascript": "nodejs",
+        "js": "nodejs",
+        "php": "php",
+        "python": "python",
+        "python3": "python",
+        "python/python3": "python",
+        "java": "java",
+        "c++": "cpp",
+        "cpp": "cpp",
+        "cxx": "cpp",
+        "shell": "shell",
+        "bash": "shell",
+        "sh": "shell",
+        "json": "json",
+        "go mod": "go",
+    }
+    return mapping.get(raw, raw or None)
+
+
+def _label_language(text: str) -> str | None:
+    cleaned = _clean_text(re.sub(r"[*`_]+", "", text))
+    cleaned = cleaned.replace("Sample code for a token server", "go").replace("Python/Python3", "python")
+    return _normalize_programming_language(cleaned)
+
+
+def _code_fence_language(text: str) -> str | None:
+    first_line = str(text or "").splitlines()[0].strip() if str(text or "").splitlines() else ""
+    match = re.match(r"^```([A-Za-z0-9_+.-]+)?", first_line)
+    if not match:
+        return None
+    return _normalize_programming_language(match.group(1))
+
+
+def _infer_code_language(block: ContentBlock, intro_block: ContentBlock | None = None) -> str | None:
+    for candidate in [
+        _label_language(intro_block.text) if intro_block is not None else None,
+        _label_language(block.text),
+        _code_fence_language(block.text),
+    ]:
+        normalized = _normalize_programming_language(candidate)
+        if normalized in {"go", "nodejs", "php", "python", "java", "cpp"}:
+            return normalized
+    lower_text = block.text.lower()
+    if "require(\"../src/rtctokenbuilder2\")" in lower_text:
+        return "nodejs"
+    if "<?php" in lower_text:
+        return "php"
+    if "system.getenv" in lower_text:
+        return "java"
+    if "namespace agora::tools" in lower_text or "#include" in lower_text:
+        return "cpp"
+    return None
+
+
+def _section_path_text(section_path: tuple[str, ...]) -> str:
+    return " > ".join(_clean_text(item) for item in section_path if _clean_text(item)).strip()
+
+
+def _section_use_case(section_path: tuple[str, ...]) -> str | None:
+    path_text = _section_path_text(section_path).lower()
+    if not path_text:
+        return "overview"
+    if "basic authentication" in path_text:
+        return "basic_authentication"
+    if "generate wildcard token" in path_text or "wildcard token" in path_text or "precautions" in path_text:
+        return "wildcard_tokens"
+    if "co-host token authentication" in path_text:
+        return "co_host_token_authentication"
+    if "advanced permissions" in path_text or "generate a token with advanced permissions" in path_text:
+        return "advanced_permissions"
+    if "use the npm package" in path_text:
+        return "npm_deployment"
+    if "deploy with docker" in path_text or "docker" in path_text:
+        return "docker_deployment"
+    if "manual local deployment" in path_text:
+        return "manual_local_deployment"
+    if "api reference" in path_text:
+        return "api_reference"
+    if "compatibility" in path_text:
+        return "compatibility"
+    if "frequently asked questions" in path_text or path_text.endswith("faq"):
+        return "faq"
+    if "prerequisites" in path_text:
+        return "prerequisites"
+    if "understand the tech" in path_text:
+        return "token_server_concepts"
+    if "token generation code" in path_text:
+        return "token_generation_code"
+    if "advanced authentication features" in path_text:
+        return "advanced_authentication"
+    if "deploy a token server" in path_text:
+        return "token_server_deployment"
+    if "reference" in path_text:
+        return "reference"
+    return None
+
+
+def _infer_method_name(text: str, section_path: tuple[str, ...]) -> str | None:
+    joined = f"{_section_path_text(section_path)}\n{text}"
+    if re.search(r"\bBuildTokenWithUidAndPrivilege\b|build_token_with_uid_and_privilege", joined, flags=re.IGNORECASE):
+        return "BuildTokenWithUidAndPrivilege"
+    if re.search(r"\bBuildTokenWithUid\b|build_token_with_uid", joined, flags=re.IGNORECASE):
+        return "BuildTokenWithUid"
+    return None
+
+
+def _infer_topics(text: str, section_path: tuple[str, ...], method_name: str | None, use_case: str | None) -> list[str]:
+    haystack = f"{_section_path_text(section_path)}\n{text}\n{method_name or ''}\n{use_case or ''}".lower()
+    topics: list[str] = []
+    for topic, aliases in [
+        ("token", ["token"]),
+        ("wildcard", ["wildcard"]),
+        ("authentication", ["authentication", "auth", "鉴权"]),
+        ("permissions", ["permission", "permissions", "privilege"]),
+        ("docker", ["docker"]),
+        ("npm", ["npm"]),
+        ("deployment", ["deploy", "deployment"]),
+        ("api", ["api"]),
+        ("parameter", ["parameter", "parameters", "param", "参数"]),
+        ("compatibility", ["compatibility"]),
+        ("faq", ["frequently asked questions", "faq"]),
+        ("uid", ["uid=0", "uid"]),
+        ("server", ["server"]),
+    ]:
+        if any(alias in haystack for alias in aliases) and topic not in topics:
+            topics.append(topic)
+    return topics
+
+
+def _runtime_for_chunk(chunk_type: str, use_case: str | None) -> str | None:
+    if chunk_type == "code":
+        return "server-side"
+    if use_case and ("deployment" in use_case or "authentication" in use_case or "token" in use_case):
+        return "server-side"
+    return None
+
+
+def _block_is_short_intro(block: ContentBlock, provider: EmbeddingProvider | None) -> bool:
+    if block.block_type in {"code", "table"}:
+        return False
+    token_count = _count_tokens(block.text, provider)
+    return token_count <= 36 or len(block.text.strip()) <= 180
+
+
+def _narrative_chunk_type(section_path: tuple[str, ...], raw_text: str) -> str:
+    path_text = _section_path_text(section_path).lower()
+    lower_text = raw_text.lower()
+    if not path_text:
+        return "concept"
+    if "prerequisites" in path_text:
+        return "prerequisite"
+    if "compatibility" in path_text:
+        return "compatibility"
+    if "frequently asked questions" in path_text or path_text.endswith("faq"):
+        return "faq_index"
+    if "manual local deployment" in path_text:
+        return "howto_overview"
+    if "use the npm package" in path_text or "deploy with docker" in path_text:
+        return "howto"
+    if "precautions" in path_text and "uid=0" in lower_text:
+        return "caution"
+    if "reference" in path_text:
+        return "concept"
+    return "concept"
+
+
+def _table_chunk_type(section_path: tuple[str, ...], raw_text: str) -> str:
+    path_text = _section_path_text(section_path).lower()
+    lower_text = raw_text.lower()
+    if "api reference" in path_text or "parameters" in lower_text:
+        return "api_params"
+    if "wildcard token" in path_text or "precautions" in path_text:
+        return "rules_table"
+    if "advanced permissions" in path_text or "token generation code" in path_text:
+        return "index"
+    return "rules_table"
+
+
+def _make_structured_spec(
+    *,
+    blocks: list[ContentBlock],
+    chunk_type: str,
+    provider: EmbeddingProvider | None,
+    boundary_reason: str,
+    overlap_tokens: int = 0,
+    language: str | None = None,
+    method_name: str | None = None,
+    section_path: tuple[str, ...] | None = None,
+    use_case: str | None = None,
+) -> StructuredChunkSpec:
+    anchor = blocks[0]
+    resolved_path = section_path or _section_path_for_block(anchor)
+    raw_text = _join_chunk_text(blocks)
+    resolved_method = method_name or _infer_method_name(raw_text, resolved_path)
+    resolved_use_case = use_case or _section_use_case(resolved_path)
+    resolved_language = language
+    if chunk_type == "code":
+        intro_block = blocks[0] if len(blocks) > 1 and blocks[0].block_type != "code" else None
+        code_block = next((block for block in blocks if block.block_type == "code"), anchor)
+        resolved_language = resolved_language or _infer_code_language(code_block, intro_block)
+    topics = _infer_topics(raw_text, resolved_path, resolved_method, resolved_use_case)
+    return StructuredChunkSpec(
+        anchor_block=anchor,
+        raw_text=raw_text,
+        chunk_type=chunk_type,
+        language=resolved_language,
+        method_name=resolved_method,
+        section_path=resolved_path,
+        topic=topics,
+        runtime=_runtime_for_chunk(chunk_type, resolved_use_case),
+        use_case=resolved_use_case,
+        overlap_tokens=max(0, int(overlap_tokens)),
+        boundary_reason=boundary_reason,
+        unit_count=len(blocks),
+    )
+
+
+def _flush_pending_narrative_specs(
+    specs: list[StructuredChunkSpec],
+    pending_blocks: list[ContentBlock],
+    *,
+    provider: EmbeddingProvider | None,
+    boundary_reason: str,
+) -> None:
+    if not pending_blocks:
+        return
+    raw_text = _join_chunk_text(pending_blocks)
+    if not raw_text:
+        pending_blocks.clear()
+        return
+    chunk_type = _narrative_chunk_type(_section_path_for_block(pending_blocks[0]), raw_text)
+    specs.append(
+        _make_structured_spec(
+            blocks=list(pending_blocks),
+            chunk_type=chunk_type,
+            provider=provider,
+            boundary_reason=boundary_reason,
+            overlap_tokens=_OFFICIAL_NARRATIVE_OVERLAP_TOKENS if len(pending_blocks) > 1 else 0,
+        )
+    )
+    pending_blocks.clear()
+
+
+def _build_code_gallery_section_specs(
+    blocks: list[ContentBlock],
+    *,
+    provider: EmbeddingProvider | None,
+) -> list[StructuredChunkSpec]:
+    specs: list[StructuredChunkSpec] = []
+    pending_blocks: list[ContentBlock] = []
+    for block in blocks:
+        if block.block_type == "table":
+            intro_blocks = list(pending_blocks)
+            pending_blocks.clear()
+            specs.append(
+                _make_structured_spec(
+                    blocks=[*intro_blocks, block] if intro_blocks else [block],
+                    chunk_type=_table_chunk_type(_section_path_for_block(block), _join_chunk_text([*intro_blocks, block] if intro_blocks else [block])),
+                    provider=provider,
+                    boundary_reason="table_boundary",
+                    overlap_tokens=_OFFICIAL_TABLE_OVERLAP_TOKENS if intro_blocks else 0,
+                )
+            )
+            continue
+        if block.block_type == "code":
+            intro_block: ContentBlock | None = None
+            if pending_blocks and _block_is_short_intro(pending_blocks[-1], provider):
+                intro_block = pending_blocks.pop()
+            _flush_pending_narrative_specs(
+                specs,
+                pending_blocks,
+                provider=provider,
+                boundary_reason="section_narrative",
+            )
+            code_blocks = [intro_block, block] if intro_block is not None else [block]
+            specs.append(
+                _make_structured_spec(
+                    blocks=code_blocks,
+                    chunk_type="code",
+                    provider=provider,
+                    boundary_reason="code_block",
+                    overlap_tokens=_OFFICIAL_CODE_OVERLAP_TOKENS if intro_block is not None else 0,
+                )
+            )
+            continue
+        if block.block_type == "note":
+            _flush_pending_narrative_specs(
+                specs,
+                pending_blocks,
+                provider=provider,
+                boundary_reason="section_narrative",
+            )
+            specs.append(
+                _make_structured_spec(
+                    blocks=[block],
+                    chunk_type="note",
+                    provider=provider,
+                    boundary_reason="note_block",
+                )
+            )
+            continue
+        pending_blocks.append(block)
+    _flush_pending_narrative_specs(
+        specs,
+        pending_blocks,
+        provider=provider,
+        boundary_reason="section_narrative",
+    )
+    return specs
+
+
+def _build_wildcard_section_specs(
+    blocks: list[ContentBlock],
+    *,
+    provider: EmbeddingProvider | None,
+) -> list[StructuredChunkSpec]:
+    specs: list[StructuredChunkSpec] = []
+    pending_blocks: list[ContentBlock] = []
+    for block in blocks:
+        if block.block_type == "note":
+            _flush_pending_narrative_specs(
+                specs,
+                pending_blocks,
+                provider=provider,
+                boundary_reason="wildcard_overview",
+            )
+            specs.append(
+                _make_structured_spec(
+                    blocks=[block],
+                    chunk_type="prerequisite",
+                    provider=provider,
+                    boundary_reason="wildcard_prerequisite",
+                    use_case="wildcard_tokens",
+                )
+            )
+            continue
+        if block.block_type == "table":
+            table_blocks = [*pending_blocks, block] if pending_blocks else [block]
+            pending_blocks.clear()
+            specs.append(
+                _make_structured_spec(
+                    blocks=table_blocks,
+                    chunk_type="rules_table",
+                    provider=provider,
+                    boundary_reason="wildcard_rules_table",
+                    overlap_tokens=_OFFICIAL_TABLE_OVERLAP_TOKENS if len(table_blocks) > 1 else 0,
+                    use_case="wildcard_tokens",
+                )
+            )
+            continue
+        pending_blocks.append(block)
+    _flush_pending_narrative_specs(
+        specs,
+        pending_blocks,
+        provider=provider,
+        boundary_reason="wildcard_overview",
+    )
+    for spec in specs:
+        if spec.use_case is None:
+            spec.use_case = "wildcard_tokens"
+    return specs
+
+
+def _build_precaution_section_specs(
+    blocks: list[ContentBlock],
+    *,
+    provider: EmbeddingProvider | None,
+) -> list[StructuredChunkSpec]:
+    specs: list[StructuredChunkSpec] = []
+    if blocks and blocks[0].block_type == "list":
+        specs.append(
+            _make_structured_spec(
+                blocks=[blocks[0]],
+                chunk_type="caution",
+                provider=provider,
+                boundary_reason="wildcard_precautions",
+                use_case="wildcard_tokens",
+            )
+        )
+    if len(blocks) >= 3:
+        specs.append(
+            _make_structured_spec(
+                blocks=blocks[1:3],
+                chunk_type="procedure",
+                provider=provider,
+                boundary_reason="wildcard_renewal_flow",
+                overlap_tokens=_OFFICIAL_NARRATIVE_OVERLAP_TOKENS,
+                use_case="wildcard_tokens",
+            )
+        )
+    if len(blocks) >= 4:
+        specs.append(
+            _make_structured_spec(
+                blocks=[blocks[-1]],
+                chunk_type="note",
+                provider=provider,
+                boundary_reason="wildcard_expiration",
+                use_case="wildcard_tokens",
+            )
+        )
+    return specs
+
+
+def _build_cohost_section_specs(
+    blocks: list[ContentBlock],
+    *,
+    provider: EmbeddingProvider | None,
+) -> list[StructuredChunkSpec]:
+    specs: list[StructuredChunkSpec] = []
+    pending_blocks: list[ContentBlock] = []
+    for block in blocks:
+        if block.block_type == "note":
+            _flush_pending_narrative_specs(
+                specs,
+                pending_blocks,
+                provider=provider,
+                boundary_reason="cohost_overview",
+            )
+            specs.append(
+                _make_structured_spec(
+                    blocks=[block],
+                    chunk_type="prerequisite",
+                    provider=provider,
+                    boundary_reason="cohost_prerequisite",
+                    use_case="co_host_token_authentication",
+                )
+            )
+            continue
+        if block.block_type == "list":
+            rules_blocks = [*pending_blocks, block] if pending_blocks else [block]
+            pending_blocks.clear()
+            specs.append(
+                _make_structured_spec(
+                    blocks=rules_blocks,
+                    chunk_type="rules",
+                    provider=provider,
+                    boundary_reason="cohost_privileges",
+                    overlap_tokens=_OFFICIAL_TABLE_OVERLAP_TOKENS if len(rules_blocks) > 1 else 0,
+                    use_case="co_host_token_authentication",
+                )
+            )
+            continue
+        pending_blocks.append(block)
+    if pending_blocks and specs and specs[-1].chunk_type == "rules":
+        specs[-1].raw_text = f"{specs[-1].raw_text}\n\n{_join_chunk_text(pending_blocks)}".strip()
+        specs[-1].unit_count += len(pending_blocks)
+        specs[-1].topic = _infer_topics(
+            specs[-1].raw_text,
+            specs[-1].section_path,
+            specs[-1].method_name,
+            specs[-1].use_case,
+        )
+        pending_blocks.clear()
+    _flush_pending_narrative_specs(
+        specs,
+        pending_blocks,
+        provider=provider,
+        boundary_reason="cohost_overview",
+    )
+    return specs
+
+
+def _build_manual_deployment_specs(
+    blocks: list[ContentBlock],
+    *,
+    provider: EmbeddingProvider | None,
+) -> list[StructuredChunkSpec]:
+    first_code_index = next((index for index, block in enumerate(blocks) if block.block_type == "code"), -1)
+    if first_code_index == -1:
+        return [
+            _make_structured_spec(
+                blocks=blocks,
+                chunk_type="howto_overview",
+                provider=provider,
+                boundary_reason="manual_local_deployment",
+                use_case="manual_local_deployment",
+            )
+        ]
+    specs: list[StructuredChunkSpec] = []
+    intro_blocks = list(blocks[:first_code_index])
+    code_intro: ContentBlock | None = None
+    if intro_blocks and _block_is_short_intro(intro_blocks[-1], provider):
+        code_intro = intro_blocks.pop()
+    if intro_blocks:
+        specs.append(
+            _make_structured_spec(
+                blocks=intro_blocks,
+                chunk_type="howto_overview",
+                provider=provider,
+                boundary_reason="manual_local_overview",
+                use_case="manual_local_deployment",
+            )
+        )
+    code_blocks = [code_intro, blocks[first_code_index]] if code_intro is not None else [blocks[first_code_index]]
+    specs.append(
+        _make_structured_spec(
+            blocks=code_blocks,
+            chunk_type="code",
+            provider=provider,
+            boundary_reason="manual_local_server_code",
+            overlap_tokens=_OFFICIAL_CODE_OVERLAP_TOKENS if code_intro is not None else 0,
+            language="go",
+            use_case="manual_local_deployment",
+        )
+    )
+    remaining_blocks = blocks[first_code_index + 1 :]
+    if remaining_blocks:
+        specs.append(
+            _make_structured_spec(
+                blocks=remaining_blocks,
+                chunk_type="procedure",
+                provider=provider,
+                boundary_reason="manual_local_commands",
+                overlap_tokens=_OFFICIAL_NARRATIVE_OVERLAP_TOKENS,
+                use_case="manual_local_deployment",
+            )
+        )
+    return specs
+
+
+def _build_api_reference_specs(
+    blocks: list[ContentBlock],
+    *,
+    provider: EmbeddingProvider | None,
+) -> list[StructuredChunkSpec]:
+    specs: list[StructuredChunkSpec] = []
+    used_indexes: set[int] = set()
+    for index, block in enumerate(blocks):
+        if index in used_indexes:
+            continue
+        if block.block_type == "code":
+            signature_blocks = [block]
+            if index > 0 and blocks[index - 1].block_type in {"paragraph", "list"} and index - 1 not in used_indexes:
+                signature_blocks.insert(0, blocks[index - 1])
+                used_indexes.add(index - 1)
+            specs.append(
+                _make_structured_spec(
+                    blocks=signature_blocks,
+                    chunk_type="api_signature",
+                    provider=provider,
+                    boundary_reason="api_signature",
+                    overlap_tokens=_OFFICIAL_CODE_OVERLAP_TOKENS if len(signature_blocks) > 1 else 0,
+                )
+            )
+            used_indexes.add(index)
+            continue
+        if block.block_type == "list":
+            param_blocks = [block]
+            if index > 0 and "parameter" in blocks[index - 1].text.lower() and index - 1 not in used_indexes:
+                param_blocks.insert(0, blocks[index - 1])
+                used_indexes.add(index - 1)
+            specs.append(
+                _make_structured_spec(
+                    blocks=param_blocks,
+                    chunk_type="api_params",
+                    provider=provider,
+                    boundary_reason="api_parameters",
+                    overlap_tokens=_OFFICIAL_TABLE_OVERLAP_TOKENS if len(param_blocks) > 1 else 0,
+                )
+            )
+            used_indexes.add(index)
+            continue
+        if block.block_type == "note":
+            specs.append(
+                _make_structured_spec(
+                    blocks=[block],
+                    chunk_type="api_note",
+                    provider=provider,
+                    boundary_reason="api_note",
+                )
+            )
+            used_indexes.add(index)
+    return specs
+
+
+def _build_generic_official_section_specs(
+    blocks: list[ContentBlock],
+    *,
+    provider: EmbeddingProvider | None,
+) -> list[StructuredChunkSpec]:
+    section_path = _section_path_for_block(blocks[0]) if blocks else ()
+    path_text = _section_path_text(section_path).lower()
+    if path_text == "reference > api reference":
+        return []
+    if "understand the tech" in path_text:
+        return [
+            _make_structured_spec(
+                blocks=blocks,
+                chunk_type="concept",
+                provider=provider,
+                boundary_reason="concept_section",
+                use_case="token_server_concepts",
+            )
+        ]
+    if "frequently asked questions" in path_text or path_text.endswith("faq"):
+        return [
+            _make_structured_spec(
+                blocks=blocks,
+                chunk_type="faq_index",
+                provider=provider,
+                boundary_reason="faq_section",
+                use_case="faq",
+            )
+        ]
+    if "compatibility" in path_text:
+        return [
+            _make_structured_spec(
+                blocks=blocks,
+                chunk_type="compatibility",
+                provider=provider,
+                boundary_reason="compatibility_section",
+                use_case="compatibility",
+            )
+        ]
+    if "use the npm package" in path_text or "deploy with docker" in path_text:
+        return [
+            _make_structured_spec(
+                blocks=blocks,
+                chunk_type="howto",
+                provider=provider,
+                boundary_reason="deployment_section",
+            )
+        ]
+    return _build_code_gallery_section_specs(blocks, provider=provider)
+
+
+def _build_official_structured_specs(
+    document: NormalizedKnowledgeDocument,
+    *,
+    provider: EmbeddingProvider | None,
+) -> list[StructuredChunkSpec]:
+    specs: list[StructuredChunkSpec] = []
+    for section_path, blocks in _group_blocks_by_section_path(document.content_blocks):
+        path_text = _section_path_text(section_path).lower()
+        if "api reference" in path_text and _infer_method_name("", section_path):
+            specs.extend(_build_api_reference_specs(blocks, provider=provider))
+            continue
+        if "manual local deployment" in path_text:
+            specs.extend(_build_manual_deployment_specs(blocks, provider=provider))
+            continue
+        if "generate wildcard token" in path_text:
+            specs.extend(_build_wildcard_section_specs(blocks, provider=provider))
+            continue
+        if "precautions" in path_text:
+            specs.extend(_build_precaution_section_specs(blocks, provider=provider))
+            continue
+        if "co-host token authentication" in path_text:
+            specs.extend(_build_cohost_section_specs(blocks, provider=provider))
+            continue
+        specs.extend(_build_generic_official_section_specs(blocks, provider=provider))
+    return specs
+
+
+def _technical_chunk_topics(metadata: dict[str, Any], chunk_type: str) -> list[str]:
+    topics = []
+    for collection in [metadata.get("keywords"), metadata.get("symptoms")]:
+        if isinstance(collection, list):
+            for item in collection:
+                normalized = _clean_text(item).lower()
+                if normalized and normalized not in topics:
+                    topics.append(normalized)
+    extra_topics = {
+        "issue_summary": ["issue summary"],
+        "troubleshooting_procedure": ["troubleshooting"],
+        "decision_logic": ["decision logic"],
+        "root_cause_summary": ["root cause"],
+        "best_practice": ["best practice"],
+        "references": ["references"],
+    }
+    for item in extra_topics.get(chunk_type, []):
+        if item not in topics:
+            topics.append(item)
+    return topics
+
+
+def _split_grouped_technical_chunk(
+    *,
+    header: str | None,
+    items: list[str],
+    max_tokens: int,
+    provider: EmbeddingProvider | None,
+    boundary_reason: str,
+) -> list[tuple[str, int, str]]:
+    if not items:
+        return []
+    groups: list[tuple[str, int, str]] = []
+    current: list[str] = []
+    for item in items:
+        candidate_lines = ([header] if header else []) + current + [item]
+        candidate_text = "\n".join(line for line in candidate_lines if line).strip()
+        if current and _count_tokens(candidate_text, provider) > max_tokens:
+            grouped_text = "\n".join(([header] if header else []) + current).strip()
+            groups.append((grouped_text, len(current), boundary_reason))
+            current = [item]
+            continue
+        current.append(item)
+    if current:
+        grouped_text = "\n".join(([header] if header else []) + current).strip()
+        groups.append((grouped_text, len(current), boundary_reason))
+    return groups
+
+
+def _split_technical_case_chunk_text(
+    *,
+    section_type: str,
+    text: str,
+    provider: EmbeddingProvider | None,
+) -> list[tuple[str, int, str]]:
+    normalized = _normalize_article_text(text)
+    if not normalized:
+        return []
+    max_tokens = _technical_section_max_tokens(section_type)
+    if _count_tokens(normalized, provider) <= max_tokens:
+        return [(normalized, 1, "semantic_section")]
+
+    lines = [line.rstrip() for line in normalized.splitlines() if line.strip()]
+    if not lines:
+        return [(normalized, 1, "semantic_section")]
+    header = lines[0] if lines[0].endswith(":") else None
+    body_lines = lines[1:] if header else lines
+
+    if section_type == "troubleshooting_procedure":
+        step_lines = [line for line in body_lines if re.match(r"^\d+\.\s+", line)]
+        groups = _split_grouped_technical_chunk(
+            header=header,
+            items=step_lines,
+            max_tokens=max_tokens,
+            provider=provider,
+            boundary_reason="step_boundary",
+        )
+        if groups:
+            return groups
+
+    if section_type in {"decision_logic", "root_cause_summary", "best_practice", "references"}:
+        bullet_lines = [line for line in body_lines if re.match(r"^-\s+", line)]
+        groups = _split_grouped_technical_chunk(
+            header=header,
+            items=bullet_lines,
+            max_tokens=max_tokens,
+            provider=provider,
+            boundary_reason="bullet_boundary",
+        )
+        if groups:
+            return groups
+
+    return [(normalized, 1, "semantic_section")]
+
+
+def _build_technical_case_specs(
+    document: NormalizedKnowledgeDocument,
+    *,
+    provider: EmbeddingProvider | None,
+) -> list[StructuredChunkSpec]:
+    anchor_blocks: dict[str, ContentBlock] = {}
+    for block in document.content_blocks:
+        anchor_blocks.setdefault(block.section_type, block)
+
+    specs: list[StructuredChunkSpec] = []
+    for section in document.sections:
+        section_path = section.heading_path or (_technical_section_heading(section.section_type),)
+        anchor_block = anchor_blocks.get(section.section_type) or ContentBlock(
+            block_type="paragraph",
+            text=section.content,
+            h1=section.h1,
+            h2=section.h2,
+            h3=section.h3,
+            section_type=section.section_type,
+            heading_path=section.heading_path,
+        )
+        for raw_text, unit_count, boundary_reason in _split_technical_case_chunk_text(
+            section_type=section.section_type,
+            text=section.content,
+            provider=provider,
+        ):
+            specs.append(
+                StructuredChunkSpec(
+                    anchor_block=anchor_block,
+                    raw_text=raw_text,
+                    chunk_type=section.section_type,
+                    language=None,
+                    method_name=None,
+                    section_path=tuple(section_path),
+                    topic=_technical_chunk_topics(document.metadata, section.section_type),
+                    runtime=None,
+                    use_case=_TECHNICAL_CASE_SUBTYPE,
+                    overlap_tokens=0,
+                    boundary_reason=boundary_reason,
+                    unit_count=unit_count,
+                )
+            )
+    return specs
+
+
 def _build_primary_chunk_rows(
     document: NormalizedKnowledgeDocument,
     metadata: dict[str, Any],
@@ -1501,6 +2835,116 @@ def _build_primary_chunk_rows(
     traces: list[dict[str, Any]] = []
     chunk_index = 0
     seen_chunk_hashes: set[str] = set()
+    if document.knowledge_type == "official":
+        block_positions = {id(block): index for index, block in enumerate(document.content_blocks, start=1)}
+        for spec in _build_official_structured_specs(document, provider=provider):
+            chunk_index += 1
+            anchor_block = spec.anchor_block
+            prefix = _chunk_context_prefix(document, anchor_block, platform=platform, product=product)
+            row, trace = _build_chunk_row(
+                document,
+                metadata,
+                anchor_block,
+                block_index=block_positions.get(id(anchor_block), chunk_index),
+                chunk_run_id=run_id,
+                chunk_index=chunk_index,
+                index_role="primary",
+                chunk_strategy=chunk_strategy,
+                strategy_version=strategy_version,
+                prefix=prefix,
+                raw_piece=spec.raw_text,
+                provider=provider,
+                platform=platform,
+                product=product,
+                module=module,
+                language=spec.language,
+                overlap_tokens=spec.overlap_tokens,
+                boundary_reason=spec.boundary_reason,
+                unit_count=spec.unit_count,
+                seen_chunk_hashes=seen_chunk_hashes,
+                metadata_overrides={
+                    "chunk_type": spec.chunk_type,
+                    "language": spec.language,
+                    "method_name": spec.method_name,
+                    "section_path": list(spec.section_path),
+                    "topic": spec.topic,
+                    "runtime": spec.runtime,
+                    "use_case": spec.use_case,
+                },
+            )
+            rows.append(row)
+            traces.append(trace)
+        return ChunkBuildResult(
+            chunk_run_id=run_id,
+            index_role="primary",
+            chunk_strategy=chunk_strategy,
+            strategy_version=strategy_version,
+            rows=rows,
+            traces=traces,
+        )
+    if document.knowledge_type == "technical":
+        block_positions = {id(block): index for index, block in enumerate(document.content_blocks, start=1)}
+        technical_metadata = {
+            "doc_subtype": metadata.get("doc_subtype") or _TECHNICAL_CASE_SUBTYPE,
+            "issue_category": metadata.get("issue_category"),
+            "symptoms": metadata.get("symptoms") if isinstance(metadata.get("symptoms"), list) else [],
+            "keywords": metadata.get("keywords") if isinstance(metadata.get("keywords"), list) else [],
+            "external_service": metadata.get("external_service"),
+            "protocol": metadata.get("protocol"),
+            "error_present": bool(metadata.get("error_present")),
+            "related_links": metadata.get("related_links")
+            if isinstance(metadata.get("related_links"), list)
+            else metadata.get("reference_links")
+            if isinstance(metadata.get("reference_links"), list)
+            else [],
+        }
+        for spec in _build_technical_case_specs(document, provider=provider):
+            chunk_index += 1
+            anchor_block = spec.anchor_block
+            prefix = _chunk_context_prefix(document, anchor_block, platform=platform, product=product)
+            row, trace = _build_chunk_row(
+                document,
+                metadata,
+                anchor_block,
+                block_index=block_positions.get(id(anchor_block), chunk_index),
+                chunk_run_id=run_id,
+                chunk_index=chunk_index,
+                index_role="primary",
+                chunk_strategy=chunk_strategy,
+                strategy_version=strategy_version,
+                prefix=prefix,
+                raw_piece=spec.raw_text,
+                provider=provider,
+                platform=platform,
+                product=product,
+                module=module,
+                language=None,
+                overlap_tokens=0,
+                boundary_reason=spec.boundary_reason,
+                unit_count=spec.unit_count,
+                seen_chunk_hashes=seen_chunk_hashes,
+                metadata_overrides={
+                    "chunk_type": spec.chunk_type,
+                    "language": None,
+                    "method_name": None,
+                    "section_path": list(spec.section_path),
+                    "source_sections": _technical_source_sections(spec.chunk_type),
+                    "topic": spec.topic,
+                    "runtime": spec.runtime,
+                    "use_case": spec.use_case,
+                    **technical_metadata,
+                },
+            )
+            rows.append(row)
+            traces.append(trace)
+        return ChunkBuildResult(
+            chunk_run_id=run_id,
+            index_role="primary",
+            chunk_strategy=chunk_strategy,
+            strategy_version=strategy_version,
+            rows=rows,
+            traces=traces,
+        )
     for block_index, block in enumerate(document.content_blocks, start=1):
         prefix = _chunk_context_prefix(document, block, platform=platform, product=product)
         max_chars = _OFFICIAL_MARKDOWN_MAX_CHARS if document.knowledge_type == "official" else _TECHNICAL_MAX_CHARS
@@ -1569,6 +3013,65 @@ def _build_shadow_chunk_rows(
     traces: list[dict[str, Any]] = []
     chunk_index = 0
     seen_chunk_hashes: set[str] = set()
+    if document.knowledge_type == "official":
+        block_positions = {id(block): index for index, block in enumerate(document.content_blocks, start=1)}
+        for section_path, blocks in _group_blocks_by_section_path(document.content_blocks):
+            section_text = _join_chunk_text(blocks)
+            if not section_text:
+                continue
+            anchor_block = blocks[0]
+            prefix = _chunk_context_prefix(document, anchor_block, platform=platform, product=product)
+            method_name = _infer_method_name(section_text, section_path)
+            use_case = _section_use_case(section_path)
+            topics = _infer_topics(section_text, section_path, method_name, use_case)
+            for raw_piece, overlap_token_count in _paragraph_token_window_split(
+                section_text,
+                max_tokens=_OFFICIAL_SHADOW_SECTION_TOKENS,
+                overlap_tokens=_OFFICIAL_SHADOW_OVERLAP_TOKENS,
+                provider=provider,
+            ):
+                chunk_index += 1
+                row, trace = _build_chunk_row(
+                    document,
+                    metadata,
+                    anchor_block,
+                    block_index=block_positions.get(id(anchor_block), chunk_index),
+                    chunk_run_id=run_id,
+                    chunk_index=chunk_index,
+                    index_role="shadow",
+                    chunk_strategy=chunk_strategy,
+                    strategy_version=strategy_version,
+                    prefix=prefix,
+                    raw_piece=raw_piece,
+                    provider=provider,
+                    platform=platform,
+                    product=product,
+                    module=module,
+                    language=None,
+                    overlap_tokens=overlap_token_count,
+                    boundary_reason="section_token_window",
+                    unit_count=max(1, len(blocks)),
+                    seen_chunk_hashes=seen_chunk_hashes,
+                    metadata_overrides={
+                        "chunk_type": "shadow_baseline",
+                        "language": None,
+                        "method_name": method_name,
+                        "section_path": list(section_path),
+                        "topic": topics,
+                        "runtime": _runtime_for_chunk("shadow_baseline", use_case),
+                        "use_case": use_case,
+                    },
+                )
+                rows.append(row)
+                traces.append(trace)
+        return ChunkBuildResult(
+            chunk_run_id=run_id,
+            index_role="shadow",
+            chunk_strategy=chunk_strategy,
+            strategy_version=strategy_version,
+            rows=rows,
+            traces=traces,
+        )
 
     for block_index, block in enumerate(document.content_blocks, start=1):
         prefix = _chunk_context_prefix(document, block, platform=platform, product=product)

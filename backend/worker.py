@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import sys
 import time
 from datetime import datetime, timezone
 from typing import Any
+
+import psycopg
 
 from backend.main import (
     MANAGED_MODE,
@@ -27,6 +30,48 @@ TICKET_LOOKUP_RETRY_BASE_DELAY_SECONDS = 0.12
 MESSAGE_TIMESTAMP_TOLERANCE_SECONDS = 1.0
 
 
+def _safe_positive_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _safe_positive_float(value: Any, default: float) -> float:
+    try:
+        parsed = float(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _safe_non_negative_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= 0 else default
+
+
+TICKET_REPOSITORY_RETRY_MAX = _safe_non_negative_int(
+    os.getenv("TICKET_WORKER_REPOSITORY_RETRY_MAX"),
+    2,
+)
+TICKET_REPOSITORY_RETRY_BASE_DELAY_SECONDS = _safe_positive_float(
+    os.getenv("TICKET_WORKER_REPOSITORY_RETRY_BASE_DELAY_SECONDS"),
+    0.25,
+)
+TICKET_TASK_RETRY_MAX = _safe_non_negative_int(
+    os.getenv("TICKET_WORKER_TASK_RETRY_MAX"),
+    3,
+)
+TICKET_TASK_RETRY_BASE_DELAY_SECONDS = _safe_positive_float(
+    os.getenv("TICKET_WORKER_TASK_RETRY_BASE_DELAY_SECONDS"),
+    1.0,
+)
+
+
 def _install_signal_handlers() -> None:
     def _handle_signal(signum: int, _frame: Any) -> None:
         global SHUTTING_DOWN
@@ -43,20 +88,54 @@ def _publish(bus: SyncRedisEventBus, channels: list[str], payload: dict[str, Any
     bus.publish(bus_payload)
 
 
-def _is_latest_customer_message(ticket: dict[str, Any], message: str, created_at: str) -> bool:
+def _is_retryable_ticket_storage_error(exc: BaseException) -> bool:
+    return isinstance(exc, (psycopg.OperationalError, psycopg.InterfaceError, OSError, TimeoutError))
+
+
+def _call_ticket_repository(operation_name: str, callback: Any) -> Any:
+    attempts = max(1, TICKET_REPOSITORY_RETRY_MAX + 1)
+    for attempt in range(1, attempts + 1):
+        try:
+            return callback()
+        except Exception as exc:
+            if not _is_retryable_ticket_storage_error(exc) or attempt >= attempts:
+                raise
+            LOGGER.warning(
+                "Worker retrying ticket repository operation %s after attempt %s/%s: %s",
+                operation_name,
+                attempt,
+                attempts,
+                exc,
+            )
+            time.sleep(TICKET_REPOSITORY_RETRY_BASE_DELAY_SECONDS * attempt)
+
+
+def _find_latest_customer_message_index(
+    ticket: dict[str, Any],
+    message: str,
+    created_at: str,
+) -> int | None:
     expected_content = str(message).strip()
     expected_created_at = str(created_at).strip()
-    for item in reversed(ticket.get("messages", [])):
+    messages = ticket.get("messages", [])
+    if not isinstance(messages, list):
+        return None
+    for index in range(len(messages) - 1, -1, -1):
+        item = messages[index]
         if str(item.get("role", "")).strip().lower() != "customer":
             continue
         content = str(item.get("content", "")).strip()
         ts = str(item.get("created_at", "")).strip()
         if expected_content and content != expected_content:
-            return False
+            return None
         if expected_created_at and ts and not _timestamps_match(ts, expected_created_at):
-            return False
-        return True
-    return False
+            return None
+        return index
+    return None
+
+
+def _is_latest_customer_message(ticket: dict[str, Any], message: str, created_at: str) -> bool:
+    return _find_latest_customer_message_index(ticket, message, created_at) is not None
 
 
 def _parse_iso_datetime(value: str) -> datetime | None:
@@ -91,7 +170,10 @@ def _is_task_cancelled(ticket_id: str, message_created_at: str) -> bool:
     if not expected_created_at:
         return False
 
-    events = ticket_repository.list_ticket_events(ticket_id=ticket_id, limit=200)
+    events = _call_ticket_repository(
+        "list_ticket_events",
+        lambda: ticket_repository.list_ticket_events(ticket_id=ticket_id, limit=200),
+    )
     for row in events:
         payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
         event_type = str(row.get("event_type") or payload.get("event") or "").strip().lower()
@@ -110,7 +192,10 @@ def _load_ticket_with_retry(
 ) -> tuple[dict[str, Any] | None, int, bool]:
     """Retry short-lived lookup misses until latest customer message is persisted."""
     attempt = 0
-    ticket = ticket_repository.get_ticket(ticket_id)
+    ticket = _call_ticket_repository(
+        "get_ticket",
+        lambda: ticket_repository.get_ticket(ticket_id),
+    )
     while True:
         if ticket is not None and _is_latest_customer_message(
             ticket,
@@ -122,8 +207,62 @@ def _load_ticket_with_retry(
             break
         attempt += 1
         time.sleep(TICKET_LOOKUP_RETRY_BASE_DELAY_SECONDS * attempt)
-        ticket = ticket_repository.get_ticket(ticket_id)
+        ticket = _call_ticket_repository(
+            "get_ticket",
+            lambda: ticket_repository.get_ticket(ticket_id),
+        )
     return ticket, attempt, False
+
+
+def _find_existing_worker_response(
+    ticket: dict[str, Any],
+    customer_message: str,
+    message_created_at: str,
+) -> dict[str, Any] | None:
+    customer_index = _find_latest_customer_message_index(
+        ticket,
+        customer_message,
+        message_created_at,
+    )
+    if customer_index is None:
+        return None
+    assistant_messages: list[dict[str, Any]] = []
+    for item in ticket.get("messages", [])[customer_index + 1 :]:
+        if str(item.get("role", "")).strip().lower() != "assistant":
+            continue
+        assistant_messages.append(item)
+    if len(assistant_messages) < 2:
+        return None
+    return assistant_messages[-1]
+
+
+def _schedule_ticket_task_retry(
+    queue: SyncRedisTaskQueue,
+    task: dict[str, Any],
+    exc: BaseException,
+) -> bool:
+    if not _is_retryable_ticket_storage_error(exc):
+        return False
+    current_retry_count = _safe_non_negative_int(task.get("worker_retry_count"), 0)
+    if current_retry_count >= TICKET_TASK_RETRY_MAX:
+        return False
+    next_retry_count = current_retry_count + 1
+    delay_seconds = TICKET_TASK_RETRY_BASE_DELAY_SECONDS * next_retry_count
+    time.sleep(delay_seconds)
+    retry_task = dict(task)
+    retry_task["worker_retry_count"] = next_retry_count
+    retry_task["last_error"] = str(exc)
+    retry_task["last_retry_at"] = now_iso()
+    if not queue.enqueue(retry_task):
+        return False
+    LOGGER.warning(
+        "Worker requeued ticket task %s after transient storage failure (retry %s/%s): %s",
+        str(task.get("ticket_id") or "").strip(),
+        next_retry_count,
+        TICKET_TASK_RETRY_MAX,
+        exc,
+    )
+    return True
 
 
 def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
@@ -173,9 +312,13 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
             "status": ticket.get("status", "open"),
             "engineer_mode": TAKEOVER_MODE,
             "message": "Customer sent a new message in takeover mode. Please contact the customer directly.",
+            "message_created_at": message_created_at,
             "created_at": now_iso(),
         }
-        ticket_repository.record_event(ticket_id, attention_event["event"], attention_event)
+        _call_ticket_repository(
+            "record_event",
+            lambda: ticket_repository.record_event(ticket_id, attention_event["event"], attention_event),
+        )
         _publish(bus, ["engineer", "dashboard"], attention_event)
         _publish(bus, ["client"], build_client_sync_event(ticket, attention_event["event"]))
         return
@@ -189,7 +332,10 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
     if _is_task_cancelled(ticket_id, message_created_at):
         LOGGER.info("Worker dropped result for cancelled task %s", ticket_id)
         return
-    refreshed_ticket = ticket_repository.get_ticket(ticket_id)
+    refreshed_ticket = _call_ticket_repository(
+        "get_ticket",
+        lambda: ticket_repository.get_ticket(ticket_id),
+    )
     if refreshed_ticket is None:
         LOGGER.warning("Worker dropped result: ticket disappeared (%s)", ticket_id)
         return
@@ -203,38 +349,55 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         return
 
     ticket = refreshed_ticket
-    initial_message_count = len(ticket.get("messages", []))
-
+    existing_response = _find_existing_worker_response(ticket, customer_message, message_created_at)
     needs_engineer_input = False
-    if needs_engineer_guidance:
-        engineer_request = build_engineer_followup_request(ticket, customer_message)
-        answer = (
-            "I could not find enough reliable information in the knowledge sources for this issue. "
-            "I have contacted an engineer to continue investigation and will follow up shortly."
+    if existing_response is not None:
+        LOGGER.info(
+            "Worker detected an existing final assistant response for ticket %s and skipped duplicate save",
+            ticket_id,
         )
-        sources = []
-        citations = []
-        ticket["status"] = "waiting_for_engineer"
-        ticket["pending_engineer_question"] = engineer_request
-        needs_engineer_input = True
+        answer = str(existing_response.get("content") or answer)
+        sources = existing_response.get("sources") if isinstance(existing_response.get("sources"), list) else sources
+        citations = (
+            existing_response.get("citations")
+            if isinstance(existing_response.get("citations"), list)
+            else citations
+        )
+        needs_engineer_input = str(ticket.get("status") or "").strip().lower() == "waiting_for_engineer"
     else:
-        ticket["status"] = "open"
-        ticket["pending_engineer_question"] = None
+        initial_message_count = len(ticket.get("messages", []))
+        if needs_engineer_guidance:
+            engineer_request = build_engineer_followup_request(ticket, customer_message)
+            answer = (
+                "I could not find enough reliable information in the knowledge sources for this issue. "
+                "I have contacted an engineer to continue investigation and will follow up shortly."
+            )
+            sources = []
+            citations = []
+            ticket["status"] = "waiting_for_engineer"
+            ticket["pending_engineer_question"] = engineer_request
+            needs_engineer_input = True
+        else:
+            ticket["status"] = "open"
+            ticket["pending_engineer_question"] = None
 
-    assistant_message: dict[str, Any] = {
-        "role": "assistant",
-        "content": answer,
-        "created_at": now_iso(),
-    }
-    if sources:
-        assistant_message["sources"] = sources
-    if citations:
-        assistant_message["citations"] = citations
-    ticket["messages"].append(assistant_message)
+        assistant_message: dict[str, Any] = {
+            "role": "assistant",
+            "content": answer,
+            "created_at": now_iso(),
+        }
+        if sources:
+            assistant_message["sources"] = sources
+        if citations:
+            assistant_message["citations"] = citations
+        ticket["messages"].append(assistant_message)
 
-    ticket["updated_at"] = now_iso()
-    new_messages = ticket.get("messages", [])[initial_message_count:]
-    ticket_repository.save_ticket(ticket, new_messages=new_messages)
+        ticket["updated_at"] = now_iso()
+        new_messages = ticket.get("messages", [])[initial_message_count:]
+        _call_ticket_repository(
+            "save_ticket",
+            lambda: ticket_repository.save_ticket(ticket, new_messages=new_messages),
+        )
 
     event = {
         "event": "ticket_ai_response_ready",
@@ -243,9 +406,13 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         "status": ticket["status"],
         "engineer_mode": ticket["engineer_mode"],
         "message": answer[:200],
+        "message_created_at": message_created_at,
         "created_at": now_iso(),
     }
-    ticket_repository.record_event(ticket_id, event["event"], event)
+    _call_ticket_repository(
+        "record_event",
+        lambda: ticket_repository.record_event(ticket_id, event["event"], event),
+    )
     _publish(bus, ["engineer", "dashboard"], event)
     _publish(bus, ["client"], build_client_sync_event(ticket, event["event"]))
 
@@ -257,11 +424,17 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
             "status": ticket["status"],
             "engineer_mode": ticket["engineer_mode"],
             "message": ticket.get("pending_engineer_question") or "Engineer attention required",
+            "message_created_at": message_created_at,
             "created_at": now_iso(),
         }
-        ticket_repository.record_event(ticket_id, attention_event["event"], attention_event)
+        _call_ticket_repository(
+            "record_event",
+            lambda: ticket_repository.record_event(ticket_id, attention_event["event"], attention_event),
+        )
         _publish(bus, ["engineer", "dashboard"], attention_event)
         _publish(bus, ["client"], build_client_sync_event(ticket, attention_event["event"]))
+
+
 def run_worker() -> int:
     logging.basicConfig(
         level=logging.INFO,
@@ -291,6 +464,8 @@ def run_worker() -> int:
             try:
                 _process_ticket_query(bus, task)
             except Exception as exc:
+                if _schedule_ticket_task_retry(queue, task, exc):
+                    continue
                 LOGGER.exception("Worker failed to process ticket task: %s", exc)
             continue
         if task_type:

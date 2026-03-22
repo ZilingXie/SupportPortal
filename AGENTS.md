@@ -12,3 +12,8 @@
    - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
 2. After restart, verify running status:
    - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+
+## RAG Change Logging
+1. Every RAG-related change must be appended to `/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/rag_change_log.md` before the task is considered complete.
+2. RAG-related changes include retrieval logic, chunking strategy, ingestion flow, embedding configuration, evaluation logic, vector tables, and any RAG data reset or backfill.
+3. Each entry must include the date, summary, reason, affected files or config, data impact, and verification evidence.

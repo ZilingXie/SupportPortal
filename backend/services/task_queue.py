@@ -72,6 +72,17 @@ class SyncRedisTaskQueue:
             self._redis = SyncRedis.from_url(self._redis_url, decode_responses=True)
         return self._redis
 
+    def enqueue(self, task: dict[str, Any]) -> bool:
+        client = self._client()
+        if client is None:
+            return False
+        try:
+            client.rpush(self._queue_name, json.dumps(task, ensure_ascii=False))
+            return True
+        except Exception as exc:
+            LOGGER.warning("Task enqueue failed: %s", exc)
+            return False
+
     def dequeue(self, timeout_seconds: int = 5) -> dict[str, Any] | None:
         client = self._client()
         if client is None:
