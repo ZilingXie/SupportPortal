@@ -169,5 +169,5 @@ LOCAL_KNOWLEDGE_ROOT=local_knowledge
 说明：
 1. `support_knowledge_documents` 继续保存 canonical 文档结构和 `primary` 统计。
 2. `support_knowledge_chunk_runs` / `support_knowledge_chunk_traces` 会额外记录双轨切片过程数据，供后续优化使用。
-3. 检索链路只会召回 `index_role='primary'` 的 chunk。
+3. 在线检索链路为 `vector + true BM25 + RRF + metadata prune + rerank`，并且只会召回 `index_role='primary'` 的 chunk。详细说明见 [docs/rag_retrieval_chain.md](/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/rag_retrieval_chain.md)。
 4. 技术文档推荐由 `n8n` 直接写入 `support_knowledge_source_documents`，再执行 `python scripts/ingest_local_knowledge_sources.py --source-system n8n --knowledge-type technical` 做本地增量入库。

@@ -12,10 +12,22 @@ from backend.services.rag_qa import (
     _metadata_rerank,
     _rrf_merge,
     _split_table_name,
+    run_rag_query,
 )
 
 
 class RagQaHybridTests(unittest.TestCase):
+    class _FakeProvider:
+        provider_name = "siliconflow"
+        model_id = "BAAI/bge-large-en-v1.5"
+        vector_dim = 1024
+
+        def count_tokens(self, text: str) -> int:
+            return max(1, len(str(text or "").split()))
+
+        def drain_request_log(self) -> list[dict[str, object]]:
+            return []
+
     def test_split_table_name_supports_schema_prefix(self) -> None:
         self.assertEqual(_split_table_name("public.docagent"), ("public", "docagent"))
         self.assertEqual(
@@ -27,12 +39,22 @@ class RagQaHybridTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             config = _get_rag_config(top_k=6)
         self.assertEqual(config["top_k"], 6)
-        self.assertEqual(config["vector_candidate_k"], 24)
-        self.assertEqual(config["keyword_candidate_k"], 24)
-        self.assertEqual(config["fusion_candidate_k"], 30)
+        self.assertEqual(config["vector_candidate_k"], 60)
+        self.assertEqual(config["bm25_candidate_k"], 60)
+        self.assertEqual(config["fusion_candidate_k"], 48)
+        self.assertEqual(config["rerank_top_n"], 24)
+        self.assertEqual(config["bm25_k1"], 1.2)
+        self.assertEqual(config["bm25_b"], 0.75)
+        self.assertEqual(config["rerank_provider"], "siliconflow")
+        self.assertEqual(config["rerank_model"], "BAAI/bge-reranker-v2-m3")
         self.assertEqual(config["table"], "supportportal.docagent_chunks_bge_large_en_v1_5_1024")
         self.assertEqual(config["embedding_provider"], "siliconflow")
         self.assertEqual(config["embedding_model"], "BAAI/bge-large-en-v1.5")
+
+    def test_get_rag_config_reads_lowercase_silliconflow_key_for_reranker(self) -> None:
+        with patch.dict(os.environ, {"silliconflow_key": "test-rerank-key"}, clear=True):
+            config = _get_rag_config(top_k=6)
+        self.assertEqual(config["rerank_api_key"], "test-rerank-key")
 
     def test_rrf_merge_dedupes_and_limits_results(self) -> None:
         shared = RetrievedChunk(
@@ -170,6 +192,8 @@ class RagQaHybridTests(unittest.TestCase):
         self.assertEqual(info["post_rerank_count"], 2)
         self.assertIn("language:nodejs", info["candidate_reasons"]["node-method"])
         self.assertIn("method_name:BuildTokenWithUidAndPrivilege", info["candidate_reasons"]["node-method"])
+        self.assertEqual(reranked[0].candidate_trace.get("metadata_rank"), 1)
+        self.assertEqual(reranked[1].candidate_trace.get("metadata_rank"), 2)
 
     def test_metadata_rerank_filters_technical_case_chunks_by_strong_intent(self) -> None:
         issue_chunk = RetrievedChunk(
@@ -261,6 +285,136 @@ class RagQaHybridTests(unittest.TestCase):
         self.assertEqual(info["filter_type"], "technical_intent")
         self.assertIn("intent:decision_logic", info["candidate_reasons"]["decision"])
         self.assertGreaterEqual(info["post_rerank_count"], 1)
+
+    def test_run_rag_query_uses_bm25_pipeline_and_skips_fts(self) -> None:
+        vector_chunk = RetrievedChunk(
+            chunk_id="vector-1",
+            text="Vector chunk",
+            source_path="official/vector.md",
+            similarity=0.91,
+        )
+        bm25_chunk = RetrievedChunk(
+            chunk_id="bm25-1",
+            text="BM25 chunk",
+            source_path="technical/bm25.md",
+            similarity=0.66,
+        )
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "table": "supportportal.docagent_chunks_bge_large_en_v1_5_1024",
+                "top_k": 2,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-4.1",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-large-en-v1.5",
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+            }
+            with patch("backend.services.rag_qa.get_embedding_provider", return_value=self._FakeProvider()):
+                with patch("backend.services.rag_qa._retrieve_chunks", return_value=[vector_chunk]):
+                    with patch("backend.services.rag_qa._retrieve_bm25_chunks", return_value=[bm25_chunk]):
+                        with patch("backend.services.rag_qa._retrieve_fts_chunks", side_effect=AssertionError("fts should not run")):
+                            with patch("backend.services.rag_qa._metadata_rerank", return_value=([vector_chunk, bm25_chunk], {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None})):
+                                with patch("backend.services.rag_qa._rerank_chunks", return_value=[bm25_chunk, vector_chunk]):
+                                    with patch("backend.services.rag_qa._invoke_llm_payload_with_trace", return_value=({"answer": "Use the BM25 chunk.", "key_steps": [], "citations": ["bm25-1"], "insufficient_evidence": False}, 10, 5, "gpt-4.1")):
+                                        result = run_rag_query("how do I use BM25?")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.trace.retrieval_strategy, "hybrid_rrf_bm25")
+        self.assertEqual(result.trace.bm25_candidates_count, 1)
+        self.assertEqual(result.trace.selected_chunk_ids[0], "bm25-1")
+        self.assertEqual(result.trace.reranker_provider, "siliconflow")
+        self.assertEqual(result.trace.reranker_model, "BAAI/bge-reranker-v2-m3")
+        self.assertTrue(result.trace.retrieval_candidates)
+        self.assertTrue(
+            all(
+                isinstance(candidate.get("candidate_trace"), dict)
+                for candidate in result.trace.retrieval_candidates
+            )
+        )
+        self.assertIn(
+            ["bm25"],
+            [
+                candidate["candidate_trace"].get("retrieval_sources")
+                for candidate in result.trace.retrieval_candidates
+            ],
+        )
+
+    def test_run_rag_query_keeps_keyword_fallback_out_of_bm25_telemetry(self) -> None:
+        vector_chunk = RetrievedChunk(
+            chunk_id="vector-1",
+            text="Vector chunk",
+            source_path="official/vector.md",
+            similarity=0.91,
+        )
+        keyword_chunk = RetrievedChunk(
+            chunk_id="keyword-1",
+            text="Keyword fallback chunk",
+            source_path="technical/keyword.md",
+            similarity=0.52,
+            retrieval_sources=["keyword_fallback"],
+            candidate_trace={"keyword_fallback_hits": 2},
+        )
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "app_schema": "supportportal",
+                "table": "supportportal.docagent_chunks_bge_large_en_v1_5_1024",
+                "top_k": 2,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-4.1",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-large-en-v1.5",
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+            }
+            with patch("backend.services.rag_qa.get_embedding_provider", return_value=self._FakeProvider()):
+                with patch("backend.services.rag_qa._retrieve_chunks", return_value=[vector_chunk]):
+                    with patch("backend.services.rag_qa._retrieve_bm25_chunks", side_effect=RuntimeError("bm25 offline")):
+                        with patch("backend.services.rag_qa._retrieve_keyword_chunks", return_value=[keyword_chunk]):
+                            with patch("backend.services.rag_qa._metadata_rerank", return_value=([vector_chunk, keyword_chunk], {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None})):
+                                with patch("backend.services.rag_qa._rerank_chunks", return_value=[vector_chunk, keyword_chunk]):
+                                    with patch("backend.services.rag_qa._invoke_llm_payload_with_trace", return_value=({"answer": "Use the vector chunk.", "key_steps": [], "citations": ["vector-1"], "insufficient_evidence": False}, 10, 5, "gpt-4.1")):
+                                        result = run_rag_query("bm25 is down, use fallback")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.trace.retrieval_strategy, "vector_keyword_fallback")
+        self.assertEqual(result.trace.bm25_candidates_count, 0)
+        self.assertEqual(
+            result.trace.retrieval_candidates[1]["candidate_trace"].get("retrieval_sources"),
+            ["keyword_fallback"],
+        )
 
 
 if __name__ == "__main__":

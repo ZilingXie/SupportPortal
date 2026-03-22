@@ -25,6 +25,7 @@ from backend.services.embedding_provider import (
     require_configured_vector_dim,
     validate_embedding_provider_dim,
 )
+from backend.services.bm25_index import build_bm25_index_payload
 from backend.services.rag_benchmark import (
     build_benchmark_review_sample,
     build_live_review_sample,
@@ -1218,6 +1219,7 @@ class PostgresKnowledgeRepository:
                     sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(self._vector_schema))
                 )
                 cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
+                self._ensure_bm25_tables(cur=cur)
                 cur.execute(
                     sql.SQL(
                         """
@@ -1599,6 +1601,8 @@ class PostgresKnowledgeRepository:
                             embedding_request_meta JSONB NOT NULL DEFAULT '[]'::jsonb,
                             primary_source_type TEXT,
                             primary_chunk_strategy TEXT,
+                            reranker_provider TEXT,
+                            reranker_model TEXT,
                             needs_human BOOLEAN NOT NULL DEFAULT FALSE,
                             handoff_reason TEXT,
                             error_flag BOOLEAN NOT NULL DEFAULT FALSE,
@@ -1623,6 +1627,8 @@ class PostgresKnowledgeRepository:
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS embedding_request_meta JSONB NOT NULL DEFAULT '[]'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS primary_source_type TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS primary_chunk_strategy TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS reranker_provider TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS reranker_model TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS generation_mode TEXT NOT NULL DEFAULT 'structured_answer'",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS structured_retry_used BOOLEAN NOT NULL DEFAULT FALSE",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS extractive_fallback_used BOOLEAN NOT NULL DEFAULT FALSE",
@@ -1651,6 +1657,7 @@ class PostgresKnowledgeRepository:
                             used_in_final_answer BOOLEAN NOT NULL DEFAULT FALSE,
                             title TEXT,
                             source_url TEXT,
+                            candidate_trace JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                             created_at TIMESTAMPTZ NOT NULL
                         )
                         """
@@ -1658,6 +1665,11 @@ class PostgresKnowledgeRepository:
                         self._table("support_rag_query_candidates"),
                         self._table("support_rag_query_runs"),
                     )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS candidate_trace JSONB NOT NULL DEFAULT '{{}}'::jsonb"
+                    ).format(self._table("support_rag_query_candidates"))
                 )
                 cur.execute(
                     sql.SQL(
@@ -1937,7 +1949,225 @@ class PostgresKnowledgeRepository:
                         self._table("support_rag_review_samples"),
                     )
                 )
+                self._backfill_bm25_index_if_needed(cur=cur)
             conn.commit()
+
+    def _ensure_bm25_tables(self, *, cur: psycopg.Cursor[Any]) -> None:
+        cur.execute(
+            sql.SQL(
+                """
+                CREATE TABLE IF NOT EXISTS {} (
+                    chunk_id TEXT PRIMARY KEY,
+                    doc_id TEXT NOT NULL,
+                    index_role TEXT NOT NULL,
+                    doc_length INTEGER NOT NULL DEFAULT 0,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            ).format(self._table("support_knowledge_bm25_docs"))
+        )
+        cur.execute(
+            sql.SQL(
+                """
+                CREATE TABLE IF NOT EXISTS {} (
+                    chunk_id TEXT NOT NULL REFERENCES {}(chunk_id) ON DELETE CASCADE,
+                    term TEXT NOT NULL,
+                    tf INTEGER NOT NULL DEFAULT 0,
+                    index_role TEXT NOT NULL,
+                    PRIMARY KEY (chunk_id, term)
+                )
+                """
+            ).format(
+                self._table("support_knowledge_bm25_postings"),
+                self._table("support_knowledge_bm25_docs"),
+            )
+        )
+        cur.execute(
+            sql.SQL(
+                """
+                CREATE TABLE IF NOT EXISTS {} (
+                    term TEXT NOT NULL,
+                    index_role TEXT NOT NULL,
+                    doc_freq INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (term, index_role)
+                )
+                """
+            ).format(self._table("support_knowledge_bm25_terms"))
+        )
+        cur.execute(
+            sql.SQL(
+                """
+                CREATE TABLE IF NOT EXISTS {} (
+                    index_role TEXT PRIMARY KEY,
+                    doc_count INTEGER NOT NULL DEFAULT 0,
+                    avg_doc_length DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            ).format(self._table("support_knowledge_bm25_stats"))
+        )
+        cur.execute(
+            sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (doc_id, index_role)").format(
+                sql.Identifier("idx_support_knowledge_bm25_docs_doc_role"),
+                self._table("support_knowledge_bm25_docs"),
+            )
+        )
+        cur.execute(
+            sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (term, index_role)").format(
+                sql.Identifier("idx_support_knowledge_bm25_postings_term_role"),
+                self._table("support_knowledge_bm25_postings"),
+            )
+        )
+        cur.execute(
+            sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (index_role, doc_length)").format(
+                sql.Identifier("idx_support_knowledge_bm25_docs_role_length"),
+                self._table("support_knowledge_bm25_docs"),
+            )
+        )
+
+    def _backfill_bm25_index_if_needed(self, *, cur: psycopg.Cursor[Any]) -> int:
+        normalized_index_role = "primary"
+        cur.execute(
+            sql.SQL("SELECT COUNT(*) FROM {} WHERE index_role = %s").format(
+                self._table("support_knowledge_bm25_docs")
+            ),
+            (normalized_index_role,),
+        )
+        existing_bm25_docs_row = cur.fetchone() or (0,)
+        existing_bm25_docs = int(existing_bm25_docs_row[0] or 0)
+        cur.execute(
+            sql.SQL("SELECT COUNT(*) FROM {} WHERE index_role = %s").format(self._vector_table()),
+            (normalized_index_role,),
+        )
+        primary_chunk_count_row = cur.fetchone() or (0,)
+        primary_chunk_count = int(primary_chunk_count_row[0] or 0)
+        if primary_chunk_count <= 0 or existing_bm25_docs == primary_chunk_count:
+            return 0
+        return self._rebuild_bm25_index_from_vector_table(cur=cur, index_role=normalized_index_role)
+
+    def _rebuild_bm25_index_from_vector_table(
+        self,
+        *,
+        cur: psycopg.Cursor[Any],
+        index_role: str = "primary",
+    ) -> int:
+        normalized_index_role = _clean_text(index_role) or "primary"
+        if normalized_index_role != "primary":
+            return 0
+
+        self._ensure_bm25_tables(cur=cur)
+        cur.execute(
+            sql.SQL(
+                """
+                SELECT
+                    id,
+                    doc_id,
+                    h1,
+                    h2,
+                    h3,
+                    content,
+                    COALESCE(vector_indexed_at, updated_at, NOW()) AS updated_at
+                FROM {}
+                WHERE index_role = %s
+                ORDER BY updated_at DESC, id ASC
+                """
+            ).format(self._vector_table()),
+            (normalized_index_role,),
+        )
+        rows = [
+            {
+                "id": row[0],
+                "doc_id": row[1],
+                "h1": row[2],
+                "h2": row[3],
+                "h3": row[4],
+                "content": row[5],
+                "updated_at": row[6],
+            }
+            for row in cur.fetchall()
+        ]
+        payload = build_bm25_index_payload(rows=rows, index_role=normalized_index_role)
+
+        cur.execute(
+            sql.SQL("DELETE FROM {} WHERE index_role = %s").format(self._table("support_knowledge_bm25_docs")),
+            (normalized_index_role,),
+        )
+        if payload["docs"]:
+            cur.executemany(
+                sql.SQL(
+                    """
+                    INSERT INTO {} (chunk_id, doc_id, index_role, doc_length, updated_at)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """
+                ).format(self._table("support_knowledge_bm25_docs")),
+                [
+                    (
+                        item["chunk_id"],
+                        item["doc_id"],
+                        item["index_role"],
+                        item["doc_length"],
+                        item["updated_at"],
+                    )
+                    for item in payload["docs"]
+                ],
+            )
+        if payload["postings"]:
+            cur.executemany(
+                sql.SQL(
+                    """
+                    INSERT INTO {} (chunk_id, term, tf, index_role)
+                    VALUES (%s, %s, %s, %s)
+                    """
+                ).format(self._table("support_knowledge_bm25_postings")),
+                [
+                    (
+                        item["chunk_id"],
+                        item["term"],
+                        item["tf"],
+                        item["index_role"],
+                    )
+                    for item in payload["postings"]
+                ],
+            )
+        cur.execute(
+            sql.SQL("DELETE FROM {} WHERE index_role = %s").format(self._table("support_knowledge_bm25_terms")),
+            (normalized_index_role,),
+        )
+        if payload["terms"]:
+            cur.executemany(
+                sql.SQL(
+                    """
+                    INSERT INTO {} (term, index_role, doc_freq)
+                    VALUES (%s, %s, %s)
+                    """
+                ).format(self._table("support_knowledge_bm25_terms")),
+                [
+                    (
+                        item["term"],
+                        item["index_role"],
+                        item["doc_freq"],
+                    )
+                    for item in payload["terms"]
+                ],
+            )
+        cur.execute(
+            sql.SQL(
+                """
+                INSERT INTO {} (index_role, doc_count, avg_doc_length, updated_at)
+                VALUES (%s, %s, %s, NOW())
+                ON CONFLICT (index_role) DO UPDATE SET
+                    doc_count = EXCLUDED.doc_count,
+                    avg_doc_length = EXCLUDED.avg_doc_length,
+                    updated_at = EXCLUDED.updated_at
+                """
+            ).format(self._table("support_knowledge_bm25_stats")),
+            (
+                normalized_index_role,
+                int(payload["stats"]["doc_count"]),
+                float(payload["stats"]["avg_doc_length"]),
+            ),
+        )
+        return int(payload["stats"]["doc_count"])
 
     def _ensure_vector_table(self, *, cur: psycopg.Cursor[Any], vector_dim: int) -> None:
         safe_dim = _safe_positive_int(vector_dim, self._default_vector_dim)
@@ -2087,6 +2317,106 @@ class PostgresKnowledgeRepository:
                 sql.Identifier(f"{self._vector_table_name}_fts_idx"),
                 self._vector_table(),
             )
+        )
+
+    def _replace_bm25_document_index(
+        self,
+        *,
+        cur: psycopg.Cursor[Any],
+        document_id: str,
+        index_role: str,
+        rows: list[dict[str, Any]],
+    ) -> None:
+        normalized_index_role = _clean_text(index_role) or "primary"
+        if normalized_index_role != "primary":
+            return
+
+        self._ensure_bm25_tables(cur=cur)
+        cur.execute(
+            sql.SQL("DELETE FROM {} WHERE doc_id = %s AND index_role = %s").format(
+                self._table("support_knowledge_bm25_docs")
+            ),
+            (document_id, normalized_index_role),
+        )
+
+        payload = build_bm25_index_payload(rows=rows, index_role=normalized_index_role)
+        if payload["docs"]:
+            cur.executemany(
+                sql.SQL(
+                    """
+                    INSERT INTO {} (chunk_id, doc_id, index_role, doc_length, updated_at)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """
+                ).format(self._table("support_knowledge_bm25_docs")),
+                [
+                    (
+                        item["chunk_id"],
+                        item["doc_id"],
+                        item["index_role"],
+                        item["doc_length"],
+                        item["updated_at"],
+                    )
+                    for item in payload["docs"]
+                ],
+            )
+        if payload["postings"]:
+            cur.executemany(
+                sql.SQL(
+                    """
+                    INSERT INTO {} (chunk_id, term, tf, index_role)
+                    VALUES (%s, %s, %s, %s)
+                    """
+                ).format(self._table("support_knowledge_bm25_postings")),
+                [
+                    (
+                        item["chunk_id"],
+                        item["term"],
+                        item["tf"],
+                        item["index_role"],
+                    )
+                    for item in payload["postings"]
+                ],
+            )
+        cur.execute(
+            sql.SQL("DELETE FROM {} WHERE index_role = %s").format(self._table("support_knowledge_bm25_terms")),
+            (normalized_index_role,),
+        )
+        cur.execute(
+            sql.SQL(
+                """
+                INSERT INTO {} (term, index_role, doc_freq)
+                SELECT term, index_role, COUNT(*)
+                FROM {}
+                WHERE index_role = %s
+                GROUP BY term, index_role
+                """
+            ).format(
+                self._table("support_knowledge_bm25_terms"),
+                self._table("support_knowledge_bm25_postings"),
+            ),
+            (normalized_index_role,),
+        )
+        cur.execute(
+            sql.SQL(
+                """
+                INSERT INTO {} (index_role, doc_count, avg_doc_length, updated_at)
+                SELECT
+                    %s,
+                    COUNT(*),
+                    COALESCE(AVG(doc_length), 0.0),
+                    NOW()
+                FROM {}
+                WHERE index_role = %s
+                ON CONFLICT (index_role) DO UPDATE SET
+                    doc_count = EXCLUDED.doc_count,
+                    avg_doc_length = EXCLUDED.avg_doc_length,
+                    updated_at = EXCLUDED.updated_at
+                """
+            ).format(
+                self._table("support_knowledge_bm25_stats"),
+                self._table("support_knowledge_bm25_docs"),
+            ),
+            (normalized_index_role, normalized_index_role),
         )
 
     def _row_to_ingestion(self, row: tuple[Any, ...], *, include_content: bool) -> dict[str, Any]:
@@ -3762,10 +4092,18 @@ class PostgresKnowledgeRepository:
         if not rows:
             with self._connect() as conn:
                 with conn.cursor() as cur:
+                    self._ensure_bm25_tables(cur=cur)
                     cur.execute(
                         sql.SQL("DELETE FROM {} WHERE doc_id = %s AND index_role = %s").format(self._vector_table()),
                         (document_id, normalized_index_role),
                     )
+                    if normalized_index_role == "primary":
+                        self._replace_bm25_document_index(
+                            cur=cur,
+                            document_id=document_id,
+                            index_role=normalized_index_role,
+                            rows=[],
+                        )
                 conn.commit()
             return 0
 
@@ -3864,11 +4202,19 @@ class PostgresKnowledgeRepository:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 self._ensure_vector_table(cur=cur, vector_dim=vector_dim)
+                self._ensure_bm25_tables(cur=cur)
                 cur.execute(
                     sql.SQL("DELETE FROM {} WHERE doc_id = %s AND index_role = %s").format(self._vector_table()),
                     (document_id, normalized_index_role),
                 )
                 cur.executemany(insert_query, payload)
+                if normalized_index_role == "primary":
+                    self._replace_bm25_document_index(
+                        cur=cur,
+                        document_id=document_id,
+                        index_role=normalized_index_role,
+                        rows=rows,
+                    )
             conn.commit()
         return len(rows)
 
@@ -3915,6 +4261,8 @@ class PostgresKnowledgeRepository:
             "embedding_request_meta",
             "primary_source_type",
             "primary_chunk_strategy",
+            "reranker_provider",
+            "reranker_model",
             "generation_mode",
             "structured_retry_used",
             "extractive_fallback_used",
@@ -3968,6 +4316,8 @@ class PostgresKnowledgeRepository:
             Json(run.get("embedding_request_meta") or []),
             _clean_text(run.get("primary_source_type")),
             _clean_text(run.get("primary_chunk_strategy")),
+            _clean_text(run.get("reranker_provider")),
+            _clean_text(run.get("reranker_model")),
             _clean_text(run.get("generation_mode")) or "structured_answer",
             bool(run.get("structured_retry_used")),
             bool(run.get("extractive_fallback_used")),
@@ -4039,9 +4389,10 @@ class PostgresKnowledgeRepository:
                                 used_in_final_answer,
                                 title,
                                 source_url,
+                                candidate_trace,
                                 created_at
                             )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
                             """
                         ).format(self._table("support_rag_query_candidates")),
                         [
@@ -4056,6 +4407,7 @@ class PostgresKnowledgeRepository:
                                 bool(candidate.get("used_in_final_answer")),
                                 _clean_text(candidate.get("title")),
                                 _clean_text(candidate.get("source_url")),
+                                Json(candidate.get("candidate_trace") or {}),
                                 created_at,
                             )
                             for candidate in candidates
@@ -7122,6 +7474,8 @@ class PostgresKnowledgeRepository:
                     needs_human,
                     handoff_reason,
                     answer_text,
+                    reranker_provider,
+                    reranker_model,
                     created_at,
                     error_flag
                 FROM {}
@@ -7146,7 +7500,8 @@ class PostgresKnowledgeRepository:
                     rerank_score,
                     used_in_final_answer,
                     title,
-                    source_url
+                    source_url,
+                    candidate_trace
                 FROM {}
                 WHERE request_id = %s
                 ORDER BY rank_before_rerank ASC NULLS LAST, id ASC
@@ -7169,6 +7524,7 @@ class PostgresKnowledgeRepository:
                 "used_in_final_answer": bool(item[6]),
                 "source_url": item[8],
                 "heading": chunk_details.get(str(item[0]), {}).get("heading") or item[7],
+                "candidate_trace": _json_dict(item[9]),
             }
             candidates.append(candidate_payload)
         selected_contexts = []
@@ -7185,13 +7541,15 @@ class PostgresKnowledgeRepository:
             "source_type": row[7],
             "chunk_strategy": row[8],
             "retrieval_strategy": row[6],
-            "created_at": _to_iso(row[29]),
+            "created_at": _to_iso(row[31]),
             "user_query": row[2],
             "rewritten_query": row[3],
             "intent": row[4],
             "generation_mode": row[25],
             "needs_human": bool(row[26]),
             "handoff_reason": row[27],
+            "reranker_provider": row[29],
+            "reranker_model": row[30],
             "vector_candidates_count": row[9],
             "bm25_candidates_count": row[10],
             "reranked_candidates_count": row[11],
@@ -7208,7 +7566,7 @@ class PostgresKnowledgeRepository:
             "cited_chunk_ids": _json_list(row[19]),
             "structured_retry_used": bool(row[20]),
             "extractive_fallback_used": bool(row[21]),
-            "error_flag": bool(row[30]),
+            "error_flag": bool(row[32]),
             "candidates": candidates,
             "selected_contexts": selected_contexts,
         }
@@ -7301,6 +7659,7 @@ class PostgresKnowledgeRepository:
                     "used_in_final_answer": bool(item.get("used_in_final_answer")),
                     "source_url": item.get("source_url") or detail.get("source_url"),
                     "heading": detail.get("heading") or item.get("title"),
+                    "candidate_trace": _json_dict(item.get("candidate_trace")),
                 }
             )
         payload = {
@@ -7315,6 +7674,8 @@ class PostgresKnowledgeRepository:
             "language": row.get("language"),
             "chunk_strategy": row.get("chunk_strategy"),
             "retrieval_strategy": row.get("retrieval_strategy"),
+            "reranker_provider": _clean_text(trace_payload.get("reranker_provider")),
+            "reranker_model": _clean_text(trace_payload.get("reranker_model")) or (run_meta or {}).get("reranker_model"),
             "created_at": (run_meta or {}).get("finished_at") or (run_meta or {}).get("created_at"),
             "user_query": row.get("question"),
             "rewritten_query": None,
