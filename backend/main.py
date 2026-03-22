@@ -40,6 +40,12 @@ from backend.services.rag_service_client import (
     map_rag_payload_to_ticket_answer,
 )
 from backend.services.sentiment_classifier import SentimentResult, classify_sentiment
+from backend.services.support_router import (
+    SupportResolution,
+    SupportRouteDecision,
+    decide_support_route,
+    resolve_support_message as resolve_support_route_message,
+)
 from backend.services.task_queue import AsyncRedisTaskQueue
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -730,7 +736,7 @@ def build_ticket_summary(ticket: dict[str, Any]) -> tuple[str, str, str]:
     return fallback_summary, fallback_next_action, "fallback"
 
 
-def build_answer(
+def _build_rag_answer(
     message: str,
     *,
     ticket_id: str | None = None,
@@ -766,6 +772,42 @@ def build_answer(
         payload.get("reason"),
     )
     return answer_tuple
+
+
+def resolve_support_message(
+    message: str,
+    *,
+    ticket_id: str | None = None,
+    customer_id: str | None = None,
+    ticket_subject: str | None = None,
+    ticket_context: list[dict[str, str]] | None = None,
+    decision: SupportRouteDecision | None = None,
+) -> SupportResolution:
+    return resolve_support_route_message(
+        message,
+        ticket_subject=ticket_subject,
+        ticket_context=ticket_context,
+        rag_answerer=lambda query: _build_rag_answer(
+            query,
+            ticket_id=ticket_id,
+            customer_id=customer_id,
+        ),
+        decision=decision,
+    )
+
+
+def build_answer(
+    message: str,
+    *,
+    ticket_id: str | None = None,
+    customer_id: str | None = None,
+) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
+    resolution = resolve_support_message(
+        message,
+        ticket_id=ticket_id,
+        customer_id=customer_id,
+    )
+    return resolution.as_answer_tuple()
 
 
 def detect_sentiment(message: str) -> SentimentResult:
@@ -1077,6 +1119,14 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
     needs_engineer_input = False
     ai_replied = True
     task_enqueued = False
+    route_payload: dict[str, Any] = {
+        "answer_route": None,
+        "scope_label": None,
+        "route_reason": None,
+        "route_confidence": None,
+        "search_used": False,
+    }
+    route_context = build_emotion_context(ticket, limit=6, max_chars=400)
 
     if ticket.get("engineer_mode") == TAKEOVER_MODE:
         answer = compose_emotion_and_answer(
@@ -1098,33 +1148,67 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
         ticket["status"] = "waiting_for_engineer"
         ticket["pending_engineer_question"] = _engineer_request_fallback(ticket, customer_message)
         needs_engineer_input = True
-    elif ASYNC_QUERY_ENABLED:
-        answer = emotion_reply.text
-        confidence = 0.0
-        ai_replied = True
-        ticket["status"] = "open"
-        ticket["pending_engineer_question"] = None
-        task_enqueued = await task_queue.enqueue(
-            build_query_task(
-                ticket_id=ticket_id,
-                customer_message=customer_message,
-                message_created_at=timestamp,
-            )
+    else:
+        route_decision = decide_support_route(
+            customer_message,
+            ticket_subject=str(ticket.get("subject") or "").strip() or None,
+            ticket_context=route_context,
         )
-        if not task_enqueued:
-            technical_answer, confidence, sources, citations, needs_engineer_guidance = build_answer(
+        route_payload.update(
+            {
+                "answer_route": "rag" if route_decision.route == "rag" else route_decision.route,
+                "scope_label": route_decision.scope_label,
+                "route_reason": route_decision.reason,
+                "route_confidence": round(float(route_decision.confidence), 4),
+                "search_used": False,
+            }
+        )
+        if route_decision.route == "rag" and ASYNC_QUERY_ENABLED:
+            answer = emotion_reply.text
+            confidence = 0.0
+            ai_replied = True
+            ticket["status"] = "open"
+            ticket["pending_engineer_question"] = None
+            task_enqueued = await task_queue.enqueue(
+                build_query_task(
+                    ticket_id=ticket_id,
+                    customer_message=customer_message,
+                    message_created_at=timestamp,
+                )
+            )
+            if not task_enqueued:
+                resolution = resolve_support_message(
+                    customer_message,
+                    ticket_id=ticket_id,
+                    customer_id=request.customer_id,
+                    ticket_subject=str(ticket.get("subject") or "").strip() or None,
+                    ticket_context=route_context,
+                    decision=route_decision,
+                )
+                route_payload.update(resolution.route_payload())
+                answer = compose_emotion_and_answer(emotion_reply.text, resolution.answer)
+                confidence = resolution.confidence
+                sources = list(resolution.sources)
+                citations = [dict(item) for item in resolution.citations]
+                needs_engineer_guidance = resolution.needs_engineer_guidance
+        else:
+            resolution = resolve_support_message(
                 customer_message,
                 ticket_id=ticket_id,
                 customer_id=request.customer_id,
+                ticket_subject=str(ticket.get("subject") or "").strip() or None,
+                ticket_context=route_context,
+                decision=route_decision,
             )
-            answer = compose_emotion_and_answer(emotion_reply.text, technical_answer)
-    else:
-        technical_answer, confidence, sources, citations, needs_engineer_guidance = build_answer(
-            customer_message,
-            ticket_id=ticket_id,
-            customer_id=request.customer_id,
-        )
-        answer = compose_emotion_and_answer(emotion_reply.text, technical_answer)
+            route_payload.update(resolution.route_payload())
+            confidence = resolution.confidence
+            sources = list(resolution.sources)
+            citations = [dict(item) for item in resolution.citations]
+            needs_engineer_guidance = resolution.needs_engineer_guidance
+            if resolution.answer_route == "rag":
+                answer = compose_emotion_and_answer(emotion_reply.text, resolution.answer)
+            else:
+                answer = resolution.answer
 
     if not needs_engineer_input and needs_engineer_guidance:
         engineer_request = build_engineer_followup_request(ticket, customer_message)
@@ -1152,6 +1236,12 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
             "content": answer,
             "created_at": now_iso(),
         }
+        if route_payload.get("answer_route"):
+            assistant_message["answer_route"] = route_payload.get("answer_route")
+            assistant_message["scope_label"] = route_payload.get("scope_label")
+            assistant_message["route_reason"] = route_payload.get("route_reason")
+            assistant_message["route_confidence"] = route_payload.get("route_confidence")
+            assistant_message["search_used"] = bool(route_payload.get("search_used"))
         if sources:
             assistant_message["sources"] = sources
         if citations:
@@ -1172,6 +1262,12 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
         "message": customer_message,
         "created_at": now_iso(),
     }
+    if route_payload.get("answer_route"):
+        event["answer_route"] = route_payload.get("answer_route")
+        event["scope_label"] = route_payload.get("scope_label")
+        event["route_reason"] = route_payload.get("route_reason")
+        event["route_confidence"] = route_payload.get("route_confidence")
+        event["search_used"] = bool(route_payload.get("search_used"))
     ticket_repository.record_event(ticket_id, event["event"], event)
     await dispatch_event(["engineer", "dashboard"], event)
     await dispatch_event(
@@ -1246,6 +1342,11 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
         "queued_for_ai": task_enqueued,
         "queued_message_created_at": timestamp if task_enqueued else None,
         "eta_minutes": 5 if priority == "high" else 15,
+        "answer_route": route_payload.get("answer_route"),
+        "scope_label": route_payload.get("scope_label"),
+        "route_reason": route_payload.get("route_reason"),
+        "route_confidence": route_payload.get("route_confidence"),
+        "search_used": bool(route_payload.get("search_used")),
     }
 
 

@@ -10,6 +10,7 @@ from backend.services.rag_qa import (
     _extract_metadata_hints,
     _get_rag_config,
     _metadata_rerank,
+    _resolve_active_vector_table,
     _rrf_merge,
     _split_table_name,
     run_rag_query,
@@ -415,6 +416,85 @@ class RagQaHybridTests(unittest.TestCase):
             result.trace.retrieval_candidates[1]["candidate_trace"].get("retrieval_sources"),
             ["keyword_fallback"],
         )
+
+    def test_resolve_active_vector_table_prefers_populated_fallback_when_configured_table_empty(self) -> None:
+        config = {
+            "dsn": "postgresql://example",
+            "table": "supportportal.docagent_chunks_bge_large_en_v1_5_1024",
+        }
+
+        with patch("backend.services.rag_qa._list_vector_tables_with_primary_counts") as list_mock:
+            list_mock.return_value = [
+                ("supportportal.docagent_chunks_bge_large_en_v1_5_1024", 0),
+                ("supportportal.docagent_chunks_ag_docs_test_1024", 1907),
+                ("supportportal.docagent_chunks", 16),
+            ]
+
+            resolved = _resolve_active_vector_table(config)
+
+        self.assertEqual(resolved, "supportportal.docagent_chunks_ag_docs_test_1024")
+
+    def test_run_rag_query_uses_resolved_vector_table_for_all_retrieval_paths(self) -> None:
+        captured_tables: list[str] = []
+
+        def _capture_vector(message: str, config: dict[str, object], *, limit: int | None = None) -> list[RetrievedChunk]:
+            _ = message
+            _ = limit
+            captured_tables.append(str(config["table"]))
+            return []
+
+        def _capture_bm25(message: str, config: dict[str, object], *, limit: int | None = None) -> list[RetrievedChunk]:
+            _ = message
+            _ = limit
+            captured_tables.append(str(config["table"]))
+            return []
+
+        def _capture_keyword(message: str, config: dict[str, object], *, limit: int | None = None) -> list[RetrievedChunk]:
+            _ = message
+            _ = limit
+            captured_tables.append(str(config["table"]))
+            return []
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "app_schema": "supportportal",
+                "table": "supportportal.docagent_chunks_bge_large_en_v1_5_1024",
+                "top_k": 2,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-4.1",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-large-en-v1.5",
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+            }
+            with patch("backend.services.rag_qa._resolve_active_vector_table", return_value="supportportal.docagent_chunks_ag_docs_test_1024"):
+                with patch("backend.services.rag_qa.get_embedding_provider", return_value=self._FakeProvider()):
+                    with patch("backend.services.rag_qa._retrieve_chunks", side_effect=_capture_vector):
+                        with patch("backend.services.rag_qa._retrieve_bm25_chunks", side_effect=_capture_bm25):
+                            with patch("backend.services.rag_qa._retrieve_keyword_chunks", side_effect=_capture_keyword):
+                                result = run_rag_query("how to join channel")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(
+            set(captured_tables),
+            {"supportportal.docagent_chunks_ag_docs_test_1024"},
+        )
+        self.assertTrue(result.trace.needs_human)
 
 
 if __name__ == "__main__":

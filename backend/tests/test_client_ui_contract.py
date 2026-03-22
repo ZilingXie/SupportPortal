@@ -244,6 +244,56 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn(".filter-select-panel", css)
         self.assertIn(".filter-select-option.is-selected", css)
 
+    def test_client_async_polling_ignores_placeholder_reply_until_final_answer_arrives(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin" };
+                state.pendingUserMessageId = "local-user-message";
+                state.pendingAsyncTicketId = "TK-015";
+                state.pendingAsyncMessageCreatedAt = "2026-03-22T12:38:23.235109+00:00";
+
+                const ticket = {
+                  id: "TK-015",
+                  userId: "user-1",
+                  title: "how to join channel",
+                  status: "waiting_for_support",
+                  createdAt: "2026-03-22T12:38:23.235078+00:00",
+                  updatedAt: "2026-03-22T12:38:25.168026+00:00",
+                  messages: [
+                    {
+                      id: "TK-015-m-2026-03-22T12:38:23.235109+00:00-0",
+                      role: "user",
+                      content: "how to join channel",
+                      createdAt: "2026-03-22T12:38:23.235109+00:00",
+                    },
+                    {
+                      id: "TK-015-m-2026-03-22T12:38:25.168026+00:00-1",
+                      role: "assistant",
+                      content: "Thank you for your message. I will check the issue and get back to you shortly.",
+                      createdAt: "2026-03-22T12:38:25.168026+00:00",
+                    },
+                  ],
+                };
+
+                if (ticketHasAssistantReply(ticket)) {
+                  throw new Error("Placeholder reply should not stop async polling.");
+                }
+
+                ticket.messages.push({
+                  id: "TK-015-m-2026-03-22T12:39:03.540492+00:00-2",
+                  role: "assistant",
+                  content: "To join a channel in the Agora Video Calling SDK for Android, call the joinChannel method.",
+                  createdAt: "2026-03-22T12:39:03.540492+00:00",
+                });
+
+                if (!ticketHasAssistantReply(ticket)) {
+                  throw new Error("Final assistant reply should stop async polling.");
+                }
+                """
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

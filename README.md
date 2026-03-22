@@ -123,7 +123,7 @@ docs/          # 文档
 1. 从 Agora 英文站点发现官方文档 URL。
 2. 下载对应的 Markdown 文件到 `local_knowledge/official/raw/`。
 3. 默认把下载得到的 `.md` 文件上传到 `https://support.stellarix.space` 的官方文档端点。
-4. 由 RAG 端点完成规范化、`primary/shadow` 双轨切片、Qwen3 向量化和落库。
+4. 由 RAG 端点完成规范化、`primary/shadow` 双轨切片、BGE Large 向量化和落库。
 
 运行方式：
 
@@ -171,3 +171,21 @@ LOCAL_KNOWLEDGE_ROOT=local_knowledge
 2. `support_knowledge_chunk_runs` / `support_knowledge_chunk_traces` 会额外记录双轨切片过程数据，供后续优化使用。
 3. 在线检索链路为 `vector + true BM25 + RRF + metadata prune + rerank`，并且只会召回 `index_role='primary'` 的 chunk。详细说明见 [docs/rag_retrieval_chain.md](/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/rag_retrieval_chain.md)。
 4. 技术文档推荐由 `n8n` 直接写入 `support_knowledge_source_documents`，再执行 `python scripts/ingest_local_knowledge_sources.py --source-system n8n --knowledge-type technical` 做本地增量入库。
+
+## Intent Routing
+
+客户消息在进入 RAG 前会先做问题范围识别：
+1. `small_talk`：闲聊/天气/问候，直接拒答。
+2. `non_agora`：非 Agora 问题，直接拒答。
+3. `agora_non_technical`：Agora 相关但非技术问题，走 OpenAI Responses API 的 web search。
+4. `agora_technical`：Agora 技术问题，继续走现有 RAG 链路。
+
+相关环境变量：
+
+```env
+INTENT_ROUTER_MODEL=gpt-4o-mini
+INTENT_ROUTER_TIMEOUT_SECONDS=3.0
+INTENT_ROUTER_CONFIDENCE_THRESHOLD=0.7
+OPENAI_WEB_SEARCH_MODEL=gpt-5
+OPENAI_WEB_SEARCH_TIMEOUT_SECONDS=12.0
+```

@@ -577,6 +577,93 @@ def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
     }
 
 
+def _list_vector_tables_with_primary_counts(dsn: str, schema: str) -> list[tuple[str, int]]:
+    resolved_dsn = str(dsn or "").strip()
+    resolved_schema = str(schema or "").strip() or "supportportal"
+    if not resolved_dsn:
+        return []
+
+    psycopg = _import_psycopg()
+    sql = psycopg.sql
+    count_query_template = sql.SQL(
+        """
+        SELECT count(*) FILTER (WHERE index_role = 'primary')
+        FROM {}
+        """
+    )
+
+    counts: list[tuple[str, int]] = []
+    with psycopg.connect(resolved_dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = %s
+                  AND table_type = 'BASE TABLE'
+                  AND table_name LIKE 'docagent_chunks%%'
+                ORDER BY table_name
+                """,
+                (resolved_schema,),
+            )
+            rows = cur.fetchall()
+
+            for row in rows:
+                table_name = str(row[0] or "").strip()
+                if not table_name:
+                    continue
+                try:
+                    cur.execute(
+                        count_query_template.format(sql.Identifier(resolved_schema, table_name))
+                    )
+                    count_row = cur.fetchone()
+                except Exception:
+                    continue
+                primary_count = int(count_row[0] or 0) if count_row else 0
+                counts.append((f"{resolved_schema}.{table_name}", primary_count))
+
+    return sorted(counts, key=lambda item: (item[1], item[0]), reverse=True)
+
+
+def _resolve_active_vector_table(config: dict[str, Any]) -> str:
+    configured_table = str(config.get("table") or "").strip()
+    configured_dsn = str(config.get("dsn") or "").strip()
+    schema, _ = _split_table_name(configured_table)
+    if not configured_table or not configured_dsn:
+        return configured_table
+
+    try:
+        candidate_tables = _list_vector_tables_with_primary_counts(configured_dsn, schema)
+    except Exception as exc:
+        logger.warning(
+            "RAG vector table discovery failed for %s: %s",
+            configured_table,
+            exc,
+        )
+        return configured_table
+
+    configured_count = next(
+        (count for table_name, count in candidate_tables if table_name == configured_table),
+        None,
+    )
+    if configured_count is not None and configured_count > 0:
+        return configured_table
+
+    fallback_table = next(
+        (table_name for table_name, count in candidate_tables if count > 0),
+        None,
+    )
+    if fallback_table and fallback_table != configured_table:
+        logger.warning(
+            "Configured RAG vector table %s has no primary rows. Falling back to %s.",
+            configured_table,
+            fallback_table,
+        )
+        return fallback_table
+
+    return configured_table
+
+
 def _table_identifier(sql: Any, raw_table: str) -> Any:
     schema, table_name = _split_table_name(raw_table)
     return sql.Identifier(schema, table_name)
@@ -1507,6 +1594,9 @@ def _estimate_embedding_tokens(message: str) -> int:
 
 def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | None:
     config = _get_rag_config(top_k=top_k)
+    resolved_table = _resolve_active_vector_table(config)
+    if resolved_table:
+        config["table"] = resolved_table
     if not config["dsn"] or not config["api_key"]:
         return None
 
