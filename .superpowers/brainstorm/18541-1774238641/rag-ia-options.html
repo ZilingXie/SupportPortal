@@ -1,0 +1,74 @@
+<h2>RAG Dashboard Information Architecture</h2>
+<p class="subtitle">Pick the structure that should anchor the redesign. I will refine the chosen direction into a decision-complete spec.</p>
+
+<div class="cards">
+  <div class="card" data-choice="replace-tabs" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">A. Replace Tabs</div>
+        <div class="mockup-body">
+          <div class="mock-nav">Scorecard | Routing | Retrieval | Generation | Data Supply | Review</div>
+          <div class="placeholder" style="height:72px;margin-top:12px;">4-layer executive scorecard</div>
+          <div style="display:grid;grid-template-columns:1.3fr 1fr;gap:12px;margin-top:12px;">
+            <div class="placeholder" style="height:132px;">Category pass-rate matrix</div>
+            <div class="placeholder" style="height:132px;">Failure buckets</div>
+          </div>
+          <div class="placeholder" style="height:86px;margin-top:12px;">Route confusion and top regressions</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Scorecard Command Center</h3>
+      <p>Most opinionated option. New taxonomy is built around the 4 evaluation layers and failure attribution.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="hybrid-home" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">B. Hybrid Home</div>
+        <div class="mockup-body">
+          <div class="mock-nav">Scorecard | Experiments | Diagnosis | Datasets | Knowledge | Production | Review</div>
+          <div class="placeholder" style="height:72px;margin-top:12px;">New scorecard landing page</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:12px;">
+            <div class="placeholder" style="height:108px;">Routing</div>
+            <div class="placeholder" style="height:108px;">Retrieval</div>
+            <div class="placeholder" style="height:108px;">Generation</div>
+          </div>
+          <div class="placeholder" style="height:98px;margin-top:12px;">Existing drill-down pages stay, but become cleaner and subordinate</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>New Home, Keep Existing Workbench</h3>
+      <p>Best compatibility path. Adds a real scorecard front door but preserves most current mental models and routes.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="triage-first" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">C. Triage First</div>
+        <div class="mockup-body">
+          <div class="mock-nav">Triage | Trace Compare | Routing Audit | Dataset | Review</div>
+          <div style="display:grid;grid-template-columns:320px 1fr;gap:12px;margin-top:12px;">
+            <div class="placeholder" style="height:232px;">Failure buckets and queues</div>
+            <div>
+              <div class="placeholder" style="height:72px;">Compact scorecard strip</div>
+              <div class="placeholder" style="height:148px;margin-top:12px;">Trace and evidence compare</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Diagnosis Console</h3>
+      <p>Optimized for daily debugging. Fastest path to bad samples, but overall trend visibility becomes secondary.</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <p class="label">Recommended</p>
+  <p><strong>A</strong> if you want the dashboard to become the canonical evaluation surface for mixed-route RAG, not just a better benchmark viewer.</p>
+</div>
