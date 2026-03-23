@@ -1,0 +1,502 @@
+[
+  {
+    "id": "agora-realuser-001",
+    "set": "realistic_user",
+    "question": "My app can join a channel with App ID only. Do I still need a token in production?"
+  },
+  {
+    "id": "agora-realuser-002",
+    "set": "realistic_user",
+    "question": "Should I generate the Agora token on the mobile app or on my backend?"
+  },
+  {
+    "id": "agora-realuser-003",
+    "set": "realistic_user",
+    "question": "What exactly gets encoded into an RTC token?"
+  },
+  {
+    "id": "agora-realuser-004",
+    "set": "realistic_user",
+    "question": "I turned on App Certificate and now joinChannel fails unless I use a token. Is that expected?"
+  },
+  {
+    "id": "agora-realuser-005",
+    "set": "realistic_user",
+    "question": "I'm getting error 109 when users join. Does that mean the token expired?"
+  },
+  {
+    "id": "agora-realuser-006",
+    "set": "realistic_user",
+    "question": "If token 109 happens, do I just call renewToken with a new token from my server?"
+  },
+  {
+    "id": "agora-realuser-007",
+    "set": "realistic_user",
+    "question": "How early does Agora warn me before a token expires?"
+  },
+  {
+    "id": "agora-realuser-008",
+    "set": "realistic_user",
+    "question": "After onTokenPrivilegeWillExpire fires, what's the correct next step?"
+  },
+  {
+    "id": "agora-realuser-009",
+    "set": "realistic_user",
+    "question": "What does onRequestToken usually mean in practice?"
+  },
+  {
+    "id": "agora-realuser-010",
+    "set": "realistic_user",
+    "question": "If onRequestToken is triggered, do I need to rejoin the channel?"
+  },
+  {
+    "id": "agora-realuser-011",
+    "set": "realistic_user",
+    "question": "Why is it a bad idea to build tokens directly in the client app?"
+  },
+  {
+    "id": "agora-realuser-012",
+    "set": "realistic_user",
+    "question": "Can I keep using the same token for the same user all day?"
+  },
+  {
+    "id": "agora-realuser-013",
+    "set": "realistic_user",
+    "question": "How long should I make my Agora token valid?"
+  },
+  {
+    "id": "agora-realuser-014",
+    "set": "realistic_user",
+    "question": "My token says invalid even though it's new. Could it be a uid mismatch?"
+  },
+  {
+    "id": "agora-realuser-015",
+    "set": "realistic_user",
+    "question": "If I generated the token for one uid but joined with another, would Agora reject it?"
+  },
+  {
+    "id": "agora-realuser-016",
+    "set": "realistic_user",
+    "question": "What's the real difference between COMMUNICATION and LIVE_BROADCASTING?"
+  },
+  {
+    "id": "agora-realuser-017",
+    "set": "realistic_user",
+    "question": "In live broadcasting mode, what permissions does the host actually have?"
+  },
+  {
+    "id": "agora-realuser-018",
+    "set": "realistic_user",
+    "question": "Can audience users publish audio/video by default in a livestream channel?"
+  },
+  {
+    "id": "agora-realuser-019",
+    "set": "realistic_user",
+    "question": "For a normal group call where everyone speaks, should I use COMMUNICATION?"
+  },
+  {
+    "id": "agora-realuser-020",
+    "set": "realistic_user",
+    "question": "For a classic one-to-many livestream, should I use LIVE_BROADCASTING?"
+  },
+  {
+    "id": "agora-realuser-021",
+    "set": "realistic_user",
+    "question": "Can an audience member start publishing without switching role first?"
+  },
+  {
+    "id": "agora-realuser-022",
+    "set": "realistic_user",
+    "question": "Why does Agora even have host and audience roles?"
+  },
+  {
+    "id": "agora-realuser-023",
+    "set": "realistic_user",
+    "question": "If I want a viewer to come on stage, what do I change?"
+  },
+  {
+    "id": "agora-realuser-024",
+    "set": "realistic_user",
+    "question": "Does COMMUNICATION mode still care about host vs audience?"
+  },
+  {
+    "id": "agora-realuser-025",
+    "set": "realistic_user",
+    "question": "What does 'audience cannot send' actually mean from an SDK point of view?"
+  },
+  {
+    "id": "agora-realuser-026",
+    "set": "realistic_user",
+    "question": "If every user needs to publish, is COMMUNICATION usually easier?"
+  },
+  {
+    "id": "agora-realuser-027",
+    "set": "realistic_user",
+    "question": "If only a few people talk and the rest just watch, is LIVE_BROADCASTING the right fit?"
+  },
+  {
+    "id": "agora-realuser-028",
+    "set": "realistic_user",
+    "question": "Can I promote a user from audience to host without leaving the channel?"
+  },
+  {
+    "id": "agora-realuser-029",
+    "set": "realistic_user",
+    "question": "Would you ever use LIVE_BROADCASTING for a small room?"
+  },
+  {
+    "id": "agora-realuser-030",
+    "set": "realistic_user",
+    "question": "For a passive viewer, should they always join as audience?"
+  },
+  {
+    "id": "agora-realuser-031",
+    "set": "realistic_user",
+    "question": "Can I detect when an audience member joins or leaves using the Video SDK alone?"
+  },
+  {
+    "id": "agora-realuser-032",
+    "set": "realistic_user",
+    "question": "If the RTC SDK doesn't tell me audience join/leave directly, what should I use instead?"
+  },
+  {
+    "id": "agora-realuser-033",
+    "set": "realistic_user",
+    "question": "Why would I add Signaling if I already use Video SDK?"
+  },
+  {
+    "id": "agora-realuser-034",
+    "set": "realistic_user",
+    "question": "I need webhooks to my backend when channel events happen. Which Agora feature does that?"
+  },
+  {
+    "id": "agora-realuser-035",
+    "set": "realistic_user",
+    "question": "Is it easier to detect hosts joining than audience users joining?"
+  },
+  {
+    "id": "agora-realuser-036",
+    "set": "realistic_user",
+    "question": "I need an accurate viewer count. Is RTC alone enough?"
+  },
+  {
+    "id": "agora-realuser-037",
+    "set": "realistic_user",
+    "question": "Why don't stream callbacks tell me everything about audience presence?"
+  },
+  {
+    "id": "agora-realuser-038",
+    "set": "realistic_user",
+    "question": "Can Agora send HTTPS callbacks to my server when channel events happen?"
+  },
+  {
+    "id": "agora-realuser-039",
+    "set": "realistic_user",
+    "question": "Would Notifications help me build viewer analytics?"
+  },
+  {
+    "id": "agora-realuser-040",
+    "set": "realistic_user",
+    "question": "If my PM wants exact live audience count, should I add Notifications or Signaling?"
+  },
+  {
+    "id": "agora-realuser-041",
+    "set": "realistic_user",
+    "question": "Can one user publish local audio/video into two channels at the same time?"
+  },
+  {
+    "id": "agora-realuser-042",
+    "set": "realistic_user",
+    "question": "I'm already publishing in channel A. How do I publish in channel B instead?"
+  },
+  {
+    "id": "agora-realuser-043",
+    "set": "realistic_user",
+    "question": "If I only want to keep listening in the first channel, what role should I use there?"
+  },
+  {
+    "id": "agora-realuser-044",
+    "set": "realistic_user",
+    "question": "If I want to speak in the second channel, what role should I join with?"
+  },
+  {
+    "id": "agora-realuser-045",
+    "set": "realistic_user",
+    "question": "If I only need to listen in channel B, should I join it as host or audience?"
+  },
+  {
+    "id": "agora-realuser-046",
+    "set": "realistic_user",
+    "question": "Why does Agora tell me to make the other channel audience?"
+  },
+  {
+    "id": "agora-realuser-047",
+    "set": "realistic_user",
+    "question": "What kind of error happens if I try to publish in a second channel without stopping the first one?"
+  },
+  {
+    "id": "agora-realuser-048",
+    "set": "realistic_user",
+    "question": "When I join a channel just to monitor it, should publishLocalAudio and publishLocalVideo be false?"
+  },
+  {
+    "id": "agora-realuser-049",
+    "set": "realistic_user",
+    "question": "Do the two channels need different channel names in multi-channel scenarios?"
+  },
+  {
+    "id": "agora-realuser-050",
+    "set": "realistic_user",
+    "question": "What's the clean setup if I want to listen in one room and speak in another?"
+  },
+  {
+    "id": "agora-realuser-051",
+    "set": "realistic_user",
+    "question": "Does the Channel Management REST API work over HTTP, or HTTPS only?"
+  },
+  {
+    "id": "agora-realuser-052",
+    "set": "realistic_user",
+    "question": "How do I build the Authorization header for Agora Channel Management APIs?"
+  },
+  {
+    "id": "agora-realuser-053",
+    "set": "realistic_user",
+    "question": "What Content-Type should I send for Channel Management API requests?"
+  },
+  {
+    "id": "agora-realuser-054",
+    "set": "realistic_user",
+    "question": "Are field names and URLs case-sensitive in Agora REST APIs?"
+  },
+  {
+    "id": "agora-realuser-055",
+    "set": "realistic_user",
+    "question": "What credentials do these REST APIs actually use?"
+  },
+  {
+    "id": "agora-realuser-056",
+    "set": "realistic_user",
+    "question": "Is it safe to put Customer Secret in my mobile app?"
+  },
+  {
+    "id": "agora-realuser-057",
+    "set": "realistic_user",
+    "question": "Why do people always say these Agora REST APIs should be called from the backend?"
+  },
+  {
+    "id": "agora-realuser-058",
+    "set": "realistic_user",
+    "question": "What security requirement does Agora enforce for Channel Management requests?"
+  },
+  {
+    "id": "agora-realuser-059",
+    "set": "realistic_user",
+    "question": "Are the request and response payloads JSON?"
+  },
+  {
+    "id": "agora-realuser-060",
+    "set": "realistic_user",
+    "question": "If my auth keeps failing on the REST API, what should I verify first?"
+  },
+  {
+    "id": "agora-realuser-061",
+    "set": "realistic_user",
+    "question": "Where do I get Customer ID and Customer Secret from?"
+  },
+  {
+    "id": "agora-realuser-062",
+    "set": "realistic_user",
+    "question": "Why does the doc mention Base64 for REST auth?"
+  },
+  {
+    "id": "agora-realuser-063",
+    "set": "realistic_user",
+    "question": "Can I call the Channel Management API straight from a frontend-only web app?"
+  },
+  {
+    "id": "agora-realuser-064",
+    "set": "realistic_user",
+    "question": "If I use the wrong casing in the JSON body, can the REST call break?"
+  },
+  {
+    "id": "agora-realuser-065",
+    "set": "realistic_user",
+    "question": "What's the point of the Channel Management REST API in a real system?"
+  },
+  {
+    "id": "agora-realuser-066",
+    "set": "realistic_user",
+    "question": "What recording modes does Agora Cloud Recording support?"
+  },
+  {
+    "id": "agora-realuser-067",
+    "set": "realistic_user",
+    "question": "What does individual recording actually produce?"
+  },
+  {
+    "id": "agora-realuser-068",
+    "set": "realistic_user",
+    "question": "What does composite recording actually produce?"
+  },
+  {
+    "id": "agora-realuser-069",
+    "set": "realistic_user",
+    "question": "When would I choose composite instead of individual recording?"
+  },
+  {
+    "id": "agora-realuser-070",
+    "set": "realistic_user",
+    "question": "When would I choose individual instead of composite recording?"
+  },
+  {
+    "id": "agora-realuser-071",
+    "set": "realistic_user",
+    "question": "I have multiple hosts and I only want one final file. Which mode should I use?"
+  },
+  {
+    "id": "agora-realuser-072",
+    "set": "realistic_user",
+    "question": "I want a separate file per speaker for post-processing. Which mode fits?"
+  },
+  {
+    "id": "agora-realuser-073",
+    "set": "realistic_user",
+    "question": "Should I start cloud recording from the client app, or from my backend?"
+  },
+  {
+    "id": "agora-realuser-074",
+    "set": "realistic_user",
+    "question": "What server component does Agora expect me to have for Cloud Recording?"
+  },
+  {
+    "id": "agora-realuser-075",
+    "set": "realistic_user",
+    "question": "Why is Cloud Recording usually implemented as a backend workflow?"
+  },
+  {
+    "id": "agora-realuser-076",
+    "set": "realistic_user",
+    "question": "In cloud recording requests, what does cname mean for normal recording modes?"
+  },
+  {
+    "id": "agora-realuser-077",
+    "set": "realistic_user",
+    "question": "Does cname mean the same thing in web page recording?"
+  },
+  {
+    "id": "agora-realuser-078",
+    "set": "realistic_user",
+    "question": "Why is cloud recording considered server-side rather than client-side?"
+  },
+  {
+    "id": "agora-realuser-079",
+    "set": "realistic_user",
+    "question": "How do I get recording status events back to my server?"
+  },
+  {
+    "id": "agora-realuser-080",
+    "set": "realistic_user",
+    "question": "Which API do I call to create and manage cloud recording jobs?"
+  },
+  {
+    "id": "agora-realuser-081",
+    "set": "realistic_user",
+    "question": "If I need to control output resolution, bitrate, and frame rate, which recording mode should I use?"
+  },
+  {
+    "id": "agora-realuser-082",
+    "set": "realistic_user",
+    "question": "Does transcodingConfig matter for individual recording the same way it does for composite?"
+  },
+  {
+    "id": "agora-realuser-083",
+    "set": "realistic_user",
+    "question": "In individual mode, does Agora preserve the original video profile?"
+  },
+  {
+    "id": "agora-realuser-084",
+    "set": "realistic_user",
+    "question": "If I want each user's recording to be directly playable after individual recording, which streamMode should I choose?"
+  },
+  {
+    "id": "agora-realuser-085",
+    "set": "realistic_user",
+    "question": "Why do people recommend streamMode=standard for individual recording?"
+  },
+  {
+    "id": "agora-realuser-086",
+    "set": "realistic_user",
+    "question": "What workflow problem does composite recording save me from later?"
+  },
+  {
+    "id": "agora-realuser-087",
+    "set": "realistic_user",
+    "question": "If I care about final video layout, which recording mode should I look at?"
+  },
+  {
+    "id": "agora-realuser-088",
+    "set": "realistic_user",
+    "question": "Why would a team still choose individual recording if playback is less convenient?"
+  },
+  {
+    "id": "agora-realuser-089",
+    "set": "realistic_user",
+    "question": "If compliance requires one file per participant, should I avoid composite?"
+  },
+  {
+    "id": "agora-realuser-090",
+    "set": "realistic_user",
+    "question": "Is transcodingConfig mainly for mixed-output recording?"
+  },
+  {
+    "id": "agora-realuser-091",
+    "set": "realistic_user",
+    "question": "When Agora says token invalid, what are the first likely causes?"
+  },
+  {
+    "id": "agora-realuser-092",
+    "set": "realistic_user",
+    "question": "If App Certificate is enabled, can that be why my token is invalid?"
+  },
+  {
+    "id": "agora-realuser-093",
+    "set": "realistic_user",
+    "question": "Can token invalid happen because I used one uid to generate the token and another to join?"
+  },
+  {
+    "id": "agora-realuser-094",
+    "set": "realistic_user",
+    "question": "Will a channel-name mismatch between token generation and joinChannel break authentication?"
+  },
+  {
+    "id": "agora-realuser-095",
+    "set": "realistic_user",
+    "question": "Why are parameter mismatch questions good for testing a docs-based RAG?"
+  },
+  {
+    "id": "agora-realuser-096",
+    "set": "realistic_user",
+    "question": "The token is fresh, but join still says invalid. What exact fields should I compare?"
+  },
+  {
+    "id": "agora-realuser-097",
+    "set": "realistic_user",
+    "question": "Why are auth errors a good benchmark for whether my RAG really understands the docs?"
+  },
+  {
+    "id": "agora-realuser-098",
+    "set": "realistic_user",
+    "question": "If my RAG keeps answering every auth issue with 'renew the token', what does that tell me?"
+  },
+  {
+    "id": "agora-realuser-099",
+    "set": "realistic_user",
+    "question": "In a multi-channel case, what does ERR_REFUSED usually mean?"
+  },
+  {
+    "id": "agora-realuser-100",
+    "set": "realistic_user",
+    "question": "Why should I include very similar auth questions in my automated test set?"
+  }
+]

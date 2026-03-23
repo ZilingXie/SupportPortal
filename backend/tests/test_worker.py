@@ -56,6 +56,7 @@ def _load_worker_module():
     fake_main.MANAGED_MODE = "managed"
     fake_main.TAKEOVER_MODE = "takeover"
     fake_main.build_answer = lambda *_args, **_kwargs: ("", 0.0, [], [], False)
+    fake_main.resolve_support_message = lambda *_args, **_kwargs: None
     fake_main.build_client_sync_event = lambda *_args, **_kwargs: {}
     fake_main.build_engineer_followup_request = lambda *_args, **_kwargs: "follow up"
     fake_main.ensure_ticket_defaults = lambda _ticket: None
@@ -250,6 +251,71 @@ class WorkerResilienceTests(unittest.TestCase):
             worker._process_ticket_query(bus, dict(self.task))
 
         repository.save_ticket.assert_not_called()
+
+    def test_process_ticket_query_persists_route_metadata_without_calling_legacy_build_answer(self) -> None:
+        initial_ticket = _build_ticket()
+        repository = Mock()
+        repository.get_ticket.side_effect = [
+            copy.deepcopy(initial_ticket),
+            copy.deepcopy(initial_ticket),
+        ]
+        repository.list_ticket_events.return_value = []
+        repository.save_ticket.return_value = None
+        repository.record_event.return_value = None
+        bus = Mock()
+
+        resolution = types.SimpleNamespace(
+            answer="Agora's CEO is Tony Zhao.",
+            confidence=0.93,
+            sources=["https://www.agora.io/en/about-agora/"],
+            citations=[
+                {
+                    "source_url": "https://www.agora.io/en/about-agora/",
+                    "heading": "About Agora",
+                    "source_path": "https://www.agora.io/en/about-agora/",
+                }
+            ],
+            needs_engineer_guidance=False,
+            answer_route="web_search",
+            scope_label="agora_non_technical",
+            route_reason="agora_public_info",
+            route_confidence=0.93,
+            search_used=True,
+            matched_signals=["agora", "ceo"],
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "resolve_support_message",
+            return_value=resolution,
+            create=True,
+        ), patch.object(
+            worker,
+            "build_answer",
+            side_effect=AssertionError("legacy build_answer should not be called"),
+        ), patch.object(
+            worker,
+            "build_client_sync_event",
+            return_value={"event": "ticket_ai_response_ready"},
+        ), patch.object(
+            worker,
+            "ensure_ticket_defaults",
+            side_effect=lambda ticket: None,
+        ), patch.object(
+            worker,
+            "now_iso",
+            return_value="2026-03-22T00:01:05+00:00",
+        ):
+            worker._process_ticket_query(bus, dict(self.task))
+
+        saved_ticket = repository.save_ticket.call_args.args[0]
+        assistant_message = saved_ticket["messages"][-1]
+        self.assertEqual(assistant_message["answer_route"], "web_search")
+        self.assertEqual(assistant_message["scope_label"], "agora_non_technical")
+        self.assertTrue(assistant_message["search_used"])
+        event_payload = repository.record_event.call_args.args[2]
+        self.assertEqual(event_payload["answer_route"], "web_search")
+        self.assertEqual(event_payload["scope_label"], "agora_non_technical")
 
 
 if __name__ == "__main__":

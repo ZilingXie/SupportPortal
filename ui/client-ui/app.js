@@ -263,9 +263,36 @@ function ticketHasAssistantReply(ticket) {
   if (pendingUserId) {
     const index = messages.findIndex((message) => String(message?.id || "").trim() === pendingUserId);
     if (index >= 0) {
-      return messages.slice(index + 1).some((message) => String(message?.role || "").toLowerCase() !== "user");
+      return (
+        messages
+          .slice(index + 1)
+          .filter((message) => String(message?.role || "").toLowerCase() !== "user").length >= 2
+      );
     }
   }
+
+  const pendingCreatedAt = String(state.pendingAsyncMessageCreatedAt || "").trim();
+  if (pendingCreatedAt) {
+    const index = messages.findIndex(
+      (message) =>
+        String(message?.role || "").toLowerCase() === "user" &&
+        String(message?.createdAt || "").trim() === pendingCreatedAt
+    );
+    if (index >= 0) {
+      return (
+        messages
+          .slice(index + 1)
+          .filter((message) => String(message?.role || "").toLowerCase() !== "user").length >= 2
+      );
+    }
+
+    const trailingMessages = messages.slice(-2);
+    return (
+      trailingMessages.length === 2 &&
+      trailingMessages.every((message) => String(message?.role || "").toLowerCase() !== "user")
+    );
+  }
+
   return String(messages[messages.length - 1]?.role || "").toLowerCase() !== "user";
 }
 

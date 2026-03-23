@@ -240,3 +240,25 @@ For each new entry, record:
   - `podman-compose -f deployment/docker-compose.single-host.yml ps`
   - `curl -sS http://localhost:8080/health` returned `ticket_storage=postgres`, `knowledge_storage=postgres`, and `rag_service=ok` after restart
   - Restart verification required terminating one stale Postgres initializer backend holding an idle transaction during concurrent repository bootstrap; after that, `deployment_rag_api_1` and `deployment_rag_worker_1` both completed startup successfully
+
+## 2026-03-22 - Empty vector-table fallback for RAG query execution
+
+- Summary: Added runtime fallback in the RAG retrieval path so that when the configured `docagent_chunks*` vector table has no `primary` rows, query execution automatically switches to a populated table in the same schema instead of escalating to engineer immediately.
+- Reason: Real ticket `TK-002` asked `how to join channel`, but the query run recorded `vector_candidates_count=0`, `bm25_candidates_count=0`, and `selected_chunk_ids=[]`. The failure was caused by querying an empty configured vector table (`supportportal.docagent_chunks_bge_large_en_v1_5_1024` had `primary_count=0`), which also caused BM25 and keyword fallback to collapse because both paths ultimately join or scan the configured vector table.
+- Affected files or config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema changes
+  - No corpus re-ingestion or document mutations
+  - Live retrieval can now transparently use a populated fallback vector table when the configured table is empty, which changes answer selection behavior for affected requests and prevents false `insufficient_evidence` escalations
+- Verification:
+  - `python3 -m unittest backend.tests.test_rag_qa`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://127.0.0.1:8080/health` returned `ticket_storage=postgres`, `knowledge_storage=postgres`, and `rag_service=ok` after restart
+  - Database evidence before the fix showed `supportportal.docagent_chunks_bge_large_en_v1_5_1024` had `primary_count=0`, while `supportportal.docagent_chunks_ag_docs_test_1024` had `primary_count=1907`
+  - Container verification with forced empty-table config (`EMBEDDING_PROVIDER=siliconflow`, `PGVECTOR_TABLE=docagent_chunks_bge_large_en_v1_5_1024`) resolved to `supportportal.docagent_chunks_ag_docs_test_1024` and returned `decision=answer`, `needs_human=false`, `generation_mode=structured_answer`, and `selected_chunk_count=5` for `how to join channel`
+  - End-to-end ticket verification via `/api/tickets/query` created `T-VERIFYJOIN1774180935`, returned the initial placeholder reply, and after async worker completion persisted a grounded final answer with citations from `official/get-started-sdk_android.md`, `official/authentication-workflow_android.md`, and `official/optimize-frame-rendering_android.md`

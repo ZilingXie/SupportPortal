@@ -18,6 +18,7 @@ from backend.main import (
     build_engineer_followup_request,
     ensure_ticket_defaults,
     now_iso,
+    resolve_support_message,
     ticket_repository,
 )
 from backend.services.event_bus import SyncRedisEventBus
@@ -323,12 +324,25 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         _publish(bus, ["client"], build_client_sync_event(ticket, attention_event["event"]))
         return
 
-    answer, confidence, sources, citations, needs_engineer_guidance = build_answer(
+    route_context = [
+        {
+            "role": str(item.get("role", "system")).strip().lower() or "system",
+            "content": " ".join(str(item.get("content", "")).split()).strip(),
+        }
+        for item in ticket.get("messages", [])
+        if " ".join(str(item.get("content", "")).split()).strip()
+    ]
+    resolution = resolve_support_message(
         customer_message,
         ticket_id=ticket_id,
         customer_id=str(ticket.get("customer_id") or "").strip() or None,
+        ticket_subject=str(ticket.get("subject") or "").strip() or None,
+        ticket_context=route_context[-6:],
     )
-    _ = confidence  # Confidence is returned to API responses; worker only persists messages/events.
+    answer = resolution.answer
+    sources = list(resolution.sources)
+    citations = [dict(item) for item in resolution.citations]
+    needs_engineer_guidance = resolution.needs_engineer_guidance
     if _is_task_cancelled(ticket_id, message_created_at):
         LOGGER.info("Worker dropped result for cancelled task %s", ticket_id)
         return
@@ -386,6 +400,11 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
             "content": answer,
             "created_at": now_iso(),
         }
+        assistant_message["answer_route"] = resolution.answer_route
+        assistant_message["scope_label"] = resolution.scope_label
+        assistant_message["route_reason"] = resolution.route_reason
+        assistant_message["route_confidence"] = round(float(resolution.route_confidence), 4)
+        assistant_message["search_used"] = bool(resolution.search_used)
         if sources:
             assistant_message["sources"] = sources
         if citations:
@@ -408,6 +427,11 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         "message": answer[:200],
         "message_created_at": message_created_at,
         "created_at": now_iso(),
+        "answer_route": resolution.answer_route,
+        "scope_label": resolution.scope_label,
+        "route_reason": resolution.route_reason,
+        "route_confidence": round(float(resolution.route_confidence), 4),
+        "search_used": bool(resolution.search_used),
     }
     _call_ticket_repository(
         "record_event",

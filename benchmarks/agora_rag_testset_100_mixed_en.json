@@ -1,0 +1,802 @@
+[
+  {
+    "id": "agora-mixed-001",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "What is an Agora token and why is it used?",
+    "expected_behavior": "Answer with the definition and purpose of token-based authentication.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-002",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "Who should generate an Agora token in a production environment?",
+    "expected_behavior": "Answer that the app server/backend should generate it.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-003",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "What usually happens if App Certificate is enabled but the client joins with only an App ID?",
+    "expected_behavior": "Answer that authentication fails and token-based auth is required.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-004",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "What does error code 109 mean in Agora authentication?",
+    "expected_behavior": "Answer that the token has expired.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-005",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "When is onTokenPrivilegeWillExpire triggered?",
+    "expected_behavior": "Answer that it is triggered shortly before expiration, commonly 30 seconds before.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-006",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "What should the app do after receiving onTokenPrivilegeWillExpire?",
+    "expected_behavior": "Answer that it should fetch a new token and call renewToken.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-007",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "What does onRequestToken indicate?",
+    "expected_behavior": "Answer that the token has expired or is no longer valid and must be refreshed.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-008",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "What is the difference between the COMMUNICATION and LIVE_BROADCASTING profiles?",
+    "expected_behavior": "Answer with the core difference in interaction model and roles.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-009",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "In LIVE_BROADCASTING mode, can an audience member publish audio and video by default?",
+    "expected_behavior": "Answer that audience cannot publish by default.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-010",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "What is the role of a host in LIVE_BROADCASTING?",
+    "expected_behavior": "Answer that a host can publish local streams and subscribe to remote streams.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-011",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "Does the Video SDK provide a direct callback for audience members joining or leaving a livestream channel?",
+    "expected_behavior": "Answer that there is no direct audience join/leave callback in the Video SDK.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-012",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "If a developer needs reliable audience join/leave tracking, what Agora product can help?",
+    "expected_behavior": "Answer with Notifications and/or Signaling.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-013",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "Can a user publish local streams to two channels at the same time in a standard multi-channel setup?",
+    "expected_behavior": "Answer that the user should publish in only one channel at a time.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-014",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "In a multi-channel scenario, what should a user do before publishing in the second channel?",
+    "expected_behavior": "Answer that the user should stop publishing in the first channel first.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-015",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "What role should the user take in the first channel if they only need to listen there while publishing in another channel?",
+    "expected_behavior": "Answer that they should be audience in the first channel.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-016",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "Does the Agora Channel Management REST API support HTTP?",
+    "expected_behavior": "Answer that it supports HTTPS only.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-017",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "What credentials are commonly used to build the Authorization header for Agora REST APIs?",
+    "expected_behavior": "Answer with Customer ID and Customer Secret.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-018",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "What format do Agora Channel Management REST API requests and responses use?",
+    "expected_behavior": "Answer JSON / application/json.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-019",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "Are the URL and request body case-sensitive in Agora Channel Management REST APIs?",
+    "expected_behavior": "Answer yes.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-020",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "What are the three main recording modes in Agora Cloud Recording?",
+    "expected_behavior": "Answer: individual recording, composite recording, and web page recording.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-021",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "What is the main output characteristic of individual recording mode?",
+    "expected_behavior": "Answer that each user's media is recorded separately.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-022",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "What is the main output characteristic of composite recording mode?",
+    "expected_behavior": "Answer that multiple users are mixed into a single file.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-023",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "Which Cloud Recording mode is better when you want one final mixed file?",
+    "expected_behavior": "Answer composite recording.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-024",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "Which Cloud Recording mode is better when you want separate files per participant?",
+    "expected_behavior": "Answer individual recording.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-025",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "Which recording mode supports setting output resolution, frame rate, and bitrate through transcodingConfig?",
+    "expected_behavior": "Answer composite recording.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-026",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "In individual recording mode, what usually happens to the original video profile?",
+    "expected_behavior": "Answer that it is generally preserved.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-027",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "What streamMode is often recommended in individual recording if directly playable output is needed?",
+    "expected_behavior": "Answer streamMode=standard.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-028",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "In Agora Cloud Recording, what does cname represent in individual or composite recording?",
+    "expected_behavior": "Answer that it represents the channel name.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-029",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "What API is typically used to start and manage Agora Cloud Recording tasks?",
+    "expected_behavior": "Answer that the Cloud Recording RESTful API is used.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-030",
+    "question_type": "fact",
+    "category": "agora-tech-fact",
+    "question": "What is a common cause of token invalid besides token expiration?",
+    "expected_behavior": "Answer that uid/channel mismatch or incorrect token construction is a common cause.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-031",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "My users can join the channel successfully in development, but after I enabled App Certificate in Console the app starts failing in production. What should I check first?",
+    "expected_behavior": "Should reason toward token-based authentication being required.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-032",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "The SDK reports ERR_TOKEN_EXPIRED while the call is still active. What is the correct recovery flow?",
+    "expected_behavior": "Should explain renewing or refreshing the token.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-033",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "A user reports that they were disconnected because the token expired mid-call. I want to reduce disruption. Which callback should I handle proactively?",
+    "expected_behavior": "Should point to onTokenPrivilegeWillExpire.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-034",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "I generated a token for uid 42, but the client joins as uid 43. The token looks fresh. Why can join still fail?",
+    "expected_behavior": "Should identify uid mismatch.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-035",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "I am building a webinar app. Two speakers should publish, and 5,000 viewers should only watch. Which profile and roles should I use?",
+    "expected_behavior": "Should recommend LIVE_BROADCASTING with hosts and audience.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-036",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "I am building a 6-person team call where everyone speaks equally. Which channel profile is the best default choice?",
+    "expected_behavior": "Should recommend COMMUNICATION.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-037",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "A viewer raises their hand in a livestream and now needs to speak on stage. What should the app do at the role level?",
+    "expected_behavior": "Should say switch from audience to host/broadcaster.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-038",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "My product manager wants exact audience counts in a livestream, but RTC callbacks do not seem enough. What should I add to the architecture?",
+    "expected_behavior": "Should suggest Notifications or Signaling.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-039",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "I need backend webhooks every time channel events happen so I can update internal analytics. Which Agora capability is relevant?",
+    "expected_behavior": "Should recommend Notifications/webhooks.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-040",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "A moderator wants to keep listening in channel A while speaking in channel B. How should the roles be arranged?",
+    "expected_behavior": "Should recommend audience in A and host/broadcaster in B.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-041",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "My app tries to publish to channel B without stopping publication in channel A, and the SDK refuses the operation. What architectural rule did I violate?",
+    "expected_behavior": "Should explain one-channel-at-a-time publishing rule.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-042",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "I only want to monitor a second channel without sending local media. What join options should I pay attention to?",
+    "expected_behavior": "Should mention not publishing local audio/video and audience role if applicable.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-043",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "A frontend engineer wants to call Agora Channel Management REST APIs directly from the browser. What is the main security concern?",
+    "expected_behavior": "Should explain exposure of Customer Secret / server-side requirement.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-044",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "My REST API call keeps failing authentication even though the endpoint URL is correct. What pieces of auth formatting should I verify?",
+    "expected_behavior": "Should mention Customer ID/Secret, Base64, Authorization header, case sensitivity if relevant.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-045",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "I want to record a multi-host livestream and hand customers exactly one final MP4 file. Which Cloud Recording mode should I choose?",
+    "expected_behavior": "Should recommend composite recording.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-046",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "I want to run post-processing per speaker after the session and need separate media assets. Which recording mode fits better?",
+    "expected_behavior": "Should recommend individual recording.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-047",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "My video operations team wants to control the output layout, bitrate, and resolution of the recorded file. Which recording path should I consider?",
+    "expected_behavior": "Should point to composite recording with transcodingConfig.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-048",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "I used individual recording, but now playback is inconvenient and I wish each user's file were directly playable. What option should I have configured?",
+    "expected_behavior": "Should mention streamMode=standard.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-049",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "I am designing the backend for Cloud Recording. Should the mobile app manage the whole recording lifecycle directly?",
+    "expected_behavior": "Should recommend a backend/self-hosted business server.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-050",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "A customer says their token is not expired, but Agora still says token invalid. What fields should I compare between token generation and joinChannel?",
+    "expected_behavior": "Should mention uid, channel name, App ID, privileges/role, expiration.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-051",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "I need to distinguish viewers from speakers cleanly because only speakers can publish. Which channel profile is a better fit?",
+    "expected_behavior": "Should recommend LIVE_BROADCASTING.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-052",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "In my social audio app, everyone should be able to talk immediately after joining. Which Agora profile is the simpler default?",
+    "expected_behavior": "Should recommend COMMUNICATION.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-053",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "I need server-side records of when users enter and leave channels, even if they never publish media. What should I use in addition to RTC?",
+    "expected_behavior": "Should suggest Notifications or Signaling.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-054",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "My teammate says we can safely keep the Customer Secret inside the desktop client because it is not mobile. Is that a good idea?",
+    "expected_behavior": "Should reject it and recommend server-side storage only.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-055",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "I want to record a browser-rendered page, not just a normal RTC channel. Which Cloud Recording mode sounds relevant?",
+    "expected_behavior": "Should identify web page recording.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-056",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "A user can watch a livestream but cannot turn on their mic. The app says they are audience. What is the likely explanation?",
+    "expected_behavior": "Should explain that audience cannot publish by default.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-057",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "We turned on App Certificate and now our old demo app broke. It still only passes App ID to joinChannel. What changed?",
+    "expected_behavior": "Should explain that token auth became mandatory.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-058",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "My developer wants to refresh the token only after the call drops. Is there a better mechanism already provided by the SDK?",
+    "expected_behavior": "Should mention pre-expiry callback handling.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-059",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "I need a single recording with a mixed layout for compliance review. Separate speaker tracks are not required. Which mode is the best fit?",
+    "expected_behavior": "Should recommend composite recording.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-060",
+    "question_type": "scenario",
+    "category": "agora-tech-scenario",
+    "question": "I need a test case that verifies my RAG can tell apart token expired versus token invalid due to parameter mismatch. What kind of pair should I include?",
+    "expected_behavior": "Should describe near-duplicate auth scenarios with different root causes.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-061",
+    "question_type": "trap",
+    "category": "agora-tech-trap",
+    "question": "Does the Agora Video SDK provide a built-in callback that always tells me exactly when every audience member joins and leaves?",
+    "expected_behavior": "Should avoid hallucinating a direct callback and mention alternatives.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-062",
+    "question_type": "trap",
+    "category": "agora-tech-trap",
+    "question": "Can audience users publish local video in LIVE_BROADCASTING mode without changing their role?",
+    "expected_behavior": "Should answer no.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-063",
+    "question_type": "trap",
+    "category": "agora-tech-trap",
+    "question": "If a token is invalid, is the correct fix always to call renewToken?",
+    "expected_behavior": "Should say no and distinguish invalid vs expired/mismatch.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-064",
+    "question_type": "trap",
+    "category": "agora-tech-trap",
+    "question": "Can I safely generate Agora tokens inside my client app as long as the code is obfuscated?",
+    "expected_behavior": "Should answer no and explain server-side generation.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-065",
+    "question_type": "trap",
+    "category": "agora-tech-trap",
+    "question": "Does individual recording automatically give me a single mixed file for all users?",
+    "expected_behavior": "Should answer no.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-066",
+    "question_type": "trap",
+    "category": "agora-tech-trap",
+    "question": "Is transcodingConfig mainly for individual recording output layout control?",
+    "expected_behavior": "Should answer no and tie it to composite recording.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-067",
+    "question_type": "trap",
+    "category": "agora-tech-trap",
+    "question": "Can I use plain HTTP for Agora Channel Management REST API if I am inside a private network?",
+    "expected_behavior": "Should answer no, HTTPS only.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-068",
+    "question_type": "trap",
+    "category": "agora-tech-trap",
+    "question": "If I use the wrong case in a REST API field name, the server should still understand it, right?",
+    "expected_behavior": "Should answer no because the API is case-sensitive.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-069",
+    "question_type": "trap",
+    "category": "agora-tech-trap",
+    "question": "If my user is already publishing in one channel, Agora should let them publish in a second channel too as long as bandwidth is enough, correct?",
+    "expected_behavior": "Should answer no in the standard recommended workflow.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-070",
+    "question_type": "trap",
+    "category": "agora-tech-trap",
+    "question": "If onRequestToken is triggered, does that mean the token is still valid for another 30 seconds?",
+    "expected_behavior": "Should answer no and distinguish from onTokenPrivilegeWillExpire.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-071",
+    "question_type": "trap",
+    "category": "agora-tech-trap",
+    "question": "Since my token has not expired yet, uid mismatch cannot be the reason for token invalid. Is that true?",
+    "expected_behavior": "Should answer no.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-072",
+    "question_type": "trap",
+    "category": "agora-tech-trap",
+    "question": "Do I need Signaling to render video in Agora?",
+    "expected_behavior": "Should avoid conflating Signaling with RTC media rendering.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-073",
+    "question_type": "trap",
+    "category": "agora-tech-trap",
+    "question": "Is LIVE_BROADCASTING always better than COMMUNICATION because it is more advanced?",
+    "expected_behavior": "Should answer no and explain fit-by-scenario.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-074",
+    "question_type": "trap",
+    "category": "agora-tech-trap",
+    "question": "Can I expose Customer Secret in a browser app if I rate-limit requests?",
+    "expected_behavior": "Should answer no.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-075",
+    "question_type": "trap",
+    "category": "agora-tech-trap",
+    "question": "If I want separate files per participant, composite recording is the better mode, right?",
+    "expected_behavior": "Should answer no; use individual.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-076",
+    "question_type": "trap",
+    "category": "agora-tech-trap",
+    "question": "The absence of audience join callbacks means Agora cannot support viewer analytics at all. True?",
+    "expected_behavior": "Should answer no and mention alternatives.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-077",
+    "question_type": "trap",
+    "category": "agora-tech-trap",
+    "question": "If I only want to monitor a channel, I should join as host so I get more callbacks. Is that the best practice?",
+    "expected_behavior": "Should answer no, audience/non-publishing is usually better.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-078",
+    "question_type": "trap",
+    "category": "agora-tech-trap",
+    "question": "Can I treat token invalid and token expired as exactly the same error category in my troubleshooting docs?",
+    "expected_behavior": "Should answer no and explain why the distinction matters.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-079",
+    "question_type": "trap",
+    "category": "agora-tech-trap",
+    "question": "If I am using Cloud Recording, there is no reason to build a backend server at all. Correct?",
+    "expected_behavior": "Should answer no and explain recommended architecture.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-080",
+    "question_type": "trap",
+    "category": "agora-tech-trap",
+    "question": "Agora's stock number is part of the RTC technical documentation, right?",
+    "expected_behavior": "Should answer no and recognize it as non-technical/company-info question.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-081",
+    "question_type": "small_talk",
+    "category": "non-agora-small-talk",
+    "question": "How's the weather today?",
+    "expected_behavior": "Should recognize this is off-topic and answer conversationally instead of forcing Agora retrieval.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-082",
+    "question_type": "small_talk",
+    "category": "non-agora-small-talk",
+    "question": "What should I eat for lunch?",
+    "expected_behavior": "Should recognize this is off-topic and answer conversationally instead of forcing Agora retrieval.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-083",
+    "question_type": "small_talk",
+    "category": "non-agora-small-talk",
+    "question": "Can you tell me a joke?",
+    "expected_behavior": "Should recognize this is off-topic and answer conversationally instead of forcing Agora retrieval.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-084",
+    "question_type": "small_talk",
+    "category": "non-agora-small-talk",
+    "question": "I'm feeling stressed today.",
+    "expected_behavior": "Should recognize this is off-topic and answer conversationally instead of forcing Agora retrieval.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-085",
+    "question_type": "small_talk",
+    "category": "non-agora-small-talk",
+    "question": "What should I do this weekend?",
+    "expected_behavior": "Should recognize this is off-topic and answer conversationally instead of forcing Agora retrieval.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-086",
+    "question_type": "small_talk",
+    "category": "non-agora-small-talk",
+    "question": "Can you help me write a birthday message?",
+    "expected_behavior": "Should recognize this is off-topic and answer conversationally instead of forcing Agora retrieval.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-087",
+    "question_type": "small_talk",
+    "category": "non-agora-small-talk",
+    "question": "Do you think I should get more sleep?",
+    "expected_behavior": "Should recognize this is off-topic and answer conversationally instead of forcing Agora retrieval.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-088",
+    "question_type": "small_talk",
+    "category": "non-agora-small-talk",
+    "question": "What's a good movie for tonight?",
+    "expected_behavior": "Should recognize this is off-topic and answer conversationally instead of forcing Agora retrieval.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-089",
+    "question_type": "small_talk",
+    "category": "non-agora-small-talk",
+    "question": "Can you motivate me a little?",
+    "expected_behavior": "Should recognize this is off-topic and answer conversationally instead of forcing Agora retrieval.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-090",
+    "question_type": "small_talk",
+    "category": "non-agora-small-talk",
+    "question": "How can I focus better this afternoon?",
+    "expected_behavior": "Should recognize this is off-topic and answer conversationally instead of forcing Agora retrieval.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-091",
+    "question_type": "off_topic",
+    "category": "non-agora-unrelated",
+    "question": "My computer blue-screened. What should I do?",
+    "expected_behavior": "Should avoid retrieving Agora docs and answer as a general tech support question.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-092",
+    "question_type": "off_topic",
+    "category": "non-agora-unrelated",
+    "question": "Why is my Wi-Fi suddenly so slow?",
+    "expected_behavior": "Should avoid retrieving Agora docs and answer as a general tech support question.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-093",
+    "question_type": "off_topic",
+    "category": "non-agora-unrelated",
+    "question": "My iPhone battery is draining fast. Any ideas?",
+    "expected_behavior": "Should avoid retrieving Agora docs and answer as a general tech support question.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-094",
+    "question_type": "off_topic",
+    "category": "non-agora-unrelated",
+    "question": "How do I recover a deleted file on Windows?",
+    "expected_behavior": "Should avoid retrieving Agora docs and answer as a general tech support question.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-095",
+    "question_type": "off_topic",
+    "category": "non-agora-unrelated",
+    "question": "My laptop fan is very loud even when I'm just browsing. What's going on?",
+    "expected_behavior": "Should avoid retrieving Agora docs and answer as a general tech support question.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-096",
+    "question_type": "agora_nontechnical",
+    "category": "agora-company-info",
+    "question": "What's Agora's stock ticker?",
+    "expected_behavior": "Should answer that Agora, Inc. trades on Nasdaq under the ticker API.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-097",
+    "question_type": "agora_nontechnical",
+    "category": "agora-company-info",
+    "question": "Where can I find Agora investor relations information?",
+    "expected_behavior": "Should point to Agora's investor relations site.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-098",
+    "question_type": "agora_nontechnical",
+    "category": "agora-company-info",
+    "question": "Is Agora a public company?",
+    "expected_behavior": "Should answer yes, Agora, Inc. is publicly traded.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-099",
+    "question_type": "agora_nontechnical",
+    "category": "agora-company-info",
+    "question": "When did Agora last report quarterly financial results?",
+    "expected_behavior": "Should identify this as a company/investor-relations question, not an SDK docs question.",
+    "expected_answer": null
+  },
+  {
+    "id": "agora-mixed-100",
+    "question_type": "agora_nontechnical",
+    "category": "agora-company-info",
+    "question": "What kind of company is Agora?",
+    "expected_behavior": "Should answer at a high level that Agora provides real-time engagement / conversational AI / real-time engagement platform services.",
+    "expected_answer": null
+  }
+]
