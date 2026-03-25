@@ -41,7 +41,7 @@ LOGGER = logging.getLogger(__name__)
 
 _VALID_KNOWLEDGE_TYPES = {"official", "technical"}
 _VALID_ENTRY_TYPES = {"official_document", "technical_article"}
-_VALID_SOURCE_TYPES = {"official_markdown_upload", "technical_article_api"}
+_VALID_SOURCE_TYPES = {"official_markdown_upload", "technical_article_api", "external_benchmark"}
 _VALID_INGESTION_STATUSES = {"queued", "processing", "completed", "failed"}
 _VALID_NORMALIZATION_STATUSES = {"pending", "normalized", "failed"}
 _VALID_DEDUPE_ACTIONS = {"new_document", "skipped_duplicate", "reindexed"}
@@ -96,6 +96,7 @@ _KNOWLEDGE_BOOTSTRAP_VERSION = "2026-03-23-fast-startup-v1"
 _SOURCE_TYPE_TO_ENTRY_TYPE = {
     "official_markdown_upload": "official_document",
     "technical_article_api": "technical_article",
+    "external_benchmark": "official_document",
 }
 
 
@@ -845,6 +846,16 @@ class KnowledgeRepository(Protocol):
     ) -> str:
         ...
 
+    def upsert_imported_benchmark_dataset(
+        self,
+        *,
+        dataset_name: str,
+        benchmark_version: str,
+        question_language: str = "en",
+        items: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        ...
+
     def rag_dashboard_page(
         self,
         page: str,
@@ -1382,6 +1393,20 @@ class DisabledKnowledgeRepository:
     ) -> str:
         _ = dataset_id
         _ = tier
+        self._raise()
+
+    def upsert_imported_benchmark_dataset(
+        self,
+        *,
+        dataset_name: str,
+        benchmark_version: str,
+        question_language: str = "en",
+        items: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        _ = dataset_name
+        _ = benchmark_version
+        _ = question_language
+        _ = items
         self._raise()
 
     def rag_dashboard_page(
@@ -2341,6 +2366,7 @@ class PostgresKnowledgeRepository:
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS avg_cost_per_query DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS answer_accuracy_score DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS answer_logic_score DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS route_correct_flag BOOLEAN",
                 ]
                 for statement in eval_result_alters:
                     cur.execute(sql.SQL(statement).format(self._table("support_rag_eval_results")))
@@ -6094,11 +6120,13 @@ class PostgresKnowledgeRepository:
                     source_type,
                     product,
                     language,
+                    reference_answer,
                     expected_document_ids,
                     expected_heading_paths,
                     expected_evidence_refs,
                     answer_key_points,
-                    difficulty
+                    difficulty,
+                    metadata
                 FROM {}
                 WHERE dataset_id = %s
                   AND item_status = ANY(%s)
@@ -6115,12 +6143,23 @@ class PostgresKnowledgeRepository:
                 "source_type": row[3],
                 "product": row[4],
                 "language": row[5],
-                "expected_document_ids": _json_list(row[6]),
-                "expected_heading_paths": _json_list(row[7]),
-                "expected_evidence_refs": _json_list(row[8]),
-                "answer_key_points": _json_list(row[9]),
+                "reference_answer": row[6],
+                "expected_document_ids": _json_list(row[7]),
+                "expected_heading_paths": _json_list(row[8]),
+                "expected_evidence_refs": _json_list(row[9]),
+                "answer_key_points": _json_list(row[10]),
                 "expected_handoff": False,
-                "tags": [_clean_text(row[10]), _clean_text(row[2]), _clean_text(row[3])],
+                "expected_route": _clean_text(_json_dict(row[12]).get("expected_route")) or "rag",
+                "expected_scope_label": _clean_text(_json_dict(row[12]).get("expected_scope_label")) or "agora_technical",
+                "retrieval_metrics_enabled": bool(_json_dict(row[12]).get("retrieval_metrics_enabled", True)),
+                "citation_metrics_enabled": bool(_json_dict(row[12]).get("citation_metrics_enabled", True)),
+                "route_aware": bool(_json_dict(row[12]).get("route_aware", False)),
+                "tags": [
+                    _clean_text(row[11]),
+                    _clean_text(row[2]),
+                    _clean_text(row[3]),
+                    _clean_text(_json_dict(row[12]).get("category")),
+                ],
             }
             for row in rows
         ]
@@ -6134,6 +6173,159 @@ class PostgresKnowledgeRepository:
         payloads = self.load_dataset_benchmark_cases(dataset_id, tier=tier)
         lines = [json.dumps(payload, ensure_ascii=False) for payload in payloads]
         return "\n".join(lines) + ("\n" if lines else "")
+
+    def upsert_imported_benchmark_dataset(
+        self,
+        *,
+        dataset_name: str,
+        benchmark_version: str,
+        question_language: str = "en",
+        items: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        normalized_name = str(dataset_name or "").strip()
+        normalized_benchmark_version = _clean_text(benchmark_version)
+        if not normalized_name:
+            raise ValueError("dataset_name is required")
+        if not normalized_benchmark_version:
+            raise ValueError("benchmark_version is required")
+        normalized_language = _clean_text(question_language).lower() or "en"
+        if normalized_language != "en":
+            raise ValueError("question_language only supports 'en' in v1")
+        if not isinstance(items, list) or not items:
+            raise ValueError("items are required")
+
+        source_types = sorted(
+            {
+                _normalize_source_type(item.get("source_type"))
+                for item in items
+                if isinstance(item, dict) and _clean_text(item.get("source_type"))
+            }
+        )
+        if not source_types:
+            raise ValueError("items must include at least one source_type")
+
+        digest = hashlib.sha1(normalized_benchmark_version.encode("utf-8")).hexdigest()[:12].upper()
+        dataset_id = f"DS-{digest}"
+        generation_run_id = f"DGR-{digest}"
+        now = _utc_now()
+
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} (
+                            dataset_id,
+                            dataset_name,
+                            benchmark_version,
+                            question_language,
+                            source_types,
+                            status,
+                            created_at,
+                            updated_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s)
+                        ON CONFLICT (dataset_id) DO UPDATE SET
+                            dataset_name = EXCLUDED.dataset_name,
+                            benchmark_version = EXCLUDED.benchmark_version,
+                            question_language = EXCLUDED.question_language,
+                            source_types = EXCLUDED.source_types,
+                            status = EXCLUDED.status,
+                            updated_at = EXCLUDED.updated_at
+                        """
+                    ).format(self._table("support_rag_datasets")),
+                    (
+                        dataset_id,
+                        normalized_name,
+                        normalized_benchmark_version,
+                        normalized_language,
+                        Json(source_types),
+                        _normalize_dataset_status("draft"),
+                        now,
+                        now,
+                    ),
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} (
+                            generation_run_id,
+                            dataset_id,
+                            dataset_name,
+                            benchmark_version,
+                            question_language,
+                            source_types,
+                            status,
+                            candidate_count_total,
+                            silver_item_count,
+                            gold_item_count,
+                            review_required_count,
+                            reviewed_item_count,
+                            error_message,
+                            created_at,
+                            started_at,
+                            finished_at,
+                            updated_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, 0, 0, 0, 0, 0, NULL, %s, %s, %s, %s)
+                        ON CONFLICT (generation_run_id) DO UPDATE SET
+                            dataset_id = EXCLUDED.dataset_id,
+                            dataset_name = EXCLUDED.dataset_name,
+                            benchmark_version = EXCLUDED.benchmark_version,
+                            question_language = EXCLUDED.question_language,
+                            source_types = EXCLUDED.source_types,
+                            status = EXCLUDED.status,
+                            error_message = NULL,
+                            started_at = EXCLUDED.started_at,
+                            finished_at = EXCLUDED.finished_at,
+                            updated_at = EXCLUDED.updated_at
+                        """
+                    ).format(self._table("support_rag_dataset_generation_runs")),
+                    (
+                        generation_run_id,
+                        dataset_id,
+                        normalized_name,
+                        normalized_benchmark_version,
+                        normalized_language,
+                        Json(source_types),
+                        _normalize_dataset_run_status("processing"),
+                        now,
+                        now,
+                        now,
+                        now,
+                    ),
+                )
+            conn.commit()
+
+        self.save_dataset_generation_results(
+            generation_run_id=generation_run_id,
+            items=items,
+            review_samples=[],
+        )
+        self.update_dataset_generation_run(
+            generation_run_id,
+            status="completed",
+            started_at=now,
+            finished_at=now,
+        )
+        snapshot = self.get_dataset_snapshot(dataset_id) or {}
+        generation_run = self.get_dataset_generation_run(generation_run_id) or {}
+        return {
+            "dataset_id": dataset_id,
+            "generation_run_id": generation_run_id,
+            "dataset_name": snapshot.get("dataset_name") or normalized_name,
+            "benchmark_version": snapshot.get("benchmark_version") or normalized_benchmark_version,
+            "question_language": snapshot.get("question_language") or normalized_language,
+            "source_types": snapshot.get("source_types") or source_types,
+            "status": snapshot.get("status"),
+            "candidate_count_total": generation_run.get("candidate_count_total"),
+            "silver_item_count": generation_run.get("silver_item_count"),
+            "gold_item_count": generation_run.get("gold_item_count"),
+            "review_required_count": generation_run.get("review_required_count"),
+            "reviewed_item_count": generation_run.get("reviewed_item_count"),
+            "created_at": snapshot.get("created_at"),
+            "updated_at": snapshot.get("updated_at"),
+        }
 
     def _dataset_generation_rollups(self, generation_run_id: str) -> dict[str, Any]:
         rows = self._query_rows(
@@ -6493,7 +6685,8 @@ class PostgresKnowledgeRepository:
                     AVG(r.answer_accuracy_score),
                     AVG(r.answer_logic_score),
                     AVG(CASE WHEN r.hallucination_flag THEN 1.0 ELSE 0.0 END),
-                    AVG(CASE WHEN r.needs_human THEN 1.0 ELSE 0.0 END)
+                    AVG(CASE WHEN r.needs_human THEN 1.0 ELSE 0.0 END),
+                    AVG(CASE WHEN r.route_correct_flag THEN 1.0 ELSE 0.0 END)
                 FROM {} AS r
                 JOIN {} AS e
                   ON e.eval_run_id = r.eval_run_id
@@ -6507,7 +6700,7 @@ class PostgresKnowledgeRepository:
             ),
             tuple([days, *params]),
         )
-        row = rows[0] if rows else (None,) * 19
+        row = rows[0] if rows else (None,) * 20
         return {
             "retrieval_hit_at_1": _coalesce_metric(row[0]),
             "retrieval_hit_at_3": _coalesce_metric(row[1]),
@@ -6528,6 +6721,7 @@ class PostgresKnowledgeRepository:
             "answer_logic_score_avg": _coalesce_metric(row[16]),
             "hallucination_rate": _coalesce_metric(row[17]),
             "needs_human_rate": _coalesce_metric(row[18]),
+            "route_accuracy": _coalesce_metric(row[19]),
         }
 
     def _daily_metric_overlays(self, days: int, filters: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -8576,6 +8770,7 @@ class PostgresKnowledgeRepository:
                     AVG(r.citation_correctness_score),
                     AVG(r.answer_accuracy_score),
                     AVG(r.answer_logic_score),
+                    AVG(CASE WHEN r.route_correct_flag THEN 1.0 ELSE 0.0 END),
                     AVG(CASE WHEN r.hallucination_flag THEN 1.0 ELSE 0.0 END),
                     AVG(CASE WHEN r.judge_disagreement_flag THEN 1.0 ELSE 0.0 END),
                     AVG(r.retrieval_latency_ms),
@@ -8606,13 +8801,13 @@ class PostgresKnowledgeRepository:
         experiments: list[dict[str, Any]] = []
         for row in rows:
             strategy_snapshot = _json_dict(row[4])
-            retrieval_strategy = _clean_text(row[35]) or _clean_text(strategy_snapshot.get("retrieval_strategy")) or "unknown"
+            retrieval_strategy = _clean_text(row[36]) or _clean_text(strategy_snapshot.get("retrieval_strategy")) or "unknown"
             experiment = {
                 "eval_run_id": row[0],
                 "experiment_id": row[1],
                 "benchmark_version": row[2],
                 "judge_models": _json_list(row[3]),
-                "chunk_strategy": _clean_text(row[34]),
+                "chunk_strategy": _clean_text(row[35]),
                 "embedding_model": _clean_text(strategy_snapshot.get("embedding_model")),
                 "retrieval_strategy": retrieval_strategy,
                 "reranker_model": _clean_text(strategy_snapshot.get("reranker_model")),
@@ -8637,17 +8832,18 @@ class PostgresKnowledgeRepository:
                 "citation_correctness_score_avg": _coalesce_metric(row[21]),
                 "answer_accuracy_score_avg": _coalesce_metric(row[22]),
                 "answer_logic_score_avg": _coalesce_metric(row[23]),
-                "hallucination_rate": _coalesce_metric(row[24]),
-                "judge_disagreement_rate": _coalesce_metric(row[25]),
-                "avg_retrieval_latency_ms": _coalesce_metric(row[26]),
-                "avg_generation_latency_ms": _coalesce_metric(row[27]),
-                "avg_total_latency_ms": _coalesce_metric(row[28]),
-                "p95_latency_ms": _coalesce_metric(row[29]),
-                "avg_cost_per_query": _coalesce_metric(row[30]),
-                "avg_selected_doc_count": _coalesce_metric(row[31]),
-                "avg_top1_similarity_score": _coalesce_metric(row[32]),
-                "avg_selected_similarity_score": _coalesce_metric(row[33]),
-                "case_count": int(row[36] or 0),
+                "route_accuracy": _coalesce_metric(row[24]),
+                "hallucination_rate": _coalesce_metric(row[25]),
+                "judge_disagreement_rate": _coalesce_metric(row[26]),
+                "avg_retrieval_latency_ms": _coalesce_metric(row[27]),
+                "avg_generation_latency_ms": _coalesce_metric(row[28]),
+                "avg_total_latency_ms": _coalesce_metric(row[29]),
+                "p95_latency_ms": _coalesce_metric(row[30]),
+                "avg_cost_per_query": _coalesce_metric(row[31]),
+                "avg_selected_doc_count": _coalesce_metric(row[32]),
+                "avg_top1_similarity_score": _coalesce_metric(row[33]),
+                "avg_selected_similarity_score": _coalesce_metric(row[34]),
+                "case_count": int(row[37] or 0),
             }
             experiment["quality_rank_score"] = _experiment_quality_score(experiment)
             experiments.append(experiment)
@@ -9031,6 +9227,15 @@ class PostgresKnowledgeRepository:
         )
         grouped: dict[str, dict[str, dict[str, Any]]] = {}
         for row in rows:
+            trace_payload = _json_dict(row[26])
+            actual_answer_text = _clean_text(trace_payload.get("actual_answer_text")) or _clean_text(trace_payload.get("answer_text"))
+            expected_answer_text = _clean_text(trace_payload.get("expected_answer_text"))
+            route_correct = trace_payload.get("route_correct")
+            if route_correct is None:
+                expected_route = _clean_text(trace_payload.get("expected_route"))
+                actual_route = _clean_text(trace_payload.get("actual_route"))
+                if expected_route and actual_route:
+                    route_correct = expected_route == actual_route
             payload = {
                 "eval_run_id": row[0],
                 "test_case_id": row[1],
@@ -9058,7 +9263,17 @@ class PostgresKnowledgeRepository:
                 "expected_heading_paths": _json_list(row[23]),
                 "expected_evidence_refs": _json_list(row[24]),
                 "answer_key_points": _json_list(row[25]),
-                "trace_payload": _json_dict(row[26]),
+                "trace_payload": trace_payload,
+                "actual_answer_text": actual_answer_text,
+                "expected_answer_text": expected_answer_text,
+                "actual_answer_preview": (actual_answer_text or "")[:280],
+                "expected_answer_preview": (expected_answer_text or "")[:280],
+                "expected_route": _clean_text(trace_payload.get("expected_route")),
+                "actual_route": _clean_text(trace_payload.get("actual_route")),
+                "expected_scope_label": _clean_text(trace_payload.get("expected_scope_label")),
+                "actual_scope_label": _clean_text(trace_payload.get("actual_scope_label")),
+                "route_correct": bool(route_correct) if route_correct is not None else None,
+                "search_used": bool(trace_payload.get("search_used")) if trace_payload.get("search_used") is not None else None,
                 "hit_at_1": _coalesce_metric(row[27]),
                 "hit_at_3": _coalesce_metric(row[28]),
                 "hit_at_5": _coalesce_metric(row[29]),
@@ -9638,6 +9853,16 @@ class PostgresKnowledgeRepository:
             "generation_mode": trace_payload.get("generation_mode"),
             "needs_human": row.get("needs_human"),
             "handoff_reason": trace_payload.get("handoff_reason"),
+            "expected_answer_text": _clean_text(trace_payload.get("expected_answer_text")),
+            "actual_answer_text": _clean_text(trace_payload.get("actual_answer_text")) or _clean_text(trace_payload.get("answer_text")),
+            "expected_route": _clean_text(trace_payload.get("expected_route")),
+            "actual_route": _clean_text(trace_payload.get("actual_route")),
+            "expected_scope_label": _clean_text(trace_payload.get("expected_scope_label")),
+            "actual_scope_label": _clean_text(trace_payload.get("actual_scope_label")),
+            "route_correct_flag": row.get("route_correct_flag"),
+            "search_used": trace_payload.get("search_used"),
+            "route_reason": _clean_text(trace_payload.get("route_reason")),
+            "route_confidence": _coalesce_metric(trace_payload.get("route_confidence")),
             "vector_candidates_count": trace_payload.get("vector_candidates_count"),
             "bm25_candidates_count": trace_payload.get("bm25_candidates_count"),
             "reranked_candidates_count": trace_payload.get("reranked_candidates_count"),
@@ -9647,7 +9872,7 @@ class PostgresKnowledgeRepository:
             "retrieval_latency_ms": row.get("retrieval_latency_ms"),
             "generation_latency_ms": row.get("generation_latency_ms"),
             "total_latency_ms": row.get("total_latency_ms"),
-            "answer": trace_payload.get("answer_text") or row.get("answer_preview"),
+            "answer": trace_payload.get("actual_answer_text") or trace_payload.get("answer_text") or row.get("answer_preview"),
             "confidence_score": trace_payload.get("confidence_score"),
             "citation_count": trace_payload.get("citation_count"),
             "citation_coverage_ratio": trace_payload.get("citation_coverage_ratio"),
@@ -9981,6 +10206,7 @@ class PostgresKnowledgeRepository:
             ("citation_correctness_score_avg", "Citation Correctness"),
             ("answer_accuracy_score_avg", "Answer Accuracy"),
             ("answer_logic_score_avg", "Answer Logic"),
+            ("route_accuracy", "Route Accuracy"),
             ("hallucination_rate", "Hallucination Rate"),
             ("judge_disagreement_rate", "Judge Disagreement Rate"),
             ("p95_latency_ms", "P95 Latency (ms)"),
@@ -10014,6 +10240,7 @@ class PostgresKnowledgeRepository:
                     "candidate_faithfulness_score_avg": (candidate or {}).get("faithfulness_score_avg"),
                     "candidate_groundedness_score_avg": (candidate or {}).get("groundedness_score_avg"),
                     "candidate_citation_correctness_score_avg": (candidate or {}).get("citation_correctness_score_avg"),
+                    "candidate_route_accuracy": (candidate or {}).get("route_accuracy"),
                     "candidate_hit_at_5": (candidate or {}).get("hit_at_5"),
                     "candidate_evidence_hit_at_5": (candidate or {}).get("evidence_hit_at_5"),
                     "baseline_quality_rank_score": (baseline or {}).get("quality_rank_score"),
@@ -10021,6 +10248,31 @@ class PostgresKnowledgeRepository:
             },
             "leaderboard": {"rows": experiments[: max(10, filters["limit"])]},
             "metric_matrix": {"rows": metric_rows},
+            "case_results": {
+                "rows": [
+                    {
+                        "eval_run_id": _clean_text((candidate or {}).get("eval_run_id")),
+                        "test_case_id": test_case_id,
+                        "question": case_row.get("question"),
+                        "actual_answer_preview": case_row.get("actual_answer_preview") or case_row.get("answer_preview"),
+                        "expected_answer_preview": case_row.get("expected_answer_preview"),
+                        "answer_accuracy_score": case_row.get("answer_accuracy_score"),
+                        "evidence_hit_at_5": case_row.get("evidence_hit_at_5"),
+                        "hit_at_5": case_row.get("hit_at_5"),
+                        "citation_correctness_score": case_row.get("citation_correctness_score"),
+                        "hallucination_flag": case_row.get("hallucination_flag"),
+                        "answer_logic_score": case_row.get("answer_logic_score"),
+                        "failure_type": case_row.get("failure_type"),
+                        "route_correct": case_row.get("route_correct"),
+                        "expected_route": case_row.get("expected_route"),
+                        "actual_route": case_row.get("actual_route"),
+                        "expected_scope_label": case_row.get("expected_scope_label"),
+                        "actual_scope_label": case_row.get("actual_scope_label"),
+                        "search_used": case_row.get("search_used"),
+                    }
+                    for test_case_id, case_row in sorted(candidate_cases.items(), key=lambda item: item[0])[: max(filters["limit"], 100)]
+                ]
+            },
             "segment_breakdown": {
                 "groups": self._segment_breakdown_from_cases(
                     baseline_cases=baseline_cases,

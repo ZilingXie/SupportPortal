@@ -1096,6 +1096,7 @@ function buildCaseDetailRouteContract(primary, baseline) {
 function buildCaseDetailAnswer(primary) {
   const sources = normalizeStringList(primary?.answer_sources || []);
   const citations = Array.isArray(primary?.answer_citations) ? primary.answer_citations : [];
+  const actualAnswer = primary?.answer || primary?.actual_answer_text || primary?.answer_text || "-";
   return `
     <section class="panel-card detail-surface">
       <div class="panel-header">
@@ -1104,7 +1105,17 @@ function buildCaseDetailAnswer(primary) {
           <p>The answer body plus any stored source snapshot.</p>
         </div>
       </div>
-      <pre class="answer-block">${escapeHtml(primary?.answer || "-")}</pre>
+      <pre class="answer-block">${escapeHtml(actualAnswer)}</pre>
+      ${
+        primary?.expected_answer_text
+          ? `<div class="detail-subsection">
+              <div class="detail-subsection-header">
+                <h4>Expected Answer</h4>
+              </div>
+              <pre class="answer-block">${escapeHtml(primary.expected_answer_text)}</pre>
+            </div>`
+          : ""
+      }
       ${
         sources.length
           ? `<div class="detail-subsection">
@@ -1313,6 +1324,92 @@ function renderCaseDetailSurface(detailPayload = {}, options = {}) {
   ].join("");
 }
 
+function buildCaseResultsTable(rows) {
+  const items = Array.isArray(rows) ? rows : [];
+  if (!items.length) {
+    return `
+      <section class="panel-card">
+        <div class="panel-header">
+          <div>
+            <h3>Case Results</h3>
+            <p>Every benchmark row includes the question, the actual answer, the expected answer, and route outcome.</p>
+          </div>
+        </div>
+        <div class="empty-state">No case results available for this scorecard scope.</div>
+      </section>
+    `;
+  }
+  return `
+    <section class="panel-card">
+      <div class="panel-header">
+        <div>
+          <h3>Case Results</h3>
+          <p>Every benchmark row includes the question, the actual answer, the expected answer, and per-case metrics.</p>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Question</th>
+              <th>Actual Answer</th>
+              <th>Expected Answer</th>
+              <th>Answer Accuracy</th>
+              <th>Evidence Hit@5</th>
+              <th>Failure Type</th>
+              <th>Route Correct</th>
+              <th>Inspect</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items
+              .map((row) => {
+                const route_correct =
+                  row.route_correct !== undefined && row.route_correct !== null
+                    ? row.route_correct
+                    : row.route_correct_flag;
+                const actual_answer_preview = row.actual_answer_preview || row.answer_preview || "-";
+                const expected_answer_preview = row.expected_answer_preview || row.reference_answer || "-";
+                return `
+                  <tr>
+                    <td>
+                      <strong>${escapeHtml(row.question || "-")}</strong>
+                      <div class="metric-meta">
+                        ${escapeHtml(humanizeLabel(row.expected_route || row.expected_execution_action || "rag"))}
+                        →
+                        ${escapeHtml(humanizeLabel(row.actual_route || row.actual_execution_action || "rag"))}
+                      </div>
+                    </td>
+                    <td>${escapeHtml(actual_answer_preview)}</td>
+                    <td>${escapeHtml(expected_answer_preview)}</td>
+                    <td>${formatMetricValue(row.answer_accuracy_score, "answer_accuracy_score")}</td>
+                    <td>${formatMetricValue(
+                      row.evidence_hit_at_5 !== null && row.evidence_hit_at_5 !== undefined ? row.evidence_hit_at_5 : row.hit_at_5,
+                      "evidence_hit_at_5"
+                    )}</td>
+                    <td>${escapeHtml(row.failure_type || "-")}</td>
+                    <td>${formatMetricValue(route_correct, "route_correct")}</td>
+                    <td>
+                      <button
+                        type="button"
+                        class="table-action-button"
+                        data-open-diagnosis-benchmark="${escapeHtml(row.eval_run_id || "")}"
+                        data-open-test-case="${escapeHtml(row.test_case_id || "")}"
+                      >
+                        Inspect
+                      </button>
+                    </td>
+                  </tr>
+                `;
+              })
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
 function renderExperimentsPage(payload) {
   const root = ragPageContainers.experiments.root;
   const sections = payload.sections || {};
@@ -1401,6 +1498,7 @@ function renderScorecardPage(payload) {
   const summary = sections.summary || {};
   const layerScorecard = sections.layer_scorecard?.rows || [];
   const categoryPassRate = sections.category_pass_rate?.rows || [];
+  const caseResults = sections.case_results?.rows || [];
   const sampleList = sections.sample_list || {};
 
   root.innerHTML = `
@@ -1425,6 +1523,7 @@ function renderScorecardPage(payload) {
       ${buildSampleList("Top Regressions", sampleList.top_regressions || [], "danger")}
       ${buildSampleList("Top Wins", sampleList.top_wins || [], "success")}
     </div>
+    ${buildCaseResultsTable(caseResults)}
   `;
 
   const baselineSelect = document.getElementById("baseline-experiment-selector");

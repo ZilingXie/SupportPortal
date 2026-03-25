@@ -56,10 +56,16 @@ class BenchmarkCase:
     source_type: str
     product: str | None
     language: str | None
+    reference_answer: str | None
     expected_document_ids: list[str]
     expected_heading_paths: list[str]
     expected_evidence_refs: list[dict[str, str]]
     expected_handoff: bool
+    expected_route: str
+    expected_scope_label: str
+    retrieval_metrics_enabled: bool
+    citation_metrics_enabled: bool
+    route_aware: bool
     tags: list[str]
 
 
@@ -183,6 +189,18 @@ def _normalize_bool(value: Any, *, field_name: str) -> bool:
     raise ValueError(f"{field_name} must be a boolean")
 
 
+def _normalize_expected_route(value: Any) -> str:
+    normalized = _clean_text(value).lower()
+    if normalized in {"rag", "web_search", "refuse"}:
+        return normalized
+    return "rag"
+
+
+def _normalize_expected_scope_label(value: Any) -> str:
+    normalized = _clean_text(value)
+    return normalized or "agora_technical"
+
+
 def _safe_float(value: Any) -> float | None:
     if value is None:
         return None
@@ -258,10 +276,28 @@ def _parse_benchmark_case(payload: dict[str, Any], *, line_number: int) -> Bench
     source_type = _clean_text(payload.get("source_type"))
     product = _clean_text(payload.get("product"))
     language = _clean_text(payload.get("language"))
+    reference_answer = _clean_text(payload.get("reference_answer"))
     expected_document_ids = _normalize_string_list(payload.get("expected_document_ids"))
     expected_heading_paths = [_normalize_heading_path(item) for item in _normalize_string_list(payload.get("expected_heading_paths"))]
     expected_evidence_refs = _normalize_evidence_refs(payload.get("expected_evidence_refs"))
     answer_key_points = _normalize_answer_key_points(payload.get("answer_key_points"))
+    expected_route = _normalize_expected_route(payload.get("expected_route"))
+    expected_scope_label = _normalize_expected_scope_label(payload.get("expected_scope_label"))
+    retrieval_metrics_enabled = (
+        _normalize_bool(payload.get("retrieval_metrics_enabled"), field_name="retrieval_metrics_enabled")
+        if payload.get("retrieval_metrics_enabled") is not None
+        else True
+    )
+    citation_metrics_enabled = (
+        _normalize_bool(payload.get("citation_metrics_enabled"), field_name="citation_metrics_enabled")
+        if payload.get("citation_metrics_enabled") is not None
+        else True
+    )
+    route_aware = (
+        _normalize_bool(payload.get("route_aware"), field_name="route_aware")
+        if payload.get("route_aware") is not None
+        else False
+    )
     tags = _normalize_string_list(payload.get("tags"))
 
     if not test_case_id:
@@ -299,6 +335,27 @@ def _parse_benchmark_case(payload: dict[str, Any], *, line_number: int) -> Bench
             expected_execution_action,
         )
         expected_handoff = bool(payload.get("expected_handoff")) if payload.get("expected_handoff") is not None else expected_execution_action == "refuse"
+        if payload.get("expected_route") is None:
+            if expected_execution_action == "web_search" or expected_route_family == "web_company_info":
+                expected_route = "web_search"
+            elif expected_execution_action in {"controlled_response", "refuse"}:
+                expected_route = "refuse"
+            else:
+                expected_route = "rag"
+        if payload.get("expected_scope_label") is None:
+            expected_scope_label = {
+                "agora_docs_rag": "agora_technical",
+                "web_company_info": "agora_non_technical",
+                "general_chat": "small_talk",
+                "general_tech_help": "non_agora",
+                "fallback_or_refuse": "non_agora",
+            }.get(expected_route_family, expected_scope_label)
+        if payload.get("retrieval_metrics_enabled") is None:
+            retrieval_metrics_enabled = expected_execution_action == "rag"
+        if payload.get("citation_metrics_enabled") is None:
+            citation_metrics_enabled = expected_execution_action in {"rag", "web_search"}
+        if payload.get("route_aware") is None:
+            route_aware = expected_execution_action != "rag" or expected_route_family != "agora_docs_rag"
         tags = tags or [category, question_type]
     else:
         if not query_type:
@@ -307,12 +364,44 @@ def _parse_benchmark_case(payload: dict[str, Any], *, line_number: int) -> Bench
             raise ValueError(f"Benchmark case {test_case_id} missing source_type")
         question_type = query_type
         category = query_type
-        expected_route_family = "agora_docs_rag"
-        expected_execution_action = "rag"
-        expected_behavior = "answer_with_docs"
-        expected_tooling_profile = "agora_docs_only"
+        if route_aware:
+            expected_route_family = {
+                "rag": "agora_docs_rag",
+                "web_search": "web_company_info",
+                "refuse": "fallback_or_refuse",
+            }.get(expected_route, "agora_docs_rag")
+            expected_execution_action = "controlled_response" if expected_route == "refuse" else expected_route
+            expected_behavior = {
+                "rag": "answer_with_docs",
+                "web_search": "answer_with_company_info",
+                "refuse": "friendly_deflection",
+            }.get(expected_route, "answer_with_docs")
+            expected_tooling_profile = expected_tooling_profile or _default_tooling_profile(
+                expected_route_family,
+                expected_execution_action,
+            )
+        else:
+            expected_route_family = "agora_docs_rag"
+            expected_execution_action = "rag"
+            expected_behavior = "answer_with_docs"
+            expected_tooling_profile = "agora_docs_only"
         temporal_sensitivity = None
-        expected_handoff = _normalize_bool(payload.get("expected_handoff"), field_name="expected_handoff")
+        expected_handoff = (
+            _normalize_bool(payload.get("expected_handoff"), field_name="expected_handoff")
+            if payload.get("expected_handoff") is not None
+            else expected_route == "refuse"
+        )
+        if payload.get("expected_scope_label") is None:
+            expected_scope_label = {
+                "rag": "agora_technical",
+                "web_search": "agora_non_technical",
+                "refuse": "non_agora",
+            }.get(expected_route, expected_scope_label)
+        if payload.get("retrieval_metrics_enabled") is None:
+            retrieval_metrics_enabled = expected_route == "rag"
+        if payload.get("citation_metrics_enabled") is None:
+            citation_metrics_enabled = expected_route in {"rag", "web_search"}
+        tags = tags or [query_type, expected_route]
 
     requires_rag_evidence = expected_route_family == "agora_docs_rag"
     if requires_rag_evidence and not expected_document_ids:
@@ -352,11 +441,17 @@ def _parse_benchmark_case(payload: dict[str, Any], *, line_number: int) -> Bench
         source_type=source_type,
         product=product,
         language=language,
+        reference_answer=reference_answer,
         expected_document_ids=expected_document_ids,
         expected_heading_paths=[item for item in expected_heading_paths if item],
         expected_evidence_refs=expected_evidence_refs,
         answer_key_points=answer_key_points,
         expected_handoff=expected_handoff,
+        expected_route=expected_route,
+        expected_scope_label=expected_scope_label,
+        retrieval_metrics_enabled=retrieval_metrics_enabled,
+        citation_metrics_enabled=citation_metrics_enabled,
+        route_aware=route_aware,
         tags=tags,
     )
 
@@ -496,10 +591,12 @@ def build_benchmark_review_sample(
             "root_cause_label": _clean_text(result_row.get("root_cause_label")),
             "question": _clean_text(result_row.get("question")),
             "answer_preview": _clean_text(result_row.get("answer_preview")),
+            "reference_answer": _clean_text(result_row.get("reference_answer")),
             "expected_document_ids": _normalize_string_list(result_row.get("expected_document_ids")),
             "expected_heading_paths": _normalize_string_list(result_row.get("expected_heading_paths")),
             "expected_evidence_refs": _normalize_evidence_refs(result_row.get("expected_evidence_refs")),
             "judge_disagreement_flag": bool(result_row.get("judge_disagreement_flag")),
+            "route_correct_flag": result_row.get("route_correct_flag") if isinstance(result_row.get("route_correct_flag"), bool) else None,
             "trace_payload": result_row.get("trace_payload") if isinstance(result_row.get("trace_payload"), dict) else {},
             "scores": {
                 field_name: _safe_float(result_row.get(field_name))
@@ -753,11 +850,17 @@ def summarize_eval_daily_metrics(result_rows: list[dict[str, Any]]) -> dict[str,
         for row in result_rows
         if isinstance(row.get("response_policy_followed"), bool)
     ]
+    route_correct_values = [
+        1.0 if row.get("route_correct_flag") else 0.0
+        for row in result_rows
+        if isinstance(row.get("route_correct_flag"), bool)
+    ]
     metrics["hallucination_rate"] = round(sum(hallucination_values) / len(hallucination_values), 4) if hallucination_values else None
     metrics["needs_human_rate"] = round(sum(needs_human_values) / len(needs_human_values), 4) if needs_human_values else None
     metrics["response_policy_followed_rate"] = (
         round(sum(response_policy_values) / len(response_policy_values), 4) if response_policy_values else None
     )
+    metrics["route_accuracy"] = round(sum(route_correct_values) / len(route_correct_values), 4) if route_correct_values else None
     return metrics
 def _ndcg_at_k(relevance_scores: list[int], k: int) -> float:
     sliced = relevance_scores[: max(1, int(k))]

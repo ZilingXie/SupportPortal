@@ -13,6 +13,7 @@ from backend.services.rag_benchmark import (
     build_live_review_sample,
     deterministic_sample,
     load_benchmark_cases,
+    parse_benchmark_cases,
     summarize_eval_daily_metrics,
 )
 
@@ -175,6 +176,52 @@ class RagBenchmarkHelperTests(unittest.TestCase):
         self.assertEqual(cases[0].expected_evidence_refs[0]["chunk_id"], "chunk-1")
         self.assertEqual(cases[1].expected_handoff, True)
 
+    def test_parse_benchmark_cases_supports_reference_answer_and_route_fields(self) -> None:
+        cases = parse_benchmark_cases(
+            [
+                {
+                    "test_case_id": "case-1",
+                    "question": "How do I use it?",
+                    "query_type": "faq",
+                    "source_type": "official_markdown_upload",
+                    "expected_document_ids": ["official-doc-1"],
+                    "reference_answer": "Use the official guide.",
+                    "answer_key_points": ["Use the official guide."],
+                    "expected_handoff": False,
+                    "tags": ["faq"],
+                },
+                {
+                    "test_case_id": "case-2",
+                    "question": "What's Agora's stock ticker?",
+                    "query_type": "agora_nontechnical",
+                    "source_type": "external_benchmark",
+                    "expected_document_ids": ["external-benchmark-placeholder"],
+                    "reference_answer": "Agora, Inc. trades on Nasdaq under the ticker API.",
+                    "answer_key_points": ["Ticker is API."],
+                    "expected_handoff": False,
+                    "expected_route": "web_search",
+                    "expected_scope_label": "agora_non_technical",
+                    "retrieval_metrics_enabled": False,
+                    "citation_metrics_enabled": True,
+                    "route_aware": True,
+                    "tags": ["company"],
+                },
+            ],
+            source_label="inline payloads",
+        )
+
+        self.assertEqual(cases[0].reference_answer, "Use the official guide.")
+        self.assertEqual(cases[0].expected_route, "rag")
+        self.assertEqual(cases[0].expected_scope_label, "agora_technical")
+        self.assertEqual(cases[0].retrieval_metrics_enabled, True)
+        self.assertEqual(cases[0].citation_metrics_enabled, True)
+        self.assertEqual(cases[0].route_aware, False)
+        self.assertEqual(cases[1].expected_route, "web_search")
+        self.assertEqual(cases[1].expected_scope_label, "agora_non_technical")
+        self.assertEqual(cases[1].retrieval_metrics_enabled, False)
+        self.assertEqual(cases[1].citation_metrics_enabled, True)
+        self.assertEqual(cases[1].route_aware, True)
+
     def test_compute_retrieval_metrics_includes_evidence_hit_rates(self) -> None:
         metrics = compute_retrieval_metrics(
             [
@@ -295,12 +342,14 @@ class RagBenchmarkHelperTests(unittest.TestCase):
                     "answer_logic_score": 0.7,
                     "evidence_hit_at_5": 1.0,
                     "hallucination_flag": False,
+                    "route_correct_flag": True,
                 },
                 {
                     "answer_accuracy_score": 0.6,
                     "answer_logic_score": 0.9,
                     "evidence_hit_at_5": 0.0,
                     "hallucination_flag": True,
+                    "route_correct_flag": False,
                 },
             ]
         )
@@ -309,6 +358,7 @@ class RagBenchmarkHelperTests(unittest.TestCase):
         self.assertEqual(metrics["answer_logic_score"], 0.8)
         self.assertEqual(metrics["evidence_hit_at_5"], 0.5)
         self.assertEqual(metrics["hallucination_rate"], 0.5)
+        self.assertEqual(metrics["route_accuracy"], 0.5)
 
     def test_summarize_eval_daily_metrics_ignores_ineligible_correctness_rows(self) -> None:
         metrics = summarize_eval_daily_metrics(
