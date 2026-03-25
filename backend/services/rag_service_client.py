@@ -322,6 +322,30 @@ class RagServiceClient:
         payload["range"] = range_value
         return self._request("GET", f"/internal/dashboard/rag/{quoted}", query=payload)
 
+    def rag_dashboard_benchmark_case_detail(
+        self,
+        eval_run_id: str,
+        test_case_id: str,
+        *,
+        baseline_eval_run_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            "GET",
+            "/internal/dashboard/rag/cases/benchmark-detail",
+            query={
+                "eval_run_id": eval_run_id,
+                "test_case_id": test_case_id,
+                "baseline_eval_run_id": baseline_eval_run_id,
+            },
+        )
+
+    def rag_dashboard_live_case_detail(self, request_id: str) -> dict[str, Any]:
+        return self._request(
+            "GET",
+            "/internal/dashboard/rag/cases/live-detail",
+            query={"request_id": request_id},
+        )
+
     def update_review_sample(
         self,
         sample_id: str,

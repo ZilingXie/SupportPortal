@@ -55,11 +55,12 @@ ENGINEER_DIR = UI_DIR / "engineer-ui"
 DASHBOARD_DIR = UI_DIR / "dashboard-ui"
 
 PRIMARY_RAG_WORKBENCH_PAGES = (
-    "experiments",
-    "datasets",
+    "scorecard",
+    "routing",
+    "retrieval",
+    "generation",
+    "data-supply",
     "diagnosis",
-    "knowledge-supply",
-    "production-signals",
     "review",
 )
 
@@ -140,6 +141,11 @@ class ReviewSampleUpdateRequest(BaseModel):
     citation_ok: bool | None = None
     logic_ok: bool | None = None
     hallucination_present: bool | None = None
+    route_family_override: str | None = Field(default=None, max_length=120)
+    execution_action_override: str | None = Field(default=None, max_length=120)
+    tooling_profile_override: str | None = Field(default=None, max_length=120)
+    failure_stage_override: str | None = Field(default=None, max_length=120)
+    failure_bucket_override: str | None = Field(default=None, max_length=120)
     dataset_decision: str | None = Field(default=None, pattern="^(promote_gold|keep_silver|needs_fix|reject)$")
     corrected_reference_answer: str | None = Field(default=None, max_length=12000)
     corrected_citation_targets: list[dict[str, Any]] | None = None
@@ -1774,7 +1780,7 @@ def dashboard_rag_page(
             "limit": limit,
             "cursor": cursor,
         }
-        if page in {"experiments", "datasets", "diagnosis", "knowledge-supply", "production-signals", "review"}:
+        if page in {"scorecard", "routing", "retrieval", "generation", "data-supply", "diagnosis", "review"}:
             return {
                 "layout": page,
                 "range": range,
@@ -1794,6 +1800,32 @@ def dashboard_rag_page(
         }
 
 
+@app.get("/api/dashboard/rag/cases/benchmark-detail")
+def dashboard_rag_benchmark_case_detail(
+    eval_run_id: str = Query(..., min_length=1),
+    test_case_id: str = Query(..., min_length=1),
+    baseline_eval_run_id: str | None = Query(default=None),
+) -> dict[str, Any]:
+    try:
+        return rag_service_client.rag_dashboard_benchmark_case_detail(
+            eval_run_id,
+            test_case_id,
+            baseline_eval_run_id=baseline_eval_run_id,
+        )
+    except RagServiceError as exc:
+        _raise_rag_service_http_error(exc)
+
+
+@app.get("/api/dashboard/rag/cases/live-detail")
+def dashboard_rag_live_case_detail(
+    request_id: str = Query(..., min_length=1),
+) -> dict[str, Any]:
+    try:
+        return rag_service_client.rag_dashboard_live_case_detail(request_id)
+    except RagServiceError as exc:
+        _raise_rag_service_http_error(exc)
+
+
 @app.post("/api/dashboard/rag/review-samples/{sample_id}")
 def dashboard_update_review_sample(
     sample_id: str,
@@ -1808,6 +1840,11 @@ def dashboard_update_review_sample(
             citation_ok=request.citation_ok,
             logic_ok=request.logic_ok,
             hallucination_present=request.hallucination_present,
+            route_family_override=request.route_family_override,
+            execution_action_override=request.execution_action_override,
+            tooling_profile_override=request.tooling_profile_override,
+            failure_stage_override=request.failure_stage_override,
+            failure_bucket_override=request.failure_bucket_override,
             dataset_decision=request.dataset_decision,
             corrected_reference_answer=request.corrected_reference_answer,
             corrected_citation_targets=request.corrected_citation_targets,

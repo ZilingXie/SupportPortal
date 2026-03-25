@@ -183,6 +183,49 @@ For each new entry, record:
   - Post-deploy BM25 stats showed `support_knowledge_bm25_docs=124` and `support_knowledge_bm25_stats=('primary', 124, 120.5241935483871)`
   - Post-deploy query telemetry showed `retrieval_strategy='hybrid_rrf_bm25'`, `bm25_candidates_count=47` for `VERIFY-OFFICIAL-BM25-20260322`, and `bm25_candidates_count=5` for `VERIFY-TECH-BM25-20260322`
 
+## 2026-03-23 - Agora benchmark suite import, route-aware benchmark cases, and dashboard case results
+
+- Summary: Replaced the legacy static FAQ smoke benchmark with JSON-backed Agora benchmark suite import, route-aware snapshot benchmark execution, full per-case result surfacing in the RAG dashboard, and duplicate-judge vote deduplication when the same judge model is configured multiple times.
+- Reason: The previous `supportportal_faq_v1.jsonl` benchmark no longer matched the current ingested corpus and could not show the original question, system answer, expected answer, and case-level metrics the workbench now needs for canonical, real-user, and mixed route-aware evaluation.
+- Affected files or config:
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/services/rag_benchmark.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/services/rag_benchmark_suite_importer.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_rag_benchmark.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_benchmark_suite_importer.py`
+  - `backend/tests/test_rag_dashboard_contract.py`
+  - `benchmarks/agora_rag_testset_100_canonical_en.json`
+  - `benchmarks/agora_rag_testset_100_mixed_en.json`
+  - `benchmarks/agora_rag_testset_100_real_user_en.json`
+  - `benchmarks/supportportal_faq_v1.jsonl`
+  - `design.md`
+  - `docs/rag_change_log.md`
+  - `scripts/run_rag_benchmark.py`
+  - `ui/dashboard-ui/rag/app.js`
+  - `ui/dashboard-ui/rag/index.html`
+- Data impact:
+  - Imported three `gold_ready` benchmark datasets from `benchmarks/*.json`: `agora_rag_testset_100_canonical_en`, `agora_rag_testset_100_real_user_en`, and `agora_rag_testset_100_mixed_en`
+  - Added route-aware benchmark metadata (`reference_answer`, `expected_route`, `expected_scope_label`, `retrieval_metrics_enabled`, `citation_metrics_enabled`) to dataset snapshot loading and eval trace payloads
+  - Extended eval result persistence and workbench aggregation with `route_correct_flag`, `route_accuracy`, and per-case expected/actual answer fields for dashboard inspection
+  - Deleted the obsolete `benchmarks/supportportal_faq_v1.jsonl` baseline so new benchmark runs must use either imported suite snapshots or explicit datasets
+  - When `RAG_BENCHMARK_JUDGE_MODELS` repeats the same model three times, benchmark execution now reuses the first vote for duplicate entries instead of issuing redundant judge calls
+- Verification:
+  - `./.venv/bin/python -m unittest backend.tests.test_rag_benchmark_runner backend.tests.test_rag_benchmark_suite_importer backend.tests.test_rag_benchmark backend.tests.test_rag_dashboard_contract backend.tests.test_dashboard_ui_contract`
+  - `./.venv/bin/python -m py_compile backend/rag_api.py backend/rag_worker.py backend/services/rag_benchmark.py backend/services/rag_benchmark_runner.py backend/services/rag_benchmark_suite_importer.py backend/repositories/knowledge_repository.py scripts/run_rag_benchmark.py`
+  - Imported suite snapshots into Postgres: `DS-C7666CE2B821`, `DS-3F617D0FF311`, and `DS-37F37A7A5875`
+  - Completed a canonical route-aware timecheck run `EVAL-689EA8189213`, and verified `support_rag_eval_results.trace_payload` now stores `question`, `actual_answer_text`, `expected_answer_text`, `expected_route`, and `actual_route`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health` returned `ticket_storage=postgres`, `knowledge_storage=postgres`, and `rag_service=ok` after restart
+  - Completed full 100-case suite runs: `EVAL-0C1512E4BDA0` (`agora_rag_testset_100_canonical_en`), `EVAL-4892567749A6` (`agora_rag_testset_100_real_user_en`), and `EVAL-758FF11C44CB` (`agora_rag_testset_100_mixed_en`)
+  - Verified `support_rag_eval_results` contains `100` rows for each of the three full runs
+  - Verified the `experiments` dashboard payload returns `case_results.rows` with `100` benchmark cases per Agora experiment, including `question`, `actual_answer_preview`, `expected_answer_preview`, `answer_accuracy_score`, `evidence_hit_at_5`, `citation_correctness_score`, `hallucination_flag`, `answer_logic_score`, and `route_correct`
+  - Verified the `diagnosis` dashboard payload exposes full `actual_answer_text`, `expected_answer_text`, route labels, and case-level benchmark metrics for `EVAL-758FF11C44CB`
+
 ## 2026-03-22 - SiliconFlow reranker key compatibility follow-up
 
 - Summary: Extended the reranker API key fallback chain to read lowercase `.env` aliases, including the deployed `silliconflow_key` variable, and added a regression test for that path.
@@ -263,6 +306,268 @@ For each new entry, record:
   - Container verification with forced empty-table config (`EMBEDDING_PROVIDER=siliconflow`, `PGVECTOR_TABLE=docagent_chunks_bge_large_en_v1_5_1024`) resolved to `supportportal.docagent_chunks_ag_docs_test_1024` and returned `decision=answer`, `needs_human=false`, `generation_mode=structured_answer`, and `selected_chunk_count=5` for `how to join channel`
   - End-to-end ticket verification via `/api/tickets/query` created `T-VERIFYJOIN1774180935`, returned the initial placeholder reply, and after async worker completion persisted a grounded final answer with citations from `official/get-started-sdk_android.md`, `official/authentication-workflow_android.md`, and `official/optimize-frame-rendering_android.md`
 
+## 2026-03-23 - Mixed-route RAG scorecard redesign and benchmark contract v2
+
+- Summary: Reworked the RAG evaluation stack from a single experiment workbench into a mixed-route scorecard model with first-class routing, retrieval, generation, and business layers; versioned the mixed benchmark artifact as `agora_rag_testset_100_mixed_en_v2.json`; added mixed-route case parsing, controlled-response execution in the benchmark runner, policy-followed scoring, authoritative web-source checks, new failure buckets, and the new `scorecard / routing / retrieval / generation / data-supply / diagnosis / review` dashboard taxonomy.
+- Reason: The previous dashboard and benchmark contract were tuned for docs-only RAG quality, which hid the real failure boundary in a mixed-route support system where many cases should never enter Agora docs retrieval at all.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/rag_api.py`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/services/rag_benchmark.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/services/support_router.py`
+  - `backend/tests/test_dashboard_routes.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_rag_benchmark.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_dashboard_contract.py`
+  - `backend/tests/test_support_router.py`
+  - `benchmarks/agora_rag_testset_100_mixed_en_v2.json`
+  - `design.md`
+  - `scripts/run_rag_benchmark.py`
+  - `ui/dashboard-ui/index.html`
+  - `ui/dashboard-ui/rag/app.js`
+  - `ui/dashboard-ui/rag/index.html`
+  - `ui/dashboard-ui/rag/styles.css`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Added versioned benchmark artifact `benchmarks/agora_rag_testset_100_mixed_en_v2.json` and kept `agora_rag_testset_100_mixed_en.json` unchanged for reproducibility
+  - Extended offline benchmark parsing to support JSON arrays, mixed-route fields, structured answer key points, and denial-evidence polarity
+  - Extended `support_rag_eval_runs` with `dataset_schema_version`
+  - Extended `support_rag_eval_results` with mixed-route fields such as route family/action/tooling expectations and actuals, `document_hit_at_5`, `evidence_coverage`, `noise_rate`, policy sub-check booleans, `response_policy_followed`, web-source grounding flags, and `failure_stage` / `failure_bucket`
+  - Extended review sample schema with route/action/tooling and failure override columns for mixed-route adjudication
+  - Dashboard page taxonomy now treats legacy `experiments / datasets / knowledge-supply / production-signals` as compatibility aliases rather than primary navigation
+  - The v2 mixed benchmark currently seeds stable placeholder evidence refs for docs-RAG cases so the new contract is versioned and executable before manual gold-evidence backfill
+- Verification:
+  - `python3 -m py_compile backend/services/support_router.py backend/services/rag_benchmark.py backend/services/rag_benchmark_runner.py backend/repositories/knowledge_repository.py backend/main.py backend/rag_api.py scripts/run_rag_benchmark.py`
+  - `python3 -m unittest backend.tests.test_support_router backend.tests.test_rag_benchmark backend.tests.test_rag_benchmark_runner backend.tests.test_rag_dashboard_contract backend.tests.test_dashboard_ui_contract`
+  - `python3 -m unittest backend.tests.test_dashboard_routes`
+  - `python3 -m unittest backend.tests.test_ticket_routing`
+
+## 2026-03-23 - Defer BM25 startup backfill off the RAG health path
+
+- Summary: Changed `PostgresKnowledgeRepository.initialize()` so startup creates BM25 tables but does not backfill them by default; startup backfill is now an explicit opt-in via `KNOWLEDGE_BM25_BACKFILL_ON_STARTUP`, which keeps `rag_api` and `rag_worker` health from waiting on long BM25 rebuilds during restart.
+- Reason: After the mixed-route scorecard rollout, service restart verification showed `rag_api` stayed in `Waiting for application startup` for about two minutes while knowledge-repository initialization rebuilt BM25 state from the vector table. The service was healthy after the rebuild, but the startup path was incorrectly coupling readiness to a heavy backfill task.
+- Affected files or config:
+  - `.env.example`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/tests/test_knowledge_repository_bm25.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema changes
+  - No document or chunk mutations
+  - Default restarts now leave pre-existing BM25 state in place instead of rebuilding it synchronously on startup
+  - Operators can still force startup backfill by setting `KNOWLEDGE_BM25_BACKFILL_ON_STARTUP=true`
+- Verification:
+  - `podman run --rm -v "$PWD:/app" -w /app localhost/supportportal-app:latest python -m unittest backend.tests.test_knowledge_repository_bm25`
+  - `python3 -m py_compile backend/repositories/knowledge_repository.py`
+
+## 2026-03-23 - Knowledge bootstrap version sentinel for fast repeat startup
+
+- Summary: Added a repository bootstrap-version sentinel table so `knowledge_repository.initialize()` can fast-exit after schema creation when the current bootstrap version is already recorded, instead of replaying the full knowledge-schema DDL on every `rag_api` and `rag_worker` restart.
+- Reason: Disabling BM25 startup backfill removed one expensive step, but restart profiling still showed the worker spending about 71 seconds in knowledge repository initialization and forcing the API process to wait on another serialized initialize pass. The remaining bottleneck was repeated full-schema bootstrap, not BM25 itself.
+- Affected files or config:
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/tests/test_knowledge_repository_bm25.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Added metadata table `supportportal.support_repository_bootstrap_versions`
+  - No knowledge document, chunk, vector, or BM25 data was deleted or rewritten
+  - First startup after deploying the change still performs one full bootstrap and records the current version
+  - Subsequent restarts now skip the repeated full bootstrap when the stored version matches `2026-03-23-fast-startup-v1`
+- Verification:
+  - `podman run --rm -v "$PWD:/app" -w /app localhost/supportportal-app:latest python -m unittest backend.tests.test_knowledge_repository_bm25 backend.tests.test_support_router backend.tests.test_rag_benchmark backend.tests.test_rag_benchmark_runner backend.tests.test_rag_dashboard_contract backend.tests.test_dashboard_ui_contract backend.tests.test_dashboard_routes backend.tests.test_ticket_routing`
+  - `python3 -m py_compile backend/repositories/knowledge_repository.py`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - First restart with the new code reached `/health` green after the bootstrap version row was written
+  - Second restart reached `/health` green in `5.1s` with `knowledge_storage=postgres` and `rag_service=ok`
+
+## 2026-03-23 - Scorecard baseline alignment and same-version comparison guard
+
+- Summary: Fixed `Scorecard` so it no longer compares benchmark runs across different `benchmark_version` values by default, and populated real `baseline` and `delta` values for the four layer rows instead of rendering placeholders.
+- Reason: The mixed-route scorecard page was showing many `-` cells because `layer_scorecard` only emitted candidate values while hardcoding baseline and delta to `None`, and the experiment picker could pair `canonical_en` and `real_user_en` runs, which made the comparison semantically invalid even before drilling into traces.
+- Affected files or config:
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema changes
+  - No benchmark or evaluation rows were rewritten
+  - Scorecard experiment pairing now normalizes baseline selection to the candidate run’s `benchmark_version`
+  - `Scorecard -> Layer Scorecard` now emits concrete `candidate`, `baseline`, and `delta` values for Routing, Retrieval, Generation, and Business
+- Verification:
+  - `podman run --rm -v "$PWD:/app" -w /app localhost/supportportal-app:latest python -m unittest backend.tests.test_rag_scorecard_repository backend.tests.test_knowledge_repository_bm25 backend.tests.test_support_router backend.tests.test_rag_benchmark backend.tests.test_rag_benchmark_runner backend.tests.test_rag_dashboard_contract backend.tests.test_dashboard_ui_contract backend.tests.test_dashboard_routes backend.tests.test_ticket_routing`
+  - `python3 -m py_compile backend/repositories/knowledge_repository.py`
+
+## 2026-03-23 - Eval-only benchmark history reset and mixed-route v2 rerun
+
+- Summary: Cleared historical benchmark evaluation data without touching knowledge documents, vector chunks, or BM25 state, then reran the full `agora_rag_testset_100_mixed_en_v2.json` benchmark to repopulate the new mixed-route scorecard from a clean slate.
+- Reason: The dashboard still contained pre-redesign benchmark history with mismatched schemas and incomplete mixed-route fields, which polluted experiment selection and left routing/business sections sparsely populated even after the scorecard fixes.
+- Affected files or config:
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Deleted all rows from `supportportal.support_rag_daily_metrics`
+  - Deleted all rows from `supportportal.support_rag_eval_runs`, which cascaded to `supportportal.support_rag_eval_results` and benchmark-linked `supportportal.support_rag_review_samples`
+  - Preserved benchmark datasets, dataset generation records, knowledge documents, BM25 tables, and the vector table
+  - Recreated benchmark history with one fresh run: `EVAL-D47D334D67E9` / `agora_mixed_en_v2_reset_20260323`
+- Verification:
+  - Pre-reset counts: `support_rag_eval_runs=6`, `support_rag_eval_results=322`, `support_rag_daily_metrics=35`, `benchmark review samples=282`
+  - Post-reset counts: `support_rag_eval_runs=0`, `support_rag_eval_results=0`, `support_rag_daily_metrics=0`, `benchmark review samples=0`
+  - Benchmark rerun command: `podman run --rm --env-file .env -v "$PWD:/app" -w /app localhost/supportportal-app:latest python scripts/run_rag_benchmark.py --experiment-id agora_mixed_en_v2_reset_20260323`
+  - Benchmark rerun summary: `Cases=100`, `benchmark_version=agora_rag_testset_100_mixed_en_v2`, `route_family_accuracy=0.37`, `evidence_hit_at_5=0.0`, `answer_accuracy_score=0.2175`, `response_policy_followed_rate=0.3`
+  - Post-rerun counts: `support_rag_eval_runs=1`, `support_rag_eval_results=100`, `support_rag_daily_metrics=10`, `benchmark review samples=98`
+  - Post-rerun field coverage: `route_family_correct=100/100`, `response_policy_followed=100/100`, `answer_accuracy_score=80/100`
+  - Scorecard API check: `/api/dashboard/rag/scorecard` returned `baseline_experiment_id=candidate_experiment_id=agora_mixed_en_v2_reset_20260323` and populated all four layer rows
+
+## 2026-03-23 - Routing case explorer and shared case detail surface
+
+- Summary: Reworked the mixed-route `Routing` tab into a full case explorer with default-open `Routing Errors` and `Routing Correct` sections, added centered lazy-loaded case detail modals, and refactored `Diagnosis` into a single-column shared detail surface that reuses the same benchmark/live detail payloads.
+- Reason: The scorecard metrics were clear, but case-level inspection still depended on generic sample cards and a crowded three-column diagnosis layout with panel overlap. Routing analysis needed direct access to every wrong/right case without forcing a page jump first.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/rag_api.py`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_rag_dashboard_contract.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `design.md`
+  - `ui/dashboard-ui/rag/app.js`
+  - `ui/dashboard-ui/rag/index.html`
+  - `ui/dashboard-ui/rag/styles.css`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema changes
+  - No benchmark runs, eval results, or review samples were rewritten
+  - `Routing` page payload now includes `sections.routing_cases.incorrect.rows` and `sections.routing_cases.correct.rows`
+  - Added lazy detail APIs:
+    - `/api/dashboard/rag/cases/benchmark-detail`
+    - `/api/dashboard/rag/cases/live-detail`
+    - `/internal/dashboard/rag/cases/benchmark-detail`
+    - `/internal/dashboard/rag/cases/live-detail`
+  - Future benchmark reruns will persist `answer_sources` and `answer_citations` snapshots inside `trace_payload`, which the shared detail surface can display for web-grounded and citation-aware cases
+- Verification:
+  - `node --check ui/dashboard-ui/rag/app.js`
+  - `python3 -m py_compile backend/repositories/knowledge_repository.py backend/main.py backend/rag_api.py backend/services/rag_service_client.py backend/services/rag_benchmark_runner.py`
+  - `python3 -m unittest backend.tests.test_rag_dashboard_contract backend.tests.test_dashboard_ui_contract backend.tests.test_rag_scorecard_repository backend.tests.test_rag_service_client`
+  - `python3 -m unittest backend.tests.test_rag_benchmark_runner backend.tests.test_rag_benchmark`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `/health` returned `status=ok`, `knowledge_storage=postgres`, `rag_service=ok`
+  - `/api/dashboard/rag/routing?range=7d&limit=5` returned `layout=routing`, `routing_cases={incorrect:63, correct:37}` after warm-up
+  - `/api/dashboard/rag/cases/benchmark-detail?eval_run_id=EVAL-D47D334D67E9&test_case_id=agora-mixed-001` returned `mode=benchmark_compare` with populated route/action/tooling/policy fields
+
+## 2026-03-23 - Detail surface overflow fixes and dashboard read-path connection reuse
+
+- Summary: Fixed long-text overflow in the shared case detail surface and reduced mixed-route dashboard latency by separating lightweight case reads from full detail reads, then reusing a cached read connection across repeated Postgres dashboard queries.
+- Reason: Route detail titles, failure buckets, and other long identifiers were still overflowing inside the shared modal/detail surface, and `routing` plus `benchmark-detail` remained slow because each request opened multiple fresh SSL connections to the remote Postgres instance.
+- Affected files or config:
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `design.md`
+  - `ui/dashboard-ui/rag/index.html`
+  - `ui/dashboard-ui/rag/styles.css`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema changes
+  - No benchmark runs, eval results, review samples, or knowledge documents were rewritten
+  - Added a lightweight benchmark case summary query path for scorecard/routing/diagnosis list pages
+  - Added a filtered single-case benchmark detail query path for the shared detail surface
+  - Added process-local cached read-connection reuse for repeated dashboard read queries
+- Verification:
+  - `node --check ui/dashboard-ui/rag/app.js`
+  - `python3 -m py_compile backend/repositories/knowledge_repository.py backend/main.py backend/rag_api.py backend/services/rag_service_client.py`
+  - `python3 -m unittest backend.tests.test_rag_scorecard_repository backend.tests.test_dashboard_ui_contract backend.tests.test_rag_dashboard_contract backend.tests.test_rag_service_client backend.tests.test_rag_benchmark backend.tests.test_rag_benchmark_runner backend.tests.test_support_router`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `/health` returned `status=ok`, `knowledge_storage=postgres`, `rag_service=ok`
+  - Cold HTTP timings after restart:
+    - `/api/dashboard/rag/routing?range=7d&limit=5` -> `7.474s`
+    - `/api/dashboard/rag/cases/benchmark-detail?eval_run_id=EVAL-D47D334D67E9&test_case_id=agora-mixed-001` -> `1.120s`
+  - Warm HTTP timings in the same runtime:
+    - `/api/dashboard/rag/routing?range=7d&limit=5` -> `1.114s`
+    - `/api/dashboard/rag/cases/benchmark-detail?eval_run_id=EVAL-D47D334D67E9&test_case_id=agora-mixed-001` -> `1.244s`
+  - In-container repository timings after the query split and read-connection reuse:
+    - `routing_page` -> `3.420s`
+    - `scorecard_page` -> `1.053s`
+    - `_experiment_rows` -> `0.533s`
+    - `_benchmark_case_summary_rows(["EVAL-D47D334D67E9"])` -> `0.642s`
+
+## 2026-03-23 - Scorecard baseline selector now honors benchmark-version compatibility in the UI
+
+- Summary: Exposed `benchmark_version` on scorecard experiment options, filtered the baseline selector to only show runs compatible with the chosen candidate, added helper copy when no alternate baseline exists, and reset stale baseline selections when the candidate switches across benchmark versions.
+- Reason: The backend already enforced same-version comparison, but the scorecard UI still rendered every experiment in the baseline dropdown. That let users select incompatible runs and then watch the backend silently snap the baseline back to the mixed benchmark, which made the selector look broken.
+- Affected files or config:
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `ui/dashboard-ui/rag/app.js`
+  - `ui/dashboard-ui/rag/index.html`
+  - `ui/dashboard-ui/rag/styles.css`
+  - `design.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema changes
+  - No benchmark runs, eval results, review samples, or knowledge documents were rewritten
+  - `sections.summary.available_experiments[]` now includes `benchmark_version` so the frontend can enforce the same comparison boundary as the repository selector
+  - The scorecard baseline dropdown now only surfaces runs from the candidate's `benchmark_version`; when no alternate comparable run exists, the control is disabled and explains why
+- Verification:
+  - `python3 -m unittest backend.tests.test_rag_scorecard_repository backend.tests.test_dashboard_ui_contract`
+  - `python3 -m py_compile backend/repositories/knowledge_repository.py`
+  - `node --check ui/dashboard-ui/rag/app.js`
+
+## 2026-03-23 - Scorecard comparison controls now use a shared footnote for visual alignment
+
+- Summary: Moved the baseline/candidate compatibility explanation out of the individual selector fields and into a shared footnote beneath the comparison controls, so the two selectors stay visually aligned even when the compatibility note is long.
+- Reason: The baseline field carried a longer compatibility message than the candidate field, which made the scorecard comparison controls look misaligned even though the data logic was correct.
+- Affected files or config:
+  - `ui/dashboard-ui/rag/app.js`
+  - `ui/dashboard-ui/rag/styles.css`
+  - `ui/dashboard-ui/rag/index.html`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `design.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema changes
+  - No benchmark runs, eval results, review samples, or knowledge documents were rewritten
+  - Static dashboard assets were cache-busted to ensure browsers load the aligned comparison controls
+- Verification:
+  - `python3 -m unittest backend.tests.test_dashboard_ui_contract`
+  - `node --check ui/dashboard-ui/rag/app.js`
+
+## 2026-03-23 - Retrieval and generation pages now use the same case explorer pattern as routing
+
+- Summary: Upgraded the `retrieval` and `generation` pages from summary-plus-sample-card layouts to full case explorer workbenches, reusing the existing collapsible explorer pattern and shared benchmark/live detail modal from `routing`.
+- Reason: The dashboard metrics were readable, but the retrieval and generation pages still required users to jump through `Top Regressions / Top Wins` and `Diagnosis` to inspect actual cases. This made those pages inconsistent with the improved routing workflow.
+- Affected files or config:
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `ui/dashboard-ui/rag/app.js`
+  - `ui/dashboard-ui/rag/styles.css`
+  - `ui/dashboard-ui/rag/index.html`
+  - `design.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema changes
+  - No benchmark runs, eval results, review samples, or knowledge documents were rewritten
+  - `retrieval` payloads now expose `sections.retrieval_cases.incorrect.rows` and `sections.retrieval_cases.correct.rows`
+  - `generation` payloads now expose `sections.generation_cases.incorrect.rows` and `sections.generation_cases.correct.rows`
+  - Retrieval explorer eligibility is limited to benchmark `agora_docs_rag` cases with retrieval metrics and excludes `failure_stage = routing`
+  - Generation explorer eligibility excludes `failure_stage = routing`, and `failure_stage = business` is intentionally grouped into `Generation Errors`
+- Verification:
+  - `python3 -m unittest backend.tests.test_rag_scorecard_repository backend.tests.test_dashboard_ui_contract`
+  - `python3 -m py_compile backend/repositories/knowledge_repository.py`
+  - `node --check ui/dashboard-ui/rag/app.js`
+
 ## 2026-03-24 - BAAI/bge-m3 migration, benchmark NDJSON rewrite, and deferred-BM25 rebuild pass
 
 - Summary: Switched the repo-wide default embedding model and vector table to `BAAI/bge-m3`, rewrote the three Agora benchmark files into runner-compatible NDJSON with the `technical_article_api` cases removed, added repository-side protections for vector-table bootstrap and BM25 write ordering, and moved the current full official-doc rebuild onto a deferred-BM25 bulk-ingest strategy to avoid per-document BM25 deadlocks during the `bge-m3` backfill.
@@ -305,57 +610,32 @@ For each new entry, record:
   - `./.venv/bin/python scripts/fetch_and_upload_agora_docs.py --api-base-url '' --download-workers 8 --upload-workers 8` completed the raw Markdown fetch phase and materialized `2970` files locally before the run was stopped in favor of deferred-BM25 ingest
   - Deferred-BM25 local rebuild currently reports `progress|processed=500|completed=497|failed=3` from the active backfill worker set while the new vector table continues to grow
 
-## 2026-03-24 - Oversized official-section chunk splitting for bge-m3 rebuild
+## 2026-03-25 - Merged scorecard dashboard and benchmark suite importer workflows
 
-- Summary: Added token-budget splitting for oversized official primary chunks and fixed the shadow token-window helper so single huge paragraphs, tables, or code-heavy sections no longer stay intact as one embedding request during the `bge-m3` rebuild.
-- Reason: The deferred-BM25 rebuild exposed a concrete ingestion failure in `pricing-plan-details.md`; the `RESTful API call detailed pricing` section was emitted as one large `rules_table` chunk, and the existing token-window helper also failed to split a single oversized paragraph for shadow chunks, pushing SiliconFlow past its `8192`-token limit.
+- Summary: Consolidated the mixed-route scorecard workbench with the Agora benchmark-suite importer flow, kept the scorecard IA as the primary `/dashboard/rag/` experience, surfaced external benchmark filtering and case-result answer comparisons in the UI, and preserved route-aware benchmark evaluation fields through `trace_payload`.
+- Reason: Two local codex worktrees had diverged on top of the same base commit. We needed one mergeable RAG branch that retained the scorecard UI while also keeping benchmark-suite import and route-aware evaluation support, so the work could be merged into `mac/main` and the temporary codex branches could be retired.
 - Affected files or config:
-  - `backend/services/knowledge_ingestion.py`
-  - `backend/tests/test_knowledge_ingestion.py`
-  - `docs/rag_change_log.md`
-- Data impact:
-  - New official primary chunks now honor per-chunk-type token budgets before embedding
-  - Shadow section token windows now split oversized single paragraphs instead of preserving them whole
-  - Spot-checking `pricing-plan-details.md` after the fix now yields `24` primary chunks with `max_chunk_tokens=418` and `22` shadow chunks with `max_chunk_tokens=518`
-  - The currently running bulk ingest still uses the older in-memory code path, so failed-doc replay is still required after the active run completes
-- Verification:
-  - `./.venv/bin/python -m unittest backend.tests.test_knowledge_ingestion.KnowledgeIngestionParsingTests.test_official_primary_chunk_rows_split_large_table_sections backend.tests.test_knowledge_ingestion.KnowledgeIngestionParsingTests.test_official_shadow_chunk_rows_split_large_table_sections`
-  - `./.venv/bin/python -m unittest backend.tests.test_knowledge_ingestion backend.tests.test_agora_doc_sync backend.tests.test_knowledge_repository_bm25 backend.tests.test_repository_configuration`
-  - `./.venv/bin/python -m py_compile backend/services/knowledge_ingestion.py backend/services/agora_doc_sync.py backend/repositories/knowledge_repository.py backend/services/embedding_provider.py`
-  - `./.venv/bin/python - <<'PY' ... parse_official_markdown_file('pricing-plan-details.md') ... PY` confirmed `primary_max_tokens=418` and `shadow_max_tokens=518` for the previously failing document
-
-## 2026-03-24 - Configurable BM25 init backfill for deferred rebuild workers
-
-- Summary: Added a repository/config flag to disable BM25 backfill during `repository.initialize()`, documented the new setting, and used it to let low-worker official-doc replay start without triggering a full BM25 rebuild before `sync_run` creation.
-- Reason: The deferred-BM25 replay path was still hanging before `sync_run` because `initialize()` always called `_backfill_bm25_index_if_needed()`. That forced a full BM25 rebuild on startup, defeating the deferred strategy and repeatedly blocking low-worker replays before any document processing could begin.
-- Affected files or config:
-  - `.env.example`
-  - `README.md`
   - `backend/repositories/knowledge_repository.py`
-  - `backend/tests/test_knowledge_repository_bm25.py`
-  - `backend/tests/test_repository_configuration.py`
+  - `backend/services/rag_benchmark.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/services/rag_benchmark_suite_importer.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_rag_benchmark.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_benchmark_suite_importer.py`
+  - `backend/tests/test_rag_dashboard_contract.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `scripts/run_rag_benchmark.py`
+  - `ui/dashboard-ui/rag/app.js`
+  - `ui/dashboard-ui/rag/index.html`
+  - `design.md`
   - `docs/rag_change_log.md`
 - Data impact:
-  - Default runtime behavior is unchanged because `KNOWLEDGE_BM25_BACKFILL_ON_INIT` defaults to `true`
-  - Controlled rebuild workers can now opt out of startup-time BM25 backfill by setting `KNOWLEDGE_BM25_BACKFILL_ON_INIT=false`
-  - The active low-worker rebuild uses this flag so `SYNC-1212B10E90D5` can enter document processing before the final one-shot BM25 rebuild
+  - No new RAG table migrations were introduced during this merge.
+  - No benchmark runs, eval results, review samples, or knowledge documents were rewritten as part of the branch consolidation.
+  - `scripts/run_rag_benchmark.py` can now import supported benchmark suites into dataset snapshots before running the benchmark, while still defaulting to the mixed-route JSON dataset when no explicit source is passed.
+  - Scorecard case-result payloads now derive `actual_answer_text`, `expected_answer_text`, `expected_route`, `actual_route`, and `route_correct` from stored `trace_payload` so route-aware benchmark rows remain inspectable without changing the existing eval-results schema.
+  - The scorecard UI now exposes `external_benchmark` in the source filter and renders a case-results table with expected-vs-actual answer comparisons.
 - Verification:
-  - `./.venv/bin/python -m unittest backend.tests.test_repository_configuration.RepositoryConfigurationTests.test_knowledge_repository_reads_bm25_backfill_on_init_flag backend.tests.test_knowledge_repository_bm25.KnowledgeRepositoryBm25HookTests.test_initialize_skips_bm25_backfill_when_disabled`
-  - `./.venv/bin/python -m unittest backend.tests.test_repository_configuration backend.tests.test_knowledge_repository_bm25 backend.tests.test_knowledge_ingestion backend.tests.test_agora_doc_sync`
-
-## 2026-03-24 - Retry transient DB disconnects during local source replay
-
-- Summary: Added bounded retry logic to `local_source_sync.ingest_source_document()` so local direct-ingest replay retries transient PostgreSQL/SSL disconnects instead of permanently failing the document on the first dropped connection.
-- Reason: After the init-backfill issue was removed, the long-running official-doc replay still hit intermittent `psycopg.OperationalError` failures such as `SSL error: unexpected eof while reading` during chunk-run persistence. Without retry, a multi-hour rebuild would accumulate many random failures unrelated to document content.
-- Affected files or config:
-  - `backend/services/local_source_sync.py`
-  - `backend/tests/test_local_source_sync.py`
-  - `docs/rag_change_log.md`
-- Data impact:
-  - Local source replay now retries retryable storage failures up to three attempts before marking the source document failed
-  - Successful retry attempts may leave earlier failed ingestion rows in telemetry, but the source document and final processed ingestion converge on the successful retry
-  - Online RAG query execution is unchanged; the retry only applies to local source sync / rebuild paths
-- Verification:
-  - `./.venv/bin/python -m unittest backend.tests.test_local_source_sync.LocalSourceSyncTests.test_ingest_source_document_retries_retryable_database_disconnects`
-  - `./.venv/bin/python -m unittest backend.tests.test_local_source_sync backend.tests.test_repository_configuration backend.tests.test_knowledge_repository_bm25 backend.tests.test_knowledge_ingestion backend.tests.test_agora_doc_sync`
-  - `./.venv/bin/python -m py_compile backend/services/local_source_sync.py backend/repositories/knowledge_repository.py`
+  - `python3 -m unittest backend.tests.test_dashboard_ui_contract backend.tests.test_rag_benchmark backend.tests.test_rag_benchmark_runner backend.tests.test_rag_dashboard_contract backend.tests.test_rag_benchmark_suite_importer backend.tests.test_rag_scorecard_repository`
+  - `python3 -m py_compile backend/services/rag_benchmark.py backend/services/rag_benchmark_runner.py backend/repositories/knowledge_repository.py backend/tests/test_dashboard_ui_contract.py backend/tests/test_rag_benchmark_runner.py scripts/run_rag_benchmark.py`
