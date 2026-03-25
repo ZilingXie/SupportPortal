@@ -19,6 +19,45 @@ from backend.repositories.knowledge_repository import (
 from backend.repositories.ticket_repository import PostgresTicketRepository, create_ticket_repository
 
 
+class _BenchmarkPrepCursor:
+    def __init__(self, *, fetchall_results=None, fetchone_results=None) -> None:
+        self._fetchall_results = list(fetchall_results or [])
+        self._fetchone_results = list(fetchone_results or [])
+
+    def execute(self, *_args, **_kwargs) -> None:
+        return None
+
+    def fetchall(self):
+        if not self._fetchall_results:
+            return []
+        return self._fetchall_results.pop(0)
+
+    def fetchone(self):
+        if not self._fetchone_results:
+            return None
+        return self._fetchone_results.pop(0)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
+class _BenchmarkPrepConnection:
+    def __init__(self, cursor: _BenchmarkPrepCursor) -> None:
+        self._cursor = cursor
+
+    def cursor(self) -> _BenchmarkPrepCursor:
+        return self._cursor
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
 class RepositoryConfigurationTests(unittest.TestCase):
     def test_ticket_repository_requires_ticket_db_dsn(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
@@ -83,7 +122,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIsInstance(repository, PostgresKnowledgeRepository)
         self.assertEqual(repository._schema, "supportportal")
         self.assertEqual(repository._vector_schema, "supportportal")
-        self.assertEqual(repository._vector_table_name, "docagent_chunks_bge_large_en_v1_5_1024")
+        self.assertEqual(repository._vector_table_name, "docagent_chunks_bge_m3_1024")
 
     def test_knowledge_repository_reads_connect_retry_settings(self) -> None:
         with patch.dict(
@@ -103,6 +142,21 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertEqual(repository._connect_timeout, 15)
         self.assertEqual(repository._connect_retries, 3)
         self.assertAlmostEqual(repository._connect_retry_delay_seconds, 0.25)
+
+    def test_knowledge_repository_reads_bm25_backfill_on_init_flag(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "PGVECTOR_DSN": "postgresql://example",
+                "PGVECTOR_DIM": "1024",
+                "SILICONFLOW_EMBEDDING_DIMENSIONS": "1024",
+                "KNOWLEDGE_BM25_BACKFILL_ON_INIT": "false",
+            },
+            clear=True,
+        ):
+            repository = create_knowledge_repository()
+        self.assertIsInstance(repository, PostgresKnowledgeRepository)
+        self.assertFalse(repository._bm25_backfill_on_init)
 
     def test_knowledge_repository_retries_connect_timeout(self) -> None:
         repository = PostgresKnowledgeRepository(
@@ -150,6 +204,51 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertEqual(_vector_type_dimension("vector(1024)"), 1024)
         self.assertEqual(_vector_type_dimension("VECTOR(3072)"), 3072)
         self.assertIsNone(_vector_type_dimension("text"))
+
+    def test_vector_table_bootstrap_runs_once_per_signature(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example")
+        cursor_one = object()
+        cursor_two = object()
+        calls: list[tuple[object, int]] = []
+
+        def _fake_ensure(self, *, cur, vector_dim):
+            calls.append((cur, vector_dim))
+
+        with patch.object(PostgresKnowledgeRepository, "_ensure_vector_table", autospec=True, side_effect=_fake_ensure):
+            repository._ensure_vector_table_bootstrap(cur=cursor_one, vector_dim=1024)
+            repository._ensure_vector_table_bootstrap(cur=cursor_two, vector_dim=1024)
+            repository._ensure_vector_table_bootstrap(cur=cursor_two, vector_dim=2048)
+
+        self.assertEqual(calls, [(cursor_one, 1024), (cursor_two, 2048)])
+
+    def test_prepare_rag_benchmark_run_skips_full_initialize_when_runtime_relations_exist(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        existing_relations = [
+            (schema_name, table_name)
+            for schema_name, table_names in repository._benchmark_runtime_required_relations().items()
+            for table_name in table_names
+        ]
+        cursor = _BenchmarkPrepCursor(
+            fetchall_results=[existing_relations],
+            fetchone_results=[("vector(1024)",)],
+        )
+
+        with patch.object(repository, "_connect", return_value=_BenchmarkPrepConnection(cursor)):
+            with patch("backend.repositories.knowledge_repository.validate_embedding_provider_dim", return_value=1024):
+                with patch.object(repository, "initialize") as initialize_mock:
+                    repository.prepare_rag_benchmark_run()
+
+        initialize_mock.assert_not_called()
+
+    def test_prepare_rag_benchmark_run_falls_back_to_initialize_when_relations_are_missing(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        cursor = _BenchmarkPrepCursor(fetchall_results=[[]])
+
+        with patch.object(repository, "_connect", return_value=_BenchmarkPrepConnection(cursor)):
+            with patch.object(repository, "initialize") as initialize_mock:
+                repository.prepare_rag_benchmark_run()
+
+        initialize_mock.assert_called_once_with()
 
 
 if __name__ == "__main__":

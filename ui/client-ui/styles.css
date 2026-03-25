@@ -323,6 +323,7 @@ button {
 .btn:focus-visible,
 .session-btn:focus-visible,
 .sidebar-nav-item:focus-visible,
+.composer-icon-button:focus-visible,
 .send-btn:focus-visible {
   outline: none;
   border-color: rgba(0, 100, 147, 0.48);
@@ -1504,64 +1505,76 @@ a.citation-pill:hover {
 }
 
 .chat-input-inner {
+  position: relative;
   width: min(100%, 980px);
   margin: 0 auto;
   overflow: hidden;
   border-radius: 28px;
   background: rgba(255, 255, 255, 0.9);
   box-shadow: 0 24px 44px rgba(52, 61, 150, 0.1);
+  transition: box-shadow 0.18s ease;
 }
 
-.composer-toolbar {
-  display: flex;
+.chat-input-inner:focus-within {
+  box-shadow:
+    0 0 0 4px rgba(0, 100, 147, 0.12),
+    0 24px 44px rgba(52, 61, 150, 0.1);
+}
+
+.chat-input-inner .textarea {
+  min-height: 132px;
+  padding: 22px 88px 24px 24px;
+}
+
+.composer-icon-button {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  width: 48px;
+  height: 48px;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 14px 18px 18px;
-  background: rgba(239, 244, 251, 0.92);
-  box-shadow: inset 0 1px 0 rgba(110, 120, 130, 0.12);
-  flex-wrap: wrap;
-}
-
-.composer-secondary-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.composer-status {
-  color: var(--ink-muted);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.send-btn {
-  min-height: 44px;
-  padding: 0 22px;
+  justify-content: center;
+  border: 1px solid rgba(110, 120, 130, 0.14);
   border-radius: 16px;
-  cursor: pointer;
-  color: #fff;
-  font-family: "Manrope", "Inter", sans-serif;
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-container) 100%);
-  box-shadow: 0 18px 34px rgba(0, 100, 147, 0.22);
+  background: rgba(239, 244, 251, 0.96);
+  color: var(--ink-soft);
+  box-shadow: 0 14px 28px rgba(52, 61, 150, 0.1);
   transition:
     transform 0.18s ease,
     box-shadow 0.18s ease,
+    background 0.18s ease,
+    color 0.18s ease,
     opacity 0.18s ease;
 }
 
-.send-btn:hover:not(:disabled) {
-  transform: translateY(-1px) scale(1.01);
+.composer-icon-button .material-symbols-outlined {
+  font-size: 20px;
+  font-variation-settings: "FILL" 1, "wght" 500, "GRAD" 0, "opsz" 20;
 }
 
-.send-btn:active:not(:disabled) {
+.send-btn {
+  color: #fff;
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-container) 100%);
+  box-shadow: 0 18px 34px rgba(0, 100, 147, 0.22);
+}
+
+.composer-stop-btn {
+  background: rgba(239, 244, 251, 0.96);
+  color: var(--secondary);
+}
+
+.composer-icon-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 18px 32px rgba(52, 61, 150, 0.14);
+}
+
+.composer-stop-btn:hover:not(:disabled) {
+  background: rgba(224, 224, 255, 0.7);
+}
+
+.composer-icon-button:active:not(:disabled) {
   transform: scale(0.98);
 }
 
@@ -1898,17 +1911,17 @@ a.citation-pill:hover {
     padding: 18px 18px 20px;
   }
 
-  .composer-toolbar {
-    align-items: flex-start;
+  .chat-input-inner .textarea {
+    min-height: 118px;
+    padding-right: 78px;
+    padding-bottom: 20px;
   }
 
-  .composer-secondary-actions,
-  .composer-status,
-  .send-btn {
-    width: 100%;
-  }
-
-  .send-btn {
-    justify-content: center;
+  .composer-icon-button {
+    right: 14px;
+    bottom: 14px;
+    width: 44px;
+    height: 44px;
+    border-radius: 14px;
   }
 }

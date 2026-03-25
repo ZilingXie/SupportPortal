@@ -244,6 +244,52 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn(".filter-select-panel", css)
         self.assertIn(".filter-select-option.is-selected", css)
 
+    def test_client_chat_composer_uses_inline_icon_actions_without_toolbar(self) -> None:
+        css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
+        self.assertIn(".composer-icon-button", css)
+        self.assertNotIn(".composer-toolbar", css)
+
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const ticket = getOrCreateDraftTicket(state.user.id);
+                state.view = "chat-ticket";
+                state.activeTicketId = ticket.id;
+
+                const idleHtml = renderChatTicket();
+                if (idleHtml.includes("composer-toolbar")) {
+                  throw new Error("Chat composer should not render the old toolbar block.");
+                }
+                if (idleHtml.includes('data-action="go-tickets"')) {
+                  throw new Error("Chat composer should not render Session History inside the input area.");
+                }
+                if (!idleHtml.includes('class="composer-icon-button send-btn"')) {
+                  throw new Error("Chat composer should render an inline send icon button.");
+                }
+                if (!idleHtml.includes('aria-label="Send Request"')) {
+                  throw new Error("Send icon button should expose an accessible label.");
+                }
+
+                state.isSending = true;
+                state.pendingTicketId = ticket.id;
+
+                const sendingHtml = renderChatTicket();
+                if (!sendingHtml.includes('class="composer-icon-button composer-stop-btn"')) {
+                  throw new Error("Sending state should render an inline stop icon button.");
+                }
+                if (!sendingHtml.includes('data-action="stop-generation"')) {
+                  throw new Error("Stop icon button should keep the existing stop-generation action.");
+                }
+                if (!sendingHtml.includes('aria-label="Stop Generation"')) {
+                  throw new Error("Stop icon button should expose an accessible label.");
+                }
+                """
+            )
+        )
+
     def test_client_async_polling_ignores_placeholder_reply_until_final_answer_arrives(self) -> None:
         self.run_client_app_script(
             textwrap.dedent(

@@ -51,6 +51,11 @@ const PRIORITY_RANK = {
   normal: 2,
   low: 1,
 };
+const POOL_STATUS_RANK = {
+  waiting_for_engineer: 3,
+  open: 2,
+  resolved: 1,
+};
 const DEFAULT_FETCH_TIMEOUT_MS = 25000;
 const TELL_AI_FETCH_TIMEOUT_MS = 70000;
 
@@ -1176,6 +1181,13 @@ async function detectStorageMode() {
 
 function sortTicketsByPriority(items) {
   return [...items].sort((a, b) => {
+    const statusRankA =
+      POOL_STATUS_RANK[String(a.status || "open").toLowerCase()] || 0;
+    const statusRankB =
+      POOL_STATUS_RANK[String(b.status || "open").toLowerCase()] || 0;
+    if (statusRankA !== statusRankB) {
+      return statusRankB - statusRankA;
+    }
     const rankA = PRIORITY_RANK[String(a.priority || "normal").toLowerCase()] || PRIORITY_RANK.normal;
     const rankB = PRIORITY_RANK[String(b.priority || "normal").toLowerCase()] || PRIORITY_RANK.normal;
     if (rankA !== rankB) {
@@ -1229,7 +1241,7 @@ function renderTicketPoolView() {
         rows.length === 0
           ? '<div class="empty-state">No tickets match the current filters.</div>'
           : `
-      <section class="ticket-pool-grid">
+      <section class="ticket-pool-list" role="list">
         ${rows
           .map((ticket) => {
             const ticketId = String(ticket.ticket_id || "-");
@@ -1245,15 +1257,16 @@ function renderTicketPoolView() {
               : parsedEngineerRequest.formatted || pendingQuestion;
             const pendingPreview =
               previewSource.length > 180 ? `${previewSource.slice(0, 180)}...` : previewSource;
+            const waitingRowClass = status === "waiting_for_engineer" ? " ticket-row-waiting" : "";
 
             return `
-              <article class="ticket-card">
-                <div class="ticket-card-head">
-                  <div>
-                    <p class="ticket-card-label mono">${escapeHtml(ticketId)}</p>
-                    <h3 class="ticket-card-title">${escapeHtml(subject)}</h3>
+              <article class="ticket-row${waitingRowClass}" role="listitem">
+                <div class="ticket-row-header">
+                  <div class="ticket-row-title-group">
+                    <p class="ticket-row-kicker mono">${escapeHtml(ticketId)}</p>
+                    <h3 class="ticket-row-title">${escapeHtml(subject)}</h3>
                   </div>
-                  <div class="ticket-card-badges">
+                  <div class="ticket-row-badges">
                     <span class="priority-badge priority-${escapeHtml(priority)}">${escapeHtml(
                       priorityLabel(priority)
                     )}</span>
@@ -1261,33 +1274,34 @@ function renderTicketPoolView() {
                   </div>
                 </div>
 
-                <div class="ticket-card-meta">
-                  <span><strong>Requester</strong> ${escapeHtml(requester)}</span>
-                  <span><strong>Updated</strong> ${escapeHtml(formatDateTime(ticket.updated_at))}</span>
-                  <span><strong>Created</strong> ${escapeHtml(formatDateTime(ticket.created_at))}</span>
-                </div>
-
-                ${
-                  pendingQuestion
-                    ? `
-                  <div class="ticket-card-snippet">
-                    <span class="ticket-card-snippet-label">Engineer Request</span>
-                    <p>${escapeHtml(pendingPreview)}</p>
+                <div class="ticket-row-secondary">
+                  <div class="ticket-row-meta">
+                    <span><strong>Requester</strong> ${escapeHtml(requester)}</span>
+                    <span><strong>Updated</strong> ${escapeHtml(formatDateTime(ticket.updated_at))}</span>
+                    <span><strong>Created</strong> ${escapeHtml(formatDateTime(ticket.created_at))}</span>
+                    ${
+                      pendingQuestion
+                        ? `
+                    <span class="ticket-row-request">
+                      <strong>Engineer Request</strong>
+                      ${escapeHtml(pendingPreview)}
+                    </span>
+                  `
+                        : ""
+                    }
                   </div>
-                `
-                    : ""
-                }
 
-                <div class="ticket-card-footer">
-                  <span class="mode-pill mode-pill-${escapeHtml(mode)}">${escapeHtml(modeLabel(mode))}</span>
-                  <button
-                    class="btn btn-primary action-btn"
-                    data-action="view-detail"
-                    data-ticket-id="${escapeHtml(ticketId)}"
-                    type="button"
-                  >
-                    Open Workspace
-                  </button>
+                  <div class="ticket-row-actions">
+                    <span class="mode-pill mode-pill-${escapeHtml(mode)}">${escapeHtml(modeLabel(mode))}</span>
+                    <button
+                      class="btn btn-primary action-btn"
+                      data-action="view-detail"
+                      data-ticket-id="${escapeHtml(ticketId)}"
+                      type="button"
+                    >
+                      Open Workspace
+                    </button>
+                  </div>
                 </div>
               </article>
             `;

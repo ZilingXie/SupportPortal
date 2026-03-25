@@ -12,9 +12,9 @@ from functools import lru_cache
 from typing import Any, Protocol
 
 DEFAULT_EMBEDDING_PROVIDER = "siliconflow"
-DEFAULT_EMBEDDING_MODEL_ID = "BAAI/bge-large-en-v1.5"
+DEFAULT_EMBEDDING_MODEL_ID = "BAAI/bge-m3"
 DEFAULT_EMBEDDING_BATCH_SIZE = 16
-DEFAULT_PGVECTOR_TABLE = "docagent_chunks_bge_large_en_v1_5_1024"
+DEFAULT_PGVECTOR_TABLE = "docagent_chunks_bge_m3_1024"
 DEFAULT_PGVECTOR_SCHEMA = "supportportal"
 DEFAULT_PRIMARY_CHUNK_STRATEGY = "markdown_header_v1"
 DEFAULT_SHADOW_CHUNK_STRATEGY = "semantic_qwen3_v1"

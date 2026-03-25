@@ -6,6 +6,63 @@ from typing import Any
 
 _ASCII_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")
 _CJK_SEGMENT_RE = re.compile(r"[\u4e00-\u9fff]+")
+_BM25_QUERY_STOPWORDS_EN = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "but",
+    "by",
+    "can",
+    "could",
+    "did",
+    "do",
+    "does",
+    "for",
+    "from",
+    "how",
+    "if",
+    "in",
+    "into",
+    "is",
+    "it",
+    "just",
+    "of",
+    "on",
+    "only",
+    "or",
+    "over",
+    "should",
+    "than",
+    "that",
+    "the",
+    "their",
+    "them",
+    "then",
+    "these",
+    "they",
+    "this",
+    "those",
+    "to",
+    "under",
+    "use",
+    "used",
+    "using",
+    "was",
+    "what",
+    "when",
+    "where",
+    "which",
+    "while",
+    "who",
+    "why",
+    "with",
+    "without",
+    "would",
+}
 
 
 def _clean_text(value: Any) -> str:
@@ -75,6 +132,8 @@ def tokenize_bm25_query(text: str) -> list[str]:
     unique_tokens: list[str] = []
     seen: set[str] = set()
     for token in tokens:
+        if token in _BM25_QUERY_STOPWORDS_EN:
+            continue
         if token in seen:
             continue
         seen.add(token)

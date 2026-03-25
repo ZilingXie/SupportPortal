@@ -48,6 +48,21 @@ Creates an Agora project.
 """
 
 
+SAMPLE_OFFICIAL_TITLE_ONLY_MARKDOWN = """---
+title: Preload channels
+description: Preloading channels for faster rendering.
+platform: web
+exported_from: https://docs.agora.io/en/video-calling/best-practices/preload-channels?platform=web
+exported_on: '2026-01-20T05:44:18.970947Z'
+exported_file: preload-channels_web.md
+---
+
+[HTML Version](https://docs.agora.io/en/video-calling/best-practices/preload-channels?platform=web)
+
+# Preload channels
+"""
+
+
 SAMPLE_TECHNICAL_ARTICLE = """**Issue Description:**
 A livestream archive was missing approximately the first 64 seconds of content. The delay occurred between the initiation of the Cloud Transcoder creation request and the time the first RTMP frame was received by the streaming service (AWS IVS).
 
@@ -98,10 +113,40 @@ In most cases, this type of delay is caused by startup latency within the Cloud 
 """
 
 
+def _build_large_pricing_markdown() -> str:
+    table_rows = "\n".join(
+        f"| Messaging | Endpoint {index} | Supports overage billing with repeated quota and pricing details for large scale enterprise workloads {index} |"
+        for index in range(1, 181)
+    )
+    return f"""---
+title: Pricing plan details
+description: Lists the details of the pricing plans for Agora Chat.
+platform: android
+exported_from: https://docs.agora.io/en/agora-chat/reference/pricing-plan-details
+exported_on: '2026-01-20T05:42:25.211420Z'
+exported_file: pricing-plan-details.md
+---
+
+[HTML Version](https://docs.agora.io/en/agora-chat/reference/pricing-plan-details)
+
+# Pricing plan details
+
+## RESTful APIs
+
+### RESTful API call detailed pricing
+
+Submit a support ticket if you want to lift the limits and pay for overage charge.
+
+| Category | Rest API Description | Notes |
+| :--- | :--- | :--- |
+{table_rows}
+"""
+
+
 class KnowledgeIngestionParsingTests(unittest.TestCase):
     class _FakeProvider:
         provider_name = "siliconflow"
-        model_id = "BAAI/bge-large-en-v1.5"
+        model_id = "BAAI/bge-m3"
         vector_dim = 1024
 
         def embed_documents(self, texts: list[str]) -> list[list[float]]:
@@ -149,6 +194,19 @@ class KnowledgeIngestionParsingTests(unittest.TestCase):
         self.assertEqual(document.knowledge_type, "official")
         self.assertEqual(document.source_type, "official_markdown_upload")
         self.assertTrue(any(section.h2 == "Create a project" for section in document.sections))
+
+    def test_parse_official_markdown_content_generates_overview_block_for_title_only_pages(self) -> None:
+        document = parse_official_markdown_content(
+            raw_markdown=SAMPLE_OFFICIAL_TITLE_ONLY_MARKDOWN,
+            file_name="preload-channels_web.md",
+            ingestion_id="KI-TEST-OFFICIAL-TITLE-ONLY",
+        )
+
+        self.assertEqual(document.title, "Preload channels")
+        self.assertGreaterEqual(len(document.sections), 1)
+        self.assertGreaterEqual(len(document.content_blocks), 1)
+        self.assertEqual(document.sections[0].h2, "Overview")
+        self.assertIn("Preloading channels for faster rendering.", document.content_blocks[0].text)
 
     def test_parse_official_markdown_ignores_fenced_code_headings_and_preserves_heading_path(self) -> None:
         document = parse_official_markdown_file(
@@ -297,6 +355,24 @@ class KnowledgeIngestionParsingTests(unittest.TestCase):
             all(isinstance(row["metadata"].get("section_path"), list) for row in rows)
         )
 
+    def test_official_primary_chunk_rows_split_large_table_sections(self) -> None:
+        document = parse_official_markdown_content(
+            raw_markdown=_build_large_pricing_markdown(),
+            file_name="pricing-plan-details.md",
+            ingestion_id="KI-TEST-OFFICIAL-LARGE-TABLE-PRIMARY",
+        )
+
+        rows = _build_chunk_rows(document, document.metadata, provider=self._FakeProvider())
+        target_rows = [
+            row
+            for row in rows
+            if row["metadata"].get("section_path") == ["RESTful APIs", "RESTful API call detailed pricing"]
+        ]
+
+        self.assertGreaterEqual(len(target_rows), 2)
+        self.assertTrue(all(row["metadata"].get("chunk_type") == "rules_table" for row in target_rows))
+        self.assertLess(max(row["chunk_token_count"] for row in target_rows), 1200)
+
     def test_shadow_chunk_rows_capture_shadow_role_and_strategy(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             document = parse_official_markdown_content(
@@ -356,6 +432,27 @@ class KnowledgeIngestionParsingTests(unittest.TestCase):
         self.assertTrue(all(row["index_role"] == "shadow" for row in result.rows))
         self.assertTrue(all(isinstance(row["metadata"].get("section_path"), list) for row in result.rows))
         self.assertLess(len(result.rows), 80)
+
+    def test_official_shadow_chunk_rows_split_large_table_sections(self) -> None:
+        document = parse_official_markdown_content(
+            raw_markdown=_build_large_pricing_markdown(),
+            file_name="pricing-plan-details.md",
+            ingestion_id="KI-TEST-OFFICIAL-LARGE-TABLE-SHADOW",
+        )
+
+        result = _build_shadow_chunk_rows(
+            document,
+            document.metadata,
+            provider=self._FakeProvider(),
+        )
+        target_rows = [
+            row
+            for row in result.rows
+            if row["metadata"].get("section_path") == ["RESTful APIs", "RESTful API call detailed pricing"]
+        ]
+
+        self.assertGreaterEqual(len(target_rows), 2)
+        self.assertLess(max(row["chunk_token_count"] for row in target_rows), 1200)
 
     def test_parse_technical_article_records_missing_sections_as_warnings(self) -> None:
         document = parse_technical_article(
