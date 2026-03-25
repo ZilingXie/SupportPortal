@@ -14,31 +14,43 @@ const ragProductFilterEl = document.getElementById("rag-product-filter");
 const ragLanguageFilterEl = document.getElementById("rag-language-filter");
 const ragExperimentFilterEl = document.getElementById("rag-experiment-filter");
 
+const caseDetailModalEl = document.getElementById("case-detail-modal");
+const caseDetailDialogEl = document.getElementById("case-detail-dialog");
+const caseDetailTitleEl = document.getElementById("case-detail-title");
+const caseDetailBodyEl = document.getElementById("case-detail-body");
+const caseDetailDiagnosisButtonEl = document.querySelector("[data-open-full-diagnosis]");
 const reportDrawerEl = document.getElementById("report-drawer");
 const reportDrawerTitleEl = document.getElementById("report-drawer-title");
 const reportDrawerBodyEl = document.getElementById("report-drawer-body");
 
 const ragPageContainers = {
-  "experiments": { root: document.getElementById("rag-experiments-page") },
-  "datasets": { root: document.getElementById("rag-datasets-page") },
+  "scorecard": { root: document.getElementById("rag-scorecard-page") },
+  "routing": { root: document.getElementById("rag-routing-page") },
+  "retrieval": { root: document.getElementById("rag-retrieval-page") },
+  "generation": { root: document.getElementById("rag-generation-page") },
+  "data-supply": { root: document.getElementById("rag-data-supply-page") },
   "diagnosis": { root: document.getElementById("rag-diagnosis-page") },
-  "knowledge-supply": { root: document.getElementById("rag-knowledge-supply-page") },
-  "production-signals": { root: document.getElementById("rag-production-signals-page") },
   "review": { root: document.getElementById("rag-review-page") },
 };
 
 const PAGE_LABELS = {
-  experiments: "Experiments",
-  datasets: "Datasets",
+  scorecard: "Scorecard",
+  routing: "Routing",
+  retrieval: "Retrieval",
+  generation: "Generation",
+  "data-supply": "Data Supply",
   diagnosis: "Diagnosis",
-  "knowledge-supply": "Knowledge Supply",
-  "production-signals": "Production Signals",
   review: "Review Queue",
 };
 
-let currentDashboardTab = "experiments";
+let currentDashboardTab = "scorecard";
 let loadToken = 0;
 const pageCache = {};
+const caseDetailCache = {};
+let caseDetailLoadToken = 0;
+let diagnosisDetailLoadToken = 0;
+let lastCaseDetailFocusEl = null;
+let activeCaseDetailState = null;
 
 const ragFilters = {
   range: "7d",
@@ -69,6 +81,17 @@ function escapeHtml(value) {
 
 function normalizeString(value) {
   return String(value ?? "").trim();
+}
+
+function normalizeDashboardTab(value) {
+  const normalized = normalizeString(value).toLowerCase();
+  if (normalized === "experiments" || normalized === "production-signals") {
+    return "scorecard";
+  }
+  if (normalized === "datasets" || normalized === "knowledge-supply") {
+    return "data-supply";
+  }
+  return PAGE_LABELS[normalized] ? normalized : "scorecard";
 }
 
 function normalizeStringList(value) {
@@ -325,6 +348,345 @@ function buildExperimentOption(option) {
   const label = option?.label || option?.experiment_id || option?.eval_run_id || "Experiment";
   const meta = option?.finished_at ? ` · ${formatDateTime(option.finished_at)}` : "";
   return `<option value="${escapeHtml(option.experiment_id || option.eval_run_id || "")}">${escapeHtml(label + meta)}</option>`;
+}
+
+function findExperimentOption(options, identifier) {
+  const normalizedIdentifier = normalizeString(identifier);
+  if (!normalizedIdentifier) {
+    return null;
+  }
+  return (
+    (options || []).find(
+      (option) =>
+        normalizedIdentifier === normalizeString(option?.experiment_id) ||
+        normalizedIdentifier === normalizeString(option?.eval_run_id)
+    ) || null
+  );
+}
+
+function resolveCandidateExperiment(summary, candidateIdentifier = null) {
+  const options = Array.isArray(summary?.available_experiments) ? summary.available_experiments : [];
+  if (candidateIdentifier !== null) {
+    const explicitCandidate = findExperimentOption(options, candidateIdentifier);
+    if (explicitCandidate) {
+      return explicitCandidate;
+    }
+    if (!normalizeString(candidateIdentifier)) {
+      return options[0] || null;
+    }
+  }
+  return findExperimentOption(options, summary?.candidate_experiment_id) || options[0] || null;
+}
+
+function getComparableBaselineOptions(summary, candidateIdentifier = null) {
+  const options = Array.isArray(summary?.available_experiments) ? summary.available_experiments : [];
+  const candidate = resolveCandidateExperiment(summary, candidateIdentifier);
+  const candidateBenchmarkVersion = normalizeString(candidate?.benchmark_version || summary?.benchmark_version);
+  if (!candidateBenchmarkVersion) {
+    return options;
+  }
+  const comparableOptions = options.filter(
+    (option) => normalizeString(option?.benchmark_version) === candidateBenchmarkVersion
+  );
+  return comparableOptions.length ? comparableOptions : options;
+}
+
+function isComparableBaselineSelection(summary, baselineIdentifier, candidateIdentifier = null) {
+  const normalizedBaselineIdentifier = normalizeString(baselineIdentifier);
+  if (!normalizedBaselineIdentifier) {
+    return true;
+  }
+  return getComparableBaselineOptions(summary, candidateIdentifier).some(
+    (option) =>
+      normalizedBaselineIdentifier === normalizeString(option?.experiment_id) ||
+      normalizedBaselineIdentifier === normalizeString(option?.eval_run_id)
+  );
+}
+
+function clearIncompatibleBaselineSelection(summary, candidateIdentifier = null) {
+  if (!isComparableBaselineSelection(summary, ragFilters.baseline_experiment_id, candidateIdentifier)) {
+    ragFilters.baseline_experiment_id = "";
+    return true;
+  }
+  return false;
+}
+
+function buildExperimentComparisonControls(summary) {
+  const options = Array.isArray(summary?.available_experiments) ? summary.available_experiments : [];
+  const candidate = resolveCandidateExperiment(summary);
+  const candidateBenchmarkVersion = normalizeString(candidate?.benchmark_version || summary?.benchmark_version);
+  const comparableBaselineOptions = getComparableBaselineOptions(summary);
+  const candidateIdentifier = normalizeString(summary?.candidate_experiment_id || candidate?.experiment_id || candidate?.eval_run_id);
+  const hasAlternateBaseline = comparableBaselineOptions.some(
+    (option) => normalizeString(option?.experiment_id || option?.eval_run_id) !== candidateIdentifier
+  );
+  const baselineNote = hasAlternateBaseline
+    ? "Only runs from the same benchmark version can be used as the baseline."
+    : "Only runs from the same benchmark version can be used as the baseline. No alternate baseline is available for this benchmark version yet.";
+  const sharedFootnote = candidateBenchmarkVersion
+    ? `Candidate defines the comparison pool. Benchmark version: ${candidateBenchmarkVersion}. ${baselineNote}`
+    : `Candidate defines the comparison pool. ${baselineNote}`;
+  return `
+    <div class="comparison-controls">
+      <div class="comparison-controls-grid hero-actions">
+        <label class="filter-field">
+          <span>Baseline</span>
+          <select id="baseline-experiment-selector" ${hasAlternateBaseline ? "" : "disabled"}>
+            <option value="">Auto</option>
+            ${comparableBaselineOptions.map(buildExperimentOption).join("")}
+          </select>
+        </label>
+        <label class="filter-field">
+          <span>Candidate</span>
+          <select id="candidate-experiment-selector">
+            <option value="">Auto</option>
+            ${options.map(buildExperimentOption).join("")}
+          </select>
+        </label>
+      </div>
+      <p class="comparison-controls-note">${escapeHtml(sharedFootnote)}</p>
+    </div>
+  `;
+}
+
+function caseDetailCacheKey(prefix, values = []) {
+  return [prefix, ...values.map((item) => normalizeString(item) || "-")].join(":");
+}
+
+async function fetchBenchmarkCaseDetail(evalRunId, testCaseId, baselineEvalRunId = "") {
+  const key = caseDetailCacheKey("benchmark", [evalRunId, testCaseId, baselineEvalRunId]);
+  if (caseDetailCache[key]) {
+    return caseDetailCache[key];
+  }
+  const params = new URLSearchParams({
+    eval_run_id: normalizeString(evalRunId),
+    test_case_id: normalizeString(testCaseId),
+  });
+  if (normalizeString(baselineEvalRunId)) {
+    params.set("baseline_eval_run_id", normalizeString(baselineEvalRunId));
+  }
+  const payload = await fetchJson(`/api/dashboard/rag/cases/benchmark-detail?${params.toString()}`);
+  caseDetailCache[key] = payload;
+  return payload;
+}
+
+async function fetchLiveCaseDetail(requestId) {
+  const key = caseDetailCacheKey("live", [requestId]);
+  if (caseDetailCache[key]) {
+    return caseDetailCache[key];
+  }
+  const params = new URLSearchParams({ request_id: normalizeString(requestId) });
+  const payload = await fetchJson(`/api/dashboard/rag/cases/live-detail?${params.toString()}`);
+  caseDetailCache[key] = payload;
+  return payload;
+}
+
+function buildCollapsiblePanel({ title, subtitle, count, body, open = true, tone = "neutral", extraClass = "" }) {
+  return `
+    <details class="collapsible-panel ${escapeHtml(extraClass)}" ${open ? "open" : ""}>
+      <summary class="collapsible-summary">
+        <div class="collapsible-copy">
+          <h3>${escapeHtml(title)}</h3>
+          ${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ""}
+        </div>
+        <div class="collapsible-meta">
+          <span class="chip chip-${escapeHtml(tone)}">${escapeHtml(formatNumber(count || 0))} cases</span>
+        </div>
+      </summary>
+      <div class="collapsible-body">
+        ${body}
+      </div>
+    </details>
+  `;
+}
+
+function buildCaseMetricGrid(items, className = "case-metric-grid") {
+  const normalizedItems = (items || []).filter((item) => item && item.label);
+  if (!normalizedItems.length) {
+    return "";
+  }
+  return `
+    <dl class="${escapeHtml(className)}">
+      ${normalizedItems
+        .map(
+          (item) => `
+            <div>
+              <dt>${escapeHtml(item.label)}</dt>
+              <dd>${escapeHtml(item.displayValue || formatMetricValue(item.value, item.key || item.label))}</dd>
+            </div>
+          `
+        )
+        .join("")}
+    </dl>
+  `;
+}
+
+function buildCaseExplorerItem(row, metricItems, { baselineEvalRunId = "" } = {}) {
+  const headerChips = [
+    `<span class="chip chip-neutral">${escapeHtml(humanizeLabel(row.category || "unknown"))}</span>`,
+  ];
+  if (row.failure_bucket) {
+    headerChips.push(`<span class="chip chip-warning">${escapeHtml(humanizeLabel(row.failure_bucket))}</span>`);
+  }
+  return `
+    <article class="case-explorer-item">
+      <button
+        type="button"
+        class="case-explorer-button"
+        data-open-case-detail-benchmark="${escapeHtml(row.eval_run_id || "")}"
+        data-open-case-detail-test-case="${escapeHtml(row.test_case_id || "")}"
+        data-open-case-detail-baseline="${escapeHtml(baselineEvalRunId || "")}"
+      >
+        <div class="case-explorer-header">
+          ${headerChips.join("")}
+        </div>
+        <h4>${escapeHtml(row.question || "Untitled case")}</h4>
+        ${buildCaseMetricGrid(metricItems)}
+      </button>
+    </article>
+  `;
+}
+
+function buildRoutingCaseRow(row, { baselineEvalRunId = "" } = {}) {
+  return buildCaseExplorerItem(
+    row,
+    [
+      {
+        label: "Expected Route",
+        value: row.expected_route_family,
+        displayValue: humanizeLabel(row.expected_route_family || "unknown"),
+      },
+      {
+        label: "Actual Route",
+        value: row.actual_route_family,
+        displayValue: humanizeLabel(row.actual_route_family || "unknown"),
+      },
+    ],
+    { baselineEvalRunId }
+  );
+}
+
+function buildRetrievalCaseRow(row, { baselineEvalRunId = "" } = {}) {
+  return buildCaseExplorerItem(
+    row,
+    [
+      { label: "Evidence Hit@5", value: row.evidence_hit_at_5, key: "evidence_hit_at_5" },
+      { label: "Coverage", value: row.evidence_coverage, key: "coverage_rate" },
+      { label: "Noise", value: row.noise_rate, key: "noise_rate" },
+    ],
+    { baselineEvalRunId }
+  );
+}
+
+function buildGenerationCaseRow(row, { baselineEvalRunId = "" } = {}) {
+  return buildCaseExplorerItem(
+    row,
+    [
+      { label: "Answer Accuracy", value: row.answer_accuracy_score, key: "answer_accuracy_score" },
+      { label: "Faithfulness", value: row.faithfulness_score, key: "faithfulness_score" },
+      { label: "Policy Followed", value: row.response_policy_followed, key: "response_policy_followed" },
+    ],
+    { baselineEvalRunId }
+  );
+}
+
+function buildCaseExplorerSection(title, rows, options = {}) {
+  const listRows = Array.isArray(rows) ? rows : [];
+  const renderRow = options.renderRow || buildRoutingCaseRow;
+  const body = listRows.length
+    ? `<div class="case-explorer-list">
+        ${listRows.map((row) => renderRow(row, options)).join("")}
+      </div>`
+    : `<div class="empty-state">No cases in this section for the current candidate run.</div>`;
+  return buildCollapsiblePanel({
+    title,
+    subtitle: options.subtitle,
+    count: listRows.length,
+    open: options.open !== false,
+    tone: options.tone || "neutral",
+    body,
+    extraClass: "case-explorer-panel",
+  });
+}
+
+function buildRoutingCaseExplorerSection(title, rows, options = {}) {
+  return buildCaseExplorerSection(title, rows, {
+    ...options,
+    renderRow: buildRoutingCaseRow,
+  });
+}
+
+function buildDiagnosisChooserItem(item, tone = "neutral") {
+  if (item.sample_source === "live_query") {
+    return `
+      <article class="sample-item">
+        <div class="sample-item-header">
+          <span class="chip chip-${tone}">${escapeHtml(item.sample_source || "live_query")}</span>
+          ${buildChipList(item.root_cause_labels || [], tone)}
+        </div>
+        <h4>${escapeHtml(item.question || item.user_query || "Untitled sample")}</h4>
+        <div class="sample-meta">
+          <span>${escapeHtml(humanizeLabel(item.query_type || "unknown"))}</span>
+          <span>${escapeHtml(humanizeLabel(item.source_type || "unknown"))}</span>
+          ${item.created_at ? `<span>${escapeHtml(formatDateTime(item.created_at))}</span>` : ""}
+        </div>
+        <div class="sample-item-actions">
+          <button
+            type="button"
+            class="table-action-button"
+            data-select-diagnosis-live="${escapeHtml(item.request_id || "")}"
+          >
+            Inspect
+          </button>
+        </div>
+      </article>
+    `;
+  }
+  return `
+    <article class="sample-item">
+      <div class="sample-item-header">
+        <span class="chip chip-${tone}">${escapeHtml(item.sample_source || "benchmark")}</span>
+        ${buildChipList(item.root_cause_labels || [], tone)}
+      </div>
+      <h4>${escapeHtml(item.question || item.user_query || "Untitled sample")}</h4>
+      <div class="sample-meta">
+        <span>${escapeHtml(humanizeLabel(item.query_type || "unknown"))}</span>
+        <span>${escapeHtml(humanizeLabel(item.source_type || "unknown"))}</span>
+        ${
+          item.delta_quality_score !== undefined
+            ? `<span>${escapeHtml(formatMetricValue(item.delta_quality_score, "score"))} delta</span>`
+            : ""
+        }
+        ${item.created_at ? `<span>${escapeHtml(formatDateTime(item.created_at))}</span>` : ""}
+      </div>
+      <div class="sample-item-actions">
+        <button
+          type="button"
+          class="table-action-button"
+          data-select-diagnosis-benchmark="${escapeHtml(item.eval_run_id || "")}"
+          data-select-diagnosis-test-case="${escapeHtml(item.test_case_id || "")}"
+        >
+          Inspect
+        </button>
+      </div>
+    </article>
+  `;
+}
+
+function buildDiagnosisChooserSection(title, items, tone = "neutral", options = {}) {
+  const rows = Array.isArray(items) ? items : [];
+  const body = rows.length
+    ? `<div class="sample-list">${rows.map((item) => buildDiagnosisChooserItem(item, tone)).join("")}</div>`
+    : `<div class="empty-state">No samples available in this section.</div>`;
+  return buildCollapsiblePanel({
+    title,
+    subtitle: options.subtitle || "Choose a case, then inspect the shared detail surface below.",
+    count: rows.length,
+    open: options.open !== false,
+    tone,
+    body,
+    extraClass: "diagnosis-chooser-panel",
+  });
 }
 
 function buildSampleAction(item) {
@@ -658,6 +1020,299 @@ function buildCandidateTable(candidates) {
   });
 }
 
+function buildCaseDetailHeader(primary, baseline, deltas) {
+  const title = primary?.question || primary?.user_query || primary?.request_id || "Case detail";
+  const routeOk = primary?.route_family_correct;
+  const statusTone = routeOk === 1 || routeOk === true ? "success" : routeOk === 0 ? "danger" : "neutral";
+  const statusLabel =
+    routeOk === 1 || routeOk === true
+      ? "Route Correct"
+      : routeOk === 0
+        ? "Route Mismatch"
+        : humanizeLabel(primary?.sample_source || "case");
+  return `
+    <section class="panel-card detail-surface">
+      <div class="panel-header case-detail-hero">
+        <div>
+          <p class="eyebrow">Trace Detail</p>
+          <h3>${escapeHtml(title)}</h3>
+          <p>Read route contract, answer behavior, evidence, and judge signals in one surface.</p>
+        </div>
+        <div class="chip-row">
+          <span class="chip chip-${statusTone}">${escapeHtml(statusLabel)}</span>
+          ${
+            primary?.category
+              ? `<span class="chip chip-neutral">${escapeHtml(humanizeLabel(primary.category))}</span>`
+              : ""
+          }
+          ${
+            primary?.sample_source
+              ? `<span class="chip chip-neutral">${escapeHtml(humanizeLabel(primary.sample_source))}</span>`
+              : ""
+          }
+        </div>
+      </div>
+      ${buildTraceOverview(primary || {})}
+      ${buildComparisonCards(primary, baseline, deltas)}
+    </section>
+  `;
+}
+
+function buildCaseDetailRouteContract(primary, baseline) {
+  const items = [
+    { label: "Expected Route Family", value: primary?.expected_route_family },
+    { label: "Actual Route Family", value: primary?.actual_route_family },
+    { label: "Expected Execution Action", value: primary?.expected_execution_action },
+    { label: "Actual Execution Action", value: primary?.actual_execution_action },
+    { label: "Expected Tooling Profile", value: primary?.expected_tooling_profile },
+    { label: "Actual Tooling Profile", value: primary?.actual_tooling_profile },
+    { label: "Route Family Correct", value: primary?.route_family_correct },
+    { label: "Execution Action Correct", value: primary?.execution_action_correct },
+    { label: "Tooling Profile Correct", value: primary?.tooling_profile_correct },
+  ].filter((item) => item.value !== undefined && item.value !== null && item.value !== "");
+  if (!items.length) {
+    return "";
+  }
+  return `
+    <section class="panel-card detail-surface">
+      <div class="panel-header">
+        <div>
+          <h3>Route Contract</h3>
+          <p>Expected vs actual route family, execution action, and tooling policy.</p>
+        </div>
+      </div>
+      ${buildDefinitionGrid(items)}
+      ${
+        baseline
+          ? `<p class="detail-note">Baseline route family: <strong>${escapeHtml(
+              humanizeLabel(baseline.actual_route_family || "-")
+            )}</strong></p>`
+          : ""
+      }
+    </section>
+  `;
+}
+
+function buildCaseDetailAnswer(primary) {
+  const sources = normalizeStringList(primary?.answer_sources || []);
+  const citations = Array.isArray(primary?.answer_citations) ? primary.answer_citations : [];
+  return `
+    <section class="panel-card detail-surface">
+      <div class="panel-header">
+        <div>
+          <h3>Answer</h3>
+          <p>The answer body plus any stored source snapshot.</p>
+        </div>
+      </div>
+      <pre class="answer-block">${escapeHtml(primary?.answer || "-")}</pre>
+      ${
+        sources.length
+          ? `<div class="detail-subsection">
+              <div class="detail-subsection-header">
+                <h4>Sources</h4>
+              </div>
+              <div class="chip-row">${buildChipList(sources, "neutral")}</div>
+            </div>`
+          : ""
+      }
+      ${
+        citations.length
+          ? buildTableSection("Citations", citations, {
+              columns: ["title", "source_url", "chunk_id", "heading"],
+              emptyLabel: "No citations captured for this answer.",
+            })
+          : ""
+      }
+    </section>
+  `;
+}
+
+function buildCaseDetailFailureAndPolicy(primary) {
+  const items = [
+    { label: "Failure Stage", value: primary?.failure_stage },
+    { label: "Failure Bucket", value: primary?.failure_bucket },
+    { label: "Failure Type", value: primary?.failure_type },
+    { label: "Policy Followed", value: primary?.response_policy_followed },
+    { label: "Matched Expected Action", value: primary?.matched_expected_execution_action },
+    { label: "Used Prohibited Agora Docs", value: primary?.used_prohibited_agora_docs },
+    { label: "Abstained Or Deflected Properly", value: primary?.abstained_or_deflected_properly },
+    { label: "No Unsupported Claims", value: primary?.no_unsupported_claims },
+    { label: "Authoritative Source Used", value: primary?.authoritative_source_used },
+    { label: "Citation Present", value: primary?.citation_present },
+    { label: "Unsupported Claim Avoidance", value: primary?.unsupported_claim_avoidance },
+  ].filter((item) => item.value !== undefined && item.value !== null && item.value !== "");
+  return `
+    <section class="panel-card detail-surface">
+      <div class="panel-header">
+        <div>
+          <h3>Failure And Policy</h3>
+          <p>Bucket the miss first, then verify the route-level behavior checks.</p>
+        </div>
+      </div>
+      ${buildDefinitionGrid(items)}
+      <div class="chip-row">
+        ${buildChipList(primary?.root_cause_labels || [], "warning")}
+      </div>
+    </section>
+  `;
+}
+
+function buildExpectedEvidenceSection(primary) {
+  const documentIds = normalizeStringList(primary?.expected_document_ids || []);
+  const headingPaths = normalizeStringList(primary?.expected_heading_paths || []);
+  const evidenceRefs = Array.isArray(primary?.expected_evidence_refs) ? primary.expected_evidence_refs : [];
+  if (!documentIds.length && !headingPaths.length && !evidenceRefs.length) {
+    return "";
+  }
+  return `
+    <section class="detail-subsection">
+      <div class="detail-subsection-header">
+        <h4>Expected Evidence</h4>
+      </div>
+      ${documentIds.length ? `<div class="chip-row">${buildChipList(documentIds.map((item) => `doc:${item}`), "neutral")}</div>` : ""}
+      ${headingPaths.length ? `<div class="chip-row">${buildChipList(headingPaths, "neutral")}</div>` : ""}
+      ${
+        evidenceRefs.length
+          ? buildTableSection("Evidence Refs", evidenceRefs, {
+              columns: ["chunk_id", "doc_id", "heading", "evidence_polarity"],
+              emptyLabel: "No evidence refs stored for this benchmark case.",
+            })
+          : ""
+      }
+    </section>
+  `;
+}
+
+function buildCaseDetailEvidence(primary) {
+  const isWebCase =
+    normalizeString(primary?.actual_execution_action) === "web_search" ||
+    normalizeString(primary?.expected_route_family) === "web_company_info";
+  const summaryItems = [
+    { label: "Vector Candidates", value: primary?.vector_candidates_count },
+    { label: "BM25 Candidates", value: primary?.bm25_candidates_count },
+    { label: "Reranked Candidates", value: primary?.reranked_candidates_count },
+    { label: "Selected Docs", value: primary?.selected_doc_count },
+    { label: "Top1 Similarity", value: primary?.top1_similarity_score },
+    { label: "Avg Selected Similarity", value: primary?.avg_selected_similarity_score },
+    { label: "Citation Count", value: primary?.citation_count },
+    { label: "Citation Coverage", value: primary?.citation_coverage_ratio },
+  ].filter((item) => item.value !== undefined && item.value !== null && item.value !== "");
+
+  if (isWebCase) {
+    return `
+      <section class="panel-card detail-surface">
+        <div class="panel-header">
+          <div>
+            <h3>Evidence / Trace</h3>
+            <p>Web-grounded trace snapshot for a company-info style case.</p>
+          </div>
+        </div>
+        ${summaryItems.length ? buildDefinitionGrid(summaryItems) : `<div class="empty-state">No web trace summary captured for this case.</div>`}
+        ${
+          (primary?.answer_citations || []).length
+            ? buildTableSection("Web Snapshot", primary.answer_citations || [], {
+                columns: ["title", "source_url"],
+                emptyLabel: "No web citations captured for this case.",
+              })
+            : `<div class="empty-state">No web snapshot captured for this case.</div>`
+        }
+      </section>
+    `;
+  }
+
+  return `
+    <section class="panel-card detail-surface">
+      <div class="panel-header">
+        <div>
+          <h3>Evidence / Trace</h3>
+          <p>Retrieved candidates, selected contexts, and stored benchmark evidence anchors.</p>
+        </div>
+      </div>
+      ${summaryItems.length ? buildDefinitionGrid(summaryItems) : `<div class="empty-state">No trace counters captured for this sample.</div>`}
+      ${buildExpectedEvidenceSection(primary)}
+      ${buildCandidateTable(primary?.candidates || [])}
+      <section class="detail-subsection">
+        <div class="detail-subsection-header">
+          <h4>Selected Contexts</h4>
+        </div>
+        ${buildContextCards(primary?.selected_contexts || [])}
+      </section>
+    </section>
+  `;
+}
+
+function buildCaseDetailQuality(primary) {
+  const items = [
+    { label: "Faithfulness", value: primary?.faithfulness_score },
+    { label: "Groundedness", value: primary?.groundedness_score },
+    { label: "Response Relevance", value: primary?.response_relevance_score },
+    { label: "Response Completeness", value: primary?.response_completeness_score },
+    { label: "Citation Correctness", value: primary?.citation_correctness_score },
+    { label: "Answer Accuracy", value: primary?.answer_accuracy_score },
+    { label: "Answer Logic", value: primary?.answer_logic_score },
+    { label: "Document Relevance", value: primary?.document_relevance_score },
+    { label: "Hallucination Flag", value: primary?.hallucination_flag },
+  ].filter((item) => item.value !== undefined && item.value !== null && item.value !== "");
+  return `
+    <section class="panel-card detail-surface">
+      <div class="panel-header">
+        <div>
+          <h3>Judge / Quality</h3>
+          <p>Judged answer quality and grounding signals captured for this case.</p>
+        </div>
+      </div>
+      ${buildDefinitionGrid(items)}
+      ${
+        (primary?.judge_votes || []).length
+          ? buildTableSection("Judge Votes", primary.judge_votes || [], {
+              emptyLabel: "No judge votes stored for this sample.",
+            })
+          : ""
+      }
+    </section>
+  `;
+}
+
+function renderCaseDetailSurface(detailPayload = {}, options = {}) {
+  const primary = detailPayload.primary || null;
+  const baseline = detailPayload.baseline || null;
+  const deltas = detailPayload.deltas || null;
+  if (!primary) {
+    return `<div class="empty-state">${escapeHtml(options.emptyLabel || "Choose a case to inspect.")}</div>`;
+  }
+  return [
+    buildCaseDetailHeader(primary, baseline, deltas),
+    buildCaseDetailRouteContract(primary, baseline),
+    buildCaseDetailAnswer(primary),
+    buildCaseDetailFailureAndPolicy(primary),
+    buildCaseDetailEvidence(primary),
+    buildCaseDetailQuality(primary),
+    primary?.related_ingestion_ids?.length
+      ? `
+        <section class="panel-card detail-surface">
+          <div class="panel-header">
+            <div>
+              <h3>Related Ingestion</h3>
+              <p>Jump to raw ingestion reports for the chunks used in this case.</p>
+            </div>
+          </div>
+          <div class="button-row">
+            ${primary.related_ingestion_ids
+              .map(
+                (ingestionId) => `
+                  <button type="button" class="ghost-button" data-open-report="${escapeHtml(ingestionId)}">
+                    Open Ingestion ${escapeHtml(ingestionId)}
+                  </button>
+                `
+              )
+              .join("")}
+          </div>
+        </section>
+      `
+      : "",
+  ].join("");
+}
+
 function renderExperimentsPage(payload) {
   const root = ragPageContainers.experiments.root;
   const sections = payload.sections || {};
@@ -666,7 +1321,6 @@ function renderExperimentsPage(payload) {
   const metricRows = sections.metric_matrix?.rows || [];
   const segmentGroups = sections.segment_breakdown?.groups || [];
   const sampleList = sections.sample_list || {};
-  const options = summary.available_experiments || [];
 
   root.innerHTML = `
     <section class="hero-card">
@@ -675,22 +1329,7 @@ function renderExperimentsPage(payload) {
         <h2>${escapeHtml(summary.title || "Experiments")}</h2>
         <p>${escapeHtml(summary.subtitle || "Choose the better experiment before you inspect regressions.")}</p>
       </div>
-      <div class="hero-actions">
-        <label class="filter-field">
-          <span>Baseline</span>
-          <select id="baseline-experiment-selector">
-            <option value="">Auto</option>
-            ${options.map(buildExperimentOption).join("")}
-          </select>
-        </label>
-        <label class="filter-field">
-          <span>Candidate</span>
-          <select id="candidate-experiment-selector">
-            <option value="">Auto</option>
-            ${options.map(buildExperimentOption).join("")}
-          </select>
-        </label>
-      </div>
+      ${buildExperimentComparisonControls(summary)}
       ${buildMetricCards(summary.cards || {})}
     </section>
 
@@ -754,6 +1393,277 @@ function renderExperimentsPage(payload) {
   if (candidateSelect) {
     candidateSelect.value = summary.candidate_experiment_id || "";
   }
+}
+
+function renderScorecardPage(payload) {
+  const root = ragPageContainers["scorecard"].root;
+  const sections = payload.sections || {};
+  const summary = sections.summary || {};
+  const layerScorecard = sections.layer_scorecard?.rows || [];
+  const categoryPassRate = sections.category_pass_rate?.rows || [];
+  const sampleList = sections.sample_list || {};
+
+  root.innerHTML = `
+    <section class="hero-card">
+      <div class="hero-copy">
+        <p class="eyebrow">Four-Layer Scorecard</p>
+        <h2>${escapeHtml(summary.title || "Scorecard")}</h2>
+        <p>${escapeHtml(summary.subtitle || "Read routing, retrieval, generation, and business outcomes together.")}</p>
+      </div>
+      ${buildExperimentComparisonControls(summary)}
+      ${buildMetricCards(summary.cards || {})}
+    </section>
+    ${buildTableSection("Layer Scorecard", layerScorecard, {
+      columns: ["layer", "metric", "candidate", "baseline", "delta"],
+      emptyLabel: "No scorecard layers available yet.",
+    })}
+    ${buildTableSection("Category Pass Rate", categoryPassRate, {
+      columns: ["category", "case_count", "pass_rate"],
+      emptyLabel: "No category pass data available yet.",
+    })}
+    <div class="two-column-grid">
+      ${buildSampleList("Top Regressions", sampleList.top_regressions || [], "danger")}
+      ${buildSampleList("Top Wins", sampleList.top_wins || [], "success")}
+    </div>
+  `;
+
+  const baselineSelect = document.getElementById("baseline-experiment-selector");
+  const candidateSelect = document.getElementById("candidate-experiment-selector");
+  if (baselineSelect) {
+    baselineSelect.value = summary.baseline_experiment_id || "";
+  }
+  if (candidateSelect) {
+    candidateSelect.value = summary.candidate_experiment_id || "";
+  }
+}
+
+function renderRoutingPage(payload) {
+  const root = ragPageContainers["routing"].root;
+  const sections = payload.sections || {};
+  const summary = sections.summary || {};
+  const categoryPassRate = sections.category_pass_rate?.rows || [];
+  const sampleList = sections.sample_list || {};
+  const routingCases = sections.routing_cases || {};
+  const incorrectRows = routingCases.incorrect?.rows || [];
+  const correctRows = routingCases.correct?.rows || [];
+  const baselineEvalRunId = summary.baseline_eval_run_id || "";
+
+  root.innerHTML = `
+    <section class="hero-card">
+      <div class="hero-copy">
+        <p class="eyebrow">Route Before Rank</p>
+        <h2>${escapeHtml(summary.title || "Routing")}</h2>
+        <p>${escapeHtml(summary.subtitle || "Audit domain classification separately from retrieval and generation.")}</p>
+      </div>
+      ${buildMetricCards(summary.cards || {})}
+    </section>
+    ${buildTableSection("Per Category Route Health", categoryPassRate, {
+      columns: ["category", "case_count", "pass_rate"],
+      emptyLabel: "No routing slices available yet.",
+    })}
+    ${buildRoutingCaseExplorerSection("Routing Errors", incorrectRows, {
+      subtitle: "Every case where the route family diverged from the benchmark contract.",
+      tone: "danger",
+      open: true,
+      baselineEvalRunId,
+    })}
+    ${buildRoutingCaseExplorerSection("Routing Correct", correctRows, {
+      subtitle: "Cases where the route family matched the benchmark contract.",
+      tone: "success",
+      open: true,
+      baselineEvalRunId,
+    })}
+    ${buildCollapsiblePanel({
+      title: "Legacy Compare Lists",
+      subtitle: "Keep the old regression and win cards as a secondary compare aid.",
+      count: (sampleList.top_regressions || []).length + (sampleList.top_wins || []).length,
+      open: false,
+      tone: "neutral",
+      extraClass: "legacy-compare-panel",
+      body: `
+        <div class="two-column-grid">
+          ${buildSampleList("Top Regressions", sampleList.top_regressions || [], "danger")}
+          ${buildSampleList("Top Wins", sampleList.top_wins || [], "success")}
+        </div>
+      `,
+    })}
+  `;
+}
+
+function renderRetrievalDashboardPage(payload) {
+  const root = ragPageContainers["retrieval"].root;
+  const sections = payload.sections || {};
+  const summary = sections.summary || {};
+  const sampleList = sections.sample_list || {};
+  const retrievalCases = sections.retrieval_cases || {};
+  const incorrectRows = retrievalCases.incorrect?.rows || [];
+  const correctRows = retrievalCases.correct?.rows || [];
+  const baselineEvalRunId = summary.baseline_eval_run_id || "";
+
+  root.innerHTML = `
+    <section class="hero-card">
+      <div class="hero-copy">
+        <p class="eyebrow">Evidence First</p>
+        <h2>${escapeHtml(summary.title || "Retrieval")}</h2>
+        <p>${escapeHtml(summary.subtitle || "Check whether the right chunks arrived before blaming synthesis.")}</p>
+      </div>
+      ${buildMetricCards(summary.cards || {})}
+    </section>
+    ${buildCaseExplorerSection("Retrieval Errors", incorrectRows, {
+      subtitle: "Every retrieval-eligible case where the miss was attributed to retrieval.",
+      tone: "danger",
+      open: true,
+      baselineEvalRunId,
+      renderRow: buildRetrievalCaseRow,
+    })}
+    ${buildCaseExplorerSection("Retrieval Correct", correctRows, {
+      subtitle: "Retrieval-eligible cases that did not fail at the retrieval stage.",
+      tone: "success",
+      open: true,
+      baselineEvalRunId,
+      renderRow: buildRetrievalCaseRow,
+    })}
+    ${buildCollapsiblePanel({
+      title: "Legacy Compare Lists",
+      subtitle: "Keep the old regression and win cards as a secondary compare aid.",
+      count: (sampleList.top_regressions || []).length + (sampleList.top_wins || []).length,
+      open: false,
+      tone: "neutral",
+      extraClass: "legacy-compare-panel",
+      body: `
+        <div class="two-column-grid">
+          ${buildSampleList("Retrieval Misses", sampleList.top_regressions || [], "danger")}
+          ${buildSampleList("Retrieval Wins", sampleList.top_wins || [], "success")}
+        </div>
+      `,
+    })}
+  `;
+}
+
+function renderGenerationDashboardPage(payload) {
+  const root = ragPageContainers["generation"].root;
+  const sections = payload.sections || {};
+  const summary = sections.summary || {};
+  const sampleList = sections.sample_list || {};
+  const generationCases = sections.generation_cases || {};
+  const incorrectRows = generationCases.incorrect?.rows || [];
+  const correctRows = generationCases.correct?.rows || [];
+  const baselineEvalRunId = summary.baseline_eval_run_id || "";
+
+  root.innerHTML = `
+    <section class="hero-card">
+      <div class="hero-copy">
+        <p class="eyebrow">Answer Quality</p>
+        <h2>${escapeHtml(summary.title || "Generation")}</h2>
+        <p>${escapeHtml(summary.subtitle || "Track correctness, relevance, faithfulness, and policy adherence.")}</p>
+      </div>
+      ${buildMetricCards(summary.cards || {})}
+    </section>
+    ${buildCaseExplorerSection("Generation Errors", incorrectRows, {
+      subtitle: "Cases where answer quality or policy behavior failed after routing.",
+      tone: "danger",
+      open: true,
+      baselineEvalRunId,
+      renderRow: buildGenerationCaseRow,
+    })}
+    ${buildCaseExplorerSection("Generation Correct", correctRows, {
+      subtitle: "Generation-eligible cases that did not fail at generation or business policy.",
+      tone: "success",
+      open: true,
+      baselineEvalRunId,
+      renderRow: buildGenerationCaseRow,
+    })}
+    ${buildCollapsiblePanel({
+      title: "Legacy Compare Lists",
+      subtitle: "Keep the old regression and win cards as a secondary compare aid.",
+      count: (sampleList.top_regressions || []).length + (sampleList.top_wins || []).length,
+      open: false,
+      tone: "neutral",
+      extraClass: "legacy-compare-panel",
+      body: `
+        <div class="two-column-grid">
+          ${buildSampleList("Generation Regressions", sampleList.top_regressions || [], "danger")}
+          ${buildSampleList("Generation Wins", sampleList.top_wins || [], "success")}
+        </div>
+      `,
+    })}
+  `;
+}
+
+function renderDataSupplyPage(payload) {
+  const root = ragPageContainers["data-supply"].root;
+  const sections = payload.sections || {};
+  const summary = sections.summary || {};
+  const benchmarkSupply = sections.benchmark_supply || {};
+  const knowledgeSupply = sections.knowledge_supply || {};
+
+  root.innerHTML = `
+    <section class="hero-card">
+      <div class="hero-copy">
+        <p class="eyebrow">Benchmark And Knowledge Inputs</p>
+        <h2>${escapeHtml(summary.title || "Data Supply")}</h2>
+        <p>${escapeHtml(summary.subtitle || "Keep benchmark quality and knowledge-base health separate.")}</p>
+      </div>
+      ${buildMetricCards(summary.cards || {})}
+    </section>
+    <section class="panel-card">
+      <div class="panel-header">
+        <div>
+          <h3>Benchmark Supply</h3>
+          <p>Dataset generation, benchmark versioning, and gold coverage.</p>
+        </div>
+      </div>
+      <div class="filter-grid">
+        <label class="filter-field">
+          <span>Dataset Name</span>
+          <input id="dataset-generation-name" type="text" placeholder="supportportal_gold_v2" />
+        </label>
+        <label class="filter-field">
+          <span>Question Language</span>
+          <select id="dataset-generation-language">
+            <option value="en" selected>English</option>
+          </select>
+        </label>
+        <label class="filter-field">
+          <span>Source Types</span>
+          <div class="chip-row">
+            <label class="chip chip-neutral">
+              <input id="dataset-source-official" type="checkbox" checked />
+              Official Markdown
+            </label>
+            <label class="chip chip-neutral">
+              <input id="dataset-source-technical" type="checkbox" checked />
+              Technical Article
+            </label>
+          </div>
+        </label>
+        <div class="button-row">
+          <button type="button" class="primary-button" data-create-dataset-generation>
+            Start Generation
+          </button>
+        </div>
+      </div>
+      ${buildTableSection("Generation Runs", benchmarkSupply.generation_runs?.rows || [], {
+        emptyLabel: "No generation runs available yet.",
+      })}
+      ${buildTableSection("Dataset Versions", benchmarkSupply.dataset_versions?.rows || [], {
+        emptyLabel: "No dataset versions available yet.",
+      })}
+      ${buildTableSection("Coverage", benchmarkSupply.coverage?.rows || [], {
+        emptyLabel: "No benchmark coverage available yet.",
+      })}
+    </section>
+    <section class="panel-card">
+      <div class="panel-header">
+        <div>
+          <h3>Knowledge Supply</h3>
+          <p>Ingestion health, chunk quality, and index freshness.</p>
+        </div>
+      </div>
+      ${buildMetricCards(knowledgeSupply.summary?.cards || {})}
+      ${(knowledgeSupply.segment_breakdown?.groups || []).map(buildGroupBlock).join("")}
+    </section>
+  `;
 }
 
 function renderDatasetsPage(payload) {
@@ -822,116 +1732,188 @@ function renderDatasetsPage(payload) {
 function renderDiagnosisPage(payload) {
   const root = ragPageContainers.diagnosis.root;
   const sections = payload.sections || {};
+  const summary = sections.summary || {};
   const sampleList = sections.sample_list || {};
-  const traceSection = sections.diagnosis_trace || {};
-  const primary = traceSection.primary || null;
-  const baseline = traceSection.baseline || null;
-  const deltas = traceSection.deltas || null;
-  const traceTitle = primary?.question || primary?.user_query || primary?.request_id || "Diagnosis trace";
+  const selectedListKey = summary.selected_list_key || "top_regressions";
 
   root.innerHTML = `
-    <div class="diagnosis-grid">
-      <aside class="rail-stack">
-        ${buildSampleList("Top Regressions", sampleList.top_regressions || [], "danger")}
-        ${buildSampleList("Risky Live Queries", sampleList.risky_live_queries || [], "warning")}
-        ${buildSampleList("Review Queue", sampleList.review_queue || [], "neutral")}
-      </aside>
-
-      <article class="detail-stack">
-        <section class="panel-card">
-          <div class="panel-header">
-            <div>
-              <p class="eyebrow">Trace Overview</p>
-              <h3>${escapeHtml(traceTitle)}</h3>
-              <p>Use this view to decide whether the miss came from retrieval, chunking, context selection, or generation.</p>
-            </div>
-          </div>
-          ${
-            primary
-              ? `
-                ${buildTraceOverview(primary)}
-                <section class="callout-block">
-                  <h4>Question</h4>
-                  <p>${escapeHtml(primary.user_query || "-")}</p>
-                  ${
-                    primary.rewritten_query
-                      ? `<div class="callout-inline"><span>Rewritten Query</span><strong>${escapeHtml(
-                          primary.rewritten_query
-                        )}</strong></div>`
-                      : ""
-                  }
-                  ${primary.intent ? `<div class="callout-inline"><span>Intent</span><strong>${escapeHtml(primary.intent)}</strong></div>` : ""}
-                </section>
-                ${buildComparisonCards(primary, baseline, deltas)}
-                <section class="callout-block">
-                  <h4>Answer</h4>
-                  <pre class="answer-block">${escapeHtml(primary.answer || "-")}</pre>
-                  <div class="chip-row">
-                    ${buildChipList(primary.root_cause_labels || [], "warning")}
-                    ${
-                      primary.expected_document_ids
-                        ? buildChipList(primary.expected_document_ids.map((item) => `doc:${item}`), "neutral")
-                        : ""
-                    }
-                  </div>
-                </section>
-                ${primary.related_ingestion_ids?.length ? `
-                  <div class="button-row">
-                    ${primary.related_ingestion_ids
-                      .map(
-                        (ingestionId) => `
-                          <button type="button" class="ghost-button" data-open-report="${escapeHtml(ingestionId)}">
-                            Open Ingestion ${escapeHtml(ingestionId)}
-                          </button>
-                        `
-                      )
-                      .join("")}
-                  </div>
-                ` : ""}
-              `
-              : `<div class="empty-state">Choose a regression, review sample, or risky live query to inspect.</div>`
-          }
-        </section>
-      </article>
-
-      <aside class="evidence-stack">
-        <section class="panel-card">
-          <div class="panel-header">
-            <div>
-              <h3>Retrieval Evidence</h3>
-              <p>Candidates and selected contexts for the focused sample.</p>
-            </div>
-          </div>
-          ${
-            primary
-              ? `
-                ${buildDefinitionGrid([
-                  { label: "Vector Candidates", value: primary.vector_candidates_count },
-                  { label: "BM25 Candidates", value: primary.bm25_candidates_count },
-                  { label: "Reranked Candidates", value: primary.reranked_candidates_count },
-                  { label: "Selected Docs", value: primary.selected_doc_count },
-                  { label: "Top1 Similarity", value: primary.top1_similarity_score },
-                  { label: "Avg Selected Similarity", value: primary.avg_selected_similarity_score },
-                  { label: "Citation Count", value: primary.citation_count },
-                  { label: "Citation Coverage", value: primary.citation_coverage_ratio },
-                ])}
-                ${buildCandidateTable(primary.candidates || [])}
-              `
-              : `<div class="empty-state">No sample selected.</div>`
-          }
-        </section>
-        <section class="panel-card">
-          <div class="panel-header">
-            <div>
-              <h3>Selected Contexts</h3>
-              <p>Chunk-level evidence used to form the final answer.</p>
-            </div>
-          </div>
-          ${buildContextCards(primary?.selected_contexts || [])}
-        </section>
-      </aside>
+    <div class="diagnosis-layout">
+      <div class="diagnosis-chooser-stack">
+        ${buildDiagnosisChooserSection("Top Regressions", sampleList.top_regressions || [], "danger", {
+          open: selectedListKey === "top_regressions",
+          subtitle: "Benchmark regressions sorted by quality delta.",
+        })}
+        ${buildDiagnosisChooserSection("Risky Live Queries", sampleList.risky_live_queries || [], "warning", {
+          open: selectedListKey === "risky_live_queries",
+          subtitle: "Live traffic that looks risky enough to inspect manually.",
+        })}
+        ${buildDiagnosisChooserSection("Review Queue", sampleList.review_queue || [], "neutral", {
+          open: selectedListKey === "review_queue",
+          subtitle: "Pending reviewed samples that may need manual correction or label fixes.",
+        })}
+      </div>
+      <div id="diagnosis-detail-surface" class="detail-surface-stack">
+        <div class="empty-state">Loading selected case detail...</div>
+      </div>
     </div>
   `;
+
+  void loadDiagnosisDetailSurface(payload);
+}
+
+function openCaseDetailModalShell(title, openDiagnosisState) {
+  activeCaseDetailState = openDiagnosisState || null;
+  lastCaseDetailFocusEl = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  caseDetailTitleEl.textContent = title || "Case detail";
+  caseDetailBodyEl.innerHTML = `<div class="empty-state">Loading case detail...</div>`;
+  caseDetailModalEl.hidden = false;
+  caseDetailModalEl.setAttribute("aria-hidden", "false");
+  document.body.classList.add("modal-open");
+  if (caseDetailDiagnosisButtonEl) {
+    caseDetailDiagnosisButtonEl.disabled = !activeCaseDetailState;
+  }
+  window.setTimeout(() => {
+    caseDetailDialogEl?.focus();
+  }, 0);
+}
+
+function closeCaseDetailModal() {
+  caseDetailModalEl.hidden = true;
+  caseDetailModalEl.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("modal-open");
+  caseDetailBodyEl.innerHTML = "";
+  activeCaseDetailState = null;
+  if (lastCaseDetailFocusEl) {
+    lastCaseDetailFocusEl.focus();
+  }
+}
+
+function focusableElementsWithin(container) {
+  if (!container) {
+    return [];
+  }
+  return Array.from(
+    container.querySelectorAll(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )
+  ).filter((element) => element instanceof HTMLElement && !element.hidden);
+}
+
+function trapCaseDetailFocus(event) {
+  if (caseDetailModalEl.hidden || event.key !== "Tab") {
+    return;
+  }
+  const focusable = focusableElementsWithin(caseDetailDialogEl);
+  if (!focusable.length) {
+    event.preventDefault();
+    caseDetailDialogEl?.focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+    return;
+  }
+  if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+async function openCaseDetailModalForBenchmark(evalRunId, testCaseId, baselineEvalRunId = "") {
+  const normalizedEvalRunId = normalizeString(evalRunId);
+  const normalizedTestCaseId = normalizeString(testCaseId);
+  if (!normalizedEvalRunId || !normalizedTestCaseId) {
+    return;
+  }
+  openCaseDetailModalShell("Benchmark Case Detail", {
+    source: "benchmark",
+    evalRunId: normalizedEvalRunId,
+    testCaseId: normalizedTestCaseId,
+  });
+  const token = ++caseDetailLoadToken;
+  try {
+    const payload = await fetchBenchmarkCaseDetail(normalizedEvalRunId, normalizedTestCaseId, baselineEvalRunId);
+    if (token !== caseDetailLoadToken) {
+      return;
+    }
+    caseDetailTitleEl.textContent = payload?.primary?.question || payload?.primary?.user_query || "Benchmark Case Detail";
+    caseDetailBodyEl.innerHTML = renderCaseDetailSurface(payload, {
+      emptyLabel: "No benchmark detail available for this case.",
+    });
+  } catch (error) {
+    if (token !== caseDetailLoadToken) {
+      return;
+    }
+    caseDetailBodyEl.innerHTML = `<div class="empty-state">Failed to load case detail: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function openCaseDetailModalForLive(requestId) {
+  const normalizedRequestId = normalizeString(requestId);
+  if (!normalizedRequestId) {
+    return;
+  }
+  openCaseDetailModalShell("Live Query Detail", {
+    source: "live_query",
+    requestId: normalizedRequestId,
+  });
+  const token = ++caseDetailLoadToken;
+  try {
+    const payload = await fetchLiveCaseDetail(normalizedRequestId);
+    if (token !== caseDetailLoadToken) {
+      return;
+    }
+    caseDetailTitleEl.textContent = payload?.primary?.question || payload?.primary?.user_query || "Live Query Detail";
+    caseDetailBodyEl.innerHTML = renderCaseDetailSurface(payload, {
+      emptyLabel: "No live detail available for this query.",
+    });
+  } catch (error) {
+    if (token !== caseDetailLoadToken) {
+      return;
+    }
+    caseDetailBodyEl.innerHTML = `<div class="empty-state">Failed to load case detail: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function loadDiagnosisDetailSurface(payload) {
+  const root = document.getElementById("diagnosis-detail-surface");
+  if (!root) {
+    return;
+  }
+  const summary = payload?.sections?.summary || {};
+  const selectedSource = normalizeString(summary.selected_source);
+  const selectedEvalRunId = normalizeString(summary.selected_eval_run_id);
+  const selectedTestCaseId = normalizeString(summary.selected_test_case_id);
+  const selectedRequestId = normalizeString(summary.selected_request_id);
+  const baselineEvalRunId = normalizeString(summary.baseline_eval_run_id);
+
+  if (!selectedSource) {
+    root.innerHTML = `<div class="empty-state">Choose a regression, risky live query, or review sample to inspect.</div>`;
+    return;
+  }
+
+  root.innerHTML = `<div class="empty-state">Loading selected case detail...</div>`;
+  const token = ++diagnosisDetailLoadToken;
+  try {
+    const detailPayload =
+      selectedSource === "live_query"
+        ? await fetchLiveCaseDetail(selectedRequestId)
+        : await fetchBenchmarkCaseDetail(selectedEvalRunId, selectedTestCaseId, baselineEvalRunId);
+    if (token !== diagnosisDetailLoadToken) {
+      return;
+    }
+    root.innerHTML = renderCaseDetailSurface(detailPayload, {
+      emptyLabel: "No diagnosis detail available for the selected case.",
+    });
+  } catch (error) {
+    if (token !== diagnosisDetailLoadToken) {
+      return;
+    }
+    root.innerHTML = `<div class="empty-state">Failed to load selected case detail: ${escapeHtml(error.message)}</div>`;
+  }
 }
 
 function renderKnowledgeSupplyPage(payload) {
@@ -1150,11 +2132,12 @@ function renderReviewPage(payload) {
 }
 
 const pageRenderers = {
-  experiments: { render: renderExperimentsPage },
-  datasets: { render: renderDatasetsPage },
+  scorecard: { render: renderScorecardPage },
+  routing: { render: renderRoutingPage },
+  retrieval: { render: renderRetrievalDashboardPage },
+  generation: { render: renderGenerationDashboardPage },
+  "data-supply": { render: renderDataSupplyPage },
   diagnosis: { render: renderDiagnosisPage },
-  "knowledge-supply": { render: renderKnowledgeSupplyPage },
-  "production-signals": { render: renderProductionSignalsPage },
   review: { render: renderReviewPage },
 };
 
@@ -1193,8 +2176,8 @@ function syncFiltersToInputs() {
 
 function readStateFromUrl() {
   const params = new URLSearchParams(window.location.search);
-  const page = normalizeString(params.get("page")) || "experiments";
-  currentDashboardTab = PAGE_LABELS[page] ? page : "experiments";
+  const page = normalizeDashboardTab(params.get("page")) || "scorecard";
+  currentDashboardTab = page;
   for (const key of Object.keys(ragFilters)) {
     const value = params.get(key);
     if (value === null) {
@@ -1260,7 +2243,7 @@ function buildPageQuery() {
 }
 
 function setActiveDashboardTab(tabName) {
-  currentDashboardTab = PAGE_LABELS[tabName] ? tabName : "experiments";
+  currentDashboardTab = normalizeDashboardTab(tabName);
   dashboardTabEls.forEach((button) => {
     button.classList.toggle("active", button.dataset.dashboardTab === currentDashboardTab);
   });
@@ -1380,6 +2363,7 @@ function clearDiagnosisSelectionForLive() {
 }
 
 function openDiagnosisForBenchmark(evalRunId, testCaseId) {
+  closeCaseDetailModal();
   ragFilters.request_id = "";
   ragFilters.sample_id = "";
   ragFilters.eval_run_id = normalizeString(evalRunId);
@@ -1391,6 +2375,7 @@ function openDiagnosisForBenchmark(evalRunId, testCaseId) {
 }
 
 function openDiagnosisForLive(requestId) {
+  closeCaseDetailModal();
   ragFilters.eval_run_id = "";
   ragFilters.test_case_id = "";
   ragFilters.sample_id = "";
@@ -1486,7 +2471,7 @@ async function createDatasetGenerationRun() {
         question_language: languageEl?.value || "en",
       }),
     });
-    invalidatePageCache("datasets");
+    invalidatePageCache("data-supply");
     invalidatePageCache("review");
     await loadCurrentPage({ force: true });
     setStatus(`Dataset generation ${datasetName} queued.`);
@@ -1510,9 +2495,9 @@ async function runDatasetBenchmark(datasetId) {
         tier: "gold",
       }),
     });
-    invalidatePageCache("datasets");
-    invalidatePageCache("experiments");
-    setActiveDashboardTab("experiments");
+    invalidatePageCache("data-supply");
+    invalidatePageCache("scorecard");
+    setActiveDashboardTab("scorecard");
     await loadCurrentPage({ force: true });
     setStatus(`Benchmark for ${normalizedDatasetId} queued.`);
   } catch (error) {
@@ -1537,9 +2522,9 @@ function openReviewPage() {
 }
 
 function openDatasetsPage() {
-  setActiveDashboardTab("datasets");
+  setActiveDashboardTab("data-supply");
   loadCurrentPage({ force: true }).catch((error) => {
-    setStatus(`Failed to open datasets page: ${error.message}`);
+    setStatus(`Failed to open data supply page: ${error.message}`);
   });
 }
 
@@ -1552,8 +2537,38 @@ function handleDocumentClick(event) {
     });
     return;
   }
+  if (event.target.closest("[data-close-case-detail]")) {
+    closeCaseDetailModal();
+    return;
+  }
+  if (event.target.closest("[data-open-full-diagnosis]") && activeCaseDetailState) {
+    if (activeCaseDetailState.source === "live_query") {
+      openDiagnosisForLive(activeCaseDetailState.requestId);
+    } else {
+      openDiagnosisForBenchmark(activeCaseDetailState.evalRunId, activeCaseDetailState.testCaseId);
+    }
+    return;
+  }
   if (event.target.closest("[data-close-report]")) {
     closeReportDrawer();
+    return;
+  }
+  const caseDetailBenchmarkButton = event.target.closest("[data-open-case-detail-benchmark]");
+  if (caseDetailBenchmarkButton) {
+    openCaseDetailModalForBenchmark(
+      caseDetailBenchmarkButton.dataset.openCaseDetailBenchmark,
+      caseDetailBenchmarkButton.dataset.openCaseDetailTestCase,
+      caseDetailBenchmarkButton.dataset.openCaseDetailBaseline
+    ).catch((error) => {
+      setStatus(`Failed to open case detail: ${error.message}`);
+    });
+    return;
+  }
+  const caseDetailLiveButton = event.target.closest("[data-open-case-detail-live]");
+  if (caseDetailLiveButton) {
+    openCaseDetailModalForLive(caseDetailLiveButton.dataset.openCaseDetailLive).catch((error) => {
+      setStatus(`Failed to open case detail: ${error.message}`);
+    });
     return;
   }
   const benchmarkButton = event.target.closest("[data-open-diagnosis-benchmark]");
@@ -1567,6 +2582,19 @@ function handleDocumentClick(event) {
   const liveButton = event.target.closest("[data-open-diagnosis-live]");
   if (liveButton) {
     openDiagnosisForLive(liveButton.dataset.openDiagnosisLive);
+    return;
+  }
+  const diagnosisBenchmarkButton = event.target.closest("[data-select-diagnosis-benchmark]");
+  if (diagnosisBenchmarkButton) {
+    openDiagnosisForBenchmark(
+      diagnosisBenchmarkButton.dataset.selectDiagnosisBenchmark,
+      diagnosisBenchmarkButton.dataset.selectDiagnosisTestCase
+    );
+    return;
+  }
+  const diagnosisLiveButton = event.target.closest("[data-select-diagnosis-live]");
+  if (diagnosisLiveButton) {
+    openDiagnosisForLive(diagnosisLiveButton.dataset.selectDiagnosisLive);
     return;
   }
   const reportButton = event.target.closest("[data-open-report]");
@@ -1607,15 +2635,27 @@ function handleDocumentClick(event) {
 function handleDocumentChange(event) {
   if (event.target.id === "baseline-experiment-selector") {
     ragFilters.baseline_experiment_id = normalizeString(event.target.value);
-    invalidatePageCache("experiments");
+    invalidatePageCache();
     loadCurrentPage({ force: true }).catch((error) => {
       setStatus(`Failed to update baseline experiment: ${error.message}`);
     });
     return;
   }
   if (event.target.id === "candidate-experiment-selector") {
-    ragFilters.candidate_experiment_id = normalizeString(event.target.value);
-    invalidatePageCache("experiments");
+    const nextCandidateExperimentId = normalizeString(event.target.value);
+    const comparisonSummary =
+      pageCache[currentDashboardTab]?.sections?.summary ||
+      pageCache.scorecard?.sections?.summary ||
+      null;
+    ragFilters.candidate_experiment_id = nextCandidateExperimentId;
+    if (!nextCandidateExperimentId) {
+      ragFilters.baseline_experiment_id = "";
+    } else if (comparisonSummary) {
+      clearIncompatibleBaselineSelection(comparisonSummary, nextCandidateExperimentId);
+    } else {
+      ragFilters.baseline_experiment_id = "";
+    }
+    invalidatePageCache();
     loadCurrentPage({ force: true }).catch((error) => {
       setStatus(`Failed to update candidate experiment: ${error.message}`);
     });
@@ -1643,12 +2683,24 @@ function bindFilters() {
   });
 }
 
+function handleDocumentKeydown(event) {
+  if (caseDetailModalEl.hidden) {
+    return;
+  }
+  if (event.key === "Escape") {
+    closeCaseDetailModal();
+    return;
+  }
+  trapCaseDetailFocus(event);
+}
+
 async function initializeDashboard() {
   readStateFromUrl();
   setActiveDashboardTab(currentDashboardTab);
   bindFilters();
   document.addEventListener("click", handleDocumentClick);
   document.addEventListener("change", handleDocumentChange);
+  document.addEventListener("keydown", handleDocumentKeydown);
   refreshButtonEl.addEventListener("click", () => {
     invalidatePageCache();
     loadCurrentPage({ force: true }).catch((error) => {

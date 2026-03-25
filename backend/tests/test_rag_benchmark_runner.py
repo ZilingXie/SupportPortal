@@ -7,6 +7,7 @@ from pathlib import Path
 
 from backend.services.rag_benchmark_runner import resolve_judge_models, run_benchmark
 from backend.services.rag_qa import RagAnswer, RagQueryResult, RagQueryTrace
+from backend.services.support_router import SupportResolution, WebSearchAnswer
 
 
 class _FakeRepository:
@@ -54,6 +55,32 @@ class _FakeRepository:
                 "tags": ["gold"],
             }
         ]
+
+
+def _fake_route_runner(question: str, **_: object):
+    if "weather" in question.lower():
+        return {
+            "scope_label": "small_talk",
+            "route_family": "general_chat",
+            "execution_action": "controlled_response",
+            "tooling_profile": "no_agora_docs_controlled",
+            "route": "controlled_response",
+            "reason": "small_talk_detected",
+            "confidence": 0.99,
+            "matched_signals": ["weather"],
+            "response_language": "en",
+        }
+    return {
+        "scope_label": "agora_technical",
+        "route_family": "agora_docs_rag",
+        "execution_action": "rag",
+        "tooling_profile": "agora_docs_only",
+        "route": "rag",
+        "reason": "agora_technical_detected",
+        "confidence": 0.98,
+        "matched_signals": ["sdk"],
+        "response_language": "en",
+    }
 
 
 def _fake_query_runner(question: str, top_k: int | None = None) -> RagQueryResult:
@@ -241,6 +268,54 @@ class RagBenchmarkRunnerTests(unittest.TestCase):
         self.assertIsNotNone(first_row["avg_cost_per_query"])
         self.assertEqual(summary["metrics"]["answer_accuracy_score"], 0.95)
         self.assertEqual(summary["metrics"]["answer_logic_score"], 0.86)
+
+    def test_run_benchmark_supports_mixed_route_controlled_response_case(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dataset_path = Path(tmpdir) / "dataset.json"
+            dataset_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "test_case_id": "case-chat-1",
+                            "question": "How's the weather today?",
+                            "question_type": "small_talk",
+                            "category": "small_talk",
+                            "expected_route_family": "general_chat",
+                            "expected_execution_action": "controlled_response",
+                            "expected_tooling_profile": "no_agora_docs_controlled",
+                            "expected_behavior": "friendly_deflection",
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            repository = _FakeRepository()
+            summary = run_benchmark(
+                dataset_path=dataset_path,
+                experiment_id="exp-mixed-route-1",
+                repository=repository,
+                route_decider=_fake_route_runner,
+                judge_runner=_fake_judge_runner,
+            )
+
+        self.assertEqual(summary["case_count"], 1)
+        first_row = repository.eval_results[0]["rows"][0]
+        self.assertEqual(first_row["expected_route_family"], "general_chat")
+        self.assertEqual(first_row["actual_route_family"], "general_chat")
+        self.assertEqual(first_row["expected_execution_action"], "controlled_response")
+        self.assertEqual(first_row["actual_execution_action"], "controlled_response")
+        self.assertEqual(first_row["expected_tooling_profile"], "no_agora_docs_controlled")
+        self.assertEqual(first_row["actual_tooling_profile"], "no_agora_docs_controlled")
+        self.assertEqual(first_row["route_family_correct"], 1.0)
+        self.assertEqual(first_row["execution_action_correct"], 1.0)
+        self.assertEqual(first_row["tooling_profile_correct"], 1.0)
+        self.assertTrue(first_row["matched_expected_execution_action"])
+        self.assertFalse(first_row["used_prohibited_agora_docs"])
+        self.assertTrue(first_row["abstained_or_deflected_properly"])
+        self.assertTrue(first_row["response_policy_followed"])
+        self.assertEqual(first_row["evidence_hit_at_5"], None)
+        self.assertEqual(first_row["trace_payload"]["route_family"], "general_chat")
+        self.assertEqual(first_row["trace_payload"]["execution_action"], "controlled_response")
 
     def test_run_benchmark_supports_dataset_snapshot_source(self) -> None:
         repository = _FakeRepository()

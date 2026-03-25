@@ -7,10 +7,11 @@ import math
 import os
 import re
 import statistics
+import threading
 import time
 from collections import Counter
 from datetime import datetime, timezone
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 from uuid import uuid4
 
 import psycopg
@@ -55,11 +56,14 @@ _VALID_DASHBOARD_PAGES = {
     "ingestion",
     "chunking",
     "embedding-index",
-    "retrieval",
-    "generation",
     "handoff",
     "performance-cost",
     "failures",
+    "scorecard",
+    "routing",
+    "retrieval",
+    "generation",
+    "data-supply",
     "experiments",
     "datasets",
     "diagnosis",
@@ -68,11 +72,12 @@ _VALID_DASHBOARD_PAGES = {
     "review",
 }
 _WORKBENCH_DASHBOARD_PAGES = {
-    "experiments",
-    "datasets",
+    "scorecard",
+    "routing",
+    "retrieval",
+    "generation",
+    "data-supply",
     "diagnosis",
-    "knowledge-supply",
-    "production-signals",
     "review",
 }
 _VALID_DASHBOARD_RANGES = {"7d": 7, "30d": 30}
@@ -85,6 +90,8 @@ _MODEL_PRICING = {
     "gpt-4.1-mini": {"prompt_per_1k": 0.0004, "completion_per_1k": 0.0016},
     "gpt-4o-mini": {"prompt_per_1k": 0.00015, "completion_per_1k": 0.0006},
 }
+_KNOWLEDGE_BOOTSTRAP_REPOSITORY = "knowledge_repository"
+_KNOWLEDGE_BOOTSTRAP_VERSION = "2026-03-23-fast-startup-v1"
 
 _SOURCE_TYPE_TO_ENTRY_TYPE = {
     "official_markdown_upload": "official_document",
@@ -124,6 +131,13 @@ def _safe_positive_float(value: Any, default_value: float) -> float:
     return parsed if parsed > 0 else default_value
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = (os.getenv(name) or "").strip().lower()
+    if not value:
+        return default
+    return value in {"1", "true", "yes", "on"}
+
+
 def _estimate_token_count(text: Any) -> int:
     raw = str(text or "")
     if not raw.strip():
@@ -155,6 +169,20 @@ def _safe_statistics_mean(values: list[float]) -> float | None:
     if not numeric:
         return None
     return round(statistics.fmean(numeric), 2)
+
+
+def _mean_from_rows(rows: list[dict[str, Any]], field_name: str) -> float | None:
+    values = [_safe_float(row.get(field_name)) for row in rows if row.get(field_name) is not None]
+    return _safe_statistics_mean(values)
+
+
+def _rate_from_rows(rows: list[dict[str, Any]], field_name: str) -> float | None:
+    values = [
+        1.0 if row.get(field_name) else 0.0
+        for row in rows
+        if isinstance(row.get(field_name), bool)
+    ]
+    return _safe_statistics_mean(values)
 
 
 def _safe_ratio(numerator: Any, denominator: Any) -> float | None:
@@ -259,8 +287,14 @@ def _live_root_causes(row: dict[str, Any]) -> list[str]:
 
 
 def _normalize_dashboard_page(page: Any) -> str:
-    normalized = str(page or "experiments").strip().lower()
-    return normalized if normalized in _VALID_DASHBOARD_PAGES else "experiments"
+    normalized = str(page or "scorecard").strip().lower()
+    if normalized == "experiments":
+        return "scorecard"
+    if normalized in {"datasets", "knowledge-supply"}:
+        return "data-supply"
+    if normalized == "production-signals":
+        return "scorecard"
+    return normalized if normalized in _VALID_DASHBOARD_PAGES else "scorecard"
 
 
 def _normalize_dashboard_range(value: Any) -> tuple[str, int]:
@@ -740,6 +774,11 @@ class KnowledgeRepository(Protocol):
         citation_ok: bool | None = None,
         logic_ok: bool | None = None,
         hallucination_present: bool | None = None,
+        route_family_override: str | None = None,
+        execution_action_override: str | None = None,
+        tooling_profile_override: str | None = None,
+        failure_stage_override: str | None = None,
+        failure_bucket_override: str | None = None,
         dataset_decision: str | None = None,
         corrected_reference_answer: str | None = None,
         corrected_citation_targets: list[dict[str, Any]] | None = None,
@@ -813,6 +852,18 @@ class KnowledgeRepository(Protocol):
         range_value: str = "7d",
         filters: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        ...
+
+    def rag_dashboard_benchmark_case_detail(
+        self,
+        eval_run_id: str,
+        test_case_id: str,
+        *,
+        baseline_eval_run_id: str | None = None,
+    ) -> dict[str, Any]:
+        ...
+
+    def rag_dashboard_live_case_detail(self, request_id: str) -> dict[str, Any]:
         ...
 
 
@@ -1227,6 +1278,11 @@ class DisabledKnowledgeRepository:
         citation_ok: bool | None = None,
         logic_ok: bool | None = None,
         hallucination_present: bool | None = None,
+        route_family_override: str | None = None,
+        execution_action_override: str | None = None,
+        tooling_profile_override: str | None = None,
+        failure_stage_override: str | None = None,
+        failure_bucket_override: str | None = None,
         dataset_decision: str | None = None,
         corrected_reference_answer: str | None = None,
         corrected_citation_targets: list[dict[str, Any]] | None = None,
@@ -1239,6 +1295,11 @@ class DisabledKnowledgeRepository:
         _ = citation_ok
         _ = logic_ok
         _ = hallucination_present
+        _ = route_family_override
+        _ = execution_action_override
+        _ = tooling_profile_override
+        _ = failure_stage_override
+        _ = failure_bucket_override
         _ = dataset_decision
         _ = corrected_reference_answer
         _ = corrected_citation_targets
@@ -1343,6 +1404,22 @@ class DisabledKnowledgeRepository:
             "last_refreshed_at": _utc_now(),
         }
 
+    def rag_dashboard_benchmark_case_detail(
+        self,
+        eval_run_id: str,
+        test_case_id: str,
+        *,
+        baseline_eval_run_id: str | None = None,
+    ) -> dict[str, Any]:
+        _ = eval_run_id
+        _ = test_case_id
+        _ = baseline_eval_run_id
+        self._raise()
+
+    def rag_dashboard_live_case_detail(self, request_id: str) -> dict[str, Any]:
+        _ = request_id
+        self._raise()
+
 
 class PostgresKnowledgeRepository:
     def __init__(
@@ -1355,6 +1432,7 @@ class PostgresKnowledgeRepository:
         connect_retries: int = 0,
         connect_retry_delay_seconds: float = 1.0,
         default_vector_dim: int = 1024,
+        bootstrap_bm25_on_startup: bool = False,
     ) -> None:
         self._dsn = dsn.strip()
         self._schema = (schema or "supportportal").strip() or "supportportal"
@@ -1362,7 +1440,9 @@ class PostgresKnowledgeRepository:
         self._connect_retries = _safe_positive_int(connect_retries, 0)
         self._connect_retry_delay_seconds = _safe_positive_float(connect_retry_delay_seconds, 1.0)
         self._default_vector_dim = _safe_positive_int(default_vector_dim, 1024)
+        self._bootstrap_bm25_on_startup = bool(bootstrap_bm25_on_startup)
         self._vector_schema, self._vector_table_name = _split_table_name(vector_table, self._schema)
+        self._read_connection_local = threading.local()
 
     def storage_mode(self) -> str:
         return "postgres"
@@ -1397,6 +1477,64 @@ class PostgresKnowledgeRepository:
     def _vector_table(self) -> sql.Identifier:
         return sql.Identifier(self._vector_schema, self._vector_table_name)
 
+    def _reset_cached_read_connection(self) -> None:
+        connection = getattr(self._read_connection_local, "connection", None)
+        if connection is None:
+            return
+        try:
+            connection.close()
+        except Exception:
+            LOGGER.debug("Failed to close cached read connection cleanly.", exc_info=True)
+        self._read_connection_local.connection = None
+
+    def _read_connection(self) -> psycopg.Connection[Any]:
+        connection = getattr(self._read_connection_local, "connection", None)
+        if connection is not None and not getattr(connection, "closed", False) and not getattr(connection, "broken", False):
+            return connection
+        connection = self._connect()
+        connection.autocommit = True
+        self._read_connection_local.connection = connection
+        return connection
+
+    def _ensure_bootstrap_version_table(self, *, cur: psycopg.Cursor[Any]) -> None:
+        cur.execute(
+            sql.SQL(
+                """
+                CREATE TABLE IF NOT EXISTS {} (
+                    repository_name TEXT PRIMARY KEY,
+                    bootstrap_version TEXT NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            ).format(self._table("support_repository_bootstrap_versions"))
+        )
+
+    def _bootstrap_version_matches(self, *, cur: psycopg.Cursor[Any]) -> bool:
+        cur.execute(
+            sql.SQL("SELECT bootstrap_version FROM {} WHERE repository_name = %s").format(
+                self._table("support_repository_bootstrap_versions")
+            ),
+            (_KNOWLEDGE_BOOTSTRAP_REPOSITORY,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return False
+        return _clean_text(row[0]) == _KNOWLEDGE_BOOTSTRAP_VERSION
+
+    def _record_bootstrap_version(self, *, cur: psycopg.Cursor[Any]) -> None:
+        cur.execute(
+            sql.SQL(
+                """
+                INSERT INTO {} (repository_name, bootstrap_version, updated_at)
+                VALUES (%s, %s, NOW())
+                ON CONFLICT (repository_name) DO UPDATE SET
+                    bootstrap_version = EXCLUDED.bootstrap_version,
+                    updated_at = EXCLUDED.updated_at
+                """
+            ).format(self._table("support_repository_bootstrap_versions")),
+            (_KNOWLEDGE_BOOTSTRAP_REPOSITORY, _KNOWLEDGE_BOOTSTRAP_VERSION),
+        )
+
     def initialize(self) -> None:
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -1410,6 +1548,10 @@ class PostgresKnowledgeRepository:
                 cur.execute(
                     sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(self._vector_schema))
                 )
+                self._ensure_bootstrap_version_table(cur=cur)
+                if self._bootstrap_version_matches(cur=cur):
+                    conn.commit()
+                    return
                 cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
                 self._ensure_bm25_tables(cur=cur)
                 cur.execute(
@@ -1874,6 +2016,7 @@ class PostgresKnowledgeRepository:
                             strategy_snapshot JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                             judge_models JSONB NOT NULL DEFAULT '[]'::jsonb,
                             benchmark_version TEXT,
+                            dataset_schema_version TEXT,
                             status TEXT NOT NULL,
                             started_at TIMESTAMPTZ,
                             finished_at TIMESTAMPTZ
@@ -1888,6 +2031,9 @@ class PostgresKnowledgeRepository:
                             id BIGSERIAL PRIMARY KEY,
                             eval_run_id TEXT NOT NULL REFERENCES {}(eval_run_id) ON DELETE CASCADE,
                             test_case_id TEXT,
+                            dataset_schema_version TEXT,
+                            question_type TEXT,
+                            category TEXT,
                             query_type TEXT,
                             source_type TEXT,
                             product TEXT,
@@ -1896,19 +2042,32 @@ class PostgresKnowledgeRepository:
                             retrieval_strategy TEXT,
                             question TEXT,
                             answer_preview TEXT,
+                            expected_route_family TEXT,
+                            actual_route_family TEXT,
+                            expected_execution_action TEXT,
+                            actual_execution_action TEXT,
+                            expected_tooling_profile TEXT,
+                            actual_tooling_profile TEXT,
+                            route_family_correct DOUBLE PRECISION,
+                            execution_action_correct DOUBLE PRECISION,
+                            tooling_profile_correct DOUBLE PRECISION,
                             expected_document_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
                             expected_heading_paths JSONB NOT NULL DEFAULT '[]'::jsonb,
                             expected_evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            answer_key_points JSONB NOT NULL DEFAULT '[]'::jsonb,
                             trace_payload JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                             hit_at_1 DOUBLE PRECISION,
                             hit_at_3 DOUBLE PRECISION,
                             hit_at_5 DOUBLE PRECISION,
+                            document_hit_at_5 DOUBLE PRECISION,
                             recall_at_5 DOUBLE PRECISION,
                             mrr DOUBLE PRECISION,
                             ndcg_at_5 DOUBLE PRECISION,
                             evidence_hit_at_1 DOUBLE PRECISION,
                             evidence_hit_at_3 DOUBLE PRECISION,
                             evidence_hit_at_5 DOUBLE PRECISION,
+                            evidence_coverage DOUBLE PRECISION,
+                            noise_rate DOUBLE PRECISION,
                             document_relevance_score DOUBLE PRECISION,
                             faithfulness_score DOUBLE PRECISION,
                             groundedness_score DOUBLE PRECISION,
@@ -1919,7 +2078,18 @@ class PostgresKnowledgeRepository:
                             answer_logic_score DOUBLE PRECISION,
                             hallucination_flag BOOLEAN,
                             needs_human BOOLEAN,
+                            answer_correctness_eligible BOOLEAN,
+                            matched_expected_execution_action BOOLEAN,
+                            used_prohibited_agora_docs BOOLEAN,
+                            abstained_or_deflected_properly BOOLEAN,
+                            no_unsupported_claims BOOLEAN,
+                            response_policy_followed BOOLEAN,
+                            authoritative_source_used BOOLEAN,
+                            citation_present BOOLEAN,
+                            unsupported_claim_avoidance BOOLEAN,
                             failure_type TEXT,
+                            failure_stage TEXT,
+                            failure_bucket TEXT,
                             root_cause_label TEXT,
                             retrieval_latency_ms DOUBLE PRECISION,
                             generation_latency_ms DOUBLE PRECISION,
@@ -2061,6 +2231,11 @@ class PostgresKnowledgeRepository:
                             citation_ok BOOLEAN,
                             logic_ok BOOLEAN,
                             hallucination_present BOOLEAN,
+                            route_family_override TEXT,
+                            execution_action_override TEXT,
+                            tooling_profile_override TEXT,
+                            failure_stage_override TEXT,
+                            failure_bucket_override TEXT,
                             dataset_decision TEXT,
                             corrected_reference_answer TEXT,
                             corrected_citation_targets JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -2089,6 +2264,11 @@ class PostgresKnowledgeRepository:
                             citation_ok BOOLEAN,
                             logic_ok BOOLEAN,
                             hallucination_present BOOLEAN,
+                            route_family_override TEXT,
+                            execution_action_override TEXT,
+                            tooling_profile_override TEXT,
+                            failure_stage_override TEXT,
+                            failure_bucket_override TEXT,
                             dataset_decision TEXT,
                             corrected_reference_answer TEXT,
                             corrected_citation_targets JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -2106,24 +2286,52 @@ class PostgresKnowledgeRepository:
                 eval_run_alters = [
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS judge_models JSONB NOT NULL DEFAULT '[]'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS benchmark_version TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS dataset_schema_version TEXT",
                 ]
                 for statement in eval_run_alters:
                     cur.execute(sql.SQL(statement).format(self._table("support_rag_eval_runs")))
                 eval_result_alters = [
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS dataset_schema_version TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS question_type TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS category TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS product TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS language TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS question TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS answer_preview TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS expected_route_family TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS actual_route_family TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS expected_execution_action TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS actual_execution_action TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS expected_tooling_profile TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS actual_tooling_profile TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS route_family_correct DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS execution_action_correct DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS tooling_profile_correct DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS expected_document_ids JSONB NOT NULL DEFAULT '[]'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS expected_heading_paths JSONB NOT NULL DEFAULT '[]'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS expected_evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS answer_key_points JSONB NOT NULL DEFAULT '[]'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS trace_payload JSONB NOT NULL DEFAULT '{{}}'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS document_hit_at_5 DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS evidence_hit_at_1 DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS evidence_hit_at_3 DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS evidence_hit_at_5 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS evidence_coverage DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS noise_rate DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS judge_votes JSONB NOT NULL DEFAULT '[]'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS judge_disagreement_flag BOOLEAN NOT NULL DEFAULT FALSE",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS answer_correctness_eligible BOOLEAN",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS matched_expected_execution_action BOOLEAN",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS used_prohibited_agora_docs BOOLEAN",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS abstained_or_deflected_properly BOOLEAN",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS no_unsupported_claims BOOLEAN",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS response_policy_followed BOOLEAN",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS authoritative_source_used BOOLEAN",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS citation_present BOOLEAN",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS unsupported_claim_avoidance BOOLEAN",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS root_cause_label TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS failure_stage TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS failure_bucket TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS retrieval_latency_ms DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS generation_latency_ms DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS total_latency_ms DOUBLE PRECISION",
@@ -2195,6 +2403,11 @@ class PostgresKnowledgeRepository:
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS citation_ok BOOLEAN",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS logic_ok BOOLEAN",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS hallucination_present BOOLEAN",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS route_family_override TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS execution_action_override TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS tooling_profile_override TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS failure_stage_override TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS failure_bucket_override TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS dataset_decision TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS corrected_reference_answer TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS corrected_citation_targets JSONB NOT NULL DEFAULT '[]'::jsonb",
@@ -2212,6 +2425,11 @@ class PostgresKnowledgeRepository:
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS citation_ok BOOLEAN",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS logic_ok BOOLEAN",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS hallucination_present BOOLEAN",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS route_family_override TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS execution_action_override TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS tooling_profile_override TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS failure_stage_override TEXT",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS failure_bucket_override TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS dataset_decision TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS corrected_reference_answer TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS corrected_citation_targets JSONB NOT NULL DEFAULT '[]'::jsonb",
@@ -2377,7 +2595,9 @@ class PostgresKnowledgeRepository:
                         self._table("support_rag_dataset_item_reviews"),
                     )
                 )
-                self._backfill_bm25_index_if_needed(cur=cur)
+                if self._bootstrap_bm25_on_startup:
+                    self._backfill_bm25_index_if_needed(cur=cur)
+                self._record_bootstrap_version(cur=cur)
             conn.commit()
 
     def _ensure_bm25_tables(self, *, cur: psycopg.Cursor[Any]) -> None:
@@ -4862,6 +5082,7 @@ class PostgresKnowledgeRepository:
             "strategy_snapshot",
             "judge_models",
             "benchmark_version",
+            "dataset_schema_version",
             "status",
             "started_at",
             "finished_at",
@@ -4874,6 +5095,7 @@ class PostgresKnowledgeRepository:
             Json(eval_run.get("strategy_snapshot") or {}),
             Json(eval_run.get("judge_models") or []),
             _clean_text(eval_run.get("benchmark_version")),
+            _clean_text(eval_run.get("dataset_schema_version")),
             _clean_text(eval_run.get("status")) or "running",
             _clean_text(eval_run.get("started_at")) or _utc_now(),
             _clean_text(eval_run.get("finished_at")),
@@ -4917,6 +5139,9 @@ class PostgresKnowledgeRepository:
         columns = [
             "eval_run_id",
             "test_case_id",
+            "dataset_schema_version",
+            "question_type",
+            "category",
             "query_type",
             "source_type",
             "product",
@@ -4925,19 +5150,32 @@ class PostgresKnowledgeRepository:
             "retrieval_strategy",
             "question",
             "answer_preview",
+            "expected_route_family",
+            "actual_route_family",
+            "expected_execution_action",
+            "actual_execution_action",
+            "expected_tooling_profile",
+            "actual_tooling_profile",
+            "route_family_correct",
+            "execution_action_correct",
+            "tooling_profile_correct",
             "expected_document_ids",
             "expected_heading_paths",
             "expected_evidence_refs",
+            "answer_key_points",
             "trace_payload",
             "hit_at_1",
             "hit_at_3",
             "hit_at_5",
+            "document_hit_at_5",
             "recall_at_5",
             "mrr",
             "ndcg_at_5",
             "evidence_hit_at_1",
             "evidence_hit_at_3",
             "evidence_hit_at_5",
+            "evidence_coverage",
+            "noise_rate",
             "document_relevance_score",
             "faithfulness_score",
             "groundedness_score",
@@ -4948,7 +5186,18 @@ class PostgresKnowledgeRepository:
             "answer_logic_score",
             "hallucination_flag",
             "needs_human",
+            "answer_correctness_eligible",
+            "matched_expected_execution_action",
+            "used_prohibited_agora_docs",
+            "abstained_or_deflected_properly",
+            "no_unsupported_claims",
+            "response_policy_followed",
+            "authoritative_source_used",
+            "citation_present",
+            "unsupported_claim_avoidance",
             "failure_type",
+            "failure_stage",
+            "failure_bucket",
             "root_cause_label",
             "retrieval_latency_ms",
             "generation_latency_ms",
@@ -4964,6 +5213,9 @@ class PostgresKnowledgeRepository:
             (
                 normalized_eval_run_id,
                 _clean_text(row.get("test_case_id")),
+                _clean_text(row.get("dataset_schema_version")),
+                _clean_text(row.get("question_type")),
+                _clean_text(row.get("category")),
                 _clean_text(row.get("query_type")),
                 _clean_text(row.get("source_type")),
                 _clean_text(row.get("product")),
@@ -4972,19 +5224,32 @@ class PostgresKnowledgeRepository:
                 _clean_text(row.get("retrieval_strategy")),
                 _clean_text(row.get("question")),
                 _clean_text(row.get("answer_preview")),
+                _clean_text(row.get("expected_route_family")),
+                _clean_text(row.get("actual_route_family")),
+                _clean_text(row.get("expected_execution_action")),
+                _clean_text(row.get("actual_execution_action")),
+                _clean_text(row.get("expected_tooling_profile")),
+                _clean_text(row.get("actual_tooling_profile")),
+                _safe_float(row.get("route_family_correct"), 0.0) if row.get("route_family_correct") is not None else None,
+                _safe_float(row.get("execution_action_correct"), 0.0) if row.get("execution_action_correct") is not None else None,
+                _safe_float(row.get("tooling_profile_correct"), 0.0) if row.get("tooling_profile_correct") is not None else None,
                 Json(_json_list(row.get("expected_document_ids"))),
                 Json(_json_list(row.get("expected_heading_paths"))),
                 Json(_json_list(row.get("expected_evidence_refs"))),
+                Json(_json_list(row.get("answer_key_points"))),
                 Json(_json_dict(row.get("trace_payload"))),
                 _safe_float(row.get("hit_at_1"), 0.0) if row.get("hit_at_1") is not None else None,
                 _safe_float(row.get("hit_at_3"), 0.0) if row.get("hit_at_3") is not None else None,
                 _safe_float(row.get("hit_at_5"), 0.0) if row.get("hit_at_5") is not None else None,
+                _safe_float(row.get("document_hit_at_5"), 0.0) if row.get("document_hit_at_5") is not None else None,
                 _safe_float(row.get("recall_at_5"), 0.0) if row.get("recall_at_5") is not None else None,
                 _safe_float(row.get("mrr"), 0.0) if row.get("mrr") is not None else None,
                 _safe_float(row.get("ndcg_at_5"), 0.0) if row.get("ndcg_at_5") is not None else None,
                 _safe_float(row.get("evidence_hit_at_1"), 0.0) if row.get("evidence_hit_at_1") is not None else None,
                 _safe_float(row.get("evidence_hit_at_3"), 0.0) if row.get("evidence_hit_at_3") is not None else None,
                 _safe_float(row.get("evidence_hit_at_5"), 0.0) if row.get("evidence_hit_at_5") is not None else None,
+                _safe_float(row.get("evidence_coverage"), 0.0) if row.get("evidence_coverage") is not None else None,
+                _safe_float(row.get("noise_rate"), 0.0) if row.get("noise_rate") is not None else None,
                 _safe_float(row.get("document_relevance_score"), 0.0) if row.get("document_relevance_score") is not None else None,
                 _safe_float(row.get("faithfulness_score"), 0.0) if row.get("faithfulness_score") is not None else None,
                 _safe_float(row.get("groundedness_score"), 0.0) if row.get("groundedness_score") is not None else None,
@@ -4995,7 +5260,24 @@ class PostgresKnowledgeRepository:
                 _safe_float(row.get("answer_logic_score"), 0.0) if row.get("answer_logic_score") is not None else None,
                 row.get("hallucination_flag") if isinstance(row.get("hallucination_flag"), bool) else None,
                 row.get("needs_human") if isinstance(row.get("needs_human"), bool) else None,
+                row.get("answer_correctness_eligible") if isinstance(row.get("answer_correctness_eligible"), bool) else None,
+                row.get("matched_expected_execution_action")
+                if isinstance(row.get("matched_expected_execution_action"), bool)
+                else None,
+                row.get("used_prohibited_agora_docs") if isinstance(row.get("used_prohibited_agora_docs"), bool) else None,
+                row.get("abstained_or_deflected_properly")
+                if isinstance(row.get("abstained_or_deflected_properly"), bool)
+                else None,
+                row.get("no_unsupported_claims") if isinstance(row.get("no_unsupported_claims"), bool) else None,
+                row.get("response_policy_followed") if isinstance(row.get("response_policy_followed"), bool) else None,
+                row.get("authoritative_source_used") if isinstance(row.get("authoritative_source_used"), bool) else None,
+                row.get("citation_present") if isinstance(row.get("citation_present"), bool) else None,
+                row.get("unsupported_claim_avoidance")
+                if isinstance(row.get("unsupported_claim_avoidance"), bool)
+                else None,
                 _clean_text(row.get("failure_type")),
+                _clean_text(row.get("failure_stage")),
+                _clean_text(row.get("failure_bucket")),
                 _clean_text(row.get("root_cause_label")),
                 _safe_float(row.get("retrieval_latency_ms"), 0.0) if row.get("retrieval_latency_ms") is not None else None,
                 _safe_float(row.get("generation_latency_ms"), 0.0) if row.get("generation_latency_ms") is not None else None,
@@ -5040,6 +5322,7 @@ class PostgresKnowledgeRepository:
                                     "expected_document_ids",
                                     "expected_heading_paths",
                                     "expected_evidence_refs",
+                                    "answer_key_points",
                                     "trace_payload",
                                     "judge_votes",
                                 }
@@ -5218,6 +5501,11 @@ class PostgresKnowledgeRepository:
         citation_ok: bool | None = None,
         logic_ok: bool | None = None,
         hallucination_present: bool | None = None,
+        route_family_override: str | None = None,
+        execution_action_override: str | None = None,
+        tooling_profile_override: str | None = None,
+        failure_stage_override: str | None = None,
+        failure_bucket_override: str | None = None,
         dataset_decision: str | None = None,
         corrected_reference_answer: str | None = None,
         corrected_citation_targets: list[dict[str, Any]] | None = None,
@@ -5247,6 +5535,21 @@ class PostgresKnowledgeRepository:
         if hallucination_present is not None:
             assignments.append(sql.SQL("hallucination_present = %s"))
             params.append(bool(hallucination_present))
+        if route_family_override is not None:
+            assignments.append(sql.SQL("route_family_override = %s"))
+            params.append(_clean_text(route_family_override))
+        if execution_action_override is not None:
+            assignments.append(sql.SQL("execution_action_override = %s"))
+            params.append(_clean_text(execution_action_override))
+        if tooling_profile_override is not None:
+            assignments.append(sql.SQL("tooling_profile_override = %s"))
+            params.append(_clean_text(tooling_profile_override))
+        if failure_stage_override is not None:
+            assignments.append(sql.SQL("failure_stage_override = %s"))
+            params.append(_clean_text(failure_stage_override))
+        if failure_bucket_override is not None:
+            assignments.append(sql.SQL("failure_bucket_override = %s"))
+            params.append(_clean_text(failure_bucket_override))
         if dataset_decision is not None:
             assignments.append(sql.SQL("dataset_decision = %s"))
             params.append(_normalize_dataset_decision(dataset_decision))
@@ -6089,19 +6392,39 @@ class PostgresKnowledgeRepository:
         return " AND " + " AND ".join(clauses), params
 
     def _query_scalar(self, query: sql.SQL, params: tuple[Any, ...] = ()) -> Any:
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, params)
-                row = cur.fetchone()
+        row = None
+        last_error: Exception | None = None
+        for _attempt in range(2):
+            conn = self._read_connection()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(query, params)
+                    row = cur.fetchone()
+                last_error = None
+                break
+            except (psycopg.OperationalError, psycopg.Error, OSError, TimeoutError) as exc:
+                last_error = exc
+                self._reset_cached_read_connection()
+        if last_error is not None:
+            raise last_error
         if not row:
             return None
         return row[0]
 
     def _query_rows(self, query: sql.SQL, params: tuple[Any, ...] = ()) -> list[tuple[Any, ...]]:
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, params)
-                return cur.fetchall()
+        last_error: Exception | None = None
+        for _attempt in range(2):
+            conn = self._read_connection()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(query, params)
+                    return cur.fetchall()
+            except (psycopg.OperationalError, psycopg.Error, OSError, TimeoutError) as exc:
+                last_error = exc
+                self._reset_cached_read_connection()
+        if last_error is not None:
+            raise last_error
+        return []
 
     def _has_eval_data(self, days: int, filters: dict[str, Any]) -> bool:
         filter_sql, params = self._build_filter_clause(
@@ -8349,11 +8672,11 @@ class PostgresKnowledgeRepository:
         if not experiments:
             return None, None
 
-        def _match(identifier: str | None) -> dict[str, Any] | None:
+        def _match(identifier: str | None, pool: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
             normalized_identifier = _clean_text(identifier)
             if not normalized_identifier:
                 return None
-            for item in experiments:
+            for item in pool or experiments:
                 if normalized_identifier in {
                     _clean_text(item.get("experiment_id")),
                     _clean_text(item.get("eval_run_id")),
@@ -8366,19 +8689,28 @@ class PostgresKnowledgeRepository:
             or _match(filters.get("experiment_id"))
             or experiments[0]
         )
-        baseline = _match(filters.get("baseline_experiment_id"))
+        candidate_benchmark_version = _clean_text((candidate or {}).get("benchmark_version"))
+        comparable_experiments = [
+            item
+            for item in experiments
+            if _clean_text(item.get("benchmark_version")) == candidate_benchmark_version
+        ]
+        if not comparable_experiments:
+            comparable_experiments = experiments
+
+        baseline = _match(filters.get("baseline_experiment_id"), comparable_experiments)
         if baseline is None:
             baseline = next(
                 (
                     item
-                    for item in experiments
+                    for item in comparable_experiments
                     if _clean_text(item.get("eval_run_id")) != _clean_text(candidate.get("eval_run_id"))
                 ),
                 candidate,
             )
         return baseline, candidate
 
-    def _experiment_case_rows(self, eval_run_ids: list[str]) -> dict[str, dict[str, dict[str, Any]]]:
+    def _benchmark_case_summary_rows(self, eval_run_ids: list[str]) -> dict[str, dict[str, dict[str, Any]]]:
         normalized_run_ids = [_clean_text(item) for item in eval_run_ids if _clean_text(item)]
         if not normalized_run_ids:
             return {}
@@ -8388,6 +8720,9 @@ class PostgresKnowledgeRepository:
                 SELECT
                     eval_run_id,
                     test_case_id,
+                    dataset_schema_version,
+                    question_type,
+                    category,
                     query_type,
                     source_type,
                     product,
@@ -8396,19 +8731,27 @@ class PostgresKnowledgeRepository:
                     retrieval_strategy,
                     question,
                     answer_preview,
-                    expected_document_ids,
-                    expected_heading_paths,
-                    expected_evidence_refs,
-                    trace_payload,
+                    expected_route_family,
+                    actual_route_family,
+                    expected_execution_action,
+                    actual_execution_action,
+                    expected_tooling_profile,
+                    actual_tooling_profile,
+                    route_family_correct,
+                    execution_action_correct,
+                    tooling_profile_correct,
                     hit_at_1,
                     hit_at_3,
                     hit_at_5,
+                    document_hit_at_5,
                     recall_at_5,
                     mrr,
                     ndcg_at_5,
                     evidence_hit_at_1,
                     evidence_hit_at_3,
                     evidence_hit_at_5,
+                    evidence_coverage,
+                    noise_rate,
                     document_relevance_score,
                     faithfulness_score,
                     groundedness_score,
@@ -8419,7 +8762,253 @@ class PostgresKnowledgeRepository:
                     answer_logic_score,
                     hallucination_flag,
                     needs_human,
+                    answer_correctness_eligible,
+                    matched_expected_execution_action,
+                    used_prohibited_agora_docs,
+                    abstained_or_deflected_properly,
+                    no_unsupported_claims,
+                    response_policy_followed,
+                    authoritative_source_used,
+                    citation_present,
+                    unsupported_claim_avoidance,
                     failure_type,
+                    failure_stage,
+                    failure_bucket,
+                    root_cause_label,
+                    retrieval_latency_ms,
+                    generation_latency_ms,
+                    total_latency_ms,
+                    selected_doc_count,
+                    top1_similarity_score,
+                    avg_selected_similarity_score,
+                    avg_cost_per_query,
+                    judge_disagreement_flag
+                FROM {}
+                WHERE eval_run_id = ANY(%s)
+                """
+            ).format(self._table("support_rag_eval_results")),
+            (normalized_run_ids,),
+        )
+        grouped: dict[str, dict[str, dict[str, Any]]] = {}
+        for row in rows:
+            (
+                eval_run_id,
+                test_case_id,
+                dataset_schema_version,
+                question_type,
+                category,
+                query_type,
+                source_type,
+                product,
+                language,
+                chunk_strategy,
+                retrieval_strategy,
+                question,
+                answer_preview,
+                expected_route_family,
+                actual_route_family,
+                expected_execution_action,
+                actual_execution_action,
+                expected_tooling_profile,
+                actual_tooling_profile,
+                route_family_correct,
+                execution_action_correct,
+                tooling_profile_correct,
+                hit_at_1,
+                hit_at_3,
+                hit_at_5,
+                document_hit_at_5,
+                recall_at_5,
+                mrr,
+                ndcg_at_5,
+                evidence_hit_at_1,
+                evidence_hit_at_3,
+                evidence_hit_at_5,
+                evidence_coverage,
+                noise_rate,
+                document_relevance_score,
+                faithfulness_score,
+                groundedness_score,
+                response_relevance_score,
+                response_completeness_score,
+                citation_correctness_score,
+                answer_accuracy_score,
+                answer_logic_score,
+                hallucination_flag,
+                needs_human,
+                answer_correctness_eligible,
+                matched_expected_execution_action,
+                used_prohibited_agora_docs,
+                abstained_or_deflected_properly,
+                no_unsupported_claims,
+                response_policy_followed,
+                authoritative_source_used,
+                citation_present,
+                unsupported_claim_avoidance,
+                failure_type,
+                failure_stage,
+                failure_bucket,
+                root_cause_label,
+                retrieval_latency_ms,
+                generation_latency_ms,
+                total_latency_ms,
+                selected_doc_count,
+                top1_similarity_score,
+                avg_selected_similarity_score,
+                avg_cost_per_query,
+                judge_disagreement_flag,
+            ) = row
+            payload = {
+                "eval_run_id": eval_run_id,
+                "test_case_id": test_case_id,
+                "dataset_schema_version": dataset_schema_version,
+                "question_type": question_type,
+                "category": category,
+                "query_type": query_type,
+                "source_type": source_type,
+                "product": product,
+                "language": language,
+                "chunk_strategy": chunk_strategy,
+                "retrieval_strategy": retrieval_strategy,
+                "question": question,
+                "answer_preview": answer_preview,
+                "expected_route_family": expected_route_family,
+                "actual_route_family": actual_route_family,
+                "expected_execution_action": expected_execution_action,
+                "actual_execution_action": actual_execution_action,
+                "expected_tooling_profile": expected_tooling_profile,
+                "actual_tooling_profile": actual_tooling_profile,
+                "route_family_correct": _coalesce_metric(route_family_correct),
+                "execution_action_correct": _coalesce_metric(execution_action_correct),
+                "tooling_profile_correct": _coalesce_metric(tooling_profile_correct),
+                "hit_at_1": _coalesce_metric(hit_at_1),
+                "hit_at_3": _coalesce_metric(hit_at_3),
+                "hit_at_5": _coalesce_metric(hit_at_5),
+                "document_hit_at_5": _coalesce_metric(document_hit_at_5),
+                "recall_at_5": _coalesce_metric(recall_at_5),
+                "mrr": _coalesce_metric(mrr),
+                "ndcg_at_5": _coalesce_metric(ndcg_at_5),
+                "evidence_hit_at_1": _coalesce_metric(evidence_hit_at_1),
+                "evidence_hit_at_3": _coalesce_metric(evidence_hit_at_3),
+                "evidence_hit_at_5": _coalesce_metric(evidence_hit_at_5),
+                "evidence_coverage": _coalesce_metric(evidence_coverage),
+                "noise_rate": _coalesce_metric(noise_rate),
+                "document_relevance_score": _coalesce_metric(document_relevance_score),
+                "faithfulness_score": _coalesce_metric(faithfulness_score),
+                "groundedness_score": _coalesce_metric(groundedness_score),
+                "response_relevance_score": _coalesce_metric(response_relevance_score),
+                "response_completeness_score": _coalesce_metric(response_completeness_score),
+                "citation_correctness_score": _coalesce_metric(citation_correctness_score),
+                "answer_accuracy_score": _coalesce_metric(answer_accuracy_score),
+                "answer_logic_score": _coalesce_metric(answer_logic_score),
+                "hallucination_flag": bool(hallucination_flag) if hallucination_flag is not None else None,
+                "needs_human": bool(needs_human) if needs_human is not None else None,
+                "answer_correctness_eligible": bool(answer_correctness_eligible) if answer_correctness_eligible is not None else None,
+                "matched_expected_execution_action": bool(matched_expected_execution_action) if matched_expected_execution_action is not None else None,
+                "used_prohibited_agora_docs": bool(used_prohibited_agora_docs) if used_prohibited_agora_docs is not None else None,
+                "abstained_or_deflected_properly": bool(abstained_or_deflected_properly) if abstained_or_deflected_properly is not None else None,
+                "no_unsupported_claims": bool(no_unsupported_claims) if no_unsupported_claims is not None else None,
+                "response_policy_followed": bool(response_policy_followed) if response_policy_followed is not None else None,
+                "authoritative_source_used": bool(authoritative_source_used) if authoritative_source_used is not None else None,
+                "citation_present": bool(citation_present) if citation_present is not None else None,
+                "unsupported_claim_avoidance": bool(unsupported_claim_avoidance) if unsupported_claim_avoidance is not None else None,
+                "failure_type": failure_type,
+                "failure_stage": failure_stage,
+                "failure_bucket": failure_bucket,
+                "root_cause_label": root_cause_label,
+                "retrieval_latency_ms": _coalesce_metric(retrieval_latency_ms),
+                "generation_latency_ms": _coalesce_metric(generation_latency_ms),
+                "total_latency_ms": _coalesce_metric(total_latency_ms),
+                "selected_doc_count": selected_doc_count,
+                "top1_similarity_score": _coalesce_metric(top1_similarity_score),
+                "avg_selected_similarity_score": _coalesce_metric(avg_selected_similarity_score),
+                "avg_cost_per_query": _coalesce_metric(avg_cost_per_query),
+                "judge_disagreement_flag": bool(judge_disagreement_flag) if judge_disagreement_flag is not None else None,
+            }
+            grouped.setdefault(str(eval_run_id), {})[str(test_case_id)] = payload
+        return grouped
+
+    def _benchmark_case_detail_rows(
+        self,
+        eval_run_ids: list[str],
+        *,
+        test_case_id: str | None = None,
+    ) -> dict[str, dict[str, dict[str, Any]]]:
+        normalized_run_ids = [_clean_text(item) for item in eval_run_ids if _clean_text(item)]
+        normalized_test_case_id = _clean_text(test_case_id)
+        if not normalized_run_ids:
+            return {}
+        case_filter_sql = sql.SQL(" AND test_case_id = %s") if normalized_test_case_id else sql.SQL("")
+        query_params: tuple[Any, ...]
+        if normalized_test_case_id:
+            query_params = (normalized_run_ids, normalized_test_case_id)
+        else:
+            query_params = (normalized_run_ids,)
+        rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    eval_run_id,
+                    test_case_id,
+                    dataset_schema_version,
+                    question_type,
+                    category,
+                    query_type,
+                    source_type,
+                    product,
+                    language,
+                    chunk_strategy,
+                    retrieval_strategy,
+                    question,
+                    answer_preview,
+                    expected_route_family,
+                    actual_route_family,
+                    expected_execution_action,
+                    actual_execution_action,
+                    expected_tooling_profile,
+                    actual_tooling_profile,
+                    route_family_correct,
+                    execution_action_correct,
+                    tooling_profile_correct,
+                    expected_document_ids,
+                    expected_heading_paths,
+                    expected_evidence_refs,
+                    answer_key_points,
+                    trace_payload,
+                    hit_at_1,
+                    hit_at_3,
+                    hit_at_5,
+                    document_hit_at_5,
+                    recall_at_5,
+                    mrr,
+                    ndcg_at_5,
+                    evidence_hit_at_1,
+                    evidence_hit_at_3,
+                    evidence_hit_at_5,
+                    evidence_coverage,
+                    noise_rate,
+                    document_relevance_score,
+                    faithfulness_score,
+                    groundedness_score,
+                    response_relevance_score,
+                    response_completeness_score,
+                    citation_correctness_score,
+                    answer_accuracy_score,
+                    answer_logic_score,
+                    hallucination_flag,
+                    needs_human,
+                    answer_correctness_eligible,
+                    matched_expected_execution_action,
+                    used_prohibited_agora_docs,
+                    abstained_or_deflected_properly,
+                    no_unsupported_claims,
+                    response_policy_followed,
+                    authoritative_source_used,
+                    citation_present,
+                    unsupported_claim_avoidance,
+                    failure_type,
+                    failure_stage,
+                    failure_bucket,
                     root_cause_label,
                     retrieval_latency_ms,
                     generation_latency_ms,
@@ -8432,60 +9021,94 @@ class PostgresKnowledgeRepository:
                     judge_disagreement_flag
                 FROM {}
                 WHERE eval_run_id = ANY(%s)
+                {case_filter}
                 """
-            ).format(self._table("support_rag_eval_results")),
-            (normalized_run_ids,),
+            ).format(
+                self._table("support_rag_eval_results"),
+                case_filter=case_filter_sql,
+            ),
+            query_params,
         )
         grouped: dict[str, dict[str, dict[str, Any]]] = {}
         for row in rows:
             payload = {
                 "eval_run_id": row[0],
                 "test_case_id": row[1],
-                "query_type": row[2],
-                "source_type": row[3],
-                "product": row[4],
-                "language": row[5],
-                "chunk_strategy": row[6],
-                "retrieval_strategy": row[7],
-                "question": row[8],
-                "answer_preview": row[9],
-                "expected_document_ids": _json_list(row[10]),
-                "expected_heading_paths": _json_list(row[11]),
-                "expected_evidence_refs": _json_list(row[12]),
-                "trace_payload": _json_dict(row[13]),
-                "hit_at_1": _coalesce_metric(row[14]),
-                "hit_at_3": _coalesce_metric(row[15]),
-                "hit_at_5": _coalesce_metric(row[16]),
-                "recall_at_5": _coalesce_metric(row[17]),
-                "mrr": _coalesce_metric(row[18]),
-                "ndcg_at_5": _coalesce_metric(row[19]),
-                "evidence_hit_at_1": _coalesce_metric(row[20]),
-                "evidence_hit_at_3": _coalesce_metric(row[21]),
-                "evidence_hit_at_5": _coalesce_metric(row[22]),
-                "document_relevance_score": _coalesce_metric(row[23]),
-                "faithfulness_score": _coalesce_metric(row[24]),
-                "groundedness_score": _coalesce_metric(row[25]),
-                "response_relevance_score": _coalesce_metric(row[26]),
-                "response_completeness_score": _coalesce_metric(row[27]),
-                "citation_correctness_score": _coalesce_metric(row[28]),
-                "answer_accuracy_score": _coalesce_metric(row[29]),
-                "answer_logic_score": _coalesce_metric(row[30]),
-                "hallucination_flag": bool(row[31]) if row[31] is not None else None,
-                "needs_human": bool(row[32]) if row[32] is not None else None,
-                "failure_type": row[33],
-                "root_cause_label": row[34],
-                "retrieval_latency_ms": _coalesce_metric(row[35]),
-                "generation_latency_ms": _coalesce_metric(row[36]),
-                "total_latency_ms": _coalesce_metric(row[37]),
-                "selected_doc_count": row[38],
-                "top1_similarity_score": _coalesce_metric(row[39]),
-                "avg_selected_similarity_score": _coalesce_metric(row[40]),
-                "avg_cost_per_query": _coalesce_metric(row[41]),
-                "judge_votes": _json_list(row[42]),
-                "judge_disagreement_flag": bool(row[43]) if row[43] is not None else None,
+                "dataset_schema_version": row[2],
+                "question_type": row[3],
+                "category": row[4],
+                "query_type": row[5],
+                "source_type": row[6],
+                "product": row[7],
+                "language": row[8],
+                "chunk_strategy": row[9],
+                "retrieval_strategy": row[10],
+                "question": row[11],
+                "answer_preview": row[12],
+                "expected_route_family": row[13],
+                "actual_route_family": row[14],
+                "expected_execution_action": row[15],
+                "actual_execution_action": row[16],
+                "expected_tooling_profile": row[17],
+                "actual_tooling_profile": row[18],
+                "route_family_correct": _coalesce_metric(row[19]),
+                "execution_action_correct": _coalesce_metric(row[20]),
+                "tooling_profile_correct": _coalesce_metric(row[21]),
+                "expected_document_ids": _json_list(row[22]),
+                "expected_heading_paths": _json_list(row[23]),
+                "expected_evidence_refs": _json_list(row[24]),
+                "answer_key_points": _json_list(row[25]),
+                "trace_payload": _json_dict(row[26]),
+                "hit_at_1": _coalesce_metric(row[27]),
+                "hit_at_3": _coalesce_metric(row[28]),
+                "hit_at_5": _coalesce_metric(row[29]),
+                "document_hit_at_5": _coalesce_metric(row[30]),
+                "recall_at_5": _coalesce_metric(row[31]),
+                "mrr": _coalesce_metric(row[32]),
+                "ndcg_at_5": _coalesce_metric(row[33]),
+                "evidence_hit_at_1": _coalesce_metric(row[34]),
+                "evidence_hit_at_3": _coalesce_metric(row[35]),
+                "evidence_hit_at_5": _coalesce_metric(row[36]),
+                "evidence_coverage": _coalesce_metric(row[37]),
+                "noise_rate": _coalesce_metric(row[38]),
+                "document_relevance_score": _coalesce_metric(row[39]),
+                "faithfulness_score": _coalesce_metric(row[40]),
+                "groundedness_score": _coalesce_metric(row[41]),
+                "response_relevance_score": _coalesce_metric(row[42]),
+                "response_completeness_score": _coalesce_metric(row[43]),
+                "citation_correctness_score": _coalesce_metric(row[44]),
+                "answer_accuracy_score": _coalesce_metric(row[45]),
+                "answer_logic_score": _coalesce_metric(row[46]),
+                "hallucination_flag": bool(row[47]) if row[47] is not None else None,
+                "needs_human": bool(row[48]) if row[48] is not None else None,
+                "answer_correctness_eligible": bool(row[49]) if row[49] is not None else None,
+                "matched_expected_execution_action": bool(row[50]) if row[50] is not None else None,
+                "used_prohibited_agora_docs": bool(row[51]) if row[51] is not None else None,
+                "abstained_or_deflected_properly": bool(row[52]) if row[52] is not None else None,
+                "no_unsupported_claims": bool(row[53]) if row[53] is not None else None,
+                "response_policy_followed": bool(row[54]) if row[54] is not None else None,
+                "authoritative_source_used": bool(row[55]) if row[55] is not None else None,
+                "citation_present": bool(row[56]) if row[56] is not None else None,
+                "unsupported_claim_avoidance": bool(row[57]) if row[57] is not None else None,
+                "failure_type": row[58],
+                "failure_stage": row[59],
+                "failure_bucket": row[60],
+                "root_cause_label": row[61],
+                "retrieval_latency_ms": _coalesce_metric(row[62]),
+                "generation_latency_ms": _coalesce_metric(row[63]),
+                "total_latency_ms": _coalesce_metric(row[64]),
+                "selected_doc_count": row[65],
+                "top1_similarity_score": _coalesce_metric(row[66]),
+                "avg_selected_similarity_score": _coalesce_metric(row[67]),
+                "avg_cost_per_query": _coalesce_metric(row[68]),
+                "judge_votes": _json_list(row[69]),
+                "judge_disagreement_flag": bool(row[70]) if row[70] is not None else None,
             }
             grouped.setdefault(str(row[0]), {})[str(row[1])] = payload
         return grouped
+
+    def _experiment_case_rows(self, eval_run_ids: list[str]) -> dict[str, dict[str, dict[str, Any]]]:
+        return self._benchmark_case_detail_rows(eval_run_ids)
 
     def _segment_breakdown_from_cases(
         self,
@@ -8813,7 +9436,8 @@ class PostgresKnowledgeRepository:
             (normalized_request_id,),
         )
         selected_chunk_ids = _json_list(row[12])
-        chunk_ids = selected_chunk_ids + [str(item[0]) for item in candidate_rows if item[0]]
+        cited_chunk_ids = _json_list(row[19])
+        chunk_ids = selected_chunk_ids + cited_chunk_ids + [str(item[0]) for item in candidate_rows if item[0]]
         chunk_details = self._chunk_details(chunk_ids)
         candidates = []
         for item in candidate_rows:
@@ -8836,6 +9460,28 @@ class PostgresKnowledgeRepository:
             if not detail:
                 detail = {"chunk_id": chunk_id}
             selected_contexts.append(detail)
+        answer_citations: list[dict[str, Any]] = []
+        for chunk_id in cited_chunk_ids:
+            detail = dict(chunk_details.get(str(chunk_id), {}))
+            if not detail:
+                continue
+            answer_citations.append(
+                {
+                    "chunk_id": detail.get("chunk_id") or chunk_id,
+                    "doc_id": detail.get("doc_id"),
+                    "source_path": detail.get("source_path"),
+                    "source_url": detail.get("source_url"),
+                    "heading": detail.get("heading"),
+                    "title": detail.get("title"),
+                }
+            )
+        answer_sources = list(
+            dict.fromkeys(
+                _clean_text(item.get("source_url")) or _clean_text(item.get("source_path"))
+                for item in answer_citations
+                if _clean_text(item.get("source_url")) or _clean_text(item.get("source_path"))
+            )
+        )
         payload = {
             "sample_source": "live_query",
             "request_id": row[0],
@@ -8866,7 +9512,9 @@ class PostgresKnowledgeRepository:
             "confidence_score": _coalesce_metric(row[16]),
             "citation_count": int(row[17] or 0),
             "citation_coverage_ratio": _coalesce_metric(row[18]),
-            "cited_chunk_ids": _json_list(row[19]),
+            "cited_chunk_ids": cited_chunk_ids,
+            "answer_citations": answer_citations,
+            "answer_sources": answer_sources,
             "structured_retry_used": bool(row[20]),
             "extractive_fallback_used": bool(row[21]),
             "error_flag": bool(row[32]),
@@ -8971,16 +9619,20 @@ class PostgresKnowledgeRepository:
             "experiment_id": row.get("experiment_id") or (run_meta or {}).get("experiment_id"),
             "benchmark_version": (run_meta or {}).get("benchmark_version"),
             "judge_models": (run_meta or {}).get("judge_models", []),
+            "test_case_id": row.get("test_case_id"),
             "query_type": row.get("query_type"),
             "source_type": row.get("source_type"),
             "product": row.get("product"),
             "language": row.get("language"),
+            "question_type": row.get("question_type"),
+            "category": row.get("category"),
             "chunk_strategy": row.get("chunk_strategy"),
             "retrieval_strategy": row.get("retrieval_strategy"),
             "reranker_provider": _clean_text(trace_payload.get("reranker_provider")),
             "reranker_model": _clean_text(trace_payload.get("reranker_model")) or (run_meta or {}).get("reranker_model"),
             "created_at": (run_meta or {}).get("finished_at") or (run_meta or {}).get("created_at"),
             "user_query": row.get("question"),
+            "question": row.get("question"),
             "rewritten_query": None,
             "intent": None,
             "generation_mode": trace_payload.get("generation_mode"),
@@ -9000,11 +9652,22 @@ class PostgresKnowledgeRepository:
             "citation_count": trace_payload.get("citation_count"),
             "citation_coverage_ratio": trace_payload.get("citation_coverage_ratio"),
             "cited_chunk_ids": _json_list(trace_payload.get("cited_chunk_ids")),
+            "answer_sources": _json_list(trace_payload.get("answer_sources")),
+            "answer_citations": _json_list(trace_payload.get("answer_citations")),
             "structured_retry_used": bool(trace_payload.get("structured_retry_used")),
             "extractive_fallback_used": bool(trace_payload.get("extractive_fallback_used")),
             "expected_document_ids": _json_list(row.get("expected_document_ids")),
             "expected_heading_paths": _json_list(row.get("expected_heading_paths")),
             "expected_evidence_refs": _json_list(row.get("expected_evidence_refs")),
+            "expected_route_family": row.get("expected_route_family"),
+            "actual_route_family": row.get("actual_route_family"),
+            "expected_execution_action": row.get("expected_execution_action"),
+            "actual_execution_action": row.get("actual_execution_action"),
+            "expected_tooling_profile": row.get("expected_tooling_profile"),
+            "actual_tooling_profile": row.get("actual_tooling_profile"),
+            "route_family_correct": row.get("route_family_correct"),
+            "execution_action_correct": row.get("execution_action_correct"),
+            "tooling_profile_correct": row.get("tooling_profile_correct"),
             "missed_expected_docs": _json_list(trace_payload.get("missed_expected_docs")),
             "candidates": candidates,
             "selected_contexts": selected_contexts,
@@ -9021,8 +9684,43 @@ class PostgresKnowledgeRepository:
             "answer_logic_score": row.get("answer_logic_score"),
             "hallucination_flag": row.get("hallucination_flag"),
             "failure_type": row.get("failure_type"),
+            "failure_stage": row.get("failure_stage"),
+            "failure_bucket": row.get("failure_bucket"),
+            "matched_expected_execution_action": row.get("matched_expected_execution_action"),
+            "used_prohibited_agora_docs": row.get("used_prohibited_agora_docs"),
+            "abstained_or_deflected_properly": row.get("abstained_or_deflected_properly"),
+            "no_unsupported_claims": row.get("no_unsupported_claims"),
+            "response_policy_followed": row.get("response_policy_followed"),
+            "authoritative_source_used": row.get("authoritative_source_used"),
+            "citation_present": row.get("citation_present"),
+            "unsupported_claim_avoidance": row.get("unsupported_claim_avoidance"),
             "judge_votes": _json_list(row.get("judge_votes")),
         }
+        if not payload["answer_citations"] and payload["cited_chunk_ids"]:
+            derived_citations: list[dict[str, Any]] = []
+            for chunk_id in payload["cited_chunk_ids"]:
+                detail = dict(chunk_details.get(str(chunk_id), {}))
+                if not detail:
+                    continue
+                derived_citations.append(
+                    {
+                        "chunk_id": detail.get("chunk_id") or chunk_id,
+                        "doc_id": detail.get("doc_id"),
+                        "source_path": detail.get("source_path"),
+                        "source_url": detail.get("source_url"),
+                        "heading": detail.get("heading"),
+                        "title": detail.get("title"),
+                    }
+                )
+            payload["answer_citations"] = derived_citations
+        if not payload["answer_sources"] and payload["answer_citations"]:
+            payload["answer_sources"] = list(
+                dict.fromkeys(
+                    _clean_text(item.get("source_url")) or _clean_text(item.get("source_path"))
+                    for item in payload["answer_citations"]
+                    if _clean_text(item.get("source_url")) or _clean_text(item.get("source_path"))
+                )
+            )
         payload["root_cause_labels"] = _benchmark_root_causes(row)
         payload["related_ingestion_ids"] = list(
             dict.fromkeys(
@@ -9033,10 +9731,224 @@ class PostgresKnowledgeRepository:
         )
         return payload
 
+    def _case_detail_deltas(
+        self,
+        primary: dict[str, Any] | None,
+        baseline: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if not primary or not baseline:
+            return None
+
+        def _bool_delta(field_name: str) -> float | None:
+            primary_value = primary.get(field_name)
+            baseline_value = baseline.get(field_name)
+            if primary_value is None or baseline_value is None:
+                return None
+            return _round_delta(1.0 if bool(primary_value) else 0.0, 1.0 if bool(baseline_value) else 0.0)
+
+        return {
+            "quality_score": _round_delta(_case_quality_score(primary), _case_quality_score(baseline)),
+            "route_family_correct": _round_delta(primary.get("route_family_correct"), baseline.get("route_family_correct")),
+            "execution_action_correct": _round_delta(
+                primary.get("execution_action_correct"),
+                baseline.get("execution_action_correct"),
+            ),
+            "tooling_profile_correct": _round_delta(
+                primary.get("tooling_profile_correct"),
+                baseline.get("tooling_profile_correct"),
+            ),
+            "faithfulness_score": _round_delta(primary.get("faithfulness_score"), baseline.get("faithfulness_score")),
+            "groundedness_score": _round_delta(primary.get("groundedness_score"), baseline.get("groundedness_score")),
+            "citation_correctness_score": _round_delta(
+                primary.get("citation_correctness_score"),
+                baseline.get("citation_correctness_score"),
+            ),
+            "answer_accuracy_score": _round_delta(primary.get("answer_accuracy_score"), baseline.get("answer_accuracy_score")),
+            "answer_logic_score": _round_delta(primary.get("answer_logic_score"), baseline.get("answer_logic_score")),
+            "response_relevance_score": _round_delta(
+                primary.get("response_relevance_score"),
+                baseline.get("response_relevance_score"),
+            ),
+            "evidence_hit_at_5": _round_delta(primary.get("evidence_hit_at_5"), baseline.get("evidence_hit_at_5")),
+            "hit_at_5": _round_delta(primary.get("hit_at_5"), baseline.get("hit_at_5")),
+            "response_policy_followed": _bool_delta("response_policy_followed"),
+        }
+
+    def _ordered_candidate_case_rows(self, candidate_cases: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+        return sorted(
+            candidate_cases.values(),
+            key=lambda item: _clean_text(item.get("test_case_id")) or _clean_text(item.get("question")),
+        )
+
+    def _build_case_explorer_rows(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        incorrect_title: str,
+        correct_title: str,
+        incorrect_predicate: Callable[[dict[str, Any]], bool],
+        row_payload: Callable[[dict[str, Any]], dict[str, Any]],
+    ) -> dict[str, Any]:
+        incorrect_rows = [row_payload(row) for row in rows if incorrect_predicate(row)]
+        correct_rows = [row_payload(row) for row in rows if not incorrect_predicate(row)]
+        return {
+            "incorrect": {"title": incorrect_title, "count": len(incorrect_rows), "rows": incorrect_rows},
+            "correct": {"title": correct_title, "count": len(correct_rows), "rows": correct_rows},
+        }
+
+    def _routing_case_rows(self, candidate_cases: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        ordered_rows = self._ordered_candidate_case_rows(candidate_cases)
+
+        def _row_payload(row: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "eval_run_id": row.get("eval_run_id"),
+                "test_case_id": row.get("test_case_id"),
+                "question": row.get("question"),
+                "category": row.get("category"),
+                "expected_route_family": row.get("expected_route_family"),
+                "actual_route_family": row.get("actual_route_family"),
+                "expected_execution_action": row.get("expected_execution_action"),
+                "actual_execution_action": row.get("actual_execution_action"),
+                "expected_tooling_profile": row.get("expected_tooling_profile"),
+                "actual_tooling_profile": row.get("actual_tooling_profile"),
+                "route_family_correct": row.get("route_family_correct"),
+                "failure_stage": row.get("failure_stage"),
+                "failure_bucket": row.get("failure_bucket"),
+            }
+
+        return self._build_case_explorer_rows(
+            ordered_rows,
+            incorrect_title="Routing Errors",
+            correct_title="Routing Correct",
+            incorrect_predicate=lambda row: _safe_float(row.get("route_family_correct")) < 1.0,
+            row_payload=_row_payload,
+        )
+
+    def _retrieval_case_rows(self, candidate_cases: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        ordered_rows = [
+            row
+            for row in self._ordered_candidate_case_rows(candidate_cases)
+            if _clean_text(row.get("expected_route_family")) == "agora_docs_rag"
+            and _clean_text(row.get("failure_stage")) != "routing"
+            and any(
+                row.get(field_name) is not None
+                for field_name in ("document_hit_at_5", "evidence_hit_at_5", "evidence_coverage", "noise_rate")
+            )
+        ]
+
+        def _row_payload(row: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "eval_run_id": row.get("eval_run_id"),
+                "test_case_id": row.get("test_case_id"),
+                "question": row.get("question"),
+                "category": row.get("category"),
+                "failure_stage": row.get("failure_stage"),
+                "failure_bucket": row.get("failure_bucket"),
+                "evidence_hit_at_5": row.get("evidence_hit_at_5"),
+                "evidence_coverage": row.get("evidence_coverage"),
+                "noise_rate": row.get("noise_rate"),
+            }
+
+        return self._build_case_explorer_rows(
+            ordered_rows,
+            incorrect_title="Retrieval Errors",
+            correct_title="Retrieval Correct",
+            incorrect_predicate=lambda row: _clean_text(row.get("failure_stage")) == "retrieval",
+            row_payload=_row_payload,
+        )
+
+    def _generation_case_rows(self, candidate_cases: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        ordered_rows = [
+            row
+            for row in self._ordered_candidate_case_rows(candidate_cases)
+            if _clean_text(row.get("failure_stage")) != "routing"
+            and any(
+                row.get(field_name) is not None
+                for field_name in ("answer_accuracy_score", "faithfulness_score", "response_policy_followed")
+            )
+        ]
+
+        def _row_payload(row: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "eval_run_id": row.get("eval_run_id"),
+                "test_case_id": row.get("test_case_id"),
+                "question": row.get("question"),
+                "category": row.get("category"),
+                "failure_stage": row.get("failure_stage"),
+                "failure_bucket": row.get("failure_bucket"),
+                "answer_accuracy_score": row.get("answer_accuracy_score"),
+                "faithfulness_score": row.get("faithfulness_score"),
+                "response_policy_followed": row.get("response_policy_followed"),
+            }
+
+        return self._build_case_explorer_rows(
+            ordered_rows,
+            incorrect_title="Generation Errors",
+            correct_title="Generation Correct",
+            incorrect_predicate=lambda row: _clean_text(row.get("failure_stage")) in {"generation", "business"},
+            row_payload=_row_payload,
+        )
+
+    def rag_dashboard_benchmark_case_detail(
+        self,
+        eval_run_id: str,
+        test_case_id: str,
+        *,
+        baseline_eval_run_id: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_eval_run_id = _clean_text(eval_run_id)
+        normalized_test_case_id = _clean_text(test_case_id)
+        normalized_baseline_eval_run_id = _clean_text(baseline_eval_run_id)
+        if not normalized_eval_run_id or not normalized_test_case_id:
+            raise ValueError("eval_run_id and test_case_id are required")
+
+        run_ids = [normalized_eval_run_id]
+        if normalized_baseline_eval_run_id and normalized_baseline_eval_run_id != normalized_eval_run_id:
+            run_ids.append(normalized_baseline_eval_run_id)
+        cases_by_run = self._benchmark_case_detail_rows(run_ids, test_case_id=normalized_test_case_id)
+        run_meta_map = self._eval_run_meta_map(run_ids)
+
+        primary_row = cases_by_run.get(normalized_eval_run_id, {}).get(normalized_test_case_id)
+        if primary_row is None:
+            raise LookupError(f"Benchmark case not found: {normalized_eval_run_id}:{normalized_test_case_id}")
+        baseline_row = None
+        if normalized_baseline_eval_run_id and normalized_baseline_eval_run_id != normalized_eval_run_id:
+            baseline_row = cases_by_run.get(normalized_baseline_eval_run_id, {}).get(normalized_test_case_id)
+
+        primary = self._benchmark_trace_detail(primary_row, run_meta=run_meta_map.get(normalized_eval_run_id))
+        baseline = (
+            self._benchmark_trace_detail(
+                baseline_row,
+                run_meta=run_meta_map.get(normalized_baseline_eval_run_id),
+            )
+            if baseline_row
+            else None
+        )
+        return {
+            "mode": "benchmark_compare",
+            "primary": primary,
+            "baseline": baseline,
+            "deltas": self._case_detail_deltas(primary, baseline),
+        }
+
+    def rag_dashboard_live_case_detail(self, request_id: str) -> dict[str, Any]:
+        normalized_request_id = _clean_text(request_id)
+        if not normalized_request_id:
+            raise ValueError("request_id is required")
+        primary = self._query_run_detail(normalized_request_id)
+        if primary is None:
+            raise LookupError(f"Live query not found: {normalized_request_id}")
+        return {
+            "mode": "live_query",
+            "primary": primary,
+            "baseline": None,
+            "deltas": None,
+        }
+
     def _experiments_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
         experiments = self._experiment_rows(days, filters)
         baseline, candidate = self._select_experiment_rows(experiments, filters)
-        cases_by_run = self._experiment_case_rows(
+        cases_by_run = self._benchmark_case_summary_rows(
             [
                 _clean_text((baseline or {}).get("eval_run_id")),
                 _clean_text((candidate or {}).get("eval_run_id")),
@@ -9094,15 +10006,7 @@ class PostgresKnowledgeRepository:
                 "baseline_experiment_id": (baseline or {}).get("experiment_id"),
                 "candidate_experiment_id": (candidate or {}).get("experiment_id"),
                 "benchmark_version": (candidate or {}).get("benchmark_version") or (baseline or {}).get("benchmark_version"),
-                "available_experiments": [
-                    {
-                        "eval_run_id": item.get("eval_run_id"),
-                        "experiment_id": item.get("experiment_id"),
-                        "label": f"{item.get('experiment_id')} · {item.get('benchmark_version') or 'benchmark'}",
-                        "finished_at": item.get("finished_at"),
-                    }
-                    for item in experiments
-                ],
+                "available_experiments": self._available_experiment_options(experiments),
                 "cards": {
                     "candidate_quality_rank_score": (candidate or {}).get("quality_rank_score"),
                     "candidate_answer_accuracy_score_avg": (candidate or {}).get("answer_accuracy_score_avg"),
@@ -9139,7 +10043,7 @@ class PostgresKnowledgeRepository:
     def _diagnosis_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
         experiments = self._experiment_rows(days, filters)
         baseline, candidate = self._select_experiment_rows(experiments, filters)
-        cases_by_run = self._experiment_case_rows(
+        cases_by_run = self._benchmark_case_summary_rows(
             [
                 _clean_text((baseline or {}).get("eval_run_id")),
                 _clean_text((candidate or {}).get("eval_run_id")),
@@ -9159,6 +10063,8 @@ class PostgresKnowledgeRepository:
         selected_request_id = _clean_text(filters.get("request_id"))
         selected_eval_run_id = _clean_text(filters.get("eval_run_id"))
         selected_test_case_id = _clean_text(filters.get("test_case_id"))
+        selected_list_key = "top_regressions"
+        matched_review = None
         if filters.get("sample_id"):
             matched_review = next(
                 (row for row in review_queue_rows if _clean_text(row.get("sample_id")) == _clean_text(filters.get("sample_id"))),
@@ -9168,83 +10074,38 @@ class PostgresKnowledgeRepository:
                 selected_request_id = _clean_text(matched_review.get("request_id")) or selected_request_id
                 selected_eval_run_id = _clean_text(matched_review.get("eval_run_id")) or selected_eval_run_id
                 selected_test_case_id = _clean_text(matched_review.get("test_case_id")) or selected_test_case_id
+                selected_list_key = "review_queue"
         if not selected_request_id and not (selected_eval_run_id and selected_test_case_id):
             if regressions:
                 selected_eval_run_id = _clean_text(regressions[0].get("eval_run_id"))
                 selected_test_case_id = _clean_text(regressions[0].get("test_case_id"))
+                selected_list_key = "top_regressions"
             elif risky_live_rows:
                 selected_request_id = _clean_text(risky_live_rows[0].get("request_id"))
+                selected_list_key = "risky_live_queries"
             elif review_queue_rows:
                 first_review = review_queue_rows[0]
                 selected_request_id = _clean_text(first_review.get("request_id"))
                 selected_eval_run_id = _clean_text(first_review.get("eval_run_id"))
                 selected_test_case_id = _clean_text(first_review.get("test_case_id"))
+                selected_list_key = "review_queue"
+        elif selected_request_id and matched_review is None and selected_list_key != "review_queue":
+            selected_list_key = "risky_live_queries"
 
-        diagnosis_trace: dict[str, Any] | None = None
+        selected_source = "benchmark" if selected_eval_run_id and selected_test_case_id else None
         if selected_request_id:
-            diagnosis_trace = {
-                "mode": "live_query",
-                "primary": self._query_run_detail(selected_request_id),
-                "baseline": None,
-            }
-        elif selected_eval_run_id and selected_test_case_id:
-            run_meta_map = self._eval_run_meta_map(
-                [
-                    selected_eval_run_id,
-                    _clean_text((baseline or {}).get("eval_run_id")),
-                ]
-            )
-            primary_row = self._experiment_case_rows([selected_eval_run_id]).get(selected_eval_run_id, {}).get(selected_test_case_id)
-            baseline_row = None
-            baseline_eval_run_id = _clean_text((baseline or {}).get("eval_run_id"))
-            if baseline_eval_run_id and baseline_eval_run_id != selected_eval_run_id:
-                baseline_row = self._experiment_case_rows([baseline_eval_run_id]).get(baseline_eval_run_id, {}).get(
-                    selected_test_case_id
-                )
-            diagnosis_trace = {
-                "mode": "benchmark_compare",
-                "primary": self._benchmark_trace_detail(primary_row, run_meta=run_meta_map.get(selected_eval_run_id))
-                if primary_row
-                else None,
-                "baseline": self._benchmark_trace_detail(
-                    baseline_row,
-                    run_meta=run_meta_map.get(baseline_eval_run_id),
-                )
-                if baseline_row
-                else None,
-            }
-        if diagnosis_trace and diagnosis_trace.get("primary") and diagnosis_trace.get("baseline"):
-            primary_row = diagnosis_trace["primary"]
-            baseline_row = diagnosis_trace["baseline"]
-            diagnosis_trace["deltas"] = {
-                "quality_score": _round_delta(_case_quality_score(primary_row), _case_quality_score(baseline_row)),
-                "faithfulness_score": _round_delta(primary_row.get("faithfulness_score"), baseline_row.get("faithfulness_score")),
-                "groundedness_score": _round_delta(primary_row.get("groundedness_score"), baseline_row.get("groundedness_score")),
-                "citation_correctness_score": _round_delta(
-                    primary_row.get("citation_correctness_score"),
-                    baseline_row.get("citation_correctness_score"),
-                ),
-                "answer_accuracy_score": _round_delta(
-                    primary_row.get("answer_accuracy_score"),
-                    baseline_row.get("answer_accuracy_score"),
-                ),
-                "answer_logic_score": _round_delta(
-                    primary_row.get("answer_logic_score"),
-                    baseline_row.get("answer_logic_score"),
-                ),
-                "evidence_hit_at_5": _round_delta(
-                    primary_row.get("evidence_hit_at_5"),
-                    baseline_row.get("evidence_hit_at_5"),
-                ),
-                "hit_at_5": _round_delta(primary_row.get("hit_at_5"), baseline_row.get("hit_at_5")),
-            }
+            selected_source = "live_query"
         sections = {
             "summary": {
                 "title": "Diagnosis",
                 "subtitle": "Trace one benchmark regression or one risky live query through retrieval, context selection, generation, and review.",
+                "selected_source": selected_source,
+                "selected_list_key": selected_list_key,
                 "selected_request_id": selected_request_id,
                 "selected_eval_run_id": selected_eval_run_id,
                 "selected_test_case_id": selected_test_case_id,
+                "baseline_eval_run_id": _clean_text((baseline or {}).get("eval_run_id")),
+                "candidate_eval_run_id": _clean_text((candidate or {}).get("eval_run_id")),
                 "baseline_experiment_id": (baseline or {}).get("experiment_id"),
                 "candidate_experiment_id": (candidate or {}).get("experiment_id"),
             },
@@ -9254,7 +10115,6 @@ class PostgresKnowledgeRepository:
                 "risky_live_queries": risky_live_rows,
                 "review_queue": review_queue_rows[:10],
             },
-            "diagnosis_trace": diagnosis_trace or {},
         }
         return self._build_workbench_envelope(
             layout="diagnosis",
@@ -9645,6 +10505,281 @@ class PostgresKnowledgeRepository:
             has_eval_data=bool(generation_run_rows or dataset_version_rows or coverage_table_rows),
         )
 
+    def _selected_benchmark_context(
+        self,
+        *,
+        days: int,
+        filters: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None, dict[str, Any] | None, dict[str, dict[str, Any]], dict[str, dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+        experiments = self._experiment_rows(days, filters)
+        baseline, candidate = self._select_experiment_rows(experiments, filters)
+        cases_by_run = self._benchmark_case_summary_rows(
+            [
+                _clean_text((baseline or {}).get("eval_run_id")),
+                _clean_text((candidate or {}).get("eval_run_id")),
+            ]
+        )
+        baseline_cases = cases_by_run.get(_clean_text((baseline or {}).get("eval_run_id")) or "", {})
+        candidate_cases = cases_by_run.get(_clean_text((candidate or {}).get("eval_run_id")) or "", {})
+        wins, regressions = self._sample_deltas_from_cases(
+            baseline_eval_run_id=_clean_text((baseline or {}).get("eval_run_id")),
+            candidate_eval_run_id=_clean_text((candidate or {}).get("eval_run_id")),
+            baseline_cases=baseline_cases,
+            candidate_cases=candidate_cases,
+        )
+        return experiments, baseline, candidate, baseline_cases, candidate_cases, wins, regressions
+
+    def _available_experiment_options(self, experiments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {
+                "eval_run_id": item.get("eval_run_id"),
+                "experiment_id": item.get("experiment_id"),
+                "benchmark_version": item.get("benchmark_version"),
+                "label": f"{item.get('experiment_id')} · {item.get('benchmark_version') or 'benchmark'}",
+                "finished_at": item.get("finished_at"),
+            }
+            for item in experiments
+        ]
+
+    def _category_pass_rows(self, candidate_cases: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in candidate_cases.values():
+            category = _clean_text(row.get("category")) or _clean_text(row.get("question_type")) or "unknown"
+            grouped.setdefault(category, []).append(row)
+        rows: list[dict[str, Any]] = []
+        for category, group_rows in grouped.items():
+            passed = 0
+            for row in group_rows:
+                route_ok = _safe_float(row.get("route_family_correct")) >= 1.0
+                if category == "fact":
+                    ok = route_ok and (_safe_float(row.get("evidence_hit_at_5")) >= 0.9) and (_safe_float(row.get("answer_accuracy_score")) >= 0.85) and (_safe_float(row.get("faithfulness_score")) >= 0.9)
+                elif category == "scenario":
+                    ok = route_ok and (_safe_float(row.get("evidence_coverage")) >= 0.8) and (_safe_float(row.get("answer_accuracy_score")) >= 0.85) and (_safe_float(row.get("faithfulness_score")) >= 0.9)
+                elif category == "trap":
+                    ok = route_ok and (_safe_float(row.get("evidence_hit_at_5")) >= 0.85) and (_safe_float(row.get("faithfulness_score")) >= 0.9) and not bool(row.get("hallucination_flag"))
+                else:
+                    ok = route_ok and bool(row.get("response_policy_followed"))
+                if ok:
+                    passed += 1
+            rows.append(
+                {
+                    "category": category,
+                    "case_count": len(group_rows),
+                    "pass_rate": round(passed / max(1, len(group_rows)), 4),
+                }
+            )
+        return sorted(rows, key=lambda item: item["category"])
+
+    def _scorecard_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
+        experiments, baseline, candidate, baseline_cases, candidate_cases, wins, regressions = self._selected_benchmark_context(
+            days=days,
+            filters=filters,
+        )
+        candidate_rows = list(candidate_cases.values())
+        baseline_rows = list(baseline_cases.values())
+        route_family_accuracy = _mean_from_rows(candidate_rows, "route_family_correct")
+        baseline_route_family_accuracy = _mean_from_rows(baseline_rows, "route_family_correct")
+        evidence_hit_at_5 = _mean_from_rows(candidate_rows, "evidence_hit_at_5")
+        baseline_evidence_hit_at_5 = _mean_from_rows(baseline_rows, "evidence_hit_at_5")
+        answer_accuracy_score = _mean_from_rows(candidate_rows, "answer_accuracy_score")
+        baseline_answer_accuracy_score = _mean_from_rows(baseline_rows, "answer_accuracy_score")
+        response_policy_followed_rate = _rate_from_rows(candidate_rows, "response_policy_followed")
+        baseline_response_policy_followed_rate = _rate_from_rows(baseline_rows, "response_policy_followed")
+        sections = {
+            "summary": {
+                "title": "Scorecard",
+                "subtitle": "Read routing, retrieval, generation, and business outcomes together before drilling into traces.",
+                "baseline_experiment_id": (baseline or {}).get("experiment_id"),
+                "candidate_experiment_id": (candidate or {}).get("experiment_id"),
+                "benchmark_version": (candidate or {}).get("benchmark_version") or (baseline or {}).get("benchmark_version"),
+                "available_experiments": self._available_experiment_options(experiments),
+                "cards": {
+                    "route_family_accuracy": route_family_accuracy,
+                    "evidence_hit_at_5": evidence_hit_at_5,
+                    "answer_accuracy_score": answer_accuracy_score,
+                    "response_policy_followed_rate": response_policy_followed_rate,
+                },
+            },
+            "layer_scorecard": {
+                "rows": [
+                    {
+                        "layer": "Routing",
+                        "metric": "Route Family Accuracy",
+                        "candidate": route_family_accuracy,
+                        "baseline": baseline_route_family_accuracy,
+                        "delta": _round_delta(route_family_accuracy, baseline_route_family_accuracy),
+                    },
+                    {
+                        "layer": "Retrieval",
+                        "metric": "Evidence Hit@5",
+                        "candidate": evidence_hit_at_5,
+                        "baseline": baseline_evidence_hit_at_5,
+                        "delta": _round_delta(evidence_hit_at_5, baseline_evidence_hit_at_5),
+                    },
+                    {
+                        "layer": "Generation",
+                        "metric": "Answer Accuracy",
+                        "candidate": answer_accuracy_score,
+                        "baseline": baseline_answer_accuracy_score,
+                        "delta": _round_delta(answer_accuracy_score, baseline_answer_accuracy_score),
+                    },
+                    {
+                        "layer": "Business",
+                        "metric": "Policy Followed Rate",
+                        "candidate": response_policy_followed_rate,
+                        "baseline": baseline_response_policy_followed_rate,
+                        "delta": _round_delta(response_policy_followed_rate, baseline_response_policy_followed_rate),
+                    },
+                ]
+            },
+            "category_pass_rate": {"rows": self._category_pass_rows(candidate_cases)},
+            "sample_list": {"top_regressions": regressions, "top_wins": wins},
+        }
+        return self._build_workbench_envelope(
+            layout="scorecard",
+            range_value=range_value,
+            filters=filters,
+            sections=sections,
+            has_eval_data=bool(experiments),
+        )
+
+    def _routing_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
+        experiments, baseline, candidate, _baseline_cases, candidate_cases, wins, regressions = self._selected_benchmark_context(
+            days=days,
+            filters=filters,
+        )
+        candidate_rows = list(candidate_cases.values())
+        non_agora_rows = [row for row in candidate_rows if _clean_text(row.get("expected_route_family")) != "agora_docs_rag"]
+        agora_rows = [row for row in candidate_rows if _clean_text(row.get("expected_route_family")) == "agora_docs_rag"]
+        false_positive_to_rag = None
+        if non_agora_rows:
+            false_positive_to_rag = round(
+                sum(1 for row in non_agora_rows if _clean_text(row.get("actual_route_family")) == "agora_docs_rag") / len(non_agora_rows),
+                4,
+            )
+        false_negative_for_agora = None
+        if agora_rows:
+            false_negative_for_agora = round(
+                sum(1 for row in agora_rows if _clean_text(row.get("actual_route_family")) != "agora_docs_rag") / len(agora_rows),
+                4,
+            )
+        sections = {
+            "summary": {
+                "title": "Routing",
+                "subtitle": "Audit domain classification separately from retrieval and answer quality.",
+                "baseline_eval_run_id": _clean_text((baseline or {}).get("eval_run_id")),
+                "candidate_eval_run_id": _clean_text((candidate or {}).get("eval_run_id")),
+                "baseline_experiment_id": (baseline or {}).get("experiment_id"),
+                "candidate_experiment_id": (candidate or {}).get("experiment_id"),
+                "benchmark_version": (candidate or {}).get("benchmark_version") or (baseline or {}).get("benchmark_version"),
+                "cards": {
+                    "route_family_accuracy": _mean_from_rows(candidate_rows, "route_family_correct"),
+                    "execution_action_accuracy": _mean_from_rows(candidate_rows, "execution_action_correct"),
+                    "tooling_profile_accuracy": _mean_from_rows(candidate_rows, "tooling_profile_correct"),
+                    "false_positive_to_agora_rag": false_positive_to_rag,
+                    "false_negative_for_true_agora_tech": false_negative_for_agora,
+                },
+            },
+            "category_pass_rate": {"rows": self._category_pass_rows(candidate_cases)},
+            "routing_cases": self._routing_case_rows(candidate_cases),
+            "sample_list": {"top_regressions": regressions, "top_wins": wins},
+        }
+        return self._build_workbench_envelope(
+            layout="routing",
+            range_value=range_value,
+            filters=filters,
+            sections=sections,
+            has_eval_data=bool(experiments),
+        )
+
+    def _retrieval_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
+        experiments, baseline, candidate, _baseline_cases, candidate_cases, wins, regressions = self._selected_benchmark_context(
+            days=days,
+            filters=filters,
+        )
+        rag_rows = [row for row in candidate_cases.values() if _clean_text(row.get("expected_route_family")) == "agora_docs_rag"]
+        sections = {
+            "summary": {
+                "title": "Retrieval",
+                "subtitle": "Judge the evidence before blaming synthesis.",
+                "baseline_eval_run_id": _clean_text((baseline or {}).get("eval_run_id")),
+                "candidate_eval_run_id": _clean_text((candidate or {}).get("eval_run_id")),
+                "cards": {
+                    "document_hit_at_5": _mean_from_rows(rag_rows, "document_hit_at_5"),
+                    "evidence_hit_at_5": _mean_from_rows(rag_rows, "evidence_hit_at_5"),
+                    "evidence_coverage": _mean_from_rows(rag_rows, "evidence_coverage"),
+                    "noise_rate": _mean_from_rows(rag_rows, "noise_rate"),
+                },
+            },
+            "retrieval_cases": self._retrieval_case_rows(candidate_cases),
+            "sample_list": {"top_regressions": regressions, "top_wins": wins},
+        }
+        return self._build_workbench_envelope(
+            layout="retrieval",
+            range_value=range_value,
+            filters=filters,
+            sections=sections,
+            has_eval_data=bool(experiments),
+        )
+
+    def _generation_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
+        experiments, baseline, candidate, _baseline_cases, candidate_cases, wins, regressions = self._selected_benchmark_context(
+            days=days,
+            filters=filters,
+        )
+        candidate_rows = list(candidate_cases.values())
+        sections = {
+            "summary": {
+                "title": "Generation",
+                "subtitle": "Check correctness, relevance, faithfulness, and policy compliance after retrieval hits.",
+                "baseline_eval_run_id": _clean_text((baseline or {}).get("eval_run_id")),
+                "candidate_eval_run_id": _clean_text((candidate or {}).get("eval_run_id")),
+                "cards": {
+                    "answer_correctness": _mean_from_rows(candidate_rows, "answer_accuracy_score"),
+                    "answer_relevancy": _mean_from_rows(candidate_rows, "response_relevance_score"),
+                    "faithfulness": _mean_from_rows(candidate_rows, "faithfulness_score"),
+                    "hallucination_rate": _rate_from_rows(candidate_rows, "hallucination_flag"),
+                    "response_policy_followed_rate": _rate_from_rows(candidate_rows, "response_policy_followed"),
+                },
+            },
+            "generation_cases": self._generation_case_rows(candidate_cases),
+            "sample_list": {"top_regressions": regressions, "top_wins": wins},
+        }
+        return self._build_workbench_envelope(
+            layout="generation",
+            range_value=range_value,
+            filters=filters,
+            sections=sections,
+            has_eval_data=bool(experiments),
+        )
+
+    def _data_supply_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
+        datasets_page = self._datasets_workbench_page(range_value, days, filters)
+        knowledge_supply_page = self._knowledge_supply_workbench_page(range_value, days, filters)
+        sections = {
+            "summary": {
+                "title": "Data Supply",
+                "subtitle": "Keep benchmark quality and knowledge-base health separate, then diagnose ownership cleanly.",
+                "cards": {
+                    "dataset_version_count": datasets_page.get("sections", {}).get("summary", {}).get("cards", {}).get("dataset_version_count"),
+                    "gold_item_count": datasets_page.get("sections", {}).get("summary", {}).get("cards", {}).get("gold_item_count"),
+                    "coverage_row_count": datasets_page.get("sections", {}).get("summary", {}).get("cards", {}).get("coverage_row_count"),
+                    "ingestion_job_count_24h": knowledge_supply_page.get("sections", {}).get("summary", {}).get("cards", {}).get("ingestion_job_count_24h"),
+                    "avg_chunk_tokens": knowledge_supply_page.get("sections", {}).get("summary", {}).get("cards", {}).get("avg_chunk_tokens"),
+                    "index_freshness_minutes": knowledge_supply_page.get("sections", {}).get("summary", {}).get("cards", {}).get("index_freshness_minutes"),
+                },
+            },
+            "benchmark_supply": datasets_page.get("sections", {}),
+            "knowledge_supply": knowledge_supply_page.get("sections", {}),
+        }
+        return self._build_workbench_envelope(
+            layout="data-supply",
+            range_value=range_value,
+            filters=filters,
+            sections=sections,
+            has_eval_data=bool(datasets_page.get("has_eval_data") or knowledge_supply_page.get("has_eval_data")),
+        )
+
     def rag_dashboard_page(
         self,
         page: str,
@@ -9655,16 +10790,26 @@ class PostgresKnowledgeRepository:
         normalized_page = _normalize_dashboard_page(page)
         normalized_range, days = _normalize_dashboard_range(range_value)
         normalized_filters = self._normalize_dashboard_filters(filters)
+        if normalized_page == "scorecard":
+            return self._scorecard_workbench_page(normalized_range, days, normalized_filters)
+        if normalized_page == "routing":
+            return self._routing_workbench_page(normalized_range, days, normalized_filters)
+        if normalized_page == "retrieval":
+            return self._retrieval_workbench_page(normalized_range, days, normalized_filters)
+        if normalized_page == "generation":
+            return self._generation_workbench_page(normalized_range, days, normalized_filters)
+        if normalized_page == "data-supply":
+            return self._data_supply_workbench_page(normalized_range, days, normalized_filters)
         if normalized_page == "experiments":
-            return self._experiments_workbench_page(normalized_range, days, normalized_filters)
+            return self._scorecard_workbench_page(normalized_range, days, normalized_filters)
         if normalized_page == "datasets":
-            return self._datasets_workbench_page(normalized_range, days, normalized_filters)
+            return self._data_supply_workbench_page(normalized_range, days, normalized_filters)
         if normalized_page == "diagnosis":
             return self._diagnosis_workbench_page(normalized_range, days, normalized_filters)
         if normalized_page == "knowledge-supply":
-            return self._knowledge_supply_workbench_page(normalized_range, days, normalized_filters)
+            return self._data_supply_workbench_page(normalized_range, days, normalized_filters)
         if normalized_page == "production-signals":
-            return self._production_signals_workbench_page(normalized_range, days, normalized_filters)
+            return self._scorecard_workbench_page(normalized_range, days, normalized_filters)
         if normalized_page == "review":
             return self._review_workbench_page(normalized_range, days, normalized_filters)
         if normalized_page == "overview":
@@ -9712,6 +10857,7 @@ def create_knowledge_repository() -> KnowledgeRepository:
         os.getenv("PGVECTOR_CONNECT_RETRY_DELAY_SECONDS"),
         1.0,
     )
+    bootstrap_bm25_on_startup = _env_flag("KNOWLEDGE_BM25_BACKFILL_ON_STARTUP", default=False)
     return PostgresKnowledgeRepository(
         dsn=dsn,
         schema=schema,
@@ -9720,4 +10866,5 @@ def create_knowledge_repository() -> KnowledgeRepository:
         connect_retries=connect_retries,
         connect_retry_delay_seconds=connect_retry_delay_seconds,
         default_vector_dim=_default_vector_dim(),
+        bootstrap_bm25_on_startup=bootstrap_bm25_on_startup,
     )

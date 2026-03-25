@@ -23,7 +23,14 @@ from backend.services.rag_benchmark import (
     parse_benchmark_cases,
     summarize_eval_daily_metrics,
 )
-from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, RagQueryResult, run_rag_query
+from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, RagAnswer, RagQueryResult, RagQueryTrace, run_rag_query
+from backend.services.support_router import (
+    SupportResolution,
+    SupportRouteDecision,
+    citations_use_authoritative_source,
+    decide_support_route,
+    resolve_support_message,
+)
 
 if TYPE_CHECKING:
     from backend.repositories.knowledge_repository import KnowledgeRepository
@@ -50,6 +57,114 @@ def _clean_text(value: Any) -> str:
     return " ".join(str(value or "").split()).strip()
 
 
+def _answer_correctness_eligible(case: BenchmarkCase) -> bool:
+    if case.expected_route_family == "agora_docs_rag":
+        return True
+    if case.expected_route_family == "web_company_info" and case.temporal_sensitivity != "time_sensitive" and case.answer_key_points:
+        return True
+    return False
+
+
+def _coerce_route_decision(raw_value: Any) -> SupportRouteDecision:
+    if isinstance(raw_value, SupportRouteDecision):
+        return raw_value
+    if not isinstance(raw_value, dict):
+        raise TypeError("route_decider must return SupportRouteDecision or dict")
+    return SupportRouteDecision(
+        scope_label=_clean_text(raw_value.get("scope_label")) or "non_agora",
+        route=_clean_text(raw_value.get("route") or raw_value.get("execution_action")) or "refuse",
+        route_family=_clean_text(raw_value.get("route_family")) or None,
+        execution_action=_clean_text(raw_value.get("execution_action")) or None,
+        tooling_profile=_clean_text(raw_value.get("tooling_profile")) or None,
+        confidence=float(raw_value.get("confidence") or 0.0),
+        reason=_clean_text(raw_value.get("reason")) or "benchmark_route_decider",
+        matched_signals=[
+            _clean_text(item)
+            for item in raw_value.get("matched_signals") or []
+            if _clean_text(item)
+        ],
+        response_language=_clean_text(raw_value.get("response_language")) or "en",
+    )
+
+
+def _expected_route_decision(case: BenchmarkCase) -> SupportRouteDecision:
+    scope_label = {
+        "agora_docs_rag": "agora_technical",
+        "web_company_info": "agora_non_technical",
+        "general_chat": "small_talk",
+        "general_tech_help": "non_agora",
+        "fallback_or_refuse": "non_agora",
+    }.get(case.expected_route_family, "non_agora")
+    return SupportRouteDecision(
+        scope_label=scope_label,
+        route=case.expected_execution_action,
+        route_family=case.expected_route_family,
+        execution_action=case.expected_execution_action,
+        tooling_profile=case.expected_tooling_profile,
+        confidence=1.0,
+        reason="benchmark_expected_route",
+        matched_signals=[],
+        response_language=case.language or "en",
+    )
+
+
+def _build_synthetic_result(
+    *,
+    case: BenchmarkCase,
+    resolution: SupportResolution,
+) -> RagQueryResult:
+    answer_text = _clean_text(resolution.answer)
+    trace = RagQueryTrace(
+        query_type=case.query_type or case.question_type,
+        retrieval_strategy="not_applicable",
+        vector_candidates_count=0,
+        bm25_candidates_count=0,
+        reranked_candidates_count=0,
+        retrieved_chunk_ids=[],
+        selected_chunk_ids=[],
+        vector_retrieval_latency_ms=0.0,
+        bm25_retrieval_latency_ms=0.0,
+        retrieval_latency_ms=0.0,
+        rerank_latency_ms=0.0,
+        generation_latency_ms=0.0,
+        total_latency_ms=0.0,
+        prompt_tokens=0,
+        completion_tokens=0,
+        embedding_tokens=0,
+        embedding_provider=None,
+        embedding_model=None,
+        embedding_dimensions=None,
+        embedding_request_meta=[],
+        model_name=None,
+        answer_length=len(answer_text),
+        citation_count=len(resolution.citations),
+        cited_chunk_ids=[],
+        needs_human=resolution.needs_engineer_guidance,
+        handoff_reason=None,
+        confidence_score=resolution.confidence,
+        primary_source_type=case.source_type,
+        primary_chunk_strategy="not_applicable",
+        generation_mode=resolution.answer_route,
+        structured_retry_used=False,
+        extractive_fallback_used=False,
+        selected_doc_count=0,
+        top1_similarity_score=None,
+        avg_selected_similarity_score=None,
+        citation_coverage_ratio=0.0 if not resolution.citations else 1.0,
+        retrieval_candidates=[],
+        selected_contexts=[],
+    )
+    return RagQueryResult(
+        answer=RagAnswer(
+            answer=resolution.answer,
+            confidence=resolution.confidence,
+            sources=list(resolution.sources),
+            citations=[dict(item) for item in resolution.citations],
+        ),
+        trace=trace,
+    )
+
+
 def resolve_judge_models(raw_value: str | None = None) -> list[str]:
     value = raw_value if raw_value is not None else os.getenv("RAG_BENCHMARK_JUDGE_MODELS")
     if not _clean_text(value):
@@ -65,6 +180,64 @@ def _vector_table_name() -> str:
     schema = _clean_text(os.getenv("PGVECTOR_SCHEMA")) or "supportportal"
     raw_table = _clean_text(os.getenv("PGVECTOR_TABLE")) or DEFAULT_PGVECTOR_TABLE
     return raw_table if "." in raw_table else f"{schema}.{raw_table}"
+
+
+def _tooling_profile_correct(*, expected_tooling_profile: str | None, actual_tooling_profile: str | None) -> float:
+    if not _clean_text(expected_tooling_profile):
+        return 1.0
+    return 1.0 if _clean_text(expected_tooling_profile) == _clean_text(actual_tooling_profile) else 0.0
+
+
+def _used_prohibited_agora_docs(*, actual_execution_action: str, expected_tooling_profile: str | None) -> bool:
+    if actual_execution_action != "rag":
+        return False
+    return _clean_text(expected_tooling_profile) not in {"", "agora_docs_only"}
+
+
+def _abstained_or_deflected_properly(*, case: BenchmarkCase, decision: SupportRouteDecision, answer_text: str) -> bool:
+    if decision.execution_action not in {"controlled_response", "refuse"}:
+        return True
+    return bool(_clean_text(answer_text)) and case.expected_execution_action in {"controlled_response", "refuse"}
+
+
+def _no_unsupported_claims(*, judge_aggregate: dict[str, Any], decision: SupportRouteDecision) -> bool:
+    hallucination_flag = judge_aggregate.get("hallucination_flag")
+    if isinstance(hallucination_flag, bool):
+        return not hallucination_flag
+    return decision.execution_action in {"controlled_response", "refuse"}
+
+
+def _failure_stage_and_bucket(
+    *,
+    case: BenchmarkCase,
+    decision: SupportRouteDecision,
+    retrieval_metrics: dict[str, Any],
+    judge_aggregate: dict[str, Any],
+    response_policy_followed: bool,
+    used_prohibited_agora_docs: bool,
+) -> tuple[str, str | None]:
+    if case.expected_route_family != decision.route_family or case.expected_execution_action != decision.execution_action:
+        return "routing", "route_to_wrong_system"
+    if used_prohibited_agora_docs:
+        return "generation", "answer_should_not_have_used_agora_docs"
+    if case.expected_execution_action == "rag":
+        evidence_hit = retrieval_metrics.get("evidence_hit_at_5")
+        evidence_coverage = retrieval_metrics.get("evidence_coverage")
+        if evidence_hit == 0.0:
+            return "retrieval", "retrieved_nothing_useful"
+        if evidence_coverage is not None and 0.0 < float(evidence_coverage) < 1.0:
+            return "retrieval", "retrieved_partially_useful_context"
+        if judge_aggregate.get("hallucination_flag") is True:
+            return "generation", "answer_contains_unsupported_claim"
+        if (judge_aggregate.get("response_completeness_score") or 1.0) < 0.7:
+            return "generation", "answer_correct_but_too_vague"
+        if (judge_aggregate.get("response_relevance_score") or 1.0) < 0.7:
+            return "generation", "answer_correct_but_not_relevant"
+        if evidence_hit == 1.0 and (judge_aggregate.get("answer_accuracy_score") or 1.0) < 0.7:
+            return "generation", "retrieved_useful_context_but_answer_missed_it"
+    if not response_policy_followed:
+        return "business", "answer_correct_but_not_relevant"
+    return "business", None
 
 
 def _strategy_snapshot(judge_models: list[str]) -> dict[str, Any]:
@@ -116,6 +289,8 @@ def _root_cause_label(
     retrieval_metrics: dict[str, Any],
     judge_aggregate: dict[str, Any],
 ) -> str:
+    if case.expected_execution_action != "rag":
+        return "policy_controlled_response" if case.expected_execution_action == "controlled_response" else "grounded_answer"
     if retrieval_metrics.get("hit_at_5") == 0.0:
         return "retrieval_miss"
     if int(result.trace.selected_doc_count or 0) <= 0:
@@ -137,6 +312,7 @@ def _build_trace_payload(
     result: RagQueryResult,
     retrieval_metrics: dict[str, Any],
     judge_votes: list[dict[str, Any]],
+    decision: SupportRouteDecision,
 ) -> dict[str, Any]:
     trace = result.trace
     answer = result.answer
@@ -148,6 +324,11 @@ def _build_trace_payload(
         "question": case.question,
         "answer_text": answer.answer,
         "answer_preview": _clean_text(answer.answer)[:280],
+        "answer_sources": list(answer.sources),
+        "answer_citations": [dict(item) for item in answer.citations],
+        "route_family": decision.route_family,
+        "execution_action": decision.execution_action,
+        "tooling_profile": decision.tooling_profile,
         "query_type": case.query_type or trace.query_type,
         "source_type": case.source_type or trace.primary_source_type,
         "product": case.product,
@@ -291,6 +472,10 @@ def _failure_type(
     case: BenchmarkCase,
 ) -> str:
     answer_text = _clean_text(result.answer.answer)
+    if case.expected_execution_action != "rag":
+        if judge_aggregate.get("response_policy_followed") is False:
+            return "policy_violation"
+        return "grounded_answer"
     if answer_text == INSUFFICIENT_EVIDENCE_REPLY or result.trace.needs_human != case.expected_handoff:
         return "handoff_needed"
     if retrieval_metrics.get("hit_at_5") == 0.0:
@@ -320,47 +505,115 @@ def _group_results(rows: list[dict[str, Any]]) -> dict[tuple[Any, ...], list[dic
 def _build_eval_row(
     *,
     case: BenchmarkCase,
+    decision: SupportRouteDecision,
     result: RagQueryResult,
     judge_votes: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    retrieval_metrics = compute_retrieval_metrics(
-        result.trace.retrieval_candidates,
-        expected_document_ids=case.expected_document_ids,
-        expected_heading_paths=case.expected_heading_paths,
-        expected_evidence_refs=case.expected_evidence_refs,
+    is_rag_path = decision.execution_action == "rag"
+    retrieval_metrics = (
+        compute_retrieval_metrics(
+            result.trace.retrieval_candidates,
+            expected_document_ids=case.expected_document_ids,
+            expected_heading_paths=case.expected_heading_paths,
+            expected_evidence_refs=case.expected_evidence_refs,
+            answer_key_points=case.answer_key_points,
+        )
+        if is_rag_path
+        else {
+            "hit_at_1": None,
+            "hit_at_3": None,
+            "hit_at_5": None,
+            "document_hit_at_5": None,
+            "evidence_hit_at_1": None,
+            "evidence_hit_at_3": None,
+            "evidence_hit_at_5": None,
+            "evidence_coverage": None,
+            "noise_rate": None,
+            "recall_at_5": None,
+            "mrr": None,
+            "ndcg_at_5": None,
+            "document_relevance_score": None,
+        }
     )
     judge_aggregate = aggregate_judge_votes(judge_votes)
+    matched_expected_execution_action = decision.execution_action == case.expected_execution_action
+    used_prohibited_agora_docs = _used_prohibited_agora_docs(
+        actual_execution_action=decision.execution_action or "",
+        expected_tooling_profile=case.expected_tooling_profile,
+    )
+    abstained_or_deflected_properly = _abstained_or_deflected_properly(
+        case=case,
+        decision=decision,
+        answer_text=result.answer.answer,
+    )
+    no_unsupported_claims = _no_unsupported_claims(
+        judge_aggregate=judge_aggregate,
+        decision=decision,
+    )
+    response_policy_followed = (
+        matched_expected_execution_action
+        and not used_prohibited_agora_docs
+        and abstained_or_deflected_properly
+        and no_unsupported_claims
+    )
+    failure_stage, failure_bucket = _failure_stage_and_bucket(
+        case=case,
+        decision=decision,
+        retrieval_metrics=retrieval_metrics,
+        judge_aggregate=judge_aggregate,
+        response_policy_followed=response_policy_followed,
+        used_prohibited_agora_docs=used_prohibited_agora_docs,
+    )
     trace_payload = _build_trace_payload(
         case=case,
         result=result,
         retrieval_metrics=retrieval_metrics,
         judge_votes=judge_votes,
+        decision=decision,
     )
     row = {
         "test_case_id": case.test_case_id,
+        "dataset_schema_version": case.dataset_schema_version,
         "question": case.question,
+        "question_type": case.question_type,
+        "category": case.category,
         "query_type": case.query_type or result.trace.query_type,
         "source_type": case.source_type or result.trace.primary_source_type,
         "product": case.product,
         "language": case.language,
         "chunk_strategy": result.trace.primary_chunk_strategy,
         "retrieval_strategy": result.trace.retrieval_strategy,
+        "expected_route_family": case.expected_route_family,
+        "actual_route_family": decision.route_family,
+        "expected_execution_action": case.expected_execution_action,
+        "actual_execution_action": decision.execution_action,
+        "expected_tooling_profile": case.expected_tooling_profile,
+        "actual_tooling_profile": decision.tooling_profile,
+        "route_family_correct": 1.0 if case.expected_route_family == decision.route_family else 0.0,
+        "execution_action_correct": 1.0 if matched_expected_execution_action else 0.0,
+        "tooling_profile_correct": _tooling_profile_correct(
+            expected_tooling_profile=case.expected_tooling_profile,
+            actual_tooling_profile=decision.tooling_profile,
+        ),
         "hit_at_1": retrieval_metrics.get("hit_at_1"),
         "hit_at_3": retrieval_metrics.get("hit_at_3"),
         "hit_at_5": retrieval_metrics.get("hit_at_5"),
+        "document_hit_at_5": retrieval_metrics.get("document_hit_at_5"),
         "recall_at_5": retrieval_metrics.get("recall_at_5"),
         "mrr": retrieval_metrics.get("mrr"),
         "ndcg_at_5": retrieval_metrics.get("ndcg_at_5"),
         "evidence_hit_at_1": retrieval_metrics.get("evidence_hit_at_1"),
         "evidence_hit_at_3": retrieval_metrics.get("evidence_hit_at_3"),
         "evidence_hit_at_5": retrieval_metrics.get("evidence_hit_at_5"),
+        "evidence_coverage": retrieval_metrics.get("evidence_coverage"),
+        "noise_rate": retrieval_metrics.get("noise_rate"),
         "document_relevance_score": judge_aggregate.get("document_relevance_score", retrieval_metrics.get("document_relevance_score")),
         "faithfulness_score": judge_aggregate.get("faithfulness_score"),
         "groundedness_score": judge_aggregate.get("groundedness_score"),
         "response_relevance_score": judge_aggregate.get("response_relevance_score"),
         "response_completeness_score": judge_aggregate.get("response_completeness_score"),
         "citation_correctness_score": judge_aggregate.get("citation_correctness_score"),
-        "answer_accuracy_score": judge_aggregate.get("answer_accuracy_score"),
+        "answer_accuracy_score": judge_aggregate.get("answer_accuracy_score") if _answer_correctness_eligible(case) else None,
         "answer_logic_score": judge_aggregate.get("answer_logic_score"),
         "hallucination_flag": judge_aggregate.get("hallucination_flag"),
         "needs_human": (
@@ -368,12 +621,26 @@ def _build_eval_row(
             if judge_aggregate.get("needs_human") is not None
             else result.trace.needs_human
         ),
+        "answer_correctness_eligible": _answer_correctness_eligible(case),
+        "matched_expected_execution_action": matched_expected_execution_action,
+        "used_prohibited_agora_docs": used_prohibited_agora_docs,
+        "abstained_or_deflected_properly": abstained_or_deflected_properly,
+        "no_unsupported_claims": no_unsupported_claims,
+        "response_policy_followed": response_policy_followed,
+        "authoritative_source_used": (
+            citations_use_authoritative_source(result.answer.citations, sources=result.answer.sources)
+            if decision.execution_action == "web_search"
+            else None
+        ),
+        "citation_present": bool(result.answer.citations),
+        "unsupported_claim_avoidance": no_unsupported_claims,
         "judge_votes": judge_votes,
         "judge_disagreement_flag": bool(judge_aggregate.get("judge_disagreement_flag")),
         "answer_preview": _clean_text(result.answer.answer)[:280],
         "expected_document_ids": case.expected_document_ids,
         "expected_heading_paths": case.expected_heading_paths,
         "expected_evidence_refs": case.expected_evidence_refs,
+        "answer_key_points": case.answer_key_points,
         "trace_payload": trace_payload,
         "retrieval_latency_ms": result.trace.retrieval_latency_ms,
         "generation_latency_ms": result.trace.generation_latency_ms,
@@ -382,6 +649,8 @@ def _build_eval_row(
         "top1_similarity_score": result.trace.top1_similarity_score,
         "avg_selected_similarity_score": result.trace.avg_selected_similarity_score,
         "avg_cost_per_query": _estimate_query_cost(result),
+        "failure_stage": failure_stage,
+        "failure_bucket": failure_bucket,
     }
     row["failure_type"] = _failure_type(
         result=result,
@@ -408,6 +677,7 @@ def run_benchmark(
     repository: "KnowledgeRepository" | None = None,
     query_runner: Callable[[str, int | None], RagQueryResult | None] | None = None,
     judge_runner: Callable[..., dict[str, Any]] | None = None,
+    route_decider: Callable[..., SupportRouteDecision | dict[str, Any]] | None = None,
     top_k: int | None = None,
     eval_run_id: str | None = None,
 ) -> dict[str, Any]:
@@ -438,11 +708,13 @@ def run_benchmark(
         raise ValueError("No benchmark cases to run")
 
     judge_models = resolve_judge_models()
+    dataset_schema_version = cases[0].dataset_schema_version if len({case.dataset_schema_version for case in cases}) == 1 else "mixed"
     eval_run_id = _clean_text(eval_run_id) or f"EVAL-{uuid4().hex[:12].upper()}"
     started_at = _utc_now()
     normalized_experiment_id = _clean_text(experiment_id) or eval_run_id
     runner = query_runner or run_rag_query
     judge = judge_runner or invoke_judge_vote
+    decider = route_decider or decide_support_route
 
     repo.upsert_rag_eval_run(
         eval_run={
@@ -453,6 +725,7 @@ def run_benchmark(
             "strategy_snapshot": _strategy_snapshot(judge_models),
             "judge_models": judge_models,
             "benchmark_version": benchmark_version,
+            "dataset_schema_version": dataset_schema_version,
             "status": "running",
             "started_at": started_at,
             "finished_at": None,
@@ -462,15 +735,30 @@ def run_benchmark(
     result_rows: list[dict[str, Any]] = []
     try:
         for case in cases:
-            result = runner(case.question, top_k=top_k)
-            if result is None:
-                raise RuntimeError("run_rag_query returned None; verify RAG configuration before running the benchmark")
+            if case.dataset_schema_version == "legacy_rag_v1" and route_decider is None:
+                decision = _expected_route_decision(case)
+            else:
+                decision = _coerce_route_decision(
+                    decider(case.question, ticket_subject=None, ticket_context=None)
+                )
+            if decision.execution_action == "rag":
+                result = runner(case.question, top_k=top_k)
+                if result is None:
+                    raise RuntimeError("run_rag_query returned None; verify RAG configuration before running the benchmark")
+            else:
+                resolution = resolve_support_message(case.question, decision=decision)
+                result = _build_synthetic_result(case=case, resolution=resolution)
             judge_votes = []
-            retrieval_metrics = compute_retrieval_metrics(
-                result.trace.retrieval_candidates,
-                expected_document_ids=case.expected_document_ids,
-                expected_heading_paths=case.expected_heading_paths,
-                expected_evidence_refs=case.expected_evidence_refs,
+            retrieval_metrics = (
+                compute_retrieval_metrics(
+                    result.trace.retrieval_candidates,
+                    expected_document_ids=case.expected_document_ids,
+                    expected_heading_paths=case.expected_heading_paths,
+                    expected_evidence_refs=case.expected_evidence_refs,
+                    answer_key_points=case.answer_key_points,
+                )
+                if decision.execution_action == "rag"
+                else {}
             )
             for judge_model in judge_models:
                 try:
@@ -489,7 +777,7 @@ def run_benchmark(
                             "error": str(exc),
                         }
                     )
-            result_rows.append(_build_eval_row(case=case, result=result, judge_votes=judge_votes))
+            result_rows.append(_build_eval_row(case=case, decision=decision, result=result, judge_votes=judge_votes))
 
         repo.replace_rag_eval_results(eval_run_id=eval_run_id, rows=result_rows)
 
@@ -519,6 +807,7 @@ def run_benchmark(
                 "strategy_snapshot": _strategy_snapshot(judge_models),
                 "judge_models": judge_models,
                 "benchmark_version": benchmark_version,
+                "dataset_schema_version": dataset_schema_version,
                 "status": "completed",
                 "started_at": started_at,
                 "finished_at": _utc_now(),
@@ -534,6 +823,7 @@ def run_benchmark(
                 "strategy_snapshot": _strategy_snapshot(judge_models),
                 "judge_models": judge_models,
                 "benchmark_version": benchmark_version,
+                "dataset_schema_version": dataset_schema_version,
                 "status": "failed",
                 "started_at": started_at,
                 "finished_at": _utc_now(),
@@ -545,6 +835,7 @@ def run_benchmark(
         "eval_run_id": eval_run_id,
         "dataset_name": dataset_name,
         "benchmark_version": benchmark_version,
+        "dataset_schema_version": dataset_schema_version,
         "judge_models": judge_models,
         "case_count": len(result_rows),
         "metrics": summarize_eval_daily_metrics(result_rows),

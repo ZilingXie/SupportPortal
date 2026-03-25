@@ -29,8 +29,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the quality-first RAG offline benchmark.")
     parser.add_argument(
         "--dataset",
-        default=str(REPO_ROOT / "benchmarks" / "supportportal_faq_v1.jsonl"),
-        help="Path to the benchmark JSONL dataset.",
+        default=str(REPO_ROOT / "benchmarks" / "agora_rag_testset_100_mixed_en_v2.json"),
+        help="Path to the benchmark dataset (JSON array or JSONL).",
     )
     parser.add_argument(
         "--dataset-id",

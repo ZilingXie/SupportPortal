@@ -11,9 +11,7 @@
    - `/client`
    - `/engineer`
    - `/dashboard`
-4. 当前例外：
-   - `/dashboard/rag/` 已完成结构拆分，但本轮不做完整视觉升级。
-   - 该页面后续新增 UI 时，不得再引入与本文件明显冲突的另一套视觉语言。
+   - `/dashboard/rag/`
 
 ## 2. Creative North Star
 1. 设计北极星：`The Intelligent Concierge`。
@@ -185,14 +183,58 @@
    - escalation awareness
 
 ### 6.4 RAG Dashboard (`/dashboard/rag/`)
-1. 本轮只要求结构独立，不要求完全迁入本视觉系统。
-2. 当前公共 page taxonomy 为：
-   - `experiments`
+1. `/dashboard/rag/` 必须完整遵守本文件的色彩、字体、层级、圆角、阴影和 `No-Line Rule`，不再保留独立视觉例外。
+2. 当前公共一级 taxonomy 固定为：
+   - `scorecard`
+   - `routing`
+   - `retrieval`
+   - `generation`
+   - `data-supply`
    - `diagnosis`
-   - `knowledge-supply`
-   - `production-signals`
    - `review`
-3. 后续若做视觉升级，必须基于本文件扩展，而不是重新引入第三套设计语言。
+3. `Scorecard` 是默认首页，必须同时呈现 `Routing / Retrieval / Generation / Business` 四层结果，而不是只放一个总分。
+4. 任何 `Baseline / Candidate` 对比控件都必须把 `candidate` 选中的 `benchmark_version` 作为比较边界：`baseline` 下拉只能展示同版本 run；如果当前版本没有可切换的替代 baseline，控件必须禁用并显示明确说明，禁止静默回退。
+5. 当 `Baseline / Candidate` 控件需要解释比较边界时，说明文案必须使用共享 footnote，置于两个 selector 下方，避免因为左右文案长度不同造成控件视觉错位。
+6. `Data Supply` 必须在同一页面里拆成两个清晰 panel：
+   - `Benchmark Supply`
+   - `Knowledge Supply`
+7. 兼容页名 `experiments / datasets / knowledge-supply / production-signals` 只允许作为路由或 API alias，不得继续作为主导航文案。
+8. `Routing / Retrieval / Generation` 页必须优先提供 case explorer，而不是只给 summary sample card。explorer 需要按 `错误 -> 正确` 的顺序展示，并允许在当前页直接打开详情。
+9. `/dashboard/rag/` 允许并鼓励使用两种可复用工作台模式：
+   - `Collapsible Case Explorer`
+   - `Centered Case Detail Modal`
+
+### 6.5 RAG Explorer Patterns
+1. `Collapsible Case Explorer`
+   - 适用页面：`routing`、`retrieval`、`generation`、`diagnosis`
+   - 容器使用主卡片 surface，不额外叠加高对比实线分割。
+   - section header 由标题、说明、计数、折叠控件组成。
+   - `Routing Errors`、`Routing Correct` 默认展开。
+   - `Retrieval Errors`、`Retrieval Correct` 默认展开。
+   - `Generation Errors`、`Generation Correct` 默认展开。
+   - `Legacy Compare Lists` 默认折叠。
+   - explorer 列表优先展示问题文本、预期契约、实际契约，不复用泛化 sample marketing card。
+2. `Centered Case Detail Modal`
+   - 适用页面：`routing / retrieval / generation` 的快速详情。
+   - 桌面端使用居中宽 modal，最大宽度需明显大于普通表单弹窗；移动端退化为全屏。
+   - modal backdrop 必须可点击关闭，并支持 `Esc` 关闭、focus trap、body scroll lock。
+   - modal 内容必须按纵向 section 编排，不允许重新做成密集 debug table。
+   - footer 允许保留一个次级动作，进入 `Diagnosis` 全页。
+3. `Shared Detail Surface`
+   - `Routing` modal 和 `Diagnosis` 全页必须复用同一套 detail section 文案与顺序。
+   - 推荐固定顺序：
+     - 顶部摘要
+     - Route Contract
+     - Answer
+     - Failure And Policy
+     - Evidence / Trace
+     - Judge / Quality
+   - benchmark-only 信息在 live query 详情里必须自动隐藏，而不是显示空表格。
+   - 所有标题、route bucket、tooling profile、document id、chunk id 这类长且可能无空格的字符串，必须支持 `wrap-anywhere`，禁止在 detail surface、definition grid、chip、modal header 中横向溢出或压穿容器。
+4. `Diagnosis` 布局
+   - 使用单列详情页，不再使用三栏并排压缩布局。
+   - 顶部 chooser 使用堆叠式 collapsible sections。
+   - detail sections 通过纵向间距分段，不依赖左右分栏去硬塞证据表和答案块。
 
 ## 7. States, Motion, Accessibility
 1. 必须覆盖：

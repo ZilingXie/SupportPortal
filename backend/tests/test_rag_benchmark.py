@@ -18,6 +18,95 @@ from backend.services.rag_benchmark import (
 
 
 class RagBenchmarkHelperTests(unittest.TestCase):
+    def test_load_benchmark_cases_supports_json_array_v2(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dataset_path = Path(tmpdir) / "dataset.json"
+            dataset_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "test_case_id": "case-1",
+                            "question": "Can an audience publish?",
+                            "question_type": "fact",
+                            "category": "fact",
+                            "expected_route_family": "agora_docs_rag",
+                            "expected_execution_action": "rag",
+                            "expected_tooling_profile": "agora_docs_only",
+                            "expected_behavior": "answer_with_docs",
+                            "expected_document_ids": ["official-doc-1"],
+                            "expected_heading_paths": ["Roles"],
+                            "expected_evidence_refs": [
+                                {
+                                    "chunk_id": "chunk-1",
+                                    "doc_id": "official-doc-1",
+                                    "heading": "Roles",
+                                    "evidence_polarity": "supports",
+                                }
+                            ],
+                            "answer_key_points": [
+                                {
+                                    "key_point_id": "kp-1",
+                                    "text": "Audience cannot publish by default.",
+                                    "supporting_evidence_refs": ["chunk-1"],
+                                }
+                            ],
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            cases = load_benchmark_cases(dataset_path)
+
+        self.assertEqual(len(cases), 1)
+        self.assertEqual(cases[0].question_type, "fact")
+        self.assertEqual(cases[0].category, "fact")
+        self.assertEqual(cases[0].expected_route_family, "agora_docs_rag")
+        self.assertEqual(cases[0].expected_execution_action, "rag")
+        self.assertEqual(cases[0].expected_tooling_profile, "agora_docs_only")
+        self.assertEqual(cases[0].answer_key_points[0]["key_point_id"], "kp-1")
+        self.assertEqual(cases[0].expected_evidence_refs[0]["evidence_polarity"], "supports")
+
+    def test_load_benchmark_cases_requires_supports_denial_ref_for_trap_case(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dataset_path = Path(tmpdir) / "dataset.json"
+            dataset_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "test_case_id": "case-trap-1",
+                            "question": "Can audience users publish without switching role?",
+                            "question_type": "trap",
+                            "category": "trap",
+                            "expected_route_family": "agora_docs_rag",
+                            "expected_execution_action": "rag",
+                            "expected_behavior": "deny_false_premise",
+                            "expected_document_ids": ["official-doc-1"],
+                            "expected_heading_paths": ["Roles"],
+                            "expected_evidence_refs": [
+                                {
+                                    "chunk_id": "chunk-1",
+                                    "doc_id": "official-doc-1",
+                                    "heading": "Roles",
+                                    "evidence_polarity": "supports",
+                                }
+                            ],
+                            "answer_key_points": [
+                                {
+                                    "key_point_id": "kp-1",
+                                    "text": "Audience cannot publish.",
+                                    "supporting_evidence_refs": ["chunk-1"],
+                                }
+                            ],
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(ValueError):
+                load_benchmark_cases(dataset_path)
+
     def test_load_benchmark_cases_requires_expected_document_ids(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             dataset_path = Path(tmpdir) / "dataset.jsonl"
@@ -111,6 +200,93 @@ class RagBenchmarkHelperTests(unittest.TestCase):
         self.assertEqual(metrics["evidence_hit_at_3"], 1.0)
         self.assertEqual(metrics["evidence_hit_at_5"], 1.0)
 
+    def test_compute_retrieval_metrics_reports_document_hit_coverage_and_noise(self) -> None:
+        metrics = compute_retrieval_metrics(
+            [
+                {
+                    "chunk_id": "chunk-noise",
+                    "doc_id": "official-doc-9",
+                    "title": "Noise",
+                },
+                {
+                    "chunk_id": "chunk-1",
+                    "doc_id": "official-doc-1",
+                    "title": "Roles",
+                },
+                {
+                    "chunk_id": "chunk-2",
+                    "doc_id": "official-doc-1",
+                    "title": "Role Switching",
+                },
+            ],
+            expected_document_ids=["official-doc-1"],
+            expected_heading_paths=["Roles", "Role Switching"],
+            expected_evidence_refs=[
+                {
+                    "chunk_id": "chunk-1",
+                    "doc_id": "official-doc-1",
+                    "heading": "Roles",
+                    "evidence_polarity": "supports_denial",
+                },
+                {
+                    "chunk_id": "chunk-2",
+                    "doc_id": "official-doc-1",
+                    "heading": "Role Switching",
+                    "evidence_polarity": "supports",
+                },
+            ],
+            answer_key_points=[
+                {
+                    "key_point_id": "kp-1",
+                    "text": "Audience cannot publish.",
+                    "supporting_evidence_refs": ["chunk-1"],
+                },
+                {
+                    "key_point_id": "kp-2",
+                    "text": "Switch role to host before publishing.",
+                    "supporting_evidence_refs": ["chunk-2"],
+                },
+            ],
+        )
+
+        self.assertEqual(metrics["document_hit_at_5"], 1.0)
+        self.assertEqual(metrics["evidence_hit_at_5"], 1.0)
+        self.assertEqual(metrics["evidence_coverage"], 1.0)
+        self.assertAlmostEqual(metrics["noise_rate"], 1 / 3, places=4)
+
+    def test_compute_retrieval_metrics_requires_matching_denial_evidence_for_trap_hits(self) -> None:
+        metrics = compute_retrieval_metrics(
+            [
+                {
+                    "chunk_id": "chunk-similar",
+                    "doc_id": "official-doc-1",
+                    "title": "Roles",
+                }
+            ],
+            expected_document_ids=["official-doc-1"],
+            expected_heading_paths=["Roles"],
+            expected_evidence_refs=[
+                {
+                    "chunk_id": "chunk-denial",
+                    "doc_id": "official-doc-1",
+                    "heading": "Roles",
+                    "evidence_polarity": "supports_denial",
+                }
+            ],
+            answer_key_points=[
+                {
+                    "key_point_id": "kp-1",
+                    "text": "Audience cannot publish.",
+                    "supporting_evidence_refs": ["chunk-denial"],
+                }
+            ],
+        )
+
+        self.assertEqual(metrics["document_hit_at_5"], 1.0)
+        self.assertEqual(metrics["evidence_hit_at_5"], 0.0)
+        self.assertEqual(metrics["evidence_coverage"], 0.0)
+        self.assertEqual(metrics["noise_rate"], 1.0)
+
     def test_summarize_eval_daily_metrics_includes_accuracy_and_logic_scores(self) -> None:
         metrics = summarize_eval_daily_metrics(
             [
@@ -133,6 +309,29 @@ class RagBenchmarkHelperTests(unittest.TestCase):
         self.assertEqual(metrics["answer_logic_score"], 0.8)
         self.assertEqual(metrics["evidence_hit_at_5"], 0.5)
         self.assertEqual(metrics["hallucination_rate"], 0.5)
+
+    def test_summarize_eval_daily_metrics_ignores_ineligible_correctness_rows(self) -> None:
+        metrics = summarize_eval_daily_metrics(
+            [
+                {
+                    "route_family": "agora_docs_rag",
+                    "answer_accuracy_score": 0.8,
+                    "answer_correctness_eligible": True,
+                    "response_policy_followed": True,
+                    "hallucination_flag": False,
+                },
+                {
+                    "route_family": "web_company_info",
+                    "answer_accuracy_score": 0.2,
+                    "answer_correctness_eligible": False,
+                    "response_policy_followed": False,
+                    "hallucination_flag": False,
+                },
+            ]
+        )
+
+        self.assertEqual(metrics["answer_accuracy_score"], 0.8)
+        self.assertEqual(metrics["response_policy_followed_rate"], 0.5)
 
     def test_aggregate_judge_votes_uses_median_and_majority_and_marks_disagreement(self) -> None:
         result = aggregate_judge_votes(
