@@ -45,6 +45,10 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "Missing command: $1"
 }
 
+git_head_summary() {
+  git show -s --format='%h %s' HEAD
+}
+
 trim() {
   local value="$1"
   value="${value#"${value%%[![:space:]]*}"}"
@@ -269,6 +273,8 @@ main() {
   current_branch="$(git rev-parse --abbrev-ref HEAD)"
   [[ "${current_branch}" != "HEAD" ]] || fail "Detached HEAD detected. Checkout a branch first."
   target_branch="${TARGET_BRANCH:-${current_branch}}"
+  log "Current git state: branch=${current_branch} commit=$(git_head_summary)"
+  log "Deploy target branch: ${target_branch}"
 
   if [[ "${SKIP_PULL}" -eq 0 ]]; then
     if [[ -n "$(git status --porcelain)" ]]; then
@@ -286,6 +292,8 @@ main() {
   else
     log "Skipping git pull."
   fi
+
+  log "Resolved deploy commit: branch=$(git rev-parse --abbrev-ref HEAD) commit=$(git_head_summary)"
 
   local host_port internal_url external_url health_timeout_seconds health_retry_interval_seconds
   host_port="$(resolve_port)"
