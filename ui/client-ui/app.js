@@ -1212,21 +1212,31 @@ function renderChatTicket() {
             placeholder="Type your request or technical issue..."
             ${canCompose ? "" : "disabled"}
           >${escapeHtml(state.inputDraft || "")}</textarea>
-          <div class="composer-toolbar">
-            <div class="composer-secondary-actions">
-              <button class="btn btn-ghost btn-inline" data-action="go-tickets" type="button">Session History</button>
-              ${
-                sending
-                  ? `<button class="btn btn-ghost btn-inline" type="button" data-action="stop-generation">Stop Generation</button>`
-                  : ""
-              }
-            </div>
-            ${
-              sending
-                ? `<span class="composer-status">Waiting for AI response...</span>`
-                : `<button class="send-btn" type="submit" ${canCompose ? "" : "disabled"}>${isEditing ? "Resend Request" : "Send Request"}</button>`
-            }
-          </div>
+          ${
+            sending
+              ? `
+            <button
+              class="composer-icon-button composer-stop-btn"
+              type="button"
+              data-action="stop-generation"
+              aria-label="Stop Generation"
+              title="Stop Generation"
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">stop</span>
+            </button>
+          `
+              : `
+            <button
+              class="composer-icon-button send-btn"
+              type="submit"
+              aria-label="${isEditing ? "Resend Request" : "Send Request"}"
+              title="${isEditing ? "Resend Request" : "Send Request"}"
+              ${canCompose ? "" : "disabled"}
+            >
+              <span class="material-symbols-outlined" aria-hidden="true">arrow_upward</span>
+            </button>
+          `
+          }
         </form>
       </footer>
     </section>

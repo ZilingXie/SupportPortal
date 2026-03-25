@@ -262,3 +262,100 @@ For each new entry, record:
   - Database evidence before the fix showed `supportportal.docagent_chunks_bge_large_en_v1_5_1024` had `primary_count=0`, while `supportportal.docagent_chunks_ag_docs_test_1024` had `primary_count=1907`
   - Container verification with forced empty-table config (`EMBEDDING_PROVIDER=siliconflow`, `PGVECTOR_TABLE=docagent_chunks_bge_large_en_v1_5_1024`) resolved to `supportportal.docagent_chunks_ag_docs_test_1024` and returned `decision=answer`, `needs_human=false`, `generation_mode=structured_answer`, and `selected_chunk_count=5` for `how to join channel`
   - End-to-end ticket verification via `/api/tickets/query` created `T-VERIFYJOIN1774180935`, returned the initial placeholder reply, and after async worker completion persisted a grounded final answer with citations from `official/get-started-sdk_android.md`, `official/authentication-workflow_android.md`, and `official/optimize-frame-rendering_android.md`
+
+## 2026-03-24 - BAAI/bge-m3 migration, benchmark NDJSON rewrite, and deferred-BM25 rebuild pass
+
+- Summary: Switched the repo-wide default embedding model and vector table to `BAAI/bge-m3`, rewrote the three Agora benchmark files into runner-compatible NDJSON with the `technical_article_api` cases removed, added repository-side protections for vector-table bootstrap and BM25 write ordering, and moved the current full official-doc rebuild onto a deferred-BM25 bulk-ingest strategy to avoid per-document BM25 deadlocks during the `bge-m3` backfill.
+- Reason: The previous default still targeted `BAAI/bge-large-en-v1.5`, the benchmark artifacts were tied to deleted DB snapshots, and the first `bge-m3` rebuild attempts exposed two practical blockers: concurrent vector-table/bootstrap churn and BM25 deadlocks when many local ingestion workers updated BM25 tables document-by-document.
+- Affected files or config:
+  - `.env.example`
+  - `README.md`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/services/agora_doc_sync.py`
+  - `backend/services/embedding_provider.py`
+  - `backend/tests/test_agora_doc_sync.py`
+  - `backend/tests/test_embedding_provider.py`
+  - `backend/tests/test_knowledge_ingestion.py`
+  - `backend/tests/test_knowledge_monitoring.py`
+  - `backend/tests/test_knowledge_repository_bm25.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_repository_configuration.py`
+  - `benchmarks/agora_rag_testset_100_canonical_en.json`
+  - `benchmarks/agora_rag_testset_100_mixed_en.json`
+  - `benchmarks/agora_rag_testset_100_real_user_en.json`
+  - `deployment/deploy_ec2.sh`
+  - `deployment/docker-compose.single-host.yml`
+  - `scripts/fetch_and_upload_agora_docs.py`
+  - `scripts/ingest_local_knowledge_sources.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Default embedding model now resolves to `BAAI/bge-m3`
+  - Default vector table now resolves to `supportportal.docagent_chunks_bge_m3_1024`
+  - The three benchmark source files now store NDJSON / runner-schema rows in-place and each drops the corresponding `technical_article_api` case, reducing each set to `99` cases
+  - Full RAG reset was executed repeatedly against `supportportal.docagent_chunks_bge_m3_1024` while stabilizing the new backfill path
+  - Full Agora raw corpus download completed locally with `2970` Markdown files under `local_knowledge/official/raw`
+  - The current official-doc rebuild is running as sync run `SYNC-2F5FBEB6FD3A` in deferred-BM25 mode; at log time the backfill had reached `500 processed / 497 completed / 3 failed`
+  - Old benchmark `expected_document_ids` no longer match the new corpus IDs; early remap checks have already identified at least one stable migration (`official-6e0b42110dcf30a5ccfc -> official-7b33b676468a4fd08dec`), but full benchmark gold rebinding is still in progress
+- Verification:
+  - `./.venv/bin/python -m unittest backend.tests.test_agora_doc_sync backend.tests.test_knowledge_repository_bm25 backend.tests.test_repository_configuration backend.tests.test_embedding_provider backend.tests.test_knowledge_ingestion backend.tests.test_rag_benchmark_runner backend.tests.test_knowledge_monitoring backend.tests.test_rag_qa`
+  - `./.venv/bin/python -m py_compile backend/services/agora_doc_sync.py backend/repositories/knowledge_repository.py backend/tests/test_agora_doc_sync.py backend/tests/test_knowledge_repository_bm25.py`
+  - `./.venv/bin/python - <<'PY' ... load_benchmark_cases(...) ... PY` confirmed the three rewritten benchmark files load successfully and each contains `99` cases
+  - `./.venv/bin/python scripts/reset_rag_database.py --vector-table docagent_chunks_bge_m3_1024 --execute`
+  - `./.venv/bin/python scripts/fetch_and_upload_agora_docs.py --api-base-url '' --download-workers 8 --upload-workers 8` completed the raw Markdown fetch phase and materialized `2970` files locally before the run was stopped in favor of deferred-BM25 ingest
+  - Deferred-BM25 local rebuild currently reports `progress|processed=500|completed=497|failed=3` from the active backfill worker set while the new vector table continues to grow
+
+## 2026-03-24 - Oversized official-section chunk splitting for bge-m3 rebuild
+
+- Summary: Added token-budget splitting for oversized official primary chunks and fixed the shadow token-window helper so single huge paragraphs, tables, or code-heavy sections no longer stay intact as one embedding request during the `bge-m3` rebuild.
+- Reason: The deferred-BM25 rebuild exposed a concrete ingestion failure in `pricing-plan-details.md`; the `RESTful API call detailed pricing` section was emitted as one large `rules_table` chunk, and the existing token-window helper also failed to split a single oversized paragraph for shadow chunks, pushing SiliconFlow past its `8192`-token limit.
+- Affected files or config:
+  - `backend/services/knowledge_ingestion.py`
+  - `backend/tests/test_knowledge_ingestion.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - New official primary chunks now honor per-chunk-type token budgets before embedding
+  - Shadow section token windows now split oversized single paragraphs instead of preserving them whole
+  - Spot-checking `pricing-plan-details.md` after the fix now yields `24` primary chunks with `max_chunk_tokens=418` and `22` shadow chunks with `max_chunk_tokens=518`
+  - The currently running bulk ingest still uses the older in-memory code path, so failed-doc replay is still required after the active run completes
+- Verification:
+  - `./.venv/bin/python -m unittest backend.tests.test_knowledge_ingestion.KnowledgeIngestionParsingTests.test_official_primary_chunk_rows_split_large_table_sections backend.tests.test_knowledge_ingestion.KnowledgeIngestionParsingTests.test_official_shadow_chunk_rows_split_large_table_sections`
+  - `./.venv/bin/python -m unittest backend.tests.test_knowledge_ingestion backend.tests.test_agora_doc_sync backend.tests.test_knowledge_repository_bm25 backend.tests.test_repository_configuration`
+  - `./.venv/bin/python -m py_compile backend/services/knowledge_ingestion.py backend/services/agora_doc_sync.py backend/repositories/knowledge_repository.py backend/services/embedding_provider.py`
+  - `./.venv/bin/python - <<'PY' ... parse_official_markdown_file('pricing-plan-details.md') ... PY` confirmed `primary_max_tokens=418` and `shadow_max_tokens=518` for the previously failing document
+
+## 2026-03-24 - Configurable BM25 init backfill for deferred rebuild workers
+
+- Summary: Added a repository/config flag to disable BM25 backfill during `repository.initialize()`, documented the new setting, and used it to let low-worker official-doc replay start without triggering a full BM25 rebuild before `sync_run` creation.
+- Reason: The deferred-BM25 replay path was still hanging before `sync_run` because `initialize()` always called `_backfill_bm25_index_if_needed()`. That forced a full BM25 rebuild on startup, defeating the deferred strategy and repeatedly blocking low-worker replays before any document processing could begin.
+- Affected files or config:
+  - `.env.example`
+  - `README.md`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/tests/test_knowledge_repository_bm25.py`
+  - `backend/tests/test_repository_configuration.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Default runtime behavior is unchanged because `KNOWLEDGE_BM25_BACKFILL_ON_INIT` defaults to `true`
+  - Controlled rebuild workers can now opt out of startup-time BM25 backfill by setting `KNOWLEDGE_BM25_BACKFILL_ON_INIT=false`
+  - The active low-worker rebuild uses this flag so `SYNC-1212B10E90D5` can enter document processing before the final one-shot BM25 rebuild
+- Verification:
+  - `./.venv/bin/python -m unittest backend.tests.test_repository_configuration.RepositoryConfigurationTests.test_knowledge_repository_reads_bm25_backfill_on_init_flag backend.tests.test_knowledge_repository_bm25.KnowledgeRepositoryBm25HookTests.test_initialize_skips_bm25_backfill_when_disabled`
+  - `./.venv/bin/python -m unittest backend.tests.test_repository_configuration backend.tests.test_knowledge_repository_bm25 backend.tests.test_knowledge_ingestion backend.tests.test_agora_doc_sync`
+
+## 2026-03-24 - Retry transient DB disconnects during local source replay
+
+- Summary: Added bounded retry logic to `local_source_sync.ingest_source_document()` so local direct-ingest replay retries transient PostgreSQL/SSL disconnects instead of permanently failing the document on the first dropped connection.
+- Reason: After the init-backfill issue was removed, the long-running official-doc replay still hit intermittent `psycopg.OperationalError` failures such as `SSL error: unexpected eof while reading` during chunk-run persistence. Without retry, a multi-hour rebuild would accumulate many random failures unrelated to document content.
+- Affected files or config:
+  - `backend/services/local_source_sync.py`
+  - `backend/tests/test_local_source_sync.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Local source replay now retries retryable storage failures up to three attempts before marking the source document failed
+  - Successful retry attempts may leave earlier failed ingestion rows in telemetry, but the source document and final processed ingestion converge on the successful retry
+  - Online RAG query execution is unchanged; the retry only applies to local source sync / rebuild paths
+- Verification:
+  - `./.venv/bin/python -m unittest backend.tests.test_local_source_sync.LocalSourceSyncTests.test_ingest_source_document_retries_retryable_database_disconnects`
+  - `./.venv/bin/python -m unittest backend.tests.test_local_source_sync backend.tests.test_repository_configuration backend.tests.test_knowledge_repository_bm25 backend.tests.test_knowledge_ingestion backend.tests.test_agora_doc_sync`
+  - `./.venv/bin/python -m py_compile backend/services/local_source_sync.py backend/repositories/knowledge_repository.py`

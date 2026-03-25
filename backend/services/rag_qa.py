@@ -553,6 +553,8 @@ def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
         "rerank_top_n": rerank_top_n,
         "bm25_k1": _safe_float_env("RAG_BM25_K1", 1.2),
         "bm25_b": _safe_float_env("RAG_BM25_B", 0.75),
+        "bm25_max_query_terms": _safe_int_env("RAG_BM25_MAX_QUERY_TERMS", 6),
+        "bm25_max_term_doc_freq_ratio": _safe_float_env("RAG_BM25_MAX_TERM_DOC_FREQ_RATIO", 0.08),
         "chat_model": (os.getenv("OPENAI_CHAT_MODEL") or "gpt-4.1").strip(),
         "embedding_provider": embedding_provider_name(),
         "embedding_model": embedding_model_id(),
@@ -625,11 +627,46 @@ def _list_vector_tables_with_primary_counts(dsn: str, schema: str) -> list[tuple
     return sorted(counts, key=lambda item: (item[1], item[0]), reverse=True)
 
 
+def _count_primary_rows_in_table(dsn: str, raw_table: str) -> int | None:
+    resolved_dsn = str(dsn or "").strip()
+    resolved_table = str(raw_table or "").strip()
+    if not resolved_dsn or not resolved_table:
+        return None
+
+    psycopg = _import_psycopg()
+    sql = psycopg.sql
+    schema, table_name = _split_table_name(resolved_table)
+    query = sql.SQL(
+        """
+        SELECT count(*) FILTER (WHERE index_role = 'primary')
+        FROM {}
+        """
+    ).format(sql.Identifier(schema, table_name))
+
+    with psycopg.connect(resolved_dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(query)
+            row = cur.fetchone()
+    return int(row[0] or 0) if row else 0
+
+
 def _resolve_active_vector_table(config: dict[str, Any]) -> str:
     configured_table = str(config.get("table") or "").strip()
     configured_dsn = str(config.get("dsn") or "").strip()
     schema, _ = _split_table_name(configured_table)
     if not configured_table or not configured_dsn:
+        return configured_table
+
+    try:
+        configured_count = _count_primary_rows_in_table(configured_dsn, configured_table)
+    except Exception as exc:
+        logger.warning(
+            "RAG configured vector table probe failed for %s: %s",
+            configured_table,
+            exc,
+        )
+        configured_count = None
+    if configured_count is not None and configured_count > 0:
         return configured_table
 
     try:
@@ -671,6 +708,45 @@ def _table_identifier(sql: Any, raw_table: str) -> Any:
 
 def _app_table_identifier(sql: Any, schema: str, table_name: str) -> Any:
     return sql.Identifier(schema, table_name)
+
+
+def _select_bm25_query_terms(
+    *,
+    terms: list[str],
+    term_doc_freqs: dict[str, int],
+    doc_count: int,
+    max_term_doc_freq_ratio: float,
+    max_query_terms: int,
+) -> list[str]:
+    normalized_terms = [str(term or "").strip().lower() for term in terms if str(term or "").strip()]
+    if not normalized_terms:
+        return []
+    safe_doc_count = max(0, int(doc_count or 0))
+    safe_max_query_terms = max(1, int(max_query_terms or 1))
+    safe_ratio = max(0.0, float(max_term_doc_freq_ratio or 0.0))
+
+    def _rank_key(term: str) -> tuple[int, int, str]:
+        doc_freq = max(0, int(term_doc_freqs.get(term) or 0))
+        return (doc_freq if doc_freq > 0 else safe_doc_count + 1, -len(term), term)
+
+    filtered_terms: list[str] = []
+    for term in normalized_terms:
+        doc_freq = max(0, int(term_doc_freqs.get(term) or 0))
+        if safe_doc_count > 0 and doc_freq > 0 and (doc_freq / safe_doc_count) > safe_ratio:
+            continue
+        filtered_terms.append(term)
+
+    ranked_terms = sorted(filtered_terms or normalized_terms, key=_rank_key)
+    selected: list[str] = []
+    seen: set[str] = set()
+    for term in ranked_terms:
+        if term in seen:
+            continue
+        seen.add(term)
+        selected.append(term)
+        if len(selected) >= safe_max_query_terms:
+            break
+    return selected
 
 
 def _retrieve_chunks(message: str, config: dict[str, Any], *, limit: int | None = None) -> list[RetrievedChunk]:
@@ -742,37 +818,79 @@ def _retrieve_bm25_chunks(message: str, config: dict[str, Any], *, limit: int | 
     query = sql.SQL(
         """
         WITH query_terms AS (
-            SELECT unnest(%s::text[]) AS term
+            SELECT
+                q.term,
+                t.doc_freq
+            FROM unnest(%s::text[]) AS q(term)
+            JOIN {} AS t
+              ON t.term = q.term
+             AND t.index_role = 'primary'
         ),
         stats AS (
             SELECT doc_count, avg_doc_length
             FROM {}
             WHERE index_role = 'primary'
         ),
-        scored AS (
+        matched_postings AS MATERIALIZED (
             SELECT
                 p.chunk_id,
-                SUM(
-                    LN(1 + ((stats.doc_count - t.doc_freq + 0.5) / (t.doc_freq + 0.5))) *
-                    (
-                        (p.tf * (%s + 1.0))
-                        /
-                        (
-                            p.tf
-                            + (%s * (1.0 - %s + (%s * (d.doc_length / NULLIF(stats.avg_doc_length, 0.0)))))
-                        )
-                    )
-                ) AS bm25_score
+                p.tf,
+                q.doc_freq
             FROM query_terms AS q
             JOIN {} AS p
               ON p.term = q.term
              AND p.index_role = 'primary'
-            JOIN {} AS t
-              ON t.term = q.term
-             AND t.index_role = 'primary'
-            JOIN {} AS d
+        ),
+        matched_docs AS MATERIALIZED (
+            SELECT
+                d.chunk_id,
+                d.doc_length
+            FROM {} AS d
+            JOIN (
+                SELECT DISTINCT chunk_id FROM matched_postings
+            ) AS matched
+              ON matched.chunk_id = d.chunk_id
+            WHERE d.index_role = 'primary'
+        ),
+        scored AS (
+            SELECT
+                p.chunk_id,
+                SUM(
+                    LN(
+                        1.0::double precision
+                        + (
+                            (
+                                ((stats.doc_count - p.doc_freq)::double precision + 0.5::double precision)
+                                /
+                                ((p.doc_freq)::double precision + 0.5::double precision)
+                            )
+                        )
+                    ) *
+                    (
+                        ((p.tf)::double precision * (%s::double precision + 1.0::double precision))
+                        /
+                        (
+                            (p.tf)::double precision
+                            + (
+                                %s::double precision
+                                * (
+                                    1.0::double precision
+                                    - %s::double precision
+                                    + (
+                                        %s::double precision
+                                        * (
+                                            (d.doc_length)::double precision
+                                            / NULLIF(stats.avg_doc_length, 0.0::double precision)
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    )
+                ) AS bm25_score
+            FROM matched_postings AS p
+            JOIN matched_docs AS d
               ON d.chunk_id = p.chunk_id
-             AND d.index_role = 'primary'
             CROSS JOIN stats
             GROUP BY p.chunk_id
         )
@@ -797,9 +915,9 @@ def _retrieve_bm25_chunks(message: str, config: dict[str, Any], *, limit: int | 
         LIMIT %s
         """
     ).format(
+        _app_table_identifier(sql, app_schema, "support_knowledge_bm25_terms"),
         _app_table_identifier(sql, app_schema, "support_knowledge_bm25_stats"),
         _app_table_identifier(sql, app_schema, "support_knowledge_bm25_postings"),
-        _app_table_identifier(sql, app_schema, "support_knowledge_bm25_terms"),
         _app_table_identifier(sql, app_schema, "support_knowledge_bm25_docs"),
         _table_identifier(sql, config["table"]),
     )
@@ -807,9 +925,44 @@ def _retrieve_bm25_chunks(message: str, config: dict[str, Any], *, limit: int | 
     with psycopg.connect(config["dsn"]) as conn:
         with conn.cursor() as cur:
             cur.execute(
+                sql.SQL(
+                    """
+                    SELECT term, doc_freq
+                    FROM {}
+                    WHERE index_role = 'primary'
+                      AND term = ANY(%s)
+                    """
+                ).format(_app_table_identifier(sql, app_schema, "support_knowledge_bm25_terms")),
+                (terms,),
+            )
+            term_doc_freqs = {
+                str(row[0]).strip().lower(): int(row[1] or 0)
+                for row in (cur.fetchall() or [])
+                if len(row) >= 2 and str(row[0]).strip()
+            }
+            cur.execute(
+                sql.SQL(
+                    """
+                    SELECT doc_count
+                    FROM {}
+                    WHERE index_role = 'primary'
+                    """
+                ).format(_app_table_identifier(sql, app_schema, "support_knowledge_bm25_stats"))
+            )
+            stats_row = cur.fetchone() or (0,)
+            selected_terms = _select_bm25_query_terms(
+                terms=terms,
+                term_doc_freqs=term_doc_freqs,
+                doc_count=int(stats_row[0] or 0),
+                max_term_doc_freq_ratio=float(config["bm25_max_term_doc_freq_ratio"]),
+                max_query_terms=int(config["bm25_max_query_terms"]),
+            )
+            if not selected_terms:
+                return []
+            cur.execute(
                 query,
                 (
-                    terms,
+                    selected_terms,
                     float(config["bm25_k1"]),
                     float(config["bm25_k1"]),
                     float(config["bm25_b"]),

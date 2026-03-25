@@ -45,6 +45,25 @@ class RagTokenizerTests(unittest.TestCase):
         self.assertEqual(tokens.count("transcoder"), 1)
         self.assertEqual(tokens.count("延迟"), 1)
 
+    def test_tokenize_bm25_query_filters_low_information_english_stopwords(self) -> None:
+        tokens = tokenize_bm25_query(
+            "What is an Agora token, and why is it recommended over using only an App ID?"
+        )
+
+        self.assertNotIn("what", tokens)
+        self.assertNotIn("is", tokens)
+        self.assertNotIn("an", tokens)
+        self.assertNotIn("and", tokens)
+        self.assertNotIn("why", tokens)
+        self.assertNotIn("it", tokens)
+        self.assertNotIn("over", tokens)
+        self.assertNotIn("using", tokens)
+        self.assertNotIn("only", tokens)
+        self.assertIn("agora", tokens)
+        self.assertIn("token", tokens)
+        self.assertIn("app", tokens)
+        self.assertIn("id", tokens)
+
 
 if __name__ == "__main__":
     unittest.main()

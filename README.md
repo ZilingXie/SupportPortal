@@ -135,31 +135,32 @@ python scripts/fetch_and_upload_agora_docs.py
 
 ```bash
 python scripts/fetch_and_upload_agora_docs.py \
-  --api-base-url support.stellarix.space \
+  --api-base-url http://localhost:8080 \
   --limit 3 \
   --download-workers 8
 ```
 
 说明：
 1. `local_knowledge/official/raw/` 每次运行都会先全量重建。
-2. `--api-base-url` 支持传入 `support.stellarix.space` 这种 host-only 值，脚本会自动补成 `https://support.stellarix.space`。
+2. 本地重建时显式传 `--api-base-url http://localhost:8080`，避免误把官方文档上传到远端环境。
 3. 运行结束后会在 `local_knowledge/official/raw/_sync_report.json` 写入下载和 ingestion 结果汇总。
 4. `local_knowledge/` 已加入 `.gitignore`，作为本地生成产物保留。
 
 ## Local Embedding / Dual-Track Chunking
 
-默认向量化配置已经切到 SiliconFlow BGE Large Embedding：
+默认向量化配置已经切到 SiliconFlow BGE M3 Embedding：
 
 ```env
 EMBEDDING_PROVIDER=siliconflow
-EMBEDDING_MODEL_ID=BAAI/bge-large-en-v1.5
+EMBEDDING_MODEL_ID=BAAI/bge-m3
 EMBEDDING_BATCH_SIZE=16
 SILICONFLOW_API_KEY=...
 SILLICONFLOW_KEY=...
 SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1
 SILICONFLOW_EMBEDDING_DIMENSIONS=1024
-PGVECTOR_TABLE=docagent_chunks_bge_large_en_v1_5_1024
+PGVECTOR_TABLE=docagent_chunks_bge_m3_1024
 PGVECTOR_DIM=1024
+KNOWLEDGE_BM25_BACKFILL_ON_INIT=true
 PRIMARY_CHUNK_STRATEGY=markdown_header_v1
 SHADOW_CHUNK_STRATEGY=semantic_qwen3_v1
 SHADOW_CHUNK_ENABLED=true
@@ -171,6 +172,7 @@ LOCAL_KNOWLEDGE_ROOT=local_knowledge
 2. `support_knowledge_chunk_runs` / `support_knowledge_chunk_traces` 会额外记录双轨切片过程数据，供后续优化使用。
 3. 在线检索链路为 `vector + true BM25 + RRF + metadata prune + rerank`，并且只会召回 `index_role='primary'` 的 chunk。详细说明见 [docs/rag_retrieval_chain.md](/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/rag_retrieval_chain.md)。
 4. 技术文档推荐由 `n8n` 直接写入 `support_knowledge_source_documents`，再执行 `python scripts/ingest_local_knowledge_sources.py --source-system n8n --knowledge-type technical` 做本地增量入库。
+5. `KNOWLEDGE_BM25_BACKFILL_ON_INIT` 默认应保持 `true`；仅在像官方文档全量重建这种 deferred-BM25 replay 场景下，才临时设置为 `false`，避免 `repository.initialize()` 在 worker 启动前先触发整库 BM25 backfill。
 
 ## Intent Routing
 

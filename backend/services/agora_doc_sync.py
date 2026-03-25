@@ -392,6 +392,7 @@ def run_sync(config: SyncConfig) -> tuple[int, dict[str, Any], Path]:
             upload_results = ingest_documents_locally(
                 markdown_files=downloaded_markdown_files,
                 output_dir=config.output_dir,
+                workers=config.upload_workers,
             )
     except Exception as exc:
         run_error = str(exc)
@@ -415,6 +416,7 @@ def ingest_documents_locally(
     *,
     markdown_files: list[Path],
     output_dir: Path,
+    workers: int = 1,
 ) -> list[UploadResult]:
     if not markdown_files:
         return []
@@ -422,6 +424,7 @@ def ingest_documents_locally(
 
     repository = create_knowledge_repository()
     repository.initialize()
+    max_workers = max(1, int(workers))
     sync_run = repository.create_sync_run(
         source_system="agora",
         knowledge_type="official",
@@ -431,17 +434,32 @@ def ingest_documents_locally(
             "mode": "local_direct",
             "output_dir": str(output_dir),
             "file_count": len(markdown_files),
+            "workers": max_workers,
         },
     )
-    results = [
-        _ingest_single_document(
-            file_path=file_path,
-            output_dir=output_dir,
-            repository=repository,
-            sync_run_id=sync_run["sync_run_id"],
-        )
-        for file_path in markdown_files
-    ]
+    if max_workers == 1:
+        results = [
+            _ingest_single_document(
+                file_path=file_path,
+                output_dir=output_dir,
+                repository=repository,
+                sync_run_id=sync_run["sync_run_id"],
+            )
+            for file_path in markdown_files
+        ]
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(
+                    _ingest_single_document,
+                    file_path=file_path,
+                    output_dir=output_dir,
+                    repository=repository,
+                    sync_run_id=sync_run["sync_run_id"],
+                ): file_path
+                for file_path in markdown_files
+            }
+            results = [future.result() for future in as_completed(futures)]
     repository.update_sync_run(
         sync_run["sync_run_id"],
         status="completed" if all(item.upload_status == "completed" for item in results) else "failed",

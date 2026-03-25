@@ -4,9 +4,12 @@ import hashlib
 import json
 import os
 import socket
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+import psycopg
 
 if TYPE_CHECKING:
     from backend.repositories.knowledge_repository import KnowledgeRepository
@@ -15,6 +18,14 @@ from backend.services.knowledge_ingestion import process_knowledge_ingestion
 
 LOCAL_KNOWLEDGE_ROOT_ENV = "LOCAL_KNOWLEDGE_ROOT"
 DEFAULT_LOCAL_KNOWLEDGE_ROOT = "local_knowledge"
+LOCAL_DIRECT_INGEST_MAX_ATTEMPTS = 3
+_RETRYABLE_STORAGE_ERROR_SNIPPETS = (
+    "connection timeout expired",
+    "server closed the connection unexpectedly",
+    "ssl error",
+    "unexpected eof while reading",
+    "consuming input failed",
+)
 
 
 @dataclass(frozen=True)
@@ -63,6 +74,13 @@ def compute_source_checksum(raw_content: str | None, raw_payload: dict[str, Any]
     payload = json.dumps(raw_payload or {}, ensure_ascii=False, sort_keys=True)
     body = str(raw_content or "")
     return hashlib.sha256(f"{body}\n{payload}".encode("utf-8")).hexdigest()
+
+
+def _is_retryable_storage_error(exc: BaseException) -> bool:
+    if isinstance(exc, psycopg.OperationalError):
+        return True
+    message = _clean_text(exc).lower()
+    return any(snippet in message for snippet in _RETRYABLE_STORAGE_ERROR_SNIPPETS)
 
 
 def stage_source_document(
@@ -153,66 +171,83 @@ def ingest_source_document(
 ) -> SourceIngestResult:
     source_doc_id = _clean_text(source_document.get("source_doc_id"))
     artifact_path = materialize_source_document(source_document, root_dir=root_dir)
-    ingestion_id: str | None = None
-    try:
-        knowledge_type = _clean_text(source_document.get("knowledge_type")) or "official"
-        source_type = "technical_article_api" if knowledge_type == "technical" else "official_markdown_upload"
-        source_url = _clean_text(source_document.get("source_url")) or _clean_text(source_document.get("published_url")) or None
-        ingestion = repository.create_ingestion(
-            knowledge_type=knowledge_type,
-            source_type=source_type,
-            title=_clean_text(source_document.get("title")) or None,
-            source_url=source_url,
-            file_name=artifact_path.name,
-            file_path=str(artifact_path),
-            content=_source_body(source_document),
-            checksum=_clean_text(source_document.get("checksum")) or None,
-            request_metadata={
-                "sync_mode": sync_mode,
-                "sync_run_id": sync_run_id,
-                "source_doc_id": source_doc_id,
-                "source_system": _clean_text(source_document.get("source_system")) or "manual",
-                "published_url": _clean_text(source_document.get("published_url")) or None,
-                "artifact_path": str(artifact_path),
-                "artifact_host": socket.gethostname(),
-            },
-        )
-        ingestion_id = _clean_text(ingestion.get("ingestion_id")) or None
-        if not ingestion_id:
-            raise RuntimeError(f"Failed to create ingestion for {source_doc_id}")
-        process_knowledge_ingestion(repository, ingestion_id)
-        report = repository.get_ingestion_report(ingestion_id) or {}
-        summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
-        status = _clean_text(summary.get("status")) or "completed"
-        if status == "completed":
-            repository.mark_source_document_processed(
-                source_doc_id,
-                processed_ingestion_id=ingestion_id,
+    knowledge_type = _clean_text(source_document.get("knowledge_type")) or "official"
+    source_type = "technical_article_api" if knowledge_type == "technical" else "official_markdown_upload"
+    source_url = _clean_text(source_document.get("source_url")) or _clean_text(source_document.get("published_url")) or None
+    last_error: str | None = None
+
+    for attempt in range(1, LOCAL_DIRECT_INGEST_MAX_ATTEMPTS + 1):
+        ingestion_id: str | None = None
+        try:
+            ingestion = repository.create_ingestion(
+                knowledge_type=knowledge_type,
+                source_type=source_type,
+                title=_clean_text(source_document.get("title")) or None,
+                source_url=source_url,
+                file_name=artifact_path.name,
+                file_path=str(artifact_path),
+                content=_source_body(source_document),
+                checksum=_clean_text(source_document.get("checksum")) or None,
+                request_metadata={
+                    "sync_mode": sync_mode,
+                    "sync_run_id": sync_run_id,
+                    "source_doc_id": source_doc_id,
+                    "source_system": _clean_text(source_document.get("source_system")) or "manual",
+                    "published_url": _clean_text(source_document.get("published_url")) or None,
+                    "artifact_path": str(artifact_path),
+                    "artifact_host": socket.gethostname(),
+                    "attempt": attempt,
+                },
             )
-        else:
-            repository.mark_source_document_failed(
-                source_doc_id,
-                error_message=_clean_text(summary.get("error_message")) or f"ingestion status={status}",
+            ingestion_id = _clean_text(ingestion.get("ingestion_id")) or None
+            if not ingestion_id:
+                raise RuntimeError(f"Failed to create ingestion for {source_doc_id}")
+            process_knowledge_ingestion(repository, ingestion_id)
+            report = repository.get_ingestion_report(ingestion_id) or {}
+            summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+            status = _clean_text(summary.get("status")) or "completed"
+            if status == "completed":
+                repository.mark_source_document_processed(
+                    source_doc_id,
+                    processed_ingestion_id=ingestion_id,
+                )
+            else:
+                repository.mark_source_document_failed(
+                    source_doc_id,
+                    error_message=_clean_text(summary.get("error_message")) or f"ingestion status={status}",
+                )
+            return SourceIngestResult(
+                source_doc_id=source_doc_id,
+                ingestion_id=ingestion_id,
+                status=status,
+                artifact_path=str(artifact_path),
+                document_id=_clean_text(summary.get("document_id")) or None,
+                chunk_count=summary.get("chunk_count"),
+                dedupe_action=_clean_text(summary.get("dedupe_action")) or None,
+                error_message=_clean_text(summary.get("error_message")) or None,
             )
-        return SourceIngestResult(
-            source_doc_id=source_doc_id,
-            ingestion_id=ingestion_id,
-            status=status,
-            artifact_path=str(artifact_path),
-            document_id=_clean_text(summary.get("document_id")) or None,
-            chunk_count=summary.get("chunk_count"),
-            dedupe_action=_clean_text(summary.get("dedupe_action")) or None,
-            error_message=_clean_text(summary.get("error_message")) or None,
-        )
-    except Exception as exc:
-        repository.mark_source_document_failed(source_doc_id, error_message=str(exc))
-        return SourceIngestResult(
-            source_doc_id=source_doc_id,
-            ingestion_id=ingestion_id,
-            status="failed",
-            artifact_path=str(artifact_path),
-            error_message=str(exc),
-        )
+        except Exception as exc:
+            last_error = str(exc)
+            if attempt < LOCAL_DIRECT_INGEST_MAX_ATTEMPTS and _is_retryable_storage_error(exc):
+                time.sleep(float(attempt))
+                continue
+            repository.mark_source_document_failed(source_doc_id, error_message=last_error)
+            return SourceIngestResult(
+                source_doc_id=source_doc_id,
+                ingestion_id=ingestion_id,
+                status="failed",
+                artifact_path=str(artifact_path),
+                error_message=last_error,
+            )
+
+    repository.mark_source_document_failed(source_doc_id, error_message=last_error or "unknown local ingestion failure")
+    return SourceIngestResult(
+        source_doc_id=source_doc_id,
+        ingestion_id=None,
+        status="failed",
+        artifact_path=str(artifact_path),
+        error_message=last_error or "unknown local ingestion failure",
+    )
 
 
 def claim_and_ingest_source_documents(

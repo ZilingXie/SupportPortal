@@ -12,6 +12,7 @@ from backend.services.rag_qa import (
     _metadata_rerank,
     _resolve_active_vector_table,
     _rrf_merge,
+    _select_bm25_query_terms,
     _split_table_name,
     run_rag_query,
 )
@@ -20,7 +21,7 @@ from backend.services.rag_qa import (
 class RagQaHybridTests(unittest.TestCase):
     class _FakeProvider:
         provider_name = "siliconflow"
-        model_id = "BAAI/bge-large-en-v1.5"
+        model_id = "BAAI/bge-m3"
         vector_dim = 1024
 
         def count_tokens(self, text: str) -> int:
@@ -32,8 +33,8 @@ class RagQaHybridTests(unittest.TestCase):
     def test_split_table_name_supports_schema_prefix(self) -> None:
         self.assertEqual(_split_table_name("public.docagent"), ("public", "docagent"))
         self.assertEqual(
-            _split_table_name("docagent_chunks_bge_large_en_v1_5_1024"),
-            ("supportportal", "docagent_chunks_bge_large_en_v1_5_1024"),
+            _split_table_name("docagent_chunks_bge_m3_1024"),
+            ("supportportal", "docagent_chunks_bge_m3_1024"),
         )
 
     def test_get_rag_config_uses_hybrid_candidate_windows(self) -> None:
@@ -48,14 +49,48 @@ class RagQaHybridTests(unittest.TestCase):
         self.assertEqual(config["bm25_b"], 0.75)
         self.assertEqual(config["rerank_provider"], "siliconflow")
         self.assertEqual(config["rerank_model"], "BAAI/bge-reranker-v2-m3")
-        self.assertEqual(config["table"], "supportportal.docagent_chunks_bge_large_en_v1_5_1024")
+        self.assertEqual(config["table"], "supportportal.docagent_chunks_bge_m3_1024")
         self.assertEqual(config["embedding_provider"], "siliconflow")
-        self.assertEqual(config["embedding_model"], "BAAI/bge-large-en-v1.5")
+        self.assertEqual(config["embedding_model"], "BAAI/bge-m3")
+        self.assertEqual(config["bm25_max_query_terms"], 6)
+        self.assertEqual(config["bm25_max_term_doc_freq_ratio"], 0.08)
 
     def test_get_rag_config_reads_lowercase_silliconflow_key_for_reranker(self) -> None:
         with patch.dict(os.environ, {"silliconflow_key": "test-rerank-key"}, clear=True):
             config = _get_rag_config(top_k=6)
         self.assertEqual(config["rerank_api_key"], "test-rerank-key")
+
+    def test_select_bm25_query_terms_filters_overly_common_terms(self) -> None:
+        selected = _select_bm25_query_terms(
+            terms=["agora", "token", "recommended", "app", "id"],
+            term_doc_freqs={
+                "agora": 29285,
+                "token": 4497,
+                "recommended": 684,
+                "app": 10033,
+                "id": 6528,
+            },
+            doc_count=65890,
+            max_term_doc_freq_ratio=0.08,
+            max_query_terms=6,
+        )
+
+        self.assertEqual(selected, ["recommended", "token"])
+
+    def test_select_bm25_query_terms_falls_back_to_rarest_terms_when_all_are_common(self) -> None:
+        selected = _select_bm25_query_terms(
+            terms=["agora", "app", "id"],
+            term_doc_freqs={
+                "agora": 29285,
+                "app": 10033,
+                "id": 6528,
+            },
+            doc_count=65890,
+            max_term_doc_freq_ratio=0.05,
+            max_query_terms=2,
+        )
+
+        self.assertEqual(selected, ["id", "app"])
 
     def test_rrf_merge_dedupes_and_limits_results(self) -> None:
         shared = RetrievedChunk(
@@ -93,6 +128,17 @@ class RagQaHybridTests(unittest.TestCase):
     def test_retrieval_queries_filter_primary_index_role(self) -> None:
         source = Path("backend/services/rag_qa.py").read_text(encoding="utf-8")
         self.assertGreaterEqual(source.count("index_role = 'primary'"), 3)
+
+    def test_bm25_query_uses_double_precision_score_constants(self) -> None:
+        source = Path("backend/services/rag_qa.py").read_text(encoding="utf-8")
+        self.assertIn("0.5::double precision", source)
+        self.assertIn("1.0::double precision", source)
+
+    def test_bm25_query_materializes_matched_postings_and_docs_before_scoring(self) -> None:
+        source = Path("backend/services/rag_qa.py").read_text(encoding="utf-8")
+        self.assertIn("matched_postings AS MATERIALIZED", source)
+        self.assertIn("matched_docs AS MATERIALIZED", source)
+        self.assertIn("SELECT DISTINCT chunk_id FROM matched_postings", source)
 
     def test_extract_metadata_hints_recognizes_language_method_and_structure_intent(self) -> None:
         hints = _extract_metadata_hints("Node.js 的 BuildTokenWithUidAndPrivilege Docker parameter 是什么")
@@ -305,7 +351,7 @@ class RagQaHybridTests(unittest.TestCase):
             config_mock.return_value = {
                 "dsn": "postgresql://example",
                 "api_key": "test-key",
-                "table": "supportportal.docagent_chunks_bge_large_en_v1_5_1024",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
                 "top_k": 2,
                 "vector_candidate_k": 10,
                 "bm25_candidate_k": 10,
@@ -316,7 +362,7 @@ class RagQaHybridTests(unittest.TestCase):
                 "bm25_b": 0.75,
                 "chat_model": "gpt-4.1",
                 "embedding_provider": "siliconflow",
-                "embedding_model": "BAAI/bge-large-en-v1.5",
+                "embedding_model": "BAAI/bge-m3",
                 "rerank_provider": "siliconflow",
                 "rerank_model": "BAAI/bge-reranker-v2-m3",
                 "rerank_api_key": "test-rerank-key",
@@ -378,7 +424,7 @@ class RagQaHybridTests(unittest.TestCase):
                 "dsn": "postgresql://example",
                 "api_key": "test-key",
                 "app_schema": "supportportal",
-                "table": "supportportal.docagent_chunks_bge_large_en_v1_5_1024",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
                 "top_k": 2,
                 "vector_candidate_k": 10,
                 "bm25_candidate_k": 10,
@@ -389,7 +435,7 @@ class RagQaHybridTests(unittest.TestCase):
                 "bm25_b": 0.75,
                 "chat_model": "gpt-4.1",
                 "embedding_provider": "siliconflow",
-                "embedding_model": "BAAI/bge-large-en-v1.5",
+                "embedding_model": "BAAI/bge-m3",
                 "rerank_provider": "siliconflow",
                 "rerank_model": "BAAI/bge-reranker-v2-m3",
                 "rerank_api_key": "test-rerank-key",
@@ -420,12 +466,12 @@ class RagQaHybridTests(unittest.TestCase):
     def test_resolve_active_vector_table_prefers_populated_fallback_when_configured_table_empty(self) -> None:
         config = {
             "dsn": "postgresql://example",
-            "table": "supportportal.docagent_chunks_bge_large_en_v1_5_1024",
+            "table": "supportportal.docagent_chunks_bge_m3_1024",
         }
 
         with patch("backend.services.rag_qa._list_vector_tables_with_primary_counts") as list_mock:
             list_mock.return_value = [
-                ("supportportal.docagent_chunks_bge_large_en_v1_5_1024", 0),
+                ("supportportal.docagent_chunks_bge_m3_1024", 0),
                 ("supportportal.docagent_chunks_ag_docs_test_1024", 1907),
                 ("supportportal.docagent_chunks", 16),
             ]
@@ -433,6 +479,19 @@ class RagQaHybridTests(unittest.TestCase):
             resolved = _resolve_active_vector_table(config)
 
         self.assertEqual(resolved, "supportportal.docagent_chunks_ag_docs_test_1024")
+
+    def test_resolve_active_vector_table_returns_configured_table_without_full_enumeration_when_populated(self) -> None:
+        config = {
+            "dsn": "postgresql://example",
+            "table": "supportportal.docagent_chunks_bge_m3_1024",
+        }
+
+        with patch("backend.services.rag_qa._count_primary_rows_in_table", return_value=65890):
+            with patch("backend.services.rag_qa._list_vector_tables_with_primary_counts") as list_mock:
+                resolved = _resolve_active_vector_table(config)
+
+        self.assertEqual(resolved, "supportportal.docagent_chunks_bge_m3_1024")
+        list_mock.assert_not_called()
 
     def test_run_rag_query_uses_resolved_vector_table_for_all_retrieval_paths(self) -> None:
         captured_tables: list[str] = []
@@ -460,7 +519,7 @@ class RagQaHybridTests(unittest.TestCase):
                 "dsn": "postgresql://example",
                 "api_key": "test-key",
                 "app_schema": "supportportal",
-                "table": "supportportal.docagent_chunks_bge_large_en_v1_5_1024",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
                 "top_k": 2,
                 "vector_candidate_k": 10,
                 "bm25_candidate_k": 10,
@@ -471,7 +530,7 @@ class RagQaHybridTests(unittest.TestCase):
                 "bm25_b": 0.75,
                 "chat_model": "gpt-4.1",
                 "embedding_provider": "siliconflow",
-                "embedding_model": "BAAI/bge-large-en-v1.5",
+                "embedding_model": "BAAI/bge-m3",
                 "rerank_provider": "siliconflow",
                 "rerank_model": "BAAI/bge-reranker-v2-m3",
                 "rerank_api_key": "test-rerank-key",

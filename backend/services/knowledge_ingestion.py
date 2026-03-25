@@ -665,6 +665,26 @@ def _blocks_from_sections(sections: list[DocumentSection]) -> list[ContentBlock]
     return [block for block in blocks if block.text]
 
 
+def _official_fallback_sections(
+    *,
+    title: str,
+    description: str | None,
+) -> list[DocumentSection]:
+    overview_text = _normalize_article_text(description or "") or _normalize_article_text(title)
+    if not overview_text:
+        return []
+    return [
+        DocumentSection(
+            section_type="introduction",
+            content=overview_text,
+            h1=title,
+            h2="Overview",
+            h3=None,
+            heading_path=("Overview",),
+        )
+    ]
+
+
 def _parse_markdown_links(text: str) -> list[dict[str, str]]:
     links: list[dict[str, str]] = []
     for match in re.finditer(r"\[([^\]]+)\]\(([^)]+)\)", text):
@@ -1071,8 +1091,14 @@ def parse_official_markdown_content(
     headings = _markdown_heading_records(body, title)
     sections = _parse_markdown_sections(title=title, markdown_body=body)
     content_blocks = _blocks_from_sections(sections)
+    description = _clean_text(front_matter.get("description"))
     warnings: list[str] = []
     removed_noise: list[str] = []
+    if not content_blocks:
+        sections = _official_fallback_sections(title=title, description=description)
+        content_blocks = _blocks_from_sections(sections)
+        if content_blocks:
+            warnings.append("generated_overview_fallback")
     if not front_matter:
         warnings.append("missing_front_matter")
     if not source_url:
@@ -1092,7 +1118,7 @@ def parse_official_markdown_content(
         "platform": _clean_text(front_matter.get("platform")),
         "language": language,
         "headings": headings,
-        "description": _clean_text(front_matter.get("description")),
+        "description": description,
         "front_matter": front_matter,
     }
     cleaning_report: dict[str, Any] = {
@@ -1960,6 +1986,39 @@ def _paragraph_token_window_split(
     overlap_tokens: int,
     provider: EmbeddingProvider | None,
 ) -> list[tuple[str, int]]:
+    def _split_token_units(
+        units: list[str],
+        *,
+        joiner: str,
+    ) -> list[tuple[str, int]]:
+        cleaned_units = [unit.strip() for unit in units if unit and unit.strip()]
+        if not cleaned_units:
+            return []
+        grouped_chunks: list[tuple[str, int]] = []
+        current_units: list[str] = []
+        current_tokens = 0
+        current_overlap = 0
+        for unit in cleaned_units:
+            unit_tokens = _count_tokens(unit, provider)
+            if current_units and current_tokens + unit_tokens > max_tokens:
+                grouped_chunks.append((joiner.join(current_units).strip(), current_overlap))
+                overlap_units: list[str] = []
+                overlap_count = 0
+                for previous in reversed(current_units):
+                    previous_tokens = _count_tokens(previous, provider)
+                    if overlap_units and overlap_count + previous_tokens > overlap_tokens:
+                        break
+                    overlap_units.insert(0, previous)
+                    overlap_count += previous_tokens
+                current_units = overlap_units[:]
+                current_tokens = sum(_count_tokens(item, provider) for item in current_units)
+                current_overlap = overlap_count
+            current_units.append(unit)
+            current_tokens += unit_tokens
+        if current_units:
+            grouped_chunks.append((joiner.join(current_units).strip(), current_overlap))
+        return [chunk for chunk in grouped_chunks if chunk[0].strip()]
+
     normalized = _normalize_article_text(text)
     if not normalized:
         return []
@@ -1972,6 +2031,22 @@ def _paragraph_token_window_split(
     current_overlap = 0
     for paragraph in paragraphs:
         paragraph_tokens = _count_tokens(paragraph, provider)
+        if paragraph_tokens > max_tokens:
+            if current:
+                chunks.append(("\n\n".join(current).strip(), current_overlap))
+                current = []
+                current_tokens = 0
+                current_overlap = 0
+            line_units = [line.strip() for line in paragraph.splitlines() if line.strip()]
+            if len(line_units) > 1:
+                chunks.extend(_split_token_units(line_units, joiner="\n"))
+                continue
+            word_units = [word for word in paragraph.split() if word]
+            if len(word_units) > 1:
+                chunks.extend(_split_token_units(word_units, joiner=" "))
+                continue
+            chunks.append((paragraph, 0))
+            continue
         if current and current_tokens + paragraph_tokens > max_tokens:
             chunks.append(("\n\n".join(current).strip(), current_overlap))
             overlap_parts: list[str] = []
@@ -2677,6 +2752,51 @@ def _build_official_structured_specs(
     return specs
 
 
+def _official_chunk_max_tokens(chunk_type: str) -> int:
+    if chunk_type == "code":
+        return _OFFICIAL_CODE_MAX_TOKENS
+    if chunk_type in {"rules_table", "api_params", "index"}:
+        return _OFFICIAL_TABLE_MAX_TOKENS
+    return _OFFICIAL_NARRATIVE_MAX_TOKENS
+
+
+def _split_official_structured_spec(
+    spec: StructuredChunkSpec,
+    *,
+    provider: EmbeddingProvider | None,
+) -> list[StructuredChunkSpec]:
+    max_tokens = _official_chunk_max_tokens(spec.chunk_type)
+    if _count_tokens(spec.raw_text, provider) <= max_tokens:
+        return [spec]
+    pieces = _paragraph_token_window_split(
+        spec.raw_text,
+        max_tokens=max_tokens,
+        overlap_tokens=spec.overlap_tokens,
+        provider=provider,
+    )
+    if len(pieces) <= 1:
+        return [spec]
+    split_specs: list[StructuredChunkSpec] = []
+    for raw_piece, overlap_token_count in pieces:
+        split_specs.append(
+            StructuredChunkSpec(
+                anchor_block=spec.anchor_block,
+                raw_text=raw_piece,
+                chunk_type=spec.chunk_type,
+                language=spec.language,
+                method_name=spec.method_name,
+                section_path=spec.section_path,
+                topic=_infer_topics(raw_piece, spec.section_path, spec.method_name, spec.use_case),
+                runtime=spec.runtime,
+                use_case=spec.use_case,
+                overlap_tokens=overlap_token_count,
+                boundary_reason=f"{spec.boundary_reason}_token_window",
+                unit_count=spec.unit_count,
+            )
+        )
+    return split_specs
+
+
 def _technical_chunk_topics(metadata: dict[str, Any], chunk_type: str) -> list[str]:
     topics = []
     for collection in [metadata.get("keywords"), metadata.get("symptoms")]:
@@ -2837,43 +2957,44 @@ def _build_primary_chunk_rows(
     seen_chunk_hashes: set[str] = set()
     if document.knowledge_type == "official":
         block_positions = {id(block): index for index, block in enumerate(document.content_blocks, start=1)}
-        for spec in _build_official_structured_specs(document, provider=provider):
-            chunk_index += 1
-            anchor_block = spec.anchor_block
-            prefix = _chunk_context_prefix(document, anchor_block, platform=platform, product=product)
-            row, trace = _build_chunk_row(
-                document,
-                metadata,
-                anchor_block,
-                block_index=block_positions.get(id(anchor_block), chunk_index),
-                chunk_run_id=run_id,
-                chunk_index=chunk_index,
-                index_role="primary",
-                chunk_strategy=chunk_strategy,
-                strategy_version=strategy_version,
-                prefix=prefix,
-                raw_piece=spec.raw_text,
-                provider=provider,
-                platform=platform,
-                product=product,
-                module=module,
-                language=spec.language,
-                overlap_tokens=spec.overlap_tokens,
-                boundary_reason=spec.boundary_reason,
-                unit_count=spec.unit_count,
-                seen_chunk_hashes=seen_chunk_hashes,
-                metadata_overrides={
-                    "chunk_type": spec.chunk_type,
-                    "language": spec.language,
-                    "method_name": spec.method_name,
-                    "section_path": list(spec.section_path),
-                    "topic": spec.topic,
-                    "runtime": spec.runtime,
-                    "use_case": spec.use_case,
-                },
-            )
-            rows.append(row)
-            traces.append(trace)
+        for base_spec in _build_official_structured_specs(document, provider=provider):
+            for spec in _split_official_structured_spec(base_spec, provider=provider):
+                chunk_index += 1
+                anchor_block = spec.anchor_block
+                prefix = _chunk_context_prefix(document, anchor_block, platform=platform, product=product)
+                row, trace = _build_chunk_row(
+                    document,
+                    metadata,
+                    anchor_block,
+                    block_index=block_positions.get(id(anchor_block), chunk_index),
+                    chunk_run_id=run_id,
+                    chunk_index=chunk_index,
+                    index_role="primary",
+                    chunk_strategy=chunk_strategy,
+                    strategy_version=strategy_version,
+                    prefix=prefix,
+                    raw_piece=spec.raw_text,
+                    provider=provider,
+                    platform=platform,
+                    product=product,
+                    module=module,
+                    language=spec.language,
+                    overlap_tokens=spec.overlap_tokens,
+                    boundary_reason=spec.boundary_reason,
+                    unit_count=spec.unit_count,
+                    seen_chunk_hashes=seen_chunk_hashes,
+                    metadata_overrides={
+                        "chunk_type": spec.chunk_type,
+                        "language": spec.language,
+                        "method_name": spec.method_name,
+                        "section_path": list(spec.section_path),
+                        "topic": spec.topic,
+                        "runtime": spec.runtime,
+                        "use_case": spec.use_case,
+                    },
+                )
+                rows.append(row)
+                traces.append(trace)
         return ChunkBuildResult(
             chunk_run_id=run_id,
             index_role="primary",

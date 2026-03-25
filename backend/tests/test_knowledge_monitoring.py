@@ -66,8 +66,8 @@ class KnowledgeMonitoringTests(unittest.TestCase):
     def test_build_knowledge_metrics_payload_calculates_backlog_and_ratios(self) -> None:
         payload = build_knowledge_metrics_payload(
             storage_mode="postgres",
-            embedding_model="BAAI/bge-large-en-v1.5",
-            vector_table="supportportal.docagent_chunks_bge_large_en_v1_5_1024",
+            embedding_model="BAAI/bge-m3",
+            vector_table="supportportal.docagent_chunks_bge_m3_1024",
             documents_total=6,
             documents_official=2,
             documents_technical=4,
@@ -98,7 +98,7 @@ class KnowledgeMonitoringTests(unittest.TestCase):
         self.assertEqual(payload["avg_processing_seconds_last_24h"], 76.23)
         self.assertEqual(payload["avg_chunk_characters"], 911.61)
         self.assertEqual(payload["knowledge_storage"], "postgres")
-        self.assertEqual(payload["vector_table"], "supportportal.docagent_chunks_bge_large_en_v1_5_1024")
+        self.assertEqual(payload["vector_table"], "supportportal.docagent_chunks_bge_m3_1024")
         self.assertEqual(payload["latest_completed_at"], "2026-03-16T08:30:00+00:00")
         self.assertEqual(payload["source_backlog_count"], 3)
         self.assertEqual(payload["source_documents_by_system"]["n8n"], 2)
@@ -107,8 +107,8 @@ class KnowledgeMonitoringTests(unittest.TestCase):
     def test_build_empty_knowledge_metrics_returns_zeroed_shape(self) -> None:
         payload = build_empty_knowledge_metrics(
             storage_mode="disabled",
-            embedding_model="BAAI/bge-large-en-v1.5",
-            vector_table="supportportal.docagent_chunks_bge_large_en_v1_5_1024",
+            embedding_model="BAAI/bge-m3",
+            vector_table="supportportal.docagent_chunks_bge_m3_1024",
         )
         self.assertEqual(payload["documents_total"], 0)
         self.assertEqual(payload["chunks_total"], 0)

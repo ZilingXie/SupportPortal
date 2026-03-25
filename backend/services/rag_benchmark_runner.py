@@ -46,6 +46,14 @@ def _create_repository() -> "KnowledgeRepository":
     return create_knowledge_repository()
 
 
+def _prepare_repository_for_benchmark(repo: "KnowledgeRepository") -> None:
+    prepare = getattr(repo, "prepare_rag_benchmark_run", None)
+    if callable(prepare):
+        prepare()
+        return
+    repo.initialize()
+
+
 def _clean_text(value: Any) -> str:
     return " ".join(str(value or "").split()).strip()
 
@@ -412,7 +420,7 @@ def run_benchmark(
     eval_run_id: str | None = None,
 ) -> dict[str, Any]:
     repo = repository or _create_repository()
-    repo.initialize()
+    _prepare_repository_for_benchmark(repo)
     if dataset_path is None and not _clean_text(dataset_id):
         raise ValueError("dataset_path or dataset_id is required")
     dataset_name: str

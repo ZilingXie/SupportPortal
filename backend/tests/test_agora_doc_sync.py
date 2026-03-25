@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from backend.services.agora_doc_sync import (
+    DiscoveryItem,
     DownloadResult,
     SyncConfig,
     UploadResult,
@@ -15,6 +16,7 @@ from backend.services.agora_doc_sync import (
     extract_markdown_urls_from_llms_text,
     html_url_to_markdown_url,
     output_relative_path_from_markdown_url,
+    run_sync,
     wait_for_ingestion_completion,
 )
 
@@ -277,6 +279,67 @@ class AgoraDocSyncTests(unittest.TestCase):
         self.assertEqual(result.ingestion_id, "KI-LOCAL-1")
         self.assertEqual(repository.processed_source_doc_id, "SRC-LOCAL-1")
         process.assert_called_once()
+
+    def test_run_sync_passes_upload_workers_to_local_ingest(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "official" / "raw"
+            discovery_items = [
+                DiscoveryItem(
+                    discovery_url="https://docs.agora.io/en/video-calling/overview/product-overview",
+                    markdown_url="https://docs-md.agora.io/en/video-calling/overview/product-overview.md",
+                    local_path="en/video-calling/overview/product-overview.md",
+                )
+            ]
+            download_results = [
+                DownloadResult(
+                    discovery_url=discovery_items[0].discovery_url,
+                    markdown_url=discovery_items[0].markdown_url,
+                    local_path=discovery_items[0].local_path,
+                    status="downloaded",
+                    size_bytes=100,
+                )
+            ]
+            config = SyncConfig(
+                output_dir=output_dir,
+                api_base_url=None,
+                upload_workers=7,
+                limit=1,
+            )
+
+            def _fake_download_documents(*, items, output_dir, workers):
+                _ = items
+                _ = workers
+                target = output_dir / "en" / "video-calling" / "overview" / "product-overview.md"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("# Product overview\n", encoding="utf-8")
+                return download_results
+
+            with patch(
+                "backend.services.agora_doc_sync.discover_documents",
+                return_value=(
+                    discovery_items,
+                    {
+                        "attempted_sources": ["sitemap"],
+                        "selected_source": "sitemap",
+                        "errors": [],
+                        "total_discovered": 1,
+                        "selected_count": 1,
+                        "effective_limit": 1,
+                    },
+                ),
+            ):
+                with patch("backend.services.agora_doc_sync.download_documents", side_effect=_fake_download_documents):
+                    with patch(
+                        "backend.services.agora_doc_sync.ingest_documents_locally",
+                        return_value=[UploadResult(local_path=download_results[0].local_path, upload_status="completed")],
+                    ) as ingest_mock:
+                        exit_code, report, report_path = run_sync(config)
+
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(report["success"])
+        self.assertEqual(report_path.name, "_sync_report.json")
+        ingest_mock.assert_called_once()
+        self.assertEqual(ingest_mock.call_args.kwargs["workers"], 7)
 
 
 if __name__ == "__main__":

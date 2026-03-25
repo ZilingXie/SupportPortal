@@ -7,6 +7,7 @@ import math
 import os
 import re
 import statistics
+import threading
 import time
 from collections import Counter
 from datetime import datetime, timezone
@@ -122,6 +123,17 @@ def _safe_float(value: Any, default_value: float = 0.0) -> float:
 def _safe_positive_float(value: Any, default_value: float) -> float:
     parsed = _safe_float(value, default_value)
     return parsed if parsed > 0 else default_value
+
+
+def _env_flag(value: Any, default_value: bool) -> bool:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return default_value
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default_value
 
 
 def _estimate_token_count(text: Any) -> int:
@@ -442,6 +454,9 @@ def _stable_source_doc_id(
 
 class KnowledgeRepository(Protocol):
     def initialize(self) -> None:
+        ...
+
+    def prepare_rag_benchmark_run(self) -> None:
         ...
 
     def storage_mode(self) -> str:
@@ -818,6 +833,9 @@ class KnowledgeRepository(Protocol):
 
 class DisabledKnowledgeRepository:
     def initialize(self) -> None:
+        return None
+
+    def prepare_rag_benchmark_run(self) -> None:
         return None
 
     def storage_mode(self) -> str:
@@ -1355,6 +1373,7 @@ class PostgresKnowledgeRepository:
         connect_retries: int = 0,
         connect_retry_delay_seconds: float = 1.0,
         default_vector_dim: int = 1024,
+        bm25_backfill_on_init: bool = True,
     ) -> None:
         self._dsn = dsn.strip()
         self._schema = (schema or "supportportal").strip() or "supportportal"
@@ -1362,7 +1381,111 @@ class PostgresKnowledgeRepository:
         self._connect_retries = _safe_positive_int(connect_retries, 0)
         self._connect_retry_delay_seconds = _safe_positive_float(connect_retry_delay_seconds, 1.0)
         self._default_vector_dim = _safe_positive_int(default_vector_dim, 1024)
+        self._bm25_backfill_on_init = bool(bm25_backfill_on_init)
         self._vector_schema, self._vector_table_name = _split_table_name(vector_table, self._schema)
+        self._vector_table_bootstrap_lock = threading.Lock()
+        self._vector_table_bootstrap_signature: tuple[str, str, int] | None = None
+
+    def _benchmark_runtime_required_relations(self) -> dict[str, set[str]]:
+        return {
+            self._schema: {
+                "support_knowledge_documents",
+                "support_knowledge_ingestions",
+                "support_knowledge_chunk_runs",
+                "support_knowledge_chunk_traces",
+                "support_knowledge_bm25_docs",
+                "support_knowledge_bm25_postings",
+                "support_knowledge_bm25_terms",
+                "support_knowledge_bm25_stats",
+                "support_rag_query_runs",
+                "support_rag_query_candidates",
+                "support_rag_eval_runs",
+                "support_rag_eval_results",
+                "support_rag_daily_metrics",
+                "support_rag_review_samples",
+            },
+            self._vector_schema: {
+                self._vector_table_name,
+            },
+        }
+
+    def _existing_relations(
+        self,
+        *,
+        cur: psycopg.Cursor[Any],
+        schema_to_tables: dict[str, set[str]],
+    ) -> set[tuple[str, str]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        for schema_name, table_names in schema_to_tables.items():
+            normalized_names = sorted({_clean_text(name) for name in table_names if _clean_text(name)})
+            if not normalized_names:
+                continue
+            clauses.append("(table_schema = %s AND table_name = ANY(%s))")
+            params.extend([schema_name, normalized_names])
+        if not clauses:
+            return set()
+        cur.execute(
+            f"""
+            SELECT table_schema, table_name
+            FROM information_schema.tables
+            WHERE {' OR '.join(clauses)}
+            """,
+            params,
+        )
+        rows = cur.fetchall() or []
+        return {
+            (_clean_text(row[0]), _clean_text(row[1]))
+            for row in rows
+            if len(row) >= 2 and _clean_text(row[0]) and _clean_text(row[1])
+        }
+
+    def prepare_rag_benchmark_run(self) -> None:
+        required_relations = self._benchmark_runtime_required_relations()
+        needs_full_initialize = False
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                existing_relations = self._existing_relations(cur=cur, schema_to_tables=required_relations)
+                missing_relations = {
+                    (schema_name, table_name)
+                    for schema_name, table_names in required_relations.items()
+                    for table_name in table_names
+                    if (schema_name, table_name) not in existing_relations
+                }
+                if missing_relations:
+                    needs_full_initialize = True
+                else:
+                    validated_vector_dim = validate_embedding_provider_dim()
+                    cur.execute(
+                        """
+                        SELECT format_type(a.atttypid, a.atttypmod)
+                        FROM pg_attribute AS a
+                        JOIN pg_class AS c ON a.attrelid = c.oid
+                        JOIN pg_namespace AS n ON c.relnamespace = n.oid
+                        WHERE n.nspname = %s
+                          AND c.relname = %s
+                          AND a.attname = 'embedding'
+                          AND NOT a.attisdropped
+                        LIMIT 1
+                        """,
+                        (self._vector_schema, self._vector_table_name),
+                    )
+                    existing_row = cur.fetchone()
+                    existing_dim = _vector_type_dimension(existing_row[0] if existing_row else None)
+                    if existing_dim is not None and existing_dim != int(validated_vector_dim):
+                        table_name = (
+                            f"{self._vector_schema}.{self._vector_table_name}"
+                            if self._vector_schema
+                            else self._vector_table_name
+                        )
+                        raise RuntimeError(
+                            f"Configured PGVECTOR_DIM={int(validated_vector_dim)} does not match existing {table_name}.embedding "
+                            f"dimension vector({existing_dim}). Recreate the table or point PGVECTOR_TABLE to a "
+                            f"table with vector({int(validated_vector_dim)})."
+                        )
+
+        if needs_full_initialize:
+            self.initialize()
 
     def storage_mode(self) -> str:
         return "postgres"
@@ -1396,6 +1519,17 @@ class PostgresKnowledgeRepository:
 
     def _vector_table(self) -> sql.Identifier:
         return sql.Identifier(self._vector_schema, self._vector_table_name)
+
+    def _ensure_vector_table_bootstrap(self, *, cur: psycopg.Cursor[Any], vector_dim: int) -> None:
+        safe_dim = _safe_positive_int(vector_dim, self._default_vector_dim)
+        signature = (self._vector_schema, self._vector_table_name, safe_dim)
+        if self._vector_table_bootstrap_signature == signature:
+            return
+        with self._vector_table_bootstrap_lock:
+            if self._vector_table_bootstrap_signature == signature:
+                return
+            self._ensure_vector_table(cur=cur, vector_dim=safe_dim)
+            self._vector_table_bootstrap_signature = signature
 
     def initialize(self) -> None:
         with self._connect() as conn:
@@ -1661,7 +1795,7 @@ class PostgresKnowledgeRepository:
                     ).format(self._table("support_knowledge_sync_runs"))
                 )
                 validated_vector_dim = validate_embedding_provider_dim()
-                self._ensure_vector_table(cur=cur, vector_dim=validated_vector_dim)
+                self._ensure_vector_table_bootstrap(cur=cur, vector_dim=validated_vector_dim)
                 ingestion_alters = [
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'official_markdown_upload'",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS normalization_status TEXT NOT NULL DEFAULT 'pending'",
@@ -2377,7 +2511,8 @@ class PostgresKnowledgeRepository:
                         self._table("support_rag_dataset_item_reviews"),
                     )
                 )
-                self._backfill_bm25_index_if_needed(cur=cur)
+                if self._bm25_backfill_on_init:
+                    self._backfill_bm25_index_if_needed(cur=cur)
             conn.commit()
 
     def _ensure_bm25_tables(self, *, cur: psycopg.Cursor[Any]) -> None:
@@ -2483,6 +2618,7 @@ class PostgresKnowledgeRepository:
         if normalized_index_role != "primary":
             return 0
 
+        self._acquire_bm25_write_lock(cur=cur, index_role=normalized_index_role)
         self._ensure_bm25_tables(cur=cur)
         cur.execute(
             sql.SQL(
@@ -2759,6 +2895,7 @@ class PostgresKnowledgeRepository:
         if normalized_index_role != "primary":
             return
 
+        self._acquire_bm25_write_lock(cur=cur, index_role=normalized_index_role)
         self._ensure_bm25_tables(cur=cur)
         cur.execute(
             sql.SQL("DELETE FROM {} WHERE doc_id = %s AND index_role = %s").format(
@@ -2845,6 +2982,18 @@ class PostgresKnowledgeRepository:
                 self._table("support_knowledge_bm25_docs"),
             ),
             (normalized_index_role, normalized_index_role),
+        )
+
+    def _acquire_bm25_write_lock(
+        self,
+        *,
+        cur: psycopg.Cursor[Any],
+        index_role: str,
+    ) -> None:
+        normalized_index_role = _clean_text(index_role) or "primary"
+        cur.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+            (f"{self._schema}.support_knowledge_bm25", normalized_index_role),
         )
 
     def _row_to_ingestion(self, row: tuple[Any, ...], *, include_content: bool) -> dict[str, Any]:
@@ -4520,7 +4669,6 @@ class PostgresKnowledgeRepository:
         if not rows:
             with self._connect() as conn:
                 with conn.cursor() as cur:
-                    self._ensure_bm25_tables(cur=cur)
                     cur.execute(
                         sql.SQL("DELETE FROM {} WHERE doc_id = %s AND index_role = %s").format(self._vector_table()),
                         (document_id, normalized_index_role),
@@ -4629,8 +4777,7 @@ class PostgresKnowledgeRepository:
 
         with self._connect() as conn:
             with conn.cursor() as cur:
-                self._ensure_vector_table(cur=cur, vector_dim=vector_dim)
-                self._ensure_bm25_tables(cur=cur)
+                self._ensure_vector_table_bootstrap(cur=cur, vector_dim=vector_dim)
                 cur.execute(
                     sql.SQL("DELETE FROM {} WHERE doc_id = %s AND index_role = %s").format(self._vector_table()),
                     (document_id, normalized_index_role),
@@ -9712,6 +9859,7 @@ def create_knowledge_repository() -> KnowledgeRepository:
         os.getenv("PGVECTOR_CONNECT_RETRY_DELAY_SECONDS"),
         1.0,
     )
+    bm25_backfill_on_init = _env_flag(os.getenv("KNOWLEDGE_BM25_BACKFILL_ON_INIT"), True)
     return PostgresKnowledgeRepository(
         dsn=dsn,
         schema=schema,
@@ -9720,4 +9868,5 @@ def create_knowledge_repository() -> KnowledgeRepository:
         connect_retries=connect_retries,
         connect_retry_delay_seconds=connect_retry_delay_seconds,
         default_vector_dim=_default_vector_dim(),
+        bm25_backfill_on_init=bm25_backfill_on_init,
     )

@@ -56,6 +56,18 @@ class _FakeRepository:
         ]
 
 
+class _BenchmarkPreparedRepository(_FakeRepository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.benchmark_prepared = False
+
+    def initialize(self) -> None:
+        raise AssertionError("run_benchmark should not call full initialize when benchmark preparation is available")
+
+    def prepare_rag_benchmark_run(self) -> None:
+        self.benchmark_prepared = True
+
+
 def _fake_query_runner(question: str, top_k: int | None = None) -> RagQueryResult:
     _ = question
     _ = top_k
@@ -91,7 +103,7 @@ def _fake_query_runner(question: str, top_k: int | None = None) -> RagQueryResul
             completion_tokens=40,
             embedding_tokens=20,
             embedding_provider="siliconflow",
-            embedding_model="BAAI/bge-large-en-v1.5",
+            embedding_model="BAAI/bge-m3",
             embedding_dimensions=1024,
             embedding_request_meta=[],
             model_name="gpt-4.1",
@@ -261,6 +273,38 @@ class RagBenchmarkRunnerTests(unittest.TestCase):
         self.assertEqual(summary["benchmark_version"], "golden_support_set_20260322T100000Z")
         self.assertEqual(repository.eval_results[0]["eval_run_id"], "EVAL-SNAPSHOT-1")
         self.assertEqual(repository.eval_results[0]["rows"][0]["test_case_id"], "case-snapshot-1")
+
+    def test_run_benchmark_prefers_benchmark_specific_repository_preparation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dataset_path = Path(tmpdir) / "dataset.jsonl"
+            dataset_path.write_text(
+                json.dumps(
+                    {
+                        "test_case_id": "case-1",
+                        "question": "How do I use it?",
+                        "query_type": "faq",
+                        "source_type": "official_markdown_upload",
+                        "expected_document_ids": ["official-doc-1"],
+                        "expected_heading_paths": ["Setup"],
+                        "expected_evidence_refs": [{"chunk_id": "chunk-1", "doc_id": "official-doc-1", "heading": "Setup"}],
+                        "answer_key_points": ["Use the official guide."],
+                        "expected_handoff": False,
+                        "tags": ["faq"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            repository = _BenchmarkPreparedRepository()
+            summary = run_benchmark(
+                dataset_path=dataset_path,
+                experiment_id="exp-benchmark-ready",
+                repository=repository,
+                query_runner=_fake_query_runner,
+                judge_runner=_fake_judge_runner,
+            )
+
+        self.assertTrue(repository.benchmark_prepared)
+        self.assertEqual(summary["case_count"], 1)
 
 
 if __name__ == "__main__":

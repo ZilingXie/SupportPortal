@@ -5,9 +5,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+import psycopg
+
 from backend.services.local_source_sync import (
     claim_and_ingest_source_documents,
     compute_source_checksum,
+    ingest_source_document,
     materialize_source_document,
 )
 
@@ -16,6 +19,8 @@ class _FakeRepository:
     def __init__(self) -> None:
         self.sync_updates: list[tuple[str, dict[str, object]]] = []
         self.processed: list[str] = []
+        self.failed: list[tuple[str, str]] = []
+        self.ingestion_counter = 0
 
     def create_sync_run(self, **_: object) -> dict[str, str]:
         return {"sync_run_id": "SYNC-1"}
@@ -38,7 +43,8 @@ class _FakeRepository:
         ]
 
     def create_ingestion(self, **_: object) -> dict[str, str]:
-        return {"ingestion_id": "KI-1"}
+        self.ingestion_counter += 1
+        return {"ingestion_id": f"KI-{self.ingestion_counter}"}
 
     def get_ingestion_report(self, ingestion_id: str) -> dict[str, object]:
         _ = ingestion_id
@@ -56,7 +62,7 @@ class _FakeRepository:
         self.processed.append(source_doc_id)
 
     def mark_source_document_failed(self, source_doc_id: str, *, error_message: str) -> None:
-        raise AssertionError(f"unexpected failure for {source_doc_id}: {error_message}")
+        self.failed.append((source_doc_id, error_message))
 
     def update_sync_run(self, sync_run_id: str, **kwargs: object) -> None:
         self.sync_updates.append((sync_run_id, kwargs))
@@ -99,6 +105,43 @@ class LocalSourceSyncTests(unittest.TestCase):
         self.assertEqual(repository.processed, ["SRC-1"])
         self.assertEqual(repository.sync_updates[-1][0], "SYNC-1")
         process.assert_called_once()
+
+    def test_ingest_source_document_retries_retryable_database_disconnects(self) -> None:
+        repository = _FakeRepository()
+        source_document = {
+            "source_doc_id": "SRC-1",
+            "knowledge_type": "technical",
+            "source_system": "n8n",
+            "title": "Runbook",
+            "source_url": "https://example.com/articles/1",
+            "published_url": "https://zendesk.example.com/hc/articles/1",
+            "content_format": "markdown",
+            "raw_content": "# Title\n\nBody",
+            "raw_payload": {"content": "# Title\n\nBody"},
+            "checksum": "checksum-1",
+            "metadata": {},
+        }
+
+        with TemporaryDirectory() as tmpdir:
+            with patch(
+                "backend.services.local_source_sync.process_knowledge_ingestion",
+                side_effect=[
+                    psycopg.OperationalError("consuming input failed: SSL error: unexpected eof while reading"),
+                    None,
+                ],
+            ) as process:
+                result = ingest_source_document(
+                    repository,
+                    source_document,
+                    root_dir=Path(tmpdir),
+                    sync_mode="local_direct",
+                    sync_run_id="SYNC-1",
+                )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(repository.processed, ["SRC-1"])
+        self.assertEqual(repository.failed, [])
+        self.assertEqual(process.call_count, 2)
 
 
 if __name__ == "__main__":
