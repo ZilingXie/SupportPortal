@@ -183,6 +183,49 @@ For each new entry, record:
   - Post-deploy BM25 stats showed `support_knowledge_bm25_docs=124` and `support_knowledge_bm25_stats=('primary', 124, 120.5241935483871)`
   - Post-deploy query telemetry showed `retrieval_strategy='hybrid_rrf_bm25'`, `bm25_candidates_count=47` for `VERIFY-OFFICIAL-BM25-20260322`, and `bm25_candidates_count=5` for `VERIFY-TECH-BM25-20260322`
 
+## 2026-03-23 - Agora benchmark suite import, route-aware benchmark cases, and dashboard case results
+
+- Summary: Replaced the legacy static FAQ smoke benchmark with JSON-backed Agora benchmark suite import, route-aware snapshot benchmark execution, full per-case result surfacing in the RAG dashboard, and duplicate-judge vote deduplication when the same judge model is configured multiple times.
+- Reason: The previous `supportportal_faq_v1.jsonl` benchmark no longer matched the current ingested corpus and could not show the original question, system answer, expected answer, and case-level metrics the workbench now needs for canonical, real-user, and mixed route-aware evaluation.
+- Affected files or config:
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/services/rag_benchmark.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/services/rag_benchmark_suite_importer.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_rag_benchmark.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_benchmark_suite_importer.py`
+  - `backend/tests/test_rag_dashboard_contract.py`
+  - `benchmarks/agora_rag_testset_100_canonical_en.json`
+  - `benchmarks/agora_rag_testset_100_mixed_en.json`
+  - `benchmarks/agora_rag_testset_100_real_user_en.json`
+  - `benchmarks/supportportal_faq_v1.jsonl`
+  - `design.md`
+  - `docs/rag_change_log.md`
+  - `scripts/run_rag_benchmark.py`
+  - `ui/dashboard-ui/rag/app.js`
+  - `ui/dashboard-ui/rag/index.html`
+- Data impact:
+  - Imported three `gold_ready` benchmark datasets from `benchmarks/*.json`: `agora_rag_testset_100_canonical_en`, `agora_rag_testset_100_real_user_en`, and `agora_rag_testset_100_mixed_en`
+  - Added route-aware benchmark metadata (`reference_answer`, `expected_route`, `expected_scope_label`, `retrieval_metrics_enabled`, `citation_metrics_enabled`) to dataset snapshot loading and eval trace payloads
+  - Extended eval result persistence and workbench aggregation with `route_correct_flag`, `route_accuracy`, and per-case expected/actual answer fields for dashboard inspection
+  - Deleted the obsolete `benchmarks/supportportal_faq_v1.jsonl` baseline so new benchmark runs must use either imported suite snapshots or explicit datasets
+  - When `RAG_BENCHMARK_JUDGE_MODELS` repeats the same model three times, benchmark execution now reuses the first vote for duplicate entries instead of issuing redundant judge calls
+- Verification:
+  - `./.venv/bin/python -m unittest backend.tests.test_rag_benchmark_runner backend.tests.test_rag_benchmark_suite_importer backend.tests.test_rag_benchmark backend.tests.test_rag_dashboard_contract backend.tests.test_dashboard_ui_contract`
+  - `./.venv/bin/python -m py_compile backend/rag_api.py backend/rag_worker.py backend/services/rag_benchmark.py backend/services/rag_benchmark_runner.py backend/services/rag_benchmark_suite_importer.py backend/repositories/knowledge_repository.py scripts/run_rag_benchmark.py`
+  - Imported suite snapshots into Postgres: `DS-C7666CE2B821`, `DS-3F617D0FF311`, and `DS-37F37A7A5875`
+  - Completed a canonical route-aware timecheck run `EVAL-689EA8189213`, and verified `support_rag_eval_results.trace_payload` now stores `question`, `actual_answer_text`, `expected_answer_text`, `expected_route`, and `actual_route`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health` returned `ticket_storage=postgres`, `knowledge_storage=postgres`, and `rag_service=ok` after restart
+  - Completed full 100-case suite runs: `EVAL-0C1512E4BDA0` (`agora_rag_testset_100_canonical_en`), `EVAL-4892567749A6` (`agora_rag_testset_100_real_user_en`), and `EVAL-758FF11C44CB` (`agora_rag_testset_100_mixed_en`)
+  - Verified `support_rag_eval_results` contains `100` rows for each of the three full runs
+  - Verified the `experiments` dashboard payload returns `case_results.rows` with `100` benchmark cases per Agora experiment, including `question`, `actual_answer_preview`, `expected_answer_preview`, `answer_accuracy_score`, `evidence_hit_at_5`, `citation_correctness_score`, `hallucination_flag`, `answer_logic_score`, and `route_correct`
+  - Verified the `diagnosis` dashboard payload exposes full `actual_answer_text`, `expected_answer_text`, route labels, and case-level benchmark metrics for `EVAL-758FF11C44CB`
+
 ## 2026-03-22 - SiliconFlow reranker key compatibility follow-up
 
 - Summary: Extended the reranker API key fallback chain to read lowercase `.env` aliases, including the deployed `silliconflow_key` variable, and added a regression test for that path.

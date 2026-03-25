@@ -78,6 +78,19 @@ class RagDashboardContractTests(unittest.TestCase):
         self.assertIn("/internal/dashboard/rag/datasets/{dataset_id}/benchmark-runs", rag_api_source)
         self.assertIn("/internal/dashboard/rag/datasets/{dataset_id}/export", rag_api_source)
 
+    def test_dashboard_repository_exposes_case_results_and_route_fields(self) -> None:
+        source = Path("backend/repositories/knowledge_repository.py").read_text(encoding="utf-8")
+        for marker in [
+            "case_results",
+            "route_accuracy",
+            "expected_answer_text",
+            "actual_answer_text",
+            "expected_route",
+            "actual_route",
+            "route_correct_flag",
+        ]:
+            self.assertIn(marker, source)
+
 
 if __name__ == "__main__":
     unittest.main()

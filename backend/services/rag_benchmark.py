@@ -47,11 +47,17 @@ class BenchmarkCase:
     source_type: str
     product: str | None
     language: str | None
+    reference_answer: str | None
     expected_document_ids: list[str]
     expected_heading_paths: list[str]
     expected_evidence_refs: list[dict[str, str]]
     answer_key_points: list[str]
     expected_handoff: bool
+    expected_route: str
+    expected_scope_label: str
+    retrieval_metrics_enabled: bool
+    citation_metrics_enabled: bool
+    route_aware: bool
     tags: list[str]
 
 
@@ -113,6 +119,18 @@ def _normalize_bool(value: Any, *, field_name: str) -> bool:
     raise ValueError(f"{field_name} must be a boolean")
 
 
+def _normalize_expected_route(value: Any) -> str:
+    normalized = _clean_text(value).lower()
+    if normalized in {"rag", "web_search", "refuse"}:
+        return normalized
+    return "rag"
+
+
+def _normalize_expected_scope_label(value: Any) -> str:
+    normalized = _clean_text(value)
+    return normalized or "agora_technical"
+
+
 def _safe_float(value: Any) -> float | None:
     if value is None:
         return None
@@ -166,10 +184,28 @@ def _parse_benchmark_case(payload: dict[str, Any], *, line_number: int) -> Bench
     source_type = _clean_text(payload.get("source_type"))
     product = _clean_text(payload.get("product"))
     language = _clean_text(payload.get("language"))
+    reference_answer = _clean_text(payload.get("reference_answer"))
     expected_document_ids = _normalize_string_list(payload.get("expected_document_ids"))
     expected_heading_paths = [_normalize_heading_path(item) for item in _normalize_string_list(payload.get("expected_heading_paths"))]
     expected_evidence_refs = _normalize_evidence_refs(payload.get("expected_evidence_refs"))
     answer_key_points = _normalize_string_list(payload.get("answer_key_points"))
+    expected_route = _normalize_expected_route(payload.get("expected_route"))
+    expected_scope_label = _normalize_expected_scope_label(payload.get("expected_scope_label"))
+    retrieval_metrics_enabled = (
+        _normalize_bool(payload.get("retrieval_metrics_enabled"), field_name="retrieval_metrics_enabled")
+        if payload.get("retrieval_metrics_enabled") is not None
+        else True
+    )
+    citation_metrics_enabled = (
+        _normalize_bool(payload.get("citation_metrics_enabled"), field_name="citation_metrics_enabled")
+        if payload.get("citation_metrics_enabled") is not None
+        else True
+    )
+    route_aware = (
+        _normalize_bool(payload.get("route_aware"), field_name="route_aware")
+        if payload.get("route_aware") is not None
+        else False
+    )
     tags = _normalize_string_list(payload.get("tags"))
 
     if not test_case_id:
@@ -192,11 +228,17 @@ def _parse_benchmark_case(payload: dict[str, Any], *, line_number: int) -> Bench
         source_type=source_type,
         product=product,
         language=language,
+        reference_answer=reference_answer,
         expected_document_ids=expected_document_ids,
         expected_heading_paths=[item for item in expected_heading_paths if item],
         expected_evidence_refs=expected_evidence_refs,
         answer_key_points=answer_key_points,
         expected_handoff=expected_handoff,
+        expected_route=expected_route,
+        expected_scope_label=expected_scope_label,
+        retrieval_metrics_enabled=retrieval_metrics_enabled,
+        citation_metrics_enabled=citation_metrics_enabled,
+        route_aware=route_aware,
         tags=tags,
     )
 
@@ -336,10 +378,12 @@ def build_benchmark_review_sample(
             "root_cause_label": _clean_text(result_row.get("root_cause_label")),
             "question": _clean_text(result_row.get("question")),
             "answer_preview": _clean_text(result_row.get("answer_preview")),
+            "reference_answer": _clean_text(result_row.get("reference_answer")),
             "expected_document_ids": _normalize_string_list(result_row.get("expected_document_ids")),
             "expected_heading_paths": _normalize_string_list(result_row.get("expected_heading_paths")),
             "expected_evidence_refs": _normalize_evidence_refs(result_row.get("expected_evidence_refs")),
             "judge_disagreement_flag": bool(result_row.get("judge_disagreement_flag")),
+            "route_correct_flag": result_row.get("route_correct_flag") if isinstance(result_row.get("route_correct_flag"), bool) else None,
             "trace_payload": result_row.get("trace_payload") if isinstance(result_row.get("trace_payload"), dict) else {},
             "scores": {
                 field_name: _safe_float(result_row.get(field_name))
@@ -502,8 +546,14 @@ def summarize_eval_daily_metrics(result_rows: list[dict[str, Any]]) -> dict[str,
         for row in result_rows
         if isinstance(row.get("needs_human"), bool)
     ]
+    route_correct_values = [
+        1.0 if row.get("route_correct_flag") else 0.0
+        for row in result_rows
+        if isinstance(row.get("route_correct_flag"), bool)
+    ]
     metrics["hallucination_rate"] = round(sum(hallucination_values) / len(hallucination_values), 4) if hallucination_values else None
     metrics["needs_human_rate"] = round(sum(needs_human_values) / len(needs_human_values), 4) if needs_human_values else None
+    metrics["route_accuracy"] = round(sum(route_correct_values) / len(route_correct_values), 4) if route_correct_values else None
     return metrics
 def _ndcg_at_k(relevance_scores: list[int], k: int) -> float:
     sliced = relevance_scores[: max(1, int(k))]

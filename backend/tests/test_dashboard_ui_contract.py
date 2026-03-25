@@ -103,6 +103,21 @@ class DashboardUiContractTests(unittest.TestCase):
         ]:
             self.assertIn(marker, source)
 
+    def test_rag_dashboard_surfaces_case_results_expected_answer_and_external_benchmark_filter(self) -> None:
+        js_source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
+        html_source = Path("ui/dashboard-ui/rag/index.html").read_text(encoding="utf-8")
+
+        for marker in [
+            "Case Results",
+            "Expected Answer",
+            "expected_answer_preview",
+            "actual_answer_preview",
+            "route_correct",
+        ]:
+            self.assertIn(marker, js_source)
+
+        self.assertIn('option value="external_benchmark"', html_source)
+
 
 if __name__ == "__main__":
     unittest.main()

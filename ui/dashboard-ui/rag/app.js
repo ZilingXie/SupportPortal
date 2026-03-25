@@ -55,7 +55,7 @@ const ragFilters = {
   test_case_id: "",
   baseline_experiment_id: "",
   candidate_experiment_id: "",
-  limit: 20,
+  limit: 100,
 };
 
 function escapeHtml(value) {
@@ -605,6 +605,12 @@ function buildTraceOverview(trace) {
     { label: "Language", value: trace.language },
     { label: "Retrieval Strategy", value: trace.retrieval_strategy },
     { label: "Generation Mode", value: trace.generation_mode },
+    { label: "Expected Route", value: trace.expected_route },
+    { label: "Actual Route", value: trace.actual_route },
+    { label: "Expected Scope", value: trace.expected_scope_label },
+    { label: "Actual Scope", value: trace.actual_scope_label },
+    { label: "Route Correct", value: trace.route_correct_flag },
+    { label: "Search Used", value: trace.search_used },
     { label: "Needs Human", value: trace.needs_human },
     { label: "Handoff Reason", value: trace.handoff_reason },
     { label: "Created At", value: trace.created_at ? formatDateTime(trace.created_at) : "-" },
@@ -658,12 +664,99 @@ function buildCandidateTable(candidates) {
   });
 }
 
+function buildCaseResultsTable(rows) {
+  const items = Array.isArray(rows) ? rows : [];
+  if (!items.length) {
+    return `
+      <section class="panel-card">
+        <div class="panel-header">
+          <div>
+            <h3>Case Results</h3>
+            <p>Every benchmark case for the selected candidate experiment.</p>
+          </div>
+        </div>
+        <div class="empty-state">No case results available for this experiment.</div>
+      </section>
+    `;
+  }
+  return `
+    <section class="panel-card">
+      <div class="panel-header">
+        <div>
+          <h3>Case Results</h3>
+          <p>Every benchmark row includes the question, the actual answer, the expected answer, and per-case metrics.</p>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Question</th>
+              <th>Actual Answer</th>
+              <th>Expected Answer</th>
+              <th>Answer Accuracy</th>
+              <th>Evidence Hit@5</th>
+              <th>Citation Correctness</th>
+              <th>Hallucination</th>
+              <th>Answer Logic</th>
+              <th>Failure Type</th>
+              <th>Route Correct</th>
+              <th>Inspect</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items
+              .map(
+                (row) => `
+                  <tr>
+                    <td>
+                      <strong>${escapeHtml(row.question || "-")}</strong>
+                      <div class="metric-meta">
+                        ${escapeHtml(humanizeLabel(row.expected_route || "rag"))}
+                        →
+                        ${escapeHtml(humanizeLabel(row.actual_route || "rag"))}
+                      </div>
+                    </td>
+                    <td>${escapeHtml(row.actual_answer_preview || "-")}</td>
+                    <td>${escapeHtml(row.expected_answer_preview || "-")}</td>
+                    <td>${formatMetricValue(row.answer_accuracy_score, "answer_accuracy_score")}</td>
+                    <td>${formatMetricValue(
+                      row.evidence_hit_at_5 !== null && row.evidence_hit_at_5 !== undefined ? row.evidence_hit_at_5 : row.hit_at_5,
+                      "evidence_hit_at_5"
+                    )}</td>
+                    <td>${formatMetricValue(row.citation_correctness_score, "citation_correctness_score")}</td>
+                    <td>${formatMetricValue(row.hallucination_flag, "hallucination_flag")}</td>
+                    <td>${formatMetricValue(row.answer_logic_score, "answer_logic_score")}</td>
+                    <td>${escapeHtml(row.failure_type || "-")}</td>
+                    <td>${formatMetricValue(row.route_correct, "route_correct")}</td>
+                    <td>
+                      <button
+                        type="button"
+                        class="table-action-button"
+                        data-open-diagnosis-benchmark="${escapeHtml(row.eval_run_id || "")}"
+                        data-open-test-case="${escapeHtml(row.test_case_id || "")}"
+                      >
+                        Inspect
+                      </button>
+                    </td>
+                  </tr>
+                `
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
 function renderExperimentsPage(payload) {
   const root = ragPageContainers.experiments.root;
   const sections = payload.sections || {};
   const summary = sections.summary || {};
   const leaderboard = sections.leaderboard?.rows || [];
   const metricRows = sections.metric_matrix?.rows || [];
+  const caseResults = sections.case_results?.rows || [];
   const segmentGroups = sections.segment_breakdown?.groups || [];
   const sampleList = sections.sample_list || {};
   const options = summary.available_experiments || [];
@@ -713,6 +806,7 @@ function renderExperimentsPage(payload) {
             "query_rewrite_enabled",
             "answer_accuracy_score_avg",
             "answer_logic_score_avg",
+            "route_accuracy",
             "evidence_hit_at_5",
             "faithfulness_score_avg",
             "groundedness_score_avg",
@@ -737,6 +831,8 @@ function renderExperimentsPage(payload) {
         })}
       </section>
     </div>
+
+    ${buildCaseResultsTable(caseResults)}
 
     <div class="two-column-grid">
       ${buildSampleList("Top Regressions", sampleList.top_regressions || [], "danger")}
@@ -874,6 +970,10 @@ function renderDiagnosisPage(payload) {
                         : ""
                     }
                   </div>
+                </section>
+                <section class="callout-block">
+                  <h4>Expected Answer</h4>
+                  <pre class="answer-block">${escapeHtml(primary.expected_answer_text || "-")}</pre>
                 </section>
                 ${primary.related_ingestion_ids?.length ? `
                   <div class="button-row">

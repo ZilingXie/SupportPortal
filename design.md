@@ -188,6 +188,7 @@
 1. 本轮只要求结构独立，不要求完全迁入本视觉系统。
 2. 当前公共 page taxonomy 为：
    - `experiments`
+   - `datasets`
    - `diagnosis`
    - `knowledge-supply`
    - `production-signals`

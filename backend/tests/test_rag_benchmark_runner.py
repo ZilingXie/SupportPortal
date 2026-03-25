@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from backend.services.rag_benchmark_runner import resolve_judge_models, run_benchmark
 from backend.services.rag_qa import RagAnswer, RagQueryResult, RagQueryTrace
+from backend.services.support_router import SupportResolution
 
 
 class _FakeRepository:
@@ -175,6 +178,39 @@ def _fake_judge_runner(
     }
 
 
+def _fake_message_resolver(
+    message: str,
+    *,
+    ticket_subject: str | None = None,
+    ticket_context: list[dict[str, str]] | None = None,
+    rag_answerer=None,
+    decision=None,
+) -> SupportResolution:
+    _ = message
+    _ = ticket_subject
+    _ = ticket_context
+    _ = rag_answerer
+    _ = decision
+    return SupportResolution(
+        answer="Agora, Inc. trades on Nasdaq under the ticker API.",
+        confidence=0.93,
+        sources=["https://investor.agora.io"],
+        citations=[
+            {
+                "source_url": "https://investor.agora.io",
+                "title": "Investor Relations",
+            }
+        ],
+        needs_engineer_guidance=False,
+        answer_route="web_search",
+        scope_label="agora_non_technical",
+        route_reason="company_info_detected",
+        route_confidence=0.93,
+        search_used=True,
+        matched_signals=["stock"],
+    )
+
+
 class RagBenchmarkRunnerTests(unittest.TestCase):
     def test_resolve_judge_models_requires_exactly_three_models(self) -> None:
         with self.assertRaises(ValueError):
@@ -261,6 +297,112 @@ class RagBenchmarkRunnerTests(unittest.TestCase):
         self.assertEqual(summary["benchmark_version"], "golden_support_set_20260322T100000Z")
         self.assertEqual(repository.eval_results[0]["eval_run_id"], "EVAL-SNAPSHOT-1")
         self.assertEqual(repository.eval_results[0]["rows"][0]["test_case_id"], "case-snapshot-1")
+
+    def test_run_benchmark_route_aware_case_records_expected_and_actual_answers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dataset_path = Path(tmpdir) / "dataset.jsonl"
+            dataset_path.write_text(
+                json.dumps(
+                    {
+                        "test_case_id": "case-route-1",
+                        "question": "What's Agora's stock ticker?",
+                        "query_type": "agora_nontechnical",
+                        "source_type": "external_benchmark",
+                        "expected_document_ids": ["external-benchmark-placeholder"],
+                        "reference_answer": "Agora, Inc. trades on Nasdaq under the ticker API.",
+                        "answer_key_points": ["Ticker is API."],
+                        "expected_handoff": False,
+                        "expected_route": "web_search",
+                        "expected_scope_label": "agora_non_technical",
+                        "retrieval_metrics_enabled": False,
+                        "citation_metrics_enabled": True,
+                        "route_aware": True,
+                        "tags": ["company"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            repository = _FakeRepository()
+            summary = run_benchmark(
+                dataset_path=dataset_path,
+                experiment_id="exp-route-aware-1",
+                repository=repository,
+                query_runner=_fake_query_runner,
+                judge_runner=_fake_judge_runner,
+                message_resolver=_fake_message_resolver,
+            )
+
+        self.assertEqual(summary["case_count"], 1)
+        self.assertEqual(summary["metrics"]["route_accuracy"], 1.0)
+        first_row = repository.eval_results[0]["rows"][0]
+        self.assertEqual(first_row["route_correct_flag"], True)
+        self.assertIsNone(first_row["hit_at_5"])
+        self.assertEqual(first_row["trace_payload"]["expected_answer_text"], "Agora, Inc. trades on Nasdaq under the ticker API.")
+        self.assertEqual(first_row["trace_payload"]["actual_answer_text"], "Agora, Inc. trades on Nasdaq under the ticker API.")
+        self.assertEqual(first_row["trace_payload"]["expected_route"], "web_search")
+        self.assertEqual(first_row["trace_payload"]["actual_route"], "web_search")
+        self.assertEqual(first_row["trace_payload"]["actual_scope_label"], "agora_non_technical")
+
+    def test_run_benchmark_reuses_duplicate_judge_model_votes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dataset_path = Path(tmpdir) / "dataset.jsonl"
+            dataset_path.write_text(
+                json.dumps(
+                    {
+                        "test_case_id": "case-dedupe-1",
+                        "question": "How do I use it?",
+                        "query_type": "faq",
+                        "source_type": "official_markdown_upload",
+                        "expected_document_ids": ["official-doc-1"],
+                        "expected_heading_paths": ["Setup"],
+                        "expected_evidence_refs": [{"chunk_id": "chunk-1", "doc_id": "official-doc-1", "heading": "Setup"}],
+                        "answer_key_points": ["Use the official guide."],
+                        "expected_handoff": False,
+                        "tags": ["faq"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            repository = _FakeRepository()
+            judge_calls: list[str] = []
+
+            def _counting_judge_runner(*, judge_model: str, case, result, retrieval_metrics) -> dict[str, object]:
+                _ = case
+                _ = result
+                _ = retrieval_metrics
+                judge_calls.append(judge_model)
+                return {
+                    "judge_model": judge_model,
+                    "document_relevance_score": 0.92,
+                    "faithfulness_score": 0.89,
+                    "groundedness_score": 0.87,
+                    "response_relevance_score": 0.91,
+                    "response_completeness_score": 0.9,
+                    "citation_correctness_score": 0.93,
+                    "answer_accuracy_score": 0.95,
+                    "answer_logic_score": 0.86,
+                    "hallucination_flag": False,
+                    "needs_human": False,
+                    "failure_type": "grounded_answer",
+                }
+
+            with mock.patch.dict(
+                os.environ,
+                {"RAG_BENCHMARK_JUDGE_MODELS": "gpt-4o-mini,gpt-4o-mini,gpt-4o-mini"},
+                clear=False,
+            ):
+                run_benchmark(
+                    dataset_path=dataset_path,
+                    experiment_id="exp-dedupe-1",
+                    repository=repository,
+                    query_runner=_fake_query_runner,
+                    judge_runner=_counting_judge_runner,
+                )
+
+        self.assertEqual(judge_calls, ["gpt-4o-mini"])
+        first_row = repository.eval_results[0]["rows"][0]
+        self.assertEqual(len(first_row["judge_votes"]), 3)
+        self.assertTrue(all(vote["judge_model"] == "gpt-4o-mini" for vote in first_row["judge_votes"]))
 
 
 if __name__ == "__main__":
