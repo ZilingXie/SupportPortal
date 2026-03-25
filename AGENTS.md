@@ -1,5 +1,10 @@
 # Collaboration Rules
 
+## Branch Workflow
+1. By default, all Codex changes for this repo must be made directly on the `mac` branch.
+2. Do not create temporary `codex/*` branches unless the user explicitly asks for branch isolation for multiple independent large changes.
+3. If the user requests isolated branch work, create the separate branch from `mac` unless the user says otherwise.
+
 ## UI Design Source Of Truth
 1. All new or refactored UI under `ui/` must follow `/Users/xieziling/Desktop/personal_proj/SupportPortal/design.md`.
 2. `design.md` is the canonical UI design language and component/style source of truth for this repo.
