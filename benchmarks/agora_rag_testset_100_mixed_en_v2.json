@@ -1,0 +1,2843 @@
+[
+  {
+    "test_case_id": "agora-mixed-001",
+    "question": "What is an Agora token and why is it used?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer with the definition and purpose of token-based authentication.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-001-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-001-kp-1",
+        "text": "Answer with the definition and purpose of token-based authentication.",
+        "supporting_evidence_refs": [
+          "agora-mixed-001-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-002",
+    "question": "Who should generate an Agora token in a production environment?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer that the app server/backend should generate it.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-002-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-002-kp-1",
+        "text": "Answer that the app server/backend should generate it.",
+        "supporting_evidence_refs": [
+          "agora-mixed-002-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-003",
+    "question": "What usually happens if App Certificate is enabled but the client joins with only an App ID?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer that authentication fails and token-based auth is required.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-003-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-003-kp-1",
+        "text": "Answer that authentication fails and token-based auth is required.",
+        "supporting_evidence_refs": [
+          "agora-mixed-003-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-004",
+    "question": "What does error code 109 mean in Agora authentication?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer that the token has expired.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-004-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-004-kp-1",
+        "text": "Answer that the token has expired.",
+        "supporting_evidence_refs": [
+          "agora-mixed-004-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-005",
+    "question": "When is onTokenPrivilegeWillExpire triggered?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer that it is triggered shortly before expiration, commonly 30 seconds before.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-005-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-005-kp-1",
+        "text": "Answer that it is triggered shortly before expiration, commonly 30 seconds before.",
+        "supporting_evidence_refs": [
+          "agora-mixed-005-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-006",
+    "question": "What should the app do after receiving onTokenPrivilegeWillExpire?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer that it should fetch a new token and call renewToken.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-006-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-006-kp-1",
+        "text": "Answer that it should fetch a new token and call renewToken.",
+        "supporting_evidence_refs": [
+          "agora-mixed-006-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-007",
+    "question": "What does onRequestToken indicate?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer that the token has expired or is no longer valid and must be refreshed.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-007-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-007-kp-1",
+        "text": "Answer that the token has expired or is no longer valid and must be refreshed.",
+        "supporting_evidence_refs": [
+          "agora-mixed-007-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-008",
+    "question": "What is the difference between the COMMUNICATION and LIVE_BROADCASTING profiles?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer with the core difference in interaction model and roles.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-008-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-008-kp-1",
+        "text": "Answer with the core difference in interaction model and roles.",
+        "supporting_evidence_refs": [
+          "agora-mixed-008-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-009",
+    "question": "In LIVE_BROADCASTING mode, can an audience member publish audio and video by default?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer that audience cannot publish by default.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-009-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-009-kp-1",
+        "text": "Answer that audience cannot publish by default.",
+        "supporting_evidence_refs": [
+          "agora-mixed-009-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-010",
+    "question": "What is the role of a host in LIVE_BROADCASTING?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer that a host can publish local streams and subscribe to remote streams.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-010-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-010-kp-1",
+        "text": "Answer that a host can publish local streams and subscribe to remote streams.",
+        "supporting_evidence_refs": [
+          "agora-mixed-010-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-011",
+    "question": "Does the Video SDK provide a direct callback for audience members joining or leaving a livestream channel?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer that there is no direct audience join/leave callback in the Video SDK.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-011-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-011-kp-1",
+        "text": "Answer that there is no direct audience join/leave callback in the Video SDK.",
+        "supporting_evidence_refs": [
+          "agora-mixed-011-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-012",
+    "question": "If a developer needs reliable audience join/leave tracking, what Agora product can help?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer with Notifications and/or Signaling.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-012-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-012-kp-1",
+        "text": "Answer with Notifications and/or Signaling.",
+        "supporting_evidence_refs": [
+          "agora-mixed-012-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-013",
+    "question": "Can a user publish local streams to two channels at the same time in a standard multi-channel setup?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer that the user should publish in only one channel at a time.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-013-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-013-kp-1",
+        "text": "Answer that the user should publish in only one channel at a time.",
+        "supporting_evidence_refs": [
+          "agora-mixed-013-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-014",
+    "question": "In a multi-channel scenario, what should a user do before publishing in the second channel?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer that the user should stop publishing in the first channel first.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-014-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-014-kp-1",
+        "text": "Answer that the user should stop publishing in the first channel first.",
+        "supporting_evidence_refs": [
+          "agora-mixed-014-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-015",
+    "question": "What role should the user take in the first channel if they only need to listen there while publishing in another channel?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer that they should be audience in the first channel.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-015-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-015-kp-1",
+        "text": "Answer that they should be audience in the first channel.",
+        "supporting_evidence_refs": [
+          "agora-mixed-015-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-016",
+    "question": "Does the Agora Channel Management REST API support HTTP?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer that it supports HTTPS only.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-016-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-016-kp-1",
+        "text": "Answer that it supports HTTPS only.",
+        "supporting_evidence_refs": [
+          "agora-mixed-016-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-017",
+    "question": "What credentials are commonly used to build the Authorization header for Agora REST APIs?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer with Customer ID and Customer Secret.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-017-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-017-kp-1",
+        "text": "Answer with Customer ID and Customer Secret.",
+        "supporting_evidence_refs": [
+          "agora-mixed-017-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-018",
+    "question": "What format do Agora Channel Management REST API requests and responses use?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer JSON / application/json.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-018-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-018-kp-1",
+        "text": "Answer JSON / application/json.",
+        "supporting_evidence_refs": [
+          "agora-mixed-018-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-019",
+    "question": "Are the URL and request body case-sensitive in Agora Channel Management REST APIs?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer yes.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-019-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-019-kp-1",
+        "text": "Answer yes.",
+        "supporting_evidence_refs": [
+          "agora-mixed-019-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-020",
+    "question": "What are the three main recording modes in Agora Cloud Recording?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer: individual recording, composite recording, and web page recording.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-020-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-020-kp-1",
+        "text": "Answer: individual recording, composite recording, and web page recording.",
+        "supporting_evidence_refs": [
+          "agora-mixed-020-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-021",
+    "question": "What is the main output characteristic of individual recording mode?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer that each user's media is recorded separately.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-021-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-021-kp-1",
+        "text": "Answer that each user's media is recorded separately.",
+        "supporting_evidence_refs": [
+          "agora-mixed-021-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-022",
+    "question": "What is the main output characteristic of composite recording mode?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer that multiple users are mixed into a single file.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-022-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-022-kp-1",
+        "text": "Answer that multiple users are mixed into a single file.",
+        "supporting_evidence_refs": [
+          "agora-mixed-022-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-023",
+    "question": "Which Cloud Recording mode is better when you want one final mixed file?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer composite recording.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-023-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-023-kp-1",
+        "text": "Answer composite recording.",
+        "supporting_evidence_refs": [
+          "agora-mixed-023-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-024",
+    "question": "Which Cloud Recording mode is better when you want separate files per participant?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer individual recording.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-024-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-024-kp-1",
+        "text": "Answer individual recording.",
+        "supporting_evidence_refs": [
+          "agora-mixed-024-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-025",
+    "question": "Which recording mode supports setting output resolution, frame rate, and bitrate through transcodingConfig?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer composite recording.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-025-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-025-kp-1",
+        "text": "Answer composite recording.",
+        "supporting_evidence_refs": [
+          "agora-mixed-025-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-026",
+    "question": "In individual recording mode, what usually happens to the original video profile?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer that it is generally preserved.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-026-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-026-kp-1",
+        "text": "Answer that it is generally preserved.",
+        "supporting_evidence_refs": [
+          "agora-mixed-026-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-027",
+    "question": "What streamMode is often recommended in individual recording if directly playable output is needed?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer streamMode=standard.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-027-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-027-kp-1",
+        "text": "Answer streamMode=standard.",
+        "supporting_evidence_refs": [
+          "agora-mixed-027-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-028",
+    "question": "In Agora Cloud Recording, what does cname represent in individual or composite recording?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer that it represents the channel name.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-028-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-028-kp-1",
+        "text": "Answer that it represents the channel name.",
+        "supporting_evidence_refs": [
+          "agora-mixed-028-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-029",
+    "question": "What API is typically used to start and manage Agora Cloud Recording tasks?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer that the Cloud Recording RESTful API is used.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-029-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-029-kp-1",
+        "text": "Answer that the Cloud Recording RESTful API is used.",
+        "supporting_evidence_refs": [
+          "agora-mixed-029-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-030",
+    "question": "What is a common cause of token invalid besides token expiration?",
+    "question_type": "fact",
+    "category": "fact",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Answer that uid/channel mismatch or incorrect token construction is a common cause.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-fact"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-fact"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-030-evidence-1",
+        "doc_id": "agora-doc-placeholder-fact",
+        "heading": "agora-tech-fact",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-030-kp-1",
+        "text": "Answer that uid/channel mismatch or incorrect token construction is a common cause.",
+        "supporting_evidence_refs": [
+          "agora-mixed-030-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-031",
+    "question": "My users can join the channel successfully in development, but after I enabled App Certificate in Console the app starts failing in production. What should I check first?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should reason toward token-based authentication being required.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-031-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-031-kp-1",
+        "text": "Should reason toward token-based authentication being required.",
+        "supporting_evidence_refs": [
+          "agora-mixed-031-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-032",
+    "question": "The SDK reports ERR_TOKEN_EXPIRED while the call is still active. What is the correct recovery flow?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should explain renewing or refreshing the token.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-032-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-032-kp-1",
+        "text": "Should explain renewing or refreshing the token.",
+        "supporting_evidence_refs": [
+          "agora-mixed-032-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-033",
+    "question": "A user reports that they were disconnected because the token expired mid-call. I want to reduce disruption. Which callback should I handle proactively?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should point to onTokenPrivilegeWillExpire.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-033-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-033-kp-1",
+        "text": "Should point to onTokenPrivilegeWillExpire.",
+        "supporting_evidence_refs": [
+          "agora-mixed-033-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-034",
+    "question": "I generated a token for uid 42, but the client joins as uid 43. The token looks fresh. Why can join still fail?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should identify uid mismatch.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-034-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-034-kp-1",
+        "text": "Should identify uid mismatch.",
+        "supporting_evidence_refs": [
+          "agora-mixed-034-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-035",
+    "question": "I am building a webinar app. Two speakers should publish, and 5,000 viewers should only watch. Which profile and roles should I use?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should recommend LIVE_BROADCASTING with hosts and audience.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-035-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-035-kp-1",
+        "text": "Should recommend LIVE_BROADCASTING with hosts and audience.",
+        "supporting_evidence_refs": [
+          "agora-mixed-035-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-036",
+    "question": "I am building a 6-person team call where everyone speaks equally. Which channel profile is the best default choice?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should recommend COMMUNICATION.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-036-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-036-kp-1",
+        "text": "Should recommend COMMUNICATION.",
+        "supporting_evidence_refs": [
+          "agora-mixed-036-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-037",
+    "question": "A viewer raises their hand in a livestream and now needs to speak on stage. What should the app do at the role level?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should say switch from audience to host/broadcaster.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-037-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-037-kp-1",
+        "text": "Should say switch from audience to host/broadcaster.",
+        "supporting_evidence_refs": [
+          "agora-mixed-037-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-038",
+    "question": "My product manager wants exact audience counts in a livestream, but RTC callbacks do not seem enough. What should I add to the architecture?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should suggest Notifications or Signaling.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-038-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-038-kp-1",
+        "text": "Should suggest Notifications or Signaling.",
+        "supporting_evidence_refs": [
+          "agora-mixed-038-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-039",
+    "question": "I need backend webhooks every time channel events happen so I can update internal analytics. Which Agora capability is relevant?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should recommend Notifications/webhooks.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-039-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-039-kp-1",
+        "text": "Should recommend Notifications/webhooks.",
+        "supporting_evidence_refs": [
+          "agora-mixed-039-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-040",
+    "question": "A moderator wants to keep listening in channel A while speaking in channel B. How should the roles be arranged?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should recommend audience in A and host/broadcaster in B.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-040-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-040-kp-1",
+        "text": "Should recommend audience in A and host/broadcaster in B.",
+        "supporting_evidence_refs": [
+          "agora-mixed-040-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-041",
+    "question": "My app tries to publish to channel B without stopping publication in channel A, and the SDK refuses the operation. What architectural rule did I violate?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should explain one-channel-at-a-time publishing rule.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-041-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-041-kp-1",
+        "text": "Should explain one-channel-at-a-time publishing rule.",
+        "supporting_evidence_refs": [
+          "agora-mixed-041-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-042",
+    "question": "I only want to monitor a second channel without sending local media. What join options should I pay attention to?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should mention not publishing local audio/video and audience role if applicable.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-042-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-042-kp-1",
+        "text": "Should mention not publishing local audio/video and audience role if applicable.",
+        "supporting_evidence_refs": [
+          "agora-mixed-042-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-043",
+    "question": "A frontend engineer wants to call Agora Channel Management REST APIs directly from the browser. What is the main security concern?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should explain exposure of Customer Secret / server-side requirement.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-043-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-043-kp-1",
+        "text": "Should explain exposure of Customer Secret / server-side requirement.",
+        "supporting_evidence_refs": [
+          "agora-mixed-043-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-044",
+    "question": "My REST API call keeps failing authentication even though the endpoint URL is correct. What pieces of auth formatting should I verify?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should mention Customer ID/Secret, Base64, Authorization header, case sensitivity if relevant.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-044-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-044-kp-1",
+        "text": "Should mention Customer ID/Secret, Base64, Authorization header, case sensitivity if relevant.",
+        "supporting_evidence_refs": [
+          "agora-mixed-044-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-045",
+    "question": "I want to record a multi-host livestream and hand customers exactly one final MP4 file. Which Cloud Recording mode should I choose?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should recommend composite recording.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-045-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-045-kp-1",
+        "text": "Should recommend composite recording.",
+        "supporting_evidence_refs": [
+          "agora-mixed-045-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-046",
+    "question": "I want to run post-processing per speaker after the session and need separate media assets. Which recording mode fits better?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should recommend individual recording.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-046-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-046-kp-1",
+        "text": "Should recommend individual recording.",
+        "supporting_evidence_refs": [
+          "agora-mixed-046-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-047",
+    "question": "My video operations team wants to control the output layout, bitrate, and resolution of the recorded file. Which recording path should I consider?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should point to composite recording with transcodingConfig.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-047-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-047-kp-1",
+        "text": "Should point to composite recording with transcodingConfig.",
+        "supporting_evidence_refs": [
+          "agora-mixed-047-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-048",
+    "question": "I used individual recording, but now playback is inconvenient and I wish each user's file were directly playable. What option should I have configured?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should mention streamMode=standard.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-048-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-048-kp-1",
+        "text": "Should mention streamMode=standard.",
+        "supporting_evidence_refs": [
+          "agora-mixed-048-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-049",
+    "question": "I am designing the backend for Cloud Recording. Should the mobile app manage the whole recording lifecycle directly?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should recommend a backend/self-hosted business server.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-049-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-049-kp-1",
+        "text": "Should recommend a backend/self-hosted business server.",
+        "supporting_evidence_refs": [
+          "agora-mixed-049-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-050",
+    "question": "A customer says their token is not expired, but Agora still says token invalid. What fields should I compare between token generation and joinChannel?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should mention uid, channel name, App ID, privileges/role, expiration.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-050-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-050-kp-1",
+        "text": "Should mention uid, channel name, App ID, privileges/role, expiration.",
+        "supporting_evidence_refs": [
+          "agora-mixed-050-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-051",
+    "question": "I need to distinguish viewers from speakers cleanly because only speakers can publish. Which channel profile is a better fit?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should recommend LIVE_BROADCASTING.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-051-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-051-kp-1",
+        "text": "Should recommend LIVE_BROADCASTING.",
+        "supporting_evidence_refs": [
+          "agora-mixed-051-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-052",
+    "question": "In my social audio app, everyone should be able to talk immediately after joining. Which Agora profile is the simpler default?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should recommend COMMUNICATION.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-052-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-052-kp-1",
+        "text": "Should recommend COMMUNICATION.",
+        "supporting_evidence_refs": [
+          "agora-mixed-052-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-053",
+    "question": "I need server-side records of when users enter and leave channels, even if they never publish media. What should I use in addition to RTC?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should suggest Notifications or Signaling.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-053-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-053-kp-1",
+        "text": "Should suggest Notifications or Signaling.",
+        "supporting_evidence_refs": [
+          "agora-mixed-053-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-054",
+    "question": "My teammate says we can safely keep the Customer Secret inside the desktop client because it is not mobile. Is that a good idea?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should reject it and recommend server-side storage only.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-054-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-054-kp-1",
+        "text": "Should reject it and recommend server-side storage only.",
+        "supporting_evidence_refs": [
+          "agora-mixed-054-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-055",
+    "question": "I want to record a browser-rendered page, not just a normal RTC channel. Which Cloud Recording mode sounds relevant?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should identify web page recording.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-055-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-055-kp-1",
+        "text": "Should identify web page recording.",
+        "supporting_evidence_refs": [
+          "agora-mixed-055-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-056",
+    "question": "A user can watch a livestream but cannot turn on their mic. The app says they are audience. What is the likely explanation?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should explain that audience cannot publish by default.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-056-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-056-kp-1",
+        "text": "Should explain that audience cannot publish by default.",
+        "supporting_evidence_refs": [
+          "agora-mixed-056-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-057",
+    "question": "We turned on App Certificate and now our old demo app broke. It still only passes App ID to joinChannel. What changed?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should explain that token auth became mandatory.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-057-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-057-kp-1",
+        "text": "Should explain that token auth became mandatory.",
+        "supporting_evidence_refs": [
+          "agora-mixed-057-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-058",
+    "question": "My developer wants to refresh the token only after the call drops. Is there a better mechanism already provided by the SDK?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should mention pre-expiry callback handling.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-058-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-058-kp-1",
+        "text": "Should mention pre-expiry callback handling.",
+        "supporting_evidence_refs": [
+          "agora-mixed-058-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-059",
+    "question": "I need a single recording with a mixed layout for compliance review. Separate speaker tracks are not required. Which mode is the best fit?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should recommend composite recording.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-059-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-059-kp-1",
+        "text": "Should recommend composite recording.",
+        "supporting_evidence_refs": [
+          "agora-mixed-059-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-060",
+    "question": "I need a test case that verifies my RAG can tell apart token expired versus token invalid due to parameter mismatch. What kind of pair should I include?",
+    "question_type": "scenario",
+    "category": "scenario",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should describe near-duplicate auth scenarios with different root causes.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-scenario"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-scenario"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-060-evidence-1",
+        "doc_id": "agora-doc-placeholder-scenario",
+        "heading": "agora-tech-scenario",
+        "evidence_polarity": "supports"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-060-kp-1",
+        "text": "Should describe near-duplicate auth scenarios with different root causes.",
+        "supporting_evidence_refs": [
+          "agora-mixed-060-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-061",
+    "question": "Does the Agora Video SDK provide a built-in callback that always tells me exactly when every audience member joins and leaves?",
+    "question_type": "trap",
+    "category": "trap",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should avoid hallucinating a direct callback and mention alternatives.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-trap"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-trap"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-061-evidence-1",
+        "doc_id": "agora-doc-placeholder-trap",
+        "heading": "agora-tech-trap",
+        "evidence_polarity": "supports_denial"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-061-kp-1",
+        "text": "Should avoid hallucinating a direct callback and mention alternatives.",
+        "supporting_evidence_refs": [
+          "agora-mixed-061-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-062",
+    "question": "Can audience users publish local video in LIVE_BROADCASTING mode without changing their role?",
+    "question_type": "trap",
+    "category": "trap",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should answer no.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-trap"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-trap"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-062-evidence-1",
+        "doc_id": "agora-doc-placeholder-trap",
+        "heading": "agora-tech-trap",
+        "evidence_polarity": "supports_denial"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-062-kp-1",
+        "text": "Should answer no.",
+        "supporting_evidence_refs": [
+          "agora-mixed-062-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-063",
+    "question": "If a token is invalid, is the correct fix always to call renewToken?",
+    "question_type": "trap",
+    "category": "trap",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should say no and distinguish invalid vs expired/mismatch.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-trap"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-trap"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-063-evidence-1",
+        "doc_id": "agora-doc-placeholder-trap",
+        "heading": "agora-tech-trap",
+        "evidence_polarity": "supports_denial"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-063-kp-1",
+        "text": "Should say no and distinguish invalid vs expired/mismatch.",
+        "supporting_evidence_refs": [
+          "agora-mixed-063-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-064",
+    "question": "Can I safely generate Agora tokens inside my client app as long as the code is obfuscated?",
+    "question_type": "trap",
+    "category": "trap",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should answer no and explain server-side generation.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-trap"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-trap"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-064-evidence-1",
+        "doc_id": "agora-doc-placeholder-trap",
+        "heading": "agora-tech-trap",
+        "evidence_polarity": "supports_denial"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-064-kp-1",
+        "text": "Should answer no and explain server-side generation.",
+        "supporting_evidence_refs": [
+          "agora-mixed-064-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-065",
+    "question": "Does individual recording automatically give me a single mixed file for all users?",
+    "question_type": "trap",
+    "category": "trap",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should answer no.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-trap"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-trap"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-065-evidence-1",
+        "doc_id": "agora-doc-placeholder-trap",
+        "heading": "agora-tech-trap",
+        "evidence_polarity": "supports_denial"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-065-kp-1",
+        "text": "Should answer no.",
+        "supporting_evidence_refs": [
+          "agora-mixed-065-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-066",
+    "question": "Is transcodingConfig mainly for individual recording output layout control?",
+    "question_type": "trap",
+    "category": "trap",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should answer no and tie it to composite recording.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-trap"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-trap"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-066-evidence-1",
+        "doc_id": "agora-doc-placeholder-trap",
+        "heading": "agora-tech-trap",
+        "evidence_polarity": "supports_denial"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-066-kp-1",
+        "text": "Should answer no and tie it to composite recording.",
+        "supporting_evidence_refs": [
+          "agora-mixed-066-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-067",
+    "question": "Can I use plain HTTP for Agora Channel Management REST API if I am inside a private network?",
+    "question_type": "trap",
+    "category": "trap",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should answer no, HTTPS only.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-trap"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-trap"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-067-evidence-1",
+        "doc_id": "agora-doc-placeholder-trap",
+        "heading": "agora-tech-trap",
+        "evidence_polarity": "supports_denial"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-067-kp-1",
+        "text": "Should answer no, HTTPS only.",
+        "supporting_evidence_refs": [
+          "agora-mixed-067-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-068",
+    "question": "If I use the wrong case in a REST API field name, the server should still understand it, right?",
+    "question_type": "trap",
+    "category": "trap",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should answer no because the API is case-sensitive.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-trap"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-trap"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-068-evidence-1",
+        "doc_id": "agora-doc-placeholder-trap",
+        "heading": "agora-tech-trap",
+        "evidence_polarity": "supports_denial"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-068-kp-1",
+        "text": "Should answer no because the API is case-sensitive.",
+        "supporting_evidence_refs": [
+          "agora-mixed-068-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-069",
+    "question": "If my user is already publishing in one channel, Agora should let them publish in a second channel too as long as bandwidth is enough, correct?",
+    "question_type": "trap",
+    "category": "trap",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should answer no in the standard recommended workflow.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-trap"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-trap"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-069-evidence-1",
+        "doc_id": "agora-doc-placeholder-trap",
+        "heading": "agora-tech-trap",
+        "evidence_polarity": "supports_denial"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-069-kp-1",
+        "text": "Should answer no in the standard recommended workflow.",
+        "supporting_evidence_refs": [
+          "agora-mixed-069-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-070",
+    "question": "If onRequestToken is triggered, does that mean the token is still valid for another 30 seconds?",
+    "question_type": "trap",
+    "category": "trap",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should answer no and distinguish from onTokenPrivilegeWillExpire.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-trap"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-trap"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-070-evidence-1",
+        "doc_id": "agora-doc-placeholder-trap",
+        "heading": "agora-tech-trap",
+        "evidence_polarity": "supports_denial"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-070-kp-1",
+        "text": "Should answer no and distinguish from onTokenPrivilegeWillExpire.",
+        "supporting_evidence_refs": [
+          "agora-mixed-070-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-071",
+    "question": "Since my token has not expired yet, uid mismatch cannot be the reason for token invalid. Is that true?",
+    "question_type": "trap",
+    "category": "trap",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should answer no.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-trap"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-trap"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-071-evidence-1",
+        "doc_id": "agora-doc-placeholder-trap",
+        "heading": "agora-tech-trap",
+        "evidence_polarity": "supports_denial"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-071-kp-1",
+        "text": "Should answer no.",
+        "supporting_evidence_refs": [
+          "agora-mixed-071-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-072",
+    "question": "Do I need Signaling to render video in Agora?",
+    "question_type": "trap",
+    "category": "trap",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should avoid conflating Signaling with RTC media rendering.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-trap"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-trap"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-072-evidence-1",
+        "doc_id": "agora-doc-placeholder-trap",
+        "heading": "agora-tech-trap",
+        "evidence_polarity": "supports_denial"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-072-kp-1",
+        "text": "Should avoid conflating Signaling with RTC media rendering.",
+        "supporting_evidence_refs": [
+          "agora-mixed-072-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-073",
+    "question": "Is LIVE_BROADCASTING always better than COMMUNICATION because it is more advanced?",
+    "question_type": "trap",
+    "category": "trap",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should answer no and explain fit-by-scenario.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-trap"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-trap"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-073-evidence-1",
+        "doc_id": "agora-doc-placeholder-trap",
+        "heading": "agora-tech-trap",
+        "evidence_polarity": "supports_denial"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-073-kp-1",
+        "text": "Should answer no and explain fit-by-scenario.",
+        "supporting_evidence_refs": [
+          "agora-mixed-073-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-074",
+    "question": "Can I expose Customer Secret in a browser app if I rate-limit requests?",
+    "question_type": "trap",
+    "category": "trap",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should answer no.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-trap"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-trap"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-074-evidence-1",
+        "doc_id": "agora-doc-placeholder-trap",
+        "heading": "agora-tech-trap",
+        "evidence_polarity": "supports_denial"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-074-kp-1",
+        "text": "Should answer no.",
+        "supporting_evidence_refs": [
+          "agora-mixed-074-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-075",
+    "question": "If I want separate files per participant, composite recording is the better mode, right?",
+    "question_type": "trap",
+    "category": "trap",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should answer no; use individual.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-trap"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-trap"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-075-evidence-1",
+        "doc_id": "agora-doc-placeholder-trap",
+        "heading": "agora-tech-trap",
+        "evidence_polarity": "supports_denial"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-075-kp-1",
+        "text": "Should answer no; use individual.",
+        "supporting_evidence_refs": [
+          "agora-mixed-075-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-076",
+    "question": "The absence of audience join callbacks means Agora cannot support viewer analytics at all. True?",
+    "question_type": "trap",
+    "category": "trap",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should answer no and mention alternatives.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-trap"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-trap"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-076-evidence-1",
+        "doc_id": "agora-doc-placeholder-trap",
+        "heading": "agora-tech-trap",
+        "evidence_polarity": "supports_denial"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-076-kp-1",
+        "text": "Should answer no and mention alternatives.",
+        "supporting_evidence_refs": [
+          "agora-mixed-076-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-077",
+    "question": "If I only want to monitor a channel, I should join as host so I get more callbacks. Is that the best practice?",
+    "question_type": "trap",
+    "category": "trap",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should answer no, audience/non-publishing is usually better.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-trap"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-trap"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-077-evidence-1",
+        "doc_id": "agora-doc-placeholder-trap",
+        "heading": "agora-tech-trap",
+        "evidence_polarity": "supports_denial"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-077-kp-1",
+        "text": "Should answer no, audience/non-publishing is usually better.",
+        "supporting_evidence_refs": [
+          "agora-mixed-077-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-078",
+    "question": "Can I treat token invalid and token expired as exactly the same error category in my troubleshooting docs?",
+    "question_type": "trap",
+    "category": "trap",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should answer no and explain why the distinction matters.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-trap"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-trap"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-078-evidence-1",
+        "doc_id": "agora-doc-placeholder-trap",
+        "heading": "agora-tech-trap",
+        "evidence_polarity": "supports_denial"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-078-kp-1",
+        "text": "Should answer no and explain why the distinction matters.",
+        "supporting_evidence_refs": [
+          "agora-mixed-078-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-079",
+    "question": "If I am using Cloud Recording, there is no reason to build a backend server at all. Correct?",
+    "question_type": "trap",
+    "category": "trap",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should answer no and explain recommended architecture.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-trap"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-trap"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-079-evidence-1",
+        "doc_id": "agora-doc-placeholder-trap",
+        "heading": "agora-tech-trap",
+        "evidence_polarity": "supports_denial"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-079-kp-1",
+        "text": "Should answer no and explain recommended architecture.",
+        "supporting_evidence_refs": [
+          "agora-mixed-079-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-080",
+    "question": "Agora's stock number is part of the RTC technical documentation, right?",
+    "question_type": "trap",
+    "category": "trap",
+    "expected_route_family": "agora_docs_rag",
+    "expected_execution_action": "rag",
+    "expected_tooling_profile": "agora_docs_only",
+    "expected_behavior": "Should answer no and recognize it as non-technical/company-info question.",
+    "expected_document_ids": [
+      "agora-doc-placeholder-trap"
+    ],
+    "expected_heading_paths": [
+      "agora-tech-trap"
+    ],
+    "expected_evidence_refs": [
+      {
+        "chunk_id": "agora-mixed-080-evidence-1",
+        "doc_id": "agora-doc-placeholder-trap",
+        "heading": "agora-tech-trap",
+        "evidence_polarity": "supports_denial"
+      }
+    ],
+    "answer_key_points": [
+      {
+        "key_point_id": "agora-mixed-080-kp-1",
+        "text": "Should answer no and recognize it as non-technical/company-info question.",
+        "supporting_evidence_refs": [
+          "agora-mixed-080-evidence-1"
+        ]
+      }
+    ]
+  },
+  {
+    "test_case_id": "agora-mixed-081",
+    "question": "How's the weather today?",
+    "question_type": "small_talk",
+    "category": "small_talk",
+    "expected_route_family": "general_chat",
+    "expected_execution_action": "controlled_response",
+    "expected_tooling_profile": "no_agora_docs_controlled",
+    "expected_behavior": "Should recognize this is off-topic and answer conversationally instead of forcing Agora retrieval."
+  },
+  {
+    "test_case_id": "agora-mixed-082",
+    "question": "What should I eat for lunch?",
+    "question_type": "small_talk",
+    "category": "small_talk",
+    "expected_route_family": "general_chat",
+    "expected_execution_action": "controlled_response",
+    "expected_tooling_profile": "no_agora_docs_controlled",
+    "expected_behavior": "Should recognize this is off-topic and answer conversationally instead of forcing Agora retrieval."
+  },
+  {
+    "test_case_id": "agora-mixed-083",
+    "question": "Can you tell me a joke?",
+    "question_type": "small_talk",
+    "category": "small_talk",
+    "expected_route_family": "general_chat",
+    "expected_execution_action": "controlled_response",
+    "expected_tooling_profile": "no_agora_docs_controlled",
+    "expected_behavior": "Should recognize this is off-topic and answer conversationally instead of forcing Agora retrieval."
+  },
+  {
+    "test_case_id": "agora-mixed-084",
+    "question": "I'm feeling stressed today.",
+    "question_type": "small_talk",
+    "category": "small_talk",
+    "expected_route_family": "general_chat",
+    "expected_execution_action": "controlled_response",
+    "expected_tooling_profile": "no_agora_docs_controlled",
+    "expected_behavior": "Should recognize this is off-topic and answer conversationally instead of forcing Agora retrieval."
+  },
+  {
+    "test_case_id": "agora-mixed-085",
+    "question": "What should I do this weekend?",
+    "question_type": "small_talk",
+    "category": "small_talk",
+    "expected_route_family": "general_chat",
+    "expected_execution_action": "controlled_response",
+    "expected_tooling_profile": "no_agora_docs_controlled",
+    "expected_behavior": "Should recognize this is off-topic and answer conversationally instead of forcing Agora retrieval."
+  },
+  {
+    "test_case_id": "agora-mixed-086",
+    "question": "Can you help me write a birthday message?",
+    "question_type": "small_talk",
+    "category": "small_talk",
+    "expected_route_family": "general_chat",
+    "expected_execution_action": "controlled_response",
+    "expected_tooling_profile": "no_agora_docs_controlled",
+    "expected_behavior": "Should recognize this is off-topic and answer conversationally instead of forcing Agora retrieval."
+  },
+  {
+    "test_case_id": "agora-mixed-087",
+    "question": "Do you think I should get more sleep?",
+    "question_type": "small_talk",
+    "category": "small_talk",
+    "expected_route_family": "general_chat",
+    "expected_execution_action": "controlled_response",
+    "expected_tooling_profile": "no_agora_docs_controlled",
+    "expected_behavior": "Should recognize this is off-topic and answer conversationally instead of forcing Agora retrieval."
+  },
+  {
+    "test_case_id": "agora-mixed-088",
+    "question": "What's a good movie for tonight?",
+    "question_type": "small_talk",
+    "category": "small_talk",
+    "expected_route_family": "general_chat",
+    "expected_execution_action": "controlled_response",
+    "expected_tooling_profile": "no_agora_docs_controlled",
+    "expected_behavior": "Should recognize this is off-topic and answer conversationally instead of forcing Agora retrieval."
+  },
+  {
+    "test_case_id": "agora-mixed-089",
+    "question": "Can you motivate me a little?",
+    "question_type": "small_talk",
+    "category": "small_talk",
+    "expected_route_family": "general_chat",
+    "expected_execution_action": "controlled_response",
+    "expected_tooling_profile": "no_agora_docs_controlled",
+    "expected_behavior": "Should recognize this is off-topic and answer conversationally instead of forcing Agora retrieval."
+  },
+  {
+    "test_case_id": "agora-mixed-090",
+    "question": "How can I focus better this afternoon?",
+    "question_type": "small_talk",
+    "category": "small_talk",
+    "expected_route_family": "general_chat",
+    "expected_execution_action": "controlled_response",
+    "expected_tooling_profile": "no_agora_docs_controlled",
+    "expected_behavior": "Should recognize this is off-topic and answer conversationally instead of forcing Agora retrieval."
+  },
+  {
+    "test_case_id": "agora-mixed-091",
+    "question": "My computer blue-screened. What should I do?",
+    "question_type": "off_topic",
+    "category": "off_topic",
+    "expected_route_family": "general_tech_help",
+    "expected_execution_action": "controlled_response",
+    "expected_tooling_profile": "no_agora_docs_controlled",
+    "expected_behavior": "Should avoid retrieving Agora docs and answer as a general tech support question."
+  },
+  {
+    "test_case_id": "agora-mixed-092",
+    "question": "Why is my Wi-Fi suddenly so slow?",
+    "question_type": "off_topic",
+    "category": "off_topic",
+    "expected_route_family": "general_tech_help",
+    "expected_execution_action": "controlled_response",
+    "expected_tooling_profile": "no_agora_docs_controlled",
+    "expected_behavior": "Should avoid retrieving Agora docs and answer as a general tech support question."
+  },
+  {
+    "test_case_id": "agora-mixed-093",
+    "question": "My iPhone battery is draining fast. Any ideas?",
+    "question_type": "off_topic",
+    "category": "off_topic",
+    "expected_route_family": "general_tech_help",
+    "expected_execution_action": "controlled_response",
+    "expected_tooling_profile": "no_agora_docs_controlled",
+    "expected_behavior": "Should avoid retrieving Agora docs and answer as a general tech support question."
+  },
+  {
+    "test_case_id": "agora-mixed-094",
+    "question": "How do I recover a deleted file on Windows?",
+    "question_type": "off_topic",
+    "category": "off_topic",
+    "expected_route_family": "general_tech_help",
+    "expected_execution_action": "controlled_response",
+    "expected_tooling_profile": "no_agora_docs_controlled",
+    "expected_behavior": "Should avoid retrieving Agora docs and answer as a general tech support question."
+  },
+  {
+    "test_case_id": "agora-mixed-095",
+    "question": "My laptop fan is very loud even when I'm just browsing. What's going on?",
+    "question_type": "off_topic",
+    "category": "off_topic",
+    "expected_route_family": "general_tech_help",
+    "expected_execution_action": "controlled_response",
+    "expected_tooling_profile": "no_agora_docs_controlled",
+    "expected_behavior": "Should avoid retrieving Agora docs and answer as a general tech support question."
+  },
+  {
+    "test_case_id": "agora-mixed-096",
+    "question": "What's Agora's stock ticker?",
+    "question_type": "agora_nontechnical",
+    "category": "agora_nontechnical",
+    "expected_route_family": "web_company_info",
+    "expected_execution_action": "web_search",
+    "expected_tooling_profile": "official_web_search",
+    "expected_behavior": "Should answer that Agora, Inc. trades on Nasdaq under the ticker API."
+  },
+  {
+    "test_case_id": "agora-mixed-097",
+    "question": "Where can I find Agora investor relations information?",
+    "question_type": "agora_nontechnical",
+    "category": "agora_nontechnical",
+    "expected_route_family": "web_company_info",
+    "expected_execution_action": "web_search",
+    "expected_tooling_profile": "official_web_search",
+    "expected_behavior": "Should point to Agora's investor relations site."
+  },
+  {
+    "test_case_id": "agora-mixed-098",
+    "question": "Is Agora a public company?",
+    "question_type": "agora_nontechnical",
+    "category": "agora_nontechnical",
+    "expected_route_family": "web_company_info",
+    "expected_execution_action": "web_search",
+    "expected_tooling_profile": "official_web_search",
+    "expected_behavior": "Should answer yes, Agora, Inc. is publicly traded."
+  },
+  {
+    "test_case_id": "agora-mixed-099",
+    "question": "When did Agora last report quarterly financial results?",
+    "question_type": "agora_nontechnical",
+    "category": "agora_nontechnical",
+    "expected_route_family": "web_company_info",
+    "expected_execution_action": "web_search",
+    "expected_tooling_profile": "official_web_search",
+    "expected_behavior": "Should identify this as a company/investor-relations question, not an SDK docs question.",
+    "temporal_sensitivity": "time_sensitive"
+  },
+  {
+    "test_case_id": "agora-mixed-100",
+    "question": "What kind of company is Agora?",
+    "question_type": "agora_nontechnical",
+    "category": "agora_nontechnical",
+    "expected_route_family": "web_company_info",
+    "expected_execution_action": "web_search",
+    "expected_tooling_profile": "official_web_search",
+    "expected_behavior": "Should answer at a high level that Agora provides real-time engagement / conversational AI / real-time engagement platform services."
+  }
+]

@@ -203,6 +203,70 @@ class RagServiceClientTests(unittest.TestCase):
         self.assertEqual(captured["authorization"], "Bearer token")
         self.assertEqual(payload["layout"], "diagnosis")
 
+    def test_benchmark_case_detail_uses_internal_dashboard_endpoint(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+        captured = {}
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"primary":{"eval_run_id":"run-1","test_case_id":"case-1"},"baseline":null,"deltas":{}}'
+
+        def _fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["authorization"] = request.headers.get("Authorization")
+            return _FakeResponse()
+
+        with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            payload = client.rag_dashboard_benchmark_case_detail(
+                "run-1",
+                "case-1",
+                baseline_eval_run_id="run-0",
+            )
+
+        parsed = urllib.parse.urlparse(captured["url"])
+        query = urllib.parse.parse_qs(parsed.query)
+        self.assertEqual(parsed.path, "/internal/dashboard/rag/cases/benchmark-detail")
+        self.assertEqual(query["eval_run_id"], ["run-1"])
+        self.assertEqual(query["test_case_id"], ["case-1"])
+        self.assertEqual(query["baseline_eval_run_id"], ["run-0"])
+        self.assertEqual(captured["authorization"], "Bearer token")
+        self.assertEqual(payload["primary"]["test_case_id"], "case-1")
+
+    def test_live_case_detail_uses_internal_dashboard_endpoint(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+        captured = {}
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"primary":{"request_id":"RQ-1"},"baseline":null,"deltas":null}'
+
+        def _fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["authorization"] = request.headers.get("Authorization")
+            return _FakeResponse()
+
+        with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            payload = client.rag_dashboard_live_case_detail("RQ-1")
+
+        parsed = urllib.parse.urlparse(captured["url"])
+        query = urllib.parse.parse_qs(parsed.query)
+        self.assertEqual(parsed.path, "/internal/dashboard/rag/cases/live-detail")
+        self.assertEqual(query["request_id"], ["RQ-1"])
+        self.assertEqual(captured["authorization"], "Bearer token")
+        self.assertEqual(payload["primary"]["request_id"], "RQ-1")
+
     def test_update_review_sample_uses_internal_review_endpoint(self) -> None:
         client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
         captured = {}

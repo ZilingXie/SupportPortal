@@ -43,30 +43,29 @@ class DashboardUiContractTests(unittest.TestCase):
         self.assertIn(".queue-health-card", css)
         self.assertIn(".feed-card", css)
 
-    def test_rag_dashboard_nav_uses_task_workbench_pages(self) -> None:
+    def test_rag_dashboard_nav_uses_scorecard_pages(self) -> None:
         source = Path("ui/dashboard-ui/rag/index.html").read_text(encoding="utf-8")
 
         expected_tabs = {
-            "experiments": "Experiments",
-            "datasets": "Datasets",
+            "scorecard": "Scorecard",
+            "routing": "Routing",
+            "retrieval": "Retrieval",
+            "generation": "Generation",
+            "data-supply": "Data Supply",
             "diagnosis": "Diagnosis",
-            "knowledge-supply": "Knowledge Supply",
-            "production-signals": "Production Signals",
             "review": "Review Queue",
         }
         for page_name, label in expected_tabs.items():
             self.assertIn(f'data-dashboard-tab="{page_name}"', source)
             self.assertIn(f">{label}</button>", source)
 
-        self.assertIn('class="dashboard-tab active" data-dashboard-tab="experiments"', source)
+        self.assertIn('class="dashboard-tab active" data-dashboard-tab="scorecard"', source)
 
         for legacy_page in [
             "overview",
             "ingestion",
             "chunking",
             "embedding-index",
-            "retrieval",
-            "generation",
             "handoff",
             "performance-cost",
             "failures",
@@ -74,16 +73,17 @@ class DashboardUiContractTests(unittest.TestCase):
         ]:
             self.assertNotIn(f'data-dashboard-tab="{legacy_page}"', source)
 
-    def test_rag_dashboard_app_defaults_to_experiments_and_registers_new_pages(self) -> None:
+    def test_rag_dashboard_app_defaults_to_scorecard_and_registers_new_pages(self) -> None:
         source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
-        self.assertIn('let currentDashboardTab = "experiments";', source)
+        self.assertIn('let currentDashboardTab = "scorecard";', source)
 
         for page_name in [
-            "experiments",
-            "datasets",
+            "scorecard",
+            "routing",
+            "retrieval",
+            "generation",
+            "data-supply",
             "diagnosis",
-            "knowledge-supply",
-            "production-signals",
             "review",
         ]:
             self.assertRegex(
@@ -91,17 +91,137 @@ class DashboardUiContractTests(unittest.TestCase):
                 rf'["\']{re.escape(page_name)}["\']\s*:\s*\{{',
             )
 
-    def test_rag_datasets_page_exposes_generation_and_benchmark_actions(self) -> None:
+    def test_rag_data_supply_page_exposes_benchmark_and_knowledge_panels(self) -> None:
         source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
         for marker in [
             "data-create-dataset-generation",
             "data-run-dataset-benchmark",
             "data-export-dataset",
+            "Benchmark Supply",
+            "Knowledge Supply",
             "Start Generation",
             "Run Benchmark",
             "Export Gold",
         ]:
             self.assertIn(marker, source)
+
+    def test_routing_page_uses_case_explorer_and_legacy_compare_sections(self) -> None:
+        source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
+        css = Path("ui/dashboard-ui/rag/styles.css").read_text(encoding="utf-8")
+
+        for marker in [
+            "Routing Errors",
+            "Routing Correct",
+            "Legacy Compare Lists",
+            "expected_route_family",
+            "actual_route_family",
+            "route_family_correct",
+        ]:
+            self.assertIn(marker, source)
+
+        for marker in [
+            "case-explorer-list",
+            "case-explorer-item",
+            "collapsible-panel",
+        ]:
+            self.assertIn(marker, css)
+
+    def test_retrieval_and_generation_pages_use_case_explorer_sections(self) -> None:
+        source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
+
+        for marker in [
+            "Retrieval Errors",
+            "Retrieval Correct",
+            "Generation Errors",
+            "Generation Correct",
+            "retrieval_cases",
+            "generation_cases",
+            "buildCaseExplorerSection",
+        ]:
+            self.assertIn(marker, source)
+
+    def test_case_detail_modal_and_diagnosis_single_column_surface_exist(self) -> None:
+        html = Path("ui/dashboard-ui/rag/index.html").read_text(encoding="utf-8")
+        source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
+        css = Path("ui/dashboard-ui/rag/styles.css").read_text(encoding="utf-8")
+
+        for marker in [
+            'id="case-detail-modal"',
+            'id="case-detail-title"',
+            'id="case-detail-body"',
+            'data-close-case-detail',
+            'data-open-full-diagnosis',
+        ]:
+            self.assertIn(marker, html)
+
+        self.assertIn("renderCaseDetailSurface", source)
+        self.assertIn("fetchBenchmarkCaseDetail", source)
+        self.assertIn("fetchLiveCaseDetail", source)
+        self.assertNotIn("diagnosis-grid", source)
+        self.assertNotIn(".diagnosis-grid", css)
+
+        for marker in [
+            "case-detail-modal",
+            "case-detail-dialog",
+            "diagnosis-layout",
+            "diagnosis-chooser-stack",
+            "Benchmark Case Detail",
+            "Live Query Detail",
+        ]:
+            self.assertIn(marker, source if "Detail" in marker else css)
+
+        self.assertNotIn("Routing case detail", source)
+        self.assertNotIn("Live query detail", source)
+
+    def test_case_detail_surface_wraps_long_titles_and_definition_values(self) -> None:
+        html = Path("ui/dashboard-ui/rag/index.html").read_text(encoding="utf-8")
+        css = Path("ui/dashboard-ui/rag/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn('class="case-detail-header-copy"', html)
+        self.assertRegex(css, r"\.panel-header\s*>\s*div\s*\{[^}]*min-width:\s*0;")
+        self.assertRegex(css, r"\.case-detail-header-copy\s*\{[^}]*min-width:\s*0;")
+        self.assertRegex(css, r"\.definition-value\s*\{[^}]*overflow-wrap:\s*anywhere;")
+        self.assertRegex(css, r"\.definition-value\s*\{[^}]*word-break:\s*break-word;")
+        self.assertRegex(css, r"\.chip\s*\{[^}]*white-space:\s*normal;")
+
+    def test_scorecard_baseline_selector_only_surfaces_same_benchmark_versions(self) -> None:
+        source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
+        css = Path("ui/dashboard-ui/rag/styles.css").read_text(encoding="utf-8")
+
+        for marker in [
+            "Only runs from the same benchmark version can be used as the baseline.",
+            "No alternate baseline is available for this benchmark version yet.",
+            "getComparableBaselineOptions",
+            "clearIncompatibleBaselineSelection",
+            "comparison-controls-note",
+        ]:
+            self.assertIn(marker, source if marker != "comparison-controls-note" else css)
+
+    def test_scorecard_comparison_controls_use_shared_footnote_for_alignment(self) -> None:
+        source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
+        css = Path("ui/dashboard-ui/rag/styles.css").read_text(encoding="utf-8")
+
+        for marker in [
+            "comparison-controls",
+            "comparison-controls-grid",
+            "Candidate defines the comparison pool.",
+        ]:
+            self.assertIn(marker, source if marker != "comparison-controls-grid" else css)
+
+    def test_scorecard_surfaces_case_results_expected_answer_and_external_benchmark_filter(self) -> None:
+        js_source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
+        html_source = Path("ui/dashboard-ui/rag/index.html").read_text(encoding="utf-8")
+
+        for marker in [
+            "Case Results",
+            "Expected Answer",
+            "expected_answer_preview",
+            "actual_answer_preview",
+            "route_correct",
+        ]:
+            self.assertIn(marker, js_source)
+
+        self.assertIn('option value="external_benchmark"', html_source)
 
 
 if __name__ == "__main__":

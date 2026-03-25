@@ -3,16 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>RAG Tuning Workbench</title>
-    <link rel="stylesheet" href="./styles.css?v=20260325-rag-workbench-2" />
+    <title>Mixed-Route RAG Scorecard</title>
+    <link rel="stylesheet" href="./styles.css?v=20260325-scorecard-merge-2" />
   </head>
   <body>
     <main class="shell">
       <header class="topbar">
         <div class="topbar-copy">
           <p class="eyebrow">SupportPortal</p>
-          <h1>RAG Tuning Workbench</h1>
-          <p id="dashboard-status" class="status-line">Loading RAG workbench...</p>
+          <h1>Mixed-Route RAG Scorecard</h1>
+          <p id="dashboard-status" class="status-line">Loading mixed-route scorecard...</p>
         </div>
         <div class="topbar-actions">
           <div class="status-stack">
@@ -23,19 +23,20 @@
         </div>
       </header>
 
-      <nav class="dashboard-tabs" aria-label="RAG workbench pages">
-        <button type="button" class="dashboard-tab active" data-dashboard-tab="experiments">Experiments</button>
-        <button type="button" class="dashboard-tab" data-dashboard-tab="datasets">Datasets</button>
+      <nav class="dashboard-tabs" aria-label="RAG scorecard pages">
+        <button type="button" class="dashboard-tab active" data-dashboard-tab="scorecard">Scorecard</button>
+        <button type="button" class="dashboard-tab" data-dashboard-tab="routing">Routing</button>
+        <button type="button" class="dashboard-tab" data-dashboard-tab="retrieval">Retrieval</button>
+        <button type="button" class="dashboard-tab" data-dashboard-tab="generation">Generation</button>
+        <button type="button" class="dashboard-tab" data-dashboard-tab="data-supply">Data Supply</button>
         <button type="button" class="dashboard-tab" data-dashboard-tab="diagnosis">Diagnosis</button>
-        <button type="button" class="dashboard-tab" data-dashboard-tab="knowledge-supply">Knowledge Supply</button>
-        <button type="button" class="dashboard-tab" data-dashboard-tab="production-signals">Production Signals</button>
         <button type="button" class="dashboard-tab" data-dashboard-tab="review">Review Queue</button>
       </nav>
 
       <section class="filter-panel">
         <div class="filter-panel-copy">
           <h2>Global Scope</h2>
-          <p>Keep these filters stable while you compare experiments, inspect traces, and review risky samples.</p>
+          <p>Keep these filters stable while you compare benchmark versions, inspect traces, and review risky samples.</p>
         </div>
         <div class="filter-grid">
           <label class="filter-field">
@@ -51,6 +52,7 @@
               <option value="all">All</option>
               <option value="official_markdown_upload">Official Markdown Upload</option>
               <option value="technical_article_api">Technical Article API</option>
+              <option value="external_benchmark">External Benchmark</option>
             </select>
           </label>
           <label class="filter-field">
@@ -103,30 +105,60 @@
         </div>
       </section>
 
-      <section class="dashboard-panel active" data-dashboard-panel="experiments">
-        <div id="rag-experiments-page" class="page-shell"></div>
+      <section class="dashboard-panel active" data-dashboard-panel="scorecard">
+        <div id="rag-scorecard-page" class="page-shell"></div>
+      </section>
+
+      <section class="dashboard-panel" data-dashboard-panel="routing">
+        <div id="rag-routing-page" class="page-shell"></div>
+      </section>
+
+      <section class="dashboard-panel" data-dashboard-panel="retrieval">
+        <div id="rag-retrieval-page" class="page-shell"></div>
+      </section>
+
+      <section class="dashboard-panel" data-dashboard-panel="generation">
+        <div id="rag-generation-page" class="page-shell"></div>
       </section>
 
       <section class="dashboard-panel" data-dashboard-panel="diagnosis">
         <div id="rag-diagnosis-page" class="page-shell"></div>
       </section>
 
-      <section class="dashboard-panel" data-dashboard-panel="datasets">
-        <div id="rag-datasets-page" class="page-shell"></div>
-      </section>
-
-      <section class="dashboard-panel" data-dashboard-panel="knowledge-supply">
-        <div id="rag-knowledge-supply-page" class="page-shell"></div>
-      </section>
-
-      <section class="dashboard-panel" data-dashboard-panel="production-signals">
-        <div id="rag-production-signals-page" class="page-shell"></div>
+      <section class="dashboard-panel" data-dashboard-panel="data-supply">
+        <div id="rag-data-supply-page" class="page-shell"></div>
       </section>
 
       <section class="dashboard-panel" data-dashboard-panel="review">
         <div id="rag-review-page" class="page-shell"></div>
       </section>
     </main>
+
+    <aside id="case-detail-modal" class="case-detail-modal" hidden aria-hidden="true">
+      <div class="case-detail-backdrop" data-close-case-detail></div>
+      <div
+        id="case-detail-dialog"
+        class="case-detail-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="case-detail-title"
+        tabindex="-1"
+      >
+        <div class="case-detail-header">
+          <div class="case-detail-header-copy">
+            <p class="eyebrow">Case Detail</p>
+            <h2 id="case-detail-title">Case detail</h2>
+          </div>
+          <button type="button" class="ghost-button" data-close-case-detail>Close</button>
+        </div>
+        <div id="case-detail-body" class="case-detail-body"></div>
+        <div class="case-detail-footer">
+          <button type="button" class="ghost-button" data-open-full-diagnosis>
+            Open Diagnosis Page
+          </button>
+        </div>
+      </div>
+    </aside>
 
     <aside id="report-drawer" class="report-drawer" hidden>
       <div class="report-drawer-backdrop" data-close-report></div>
@@ -143,6 +175,6 @@
     </aside>
 
     <script src="../vendor/chart.umd.min.js"></script>
-    <script src="./app.js?v=20260325-rag-workbench-2"></script>
+    <script src="./app.js?v=20260325-scorecard-merge-2"></script>
   </body>
 </html>

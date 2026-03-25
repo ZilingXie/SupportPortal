@@ -6,6 +6,7 @@ import os
 import re
 import urllib.error
 import urllib.request
+import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -23,6 +24,25 @@ OFFICIAL_AGORA_DOMAINS = [
     "docs-preview.agora.io",
     "investor.agora.io",
 ]
+AUTHORITATIVE_WEB_SOURCE_TIERS = {
+    "tier_1": [
+        "agora.io",
+        "www.agora.io",
+        "investor.agora.io",
+        "sec.gov",
+        "www.sec.gov",
+        "nasdaq.com",
+        "www.nasdaq.com",
+    ],
+    "tier_2": [
+        "reuters.com",
+        "www.reuters.com",
+        "bloomberg.com",
+        "www.bloomberg.com",
+        "finance.yahoo.com",
+        "www.marketwatch.com",
+    ],
+}
 _SYSTEM_TERMS = (
     "windows",
     "macbook",
@@ -144,6 +164,19 @@ class SupportRouteDecision:
     reason: str
     matched_signals: list[str] = field(default_factory=list)
     response_language: str = "en"
+    route_family: str | None = None
+    execution_action: str | None = None
+    tooling_profile: str | None = None
+
+    def __post_init__(self) -> None:
+        route_family, execution_action, tooling_profile = _route_contract_for_scope(
+            scope_label=self.scope_label,
+            action=self.execution_action or self.route,
+            reason=self.reason,
+        )
+        object.__setattr__(self, "route_family", self.route_family or route_family)
+        object.__setattr__(self, "execution_action", self.execution_action or execution_action)
+        object.__setattr__(self, "tooling_profile", self.tooling_profile or tooling_profile)
 
 
 @dataclass(frozen=True)
@@ -167,6 +200,9 @@ class SupportResolution:
     route_confidence: float
     search_used: bool
     matched_signals: list[str] = field(default_factory=list)
+    route_family: str | None = None
+    execution_action: str | None = None
+    tooling_profile: str | None = None
 
     def as_answer_tuple(self) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
         return (
@@ -181,11 +217,68 @@ class SupportResolution:
         return {
             "answer_route": self.answer_route,
             "scope_label": self.scope_label,
+            "route_family": self.route_family,
+            "execution_action": self.execution_action,
+            "tooling_profile": self.tooling_profile,
             "route_reason": self.route_reason,
             "route_confidence": round(float(self.route_confidence), 4),
             "search_used": bool(self.search_used),
             "matched_signals": list(self.matched_signals),
         }
+
+
+def _route_contract_for_scope(*, scope_label: str, action: str, reason: str) -> tuple[str, str, str]:
+    clean_scope = _normalize_text(scope_label).lower()
+    normalized_action = _normalize_text(action).lower()
+    clean_reason = _normalize_text(reason).lower()
+
+    if clean_scope == "agora_technical":
+        actual_action = normalized_action if normalized_action in {"rag", "refuse"} else "rag"
+        tooling = "agora_docs_only" if actual_action == "rag" else "no_agora_docs_refusal"
+        return "agora_docs_rag", actual_action, tooling
+    if clean_scope == "agora_non_technical":
+        actual_action = normalized_action if normalized_action in {"web_search", "controlled_response", "refuse"} else "web_search"
+        if actual_action == "web_search":
+            tooling = "official_web_search"
+        elif actual_action == "controlled_response":
+            tooling = "no_agora_docs_controlled"
+        else:
+            tooling = "no_agora_docs_refusal"
+        return "web_company_info", actual_action, tooling
+    if clean_scope == "small_talk":
+        return "general_chat", "controlled_response", "no_agora_docs_controlled"
+    if clean_scope == "non_agora":
+        if clean_reason in {"empty_message", "conservative_non_agora_fallback"} or normalized_action == "refuse":
+            return "fallback_or_refuse", "refuse", "no_agora_docs_refusal"
+        return "general_tech_help", "controlled_response", "no_agora_docs_controlled"
+    return "fallback_or_refuse", "refuse", "no_agora_docs_refusal"
+
+
+def _build_route_decision(
+    *,
+    scope_label: str,
+    action: str,
+    confidence: float,
+    reason: str,
+    matched_signals: list[str],
+    response_language: str,
+) -> SupportRouteDecision:
+    route_family, execution_action, tooling_profile = _route_contract_for_scope(
+        scope_label=scope_label,
+        action=action,
+        reason=reason,
+    )
+    return SupportRouteDecision(
+        scope_label=scope_label,
+        route=execution_action,
+        route_family=route_family,
+        execution_action=execution_action,
+        tooling_profile=tooling_profile,
+        confidence=confidence,
+        reason=reason,
+        matched_signals=matched_signals,
+        response_language=response_language,
+    )
 
 
 def _safe_float_env(name: str, default: float) -> float:
@@ -227,6 +320,33 @@ def _sanitize_web_search_answer_text(text: Any) -> str:
 
 def _response_language(message: str) -> str:
     return "zh" if _CJK_RE.search(str(message or "")) else "en"
+
+
+def _normalized_domain(value: str) -> str:
+    parsed = urllib.parse.urlparse(value if "://" in value else f"https://{value}")
+    return parsed.netloc.lower().strip()
+
+
+def authoritative_source_tier(source_url: str) -> str | None:
+    normalized_domain = _normalized_domain(_normalize_text(source_url))
+    if not normalized_domain:
+        return None
+    for tier_name, domains in AUTHORITATIVE_WEB_SOURCE_TIERS.items():
+        for domain in domains:
+            normalized_allowed = _normalized_domain(domain)
+            if normalized_domain == normalized_allowed or normalized_domain.endswith(f".{normalized_allowed}"):
+                return tier_name
+    return None
+
+
+def citations_use_authoritative_source(citations: list[dict[str, str]] | None = None, *, sources: list[str] | None = None) -> bool:
+    for citation in citations or []:
+        if authoritative_source_tier(_normalize_text(citation.get("source_url")) or _normalize_text(citation.get("source_path"))):
+            return True
+    for source_url in sources or []:
+        if authoritative_source_tier(source_url):
+            return True
+    return False
 
 
 def _contains_any(text: str, terms: tuple[str, ...]) -> list[str]:
@@ -330,9 +450,9 @@ def _llm_route_decision(
     except (TypeError, ValueError):
         confidence = 0.0
     matched_signals = [str(item).strip() for item in payload.get("matched_signals") or [] if str(item).strip()]
-    return SupportRouteDecision(
+    return _build_route_decision(
         scope_label=scope_label,
-        route=route,
+        action=route,
         confidence=max(0.0, min(1.0, confidence)),
         reason=_normalize_text(payload.get("reason")) or "llm_fallback",
         matched_signals=matched_signals,
@@ -350,9 +470,9 @@ def decide_support_route(
     lowered = text.lower()
     response_language = _response_language(text)
     if not text:
-        return SupportRouteDecision(
+        return _build_route_decision(
             scope_label="non_agora",
-            route="refuse",
+            action="refuse",
             confidence=0.95,
             reason="empty_message",
             matched_signals=[],
@@ -361,9 +481,9 @@ def decide_support_route(
 
     current_small_talk = _contains_any(lowered, _SMALL_TALK_TERMS)
     if current_small_talk:
-        return SupportRouteDecision(
+        return _build_route_decision(
             scope_label="small_talk",
-            route="refuse",
+            action="controlled_response",
             confidence=0.98,
             reason="small_talk_detected",
             matched_signals=current_small_talk,
@@ -383,9 +503,9 @@ def decide_support_route(
         technical_signals.append("join channel")
 
     if system_signals and not agora_signals and not technical_signals:
-        return SupportRouteDecision(
+        return _build_route_decision(
             scope_label="non_agora",
-            route="refuse",
+            action="controlled_response",
             confidence=0.95,
             reason="non_agora_system_issue",
             matched_signals=system_signals,
@@ -394,9 +514,9 @@ def decide_support_route(
 
     if public_info_signals and (agora_signals or context_agora_signals or "agora" in lowered):
         matched = list(dict.fromkeys([*agora_signals, *public_info_signals] or ["agora_public_info"]))
-        return SupportRouteDecision(
+        return _build_route_decision(
             scope_label="agora_non_technical",
-            route="web_search",
+            action="web_search",
             confidence=0.93,
             reason="agora_public_info",
             matched_signals=matched,
@@ -405,9 +525,9 @@ def decide_support_route(
 
     if technical_signals and (agora_signals or _JOIN_CHANNEL_RE.search(text) or context_agora_signals):
         matched = list(dict.fromkeys([*agora_signals, *technical_signals]))
-        return SupportRouteDecision(
+        return _build_route_decision(
             scope_label="agora_technical",
-            route="rag",
+            action="rag",
             confidence=0.94,
             reason="agora_technical_signals",
             matched_signals=matched,
@@ -416,9 +536,9 @@ def decide_support_route(
 
     if context_agora_signals and (follow_up_signals or _looks_like_question(text)):
         matched = list(dict.fromkeys([*context_agora_signals, *follow_up_signals]))
-        return SupportRouteDecision(
+        return _build_route_decision(
             scope_label="agora_technical",
-            route="rag",
+            action="rag",
             confidence=0.87,
             reason="agora_context_followup",
             matched_signals=matched,
@@ -427,9 +547,9 @@ def decide_support_route(
 
     if agora_signals and public_info_signals:
         matched = list(dict.fromkeys([*agora_signals, *public_info_signals]))
-        return SupportRouteDecision(
+        return _build_route_decision(
             scope_label="agora_non_technical",
-            route="web_search",
+            action="web_search",
             confidence=0.9,
             reason="agora_public_info",
             matched_signals=matched,
@@ -464,9 +584,9 @@ def decide_support_route(
         if llm_decision and llm_decision.confidence >= threshold:
             return llm_decision
 
-    return SupportRouteDecision(
+    return _build_route_decision(
         scope_label="non_agora",
-        route="refuse",
+        action="refuse",
         confidence=0.75,
         reason="conservative_non_agora_fallback",
         matched_signals=[],
@@ -478,6 +598,29 @@ def build_refusal_answer(decision: SupportRouteDecision) -> str:
     if decision.response_language == "zh":
         return "我是 Agora 的 support agent，主要负责回答 Agora 相关的问题。这个问题不在我的支持范围内，所以我先不回答。"
     return "I'm Agora's support agent and mainly handle Agora-related questions. I can't answer that request."
+
+
+def build_controlled_response(decision: SupportRouteDecision) -> str:
+    if decision.response_language == "zh":
+        if decision.route_family == "general_chat":
+            return (
+                "我是 Agora 的 support agent，主要负责 Agora 相关支持。"
+                "像天气或闲聊这类问题我就不展开了；如果你有 Agora 技术问题，我可以继续帮你。"
+            )
+        return (
+            "我是 Agora 的 support agent，主要负责 Agora 相关支持。"
+            "这个问题更像通用技术帮助，不适合使用 Agora 文档来回答；如果你遇到 Agora SDK 或 API 问题，我可以继续协助。"
+        )
+    if decision.route_family == "general_chat":
+        return (
+            "I'm Agora's support agent and mainly handle Agora-related support. "
+            "I won't use Agora docs for small talk, but I can help if you have an Agora technical question."
+        )
+    return (
+        "I'm Agora's support agent and mainly handle Agora-related support. "
+        "This looks like general technical help, so I won't answer it with Agora docs. "
+        "If you have an Agora SDK or API issue, I can help with that."
+    )
 
 
 def _search_fallback_answer(response_language: str) -> str:
@@ -658,7 +801,7 @@ def resolve_support_message(
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
     )
-    if decision.route == "refuse":
+    if decision.execution_action == "refuse":
         answer = build_refusal_answer(decision)
         return SupportResolution(
             answer=answer,
@@ -668,12 +811,32 @@ def resolve_support_message(
             needs_engineer_guidance=False,
             answer_route="refuse",
             scope_label=decision.scope_label,
+            route_family=decision.route_family,
+            execution_action=decision.execution_action,
+            tooling_profile=decision.tooling_profile,
             route_reason=decision.reason,
             route_confidence=decision.confidence,
             search_used=False,
             matched_signals=list(decision.matched_signals),
         )
-    if decision.route == "web_search":
+    if decision.execution_action == "controlled_response":
+        return SupportResolution(
+            answer=build_controlled_response(decision),
+            confidence=round(decision.confidence, 2),
+            sources=[],
+            citations=[],
+            needs_engineer_guidance=False,
+            answer_route="controlled_response",
+            scope_label=decision.scope_label,
+            route_family=decision.route_family,
+            execution_action=decision.execution_action,
+            tooling_profile=decision.tooling_profile,
+            route_reason=decision.reason,
+            route_confidence=decision.confidence,
+            search_used=False,
+            matched_signals=list(decision.matched_signals),
+        )
+    if decision.execution_action == "web_search":
         search_result = search_agora_public_info(message, response_language=decision.response_language)
         return SupportResolution(
             answer=search_result.answer,
@@ -683,6 +846,9 @@ def resolve_support_message(
             needs_engineer_guidance=False,
             answer_route="web_search",
             scope_label=decision.scope_label,
+            route_family=decision.route_family,
+            execution_action=decision.execution_action,
+            tooling_profile=decision.tooling_profile,
             route_reason=decision.reason,
             route_confidence=decision.confidence,
             search_used=search_result.search_used,
@@ -699,6 +865,9 @@ def resolve_support_message(
         needs_engineer_guidance=needs_engineer_guidance,
         answer_route="rag",
         scope_label=decision.scope_label,
+        route_family=decision.route_family,
+        execution_action=decision.execution_action,
+        tooling_profile=decision.tooling_profile,
         route_reason=decision.reason,
         route_confidence=decision.confidence,
         search_used=False,

@@ -8,16 +8,24 @@ class RagDashboardContractTests(unittest.TestCase):
     def test_repository_dispatches_workbench_pages(self) -> None:
         source = Path("backend/repositories/knowledge_repository.py").read_text(encoding="utf-8")
         expected_dispatches = {
-            'if normalized_page == "experiments":': "_experiments_workbench_page",
-            'if normalized_page == "datasets":': "_datasets_workbench_page",
+            'if normalized_page == "scorecard":': "_scorecard_workbench_page",
+            'if normalized_page == "routing":': "_routing_workbench_page",
+            'if normalized_page == "retrieval":': "_retrieval_workbench_page",
+            'if normalized_page == "generation":': "_generation_workbench_page",
+            'if normalized_page == "data-supply":': "_data_supply_workbench_page",
             'if normalized_page == "diagnosis":': "_diagnosis_workbench_page",
-            'if normalized_page == "knowledge-supply":': "_knowledge_supply_workbench_page",
-            'if normalized_page == "production-signals":': "_production_signals_workbench_page",
             'if normalized_page == "review":': "_review_workbench_page",
         }
         for branch, helper_name in expected_dispatches.items():
             self.assertIn(branch, source)
             self.assertIn(helper_name, source)
+        for alias_branch in [
+            'if normalized_page == "experiments":',
+            'if normalized_page == "datasets":',
+            'if normalized_page == "knowledge-supply":',
+            'if normalized_page == "production-signals":',
+        ]:
+            self.assertIn(alias_branch, source)
 
     def test_repository_normalizes_diagnosis_and_compare_filters(self) -> None:
         source = Path("backend/repositories/knowledge_repository.py").read_text(encoding="utf-8")
@@ -45,16 +53,32 @@ class RagDashboardContractTests(unittest.TestCase):
             ]:
                 self.assertIn(f"{filter_name}: str | None = Query(default=None)", source)
 
+    def test_case_detail_routes_are_exposed_publicly_and_internally(self) -> None:
+        main_source = Path("backend/main.py").read_text(encoding="utf-8")
+        rag_api_source = Path("backend/rag_api.py").read_text(encoding="utf-8")
+
+        self.assertIn("/api/dashboard/rag/cases/benchmark-detail", main_source)
+        self.assertIn("/api/dashboard/rag/cases/live-detail", main_source)
+        self.assertIn("/internal/dashboard/rag/cases/benchmark-detail", rag_api_source)
+        self.assertIn("/internal/dashboard/rag/cases/live-detail", rag_api_source)
+
+        for source in [main_source, rag_api_source]:
+            self.assertIn("baseline_eval_run_id: str | None = Query(default=None)", source)
+            self.assertIn("test_case_id: str = Query(...", source)
+            self.assertIn("eval_run_id: str = Query(...", source)
+            self.assertIn("request_id: str = Query(...", source)
+
     def test_workbench_pages_are_primary_public_page_set(self) -> None:
         main_source = Path("backend/main.py").read_text(encoding="utf-8")
         rag_api_source = Path("backend/rag_api.py").read_text(encoding="utf-8")
         for source in [main_source, rag_api_source]:
             for page_name in [
-                "experiments",
-                "datasets",
+                "scorecard",
+                "routing",
+                "retrieval",
+                "generation",
+                "data-supply",
                 "diagnosis",
-                "knowledge-supply",
-                "production-signals",
                 "review",
             ]:
                 self.assertIn(page_name, source)
@@ -69,6 +93,11 @@ class RagDashboardContractTests(unittest.TestCase):
                 "dataset_decision",
                 "corrected_reference_answer",
                 "corrected_citation_targets",
+                "route_family_override",
+                "execution_action_override",
+                "tooling_profile_override",
+                "failure_stage_override",
+                "failure_bucket_override",
             ]:
                 self.assertIn(field_name, source)
         self.assertIn("/api/dashboard/rag/datasets/generation-runs", main_source)
@@ -77,6 +106,19 @@ class RagDashboardContractTests(unittest.TestCase):
         self.assertIn("/internal/dashboard/rag/datasets/generation-runs", rag_api_source)
         self.assertIn("/internal/dashboard/rag/datasets/{dataset_id}/benchmark-runs", rag_api_source)
         self.assertIn("/internal/dashboard/rag/datasets/{dataset_id}/export", rag_api_source)
+
+    def test_dashboard_repository_exposes_case_results_and_route_fields(self) -> None:
+        source = Path("backend/repositories/knowledge_repository.py").read_text(encoding="utf-8")
+        for marker in [
+            "case_results",
+            "route_accuracy",
+            "expected_answer_text",
+            "actual_answer_text",
+            "expected_route",
+            "actual_route",
+            "route_correct_flag",
+        ]:
+            self.assertIn(marker, source)
 
 
 if __name__ == "__main__":
