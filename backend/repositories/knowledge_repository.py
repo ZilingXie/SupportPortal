@@ -9059,6 +9059,57 @@ class PostgresKnowledgeRepository:
             )
         return baseline, candidate
 
+    def _select_scorecard_experiment_rows(
+        self,
+        experiments: list[dict[str, Any]],
+        filters: dict[str, Any],
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        if not experiments:
+            return None, None
+
+        def _match(identifier: str | None, pool: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
+            normalized_identifier = _clean_text(identifier)
+            if not normalized_identifier:
+                return None
+            for item in pool or experiments:
+                if normalized_identifier in {
+                    _clean_text(item.get("experiment_id")),
+                    _clean_text(item.get("eval_run_id")),
+                }:
+                    return item
+            return None
+
+        def _default_from_pool(pool: list[dict[str, Any]]) -> dict[str, Any] | None:
+            default_option = next(iter(self._available_experiment_options(pool)), None)
+            if default_option is None:
+                return None
+            return (
+                _match(default_option.get("experiment_id"), pool)
+                or _match(default_option.get("eval_run_id"), pool)
+                or default_option
+            )
+
+        baseline = (
+            _match(filters.get("candidate_experiment_id"))
+            or _match(filters.get("experiment_id"))
+            or _default_from_pool(experiments)
+        )
+        if baseline is not None and baseline not in experiments:
+            baseline = _match(baseline.get("experiment_id")) or _match(baseline.get("eval_run_id")) or baseline
+
+        baseline_eval_run_id = _clean_text((baseline or {}).get("eval_run_id"))
+        candidate_pool = [
+            item
+            for item in experiments
+            if _clean_text(item.get("eval_run_id")) != baseline_eval_run_id
+        ]
+        candidate = _match(filters.get("baseline_experiment_id"), candidate_pool)
+        if candidate is None:
+            candidate = _default_from_pool(candidate_pool)
+        if candidate is None:
+            candidate = baseline
+        return baseline, candidate
+
     def _benchmark_case_summary_rows(self, eval_run_ids: list[str]) -> dict[str, dict[str, dict[str, Any]]]:
         normalized_run_ids = [_clean_text(item) for item in eval_run_ids if _clean_text(item)]
         if not normalized_run_ids:
@@ -11088,13 +11139,27 @@ class PostgresKnowledgeRepository:
         return sorted(rows, key=lambda item: item["category"])
 
     def _scorecard_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
-        experiments, baseline, candidate, baseline_cases, candidate_cases, wins, regressions = self._selected_benchmark_context(
-            days=days,
-            filters=filters,
-        )
+        experiments = self._experiment_rows(days, filters)
+        baseline, candidate = self._select_scorecard_experiment_rows(experiments, filters)
         selector_experiments = experiments or self._benchmark_selector_rows(days, filters)
-        _selector_baseline, selector_candidate = self._select_experiment_rows(selector_experiments, filters)
-        benchmark_selector = self._build_benchmark_selector(selector_experiments, candidate or selector_candidate)
+        selector_baseline, selector_candidate = self._select_scorecard_experiment_rows(selector_experiments, filters)
+        display_baseline = baseline or selector_baseline
+        display_candidate = candidate or selector_candidate
+        benchmark_selector = self._build_benchmark_selector(selector_experiments, display_baseline)
+        cases_by_run = self._benchmark_case_summary_rows(
+            [
+                _clean_text((display_baseline or {}).get("eval_run_id")),
+                _clean_text((display_candidate or {}).get("eval_run_id")),
+            ]
+        )
+        baseline_cases = cases_by_run.get(_clean_text((display_baseline or {}).get("eval_run_id")) or "", {})
+        candidate_cases = cases_by_run.get(_clean_text((display_candidate or {}).get("eval_run_id")) or "", {})
+        wins, regressions = self._sample_deltas_from_cases(
+            baseline_eval_run_id=_clean_text((display_baseline or {}).get("eval_run_id")),
+            candidate_eval_run_id=_clean_text((display_candidate or {}).get("eval_run_id")),
+            baseline_cases=baseline_cases,
+            candidate_cases=candidate_cases,
+        )
         candidate_rows = list(candidate_cases.values())
         baseline_rows = list(baseline_cases.values())
         route_family_accuracy = _mean_from_rows(candidate_rows, "route_family_correct")
@@ -11109,10 +11174,10 @@ class PostgresKnowledgeRepository:
             "summary": {
                 "title": "Scorecard",
                 "subtitle": "Read routing, retrieval, generation, and business outcomes together before drilling into traces.",
-                "baseline_experiment_id": (baseline or {}).get("experiment_id"),
-                "candidate_experiment_id": (candidate or {}).get("experiment_id"),
-                "benchmark_version": (candidate or {}).get("benchmark_version") or (baseline or {}).get("benchmark_version"),
-                "available_experiments": self._available_experiment_options(experiments),
+                "baseline_experiment_id": (display_baseline or {}).get("experiment_id"),
+                "candidate_experiment_id": (display_candidate or {}).get("experiment_id"),
+                "benchmark_version": (display_baseline or {}).get("benchmark_version") or (display_candidate or {}).get("benchmark_version"),
+                "available_experiments": self._available_experiment_options(selector_experiments),
                 "cards": {
                     "route_family_accuracy": route_family_accuracy,
                     "evidence_hit_at_5": evidence_hit_at_5,
