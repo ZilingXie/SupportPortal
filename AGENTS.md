@@ -5,7 +5,9 @@
 2. For each task, create a new `codex/<task>` branch from the latest `mac` branch state. Do not reuse old task branches unless the user explicitly asks for that.
 3. Perform all edits, checks, and tests for the task on that `codex/<task>` branch.
 4. If the current workspace has uncommitted changes that could affect branch creation, switching, testing, or merging, Codex must stop and ask the user before proceeding. Do not stash, overwrite, or force checkout on its own.
-5. After the user reviews and approves the task branch, merge it back into `mac`. Once the merge succeeds, delete the local task branch.
+5. If the user explicitly approves the task branch for finalization (for example by saying "验收通过" or using an equivalent approval), Codex must treat that as authorization to start the branch finalization flow.
+6. Before any commit or merge, run a fresh round of verification that matches the current task. If verification fails, if Codex is not currently on the expected `codex/<task>` branch, or if the working tree/index state makes finalization unsafe or ambiguous, Codex must stop and ask the user before proceeding.
+7. After that verification passes, commit the task-branch changes, merge the resulting commit back into `mac`, and delete the local `codex/<task>` branch only after the merge succeeds.
 
 ## UI Design Source Of Truth
 1. All new or refactored UI under `ui/` must follow `/Users/xieziling/Desktop/personal_proj/SupportPortal/design.md`.
