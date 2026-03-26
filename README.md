@@ -191,3 +191,24 @@ INTENT_ROUTER_CONFIDENCE_THRESHOLD=0.7
 OPENAI_WEB_SEARCH_MODEL=gpt-5
 OPENAI_WEB_SEARCH_TIMEOUT_SECONDS=12.0
 ```
+
+## Local-First Benchmark Workflow
+
+RAG benchmark 现在以本地 `benchmarks/*.json` 文件为唯一事实来源，dataset tables 只作为镜像库存给 `/dashboard/rag/` 的 `Data Supply` 页面和审计流程使用。
+
+常用命令：
+
+```bash
+# 1. 将本地 benchmark catalog 镜像到 dataset tables
+./.venv/bin/python scripts/sync_local_benchmarks.py
+
+# 2. 从本地 benchmark 文件直接运行 benchmark
+./.venv/bin/python scripts/run_rag_benchmark.py \
+  --dataset benchmarks/agora_rag_testset_100_mixed_en.json \
+  --experiment-id agora_mixed_en_local
+```
+
+说明：
+1. `scripts/run_rag_benchmark.py` 只接受 `--dataset`；`--dataset-id` 和 `--suite` 已停用。
+2. `Data Supply -> Benchmark Supply` 的 `Sync Local Benchmarks` 只负责把本地 benchmark 文件镜像到 dataset tables，不会改变 benchmark 运行入口。
+3. benchmark 文件当前使用 NDJSON，每行一个 case，并且已经升级为显式 route-aware contract。

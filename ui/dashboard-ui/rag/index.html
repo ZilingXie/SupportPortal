@@ -15,6 +15,15 @@
           <p id="dashboard-status" class="status-line">Loading mixed-route scorecard...</p>
         </div>
         <div class="topbar-actions">
+          <div class="topbar-benchmark">
+            <label class="filter-field benchmark-run-field">
+              <span>Current Benchmark Run</span>
+              <select id="current-benchmark-run-selector" disabled>
+                <option value="">Loading latest run...</option>
+              </select>
+            </label>
+            <p id="current-benchmark-run-meta" class="benchmark-run-meta">Latest completed benchmark run</p>
+          </div>
           <div class="status-stack">
             <span id="active-scope-label">Scope: all data</span>
             <span id="last-refreshed-label">Last refreshed: -</span>

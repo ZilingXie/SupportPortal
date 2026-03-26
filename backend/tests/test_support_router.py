@@ -31,11 +31,11 @@ class SupportRouterTests(unittest.TestCase):
     def test_decide_support_route_refuses_non_agora_question(self) -> None:
         decision = decide_support_route("我电脑蓝屏了怎么办")
 
-        self.assertEqual(decision.scope_label, "non_agora")
-        self.assertEqual(decision.route_family, "general_tech_help")
-        self.assertEqual(decision.execution_action, "controlled_response")
-        self.assertEqual(decision.tooling_profile, "no_agora_docs_controlled")
-        self.assertEqual(decision.route, "controlled_response")
+        self.assertEqual(decision.scope_label, "agora_technical")
+        self.assertEqual(decision.route_family, "agora_docs_rag")
+        self.assertEqual(decision.execution_action, "rag")
+        self.assertEqual(decision.tooling_profile, "agora_docs_only")
+        self.assertEqual(decision.route, "rag")
         self.assertGreaterEqual(decision.confidence, 0.85)
 
     def test_decide_support_route_routes_agora_technical_question_to_rag(self) -> None:
@@ -45,6 +45,14 @@ class SupportRouterTests(unittest.TestCase):
         self.assertEqual(decision.route_family, "agora_docs_rag")
         self.assertEqual(decision.execution_action, "rag")
         self.assertEqual(decision.tooling_profile, "agora_docs_only")
+        self.assertEqual(decision.route, "rag")
+
+    def test_decide_support_route_does_not_treat_which_as_small_talk(self) -> None:
+        decision = decide_support_route("Which profile and roles should I use?")
+
+        self.assertEqual(decision.scope_label, "agora_technical")
+        self.assertEqual(decision.route_family, "agora_docs_rag")
+        self.assertEqual(decision.execution_action, "rag")
         self.assertEqual(decision.route, "rag")
 
     def test_decide_support_route_uses_context_for_follow_up(self) -> None:

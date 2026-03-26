@@ -1,6 +1,8 @@
 const dashboardStatusEl = document.getElementById("dashboard-status");
 const activeScopeLabelEl = document.getElementById("active-scope-label");
 const lastRefreshedLabelEl = document.getElementById("last-refreshed-label");
+const currentBenchmarkRunSelectorEl = document.getElementById("current-benchmark-run-selector");
+const currentBenchmarkRunMetaEl = document.getElementById("current-benchmark-run-meta");
 const refreshButtonEl = document.getElementById("refresh-button");
 const dashboardTabEls = Array.from(document.querySelectorAll("[data-dashboard-tab]"));
 const dashboardPanelEls = Array.from(document.querySelectorAll("[data-dashboard-panel]"));
@@ -42,17 +44,37 @@ const PAGE_LABELS = {
   diagnosis: "Diagnosis",
   review: "Review Queue",
 };
+const DASHBOARD_PAGE_NAMES = Object.keys(PAGE_LABELS);
+
+const LOCAL_BENCHMARK_CATALOG = [
+  {
+    label: "Canonical",
+    benchmark_version: "agora_rag_testset_100_standrad_en",
+    source_path: "benchmarks/agora_rag_testset_100_standrad_en.json",
+  },
+  {
+    label: "Mixed",
+    benchmark_version: "agora_rag_testset_100_mixed_en",
+    source_path: "benchmarks/agora_rag_testset_100_mixed_en.json",
+  },
+  {
+    label: "Real User",
+    benchmark_version: "agora_rag_testset_100_realUser_en",
+    source_path: "benchmarks/agora_rag_testset_100_realUser_en.json",
+  },
+];
 
 let currentDashboardTab = "scorecard";
-let loadToken = 0;
+let cacheEpoch = 0;
 const pageCache = {};
+const pageLoadPromises = {};
 const caseDetailCache = {};
 let caseDetailLoadToken = 0;
 let diagnosisDetailLoadToken = 0;
 let lastCaseDetailFocusEl = null;
 let activeCaseDetailState = null;
 
-const ragFilters = {
+const DEFAULT_RAG_FILTERS = {
   range: "7d",
   source_type: "all",
   product: "all",
@@ -69,6 +91,7 @@ const ragFilters = {
   candidate_experiment_id: "",
   limit: 20,
 };
+const ragFilters = { ...DEFAULT_RAG_FILTERS };
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -364,8 +387,8 @@ function findExperimentOption(options, identifier) {
   );
 }
 
-function resolveCandidateExperiment(summary, candidateIdentifier = null) {
-  const options = Array.isArray(summary?.available_experiments) ? summary.available_experiments : [];
+function resolveCandidateExperiment(context, candidateIdentifier = null) {
+  const options = Array.isArray(context?.available_experiments) ? context.available_experiments : [];
   if (candidateIdentifier !== null) {
     const explicitCandidate = findExperimentOption(options, candidateIdentifier);
     if (explicitCandidate) {
@@ -375,13 +398,22 @@ function resolveCandidateExperiment(summary, candidateIdentifier = null) {
       return options[0] || null;
     }
   }
-  return findExperimentOption(options, summary?.candidate_experiment_id) || options[0] || null;
+  return (
+    findExperimentOption(
+      options,
+      context?.candidate_experiment_id || context?.current_experiment_id || context?.current_eval_run_id
+    ) ||
+    options[0] ||
+    null
+  );
 }
 
-function getComparableBaselineOptions(summary, candidateIdentifier = null) {
-  const options = Array.isArray(summary?.available_experiments) ? summary.available_experiments : [];
-  const candidate = resolveCandidateExperiment(summary, candidateIdentifier);
-  const candidateBenchmarkVersion = normalizeString(candidate?.benchmark_version || summary?.benchmark_version);
+function getComparableBaselineOptions(context, candidateIdentifier = null) {
+  const options = Array.isArray(context?.available_experiments) ? context.available_experiments : [];
+  const candidate = resolveCandidateExperiment(context, candidateIdentifier);
+  const candidateBenchmarkVersion = normalizeString(
+    candidate?.benchmark_version || context?.benchmark_version || context?.current_benchmark_version
+  );
   if (!candidateBenchmarkVersion) {
     return options;
   }
@@ -391,32 +423,52 @@ function getComparableBaselineOptions(summary, candidateIdentifier = null) {
   return comparableOptions.length ? comparableOptions : options;
 }
 
-function isComparableBaselineSelection(summary, baselineIdentifier, candidateIdentifier = null) {
+function isComparableBaselineSelection(context, baselineIdentifier, candidateIdentifier = null) {
   const normalizedBaselineIdentifier = normalizeString(baselineIdentifier);
   if (!normalizedBaselineIdentifier) {
     return true;
   }
-  return getComparableBaselineOptions(summary, candidateIdentifier).some(
+  return getComparableBaselineOptions(context, candidateIdentifier).some(
     (option) =>
       normalizedBaselineIdentifier === normalizeString(option?.experiment_id) ||
       normalizedBaselineIdentifier === normalizeString(option?.eval_run_id)
   );
 }
 
-function clearIncompatibleBaselineSelection(summary, candidateIdentifier = null) {
-  if (!isComparableBaselineSelection(summary, ragFilters.baseline_experiment_id, candidateIdentifier)) {
+function clearIncompatibleBaselineSelection(context, candidateIdentifier = null) {
+  if (!isComparableBaselineSelection(context, ragFilters.baseline_experiment_id, candidateIdentifier)) {
     ragFilters.baseline_experiment_id = "";
     return true;
   }
   return false;
 }
 
-function buildExperimentComparisonControls(summary) {
-  const options = Array.isArray(summary?.available_experiments) ? summary.available_experiments : [];
-  const candidate = resolveCandidateExperiment(summary);
-  const candidateBenchmarkVersion = normalizeString(candidate?.benchmark_version || summary?.benchmark_version);
-  const comparableBaselineOptions = getComparableBaselineOptions(summary);
-  const candidateIdentifier = normalizeString(summary?.candidate_experiment_id || candidate?.experiment_id || candidate?.eval_run_id);
+function buildBenchmarkRunMeta(option) {
+  const parts = [];
+  if (normalizeString(option?.benchmark_version)) {
+    parts.push(option.benchmark_version);
+  }
+  const dateValue = option?.finished_at || option?.created_at || "";
+  if (normalizeString(dateValue)) {
+    parts.push(formatDateTime(dateValue));
+  }
+  return parts.join(" · ");
+}
+
+function buildExperimentComparisonControls(summary, benchmarkSelector = null) {
+  const comparisonContext = benchmarkSelector || summary || {};
+  const candidate = resolveCandidateExperiment(comparisonContext);
+  const candidateBenchmarkVersion = normalizeString(
+    candidate?.benchmark_version || comparisonContext?.benchmark_version || comparisonContext?.current_benchmark_version
+  );
+  const comparableBaselineOptions = getComparableBaselineOptions(comparisonContext);
+  const candidateIdentifier = normalizeString(
+    candidate?.experiment_id ||
+      candidate?.eval_run_id ||
+      comparisonContext?.current_experiment_id ||
+      comparisonContext?.current_eval_run_id ||
+      summary?.candidate_experiment_id
+  );
   const hasAlternateBaseline = comparableBaselineOptions.some(
     (option) => normalizeString(option?.experiment_id || option?.eval_run_id) !== candidateIdentifier
   );
@@ -426,6 +478,8 @@ function buildExperimentComparisonControls(summary) {
   const sharedFootnote = candidateBenchmarkVersion
     ? `Candidate defines the comparison pool. Benchmark version: ${candidateBenchmarkVersion}. ${baselineNote}`
     : `Candidate defines the comparison pool. ${baselineNote}`;
+  const candidateLabel = candidate?.label || candidate?.experiment_id || candidate?.eval_run_id || "Latest benchmark run";
+  const candidateMeta = buildBenchmarkRunMeta(candidate);
   return `
     <div class="comparison-controls">
       <div class="comparison-controls-grid hero-actions">
@@ -436,17 +490,36 @@ function buildExperimentComparisonControls(summary) {
             ${comparableBaselineOptions.map(buildExperimentOption).join("")}
           </select>
         </label>
-        <label class="filter-field">
-          <span>Candidate</span>
-          <select id="candidate-experiment-selector">
-            <option value="">Auto</option>
-            ${options.map(buildExperimentOption).join("")}
-          </select>
-        </label>
+        <article class="comparison-static-card">
+          <span class="comparison-static-label">Candidate</span>
+          <strong class="comparison-static-value">${escapeHtml(candidateLabel)}</strong>
+          <span class="comparison-static-meta">${escapeHtml(candidateMeta || "Latest completed benchmark run")}</span>
+        </article>
       </div>
       <p class="comparison-controls-note">${escapeHtml(sharedFootnote)}</p>
     </div>
   `;
+}
+
+function renderBenchmarkRunSelector(benchmarkSelector) {
+  if (!currentBenchmarkRunSelectorEl || !currentBenchmarkRunMetaEl) {
+    return;
+  }
+  const options = Array.isArray(benchmarkSelector?.available_experiments) ? benchmarkSelector.available_experiments : [];
+  const currentOption = resolveCandidateExperiment(benchmarkSelector);
+  if (!options.length) {
+    currentBenchmarkRunSelectorEl.innerHTML = `<option value="">No benchmark runs available</option>`;
+    currentBenchmarkRunSelectorEl.disabled = true;
+    currentBenchmarkRunMetaEl.textContent = "No benchmark runs found in this scope.";
+    return;
+  }
+  currentBenchmarkRunSelectorEl.innerHTML = options.map(buildExperimentOption).join("");
+  currentBenchmarkRunSelectorEl.disabled = false;
+  const currentValue = normalizeString(currentOption?.experiment_id || currentOption?.eval_run_id);
+  if (currentValue) {
+    currentBenchmarkRunSelectorEl.value = currentValue;
+  }
+  currentBenchmarkRunMetaEl.textContent = buildBenchmarkRunMeta(currentOption) || "Latest completed benchmark run";
 }
 
 function caseDetailCacheKey(prefix, values = []) {
@@ -1426,7 +1499,7 @@ function renderExperimentsPage(payload) {
         <h2>${escapeHtml(summary.title || "Experiments")}</h2>
         <p>${escapeHtml(summary.subtitle || "Choose the better experiment before you inspect regressions.")}</p>
       </div>
-      ${buildExperimentComparisonControls(summary)}
+      ${buildExperimentComparisonControls(summary, payload.benchmark_selector)}
       ${buildMetricCards(summary.cards || {})}
     </section>
 
@@ -1483,12 +1556,8 @@ function renderExperimentsPage(payload) {
   `;
 
   const baselineSelect = document.getElementById("baseline-experiment-selector");
-  const candidateSelect = document.getElementById("candidate-experiment-selector");
   if (baselineSelect) {
     baselineSelect.value = summary.baseline_experiment_id || "";
-  }
-  if (candidateSelect) {
-    candidateSelect.value = summary.candidate_experiment_id || "";
   }
 }
 
@@ -1508,7 +1577,7 @@ function renderScorecardPage(payload) {
         <h2>${escapeHtml(summary.title || "Scorecard")}</h2>
         <p>${escapeHtml(summary.subtitle || "Read routing, retrieval, generation, and business outcomes together.")}</p>
       </div>
-      ${buildExperimentComparisonControls(summary)}
+      ${buildExperimentComparisonControls(summary, payload.benchmark_selector)}
       ${buildMetricCards(summary.cards || {})}
     </section>
     ${buildTableSection("Layer Scorecard", layerScorecard, {
@@ -1527,12 +1596,8 @@ function renderScorecardPage(payload) {
   `;
 
   const baselineSelect = document.getElementById("baseline-experiment-selector");
-  const candidateSelect = document.getElementById("candidate-experiment-selector");
   if (baselineSelect) {
     baselineSelect.value = summary.baseline_experiment_id || "";
-  }
-  if (candidateSelect) {
-    candidateSelect.value = summary.candidate_experiment_id || "";
   }
 }
 
@@ -1695,6 +1760,18 @@ function renderDataSupplyPage(payload) {
   const summary = sections.summary || {};
   const benchmarkSupply = sections.benchmark_supply || {};
   const knowledgeSupply = sections.knowledge_supply || {};
+  const currentBenchmarkVersion = normalizeString(
+    payload.benchmark_selector?.current_benchmark_version || summary.benchmark_version
+  );
+  const datasetVersions = benchmarkSupply.dataset_versions?.rows || [];
+  const mirroredByBenchmarkVersion = new Map(
+    datasetVersions.map((row) => [normalizeString(row.benchmark_version), row])
+  );
+  const localCatalogRows = LOCAL_BENCHMARK_CATALOG.map((entry) => ({
+    ...entry,
+    mirror: mirroredByBenchmarkVersion.get(normalizeString(entry.benchmark_version)) || null,
+    isCurrent: currentBenchmarkVersion && normalizeString(entry.benchmark_version) === currentBenchmarkVersion,
+  }));
 
   root.innerHTML = `
     <section class="hero-card">
@@ -1709,47 +1786,53 @@ function renderDataSupplyPage(payload) {
       <div class="panel-header">
         <div>
           <h3>Benchmark Supply</h3>
-          <p>Dataset generation, benchmark versioning, and gold coverage.</p>
+          <p>Use local benchmark files as the source of truth, then mirror them into dataset inventory tables for audit and coverage.</p>
         </div>
       </div>
-      <div class="filter-grid">
-        <label class="filter-field">
-          <span>Dataset Name</span>
-          <input id="dataset-generation-name" type="text" placeholder="supportportal_gold_v2" />
-        </label>
-        <label class="filter-field">
-          <span>Question Language</span>
-          <select id="dataset-generation-language">
-            <option value="en" selected>English</option>
-          </select>
-        </label>
-        <label class="filter-field">
-          <span>Source Types</span>
-          <div class="chip-row">
-            <label class="chip chip-neutral">
-              <input id="dataset-source-official" type="checkbox" checked />
-              Official Markdown
-            </label>
-            <label class="chip chip-neutral">
-              <input id="dataset-source-technical" type="checkbox" checked />
-              Technical Article
-            </label>
-          </div>
-        </label>
+      <div class="benchmark-sync-card">
+        <div class="benchmark-sync-copy">
+          <p class="eyebrow">Local Benchmark Catalog</p>
+          <h4>Mirror local benchmark files into dataset tables</h4>
+          <p>Benchmark execution still reads local files directly. Sync only refreshes dataset inventory so Data Supply and audit views stay populated.</p>
+        </div>
         <div class="button-row">
-          <button type="button" class="primary-button" data-create-dataset-generation>
-            Start Generation
+          <button type="button" class="primary-button" data-sync-local-benchmarks>
+            Sync Local Benchmarks
           </button>
         </div>
       </div>
-      ${buildTableSection("Generation Runs", benchmarkSupply.generation_runs?.rows || [], {
-        emptyLabel: "No generation runs available yet.",
+      <div class="sample-list benchmark-catalog-list">
+        ${localCatalogRows
+          .map(
+            (row) => `
+              <article class="sample-item ${row.isCurrent ? "benchmark-catalog-current" : ""}">
+                <div class="sample-item-header">
+                  <span class="chip chip-neutral">${escapeHtml(row.label)}</span>
+                  <span class="chip chip-neutral">${escapeHtml(row.isCurrent ? "current run" : "catalog")}</span>
+                </div>
+                <h4>${escapeHtml(row.benchmark_version)}</h4>
+                <div class="sample-meta">
+                  <span>${escapeHtml(row.source_path)}</span>
+                </div>
+                ${buildDefinitionGrid([
+                  { label: "Mirror Dataset", value: row.mirror?.dataset_name || "-" },
+                  { label: "Dataset Id", value: row.mirror?.dataset_id || "-" },
+                  { label: "Gold Items", value: row.mirror?.gold_item_count },
+                  { label: "Pending Review", value: row.mirror?.pending_review_count },
+                ])}
+              </article>
+            `
+          )
+          .join("")}
+      </div>
+      ${buildTableSection("Sync Runs", benchmarkSupply.generation_runs?.rows || [], {
+        emptyLabel: "No local benchmark sync runs available yet.",
       })}
-      ${buildTableSection("Dataset Versions", benchmarkSupply.dataset_versions?.rows || [], {
-        emptyLabel: "No dataset versions available yet.",
+      ${buildTableSection("Dataset Versions", datasetVersions, {
+        emptyLabel: "No mirrored dataset versions available yet.",
       })}
       ${buildTableSection("Coverage", benchmarkSupply.coverage?.rows || [], {
-        emptyLabel: "No benchmark coverage available yet.",
+        emptyLabel: "No mirrored benchmark coverage available yet.",
       })}
     </section>
     <section class="panel-card">
@@ -2275,6 +2358,7 @@ function syncFiltersToInputs() {
 
 function readStateFromUrl() {
   const params = new URLSearchParams(window.location.search);
+  Object.assign(ragFilters, DEFAULT_RAG_FILTERS);
   const page = normalizeDashboardTab(params.get("page")) || "scorecard";
   currentDashboardTab = page;
   for (const key of Object.keys(ragFilters)) {
@@ -2352,44 +2436,122 @@ function setActiveDashboardTab(tabName) {
   writeStateToUrl();
 }
 
-function invalidatePageCache(pageName = null) {
-  if (!pageName) {
-    Object.keys(pageCache).forEach((key) => delete pageCache[key]);
-    return;
+function resetDashboardCache() {
+  cacheEpoch += 1;
+  Object.keys(pageCache).forEach((key) => delete pageCache[key]);
+  Object.keys(pageLoadPromises).forEach((key) => delete pageLoadPromises[key]);
+}
+
+function clearBenchmarkCaseSelection() {
+  ragFilters.sample_id = "";
+  ragFilters.request_id = "";
+  ragFilters.eval_run_id = "";
+  ragFilters.test_case_id = "";
+}
+
+function resolveComparisonContext() {
+  return (
+    pageCache[currentDashboardTab]?.benchmark_selector ||
+    pageCache[currentDashboardTab]?.sections?.summary ||
+    pageCache.scorecard?.benchmark_selector ||
+    pageCache.scorecard?.sections?.summary ||
+    null
+  );
+}
+
+function applyPagePayload(pageName, payload) {
+  pageRenderers[pageName]?.render(payload);
+  renderBenchmarkRunSelector(payload?.benchmark_selector);
+  updateScopeLabel();
+  setLastRefreshed(payload?.last_refreshed_at);
+}
+
+async function fetchPageData(pageName, { force = false, epoch = cacheEpoch } = {}) {
+  if (!force && pageCache[pageName]) {
+    return pageCache[pageName];
   }
-  delete pageCache[pageName];
+  if (!force) {
+    const existingRequest = pageLoadPromises[pageName];
+    if (existingRequest && existingRequest.epoch === epoch) {
+      return existingRequest.promise;
+    }
+  }
+  const requestPromise = (async () => {
+    const payload = await fetchJson(`/api/dashboard/rag/${pageName}?${buildPageQuery()}`);
+    if (epoch !== cacheEpoch) {
+      return null;
+    }
+    pageCache[pageName] = payload;
+    return payload;
+  })();
+  pageLoadPromises[pageName] = { epoch, promise: requestPromise };
+  try {
+    return await requestPromise;
+  } finally {
+    if (pageLoadPromises[pageName]?.promise === requestPromise) {
+      delete pageLoadPromises[pageName];
+    }
+  }
 }
 
 async function loadPage(pageName, { force = false } = {}) {
   const root = ragPageContainers[pageName]?.root;
   if (!root) {
-    return;
+    return null;
   }
   if (!force && pageCache[pageName]) {
-    pageRenderers[pageName]?.render(pageCache[pageName]);
-    return;
+    applyPagePayload(pageName, pageCache[pageName]);
+    setStatus(`${PAGE_LABELS[pageName]} ready.`);
+    return pageCache[pageName];
   }
-  const token = ++loadToken;
+  const epoch = cacheEpoch;
   root.innerHTML = `<div class="empty-state">Loading ${escapeHtml(PAGE_LABELS[pageName])}...</div>`;
   setStatus(`Loading ${PAGE_LABELS[pageName]}...`);
   try {
-    const payload = await fetchJson(`/api/dashboard/rag/${pageName}?${buildPageQuery()}`);
-    if (token !== loadToken) {
-      return;
+    const payload = await fetchPageData(pageName, { force, epoch });
+    if (!payload) {
+      return null;
     }
-    pageCache[pageName] = payload;
-    pageRenderers[pageName]?.render(payload);
-    updateScopeLabel();
-    setLastRefreshed(payload.last_refreshed_at);
+    if (pageName !== currentDashboardTab) {
+      return payload;
+    }
+    applyPagePayload(pageName, payload);
     setStatus(`${PAGE_LABELS[pageName]} ready.`);
+    return payload;
   } catch (error) {
+    if (pageName !== currentDashboardTab) {
+      return null;
+    }
     root.innerHTML = `<div class="empty-state">Failed to load ${escapeHtml(PAGE_LABELS[pageName])}: ${escapeHtml(error.message)}</div>`;
     setStatus(`Failed to load ${PAGE_LABELS[pageName]}: ${error.message}`);
+    throw error;
   }
 }
 
+async function prewarmDashboardPages(activePage = currentDashboardTab) {
+  const epoch = cacheEpoch;
+  await Promise.allSettled(
+    DASHBOARD_PAGE_NAMES.filter((pageName) => pageName !== activePage).map((pageName) =>
+      fetchPageData(pageName, { epoch }).catch(() => null)
+    )
+  );
+}
+
 async function loadCurrentPage({ force = false } = {}) {
-  await loadPage(currentDashboardTab, { force });
+  writeStateToUrl();
+  const payload = await loadPage(currentDashboardTab, { force });
+  if (payload) {
+    void prewarmDashboardPages(currentDashboardTab);
+  }
+  return payload;
+}
+
+async function refreshDashboardPages({ clearBenchmarkSelection = false } = {}) {
+  if (clearBenchmarkSelection) {
+    clearBenchmarkCaseSelection();
+  }
+  resetDashboardCache();
+  return loadCurrentPage({ force: true });
 }
 
 function openReportDrawer(payload) {
@@ -2456,11 +2618,6 @@ function setGlobalFilterState() {
   ragFilters.experiment_id = normalizeString(ragExperimentFilterEl.value) || "all";
 }
 
-function clearDiagnosisSelectionForLive() {
-  ragFilters.request_id = "";
-  ragFilters.sample_id = "";
-}
-
 function openDiagnosisForBenchmark(evalRunId, testCaseId) {
   closeCaseDetailModal();
   ragFilters.request_id = "";
@@ -2468,7 +2625,7 @@ function openDiagnosisForBenchmark(evalRunId, testCaseId) {
   ragFilters.eval_run_id = normalizeString(evalRunId);
   ragFilters.test_case_id = normalizeString(testCaseId);
   setActiveDashboardTab("diagnosis");
-  loadCurrentPage({ force: true }).catch((error) => {
+  refreshDashboardPages().catch((error) => {
     setStatus(`Failed to open diagnosis: ${error.message}`);
   });
 }
@@ -2480,7 +2637,7 @@ function openDiagnosisForLive(requestId) {
   ragFilters.sample_id = "";
   ragFilters.request_id = normalizeString(requestId);
   setActiveDashboardTab("diagnosis");
-  loadCurrentPage({ force: true }).catch((error) => {
+  refreshDashboardPages().catch((error) => {
     setStatus(`Failed to open diagnosis: ${error.message}`);
   });
 }
@@ -2529,9 +2686,7 @@ async function saveReviewSample(sampleId) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    invalidatePageCache("review");
-    invalidatePageCache("diagnosis");
-    await loadCurrentPage({ force: true });
+    await refreshDashboardPages();
     setStatus(`Review ${normalizedSampleId} saved.`);
   } catch (error) {
     setStatus(`Failed to save review ${normalizedSampleId}: ${error.message}`);
@@ -2570,12 +2725,23 @@ async function createDatasetGenerationRun() {
         question_language: languageEl?.value || "en",
       }),
     });
-    invalidatePageCache("data-supply");
-    invalidatePageCache("review");
-    await loadCurrentPage({ force: true });
+    await refreshDashboardPages();
     setStatus(`Dataset generation ${datasetName} queued.`);
   } catch (error) {
     setStatus(`Failed to create dataset generation run: ${error.message}`);
+  }
+}
+
+async function syncLocalBenchmarks() {
+  setStatus("Syncing local benchmark catalog into dataset tables...");
+  try {
+    const payload = await fetchJson("/api/dashboard/rag/benchmarks/local-sync", {
+      method: "POST",
+    });
+    await refreshDashboardPages();
+    setStatus(`Local benchmark sync completed: ${formatNumber(payload.synced_count || 0)} datasets mirrored.`);
+  } catch (error) {
+    setStatus(`Failed to sync local benchmarks: ${error.message}`);
   }
 }
 
@@ -2594,10 +2760,8 @@ async function runDatasetBenchmark(datasetId) {
         tier: "gold",
       }),
     });
-    invalidatePageCache("data-supply");
-    invalidatePageCache("scorecard");
     setActiveDashboardTab("scorecard");
-    await loadCurrentPage({ force: true });
+    await refreshDashboardPages();
     setStatus(`Benchmark for ${normalizedDatasetId} queued.`);
   } catch (error) {
     setStatus(`Failed to queue benchmark ${normalizedDatasetId}: ${error.message}`);
@@ -2615,14 +2779,14 @@ function exportDatasetSnapshot(datasetId) {
 
 function openReviewPage() {
   setActiveDashboardTab("review");
-  loadCurrentPage({ force: true }).catch((error) => {
+  loadCurrentPage().catch((error) => {
     setStatus(`Failed to open review queue: ${error.message}`);
   });
 }
 
 function openDatasetsPage() {
   setActiveDashboardTab("data-supply");
-  loadCurrentPage({ force: true }).catch((error) => {
+  loadCurrentPage().catch((error) => {
     setStatus(`Failed to open data supply page: ${error.message}`);
   });
 }
@@ -2711,6 +2875,11 @@ function handleDocumentClick(event) {
     createDatasetGenerationRun();
     return;
   }
+  const syncLocalBenchmarksButton = event.target.closest("[data-sync-local-benchmarks]");
+  if (syncLocalBenchmarksButton) {
+    syncLocalBenchmarks();
+    return;
+  }
   const runDatasetBenchmarkButton = event.target.closest("[data-run-dataset-benchmark]");
   if (runDatasetBenchmarkButton) {
     runDatasetBenchmark(runDatasetBenchmarkButton.dataset.runDatasetBenchmark);
@@ -2734,30 +2903,26 @@ function handleDocumentClick(event) {
 function handleDocumentChange(event) {
   if (event.target.id === "baseline-experiment-selector") {
     ragFilters.baseline_experiment_id = normalizeString(event.target.value);
-    invalidatePageCache();
-    loadCurrentPage({ force: true }).catch((error) => {
+    refreshDashboardPages().catch((error) => {
       setStatus(`Failed to update baseline experiment: ${error.message}`);
     });
     return;
   }
-  if (event.target.id === "candidate-experiment-selector") {
+  if (event.target.id === "current-benchmark-run-selector") {
     const nextCandidateExperimentId = normalizeString(event.target.value);
-    const comparisonSummary =
-      pageCache[currentDashboardTab]?.sections?.summary ||
-      pageCache.scorecard?.sections?.summary ||
-      null;
+    const comparisonContext = resolveComparisonContext();
     ragFilters.candidate_experiment_id = nextCandidateExperimentId;
     if (!nextCandidateExperimentId) {
       ragFilters.baseline_experiment_id = "";
-    } else if (comparisonSummary) {
-      clearIncompatibleBaselineSelection(comparisonSummary, nextCandidateExperimentId);
+    } else if (comparisonContext) {
+      clearIncompatibleBaselineSelection(comparisonContext, nextCandidateExperimentId);
     } else {
       ragFilters.baseline_experiment_id = "";
     }
-    invalidatePageCache();
-    loadCurrentPage({ force: true }).catch((error) => {
-      setStatus(`Failed to update candidate experiment: ${error.message}`);
+    refreshDashboardPages({ clearBenchmarkSelection: true }).catch((error) => {
+      setStatus(`Failed to update benchmark run: ${error.message}`);
     });
+    return;
   }
 }
 
@@ -2765,8 +2930,7 @@ function bindFilters() {
   [ragRangeFilterEl, ragSourceFilterEl, ragQueryTypeFilterEl, ragRetrievalFilterEl, ragChunkFilterEl].forEach((el) => {
     el.addEventListener("change", () => {
       setGlobalFilterState();
-      invalidatePageCache();
-      loadCurrentPage({ force: true }).catch((error) => {
+      refreshDashboardPages().catch((error) => {
         setStatus(`Failed to apply filters: ${error.message}`);
       });
     });
@@ -2774,8 +2938,7 @@ function bindFilters() {
   [ragProductFilterEl, ragLanguageFilterEl, ragExperimentFilterEl].forEach((el) => {
     el.addEventListener("change", () => {
       setGlobalFilterState();
-      invalidatePageCache();
-      loadCurrentPage({ force: true }).catch((error) => {
+      refreshDashboardPages().catch((error) => {
         setStatus(`Failed to apply filters: ${error.message}`);
       });
     });
@@ -2801,15 +2964,14 @@ async function initializeDashboard() {
   document.addEventListener("change", handleDocumentChange);
   document.addEventListener("keydown", handleDocumentKeydown);
   refreshButtonEl.addEventListener("click", () => {
-    invalidatePageCache();
-    loadCurrentPage({ force: true }).catch((error) => {
+    refreshDashboardPages().catch((error) => {
       setStatus(`Failed to refresh page: ${error.message}`);
     });
   });
   window.addEventListener("popstate", () => {
     readStateFromUrl();
     setActiveDashboardTab(currentDashboardTab);
-    loadCurrentPage({ force: true }).catch((error) => {
+    refreshDashboardPages().catch((error) => {
       setStatus(`Failed to restore state: ${error.message}`);
     });
   });

@@ -1868,6 +1868,14 @@ def dashboard_create_dataset_generation_run(
         _raise_rag_service_http_error(exc)
 
 
+@app.post("/api/dashboard/rag/benchmarks/local-sync")
+def dashboard_sync_local_benchmarks() -> dict[str, Any]:
+    try:
+        return rag_service_client.sync_local_benchmarks()
+    except RagServiceError as exc:
+        _raise_rag_service_http_error(exc)
+
+
 @app.post("/api/dashboard/rag/datasets/{dataset_id}/benchmark-runs")
 def dashboard_create_dataset_benchmark_run(
     dataset_id: str,
