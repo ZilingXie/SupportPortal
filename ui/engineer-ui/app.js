@@ -1260,17 +1260,27 @@ function renderTicketPoolView() {
             const waitingRowClass = status === "waiting_for_engineer" ? " ticket-row-waiting" : "";
 
             return `
-              <article class="ticket-row${waitingRowClass}" role="listitem">
+              <article
+                class="ticket-row${waitingRowClass}"
+                role="button"
+                tabindex="0"
+                data-ticket-row="true"
+                data-ticket-id="${escapeHtml(ticketId)}"
+                aria-label="Open ticket ${escapeHtml(ticketId)} detail"
+              >
                 <div class="ticket-row-header">
                   <div class="ticket-row-title-group">
-                    <p class="ticket-row-kicker mono">${escapeHtml(ticketId)}</p>
-                    <h3 class="ticket-row-title">${escapeHtml(subject)}</h3>
+                    <div class="ticket-row-headline">
+                      <p class="ticket-row-kicker mono">${escapeHtml(ticketId)}</p>
+                      <h3 class="ticket-row-title">${escapeHtml(subject)}</h3>
+                    </div>
                   </div>
                   <div class="ticket-row-badges">
                     <span class="priority-badge priority-${escapeHtml(priority)}">${escapeHtml(
                       priorityLabel(priority)
                     )}</span>
                     <span class="status-badge ${statusClass(status)}">${escapeHtml(statusLabel(status))}</span>
+                    <span class="mode-pill mode-pill-${escapeHtml(mode)}">${escapeHtml(modeLabel(mode))}</span>
                   </div>
                 </div>
 
@@ -1289,18 +1299,6 @@ function renderTicketPoolView() {
                   `
                         : ""
                     }
-                  </div>
-
-                  <div class="ticket-row-actions">
-                    <span class="mode-pill mode-pill-${escapeHtml(mode)}">${escapeHtml(modeLabel(mode))}</span>
-                    <button
-                      class="btn btn-primary action-btn"
-                      data-action="view-detail"
-                      data-ticket-id="${escapeHtml(ticketId)}"
-                      type="button"
-                    >
-                      Open Workspace
-                    </button>
                   </div>
                 </div>
               </article>
@@ -2008,11 +2006,20 @@ async function submitTakeoverReply(ticketId, messageText) {
 }
 
 async function handleTableClick(event) {
-  const button = event.target.closest("button.action-btn");
-  if (!button) {
+  const row = getTicketRowTarget(event.target);
+  if (row) {
+    const ticketId = String(row.dataset.ticketId || "").trim();
+    if (!ticketId) {
+      return;
+    }
+    await openTicketDetail(ticketId);
     return;
   }
 
+  const button = event.target.closest("button.action-btn");
+  if (!button || !button.dataset) {
+    return;
+  }
   const action = button.dataset.action;
   const ticketId = button.dataset.ticketId;
   if (!action || !ticketId) {
@@ -2042,6 +2049,53 @@ async function handleTableClick(event) {
     }
   } finally {
     button.disabled = false;
+  }
+}
+
+const ROW_INTERACTIVE_SELECTOR = [
+  "button",
+  "a",
+  "input",
+  "select",
+  "textarea",
+  "summary",
+  '[role="button"]',
+  '[role="link"]',
+].join(", ");
+
+function getTicketRowTarget(target) {
+  if (!target || typeof target.closest !== "function") {
+    return null;
+  }
+  const row = target.closest("[data-ticket-row]");
+  if (!row) {
+    return null;
+  }
+  const interactive = target.closest(ROW_INTERACTIVE_SELECTOR);
+  if (interactive && interactive !== row) {
+    return null;
+  }
+  return row;
+}
+
+function handleTableKeydown(event) {
+  if (event.key !== "Enter" && event.key !== " " && event.key !== "Spacebar") {
+    return;
+  }
+  const row = getTicketRowTarget(event.target);
+  if (!row) {
+    return;
+  }
+  const ticketId = String(row.dataset.ticketId || "").trim();
+  if (!ticketId) {
+    return;
+  }
+  event.preventDefault();
+  const openResult = openTicketDetail(ticketId);
+  if (openResult && typeof openResult.catch === "function") {
+    openResult.catch((error) => {
+      showBoardError(`Operation failed: ${error.message}`);
+    });
   }
 }
 
@@ -2797,16 +2851,17 @@ workspaceRegionEl?.addEventListener("click", (event) => {
     return;
   }
 
-  if (event.target.closest("button.action-btn")) {
-    handleTableClick(event).catch((error) => {
-      showBoardError(`Operation failed: ${error.message}`);
-    });
-  }
+  handleTableClick(event).catch((error) => {
+    showBoardError(`Operation failed: ${error.message}`);
+  });
 });
 workspaceRegionEl?.addEventListener("input", handleDetailInput);
 workspaceRegionEl?.addEventListener("focusin", handleDetailFocusIn);
 workspaceRegionEl?.addEventListener("focusout", handleDetailFocusOut);
-workspaceRegionEl?.addEventListener("keydown", handleDetailKeydown);
+workspaceRegionEl?.addEventListener("keydown", (event) => {
+  handleTableKeydown(event);
+  handleDetailKeydown(event);
+});
 workspaceRegionEl?.addEventListener("change", (event) => {
   handleDetailChange(event).catch((error) => {
     window.alert(`Operation failed: ${error.message}`);
