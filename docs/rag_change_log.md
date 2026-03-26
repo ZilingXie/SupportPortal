@@ -12,6 +12,39 @@ For each new entry, record:
 
 ## 2026-03-21 - Stable local ingestion hardening for `ag_docs`
 
+## 2026-03-26 - Technical-question routing consolidation and route-aware benchmark rerun
+
+- Summary: Removed `general_tech_help` from the active routing taxonomy, routed all technical/support questions into `agora_docs_rag`, replaced small-talk substring matching with token-aware matching, updated mixed `off_topic` benchmark cases to use `grounded_abstain`, cleared benchmark history, re-synced local benchmark files into dataset tables, and reran canonical / mixed / real-user benchmarks on the new taxonomy.
+- Reason: The previous router was misclassifying brandless technical questions into `fallback_or_refuse`, falsely matching `hi` inside words like `which`, and leaving route-aware benchmark pages with incomplete taxonomy alignment for off-topic technical cases.
+- Affected files or config:
+  - `backend/services/support_router.py`
+  - `backend/services/rag_benchmark.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/tests/test_support_router.py`
+  - `backend/tests/test_rag_benchmark.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `benchmarks/agora_rag_testset_100_mixed_en.json`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Active route families for new benchmark runs are now `agora_docs_rag`, `web_company_info`, `general_chat`, and `fallback_or_refuse`; new eval rows no longer emit `general_tech_help`
+  - Mixed benchmark `off_topic` cases `agora-mixed-091` through `agora-mixed-095` now expect `agora_docs_rag / rag / agora_docs_only` with `expected_behavior=grounded_abstain`
+  - Cleared benchmark-only history from `support_rag_eval_results`, `support_rag_eval_runs`, `support_rag_daily_metrics`, and benchmark `support_rag_review_samples`
+  - Re-synced local benchmark files into dataset tables, restoring `support_rag_datasets=3`, `support_rag_dataset_generation_runs=3`, and `support_rag_dataset_items=297`
+  - Reran benchmarks:
+    - `agora_canonical_en_bge_m3_20260326` -> `EVAL-CB8997C5D200`
+    - `agora_mixed_en_bge_m3_20260326` -> `EVAL-114948624559`
+    - `agora_real_user_en_bge_m3_20260326` -> `EVAL-854A89297504`
+  - Final rerun counts: `support_rag_eval_runs=3`, `support_rag_eval_results=297`
+  - Mixed expected route-family inventory is now `agora_docs_rag=84`, `general_chat=10`, `web_company_info=5`, `fallback_or_refuse=0`
+- Verification:
+  - `./.venv/bin/python -m unittest backend.tests.test_support_router backend.tests.test_rag_benchmark backend.tests.test_rag_benchmark_runner`
+  - `./.venv/bin/python -m unittest backend.tests.test_support_router backend.tests.test_rag_benchmark backend.tests.test_rag_benchmark_runner backend.tests.test_local_benchmark_sync backend.tests.test_run_rag_benchmark_cli backend.tests.test_dashboard_ui_contract backend.tests.test_rag_dashboard_contract backend.tests.test_rag_scorecard_repository backend.tests.test_rag_service_client`
+  - `./.venv/bin/python -m py_compile backend/services/support_router.py backend/services/rag_benchmark.py backend/services/rag_benchmark_runner.py backend/services/local_benchmark_sync.py backend/tests/test_support_router.py backend/tests/test_rag_benchmark.py backend/tests/test_rag_benchmark_runner.py`
+  - `./.venv/bin/python scripts/sync_local_benchmarks.py`
+  - Benchmark runs completed with route-aware fields populated `99/99` for each run across `question_type`, `category`, `expected_route_family`, `actual_route_family`, `failure_stage`, and `response_policy_followed`
+  - Mixed rerun actual route-family distribution: `agora_docs_rag=80`, `fallback_or_refuse=7`, `general_chat=4`, `web_company_info=8`, and `legacy_route_family_rows=0`
+  - Dashboard API checks for `routing`, `retrieval`, `generation`, and `data-supply` returned populated sections for `agora_mixed_en_bge_m3_20260326`
+
 - Summary: Added config controls for stable local markdown ingestion by allowing metadata enrichment to be disabled, retrying transient Postgres connection failures, and adding a resumable directory ingestion script for `ag_docs`.
 - Reason: Parallel ingestion was amplifying connection timeouts and making local rebuilds unreliable.
 - Affected files or config:
