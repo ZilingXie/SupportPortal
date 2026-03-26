@@ -844,3 +844,38 @@ For each new entry, record:
   - Contract and repository suite result: `38 tests` passed.
   - Compose `ps` showed all expected containers up: `deployment_redis_1`, `deployment_rag_api_1`, `deployment_rag_worker_1`, `deployment_ws_gateway_1`, `deployment_api_1`, `deployment_worker_1`, `deployment_nginx_1`.
   - Final health check returned `status=ok`, `ticket_storage=postgres`, `knowledge_storage=postgres`, and `rag_service=ok`.
+
+## 2026-03-26 - LLM-first support router via Responses API with few-shot prompt hints
+
+- Summary: Replaced the old rule-first support router with an LLM-first classifier that sends structured lexicon/context hints plus static few-shot examples to the OpenAI `v1/responses` API, keeps the existing route contract unchanged, and sanitizes model output before it is stored in route traces.
+- Reason: The prior router overfit a narrow keyword list and was missing real user Agora technical questions around product-mode selection, notifications/viewer analytics, recording strategy, and auth/benchmark phrasing. Moving the route decision to the model while preserving hint signals makes the boundary more expressive without changing downstream route consumers.
+- Affected files or config:
+  - `backend/services/support_router.py`
+  - `backend/services/support_router_prompt.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/tests/test_support_router.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema changes.
+  - No benchmark result rows, vector rows, knowledge documents, or dashboard payload shapes were rewritten.
+  - Support routing for non-empty messages is now LLM-first. Lexicon and regex matches are still extracted, but only as prompt hints.
+  - Router defaults now target `gpt-5.4-mini` with `INTENT_ROUTER_REASONING_EFFORT=low`, `INTENT_ROUTER_TEMPERATURE=0.3`, and a higher default router timeout of `8.0s` to reduce false refusals from model latency.
+  - Route traces now persist the model-derived `scope_label`, sanitized `reason`, and deduplicated `matched_signals`, while `route_family`, `execution_action`, and `tooling_profile` continue to be derived locally from the existing route contract.
+  - `rag_benchmark_runner.py` now respects an injected `route_decider` for route-aware benchmark cases so benchmark route assertions reflect the caller-provided router.
+- Verification:
+  - `python3 -m py_compile backend/services/support_router.py backend/services/support_router_prompt.py backend/services/rag_benchmark_runner.py backend/tests/test_support_router.py`
+  - `python3 -m unittest backend.tests.test_support_router backend.tests.test_rag_benchmark_runner backend.tests.test_ticket_routing -v`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health`
+  - Containerized route-only audit over the three official local benchmark datasets using `load_benchmark_cases(...)` plus `decide_support_route(...)` returned:
+    - `benchmarks/agora_rag_testset_100_standrad_en.json`: `route_family_accuracy=0.9798`, `execution_action_accuracy=0.9798`, `tooling_profile_accuracy=0.9798`, `false_negative_for_true_agora_tech=0.0202`, `false_positive_to_agora_rag=0.0`
+    - `benchmarks/agora_rag_testset_100_mixed_en.json`: `route_family_accuracy=0.9192`, `execution_action_accuracy=0.9192`, `tooling_profile_accuracy=0.9192`, `false_negative_for_true_agora_tech=0.0714`, `false_positive_to_agora_rag=0.0`
+    - `benchmarks/agora_rag_testset_100_realUser_en.json`: `route_family_accuracy=0.9798`, `execution_action_accuracy=0.9798`, `tooling_profile_accuracy=0.9798`, `false_negative_for_true_agora_tech=0.0202`, `false_positive_to_agora_rag=0.0`
+  - Remaining standard misses were:
+    - `agora-canonical-057`
+    - `agora-canonical-064`
+  - Remaining real-user misses were:
+    - `agora-realuser-064`
+    - `agora-realuser-093`

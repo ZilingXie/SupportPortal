@@ -1,13 +1,14 @@
 # Collaboration Rules
 
 ## Branch Workflow
-1. By default, Codex must not make task changes directly on the `mac` branch. Treat `mac` as the base and integration branch.
-2. For each task, create a new `codex/<task>` branch from the latest `mac` branch state. Do not reuse old task branches unless the user explicitly asks for that.
-3. Perform all edits, checks, and tests for the task on that `codex/<task>` branch.
-4. If the current workspace has uncommitted changes that could affect branch creation, switching, testing, or merging, Codex must stop and ask the user before proceeding. Do not stash, overwrite, or force checkout on its own.
+1. Treat `mac` as the base and integration branch. Investigation that does not modify repo-tracked files may be performed directly on `mac`.
+2. Once a task requires editing repo-tracked files, Codex must create a new `codex/<task>` branch from the latest `mac` branch state before making those edits. Do not reuse old task branches unless the user explicitly asks for that.
+3. After a `codex/<task>` branch is created, all repo-tracked edits, checks, and task verification for that task must happen on that `codex/<task>` branch until finalization begins.
+4. If the current workspace has uncommitted changes that could affect investigation, branch creation, branch switching, testing, squashing changes onto `mac`, or recreating the final change on `main`, Codex must stop and ask the user before proceeding. Do not stash, overwrite, or force checkout on its own.
 5. If the user explicitly approves the task branch for finalization (for example by saying "验收通过" or using an equivalent approval), Codex must treat that as authorization to start the branch finalization flow.
-6. Before any commit or merge, run a fresh round of verification that matches the current task. If verification fails, if Codex is not currently on the expected `codex/<task>` branch, or if the working tree/index state makes finalization unsafe or ambiguous, Codex must stop and ask the user before proceeding.
-7. After that verification passes, commit the task-branch changes, merge the resulting commit back into `mac`, and delete the local `codex/<task>` branch only after the merge succeeds.
+6. Before any commit or finalization transfer, run a fresh round of verification that matches the current task. For tasks with repo-tracked edits, that verification must pass on the expected `codex/<task>` branch before switching away from it. If verification fails, or if the working tree/index state makes finalization unsafe or ambiguous, Codex must stop and ask the user before proceeding.
+7. The finalization flow for a task branch is: run fresh verification on `codex/<task>`; switch to `mac`; transfer the task-branch changes onto `mac` as a squash result; delete the local `codex/<task>` branch only after the squash result is safely present on `mac`; create the final authoritative commit on `mac`; switch to `main`; apply the same diff from the `mac` commit without reusing the `mac` commit object; then create a separate new commit on `main`.
+8. The `main` step is not a `mac` to `main` merge and not a direct cherry-pick of the `mac` commit.
 
 ## UI Design Source Of Truth
 1. All new or refactored UI under `ui/` must follow `/Users/xieziling/Desktop/personal_proj/SupportPortal/design.md`.
