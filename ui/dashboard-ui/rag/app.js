@@ -45,6 +45,13 @@ const PAGE_LABELS = {
   review: "Review Queue",
 };
 const DASHBOARD_PAGE_NAMES = Object.keys(PAGE_LABELS);
+const ROUTING_SUMMARY_PERCENT_KEYS = new Set([
+  "route_family_accuracy",
+  "execution_action_accuracy",
+  "tooling_profile_accuracy",
+  "false_positive_to_agora_rag",
+  "false_negative_for_true_agora_tech",
+]);
 
 const LOCAL_BENCHMARK_CATALOG = [
   {
@@ -156,6 +163,16 @@ function formatDateTime(value) {
   return date.toLocaleString();
 }
 
+function formatPercentageValue(value) {
+  if (value === null || value === undefined || value === "") {
+    return "-";
+  }
+  if (typeof value !== "number") {
+    return formatMetricValue(value);
+  }
+  return `${formatDecimal(value * 100, 1)}%`;
+}
+
 function formatMetricValue(value, key = "") {
   if (value === null || value === undefined || value === "") {
     return "-";
@@ -199,7 +216,8 @@ function buildChipList(values, tone = "neutral") {
   return items.map((item) => `<span class="chip chip-${tone}">${escapeHtml(item)}</span>`).join("");
 }
 
-function buildMetricCards(cards) {
+function buildMetricCards(cards, options = {}) {
+  const formatters = options.formatters || {};
   const entries = Object.entries(cards || {}).filter(([, value]) => value !== null && value !== undefined && value !== "");
   if (!entries.length) {
     return `<div class="empty-state">No metrics available in this scope.</div>`;
@@ -208,16 +226,28 @@ function buildMetricCards(cards) {
     <div class="metric-grid">
       ${entries
         .map(
-          ([key, value]) => `
+          ([key, value]) => {
+            const formatter = formatters[key];
+            const displayValue = formatter ? formatter(value, key) : formatMetricValue(value, key);
+            return `
             <article class="metric-card">
               <span class="metric-label">${escapeHtml(humanizeLabel(key))}</span>
-              <strong class="metric-value">${formatMetricValue(value, key)}</strong>
+              <strong class="metric-value">${displayValue}</strong>
             </article>
-          `
+          `;
+          }
         )
         .join("")}
     </div>
   `;
+}
+
+function buildRoutingSummaryCardFormatters(cards) {
+  return Object.fromEntries(
+    Object.keys(cards || {})
+      .map((key) => [key, ROUTING_SUMMARY_PERCENT_KEYS.has(key) ? formatPercentageValue : null])
+      .filter(([, formatter]) => formatter)
+  );
 }
 
 function buildDefinitionGrid(items) {
@@ -1619,7 +1649,9 @@ function renderRoutingPage(payload) {
         <h2>${escapeHtml(summary.title || "Routing")}</h2>
         <p>${escapeHtml(summary.subtitle || "Audit domain classification separately from retrieval and generation.")}</p>
       </div>
-      ${buildMetricCards(summary.cards || {})}
+      ${buildMetricCards(summary.cards || {}, {
+        formatters: buildRoutingSummaryCardFormatters(summary.cards || {}),
+      })}
     </section>
     ${buildTableSection("Per Category Route Health", categoryPassRate, {
       columns: ["category", "case_count", "pass_rate"],

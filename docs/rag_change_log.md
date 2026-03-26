@@ -787,3 +787,32 @@ For each new entry, record:
     - `EVAL-114948624559`
     - `EVAL-854A89297504`
     - `EVAL-CB8997C5D200`
+
+## 2026-03-26 - Routing summary cards percentage-only display
+
+- Summary: Changed the `Routing` hero summary cards in `/dashboard/rag/` to render routing ratio metrics as percentages while leaving the underlying API payload and all non-routing card/table/detail formatting unchanged.
+- Reason: The routing summary cards were showing raw `0-1` ratio values like `0.95` and `0.05`, which made the top-level audit snapshot harder to scan than percentage values such as `95%` and `5%`.
+- Affected files or config:
+  - `ui/dashboard-ui/rag/app.js`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema changes.
+  - No benchmark runs, eval results, review samples, vector rows, or knowledge documents were rewritten.
+  - `Routing` summary cards now format only these five keys as percentages at render time:
+    - `route_family_accuracy`
+    - `execution_action_accuracy`
+    - `tooling_profile_accuracy`
+    - `false_positive_to_agora_rag`
+    - `false_negative_for_true_agora_tech`
+  - Other RAG dashboard cards, tables, and detail surfaces continue to use the existing metric formatter behavior.
+- Verification:
+  - `python3 -m unittest backend.tests.test_dashboard_ui_contract`
+  - `node --check ui/dashboard-ui/rag/app.js`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health`
+  - Contract suite result: `13 tests` passed.
+  - Compose `ps` showed all expected containers up: `deployment_redis_1`, `deployment_rag_api_1`, `deployment_rag_worker_1`, `deployment_ws_gateway_1`, `deployment_api_1`, `deployment_worker_1`, `deployment_nginx_1`.
+  - Health endpoint returned `status=ok`, `knowledge_storage=postgres`, and `rag_service=ok`.

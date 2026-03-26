@@ -140,6 +140,24 @@ class DashboardUiContractTests(unittest.TestCase):
         ]:
             self.assertIn(marker, css)
 
+    def test_routing_summary_cards_use_percentage_only_overrides(self) -> None:
+        source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
+
+        for marker in [
+            "const ROUTING_SUMMARY_PERCENT_KEYS = new Set([",
+            "function formatPercentageValue(value) {",
+            "function buildMetricCards(cards, options = {}) {",
+            "const formatters = options.formatters || {};",
+            "const formatter = formatters[key];",
+            "ROUTING_SUMMARY_PERCENT_KEYS.has(key) ? formatPercentageValue : null",
+            "route_family_accuracy",
+            "execution_action_accuracy",
+            "tooling_profile_accuracy",
+            "false_positive_to_agora_rag",
+            "false_negative_for_true_agora_tech",
+        ]:
+            self.assertIn(marker, source)
+
     def test_retrieval_and_generation_pages_use_case_explorer_sections(self) -> None:
         source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
 
