@@ -816,3 +816,31 @@ For each new entry, record:
   - Contract suite result: `13 tests` passed.
   - Compose `ps` showed all expected containers up: `deployment_redis_1`, `deployment_rag_api_1`, `deployment_rag_worker_1`, `deployment_ws_gateway_1`, `deployment_api_1`, `deployment_worker_1`, `deployment_nginx_1`.
   - Health endpoint returned `status=ok`, `knowledge_storage=postgres`, and `rag_service=ok`.
+
+## 2026-03-26 - Scorecard baseline pinned to current benchmark run
+
+- Summary: Reworked the `/dashboard/rag/` scorecard comparison controls so the top-level `Current Benchmark Run` is always the scorecard baseline, while the scorecard panel exposes a separate candidate selector that defaults to a different benchmark run when one is available.
+- Reason: The previous scorecard compare control treated the current benchmark run as the candidate and asked users to pick a baseline from the same benchmark version, which made it impossible to keep the active run fixed while comparing it against another benchmark run by default.
+- Affected files or config:
+  - `backend/repositories/knowledge_repository.py`
+  - `ui/dashboard-ui/rag/app.js`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema changes.
+  - No benchmark runs, eval results, review samples, vector rows, or knowledge documents were rewritten.
+  - Scorecard selection now uses the `Current Benchmark Run` as the fixed baseline and defaults the compare candidate to a different benchmark run when an alternate exists.
+  - The scorecard candidate dropdown excludes the currently selected benchmark run and no longer requires the compare run to share the same `benchmark_version`.
+  - Other RAG dashboard pages continue to use the current benchmark run as their primary inspected run; this change only redefines the scorecard compare panel behavior.
+- Verification:
+  - `python3 -m unittest backend.tests.test_dashboard_ui_contract backend.tests.test_rag_scorecard_repository backend.tests.test_rag_dashboard_contract`
+  - `python3 -m py_compile backend/repositories/knowledge_repository.py`
+  - `node --check ui/dashboard-ui/rag/app.js`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health`
+  - Contract and repository suite result: `38 tests` passed.
+  - Compose `ps` showed all expected containers up: `deployment_redis_1`, `deployment_rag_api_1`, `deployment_rag_worker_1`, `deployment_ws_gateway_1`, `deployment_api_1`, `deployment_worker_1`, `deployment_nginx_1`.
+  - Final health check returned `status=ok`, `ticket_storage=postgres`, `knowledge_storage=postgres`, and `rag_service=ok`.

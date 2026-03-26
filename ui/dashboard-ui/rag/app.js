@@ -438,41 +438,6 @@ function resolveCandidateExperiment(context, candidateIdentifier = null) {
   );
 }
 
-function getComparableBaselineOptions(context, candidateIdentifier = null) {
-  const options = Array.isArray(context?.available_experiments) ? context.available_experiments : [];
-  const candidate = resolveCandidateExperiment(context, candidateIdentifier);
-  const candidateBenchmarkVersion = normalizeString(
-    candidate?.benchmark_version || context?.benchmark_version || context?.current_benchmark_version
-  );
-  if (!candidateBenchmarkVersion) {
-    return options;
-  }
-  const comparableOptions = options.filter(
-    (option) => normalizeString(option?.benchmark_version) === candidateBenchmarkVersion
-  );
-  return comparableOptions.length ? comparableOptions : options;
-}
-
-function isComparableBaselineSelection(context, baselineIdentifier, candidateIdentifier = null) {
-  const normalizedBaselineIdentifier = normalizeString(baselineIdentifier);
-  if (!normalizedBaselineIdentifier) {
-    return true;
-  }
-  return getComparableBaselineOptions(context, candidateIdentifier).some(
-    (option) =>
-      normalizedBaselineIdentifier === normalizeString(option?.experiment_id) ||
-      normalizedBaselineIdentifier === normalizeString(option?.eval_run_id)
-  );
-}
-
-function clearIncompatibleBaselineSelection(context, candidateIdentifier = null) {
-  if (!isComparableBaselineSelection(context, ragFilters.baseline_experiment_id, candidateIdentifier)) {
-    ragFilters.baseline_experiment_id = "";
-    return true;
-  }
-  return false;
-}
-
 function buildBenchmarkRunMeta(option) {
   const parts = [];
   if (normalizeString(option?.benchmark_version)) {
@@ -485,46 +450,72 @@ function buildBenchmarkRunMeta(option) {
   return parts.join(" · ");
 }
 
+function resolveScorecardBaselineExperiment(context) {
+  const options = Array.isArray(context?.available_experiments) ? context.available_experiments : [];
+  return (
+    findExperimentOption(
+      options,
+      context?.baseline_experiment_id || context?.current_experiment_id || context?.current_eval_run_id
+    ) ||
+    options[0] ||
+    null
+  );
+}
+
+function getScorecardCandidateOptions(context) {
+  const options = Array.isArray(context?.available_experiments) ? context.available_experiments : [];
+  const baseline = resolveScorecardBaselineExperiment(context);
+  const baselineIdentifier = normalizeString(
+    baseline?.experiment_id || baseline?.eval_run_id || context?.baseline_experiment_id || context?.current_experiment_id
+  );
+  return options.filter(
+    (option) => normalizeString(option?.experiment_id || option?.eval_run_id) !== baselineIdentifier
+  );
+}
+
+function resolveScorecardComparisonCandidate(context) {
+  const candidateOptions = getScorecardCandidateOptions(context);
+  return findExperimentOption(candidateOptions, context?.candidate_experiment_id) || candidateOptions[0] || null;
+}
+
 function buildExperimentComparisonControls(summary, benchmarkSelector = null) {
-  const comparisonContext = benchmarkSelector || summary || {};
-  const candidate = resolveCandidateExperiment(comparisonContext);
-  const candidateBenchmarkVersion = normalizeString(
-    candidate?.benchmark_version || comparisonContext?.benchmark_version || comparisonContext?.current_benchmark_version
-  );
-  const comparableBaselineOptions = getComparableBaselineOptions(comparisonContext);
-  const candidateIdentifier = normalizeString(
-    candidate?.experiment_id ||
-      candidate?.eval_run_id ||
-      comparisonContext?.current_experiment_id ||
-      comparisonContext?.current_eval_run_id ||
-      summary?.candidate_experiment_id
-  );
-  const hasAlternateBaseline = comparableBaselineOptions.some(
-    (option) => normalizeString(option?.experiment_id || option?.eval_run_id) !== candidateIdentifier
-  );
-  const baselineNote = hasAlternateBaseline
-    ? "Only runs from the same benchmark version can be used as the baseline."
-    : "Only runs from the same benchmark version can be used as the baseline. No alternate baseline is available for this benchmark version yet.";
-  const sharedFootnote = candidateBenchmarkVersion
-    ? `Candidate defines the comparison pool. Benchmark version: ${candidateBenchmarkVersion}. ${baselineNote}`
-    : `Candidate defines the comparison pool. ${baselineNote}`;
-  const candidateLabel = candidate?.label || candidate?.experiment_id || candidate?.eval_run_id || "Latest benchmark run";
-  const candidateMeta = buildBenchmarkRunMeta(candidate);
+  const comparisonContext = {
+    available_experiments:
+      (Array.isArray(summary?.available_experiments) && summary.available_experiments.length
+        ? summary.available_experiments
+        : benchmarkSelector?.available_experiments) || [],
+    current_experiment_id: benchmarkSelector?.current_experiment_id,
+    current_eval_run_id: benchmarkSelector?.current_eval_run_id,
+    baseline_experiment_id: summary?.baseline_experiment_id,
+    candidate_experiment_id: summary?.candidate_experiment_id,
+  };
+  const baseline = resolveScorecardBaselineExperiment(comparisonContext);
+  const candidateOptions = getScorecardCandidateOptions(comparisonContext);
+  const candidate = resolveScorecardComparisonCandidate(comparisonContext);
+  const hasAlternateCandidate = candidateOptions.length > 0;
+  const sharedFootnote = hasAlternateCandidate
+    ? "Current Benchmark Run stays pinned as the baseline. Choose another benchmark run as the candidate."
+    : "Current Benchmark Run stays pinned as the baseline. No alternate candidate benchmark run is available yet.";
+  const baselineLabel = baseline?.label || baseline?.experiment_id || baseline?.eval_run_id || "Current benchmark run";
+  const baselineMeta = buildBenchmarkRunMeta(baseline);
   return `
     <div class="comparison-controls">
       <div class="comparison-controls-grid hero-actions">
+        <article class="comparison-static-card">
+          <span class="comparison-static-label">Baseline</span>
+          <strong class="comparison-static-value">${escapeHtml(baselineLabel)}</strong>
+          <span class="comparison-static-meta">${escapeHtml(baselineMeta || "Current benchmark run")}</span>
+        </article>
         <label class="filter-field">
-          <span>Baseline</span>
-          <select id="baseline-experiment-selector" ${hasAlternateBaseline ? "" : "disabled"}>
-            <option value="">Auto</option>
-            ${comparableBaselineOptions.map(buildExperimentOption).join("")}
+          <span>Candidate</span>
+          <select id="candidate-experiment-selector" ${hasAlternateCandidate ? "" : "disabled"}>
+            ${
+              hasAlternateCandidate
+                ? candidateOptions.map(buildExperimentOption).join("")
+                : `<option value="">No alternate run available</option>`
+            }
           </select>
         </label>
-        <article class="comparison-static-card">
-          <span class="comparison-static-label">Candidate</span>
-          <strong class="comparison-static-value">${escapeHtml(candidateLabel)}</strong>
-          <span class="comparison-static-meta">${escapeHtml(candidateMeta || "Latest completed benchmark run")}</span>
-        </article>
       </div>
       <p class="comparison-controls-note">${escapeHtml(sharedFootnote)}</p>
     </div>
@@ -1585,9 +1576,9 @@ function renderExperimentsPage(payload) {
     ${(segmentGroups || []).map(buildGroupBlock).join("")}
   `;
 
-  const baselineSelect = document.getElementById("baseline-experiment-selector");
-  if (baselineSelect) {
-    baselineSelect.value = summary.baseline_experiment_id || "";
+  const candidateSelect = document.getElementById("candidate-experiment-selector");
+  if (candidateSelect) {
+    candidateSelect.value = summary.candidate_experiment_id || "";
   }
 }
 
@@ -1625,9 +1616,9 @@ function renderScorecardPage(payload) {
     ${buildCaseResultsTable(caseResults)}
   `;
 
-  const baselineSelect = document.getElementById("baseline-experiment-selector");
-  if (baselineSelect) {
-    baselineSelect.value = summary.baseline_experiment_id || "";
+  const candidateSelect = document.getElementById("candidate-experiment-selector");
+  if (candidateSelect) {
+    candidateSelect.value = summary.candidate_experiment_id || "";
   }
 }
 
@@ -2481,16 +2472,6 @@ function clearBenchmarkCaseSelection() {
   ragFilters.test_case_id = "";
 }
 
-function resolveComparisonContext() {
-  return (
-    pageCache[currentDashboardTab]?.benchmark_selector ||
-    pageCache[currentDashboardTab]?.sections?.summary ||
-    pageCache.scorecard?.benchmark_selector ||
-    pageCache.scorecard?.sections?.summary ||
-    null
-  );
-}
-
 function applyPagePayload(pageName, payload) {
   pageRenderers[pageName]?.render(payload);
   renderBenchmarkRunSelector(payload?.benchmark_selector);
@@ -2933,22 +2914,20 @@ function handleDocumentClick(event) {
 }
 
 function handleDocumentChange(event) {
-  if (event.target.id === "baseline-experiment-selector") {
+  if (event.target.id === "candidate-experiment-selector") {
     ragFilters.baseline_experiment_id = normalizeString(event.target.value);
     refreshDashboardPages().catch((error) => {
-      setStatus(`Failed to update baseline experiment: ${error.message}`);
+      setStatus(`Failed to update candidate benchmark run: ${error.message}`);
     });
     return;
   }
   if (event.target.id === "current-benchmark-run-selector") {
     const nextCandidateExperimentId = normalizeString(event.target.value);
-    const comparisonContext = resolveComparisonContext();
     ragFilters.candidate_experiment_id = nextCandidateExperimentId;
-    if (!nextCandidateExperimentId) {
-      ragFilters.baseline_experiment_id = "";
-    } else if (comparisonContext) {
-      clearIncompatibleBaselineSelection(comparisonContext, nextCandidateExperimentId);
-    } else {
+    if (
+      !nextCandidateExperimentId ||
+      normalizeString(ragFilters.baseline_experiment_id) === nextCandidateExperimentId
+    ) {
       ragFilters.baseline_experiment_id = "";
     }
     refreshDashboardPages({ clearBenchmarkSelection: true }).catch((error) => {

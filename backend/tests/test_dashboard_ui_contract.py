@@ -216,19 +216,20 @@ class DashboardUiContractTests(unittest.TestCase):
         self.assertRegex(css, r"\.definition-value\s*\{[^}]*word-break:\s*break-word;")
         self.assertRegex(css, r"\.chip\s*\{[^}]*white-space:\s*normal;")
 
-    def test_scorecard_baseline_selector_only_surfaces_same_benchmark_versions(self) -> None:
+    def test_scorecard_comparison_controls_pin_baseline_to_current_run_and_allow_alternate_candidate(self) -> None:
         source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
         css = Path("ui/dashboard-ui/rag/styles.css").read_text(encoding="utf-8")
 
         for marker in [
-            "Only runs from the same benchmark version can be used as the baseline.",
-            "No alternate baseline is available for this benchmark version yet.",
-            "getComparableBaselineOptions",
-            "clearIncompatibleBaselineSelection",
+            "candidate-experiment-selector",
+            "Current Benchmark Run stays pinned as the baseline.",
+            "No alternate candidate benchmark run is available yet.",
+            "getScorecardCandidateOptions",
+            "resolveScorecardComparisonCandidate",
             "comparison-controls-note",
         ]:
             self.assertIn(marker, source if marker != "comparison-controls-note" else css)
-        self.assertNotIn("candidate-experiment-selector", source)
+        self.assertNotIn('id="baseline-experiment-selector"', source)
 
     def test_scorecard_comparison_controls_use_shared_footnote_for_alignment(self) -> None:
         source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
@@ -237,7 +238,7 @@ class DashboardUiContractTests(unittest.TestCase):
         for marker in [
             "comparison-controls",
             "comparison-controls-grid",
-            "Candidate defines the comparison pool.",
+            "Current Benchmark Run stays pinned as the baseline.",
         ]:
             self.assertIn(marker, source if marker != "comparison-controls-grid" else css)
 
