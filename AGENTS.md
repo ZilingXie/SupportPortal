@@ -1,9 +1,11 @@
 # Collaboration Rules
 
 ## Branch Workflow
-1. By default, all Codex changes for this repo must be made directly on the `mac` branch.
-2. Do not create temporary `codex/*` branches unless the user explicitly asks for branch isolation for multiple independent large changes.
-3. If the user requests isolated branch work, create the separate branch from `mac` unless the user says otherwise.
+1. By default, Codex must not make task changes directly on the `mac` branch. Treat `mac` as the base and integration branch.
+2. For each task, create a new `codex/<task>` branch from the latest `mac` branch state. Do not reuse old task branches unless the user explicitly asks for that.
+3. Perform all edits, checks, and tests for the task on that `codex/<task>` branch.
+4. If the current workspace has uncommitted changes that could affect branch creation, switching, testing, or merging, Codex must stop and ask the user before proceeding. Do not stash, overwrite, or force checkout on its own.
+5. After the user reviews and approves the task branch, merge it back into `mac`. Once the merge succeeds, delete the local task branch.
 
 ## UI Design Source Of Truth
 1. All new or refactored UI under `ui/` must follow `/Users/xieziling/Desktop/personal_proj/SupportPortal/design.md`.
