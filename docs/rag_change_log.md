@@ -879,3 +879,26 @@ For each new entry, record:
   - Remaining real-user misses were:
     - `agora-realuser-064`
     - `agora-realuser-093`
+
+## 2026-03-26 - Recover grounded RAG answers after async query transport failures
+
+- Summary: Added a client-side recovery path that re-reads the live query detail by `request_id` when `/internal/rag/query` fails at the transport layer, so the ticket pipeline can reuse a grounded answer that the RAG service already finished instead of escalating the ticket to an engineer.
+- Reason: Real ticket `TK-021` asked `how to join channel`. The persisted ticket response escalated to engineer, but the matching RAG telemetry row `rag-4a380a42c875` showed `needs_human=false`, `generation_mode=structured_answer`, and a fully populated grounded answer. The failure boundary was between RAG query execution and async ticket persistence, not retrieval itself.
+- Affected files or config:
+  - `backend/services/rag_service_client.py`
+  - `backend/main.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema changes.
+  - No vector rows, knowledge documents, benchmark rows, or ticket history were rewritten.
+  - Async support answers can now recover a completed grounded RAG result from the live-query dashboard record when the original query call fails after the server already persisted the answer.
+  - This reduces false `waiting_for_engineer` handoffs caused by query transport failures without changing the normal grounded-answer or true-insufficient-evidence paths.
+- Verification:
+  - `./.venv/bin/python -m unittest backend.tests.test_rag_service_client`
+  - `./.venv/bin/python -m py_compile backend/main.py backend/services/rag_service_client.py`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - Container recovery replay on `deployment_api_1` patched `rag_service_client.query` to raise `RagServiceError` while `rag_service_client.rag_dashboard_live_case_detail` returned a grounded `primary` payload; `_build_rag_answer("how to join channel")` returned the recovered answer, preserved citations/sources, and `needs_engineer=false`.
+  - Containerized live-path replay on `deployment_api_1` ran `resolve_support_message("how to join channel", ...)` after restart and returned `answer_route=rag`, `scope_label=agora_technical`, `needs_engineer_guidance=false`, `confidence=0.95`, `source_count=6`, and `citation_count=6`.
