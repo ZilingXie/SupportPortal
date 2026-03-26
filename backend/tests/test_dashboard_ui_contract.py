@@ -91,17 +91,31 @@ class DashboardUiContractTests(unittest.TestCase):
                 rf'["\']{re.escape(page_name)}["\']\s*:\s*\{{',
             )
 
+    def test_rag_dashboard_topbar_exposes_current_benchmark_run_selector_and_prewarm_cache(self) -> None:
+        html = Path("ui/dashboard-ui/rag/index.html").read_text(encoding="utf-8")
+        source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
+
+        self.assertIn("Current Benchmark Run", html)
+        self.assertIn('id="current-benchmark-run-selector"', html)
+        for marker in [
+            "cacheEpoch",
+            "pageLoadPromises",
+            "prewarmDashboardPages",
+            "benchmark_selector",
+        ]:
+            self.assertIn(marker, source)
+
     def test_rag_data_supply_page_exposes_benchmark_and_knowledge_panels(self) -> None:
         source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
         for marker in [
-            "data-create-dataset-generation",
-            "data-run-dataset-benchmark",
-            "data-export-dataset",
             "Benchmark Supply",
             "Knowledge Supply",
-            "Start Generation",
-            "Run Benchmark",
-            "Export Gold",
+            "Sync Local Benchmarks",
+            "data-sync-local-benchmarks",
+            "Local Benchmark Catalog",
+            "Sync Runs",
+            "Dataset Versions",
+            "Coverage",
         ]:
             self.assertIn(marker, source)
 
@@ -196,6 +210,7 @@ class DashboardUiContractTests(unittest.TestCase):
             "comparison-controls-note",
         ]:
             self.assertIn(marker, source if marker != "comparison-controls-note" else css)
+        self.assertNotIn("candidate-experiment-selector", source)
 
     def test_scorecard_comparison_controls_use_shared_footnote_for_alignment(self) -> None:
         source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")

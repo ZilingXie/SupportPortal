@@ -6277,6 +6277,8 @@ class PostgresKnowledgeRepository:
             {
                 "test_case_id": row[0],
                 "question": row[1],
+                "question_type": _clean_text(_json_dict(row[12]).get("question_type")) or _clean_text(row[2]),
+                "category": _clean_text(_json_dict(row[12]).get("category")) or _clean_text(row[2]),
                 "query_type": row[2],
                 "source_type": row[3],
                 "product": row[4],
@@ -6286,13 +6288,20 @@ class PostgresKnowledgeRepository:
                 "expected_heading_paths": _json_list(row[8]),
                 "expected_evidence_refs": _json_list(row[9]),
                 "answer_key_points": _json_list(row[10]),
-                "expected_handoff": False,
+                "expected_handoff": bool(_json_dict(row[12]).get("expected_handoff", False)),
+                "expected_route_family": _clean_text(_json_dict(row[12]).get("expected_route_family")),
+                "expected_execution_action": _clean_text(_json_dict(row[12]).get("expected_execution_action")),
+                "expected_behavior": _clean_text(_json_dict(row[12]).get("expected_behavior")),
+                "expected_tooling_profile": _clean_text(_json_dict(row[12]).get("expected_tooling_profile")),
+                "temporal_sensitivity": _clean_text(_json_dict(row[12]).get("temporal_sensitivity")) or None,
+                "dataset_schema_version": _clean_text(_json_dict(row[12]).get("dataset_schema_version")) or None,
                 "expected_route": _clean_text(_json_dict(row[12]).get("expected_route")) or "rag",
                 "expected_scope_label": _clean_text(_json_dict(row[12]).get("expected_scope_label")) or "agora_technical",
                 "retrieval_metrics_enabled": bool(_json_dict(row[12]).get("retrieval_metrics_enabled", True)),
                 "citation_metrics_enabled": bool(_json_dict(row[12]).get("citation_metrics_enabled", True)),
                 "route_aware": bool(_json_dict(row[12]).get("route_aware", False)),
-                "tags": [
+                "tags": _json_list(_json_dict(row[12]).get("tags"))
+                or [
                     _clean_text(row[11]),
                     _clean_text(row[2]),
                     _clean_text(row[3]),
@@ -6955,8 +6964,9 @@ class PostgresKnowledgeRepository:
         filters: dict[str, Any],
         sections: dict[str, Any],
         has_eval_data: bool,
+        benchmark_selector: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return {
+        envelope = {
             "layout": layout,
             "range": range_value,
             "filters": filters,
@@ -6964,6 +6974,9 @@ class PostgresKnowledgeRepository:
             "has_eval_data": has_eval_data,
             "last_refreshed_at": _utc_now(),
         }
+        if benchmark_selector is not None:
+            envelope["benchmark_selector"] = benchmark_selector
+        return envelope
 
     def _review_queue_summary(self, days: int) -> tuple[int, int, int, int]:
         row = self._query_rows(
@@ -9021,8 +9034,10 @@ class PostgresKnowledgeRepository:
         candidate = (
             _match(filters.get("candidate_experiment_id"))
             or _match(filters.get("experiment_id"))
-            or experiments[0]
+            or next(iter(self._available_experiment_options(experiments)), None)
         )
+        if candidate is not None and candidate not in experiments:
+            candidate = _match(candidate.get("experiment_id")) or _match(candidate.get("eval_run_id")) or candidate
         candidate_benchmark_version = _clean_text((candidate or {}).get("benchmark_version"))
         comparable_experiments = [
             item
@@ -10433,6 +10448,9 @@ class PostgresKnowledgeRepository:
     def _diagnosis_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
         experiments = self._experiment_rows(days, filters)
         baseline, candidate = self._select_experiment_rows(experiments, filters)
+        selector_experiments = experiments or self._benchmark_selector_rows(days, filters)
+        _selector_baseline, selector_candidate = self._select_experiment_rows(selector_experiments, filters)
+        benchmark_selector = self._build_benchmark_selector(selector_experiments, candidate or selector_candidate)
         cases_by_run = self._benchmark_case_summary_rows(
             [
                 _clean_text((baseline or {}).get("eval_run_id")),
@@ -10512,6 +10530,7 @@ class PostgresKnowledgeRepository:
             filters=filters,
             sections=sections,
             has_eval_data=bool(experiments),
+            benchmark_selector=benchmark_selector,
         )
 
     def _knowledge_supply_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
@@ -10641,6 +10660,10 @@ class PostgresKnowledgeRepository:
         )
 
     def _review_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
+        experiments = self._experiment_rows(days, filters)
+        selector_experiments = experiments or self._benchmark_selector_rows(days, filters)
+        _selector_baseline, selector_candidate = self._select_experiment_rows(selector_experiments, filters)
+        benchmark_selector = self._build_benchmark_selector(selector_experiments, selector_candidate)
         review_rows = self._review_queue_rows(days, filters)
         pending_review_count, live_review_count, benchmark_review_count, dataset_review_count = self._review_queue_summary(
             days
@@ -10672,6 +10695,7 @@ class PostgresKnowledgeRepository:
             filters=filters,
             sections=sections,
             has_eval_data=True,
+            benchmark_selector=benchmark_selector,
         )
 
     def _datasets_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
@@ -10693,6 +10717,14 @@ class PostgresKnowledgeRepository:
         if language_value and language_value != "all":
             language_clause = " AND g.question_language = %s "
             language_params.append(language_value)
+        benchmark_version_value = _clean_text(filters.get("benchmark_version"))
+        generation_benchmark_clause = ""
+        dataset_benchmark_clause = ""
+        benchmark_params: list[Any] = []
+        if benchmark_version_value and benchmark_version_value != "all":
+            generation_benchmark_clause = " AND g.benchmark_version = %s "
+            dataset_benchmark_clause = " AND d.benchmark_version = %s "
+            benchmark_params.append(benchmark_version_value)
         generation_rows = self._query_rows(
             sql.SQL(
                 """
@@ -10720,6 +10752,7 @@ class PostgresKnowledgeRepository:
                 WHERE g.created_at >= NOW() - (%s * INTERVAL '1 day')
                 {source_clause}
                 {language_clause}
+                {benchmark_clause}
                 ORDER BY g.created_at DESC
                 LIMIT %s
                 """
@@ -10728,8 +10761,9 @@ class PostgresKnowledgeRepository:
                 self._table("support_rag_datasets"),
                 source_clause=sql.SQL(source_clause),
                 language_clause=sql.SQL(language_clause),
+                benchmark_clause=sql.SQL(generation_benchmark_clause),
             ),
-            tuple([days, *source_params, *language_params, filters["limit"]]),
+            tuple([days, *source_params, *language_params, *benchmark_params, filters["limit"]]),
         )
         item_filter_sql, item_filter_params = self._build_filter_clause(
             filters,
@@ -10769,6 +10803,7 @@ class PostgresKnowledgeRepository:
                   ON s.dataset_item_id = i.dataset_item_id
                  AND s.sample_source = 'dataset_candidate'
                 WHERE d.created_at >= NOW() - (%s * INTERVAL '1 day')
+                {benchmark_clause}
                 {filters}
                 GROUP BY d.dataset_id, d.dataset_name, d.benchmark_version, d.question_language, d.source_types, d.status, d.created_at, d.updated_at
                 ORDER BY d.created_at DESC
@@ -10779,9 +10814,10 @@ class PostgresKnowledgeRepository:
                 self._table("support_rag_dataset_generation_runs"),
                 self._table("support_rag_dataset_items"),
                 self._table("support_rag_review_samples"),
+                benchmark_clause=sql.SQL(dataset_benchmark_clause),
                 filters=sql.SQL(item_filter_sql),
             ),
-            tuple([days, *item_filter_params, filters["limit"]]),
+            tuple([days, *benchmark_params, *item_filter_params, filters["limit"]]),
         )
         coverage_rows = self._query_rows(
             sql.SQL(
@@ -10800,6 +10836,7 @@ class PostgresKnowledgeRepository:
                 JOIN {} AS d
                   ON d.dataset_id = i.dataset_id
                 WHERE d.created_at >= NOW() - (%s * INTERVAL '1 day')
+                {benchmark_clause}
                 {filters}
                 GROUP BY d.dataset_id, d.dataset_name, d.benchmark_version, i.source_type, i.query_type, i.difficulty, i.language
                 ORDER BY gold_item_count DESC, silver_item_count DESC, d.created_at DESC, i.source_type ASC, i.query_type ASC
@@ -10808,9 +10845,10 @@ class PostgresKnowledgeRepository:
             ).format(
                 self._table("support_rag_dataset_items"),
                 self._table("support_rag_datasets"),
+                benchmark_clause=sql.SQL(dataset_benchmark_clause),
                 filters=sql.SQL(item_filter_sql),
             ),
-            tuple([days, *item_filter_params, max(filters["limit"] * 3, 30)]),
+            tuple([days, *benchmark_params, *item_filter_params, max(filters["limit"] * 3, 30)]),
         )
         generation_run_rows = [
             {
@@ -10919,7 +10957,65 @@ class PostgresKnowledgeRepository:
         )
         return experiments, baseline, candidate, baseline_cases, candidate_cases, wins, regressions
 
+    def _benchmark_selector_rows(self, days: int, filters: dict[str, Any]) -> list[dict[str, Any]]:
+        experiment_id_value = _clean_text(filters.get("experiment_id"))
+        experiment_filter_sql = ""
+        experiment_filter_params: list[Any] = []
+        if experiment_id_value and experiment_id_value != "all":
+            experiment_filter_sql = """
+              AND (
+                  COALESCE(e.experiment_id, e.eval_run_id) = %s
+                  OR e.eval_run_id = %s
+              )
+            """
+            experiment_filter_params.extend([experiment_id_value, experiment_id_value])
+        rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    e.eval_run_id,
+                    COALESCE(e.experiment_id, e.eval_run_id) AS experiment_id,
+                    e.benchmark_version,
+                    e.started_at,
+                    e.finished_at
+                FROM {} AS e
+                WHERE COALESCE(e.finished_at, e.started_at) >= NOW() - (%s * INTERVAL '1 day')
+                {experiment_filter}
+                ORDER BY
+                    COALESCE(e.finished_at, e.started_at) DESC,
+                    COALESCE(e.experiment_id, e.eval_run_id) DESC
+                """
+            ).format(
+                self._table("support_rag_eval_runs"),
+                experiment_filter=sql.SQL(experiment_filter_sql),
+            ),
+            tuple([days, *experiment_filter_params]),
+        )
+        return [
+            {
+                "eval_run_id": row[0],
+                "experiment_id": row[1],
+                "benchmark_version": row[2],
+                "created_at": _to_iso(row[3]) if row[3] is not None else None,
+                "finished_at": _to_iso(row[4]) if row[4] is not None else None,
+            }
+            for row in rows
+        ]
+
+    def _experiment_recency_value(self, experiment: dict[str, Any] | None) -> str:
+        return _clean_text((experiment or {}).get("finished_at")) or _clean_text((experiment or {}).get("created_at"))
+
     def _available_experiment_options(self, experiments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        sorted_experiments = sorted(
+            experiments,
+            key=lambda item: (
+                self._experiment_recency_value(item),
+                _clean_text(item.get("finished_at")),
+                _clean_text(item.get("created_at")),
+                _clean_text(item.get("experiment_id")) or _clean_text(item.get("eval_run_id")),
+            ),
+            reverse=True,
+        )
         return [
             {
                 "eval_run_id": item.get("eval_run_id"),
@@ -10927,9 +11023,40 @@ class PostgresKnowledgeRepository:
                 "benchmark_version": item.get("benchmark_version"),
                 "label": f"{item.get('experiment_id')} · {item.get('benchmark_version') or 'benchmark'}",
                 "finished_at": item.get("finished_at"),
+                "created_at": item.get("created_at"),
             }
-            for item in experiments
+            for item in sorted_experiments
         ]
+
+    def _build_benchmark_selector(
+        self,
+        experiments: list[dict[str, Any]],
+        candidate: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        options = self._available_experiment_options(experiments)
+        current_option = None
+        current_identifier = _clean_text((candidate or {}).get("experiment_id")) or _clean_text((candidate or {}).get("eval_run_id"))
+        if current_identifier:
+            current_option = next(
+                (
+                    item
+                    for item in options
+                    if current_identifier in {
+                        _clean_text(item.get("experiment_id")),
+                        _clean_text(item.get("eval_run_id")),
+                    }
+                ),
+                None,
+            )
+        if current_option is None and options:
+            current_option = options[0]
+        return {
+            "current_experiment_id": (current_option or {}).get("experiment_id"),
+            "current_eval_run_id": (current_option or {}).get("eval_run_id"),
+            "current_benchmark_version": (current_option or {}).get("benchmark_version"),
+            "current_finished_at": (current_option or {}).get("finished_at") or (current_option or {}).get("created_at"),
+            "available_experiments": options,
+        }
 
     def _category_pass_rows(self, candidate_cases: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
         grouped: dict[str, list[dict[str, Any]]] = {}
@@ -10965,6 +11092,9 @@ class PostgresKnowledgeRepository:
             days=days,
             filters=filters,
         )
+        selector_experiments = experiments or self._benchmark_selector_rows(days, filters)
+        _selector_baseline, selector_candidate = self._select_experiment_rows(selector_experiments, filters)
+        benchmark_selector = self._build_benchmark_selector(selector_experiments, candidate or selector_candidate)
         candidate_rows = list(candidate_cases.values())
         baseline_rows = list(baseline_cases.values())
         route_family_accuracy = _mean_from_rows(candidate_rows, "route_family_correct")
@@ -11031,6 +11161,7 @@ class PostgresKnowledgeRepository:
             filters=filters,
             sections=sections,
             has_eval_data=bool(experiments),
+            benchmark_selector=benchmark_selector,
         )
 
     def _routing_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
@@ -11038,6 +11169,9 @@ class PostgresKnowledgeRepository:
             days=days,
             filters=filters,
         )
+        selector_experiments = experiments or self._benchmark_selector_rows(days, filters)
+        _selector_baseline, selector_candidate = self._select_experiment_rows(selector_experiments, filters)
+        benchmark_selector = self._build_benchmark_selector(selector_experiments, candidate or selector_candidate)
         candidate_rows = list(candidate_cases.values())
         non_agora_rows = [row for row in candidate_rows if _clean_text(row.get("expected_route_family")) != "agora_docs_rag"]
         agora_rows = [row for row in candidate_rows if _clean_text(row.get("expected_route_family")) == "agora_docs_rag"]
@@ -11080,6 +11214,7 @@ class PostgresKnowledgeRepository:
             filters=filters,
             sections=sections,
             has_eval_data=bool(experiments),
+            benchmark_selector=benchmark_selector,
         )
 
     def _retrieval_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
@@ -11087,6 +11222,9 @@ class PostgresKnowledgeRepository:
             days=days,
             filters=filters,
         )
+        selector_experiments = experiments or self._benchmark_selector_rows(days, filters)
+        _selector_baseline, selector_candidate = self._select_experiment_rows(selector_experiments, filters)
+        benchmark_selector = self._build_benchmark_selector(selector_experiments, candidate or selector_candidate)
         rag_rows = [row for row in candidate_cases.values() if _clean_text(row.get("expected_route_family")) == "agora_docs_rag"]
         sections = {
             "summary": {
@@ -11110,6 +11248,7 @@ class PostgresKnowledgeRepository:
             filters=filters,
             sections=sections,
             has_eval_data=bool(experiments),
+            benchmark_selector=benchmark_selector,
         )
 
     def _generation_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
@@ -11117,6 +11256,9 @@ class PostgresKnowledgeRepository:
             days=days,
             filters=filters,
         )
+        selector_experiments = experiments or self._benchmark_selector_rows(days, filters)
+        _selector_baseline, selector_candidate = self._select_experiment_rows(selector_experiments, filters)
+        benchmark_selector = self._build_benchmark_selector(selector_experiments, candidate or selector_candidate)
         candidate_rows = list(candidate_cases.values())
         sections = {
             "summary": {
@@ -11141,15 +11283,25 @@ class PostgresKnowledgeRepository:
             filters=filters,
             sections=sections,
             has_eval_data=bool(experiments),
+            benchmark_selector=benchmark_selector,
         )
 
     def _data_supply_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
-        datasets_page = self._datasets_workbench_page(range_value, days, filters)
+        experiments = self._experiment_rows(days, filters)
+        selector_experiments = experiments or self._benchmark_selector_rows(days, filters)
+        _selector_baseline, selector_candidate = self._select_experiment_rows(selector_experiments, filters)
+        benchmark_selector = self._build_benchmark_selector(selector_experiments, selector_candidate)
+        selected_benchmark_version = _clean_text((selector_candidate or {}).get("benchmark_version"))
+        datasets_filters = dict(filters)
+        if selected_benchmark_version:
+            datasets_filters["benchmark_version"] = selected_benchmark_version
+        datasets_page = self._datasets_workbench_page(range_value, days, datasets_filters)
         knowledge_supply_page = self._knowledge_supply_workbench_page(range_value, days, filters)
         sections = {
             "summary": {
                 "title": "Data Supply",
                 "subtitle": "Keep benchmark quality and knowledge-base health separate, then diagnose ownership cleanly.",
+                "benchmark_version": selected_benchmark_version or None,
                 "cards": {
                     "dataset_version_count": datasets_page.get("sections", {}).get("summary", {}).get("cards", {}).get("dataset_version_count"),
                     "gold_item_count": datasets_page.get("sections", {}).get("summary", {}).get("cards", {}).get("gold_item_count"),
@@ -11168,6 +11320,7 @@ class PostgresKnowledgeRepository:
             filters=filters,
             sections=sections,
             has_eval_data=bool(datasets_page.get("has_eval_data") or knowledge_supply_page.get("has_eval_data")),
+            benchmark_selector=benchmark_selector,
         )
 
     def rag_dashboard_page(

@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from backend.services.rag_benchmark_runner import resolve_judge_models, run_benchmark
-from backend.services.rag_qa import RagAnswer, RagQueryResult, RagQueryTrace
+from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, RagAnswer, RagQueryResult, RagQueryTrace
 from backend.services.support_router import SupportResolution
 
 
@@ -188,6 +188,59 @@ def _fake_query_runner(question: str, top_k: int | None = None) -> RagQueryResul
     )
 
 
+def _insufficient_evidence_query_runner(question: str, top_k: int | None = None) -> RagQueryResult:
+    _ = question
+    _ = top_k
+    return RagQueryResult(
+        answer=RagAnswer(
+            answer=INSUFFICIENT_EVIDENCE_REPLY,
+            confidence=0.88,
+            sources=[],
+            citations=[],
+        ),
+        trace=RagQueryTrace(
+            query_type="off_topic",
+            retrieval_strategy="hybrid_rrf",
+            vector_candidates_count=0,
+            bm25_candidates_count=0,
+            reranked_candidates_count=0,
+            retrieved_chunk_ids=[],
+            selected_chunk_ids=[],
+            vector_retrieval_latency_ms=0.0,
+            bm25_retrieval_latency_ms=0.0,
+            retrieval_latency_ms=0.0,
+            rerank_latency_ms=0.0,
+            generation_latency_ms=12.0,
+            total_latency_ms=12.0,
+            prompt_tokens=0,
+            completion_tokens=0,
+            embedding_tokens=0,
+            embedding_provider="siliconflow",
+            embedding_model="BAAI/bge-m3",
+            embedding_dimensions=1024,
+            embedding_request_meta=[],
+            model_name="gpt-4.1",
+            answer_length=len(INSUFFICIENT_EVIDENCE_REPLY),
+            citation_count=0,
+            cited_chunk_ids=[],
+            needs_human=False,
+            handoff_reason=None,
+            confidence_score=0.88,
+            primary_source_type="external_benchmark",
+            primary_chunk_strategy="markdown_header_v1",
+            generation_mode="structured_answer",
+            structured_retry_used=False,
+            extractive_fallback_used=False,
+            selected_doc_count=0,
+            top1_similarity_score=None,
+            avg_selected_similarity_score=None,
+            citation_coverage_ratio=0.0,
+            retrieval_candidates=[],
+            selected_contexts=[],
+        ),
+    )
+
+
 def _fake_judge_runner(
     *,
     judge_model: str,
@@ -246,6 +299,34 @@ def _fake_message_resolver(
         route_confidence=0.93,
         search_used=True,
         matched_signals=["stock"],
+    )
+
+
+def _grounded_abstain_message_resolver(
+    message: str,
+    *,
+    ticket_subject: str | None = None,
+    ticket_context: list[dict[str, str]] | None = None,
+    rag_answerer=None,
+    decision=None,
+) -> SupportResolution:
+    _ = message
+    _ = ticket_subject
+    _ = ticket_context
+    _ = rag_answerer
+    _ = decision
+    return SupportResolution(
+        answer=INSUFFICIENT_EVIDENCE_REPLY,
+        confidence=0.88,
+        sources=[],
+        citations=[],
+        needs_engineer_guidance=False,
+        answer_route="rag",
+        scope_label="agora_technical",
+        route_reason="technical_issue_detected",
+        route_confidence=0.88,
+        search_used=False,
+        matched_signals=["windows"],
     )
 
 
@@ -363,6 +444,62 @@ class RagBenchmarkRunnerTests(unittest.TestCase):
         self.assertEqual(first_row["evidence_hit_at_5"], None)
         self.assertEqual(first_row["trace_payload"]["route_family"], "general_chat")
         self.assertEqual(first_row["trace_payload"]["execution_action"], "controlled_response")
+
+    def test_run_benchmark_marks_grounded_abstain_rag_case_as_policy_success_only_for_closeout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dataset_path = Path(tmpdir) / "dataset.json"
+            dataset_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "test_case_id": "case-off-topic-1",
+                            "question": "My computer blue-screened. What should I do?",
+                            "question_type": "off_topic",
+                            "category": "off_topic",
+                            "expected_route_family": "agora_docs_rag",
+                            "expected_execution_action": "rag",
+                            "expected_tooling_profile": "agora_docs_only",
+                            "expected_behavior": "grounded_abstain",
+                            "retrieval_metrics_enabled": False,
+                            "citation_metrics_enabled": False,
+                            "route_aware": True,
+                            "expected_document_ids": ["external-benchmark-placeholder"],
+                            "expected_heading_paths": ["non agora"],
+                            "expected_evidence_refs": [
+                                {
+                                    "doc_id": "external-benchmark-placeholder",
+                                    "heading": "non agora",
+                                    "chunk_id": "external-benchmark-091",
+                                }
+                            ],
+                            "answer_key_points": [
+                                "No relevant Agora support docs support this device-level issue.",
+                                "The assistant should explicitly say it cannot ground an answer from Agora docs.",
+                            ],
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            repository = _FakeRepository()
+            summary = run_benchmark(
+                dataset_path=dataset_path,
+                experiment_id="exp-grounded-abstain-1",
+                repository=repository,
+                query_runner=_insufficient_evidence_query_runner,
+                judge_runner=_fake_judge_runner,
+                message_resolver=_grounded_abstain_message_resolver,
+            )
+
+        self.assertEqual(summary["case_count"], 1)
+        first_row = repository.eval_results[0]["rows"][0]
+        self.assertEqual(first_row["expected_behavior"], "grounded_abstain")
+        self.assertEqual(first_row["actual_route_family"], "agora_docs_rag")
+        self.assertTrue(first_row["matched_expected_execution_action"])
+        self.assertTrue(first_row["abstained_or_deflected_properly"])
+        self.assertTrue(first_row["response_policy_followed"])
+        self.assertEqual(first_row["failure_type"], "grounded_answer")
+        self.assertEqual(first_row["trace_payload"]["actual_answer_text"], INSUFFICIENT_EVIDENCE_REPLY)
 
     def test_run_benchmark_supports_dataset_snapshot_source(self) -> None:
         repository = _FakeRepository()

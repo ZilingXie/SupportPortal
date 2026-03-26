@@ -170,6 +170,37 @@ class RagScorecardRepositoryTests(unittest.TestCase):
         self.assertEqual(candidate["experiment_id"], "mixed-candidate")
         self.assertEqual(baseline["experiment_id"], "mixed-baseline")
 
+    def test_select_experiment_rows_defaults_candidate_to_latest_completed_run(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        experiments = [
+            {
+                "experiment_id": "mixed-older",
+                "eval_run_id": "run-mixed-older",
+                "benchmark_version": "agora_rag_testset_100_mixed_en_v2",
+                "finished_at": "2026-03-23T12:00:00+00:00",
+                "created_at": "2026-03-23T11:00:00+00:00",
+            },
+            {
+                "experiment_id": "canonical-latest",
+                "eval_run_id": "run-canonical-latest",
+                "benchmark_version": "agora_rag_testset_100_canonical_en",
+                "finished_at": "2026-03-25T12:00:00+00:00",
+                "created_at": "2026-03-25T11:00:00+00:00",
+            },
+            {
+                "experiment_id": "mixed-created-only",
+                "eval_run_id": "run-mixed-created-only",
+                "benchmark_version": "agora_rag_testset_100_mixed_en_v2",
+                "finished_at": None,
+                "created_at": "2026-03-24T11:00:00+00:00",
+            },
+        ]
+
+        baseline, candidate = repository._select_experiment_rows(experiments, {})
+
+        self.assertEqual(candidate["experiment_id"], "canonical-latest")
+        self.assertEqual(baseline["experiment_id"], "canonical-latest")
+
     def test_scorecard_page_populates_baseline_and_delta_for_layers(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
         candidate_cases = {
@@ -281,6 +312,151 @@ class RagScorecardRepositoryTests(unittest.TestCase):
         available = payload["sections"]["summary"]["available_experiments"]
         self.assertEqual(available[0]["benchmark_version"], "agora_rag_testset_100_mixed_en_v2")
         self.assertEqual(available[1]["benchmark_version"], "agora_rag_testset_100_canonical_en")
+
+    def test_scorecard_page_exposes_top_level_benchmark_selector_sorted_by_recency(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+
+        with patch.object(
+            repository,
+            "_selected_benchmark_context",
+            return_value=(
+                [
+                    {
+                        "experiment_id": "mixed-older",
+                        "eval_run_id": "run-mixed-older",
+                        "benchmark_version": "agora_rag_testset_100_mixed_en_v2",
+                        "finished_at": "2026-03-23T12:00:00+00:00",
+                        "created_at": "2026-03-23T11:00:00+00:00",
+                    },
+                    {
+                        "experiment_id": "canonical-latest",
+                        "eval_run_id": "run-canonical-latest",
+                        "benchmark_version": "agora_rag_testset_100_canonical_en",
+                        "finished_at": "2026-03-25T12:00:00+00:00",
+                        "created_at": "2026-03-25T11:00:00+00:00",
+                    },
+                ],
+                {
+                    "experiment_id": "canonical-latest",
+                    "eval_run_id": "run-canonical-latest",
+                    "benchmark_version": "agora_rag_testset_100_canonical_en",
+                    "finished_at": "2026-03-25T12:00:00+00:00",
+                },
+                {
+                    "experiment_id": "canonical-latest",
+                    "eval_run_id": "run-canonical-latest",
+                    "benchmark_version": "agora_rag_testset_100_canonical_en",
+                    "finished_at": "2026-03-25T12:00:00+00:00",
+                },
+                {},
+                {},
+                [],
+                [],
+            ),
+        ):
+            payload = repository._scorecard_workbench_page("7d", 7, {"limit": 20})
+
+        selector = payload["benchmark_selector"]
+        self.assertEqual(selector["current_experiment_id"], "canonical-latest")
+        self.assertEqual(selector["current_benchmark_version"], "agora_rag_testset_100_canonical_en")
+        self.assertEqual(selector["available_experiments"][0]["experiment_id"], "canonical-latest")
+        self.assertEqual(selector["available_experiments"][1]["experiment_id"], "mixed-older")
+
+    def test_scorecard_page_uses_eval_run_selector_rows_when_metric_experiments_are_empty(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+
+        with patch.object(
+            repository,
+            "_selected_benchmark_context",
+            return_value=([], None, None, {}, {}, [], []),
+        ), patch.object(
+            repository,
+            "_benchmark_selector_rows",
+            return_value=[
+                {
+                    "experiment_id": "run-latest",
+                    "eval_run_id": "EVAL-LATEST",
+                    "benchmark_version": "agora_rag_testset_100_mixed_en",
+                    "created_at": "2026-03-26T07:47:08+00:00",
+                    "finished_at": None,
+                },
+                {
+                    "experiment_id": "run-older",
+                    "eval_run_id": "EVAL-OLDER",
+                    "benchmark_version": "agora_rag_testset_100_standrad_en",
+                    "created_at": "2026-03-26T07:17:48+00:00",
+                    "finished_at": None,
+                },
+            ],
+        ):
+            payload = repository._scorecard_workbench_page("7d", 7, {"limit": 20})
+
+        selector = payload["benchmark_selector"]
+        self.assertEqual(selector["current_experiment_id"], "run-latest")
+        self.assertEqual(selector["available_experiments"][0]["eval_run_id"], "EVAL-LATEST")
+        self.assertEqual(selector["available_experiments"][1]["eval_run_id"], "EVAL-OLDER")
+
+    def test_data_supply_page_filters_benchmark_tables_to_current_run_version(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        candidate = {
+            "experiment_id": "mixed-candidate",
+            "eval_run_id": "run-mixed-candidate",
+            "benchmark_version": "agora_rag_testset_100_mixed_en_v2",
+            "finished_at": "2026-03-25T12:00:00+00:00",
+        }
+        experiments = [
+            candidate,
+            {
+                "experiment_id": "canonical-baseline",
+                "eval_run_id": "run-canonical",
+                "benchmark_version": "agora_rag_testset_100_canonical_en",
+                "finished_at": "2026-03-24T12:00:00+00:00",
+            },
+        ]
+
+        with patch.object(repository, "_experiment_rows", return_value=experiments), patch.object(
+            repository,
+            "_select_experiment_rows",
+            return_value=(candidate, candidate),
+        ), patch.object(
+            repository,
+            "_datasets_workbench_page",
+            return_value={
+                "sections": {
+                    "summary": {
+                        "cards": {
+                            "dataset_version_count": 1,
+                            "gold_item_count": 99,
+                            "coverage_row_count": 12,
+                        }
+                    }
+                },
+                "has_eval_data": True,
+            },
+        ) as datasets_page_mock, patch.object(
+            repository,
+            "_knowledge_supply_workbench_page",
+            return_value={
+                "sections": {
+                    "summary": {
+                        "cards": {
+                            "ingestion_job_count_24h": 3,
+                            "avg_chunk_tokens": 420,
+                            "index_freshness_minutes": 18,
+                        }
+                    }
+                },
+                "has_eval_data": True,
+            },
+        ):
+            payload = repository._data_supply_workbench_page("7d", 7, {"limit": 20})
+
+        datasets_filters = datasets_page_mock.call_args.args[2]
+        self.assertEqual(datasets_filters["benchmark_version"], "agora_rag_testset_100_mixed_en_v2")
+        self.assertEqual(
+            payload["benchmark_selector"]["current_benchmark_version"],
+            "agora_rag_testset_100_mixed_en_v2",
+        )
 
     def test_routing_page_groups_cases_by_route_family_correct_in_test_case_order(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")

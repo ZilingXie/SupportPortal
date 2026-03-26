@@ -347,7 +347,6 @@ def _parse_benchmark_case(payload: dict[str, Any], *, line_number: int) -> Bench
                 "agora_docs_rag": "agora_technical",
                 "web_company_info": "agora_non_technical",
                 "general_chat": "small_talk",
-                "general_tech_help": "non_agora",
                 "fallback_or_refuse": "non_agora",
             }.get(expected_route_family, expected_scope_label)
         if payload.get("retrieval_metrics_enabled") is None:

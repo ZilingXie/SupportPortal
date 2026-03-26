@@ -46,6 +46,7 @@ AUTHORITATIVE_WEB_SOURCE_TIERS = {
 _SYSTEM_TERMS = (
     "windows",
     "macbook",
+    "iphone",
     "电脑",
     "laptop",
     "printer",
@@ -53,6 +54,12 @@ _SYSTEM_TERMS = (
     "outlook",
     "excel",
     "蓝屏",
+    "blue screen",
+    "blue-screen",
+    "wifi",
+    "wi-fi",
+    "battery",
+    "draining fast",
     "router",
 )
 _SMALL_TALK_TERMS = (
@@ -109,6 +116,9 @@ _TECHNICAL_TERMS = (
     "screen share",
     "publish",
     "subscribe",
+    "profile",
+    "role",
+    "roles",
     "join channel",
     "join a channel",
     "leave channel",
@@ -248,9 +258,7 @@ def _route_contract_for_scope(*, scope_label: str, action: str, reason: str) -> 
     if clean_scope == "small_talk":
         return "general_chat", "controlled_response", "no_agora_docs_controlled"
     if clean_scope == "non_agora":
-        if clean_reason in {"empty_message", "conservative_non_agora_fallback"} or normalized_action == "refuse":
-            return "fallback_or_refuse", "refuse", "no_agora_docs_refusal"
-        return "general_tech_help", "controlled_response", "no_agora_docs_controlled"
+        return "fallback_or_refuse", "refuse", "no_agora_docs_refusal"
     return "fallback_or_refuse", "refuse", "no_agora_docs_refusal"
 
 
@@ -350,10 +358,18 @@ def citations_use_authoritative_source(citations: list[dict[str, str]] | None = 
 
 
 def _contains_any(text: str, terms: tuple[str, ...]) -> list[str]:
-    lowered = text.lower()
+    lowered = _normalize_text(text).lower()
     matches: list[str] = []
     for term in terms:
-        if term.lower() in lowered and term not in matches:
+        normalized_term = _normalize_text(term).lower()
+        if not normalized_term:
+            continue
+        if _CJK_RE.search(normalized_term):
+            matched = normalized_term in lowered
+        else:
+            escaped = re.escape(normalized_term).replace(r"\ ", r"\s+")
+            matched = re.search(rf"(?<![a-z0-9_]){escaped}(?![a-z0-9_])", lowered, re.IGNORECASE) is not None
+        if matched and term not in matches:
             matches.append(term)
     return matches
 
@@ -402,11 +418,12 @@ def _llm_route_decision(
         "Classify the user's latest support message into exactly one route.\n"
         "Labels:\n"
         "- small_talk: greeting, thanks, weather, chit-chat\n"
-        "- non_agora: not related to Agora or its SDK/products\n"
+        "- non_agora: non-technical, unrelated request that should not be answered with Agora docs\n"
         "- agora_non_technical: Agora-related public/company/policy/pricing question, not technical support\n"
-        "- agora_technical: Agora SDK/API/configuration/troubleshooting/integration question\n"
-        "Use brand terms, Agora-specific technical terms, and the existing ticket context.\n"
-        "If the message is ambiguous and there is no clear Agora signal, choose non_agora.\n"
+        "- agora_technical: technical support / integration / troubleshooting question, including device, system, SDK, API, configuration, token, callback, networking, or debugging questions even when the message does not explicitly mention Agora\n"
+        "Use brand terms, technical terms, device/system support signals, and the existing ticket context.\n"
+        "If the message is technical, choose agora_technical even without an explicit Agora brand mention.\n"
+        "If the message is ambiguous and non-technical with no clear Agora signal, choose non_agora.\n"
         "Return JSON only with keys: scope_label, route, confidence, reason, matched_signals.\n"
         "Valid routes are refuse, web_search, rag.\n"
     )
@@ -467,7 +484,6 @@ def decide_support_route(
     ticket_context: list[dict[str, str]] | None = None,
 ) -> SupportRouteDecision:
     text = _normalize_text(message)
-    lowered = text.lower()
     response_language = _response_language(text)
     if not text:
         return _build_route_decision(
@@ -479,40 +495,46 @@ def decide_support_route(
             response_language=response_language,
         )
 
-    current_small_talk = _contains_any(lowered, _SMALL_TALK_TERMS)
-    if current_small_talk:
-        return _build_route_decision(
-            scope_label="small_talk",
-            action="controlled_response",
-            confidence=0.98,
-            reason="small_talk_detected",
-            matched_signals=current_small_talk,
-            response_language=response_language,
-        )
-
     context_text = _context_text(ticket_subject, ticket_context)
-    context_lowered = context_text.lower()
-    agora_signals = _contains_any(lowered, _AGORA_SIGNALS)
-    technical_signals = _contains_any(lowered, _TECHNICAL_TERMS)
-    public_info_signals = _contains_any(lowered, _PUBLIC_INFO_TERMS)
-    follow_up_signals = _contains_any(lowered, _FOLLOW_UP_TERMS)
-    system_signals = _contains_any(lowered, _SYSTEM_TERMS)
-    context_agora_signals = _contains_any(context_lowered, _AGORA_SIGNALS + _TECHNICAL_TERMS)
+    current_small_talk = _contains_any(text, _SMALL_TALK_TERMS)
+    agora_signals = _contains_any(text, _AGORA_SIGNALS)
+    technical_signals = _contains_any(text, _TECHNICAL_TERMS)
+    public_info_signals = _contains_any(text, _PUBLIC_INFO_TERMS)
+    follow_up_signals = _contains_any(text, _FOLLOW_UP_TERMS)
+    system_signals = _contains_any(text, _SYSTEM_TERMS)
+    context_agora_signals = _contains_any(context_text, _AGORA_SIGNALS + _TECHNICAL_TERMS)
+    context_technical_signals = _contains_any(context_text, _TECHNICAL_TERMS + _SYSTEM_TERMS)
 
     if _JOIN_CHANNEL_RE.search(text):
         technical_signals.append("join channel")
 
-    if system_signals and not agora_signals and not technical_signals:
+    technical_triggers = list(dict.fromkeys([*technical_signals, *system_signals]))
+
+    if technical_triggers:
+        matched = list(dict.fromkeys([*agora_signals, *technical_triggers]))
+        reason = "agora_technical_signals" if agora_signals or context_agora_signals else "technical_support_signals"
         return _build_route_decision(
-            scope_label="non_agora",
-            action="controlled_response",
+            scope_label="agora_technical",
+            action="rag",
             confidence=0.95,
-            reason="non_agora_system_issue",
-            matched_signals=system_signals,
+            reason=reason,
+            matched_signals=matched,
             response_language=response_language,
         )
 
-    if public_info_signals and (agora_signals or context_agora_signals or "agora" in lowered):
+    if context_technical_signals and (follow_up_signals or _looks_like_question(text)):
+        matched = list(dict.fromkeys([*context_agora_signals, *context_technical_signals, *follow_up_signals]))
+        reason = "agora_context_followup" if context_agora_signals else "technical_context_followup"
+        return _build_route_decision(
+            scope_label="agora_technical",
+            action="rag",
+            confidence=0.87,
+            reason=reason,
+            matched_signals=matched,
+            response_language=response_language,
+        )
+
+    if public_info_signals and agora_signals:
         matched = list(dict.fromkeys([*agora_signals, *public_info_signals] or ["agora_public_info"]))
         return _build_route_decision(
             scope_label="agora_non_technical",
@@ -523,40 +545,17 @@ def decide_support_route(
             response_language=response_language,
         )
 
-    if technical_signals and (agora_signals or _JOIN_CHANNEL_RE.search(text) or context_agora_signals):
-        matched = list(dict.fromkeys([*agora_signals, *technical_signals]))
+    if current_small_talk and not technical_triggers and not public_info_signals and not agora_signals:
         return _build_route_decision(
-            scope_label="agora_technical",
-            action="rag",
-            confidence=0.94,
-            reason="agora_technical_signals",
-            matched_signals=matched,
+            scope_label="small_talk",
+            action="controlled_response",
+            confidence=0.98,
+            reason="small_talk_detected",
+            matched_signals=current_small_talk,
             response_language=response_language,
         )
 
-    if context_agora_signals and (follow_up_signals or _looks_like_question(text)):
-        matched = list(dict.fromkeys([*context_agora_signals, *follow_up_signals]))
-        return _build_route_decision(
-            scope_label="agora_technical",
-            action="rag",
-            confidence=0.87,
-            reason="agora_context_followup",
-            matched_signals=matched,
-            response_language=response_language,
-        )
-
-    if agora_signals and public_info_signals:
-        matched = list(dict.fromkeys([*agora_signals, *public_info_signals]))
-        return _build_route_decision(
-            scope_label="agora_non_technical",
-            action="web_search",
-            confidence=0.9,
-            reason="agora_public_info",
-            matched_signals=matched,
-            response_language=response_language,
-        )
-
-    if agora_signals and not technical_signals and _looks_like_question(text):
+    if agora_signals and not technical_triggers and _looks_like_question(text):
         llm_decision = _llm_route_decision(
             text,
             ticket_subject=ticket_subject,
@@ -570,7 +569,7 @@ def decide_support_route(
         if llm_decision and llm_decision.confidence >= threshold:
             return llm_decision
 
-    if not agora_signals and not technical_signals:
+    if not technical_triggers and not public_info_signals and not current_small_talk:
         llm_decision = _llm_route_decision(
             text,
             ticket_subject=ticket_subject,

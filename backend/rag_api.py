@@ -33,6 +33,7 @@ from backend.services.knowledge_monitoring import (
     now_iso,
 )
 from backend.services.local_source_sync import ingest_source_document, stage_source_document
+from backend.services.local_benchmark_sync import sync_default_local_benchmarks
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, run_rag_query
 from backend.services.task_queue import AsyncRedisTaskQueue
 
@@ -759,6 +760,20 @@ async def internal_create_dataset_generation_run(
     payload["queued"] = True
     payload["processing_mode"] = "async_worker"
     return payload
+
+
+@app.post("/internal/dashboard/rag/benchmarks/local-sync")
+def internal_sync_local_benchmarks(
+    _: None = Depends(_require_internal_auth),
+) -> dict[str, Any]:
+    repository = _require_knowledge_repository()
+    synced = sync_default_local_benchmarks(repository)
+    return {
+        "synced_count": len(synced),
+        "datasets": synced,
+        "synced_at": now_iso(),
+        "source_of_truth": "local_benchmarks",
+    }
 
 
 @app.post("/internal/dashboard/rag/datasets/{dataset_id}/benchmark-runs", status_code=202)

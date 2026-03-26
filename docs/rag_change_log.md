@@ -639,3 +639,118 @@ For each new entry, record:
 - Verification:
   - `python3 -m unittest backend.tests.test_dashboard_ui_contract backend.tests.test_rag_benchmark backend.tests.test_rag_benchmark_runner backend.tests.test_rag_dashboard_contract backend.tests.test_rag_benchmark_suite_importer backend.tests.test_rag_scorecard_repository`
   - `python3 -m py_compile backend/services/rag_benchmark.py backend/services/rag_benchmark_runner.py backend/repositories/knowledge_repository.py backend/tests/test_dashboard_ui_contract.py backend/tests/test_rag_benchmark_runner.py scripts/run_rag_benchmark.py`
+
+## 2026-03-26 - Local-first route-aware benchmark sync, dataset mirror rebuild, and benchmark rerun
+
+- Summary: Promoted the local `benchmarks/*.json` files to the sole benchmark source of truth, upgraded all three files to the explicit mixed-route v2 contract, mirrored them back into dataset tables for Data Supply, disabled `--dataset-id` and `--suite` benchmark entrypoints, cleared historical benchmark results, and reran the canonical, mixed, and real-user benchmark suites from local files.
+- Reason: The previous reruns populated eval scores but left route/category/failure metadata null, which made `Routing` render as `unknown`, left `Retrieval` without eligible rows, showed incomplete `Generation` policy data, and kept `Data Supply` at zero because dataset tables had been wiped during earlier resets and were no longer the live benchmark source.
+- Affected files or config:
+  - `README.md`
+  - `backend/main.py`
+  - `backend/rag_api.py`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/services/local_benchmark_sync.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_local_benchmark_sync.py`
+  - `backend/tests/test_rag_benchmark.py`
+  - `backend/tests/test_rag_dashboard_contract.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `backend/tests/test_run_rag_benchmark_cli.py`
+  - `benchmarks/agora_rag_testset_100_mixed_en.json`
+  - `benchmarks/agora_rag_testset_100_realUser_en.json`
+  - `benchmarks/agora_rag_testset_100_standrad_en.json`
+  - `design.md`
+  - `scripts/run_rag_benchmark.py`
+  - `scripts/sync_local_benchmarks.py`
+  - `ui/dashboard-ui/rag/app.js`
+  - `ui/dashboard-ui/rag/styles.css`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Local benchmark files now carry explicit route-aware metadata on every row:
+    - `question_type`
+    - `category`
+    - `expected_route_family`
+    - `expected_execution_action`
+    - `expected_behavior`
+    - `expected_tooling_profile`
+    - `temporal_sensitivity`
+    - `route_aware`
+    - `retrieval_metrics_enabled`
+    - `citation_metrics_enabled`
+  - All three local benchmark files remain `99` cases each and now load under `dataset_schema_version = mixed_route_v2`.
+  - Mixed trap cases now include at least one `expected_evidence_ref.evidence_polarity = supports_denial` so the route-aware parser accepts them.
+  - Dataset mirror tables were rebuilt from local files:
+    - `support_rag_datasets = 3`
+    - `support_rag_dataset_generation_runs = 3`
+    - `support_rag_dataset_items = 297`
+  - Historical benchmark eval data was cleared from:
+    - `support_rag_eval_results`
+    - `support_rag_eval_runs`
+    - `support_rag_daily_metrics`
+    - `support_rag_review_samples` where `sample_source = 'benchmark'`
+  - Local smoke run `EVAL-D1CBCFF45063` verified mixed-route v2 write-through with non-null route/category/failure/policy fields before the full rerun.
+  - Full benchmark reruns completed from local files:
+    - `agora_canonical_en_bge_m3_20260326` -> `EVAL-8B9D8B320DB8`
+    - `agora_mixed_en_bge_m3_20260326` -> `EVAL-0D2F7A657EE5`
+    - `agora_real_user_en_bge_m3_20260326` -> `EVAL-83EB591AD772`
+  - Final eval inventory after rerun:
+    - `support_rag_eval_runs = 3`
+    - `support_rag_eval_results = 297`
+    - For each rerun, `question_type`, `category`, `expected_route_family`, `actual_route_family`, `failure_stage`, and `response_policy_followed` are populated on all `99` rows.
+- Verification:
+  - `./.venv/bin/python -m unittest backend.tests.test_rag_benchmark backend.tests.test_local_benchmark_sync backend.tests.test_run_rag_benchmark_cli backend.tests.test_dashboard_ui_contract backend.tests.test_rag_dashboard_contract backend.tests.test_rag_service_client backend.tests.test_rag_scorecard_repository backend.tests.test_rag_benchmark_runner`
+  - `./.venv/bin/python -m py_compile backend/services/local_benchmark_sync.py backend/services/rag_benchmark.py backend/services/rag_benchmark_runner.py backend/repositories/knowledge_repository.py backend/main.py backend/rag_api.py backend/services/rag_service_client.py scripts/run_rag_benchmark.py scripts/sync_local_benchmarks.py`
+  - `node --check ui/dashboard-ui/rag/app.js`
+  - `./.venv/bin/python scripts/sync_local_benchmarks.py`
+  - `./.venv/bin/python scripts/run_rag_benchmark.py --dataset benchmarks/agora_rag_testset_100_mixed_en.json --limit 1 --experiment-id agora_mixed_smoke_20260326`
+  - SQL checks confirmed:
+    - dataset mirror counts are `3 / 3 / 297`
+    - rerun eval counts are `3 / 297`
+    - each rerun has `99/99` populated route/category/failure/policy fields
+
+## 2026-03-26 - Benchmark run selector and full-tab prewarm cache for the RAG dashboard
+
+- Summary: Added a global `Current Benchmark Run` selector to the top of `/dashboard/rag/`, defaulted benchmark-aware pages to the latest completed run, prewarmed every RAG dashboard tab into cache after the initial page load, and rebuilt the full tab cache whenever benchmark scope or global dashboard state changes.
+- Reason: Tab switches were still incurring cold loads, benchmark selection was buried inside the scorecard view, and `Data Supply` could drift away from the currently inspected benchmark run, which made cross-tab comparison slower and less coherent.
+- Affected files or config:
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_rag_dashboard_contract.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `ui/dashboard-ui/rag/index.html`
+  - `ui/dashboard-ui/rag/app.js`
+  - `ui/dashboard-ui/rag/styles.css`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No new RAG schema changes, data backfills, or benchmark-result rewrites were introduced.
+  - Benchmark-aware dashboard pages now expose shared `benchmark_selector` metadata with the current run plus the recency-sorted available run list.
+  - When no `candidate_experiment_id` is supplied, the dashboard now defaults to the latest completed benchmark run by `finished_at`, falling back to `created_at` when needed.
+  - `Data Supply` now filters `Sync Runs`, `Dataset Versions`, and `Coverage` to the current run's `benchmark_version`; `Knowledge Supply` remains unchanged.
+  - The RAG dashboard now warms all tab payloads in the background after the active tab resolves, and any benchmark run change, global filter change, refresh, or popstate restore rebuilds that cache epoch before reloading.
+- Verification:
+  - `./.venv/bin/python -m unittest backend.tests.test_dashboard_ui_contract backend.tests.test_rag_dashboard_contract backend.tests.test_rag_scorecard_repository`
+  - `./.venv/bin/python -m py_compile backend/repositories/knowledge_repository.py`
+  - `node --check ui/dashboard-ui/rag/app.js`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+
+## 2026-03-26 - Benchmark selector fallback to eval-run metadata when scorecard results are empty
+
+- Summary: Changed the RAG dashboard benchmark selector to fall back to `support_rag_eval_runs` metadata whenever the scorecard pages have no aggregated experiment rows from `support_rag_eval_results`.
+- Reason: The selector was built only from experiment aggregates that join `support_rag_eval_results`, so environments with queued or partially written benchmark runs showed `No benchmark runs available` even though `support_rag_eval_runs` already contained recent benchmark runs.
+- Affected files or config:
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No data was rewritten.
+  - The selector can now list benchmark runs directly from `support_rag_eval_runs` while scorecard metrics remain empty until matching `support_rag_eval_results` rows exist.
+- Verification:
+  - `./.venv/bin/python -m unittest backend.tests.test_dashboard_ui_contract backend.tests.test_rag_dashboard_contract backend.tests.test_rag_scorecard_repository`
+  - `./.venv/bin/python -m py_compile backend/repositories/knowledge_repository.py`
+  - Local repository check against RDS confirmed `_benchmark_selector_rows(7, ...)` returns:
+    - `EVAL-114948624559`
+    - `EVAL-854A89297504`
+    - `EVAL-CB8997C5D200`

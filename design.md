@@ -198,9 +198,12 @@
 6. `Data Supply` 必须在同一页面里拆成两个清晰 panel：
    - `Benchmark Supply`
    - `Knowledge Supply`
-7. 兼容页名 `experiments / datasets / knowledge-supply / production-signals` 只允许作为路由或 API alias，不得继续作为主导航文案。
-8. `Routing / Retrieval / Generation` 页必须优先提供 case explorer，而不是只给 summary sample card。explorer 需要按 `错误 -> 正确` 的顺序展示，并允许在当前页直接打开详情。
-9. `/dashboard/rag/` 允许并鼓励使用两种可复用工作台模式：
+7. `Benchmark Supply` 的事实来源必须是本地 `benchmarks/*.json` 文件；dataset tables 只作为镜像和审计库存，不作为 benchmark 运行入口。
+8. `Benchmark Supply` 的主 CTA 必须是 `Sync Local Benchmarks`，语义是“把本地 benchmark catalog 镜像到 dataset tables”，而不是“在线生成新 benchmark 数据集”。
+9. `Benchmark Supply` 需要明确展示本地 benchmark catalog、最近 sync 结果和镜像后的 dataset inventory，避免把它设计成 dataset factory 表单。
+10. 兼容页名 `experiments / datasets / knowledge-supply / production-signals` 只允许作为路由或 API alias，不得继续作为主导航文案。
+11. `Routing / Retrieval / Generation` 页必须优先提供 case explorer，而不是只给 summary sample card。explorer 需要按 `错误 -> 正确` 的顺序展示，并允许在当前页直接打开详情。
+12. `/dashboard/rag/` 允许并鼓励使用两种可复用工作台模式：
    - `Collapsible Case Explorer`
    - `Centered Case Detail Modal`
 

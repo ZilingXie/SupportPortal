@@ -116,7 +116,6 @@ def _expected_route_decision(case: BenchmarkCase) -> SupportRouteDecision:
         "agora_docs_rag": "agora_technical",
         "web_company_info": "agora_non_technical",
         "general_chat": "small_talk",
-        "general_tech_help": "non_agora",
         "fallback_or_refuse": "non_agora",
     }.get(case.expected_route_family, "non_agora")
     return SupportRouteDecision(
@@ -219,6 +218,8 @@ def _used_prohibited_agora_docs(*, actual_execution_action: str, expected_toolin
 
 
 def _abstained_or_deflected_properly(*, case: BenchmarkCase, decision: SupportRouteDecision, answer_text: str) -> bool:
+    if case.expected_behavior == "grounded_abstain":
+        return _clean_text(answer_text) == _clean_text(INSUFFICIENT_EVIDENCE_REPLY)
     if decision.execution_action not in {"controlled_response", "refuse"}:
         return True
     return bool(_clean_text(answer_text)) and case.expected_execution_action in {"controlled_response", "refuse"}
@@ -507,6 +508,7 @@ def _build_trace_payload(
         "expected_document_ids": case.expected_document_ids,
         "expected_heading_paths": case.expected_heading_paths,
         "expected_evidence_refs": case.expected_evidence_refs,
+        "expected_behavior": case.expected_behavior,
         "expected_route": case.expected_route,
         "actual_route": execution_result.actual_route,
         "expected_scope_label": case.expected_scope_label,
@@ -695,6 +697,12 @@ def _failure_type(
         if judge_aggregate.get("response_policy_followed") is False:
             return "policy_violation"
         return "grounded_answer"
+    if case.expected_behavior == "grounded_abstain":
+        if answer_text == INSUFFICIENT_EVIDENCE_REPLY:
+            return "grounded_answer"
+        if judge_aggregate.get("hallucination_flag") is True:
+            return "hallucination"
+        return "incomplete_answer"
     if answer_text == INSUFFICIENT_EVIDENCE_REPLY or result.trace.needs_human != case.expected_handoff:
         return "handoff_needed"
     if retrieval_metrics.get("hit_at_5") == 0.0:
@@ -795,6 +803,7 @@ def _build_eval_row(
         "expected_execution_action": case.expected_execution_action,
         "actual_execution_action": decision.execution_action,
         "expected_tooling_profile": case.expected_tooling_profile,
+        "expected_behavior": case.expected_behavior,
         "actual_tooling_profile": decision.tooling_profile,
         "route_family_correct": 1.0 if case.expected_route_family == decision.route_family else 0.0,
         "execution_action_correct": 1.0 if matched_expected_execution_action else 0.0,

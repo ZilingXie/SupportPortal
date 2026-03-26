@@ -101,9 +101,11 @@ class RagDashboardContractTests(unittest.TestCase):
             ]:
                 self.assertIn(field_name, source)
         self.assertIn("/api/dashboard/rag/datasets/generation-runs", main_source)
+        self.assertIn("/api/dashboard/rag/benchmarks/local-sync", main_source)
         self.assertIn("/api/dashboard/rag/datasets/{dataset_id}/benchmark-runs", main_source)
         self.assertIn("/api/dashboard/rag/datasets/{dataset_id}/export", main_source)
         self.assertIn("/internal/dashboard/rag/datasets/generation-runs", rag_api_source)
+        self.assertIn("/internal/dashboard/rag/benchmarks/local-sync", rag_api_source)
         self.assertIn("/internal/dashboard/rag/datasets/{dataset_id}/benchmark-runs", rag_api_source)
         self.assertIn("/internal/dashboard/rag/datasets/{dataset_id}/export", rag_api_source)
 
@@ -117,6 +119,18 @@ class RagDashboardContractTests(unittest.TestCase):
             "expected_route",
             "actual_route",
             "route_correct_flag",
+        ]:
+            self.assertIn(marker, source)
+
+    def test_dashboard_repository_exposes_shared_benchmark_selector_metadata(self) -> None:
+        source = Path("backend/repositories/knowledge_repository.py").read_text(encoding="utf-8")
+        for marker in [
+            "benchmark_selector",
+            "current_experiment_id",
+            "current_eval_run_id",
+            "current_benchmark_version",
+            "current_finished_at",
+            "available_experiments",
         ]:
             self.assertIn(marker, source)
 

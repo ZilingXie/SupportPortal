@@ -387,6 +387,37 @@ class RagServiceClientTests(unittest.TestCase):
         self.assertEqual(captured["body"]["tier"], "gold")
         self.assertEqual(payload["eval_run_id"], "EVAL-1")
 
+    def test_sync_local_benchmarks_uses_internal_endpoint(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+        captured = {}
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"synced_count":3,"source_of_truth":"local_benchmarks"}'
+
+        def _fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["authorization"] = request.headers.get("Authorization")
+            captured["body"] = request.data
+            return _FakeResponse()
+
+        with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            payload = client.sync_local_benchmarks()
+
+        self.assertEqual(
+            captured["url"],
+            "http://rag-api.internal/internal/dashboard/rag/benchmarks/local-sync",
+        )
+        self.assertEqual(captured["authorization"], "Bearer token")
+        self.assertIsNone(captured["body"])
+        self.assertEqual(payload["synced_count"], 3)
+
     def test_export_dataset_snapshot_uses_internal_endpoint(self) -> None:
         client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
         captured = {}

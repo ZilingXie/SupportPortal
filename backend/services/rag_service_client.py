@@ -398,6 +398,12 @@ class RagServiceClient:
             json_body=payload,
         )
 
+    def sync_local_benchmarks(self) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/internal/dashboard/rag/benchmarks/local-sync",
+        )
+
     def create_dataset_benchmark_run(
         self,
         dataset_id: str,

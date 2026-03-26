@@ -19,6 +19,39 @@ from backend.services.rag_benchmark import (
 
 
 class RagBenchmarkHelperTests(unittest.TestCase):
+    def test_repo_local_benchmark_files_are_route_aware_mixed_route_v2(self) -> None:
+        benchmark_paths = [
+            Path(__file__).resolve().parents[2] / "benchmarks" / "agora_rag_testset_100_standrad_en.json",
+            Path(__file__).resolve().parents[2] / "benchmarks" / "agora_rag_testset_100_mixed_en.json",
+            Path(__file__).resolve().parents[2] / "benchmarks" / "agora_rag_testset_100_realUser_en.json",
+        ]
+
+        for benchmark_path in benchmark_paths:
+            cases = load_benchmark_cases(benchmark_path)
+            self.assertEqual(len(cases), 99, benchmark_path.name)
+            self.assertTrue(all(case.dataset_schema_version == "mixed_route_v2" for case in cases), benchmark_path.name)
+            self.assertTrue(all(case.question_type for case in cases), benchmark_path.name)
+            self.assertTrue(all(case.category for case in cases), benchmark_path.name)
+            self.assertTrue(all(case.expected_route_family for case in cases), benchmark_path.name)
+            self.assertFalse(any(case.expected_route_family == "general_tech_help" for case in cases), benchmark_path.name)
+            self.assertTrue(all(case.expected_execution_action for case in cases), benchmark_path.name)
+            self.assertTrue(all(case.expected_behavior for case in cases), benchmark_path.name)
+            self.assertTrue(all(case.route_aware for case in cases), benchmark_path.name)
+
+    def test_mixed_off_topic_cases_use_grounded_abstain_docs_rag_contract(self) -> None:
+        mixed_path = Path(__file__).resolve().parents[2] / "benchmarks" / "agora_rag_testset_100_mixed_en.json"
+
+        cases = load_benchmark_cases(mixed_path)
+        off_topic_cases = [case for case in cases if case.category == "off_topic"]
+
+        self.assertEqual(len(off_topic_cases), 5)
+        self.assertTrue(all(case.expected_route_family == "agora_docs_rag" for case in off_topic_cases))
+        self.assertTrue(all(case.expected_execution_action == "rag" for case in off_topic_cases))
+        self.assertTrue(all(case.expected_tooling_profile == "agora_docs_only" for case in off_topic_cases))
+        self.assertTrue(all(case.expected_behavior == "grounded_abstain" for case in off_topic_cases))
+        self.assertTrue(all(case.retrieval_metrics_enabled is False for case in off_topic_cases))
+        self.assertTrue(all(case.citation_metrics_enabled is False for case in off_topic_cases))
+
     def test_load_benchmark_cases_supports_json_array_v2(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             dataset_path = Path(tmpdir) / "dataset.json"
