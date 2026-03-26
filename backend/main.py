@@ -37,7 +37,6 @@ from backend.services.rag_service_client import (
     RagServiceClient,
     RagServiceError,
     async_to_thread,
-    map_rag_payload_to_ticket_answer,
 )
 from backend.services.sentiment_classifier import SentimentResult, classify_sentiment
 from backend.services.support_router import (
@@ -750,11 +749,12 @@ def _build_rag_answer(
 ) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
     request_id = f"rag-{uuid4().hex[:12]}"
     try:
-        payload = rag_service_client.query(
+        answer_tuple = rag_service_client.query_answer_with_recovery(
             question=message,
             request_id=request_id,
             ticket_id=ticket_id,
             customer_id=customer_id,
+            insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
         )
     except RagServiceError as exc:
         LOGGER.warning(
@@ -765,17 +765,12 @@ def _build_rag_answer(
         )
         return INSUFFICIENT_EVIDENCE_REPLY, 0.0, [], [], True
 
-    answer_tuple = map_rag_payload_to_ticket_answer(
-        payload,
-        insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
-    )
     if answer_tuple[-1] is False:
         return answer_tuple
     LOGGER.info(
-        "RAG service escalated request_id=%s ticket_id=%s reason=%s",
+        "RAG service escalated request_id=%s ticket_id=%s",
         request_id,
         ticket_id,
-        payload.get("reason"),
     )
     return answer_tuple
 

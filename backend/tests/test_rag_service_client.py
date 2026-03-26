@@ -267,6 +267,106 @@ class RagServiceClientTests(unittest.TestCase):
         self.assertEqual(captured["authorization"], "Bearer token")
         self.assertEqual(payload["primary"]["request_id"], "RQ-1")
 
+    def test_query_answer_with_recovery_returns_live_detail_answer_after_query_timeout(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+        live_detail = {
+            "primary": {
+                "request_id": "rag-join-1",
+                "needs_human": False,
+                "answer": "Call joinChannel with a token and channel name.",
+                "confidence_score": 0.95,
+                "answer_sources": ["https://docs.agora.io/en/video-calling/get-started/get-started-sdk"],
+                "answer_citations": [
+                    {
+                        "chunk_id": "chunk-1",
+                        "source_path": "official/get-started-sdk_android.md",
+                        "heading": "Quickstart > Join a channel",
+                        "source_url": "https://docs.agora.io/en/video-calling/get-started/get-started-sdk",
+                    }
+                ],
+            }
+        }
+
+        with patch.object(
+            client,
+            "query",
+            side_effect=RagServiceError("RAG service request failed"),
+        ), patch.object(
+            client,
+            "rag_dashboard_live_case_detail",
+            return_value=live_detail,
+        ) as live_detail_mock:
+            answer, confidence, sources, citations, needs_engineer = client.query_answer_with_recovery(
+                question="how to join channel",
+                request_id="rag-join-1",
+                ticket_id="TK-021",
+                customer_id="C-001",
+                insufficient_reply="INSUFFICIENT",
+            )
+
+        self.assertEqual(answer, "Call joinChannel with a token and channel name.")
+        self.assertEqual(confidence, 0.95)
+        self.assertEqual(sources, ["https://docs.agora.io/en/video-calling/get-started/get-started-sdk"])
+        self.assertEqual(citations[0]["chunk_id"], "chunk-1")
+        self.assertFalse(needs_engineer)
+        live_detail_mock.assert_called_once_with("rag-join-1")
+
+    def test_query_answer_with_recovery_retries_live_detail_until_answer_is_available(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+        live_detail = {
+            "primary": {
+                "request_id": "rag-join-2",
+                "needs_human": False,
+                "answer": "Use the join method on the channel instance.",
+                "confidence_score": 0.91,
+                "answer_sources": ["https://docs.agora.io/en/signaling/core-functionality/stream-channel"],
+                "answer_citations": [
+                    {
+                        "chunk_id": "chunk-2",
+                        "source_path": "official/stream-channel_ios.md",
+                        "heading": "Stream channels > Join a stream channel",
+                        "source_url": "https://docs.agora.io/en/signaling/core-functionality/stream-channel",
+                    }
+                ],
+            }
+        }
+
+        with patch.object(
+            client,
+            "query",
+            side_effect=RagServiceError("RAG service request failed"),
+        ), patch.object(
+            client,
+            "rag_dashboard_live_case_detail",
+            side_effect=[
+                RagServiceError(
+                    "RAG service returned HTTP 404",
+                    status_code=404,
+                    payload={"detail": "Live query not found"},
+                ),
+                live_detail,
+            ],
+        ) as live_detail_mock, patch(
+            "backend.services.rag_service_client.time.sleep",
+        ) as sleep_mock:
+            answer, confidence, sources, citations, needs_engineer = client.query_answer_with_recovery(
+                question="how to join channel",
+                request_id="rag-join-2",
+                ticket_id="TK-021",
+                customer_id="C-001",
+                insufficient_reply="INSUFFICIENT",
+                recovery_attempts=2,
+                recovery_delay_seconds=0.25,
+            )
+
+        self.assertEqual(answer, "Use the join method on the channel instance.")
+        self.assertEqual(confidence, 0.91)
+        self.assertEqual(sources, ["https://docs.agora.io/en/signaling/core-functionality/stream-channel"])
+        self.assertEqual(citations[0]["chunk_id"], "chunk-2")
+        self.assertFalse(needs_engineer)
+        self.assertEqual(live_detail_mock.call_count, 2)
+        sleep_mock.assert_called_once_with(0.25)
+
     def test_update_review_sample_uses_internal_review_endpoint(self) -> None:
         client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
         captured = {}

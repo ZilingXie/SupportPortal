@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import socket
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -57,6 +58,28 @@ def map_rag_payload_to_ticket_answer(
             False,
         )
     return insufficient_reply, float(payload.get("confidence") or 0.0), [], [], True
+
+
+def map_live_detail_payload_to_ticket_answer(payload: dict[str, Any]) -> tuple[str, float, list[str], list[dict[str, str]], bool] | None:
+    primary = payload.get("primary") if isinstance(payload, dict) else None
+    if not isinstance(primary, dict):
+        return None
+    answer = str(primary.get("answer") or "").strip()
+    if bool(primary.get("needs_human")) or not answer:
+        return None
+    try:
+        confidence = float(primary.get("confidence_score") or 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    citations = primary.get("answer_citations") if isinstance(primary.get("answer_citations"), list) else []
+    sources = primary.get("answer_sources") if isinstance(primary.get("answer_sources"), list) else []
+    return (
+        answer,
+        confidence,
+        [str(source) for source in sources if str(source).strip()],
+        [item for item in citations if isinstance(item, dict)],
+        False,
+    )
 
 
 def _base_url() -> str:
@@ -246,6 +269,80 @@ class RagServiceClient:
         if top_k is not None:
             payload["top_k"] = int(top_k)
         return self._request("POST", "/internal/rag/query", json_body=payload)
+
+    def query_answer_with_recovery(
+        self,
+        *,
+        question: str,
+        request_id: str,
+        ticket_id: str | None,
+        customer_id: str | None,
+        insufficient_reply: str,
+        top_k: int | None = None,
+        recovery_attempts: int = 3,
+        recovery_delay_seconds: float = 0.5,
+    ) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
+        try:
+            payload = self.query(
+                question=question,
+                request_id=request_id,
+                ticket_id=ticket_id,
+                customer_id=customer_id,
+                top_k=top_k,
+            )
+        except RagServiceError as exc:
+            recovered = self._recover_ticket_answer(
+                request_id=request_id,
+                recovery_attempts=recovery_attempts,
+                recovery_delay_seconds=recovery_delay_seconds,
+            )
+            if recovered is not None:
+                LOGGER.warning(
+                    "Recovered RAG answer from live detail after query failure request_id=%s error=%s",
+                    request_id,
+                    exc,
+                )
+                return recovered
+            raise
+        return map_rag_payload_to_ticket_answer(payload, insufficient_reply=insufficient_reply)
+
+    def _recover_ticket_answer(
+        self,
+        *,
+        request_id: str,
+        recovery_attempts: int,
+        recovery_delay_seconds: float,
+    ) -> tuple[str, float, list[str], list[dict[str, str]], bool] | None:
+        try:
+            attempts = max(1, int(recovery_attempts))
+        except (TypeError, ValueError):
+            attempts = 1
+        try:
+            delay_seconds = max(0.0, float(recovery_delay_seconds))
+        except (TypeError, ValueError):
+            delay_seconds = 0.0
+
+        for attempt in range(1, attempts + 1):
+            try:
+                payload = self.rag_dashboard_live_case_detail(request_id)
+            except RagServiceError as exc:
+                should_retry = attempt < attempts and (
+                    exc.status_code is None
+                    or exc.status_code == 404
+                    or exc.status_code >= 500
+                )
+                if should_retry and delay_seconds > 0:
+                    time.sleep(delay_seconds)
+                if should_retry:
+                    continue
+                return None
+
+            recovered = map_live_detail_payload_to_ticket_answer(payload)
+            if recovered is not None:
+                return recovered
+            if attempt < attempts and delay_seconds > 0:
+                time.sleep(delay_seconds)
+        return None
 
     def upload_official_document(self, *, file_name: str, content: bytes) -> dict[str, Any]:
         body, content_type = _encode_multipart_form_data(
