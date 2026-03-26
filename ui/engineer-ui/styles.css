@@ -1032,6 +1032,7 @@ a {
   gap: 14px;
   padding: 18px 20px;
   border-radius: 24px;
+  cursor: pointer;
   transition:
     transform 180ms ease,
     box-shadow 180ms ease,
@@ -1044,6 +1045,14 @@ a {
   background: rgba(255, 255, 255, 0.92);
 }
 
+.ticket-row:focus-visible {
+  outline: none;
+  border-color: rgba(0, 100, 147, 0.28);
+  box-shadow:
+    var(--shadow-soft),
+    0 0 0 3px rgba(0, 176, 255, 0.16);
+}
+
 .ticket-row-waiting {
   border-color: rgba(159, 93, 18, 0.18);
   background: linear-gradient(180deg, rgba(255, 245, 235, 0.9) 0%, rgba(255, 255, 255, 0.9) 100%);
@@ -1051,7 +1060,6 @@ a {
 
 .ticket-row-header,
 .ticket-row-secondary,
-.ticket-row-actions,
 .ticket-row-badges,
 .workspace-header-top,
 .workspace-header-main,
@@ -1071,7 +1079,6 @@ a {
 }
 
 .ticket-row-secondary {
-  justify-content: space-between;
   align-items: flex-start;
 }
 
@@ -1082,9 +1089,16 @@ a {
 }
 
 .ticket-row-title-group {
-  display: grid;
-  gap: 8px;
+  flex: 1 1 320px;
   min-width: 0;
+}
+
+.ticket-row-headline {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .ticket-row-badges {
@@ -1119,11 +1133,6 @@ a {
   gap: 4px;
   min-width: 280px;
   flex: 1 1 340px;
-}
-
-.ticket-row-actions {
-  justify-content: flex-end;
-  flex: 0 0 auto;
 }
 
 .priority-badge,
@@ -1691,10 +1700,6 @@ a {
   .workspace-header-main {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .ticket-row-actions {
-    justify-content: flex-start;
   }
 
   .workspace-header-actions {

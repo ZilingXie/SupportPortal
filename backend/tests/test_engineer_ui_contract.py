@@ -109,14 +109,15 @@ class EngineerUiContractTests(unittest.TestCase):
 
         self.assertIn("Concierge AI", html)
         self.assertIn("Manrope", html)
-        self.assertIn("./styles.css?v=20260324-engineer-stitch-6", html)
-        self.assertIn('./app.js?v=20260324-engineer-stitch-6', html)
+        self.assertIn("./styles.css?v=20260326-engineer-stitch-7", html)
+        self.assertIn('./app.js?v=20260326-engineer-stitch-7', html)
         self.assertIn("function parseRoute()", app_source)
         self.assertIn('path.startsWith("/tickets/")', app_source)
         self.assertIn("function renderTicketPoolView()", app_source)
         self.assertIn("function renderTicketDetailView()", app_source)
         self.assertIn("Next Action Needed", app_source)
         self.assertIn("AI Managing", app_source)
+        self.assertNotIn("Open Workspace", app_source)
         self.assertIn('window.addEventListener("hashchange"', app_source)
         self.assertIn('class="rail-footer"', html)
         self.assertIn('class="rail-status-icon realtime-icon"', html)
@@ -174,7 +175,7 @@ class EngineerUiContractTests(unittest.TestCase):
                     engineer_mode: "managed",
                     created_at: "2026-03-24T08:00:00+00:00",
                     updated_at: "2026-03-24T08:30:00+00:00",
-                    pending_engineer_question: "Need engineer review.",
+                    pending_engineer_question: "Engineer Request\\nIssue: Need engineer review.",
                   },
                 ];
 
@@ -186,11 +187,36 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (html.includes("ticket-card")) {{
                   throw new Error("Ticket pool should no longer render card layout.");
                 }}
+                if (html.includes("Open Workspace")) {{
+                  throw new Error("Ticket pool rows should no longer render an Open Workspace button.");
+                }}
                 if (!html.includes("ticket-pool-list")) {{
                   throw new Error("Ticket pool should render the list container.");
                 }}
                 if (!html.includes("ticket-row")) {{
                   throw new Error("Ticket pool should render list rows.");
+                }}
+                if (!html.includes('data-ticket-row="true"')) {{
+                  throw new Error("Ticket pool rows should be marked as directly clickable rows.");
+                }}
+                if (!html.includes('role="button"')) {{
+                  throw new Error("Ticket pool rows should expose button semantics.");
+                }}
+                if (!html.includes('tabindex="0"')) {{
+                  throw new Error("Ticket pool rows should be keyboard focusable.");
+                }}
+                if (!html.includes("mode-pill")) {{
+                  throw new Error("Ticket pool rows should render the mode badge in the first line.");
+                }}
+                if (!html.includes("Engineer Request")) {{
+                  throw new Error("Ticket pool rows should render the engineer request label when present.");
+                }}
+                if (!html.includes("Issue: Need engineer review.")) {{
+                  throw new Error("Ticket pool rows should render the engineer request preview inline.");
+                }}
+                const requestMatches = html.match(/ticket-row-request/g) || [];
+                if (requestMatches.length !== 1) {{
+                  throw new Error("Only tickets with pending engineer request text should render a request block.");
                 }}
 
                 const waitingIndex = html.indexOf("TK-WAITING-LOW");
@@ -201,6 +227,86 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (waitingIndex > openIndex) {{
                   throw new Error("Waiting for engineer tickets should render ahead of normal open tickets.");
                 }}
+
+                const waitingRowStart = html.indexOf('data-ticket-id="TK-WAITING-LOW"');
+                const waitingRowEnd = html.indexOf("</article>", waitingRowStart);
+                const waitingRowMarkup = html.slice(waitingRowStart, waitingRowEnd);
+                const modeIndex = waitingRowMarkup.indexOf("mode-pill");
+                const secondLineIndex = waitingRowMarkup.indexOf("ticket-row-secondary");
+                if (modeIndex === -1 || secondLineIndex === -1 || modeIndex > secondLineIndex) {{
+                  throw new Error("Mode badge should stay in the first row alongside title and status badges.");
+                }}
+                """
+            )
+        )
+
+    def test_engineer_ticket_pool_row_click_and_keyboard_open_detail(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                let opened = [];
+                openTicketDetail = (ticketId) => {
+                  opened.push(ticketId);
+                };
+
+                const row = {
+                  dataset: { ticketId: "TK-CLICK-001" },
+                };
+
+                const rowTarget = {
+                  closest(selector) {
+                    if (selector === "[data-ticket-row]") {
+                      return row;
+                    }
+                    return null;
+                  },
+                };
+
+                handleTableClick({ target: rowTarget });
+                if (opened.length !== 1 || opened[0] !== "TK-CLICK-001") {
+                  throw new Error("Clicking a ticket row should open the matching detail workspace.");
+                }
+
+                let enterPrevented = false;
+                handleTableKeydown({
+                  key: "Enter",
+                  target: rowTarget,
+                  preventDefault() {
+                    enterPrevented = true;
+                  },
+                });
+                if (!enterPrevented || opened.length !== 2 || opened[1] !== "TK-CLICK-001") {
+                  throw new Error("Pressing Enter on a focused row should open the matching detail workspace.");
+                }
+
+                let spacePrevented = false;
+                handleTableKeydown({
+                  key: " ",
+                  target: rowTarget,
+                  preventDefault() {
+                    spacePrevented = true;
+                  },
+                });
+                if (!spacePrevented || opened.length !== 3 || opened[2] !== "TK-CLICK-001") {
+                  throw new Error("Pressing Space on a focused row should open the matching detail workspace.");
+                }
+
+                const nestedButtonTarget = {
+                  closest(selector) {
+                    if (selector === "[data-ticket-row]") {
+                      return row;
+                    }
+                    if (selector.includes("button")) {
+                      return {};
+                    }
+                    return null;
+                  },
+                };
+
+                handleTableClick({ target: nestedButtonTarget });
+                if (opened.length !== 3) {
+                  throw new Error("Row click handling should ignore nested interactive controls.");
+                }
                 """
             )
         )
