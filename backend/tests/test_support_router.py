@@ -7,6 +7,7 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 
+from backend.services.support_router_prompt import build_route_prompt_hints
 from backend.services.support_router import (
     SupportRouteDecision,
     build_refusal_answer,
@@ -17,61 +18,116 @@ from backend.services.support_router import (
 )
 
 
+class _FakeResponse:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def read(self) -> bytes:
+        return json.dumps(self._payload).encode("utf-8")
+
+
 class SupportRouterTests(unittest.TestCase):
-    def test_decide_support_route_refuses_small_talk(self) -> None:
-        decision = decide_support_route("今天天气怎么样")
+    def test_build_route_prompt_hints_captures_product_mode_and_context_signals(self) -> None:
+        hints = build_route_prompt_hints(
+            "What's the real difference between COMMUNICATION and LIVE_BROADCASTING?",
+            ticket_subject="Agora profile choice",
+            ticket_context=[
+                {"role": "customer", "content": "I need better viewer analytics."},
+                {"role": "assistant", "content": "Let's compare the profiles."},
+            ],
+        )
+
+        self.assertIn("communication", hints["message_matches"]["technical"])
+        self.assertIn("live broadcasting", hints["message_matches"]["technical"])
+        self.assertIn("viewer analytics", hints["context_matches"]["technical"])
+        self.assertIn("agora", hints["context_matches"]["agora"])
+        self.assertTrue(hints["flags"]["looks_like_question"])
+
+    def test_build_route_prompt_hints_marks_docs_eval_anchor_terms(self) -> None:
+        hints = build_route_prompt_hints(
+            "Why are parameter mismatch questions good for testing a docs-based RAG?",
+            ticket_subject="Auth benchmark quality",
+            ticket_context=[
+                {"role": "customer", "content": "I want the auth test set to catch token construction mistakes."},
+            ],
+        )
+
+        self.assertIn("parameter mismatch", hints["message_matches"]["technical"])
+        self.assertIn("docs-based rag", hints["message_matches"]["technical"])
+        self.assertIn("auth benchmark", hints["context_matches"]["technical"])
+        self.assertTrue(hints["flags"]["looks_like_question"])
+
+    def test_decide_support_route_uses_llm_classification_for_small_talk(self) -> None:
+        payload = {
+            "output_text": json.dumps(
+                {
+                    "scope_label": "small_talk",
+                    "confidence": 0.92,
+                    "reason": "few_shot_small_talk",
+                    "matched_signals": ["weather"],
+                }
+            )
+        }
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen",
+            return_value=_FakeResponse(payload),
+        ):
+            decision = decide_support_route("今天天气怎么样")
 
         self.assertEqual(decision.scope_label, "small_talk")
         self.assertEqual(decision.route_family, "general_chat")
         self.assertEqual(decision.execution_action, "controlled_response")
         self.assertEqual(decision.tooling_profile, "no_agora_docs_controlled")
         self.assertEqual(decision.route, "controlled_response")
-        self.assertGreaterEqual(decision.confidence, 0.9)
-
-    def test_decide_support_route_refuses_non_agora_question(self) -> None:
-        decision = decide_support_route("我电脑蓝屏了怎么办")
-
-        self.assertEqual(decision.scope_label, "agora_technical")
-        self.assertEqual(decision.route_family, "agora_docs_rag")
-        self.assertEqual(decision.execution_action, "rag")
-        self.assertEqual(decision.tooling_profile, "agora_docs_only")
-        self.assertEqual(decision.route, "rag")
-        self.assertGreaterEqual(decision.confidence, 0.85)
+        self.assertEqual(decision.reason, "few_shot_small_talk")
+        self.assertEqual(decision.matched_signals, ["weather"])
 
     def test_decide_support_route_routes_agora_technical_question_to_rag(self) -> None:
-        decision = decide_support_route("how to join a channel")
+        payload = {
+            "output_text": json.dumps(
+                {
+                    "scope_label": "agora_technical",
+                    "confidence": 0.94,
+                    "reason": "few_shot_product_fit",
+                    "matched_signals": ["live broadcasting", "comparison"],
+                }
+            )
+        }
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen",
+            return_value=_FakeResponse(payload),
+        ):
+            decision = decide_support_route("What's the real difference between COMMUNICATION and LIVE_BROADCASTING?")
 
         self.assertEqual(decision.scope_label, "agora_technical")
         self.assertEqual(decision.route_family, "agora_docs_rag")
         self.assertEqual(decision.execution_action, "rag")
         self.assertEqual(decision.tooling_profile, "agora_docs_only")
         self.assertEqual(decision.route, "rag")
+        self.assertEqual(decision.reason, "few_shot_product_fit")
 
-    def test_decide_support_route_does_not_treat_which_as_small_talk(self) -> None:
-        decision = decide_support_route("Which profile and roles should I use?")
-
-        self.assertEqual(decision.scope_label, "agora_technical")
-        self.assertEqual(decision.route_family, "agora_docs_rag")
-        self.assertEqual(decision.execution_action, "rag")
-        self.assertEqual(decision.route, "rag")
-
-    def test_decide_support_route_uses_context_for_follow_up(self) -> None:
-        decision = decide_support_route(
-            "it still doesn't work",
-            ticket_subject="Agora RTC token issue",
-            ticket_context=[
-                {"role": "customer", "content": "My Agora SDK token is invalid."},
-                {"role": "assistant", "content": "Please check the token builder configuration."},
-            ],
-        )
-
-        self.assertEqual(decision.scope_label, "agora_technical")
-        self.assertEqual(decision.route_family, "agora_docs_rag")
-        self.assertEqual(decision.execution_action, "rag")
-        self.assertEqual(decision.route, "rag")
-
-    def test_decide_support_route_routes_agora_non_technical_question_to_web_search(self) -> None:
-        decision = decide_support_route("who's the ceo of agora")
+    def test_decide_support_route_uses_llm_classification_for_public_info(self) -> None:
+        payload = {
+            "output_text": json.dumps(
+                {
+                    "scope_label": "agora_non_technical",
+                    "confidence": 0.91,
+                    "reason": "few_shot_company_info",
+                    "matched_signals": ["ceo", "agora"],
+                }
+            )
+        }
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen",
+            return_value=_FakeResponse(payload),
+        ):
+            decision = decide_support_route("who's the ceo of agora")
 
         self.assertEqual(decision.scope_label, "agora_non_technical")
         self.assertEqual(decision.route_family, "web_company_info")
@@ -79,14 +135,180 @@ class SupportRouterTests(unittest.TestCase):
         self.assertEqual(decision.tooling_profile, "official_web_search")
         self.assertEqual(decision.route, "web_search")
 
+    def test_decide_support_route_uses_context_in_prompt_hints(self) -> None:
+        payload = {
+            "output_text": json.dumps(
+                {
+                    "scope_label": "agora_technical",
+                    "confidence": 0.89,
+                    "reason": "few_shot_follow_up",
+                    "matched_signals": ["token", "it still"],
+                }
+            )
+        }
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen",
+            return_value=_FakeResponse(payload),
+        ):
+            decision = decide_support_route(
+                "it still doesn't work",
+                ticket_subject="Agora RTC token issue",
+                ticket_context=[
+                    {"role": "customer", "content": "My Agora SDK token is invalid."},
+                    {"role": "assistant", "content": "Please check the token builder configuration."},
+                ],
+            )
+
+        self.assertEqual(decision.scope_label, "agora_technical")
+        self.assertEqual(decision.route_family, "agora_docs_rag")
+        self.assertEqual(decision.execution_action, "rag")
+        self.assertEqual(decision.reason, "few_shot_follow_up")
+
     def test_decide_support_route_falls_back_to_non_agora_for_ambiguous_messages(self) -> None:
-        with patch("backend.services.support_router._llm_route_decision", return_value=None):
+        payload = {
+            "output_text": json.dumps(
+                {
+                    "scope_label": "agora_technical",
+                    "confidence": 0.4,
+                    "reason": "uncertain_route",
+                    "matched_signals": ["question"],
+                }
+            )
+        }
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen",
+            return_value=_FakeResponse(payload),
+        ):
             decision = decide_support_route("what should I do next")
 
         self.assertEqual(decision.scope_label, "non_agora")
         self.assertEqual(decision.route_family, "fallback_or_refuse")
         self.assertEqual(decision.execution_action, "refuse")
         self.assertEqual(decision.route, "refuse")
+
+    def test_decide_support_route_falls_back_to_non_agora_on_invalid_json(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen",
+            return_value=_FakeResponse({"output_text": "not-json"}),
+        ):
+            decision = decide_support_route("Would Notifications help me build viewer analytics?")
+
+        self.assertEqual(decision.scope_label, "non_agora")
+        self.assertEqual(decision.route_family, "fallback_or_refuse")
+        self.assertEqual(decision.execution_action, "refuse")
+
+    def test_decide_support_route_falls_back_to_non_agora_on_http_failure(self) -> None:
+        def _raise_http_error(*_args, **_kwargs):
+            raise urllib.error.HTTPError(
+                url="https://api.openai.com/v1/responses",
+                code=500,
+                msg="Internal Server Error",
+                hdrs=None,
+                fp=io.BytesIO(b'{"error":{"message":"boom"}}'),
+            )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen",
+            side_effect=_raise_http_error,
+        ):
+            decision = decide_support_route("If compliance requires one file per participant, should I avoid composite?")
+
+        self.assertEqual(decision.scope_label, "non_agora")
+        self.assertEqual(decision.route_family, "fallback_or_refuse")
+        self.assertEqual(decision.execution_action, "refuse")
+
+    def test_decide_support_route_uses_conservative_fallback_when_router_unavailable(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=True):
+            decision = decide_support_route("What is the real difference between COMMUNICATION and LIVE_BROADCASTING?")
+
+        self.assertEqual(decision.scope_label, "non_agora")
+        self.assertEqual(decision.route_family, "fallback_or_refuse")
+        self.assertEqual(decision.execution_action, "refuse")
+
+    def test_llm_route_decision_uses_responses_payload_with_configured_settings(self) -> None:
+        captured_request: dict[str, object] = {}
+        payload = {
+            "output_text": json.dumps(
+                {
+                    "scope_label": "agora_technical",
+                    "confidence": 0.94,
+                    "reason": "few_shot_route",
+                    "matched_signals": ["live broadcasting", "comparison"],
+                }
+            )
+        }
+
+        def _capture(request, timeout=None):
+            captured_request["url"] = request.full_url
+            captured_request["body"] = json.loads(request.data.decode("utf-8"))
+            captured_request["timeout"] = timeout
+            return _FakeResponse(payload)
+
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_API_KEY": "test-key",
+                "INTENT_ROUTER_MODEL": "gpt-5.4-mini",
+                "INTENT_ROUTER_REASONING_EFFORT": "low",
+                "INTENT_ROUTER_TEMPERATURE": "0.3",
+            },
+            clear=True,
+        ), patch("urllib.request.urlopen", side_effect=_capture):
+            decision = decide_support_route("What's the real difference between COMMUNICATION and LIVE_BROADCASTING?")
+
+        request_body = captured_request["body"]
+        self.assertEqual(captured_request["url"], "https://api.openai.com/v1/responses")
+        self.assertEqual(request_body["model"], "gpt-5.4-mini")
+        self.assertEqual(request_body["reasoning"]["effort"], "low")
+        self.assertEqual(request_body["temperature"], 0.3)
+        self.assertIn("COMMUNICATION", json.dumps(request_body["input"], ensure_ascii=False))
+        self.assertIn("parameter mismatch", json.dumps(request_body["input"], ensure_ascii=False))
+        self.assertEqual(decision.scope_label, "agora_technical")
+
+    def test_decide_support_route_retries_without_temperature_when_model_rejects_it(self) -> None:
+        calls: list[dict[str, object]] = []
+        payload = {
+            "output_text": json.dumps(
+                {
+                    "scope_label": "agora_technical",
+                    "confidence": 0.9,
+                    "reason": "temperature_retry",
+                    "matched_signals": ["live broadcasting", "comparison", "comparison"],
+                }
+            )
+        }
+
+        def _capture(request, timeout=None):
+            calls.append(json.loads(request.data.decode("utf-8")))
+            if len(calls) == 1:
+                raise urllib.error.HTTPError(
+                    url="https://api.openai.com/v1/responses",
+                    code=400,
+                    msg="Bad Request",
+                    hdrs=None,
+                    fp=io.BytesIO(b'{"error":{"message":"Unsupported temperature for this model"}}'),
+                )
+            return _FakeResponse(payload)
+
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_API_KEY": "test-key",
+                "INTENT_ROUTER_MODEL": "gpt-5.4-mini",
+                "INTENT_ROUTER_REASONING_EFFORT": "low",
+                "INTENT_ROUTER_TEMPERATURE": "0.3",
+            },
+            clear=True,
+        ), patch("urllib.request.urlopen", side_effect=_capture):
+            decision = decide_support_route("What's the real difference between COMMUNICATION and LIVE_BROADCASTING?")
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0]["temperature"], 0.3)
+        self.assertNotIn("temperature", calls[1])
+        self.assertEqual(calls[1]["model"], "gpt-5.4-mini")
+        self.assertEqual(calls[1]["reasoning"]["effort"], "low")
+        self.assertEqual(decision.reason, "temperature_retry")
+        self.assertEqual(decision.matched_signals, ["live broadcasting", "comparison"])
 
     def test_build_refusal_answer_uses_chinese_template(self) -> None:
         answer = build_refusal_answer(
@@ -104,7 +326,14 @@ class SupportRouterTests(unittest.TestCase):
         self.assertIn("Agora 相关的问题", answer)
 
     def test_resolve_support_message_returns_controlled_response_for_general_chat(self) -> None:
-        decision = decide_support_route("hello there")
+        decision = SupportRouteDecision(
+            scope_label="small_talk",
+            route="controlled_response",
+            confidence=0.92,
+            reason="few_shot_small_talk",
+            matched_signals=["hello"],
+            response_language="en",
+        )
 
         resolution = resolve_support_message("hello there", decision=decision)
 

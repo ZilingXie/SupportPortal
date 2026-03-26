@@ -10,11 +10,15 @@ import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from backend.services.support_router_prompt import build_route_system_prompt, build_route_user_payload
+
 LOGGER = logging.getLogger(__name__)
 
-DEFAULT_INTENT_ROUTER_MODEL = "gpt-4o-mini"
-DEFAULT_INTENT_ROUTER_TIMEOUT_SECONDS = 3.0
+DEFAULT_INTENT_ROUTER_MODEL = "gpt-5.4-mini"
+DEFAULT_INTENT_ROUTER_TIMEOUT_SECONDS = 8.0
 DEFAULT_INTENT_ROUTER_CONFIDENCE_THRESHOLD = 0.7
+DEFAULT_INTENT_ROUTER_REASONING_EFFORT = "low"
+DEFAULT_INTENT_ROUTER_TEMPERATURE = 0.3
 DEFAULT_OPENAI_WEB_SEARCH_MODEL = "gpt-5"
 DEFAULT_OPENAI_WEB_SEARCH_TIMEOUT_SECONDS = 12.0
 OFFICIAL_AGORA_DOMAINS = [
@@ -43,124 +47,7 @@ AUTHORITATIVE_WEB_SOURCE_TIERS = {
         "www.marketwatch.com",
     ],
 }
-_SYSTEM_TERMS = (
-    "windows",
-    "macbook",
-    "iphone",
-    "电脑",
-    "laptop",
-    "printer",
-    "office",
-    "outlook",
-    "excel",
-    "蓝屏",
-    "blue screen",
-    "blue-screen",
-    "wifi",
-    "wi-fi",
-    "battery",
-    "draining fast",
-    "router",
-)
-_SMALL_TALK_TERMS = (
-    "今天天气",
-    "天气怎么样",
-    "weather",
-    "hello",
-    "hi",
-    "hey",
-    "thanks",
-    "thank you",
-    "你好",
-    "早上好",
-    "晚上好",
-)
-_PUBLIC_INFO_TERMS = (
-    "ceo",
-    "founder",
-    "headquarters",
-    "stock",
-    "investor",
-    "revenue",
-    "company",
-    "pricing",
-    "price",
-    "billing",
-    "policy",
-    "plan",
-    "legal",
-    "上市",
-    "股价",
-    "创始人",
-    "总部",
-    "定价",
-    "价格",
-    "政策",
-    "公司",
-)
-_TECHNICAL_TERMS = (
-    "token",
-    "appid",
-    "app id",
-    "app certificate",
-    "sdk",
-    "api",
-    "rtc",
-    "rtm",
-    "channel",
-    "uid",
-    "webhook",
-    "callback",
-    "recording",
-    "cloud recording",
-    "screen share",
-    "publish",
-    "subscribe",
-    "profile",
-    "role",
-    "roles",
-    "join channel",
-    "join a channel",
-    "leave channel",
-    "latency",
-    "packet loss",
-    "buildtoken",
-    "声网",
-    "频道",
-    "加入频道",
-    "离开频道",
-    "回调",
-    "录制",
-    "连麦",
-    "鉴权",
-    "排障",
-)
-_AGORA_SIGNALS = (
-    "agora",
-    "agora.io",
-    "声网",
-    "convoai",
-)
-_FOLLOW_UP_TERMS = (
-    "still",
-    "again",
-    "same issue",
-    "same problem",
-    "doesn't work",
-    "does not work",
-    "not work",
-    "not working",
-    "failed",
-    "issue",
-    "problem",
-    "it still",
-    "还是不行",
-    "还是有问题",
-    "还是失败",
-)
-_QUESTION_PREFIX_RE = re.compile(r"^(what|why|how|where|when|who|can|could|would|is|are|do|does|did)\b", re.IGNORECASE)
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
-_JOIN_CHANNEL_RE = re.compile(r"\b(join|leave|create|publish|subscribe)\b.{0,24}\bchannel\b", re.IGNORECASE)
 _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+[^)]*)\)", re.IGNORECASE)
 _BARE_URL_RE = re.compile(r"https?://[^\s)]+", re.IGNORECASE)
 _URLISH_LABEL_RE = re.compile(r"^(?:https?://)?(?:[\w-]+\.)+[a-z]{2,}(?:/[^\s]*)?$", re.IGNORECASE)
@@ -300,8 +187,28 @@ def _safe_float_env(name: str, default: float) -> float:
     return value if value > 0 else default
 
 
+def _safe_nonnegative_float_env(name: str, default: float) -> float:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value >= 0 else default
+
+
 def _normalize_text(value: Any) -> str:
     return " ".join(str(value or "").split()).strip()
+
+
+def _sanitize_matched_signals(values: list[Any] | tuple[Any, ...] | None) -> list[str]:
+    sanitized: list[str] = []
+    for value in values or []:
+        clean = _normalize_text(value)
+        if clean and clean not in sanitized:
+            sanitized.append(clean)
+    return sanitized
 
 
 def _sanitize_web_search_answer_text(text: Any) -> str:
@@ -357,40 +264,117 @@ def citations_use_authoritative_source(citations: list[dict[str, str]] | None = 
     return False
 
 
-def _contains_any(text: str, terms: tuple[str, ...]) -> list[str]:
-    lowered = _normalize_text(text).lower()
-    matches: list[str] = []
-    for term in terms:
-        normalized_term = _normalize_text(term).lower()
-        if not normalized_term:
+def _extract_response_text(response_payload: dict[str, Any]) -> str:
+    output_text = _normalize_text(response_payload.get("output_text"))
+    if output_text:
+        return output_text
+    output_items = response_payload.get("output") if isinstance(response_payload.get("output"), list) else []
+    for item in output_items:
+        if not isinstance(item, dict) or item.get("type") != "message":
             continue
-        if _CJK_RE.search(normalized_term):
-            matched = normalized_term in lowered
+        for content_item in item.get("content") or []:
+            if not isinstance(content_item, dict):
+                continue
+            text = _normalize_text(content_item.get("text"))
+            if text:
+                return text
+    return ""
+
+
+def _router_response_payload(
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    model: str,
+    reasoning_effort: str,
+    temperature: float | None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model": model,
+        "reasoning": {"effort": reasoning_effort},
+        "input": [
+            {
+                "role": "system",
+                "content": [{"type": "input_text", "text": system_prompt}],
+            },
+            {
+                "role": "user",
+                "content": [{"type": "input_text", "text": user_prompt}],
+            },
+        ],
+    }
+    if temperature is not None:
+        payload["temperature"] = temperature
+    return payload
+
+
+def _read_http_error_payload(error: urllib.error.HTTPError) -> str:
+    try:
+        body = error.read()
+    except Exception:
+        return ""
+    finally:
+        try:
+            error.close()
+        except Exception:
+            pass
+    if not body:
+        return ""
+    return body.decode("utf-8", errors="replace")
+
+
+def _call_route_responses_api(
+    *,
+    api_key: str,
+    model: str,
+    timeout_seconds: float,
+    reasoning_effort: str,
+    temperature: float | None,
+    system_prompt: str,
+    user_prompt: str,
+) -> dict[str, Any] | None:
+    payload = _router_response_payload(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        model=model,
+        reasoning_effort=reasoning_effort,
+        temperature=temperature,
+    )
+    request = urllib.request.Request(
+        "https://api.openai.com/v1/responses",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            return json.loads(response.read().decode("utf-8", errors="replace") or "{}")
+    except urllib.error.HTTPError as exc:
+        if temperature is not None:
+            error_payload = _read_http_error_payload(exc).lower()
+            if exc.code in {400, 422} and "temperature" in error_payload:
+                return _call_route_responses_api(
+                    api_key=api_key,
+                    model=model,
+                    timeout_seconds=timeout_seconds,
+                    reasoning_effort=reasoning_effort,
+                    temperature=None,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                )
         else:
-            escaped = re.escape(normalized_term).replace(r"\ ", r"\s+")
-            matched = re.search(rf"(?<![a-z0-9_]){escaped}(?![a-z0-9_])", lowered, re.IGNORECASE) is not None
-        if matched and term not in matches:
-            matches.append(term)
-    return matches
-
-
-def _context_text(ticket_subject: str | None, ticket_context: list[dict[str, str]] | None) -> str:
-    parts: list[str] = []
-    subject = _normalize_text(ticket_subject)
-    if subject:
-        parts.append(subject)
-    for item in list(ticket_context or [])[-6:]:
-        content = _normalize_text(item.get("content") if isinstance(item, dict) else "")
-        if content:
-            parts.append(content)
-    return "\n".join(parts).strip()
-
-
-def _looks_like_question(text: str) -> bool:
-    compact = _normalize_text(text)
-    if not compact:
-        return False
-    return "?" in compact or bool(_QUESTION_PREFIX_RE.match(compact))
+            try:
+                exc.close()
+            except Exception:
+                pass
+        LOGGER.warning("Intent router responses call failed: %s", exc)
+        return None
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        LOGGER.warning("Intent router responses call failed: %s", exc)
+        return None
 
 
 def _llm_route_decision(
@@ -404,72 +388,46 @@ def _llm_route_decision(
     if not api_key:
         return None
     model = (os.getenv("INTENT_ROUTER_MODEL") or DEFAULT_INTENT_ROUTER_MODEL).strip()
+    reasoning_effort = (os.getenv("INTENT_ROUTER_REASONING_EFFORT") or DEFAULT_INTENT_ROUTER_REASONING_EFFORT).strip() or DEFAULT_INTENT_ROUTER_REASONING_EFFORT
+    temperature = _safe_nonnegative_float_env("INTENT_ROUTER_TEMPERATURE", DEFAULT_INTENT_ROUTER_TEMPERATURE)
     timeout_seconds = _safe_float_env(
         "INTENT_ROUTER_TIMEOUT_SECONDS",
         DEFAULT_INTENT_ROUTER_TIMEOUT_SECONDS,
     )
-    try:
-        from langchain_openai import ChatOpenAI
-    except Exception as exc:  # pragma: no cover - dependency failure is environment-specific
-        LOGGER.warning("Intent router unavailable because langchain-openai import failed: %s", exc)
+    system_prompt = build_route_system_prompt()
+    user_prompt = build_route_user_payload(
+        message,
+        ticket_subject=ticket_subject,
+        ticket_context=ticket_context,
+        response_language=response_language,
+    )
+    response_payload = _call_route_responses_api(
+        api_key=api_key,
+        model=model,
+        timeout_seconds=timeout_seconds,
+        reasoning_effort=reasoning_effort,
+        temperature=temperature,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+    )
+    if response_payload is None:
         return None
-
-    system_prompt = (
-        "Classify the user's latest support message into exactly one route.\n"
-        "Labels:\n"
-        "- small_talk: greeting, thanks, weather, chit-chat\n"
-        "- non_agora: non-technical, unrelated request that should not be answered with Agora docs\n"
-        "- agora_non_technical: Agora-related public/company/policy/pricing question, not technical support\n"
-        "- agora_technical: technical support / integration / troubleshooting question, including device, system, SDK, API, configuration, token, callback, networking, or debugging questions even when the message does not explicitly mention Agora\n"
-        "Use brand terms, technical terms, device/system support signals, and the existing ticket context.\n"
-        "If the message is technical, choose agora_technical even without an explicit Agora brand mention.\n"
-        "If the message is ambiguous and non-technical with no clear Agora signal, choose non_agora.\n"
-        "Return JSON only with keys: scope_label, route, confidence, reason, matched_signals.\n"
-        "Valid routes are refuse, web_search, rag.\n"
-    )
-    user_prompt = json.dumps(
-        {
-            "message": _normalize_text(message),
-            "ticket_subject": _normalize_text(ticket_subject),
-            "ticket_context": list(ticket_context or [])[-6:],
-            "response_language": response_language,
-        },
-        ensure_ascii=False,
-    )
     try:
-        llm = ChatOpenAI(
-            model=model,
-            temperature=0,
-            api_key=api_key,
-            timeout=timeout_seconds,
-        )
-        response = llm.invoke([("system", system_prompt), ("user", user_prompt)])
-        raw = getattr(response, "content", "")
-        if isinstance(raw, list):
-            text = "".join(
-                str(item.get("text", "")) if isinstance(item, dict) else str(item)
-                for item in raw
-            ).strip()
-        else:
-            text = str(raw or "").strip()
-        payload = json.loads(text)
-    except Exception as exc:
-        LOGGER.warning("Intent router LLM fallback failed: %s", exc)
+        payload = json.loads(_extract_response_text(response_payload))
+    except json.JSONDecodeError:
+        LOGGER.warning("Intent router response did not return valid JSON")
         return None
     scope_label = _normalize_text(payload.get("scope_label")).lower()
-    route = _normalize_text(payload.get("route")).lower()
     if scope_label not in {"small_talk", "non_agora", "agora_non_technical", "agora_technical"}:
-        return None
-    if route not in {"refuse", "web_search", "rag"}:
         return None
     try:
         confidence = float(payload.get("confidence") or 0.0)
     except (TypeError, ValueError):
         confidence = 0.0
-    matched_signals = [str(item).strip() for item in payload.get("matched_signals") or [] if str(item).strip()]
+    matched_signals = _sanitize_matched_signals(payload.get("matched_signals"))
     return _build_route_decision(
         scope_label=scope_label,
-        action=route,
+        action="",
         confidence=max(0.0, min(1.0, confidence)),
         reason=_normalize_text(payload.get("reason")) or "llm_fallback",
         matched_signals=matched_signals,
@@ -495,93 +453,18 @@ def decide_support_route(
             response_language=response_language,
         )
 
-    context_text = _context_text(ticket_subject, ticket_context)
-    current_small_talk = _contains_any(text, _SMALL_TALK_TERMS)
-    agora_signals = _contains_any(text, _AGORA_SIGNALS)
-    technical_signals = _contains_any(text, _TECHNICAL_TERMS)
-    public_info_signals = _contains_any(text, _PUBLIC_INFO_TERMS)
-    follow_up_signals = _contains_any(text, _FOLLOW_UP_TERMS)
-    system_signals = _contains_any(text, _SYSTEM_TERMS)
-    context_agora_signals = _contains_any(context_text, _AGORA_SIGNALS + _TECHNICAL_TERMS)
-    context_technical_signals = _contains_any(context_text, _TECHNICAL_TERMS + _SYSTEM_TERMS)
-
-    if _JOIN_CHANNEL_RE.search(text):
-        technical_signals.append("join channel")
-
-    technical_triggers = list(dict.fromkeys([*technical_signals, *system_signals]))
-
-    if technical_triggers:
-        matched = list(dict.fromkeys([*agora_signals, *technical_triggers]))
-        reason = "agora_technical_signals" if agora_signals or context_agora_signals else "technical_support_signals"
-        return _build_route_decision(
-            scope_label="agora_technical",
-            action="rag",
-            confidence=0.95,
-            reason=reason,
-            matched_signals=matched,
-            response_language=response_language,
-        )
-
-    if context_technical_signals and (follow_up_signals or _looks_like_question(text)):
-        matched = list(dict.fromkeys([*context_agora_signals, *context_technical_signals, *follow_up_signals]))
-        reason = "agora_context_followup" if context_agora_signals else "technical_context_followup"
-        return _build_route_decision(
-            scope_label="agora_technical",
-            action="rag",
-            confidence=0.87,
-            reason=reason,
-            matched_signals=matched,
-            response_language=response_language,
-        )
-
-    if public_info_signals and agora_signals:
-        matched = list(dict.fromkeys([*agora_signals, *public_info_signals] or ["agora_public_info"]))
-        return _build_route_decision(
-            scope_label="agora_non_technical",
-            action="web_search",
-            confidence=0.93,
-            reason="agora_public_info",
-            matched_signals=matched,
-            response_language=response_language,
-        )
-
-    if current_small_talk and not technical_triggers and not public_info_signals and not agora_signals:
-        return _build_route_decision(
-            scope_label="small_talk",
-            action="controlled_response",
-            confidence=0.98,
-            reason="small_talk_detected",
-            matched_signals=current_small_talk,
-            response_language=response_language,
-        )
-
-    if agora_signals and not technical_triggers and _looks_like_question(text):
-        llm_decision = _llm_route_decision(
-            text,
-            ticket_subject=ticket_subject,
-            ticket_context=ticket_context,
-            response_language=response_language,
-        )
-        threshold = _safe_float_env(
-            "INTENT_ROUTER_CONFIDENCE_THRESHOLD",
-            DEFAULT_INTENT_ROUTER_CONFIDENCE_THRESHOLD,
-        )
-        if llm_decision and llm_decision.confidence >= threshold:
-            return llm_decision
-
-    if not technical_triggers and not public_info_signals and not current_small_talk:
-        llm_decision = _llm_route_decision(
-            text,
-            ticket_subject=ticket_subject,
-            ticket_context=ticket_context,
-            response_language=response_language,
-        )
-        threshold = _safe_float_env(
-            "INTENT_ROUTER_CONFIDENCE_THRESHOLD",
-            DEFAULT_INTENT_ROUTER_CONFIDENCE_THRESHOLD,
-        )
-        if llm_decision and llm_decision.confidence >= threshold:
-            return llm_decision
+    llm_decision = _llm_route_decision(
+        text,
+        ticket_subject=ticket_subject,
+        ticket_context=ticket_context,
+        response_language=response_language,
+    )
+    threshold = _safe_float_env(
+        "INTENT_ROUTER_CONFIDENCE_THRESHOLD",
+        DEFAULT_INTENT_ROUTER_CONFIDENCE_THRESHOLD,
+    )
+    if llm_decision and llm_decision.confidence >= threshold:
+        return llm_decision
 
     return _build_route_decision(
         scope_label="non_agora",

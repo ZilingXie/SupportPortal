@@ -367,6 +367,7 @@ def _execute_case(
     runner: Callable[[str, int | None], RagQueryResult | None],
     top_k: int | None,
     message_resolver: Callable[..., Any] | None,
+    route_decider: Callable[..., SupportRouteDecision | dict[str, Any]] | None,
 ) -> BenchmarkExecutionResult:
     if not case.route_aware:
         result = runner(case.question, top_k=top_k)
@@ -378,6 +379,11 @@ def _execute_case(
 
     resolver = message_resolver or resolve_support_message
     rag_result_holder: dict[str, RagQueryResult] = {}
+    decision = (
+        _coerce_route_decision(route_decider(case.question, ticket_subject=None, ticket_context=None))
+        if route_decider is not None
+        else None
+    )
 
     def _rag_answerer(message: str) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
         rag_result = runner(message, top_k=top_k)
@@ -397,7 +403,7 @@ def _execute_case(
         ticket_subject=None,
         ticket_context=None,
         rag_answerer=_rag_answerer,
-        decision=None,
+        decision=decision,
     )
     rag_result = rag_result_holder.get("result")
     if _clean_text(getattr(resolution, "answer_route", "")) == "rag" and rag_result is None:
@@ -962,6 +968,7 @@ def run_benchmark(
                     runner=runner,
                     top_k=top_k,
                     message_resolver=message_resolver,
+                    route_decider=route_decider,
                 )
                 decision = _decision_from_execution_result(case, execution_result)
             else:
