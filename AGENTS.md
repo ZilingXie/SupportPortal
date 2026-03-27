@@ -1,14 +1,14 @@
 # Collaboration Rules
 
 ## Branch Workflow
-1. Treat `mac` as the base and integration branch. Investigation that does not modify repo-tracked files may be performed directly on `mac`.
-2. Once a task requires editing repo-tracked files, Codex must create a new `codex/<task>` branch from the latest `mac` branch state before making those edits. Do not reuse old task branches unless the user explicitly asks for that.
-3. After a `codex/<task>` branch is created, all repo-tracked edits, checks, and task verification for that task must happen on that `codex/<task>` branch until finalization begins.
-4. If the current workspace has uncommitted changes that could affect investigation, branch creation, branch switching, testing, squashing changes onto `mac`, or recreating the final change on `main`, Codex must stop and ask the user before proceeding. Do not stash, overwrite, or force checkout on its own.
-5. If the user explicitly approves the task branch for finalization (for example by saying "验收通过" or using an equivalent approval), Codex must treat that as authorization to start the branch finalization flow.
-6. Before any commit or finalization transfer, run a fresh round of verification that matches the current task. For tasks with repo-tracked edits, that verification must pass on the expected `codex/<task>` branch before switching away from it. If verification fails, or if the working tree/index state makes finalization unsafe or ambiguous, Codex must stop and ask the user before proceeding.
-7. The finalization flow for a task branch is: run fresh verification on `codex/<task>`; switch to `mac`; transfer the task-branch changes onto `mac` as a squash result; delete the local `codex/<task>` branch only after the squash result is safely present on `mac`; create the final authoritative commit on `mac`; switch to `main`; apply the same diff from the `mac` commit without reusing the `mac` commit object; then create a separate new commit on `main`.
-8. The `main` step is not a `mac` to `main` merge and not a direct cherry-pick of the `mac` commit.
+1. Treat `main` as the source branch for new task branches and `mac` as the integration branch. Investigation that does not modify repo-tracked files may be performed directly on `mac`.
+2. Changes limited to the repository-root `AGENTS.md` file may be made directly on `mac` without creating a `codex/<task>` branch.
+3. Once a task requires editing any other repo-tracked files, Codex must first update the local `main` branch to the latest remote state, then create a new `codex/<task>` branch from that updated `main` branch before making those repo-tracked edits. Do not reuse old task branches unless the user explicitly asks for that.
+4. After a `codex/<task>` branch is created, all repo-tracked edits, checks, and task verification for that task must happen on that `codex/<task>` branch until finalization begins.
+5. If the current workspace has uncommitted changes that could affect updating `main`, branch creation, branch switching, testing, merging changes into `mac`, or deleting the local `codex/<task>` branch, Codex must stop and ask the user before proceeding. Do not stash, overwrite, or force checkout on its own.
+6. If the user explicitly approves the task branch for finalization (for example by saying "验收通过" or using an equivalent approval), Codex must treat that as authorization to start the branch finalization flow.
+7. Before any merge or finalization step, run a fresh round of verification that matches the current task. For tasks with repo-tracked edits, that verification must pass on the expected `codex/<task>` branch before switching away from it. If verification fails, or if the working tree/index state makes finalization unsafe or ambiguous, Codex must stop and ask the user before proceeding.
+8. The finalization flow for a task branch is: run fresh verification on `codex/<task>`; switch to `mac`; merge the task branch changes into `mac`; confirm the merged result is safely present on `mac`; then delete the local `codex/<task>` branch.
 
 ## UI Design Source Of Truth
 1. All new or refactored UI under `ui/` must follow `/Users/xieziling/Desktop/personal_proj/SupportPortal/design.md`.
