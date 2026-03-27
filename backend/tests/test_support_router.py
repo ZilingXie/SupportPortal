@@ -345,6 +345,38 @@ class SupportRouterTests(unittest.TestCase):
 
 
 class AgoraPublicInfoSearchTests(unittest.TestCase):
+    def test_search_agora_public_info_uses_safer_default_timeout_budget(self) -> None:
+        captured_request: dict[str, object] = {}
+        payload = {
+            "output_text": "Tony Zhao is Agora's CEO.",
+            "output": [
+                {
+                    "type": "web_search_call",
+                    "action": {
+                        "sources": [
+                            {
+                                "url": "https://investor.agora.io/corporate/senior-leadership/",
+                                "title": "Senior Leadership",
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+
+        def _capture(request, timeout=None):
+            captured_request["timeout"] = timeout
+            return _FakeResponse(payload)
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen",
+            side_effect=_capture,
+        ):
+            answer = search_agora_public_info("who's the ceo of agora", response_language="en")
+
+        self.assertEqual(captured_request["timeout"], 30.0)
+        self.assertTrue(answer.search_used)
+
     def test_citations_use_authoritative_source_accepts_official_and_market_domains(self) -> None:
         self.assertTrue(
             citations_use_authoritative_source(

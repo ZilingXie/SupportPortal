@@ -229,6 +229,169 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_client_session_history_uses_shared_history_rows_for_page_and_sidebar(self) -> None:
+        css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
+        self.assertIn(".history-list", css)
+        self.assertIn(".history-row", css)
+        self.assertIn(".history-row-compact", css)
+        self.assertIn(".history-row-actions", css)
+
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const activeTicket = createTicket(state.user.id);
+                updateTicketTitle(activeTicket.id, "VPN latency investigation");
+                saveTicketMessages(activeTicket.id, [
+                  {
+                    id: "msg-1",
+                    role: "user",
+                    content: "Need help with VPN latency",
+                    createdAt: new Date().toISOString(),
+                  },
+                ]);
+                updateTicketStatus(activeTicket.id, "waiting_for_support");
+
+                const resolvedTicket = createTicket(state.user.id);
+                updateTicketTitle(resolvedTicket.id, "Database restore follow-up");
+                saveTicketMessages(resolvedTicket.id, [
+                  {
+                    id: "msg-2",
+                    role: "user",
+                    content: "Issue resolved, thanks",
+                    createdAt: new Date().toISOString(),
+                  },
+                ]);
+                updateTicketStatus(resolvedTicket.id, "resolved");
+
+                state.activeTicketId = activeTicket.id;
+                state.view = "tickets";
+                state.statusFilter = "all";
+
+                const sidebarHtml = renderSidebarContent();
+                if (sidebarHtml.includes("session-btn")) {
+                  throw new Error("Sidebar session history should no longer use the legacy session button card.");
+                }
+                if (!sidebarHtml.includes("history-row history-row-compact")) {
+                  throw new Error("Sidebar session history should render compact history rows.");
+                }
+                if (!sidebarHtml.includes('data-history-ticket-row="true"')) {
+                  throw new Error("Compact history rows should expose row semantics.");
+                }
+                if (!sidebarHtml.includes("history-row-kicker")) {
+                  throw new Error("Compact history rows should render the shared session kicker.");
+                }
+                if (!sidebarHtml.includes("history-row-meta")) {
+                  throw new Error("Compact history rows should render shared session meta.");
+                }
+
+                const ticketsHtml = renderTicketsPage();
+                if (ticketsHtml.includes("tickets-grid")) {
+                  throw new Error("Session History page should no longer render the old grid layout.");
+                }
+                if (ticketsHtml.includes("ticket-card")) {
+                  throw new Error("Session History page should no longer render legacy ticket cards.");
+                }
+                if (!ticketsHtml.includes('class="history-list"')) {
+                  throw new Error("Session History page should render the shared history list container.");
+                }
+                if (!ticketsHtml.includes("history-row")) {
+                  throw new Error("Session History page should render shared history rows.");
+                }
+                if (!ticketsHtml.includes('role="button"')) {
+                  throw new Error("History rows should expose button semantics.");
+                }
+                if (!ticketsHtml.includes('tabindex="0"')) {
+                  throw new Error("History rows should be keyboard focusable.");
+                }
+                if (!ticketsHtml.includes("history-row-actions")) {
+                  throw new Error("History rows should keep the explicit action area.");
+                }
+                if (!ticketsHtml.includes("Created")) {
+                  throw new Error("History rows should render created metadata.");
+                }
+                if (!ticketsHtml.includes("Updated")) {
+                  throw new Error("History rows should render updated metadata.");
+                }
+              """
+            )
+        )
+
+    def test_client_history_row_interactions_ignore_nested_buttons_and_support_keyboard(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                const row = {
+                  dataset: { ticketId: "TK-321" },
+                };
+
+                const buttonTarget = {
+                  closest(selector) {
+                    if (selector === "[data-history-ticket-row]") {
+                      return row;
+                    }
+                    if (selector.includes("button")) {
+                      return { tagName: "BUTTON" };
+                    }
+                    return null;
+                  },
+                };
+
+                const plainTarget = {
+                  closest(selector) {
+                    if (selector === "[data-history-ticket-row]") {
+                      return row;
+                    }
+                    if (selector.includes("button")) {
+                      return null;
+                    }
+                    return null;
+                  },
+                };
+
+                if (getHistoryRowTarget(buttonTarget) !== null) {
+                  throw new Error("Nested interactive controls should not activate the history row.");
+                }
+                if (getHistoryRowTarget(plainTarget) !== row) {
+                  throw new Error("Plain row content should resolve to the history row target.");
+                }
+
+                let lastPath = null;
+                navigate = (path) => {
+                  lastPath = path;
+                };
+
+                handleHistoryRowClick({ target: plainTarget });
+                if (lastPath !== "/chat/TK-321") {
+                  throw new Error(`Row click should navigate to the chat ticket, got ${lastPath}.`);
+                }
+
+                lastPath = null;
+                handleHistoryRowClick({ target: buttonTarget });
+                if (lastPath !== null) {
+                  throw new Error("Nested button clicks should not trigger row navigation.");
+                }
+
+                let prevented = false;
+                handleHistoryRowKeydown({
+                  key: "Enter",
+                  target: plainTarget,
+                  preventDefault() {
+                    prevented = true;
+                  },
+                });
+                if (!prevented) {
+                  throw new Error("Keyboard row activation should prevent the default event.");
+                }
+                if (lastPath !== "/chat/TK-321") {
+                  throw new Error(`Keyboard row activation should navigate to the chat ticket, got ${lastPath}.`);
+                }
+              """
+            )
+        )
+
     def test_client_session_history_uses_custom_status_filter_dropdown(self) -> None:
         app_source = Path("ui/client-ui/app.js").read_text(encoding="utf-8")
         css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")

@@ -729,6 +729,120 @@ function statusBadge(status) {
   return `<span class="status-badge ${config.className}">${config.label}</span>`;
 }
 
+function buildHistoryRowActions(ticket) {
+  return `
+    <div class="history-row-actions">
+      <button class="btn btn-ghost btn-inline" data-action="open-ticket" data-ticket-id="${ticket.id}" type="button">Open</button>
+      ${
+        ticket.status === "resolved"
+          ? `<button class="btn btn-outline btn-inline" data-action="reopen-ticket" data-ticket-id="${ticket.id}" type="button">Reopen</button>`
+          : isTicketEmpty(ticket)
+          ? ""
+          : `<button class="btn btn-outline btn-inline" data-action="resolve-ticket" data-ticket-id="${ticket.id}" type="button">Resolve</button>`
+      }
+    </div>
+  `;
+}
+
+function renderHistoryRowMeta(ticket) {
+  return `
+    <div class="history-row-meta">
+      <span><strong>Created</strong> ${escapeHtml(formatDate(ticket.createdAt))}</span>
+      <span><strong>Updated</strong> ${escapeHtml(formatDate(ticket.updatedAt))}</span>
+    </div>
+  `;
+}
+
+function renderHistoryRow(ticket, options = {}) {
+  const { compact = false, active = false, includeActions = false } = options;
+  const classes = ["history-row"];
+  if (compact) {
+    classes.push("history-row-compact");
+  }
+  if (active) {
+    classes.push("is-active");
+  }
+
+  return `
+    <article
+      class="${classes.join(" ")}"
+      role="button"
+      tabindex="0"
+      data-history-ticket-row="true"
+      data-ticket-id="${ticket.id}"
+      aria-label="Open session ${escapeHtml(ticket.id)}"
+    >
+      <div class="history-row-header">
+        <div class="history-row-title-group">
+          <div class="history-row-headline">
+            <p class="history-row-kicker mono">${escapeHtml(ticket.id)}</p>
+            <h3 class="history-row-title">${escapeHtml(ticket.title)}</h3>
+          </div>
+        </div>
+        <div class="history-row-badges">${statusBadge(ticket.status)}</div>
+      </div>
+      <div class="history-row-secondary">
+        ${renderHistoryRowMeta(ticket)}
+        ${includeActions ? buildHistoryRowActions(ticket) : ""}
+      </div>
+    </article>
+  `;
+}
+
+const HISTORY_ROW_INTERACTIVE_SELECTOR = [
+  "button",
+  "a",
+  "input",
+  "select",
+  "textarea",
+  "summary",
+  '[role="button"]',
+  '[role="link"]',
+].join(", ");
+
+function openTicketChat(ticketId) {
+  const normalizedId = String(ticketId || "").trim();
+  if (!normalizedId) {
+    return;
+  }
+  navigate(`/chat/${normalizedId}`);
+}
+
+function getHistoryRowTarget(target) {
+  if (!target || typeof target.closest !== "function") {
+    return null;
+  }
+  const row = target.closest("[data-history-ticket-row]");
+  if (!row) {
+    return null;
+  }
+  const interactive = target.closest(HISTORY_ROW_INTERACTIVE_SELECTOR);
+  if (interactive && interactive !== row) {
+    return null;
+  }
+  return row;
+}
+
+function handleHistoryRowClick(event) {
+  const row = getHistoryRowTarget(event.target);
+  if (!row) {
+    return;
+  }
+  openTicketChat(row.dataset.ticketId);
+}
+
+function handleHistoryRowKeydown(event) {
+  if (event.key !== "Enter" && event.key !== " " && event.key !== "Spacebar") {
+    return;
+  }
+  const row = getHistoryRowTarget(event.target);
+  if (!row) {
+    return;
+  }
+  event.preventDefault();
+  openTicketChat(row.dataset.ticketId);
+}
+
 function getStatusFilterOption(value) {
   return STATUS_FILTER_OPTIONS.find((option) => option.value === value) || STATUS_FILTER_OPTIONS[0];
 }
@@ -937,18 +1051,12 @@ function renderSidebarContent() {
         ? `<p class="session-empty">No sessions yet. Start a conversation to build your history.</p>`
         : recent
             .map(
-              (ticket) => `
-          <button class="session-btn ${
-            state.activeTicketId === ticket.id ? "active" : ""
-          }" data-action="open-ticket" data-ticket-id="${ticket.id}" type="button">
-            <div class="session-top">
-              <span class="session-id mono">${ticket.id}</span>
-              ${statusBadge(ticket.status)}
-            </div>
-            <div class="session-title">${escapeHtml(ticket.title)}</div>
-            <div class="session-meta">${escapeHtml(formatDate(ticket.updatedAt))}</div>
-          </button>
-        `
+              (ticket) =>
+                renderHistoryRow(ticket, {
+                  compact: true,
+                  active: state.activeTicketId === ticket.id,
+                  includeActions: false,
+                })
             )
             .join("")
     }
@@ -1271,35 +1379,13 @@ function renderTicketsPage() {
           filtered.length === 0
             ? `<div class="empty-state">No sessions found.</div>`
             : `
-          <div class="tickets-grid">
+          <div class="history-list">
                 ${filtered
-                  .map(
-                    (ticket) => `
-                  <article class="ticket-card">
-                    <div class="ticket-card-head">
-                      <div>
-                        <p class="ticket-card-label">Session ID</p>
-                        <h3 class="ticket-card-id mono">${ticket.id}</h3>
-                      </div>
-                      ${statusBadge(ticket.status)}
-                    </div>
-                    <p class="ticket-card-title">${escapeHtml(ticket.title)}</p>
-                    <div class="ticket-card-meta">
-                      <span>Created ${escapeHtml(formatDate(ticket.createdAt))}</span>
-                      <span>Updated ${escapeHtml(formatDate(ticket.updatedAt))}</span>
-                    </div>
-                    <div class="actions">
-                      <button class="btn btn-ghost" data-action="open-ticket" data-ticket-id="${ticket.id}" type="button">Open</button>
-                        ${
-                          ticket.status === "resolved"
-                            ? `<button class="btn btn-outline" data-action="reopen-ticket" data-ticket-id="${ticket.id}" type="button">Reopen</button>`
-                            : isTicketEmpty(ticket)
-                            ? ""
-                            : `<button class="btn btn-outline" data-action="resolve-ticket" data-ticket-id="${ticket.id}" type="button">Resolve</button>`
-                        }
-                    </div>
-                  </article>
-                `
+                  .map((ticket) =>
+                    renderHistoryRow(ticket, {
+                      compact: false,
+                      includeActions: true,
+                    })
                   )
                   .join("")}
           </div>
@@ -1563,8 +1649,13 @@ function bindAuthedEvents() {
       if (!ticketId) {
         return;
       }
-      navigate(`/chat/${ticketId}`);
+      openTicketChat(ticketId);
     });
+  });
+
+  appRoot.querySelectorAll("[data-history-ticket-row]").forEach((element) => {
+    element.addEventListener("click", handleHistoryRowClick);
+    element.addEventListener("keydown", handleHistoryRowKeydown);
   });
 
   appRoot.querySelectorAll("[data-action='resolve-ticket']").forEach((element) => {
