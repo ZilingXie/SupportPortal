@@ -322,6 +322,7 @@ button {
 .textarea:focus-visible,
 .btn:focus-visible,
 .session-btn:focus-visible,
+.history-row:focus-visible,
 .sidebar-nav-item:focus-visible,
 .composer-icon-button:focus-visible,
 .send-btn:focus-visible {
@@ -826,53 +827,157 @@ button {
   line-height: 1.6;
 }
 
-.session-btn {
-  width: 100%;
-  padding: 16px 16px 14px;
-  border-radius: 20px;
-  color: inherit;
-  text-align: left;
+.history-row {
+  display: grid;
+  gap: 14px;
+  padding: 18px 20px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 14px 34px rgba(52, 61, 150, 0.08);
   cursor: pointer;
-  background: rgba(255, 255, 255, 0.05);
   transition:
-    background 0.18s ease,
-    transform 0.18s ease;
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    background 0.18s ease;
 }
 
-.session-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+.history-row:hover {
+  transform: translateY(-1px);
+  background: #fff;
+  box-shadow: 0 20px 40px rgba(52, 61, 150, 0.12);
 }
 
-.session-btn.active {
-  background: rgba(0, 176, 255, 0.12);
+.history-row.is-active {
+  background: linear-gradient(180deg, rgba(202, 230, 255, 0.88) 0%, rgba(255, 255, 255, 0.92) 100%);
+  box-shadow:
+    0 20px 40px rgba(52, 61, 150, 0.12),
+    inset 0 0 0 1px rgba(0, 176, 255, 0.16);
 }
 
-.session-top {
+.history-row-header,
+.history-row-secondary,
+.history-row-badges,
+.history-row-headline,
+.history-row-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
 }
 
-.session-id {
-  color: rgba(236, 241, 248, 0.82);
-  font-size: 12px;
+.history-row-header {
+  justify-content: space-between;
+  align-items: flex-start;
 }
 
-.session-title {
-  margin-top: 12px;
-  color: #fff;
+.history-row-title-group {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.history-row-headline {
+  align-items: baseline;
+  min-width: 0;
+}
+
+.history-row-kicker {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.history-row-title {
+  margin: 0;
   font-family: "Manrope", "Inter", sans-serif;
-  font-size: 15px;
-  font-weight: 700;
-  line-height: 1.3;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.08;
+  letter-spacing: -0.03em;
   overflow-wrap: anywhere;
 }
 
-.session-meta {
-  margin-top: 8px;
-  color: rgba(236, 241, 248, 0.62);
+.history-row-badges {
+  justify-content: flex-end;
+}
+
+.history-row-secondary {
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px 18px;
+}
+
+.history-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  color: var(--ink-soft);
+  font-size: 13px;
+  flex: 1 1 420px;
+}
+
+.history-row-meta strong {
+  margin-right: 4px;
+  color: var(--ink-muted);
   font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.history-row-actions {
+  justify-content: flex-end;
+}
+
+.history-row-compact {
+  padding: 16px 16px 14px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: none;
+}
+
+.history-row-compact:hover {
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: none;
+}
+
+.history-row-compact.is-active {
+  background: rgba(0, 176, 255, 0.12);
+  box-shadow: inset -3px 0 0 rgba(0, 176, 255, 0.9);
+}
+
+.history-row-compact .history-row-header,
+.history-row-compact .history-row-secondary {
+  gap: 10px;
+}
+
+.history-row-compact .history-row-title {
+  color: #fff;
+  font-size: 15px;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.history-row-compact .history-row-kicker {
+  color: rgba(236, 241, 248, 0.72);
+  font-size: 10px;
+}
+
+.history-row-compact .history-row-meta {
+  gap: 6px 12px;
+  color: rgba(236, 241, 248, 0.68);
+  font-size: 12px;
+}
+
+.history-row-compact .history-row-meta strong {
+  color: rgba(195, 204, 255, 0.58);
+  font-size: 10px;
+}
+
+.history-row-compact .status-badge {
+  box-shadow: none;
 }
 
 .sidebar-footer {
@@ -1622,77 +1727,9 @@ a.citation-pill:hover {
   margin-top: 28px;
 }
 
-.tickets-grid {
+.history-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 18px;
-}
-
-.ticket-card {
-  padding: 24px;
-  border-radius: 28px;
-  background: rgba(255, 255, 255, 0.88);
-  box-shadow: 0 14px 34px rgba(52, 61, 150, 0.08);
-  transition:
-    transform 0.18s ease,
-    background 0.18s ease,
-    box-shadow 0.18s ease;
-}
-
-.ticket-card:hover {
-  transform: translateY(-2px);
-  background: #fff;
-  box-shadow: 0 22px 44px rgba(52, 61, 150, 0.12);
-}
-
-.ticket-card-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
-}
-
-.ticket-card-label {
-  margin: 0;
-  color: var(--ink-muted);
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
-.ticket-card-id {
-  margin: 10px 0 0;
-  font-family: "Manrope", "Inter", sans-serif;
-  font-size: 24px;
-  font-weight: 800;
-  line-height: 1;
-  letter-spacing: -0.03em;
-}
-
-.ticket-card-title {
-  margin: 18px 0 0;
-  font-family: "Manrope", "Inter", sans-serif;
-  font-size: 20px;
-  font-weight: 800;
-  line-height: 1.2;
-  overflow-wrap: anywhere;
-}
-
-.ticket-card-meta {
-  margin-top: 16px;
-  display: grid;
-  gap: 6px;
-  color: var(--ink-soft);
-  font-size: 13px;
-}
-
-.actions {
-  margin-top: 20px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .empty-state {
@@ -1822,13 +1859,22 @@ a.citation-pill:hover {
 
   .welcome-inner,
   .empty-state,
-  .ticket-card,
+  .history-row,
   .chat-input-inner {
     border-radius: 24px;
   }
 
   .msg-column {
     max-width: 100%;
+  }
+
+  .history-row-secondary {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .history-row-actions {
+    justify-content: flex-start;
   }
 }
 
@@ -1901,6 +1947,19 @@ a.citation-pill:hover {
 
   .tickets-title {
     font-size: 26px;
+  }
+
+  .history-row {
+    padding: 16px 16px 14px;
+    gap: 12px;
+  }
+
+  .history-row-title {
+    font-size: 20px;
+  }
+
+  .history-row-meta {
+    gap: 8px 12px;
   }
 
   .chat-main {
