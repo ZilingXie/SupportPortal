@@ -1183,6 +1183,12 @@ button {
   text-transform: uppercase;
 }
 
+.context-chip.is-escalated {
+  color: var(--warning);
+  border-color: rgba(159, 93, 18, 0.18);
+  background: rgba(255, 245, 235, 0.9);
+}
+
 .context-divider {
   width: 1px;
   height: 16px;
@@ -1214,6 +1220,27 @@ button {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.context-assistance-btn {
+  color: var(--primary);
+  border-color: rgba(0, 100, 147, 0.14);
+  background: rgba(202, 230, 255, 0.36);
+}
+
+.context-assistance-note {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  color: var(--ink-soft);
+  background: rgba(202, 230, 255, 0.34);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
 }
 
 .main {
@@ -1771,6 +1798,11 @@ a.citation-pill:hover {
   background: rgba(0, 100, 147, 0.12);
 }
 
+.status-escalated {
+  color: var(--warning);
+  background: rgba(255, 234, 205, 0.92);
+}
+
 .status-resolved {
   color: #005763;
   background: rgba(0, 183, 204, 0.14);
@@ -1850,6 +1882,10 @@ a.citation-pill:hover {
 
   .tickets-actions {
     width: 100%;
+  }
+
+  .context-actions {
+    justify-content: flex-start;
   }
 
   .filter-select {
