@@ -58,6 +58,78 @@ class _BenchmarkPrepConnection:
         return False
 
 
+class _ReusableCursor:
+    def __init__(self, *, fetchall_results=None, fetchone_results=None) -> None:
+        self._fetchall_results = list(fetchall_results or [])
+        self._fetchone_results = list(fetchone_results or [])
+        self.executed: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def execute(self, *args, **kwargs) -> None:
+        self.executed.append((args, kwargs))
+
+    def fetchall(self):
+        if not self._fetchall_results:
+            return []
+        return self._fetchall_results.pop(0)
+
+    def fetchone(self):
+        if not self._fetchone_results:
+            return None
+        return self._fetchone_results.pop(0)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
+class _ReusableConnection:
+    def __init__(self, cursor: _ReusableCursor) -> None:
+        self._cursor = cursor
+        self.autocommit = False
+        self.closed = False
+        self.broken = False
+        self.commit_count = 0
+        self.rollback_count = 0
+        self.close_count = 0
+
+    def cursor(self) -> _ReusableCursor:
+        return self._cursor
+
+    def transaction(self):
+        connection = self
+
+        class _Transaction:
+            def __enter__(self_inner):
+                return connection
+
+            def __exit__(self_inner, exc_type, exc, tb) -> bool:
+                if exc_type is None:
+                    connection.commit()
+                else:
+                    connection.rollback()
+                return False
+
+        return _Transaction()
+
+    def commit(self) -> None:
+        self.commit_count += 1
+
+    def rollback(self) -> None:
+        self.rollback_count += 1
+
+    def close(self) -> None:
+        self.close_count += 1
+        self.closed = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+
 class RepositoryConfigurationTests(unittest.TestCase):
     def test_ticket_repository_requires_ticket_db_dsn(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
@@ -199,6 +271,25 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIs(connection, sentinel_connection)
         self.assertEqual(connect_mock.call_count, 2)
         sleep_mock.assert_called_once_with(0.2)
+
+    def test_ticket_repository_reuses_cached_read_connection_between_reads(self) -> None:
+        repository = PostgresTicketRepository(dsn="postgresql://example")
+        connection = _ReusableConnection(_ReusableCursor(fetchall_results=[[], []]))
+        with patch("backend.repositories.ticket_repository.psycopg.connect", return_value=connection) as connect_mock:
+            repository.list_tickets(include_messages=False)
+            repository.list_tickets(include_messages=False)
+
+        self.assertEqual(connect_mock.call_count, 1)
+
+    def test_ticket_repository_reuses_cached_write_connection_between_event_writes(self) -> None:
+        repository = PostgresTicketRepository(dsn="postgresql://example")
+        connection = _ReusableConnection(_ReusableCursor())
+        with patch("backend.repositories.ticket_repository.psycopg.connect", return_value=connection) as connect_mock:
+            repository.record_event("T-1", "ticket_updated", {"ticket_id": "T-1"})
+            repository.record_event("T-1", "ticket_updated", {"ticket_id": "T-1"})
+
+        self.assertEqual(connect_mock.call_count, 1)
+        self.assertEqual(connection.commit_count, 2)
 
     def test_vector_type_dimension_extracts_pgvector_dim(self) -> None:
         self.assertEqual(_vector_type_dimension("vector(1024)"), 1024)

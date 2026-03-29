@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import sys
+import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from backend.services.emotion_reply import (
     detect_intent,
@@ -30,6 +32,23 @@ class EmotionReplyTests(unittest.TestCase):
         self.assertEqual(reply.source, "fallback")
         self.assertIn("sorry", reply.text.lower())
         self.assertIn("engineer", reply.text.lower())
+
+    def test_generate_reply_skips_openai_for_negative_sentiment(self) -> None:
+        chat_openai_mock = Mock()
+        fake_module = types.SimpleNamespace(ChatOpenAI=chat_openai_mock)
+
+        with patch.dict(sys.modules, {"langchain_openai": fake_module}):
+            with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True):
+                reply = generate_emotion_reply(
+                    sentiment_bucket="negative",
+                    raw_label="anger",
+                    sentiment_confidence=0.91,
+                    customer_message="This is terrible and still broken.",
+                    ticket_context=[{"role": "customer", "content": "This is terrible and still broken."}],
+                )
+
+        self.assertEqual(reply.source, "fallback")
+        chat_openai_mock.assert_not_called()
 
     def test_normalize_reply_word_limit(self) -> None:
         long_text = " ".join(["word"] * 40)

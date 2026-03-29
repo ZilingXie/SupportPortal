@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import logging
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Protocol
@@ -179,12 +180,32 @@ class PostgresTicketRepository:
         self._connect_timeout = _safe_positive_int(connect_timeout, 5)
         self._connect_retries = _safe_positive_int(connect_retries, 0)
         self._connect_retry_delay_seconds = _safe_positive_float(connect_retry_delay_seconds, 1.0)
+        self._connection_local = threading.local()
 
     def storage_mode(self) -> str:
         return "postgres"
 
     def _table(self, table_name: str) -> sql.Identifier:
         return sql.Identifier(self._schema, table_name)
+
+    def _reset_cached_connection(self) -> None:
+        connection = getattr(self._connection_local, "connection", None)
+        if connection is None:
+            return
+        try:
+            connection.close()
+        except Exception:
+            LOGGER.debug("Failed to close cached ticket repository connection cleanly.", exc_info=True)
+        self._connection_local.connection = None
+
+    def _cached_connection(self) -> psycopg.Connection[Any]:
+        connection = getattr(self._connection_local, "connection", None)
+        if connection is not None and not getattr(connection, "closed", False) and not getattr(connection, "broken", False):
+            return connection
+        connection = self._connect()
+        connection.autocommit = True
+        self._connection_local.connection = connection
+        return connection
 
     def _connect(self) -> psycopg.Connection[Any]:
         attempts = max(1, self._connect_retries + 1)
@@ -301,7 +322,8 @@ class PostgresTicketRepository:
             conn.commit()
 
     def exists(self, ticket_id: str) -> bool:
-        with self._connect() as conn:
+        conn = self._cached_connection()
+        try:
             with conn.cursor() as cur:
                 cur.execute(
                     sql.SQL("SELECT 1 FROM {} WHERE ticket_id = %s").format(
@@ -310,6 +332,10 @@ class PostgresTicketRepository:
                     (ticket_id,),
                 )
                 return cur.fetchone() is not None
+        except Exception:
+            if getattr(conn, "closed", False) or getattr(conn, "broken", False):
+                self._reset_cached_connection()
+            raise
 
     def _fetch_messages(self, conn: psycopg.Connection[Any], ticket_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
         grouped: dict[str, list[dict[str, Any]]] = {ticket_id: [] for ticket_id in ticket_ids}
@@ -361,7 +387,8 @@ class PostgresTicketRepository:
         }
 
     def _fetch_tickets(self, include_messages: bool) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+        conn = self._cached_connection()
+        try:
             with conn.cursor() as cur:
                 cur.execute(
                     sql.SQL(
@@ -385,6 +412,10 @@ class PostgresTicketRepository:
                 rows = cur.fetchall()
             ticket_ids = [str(row[0]) for row in rows]
             message_map = self._fetch_messages(conn, ticket_ids) if include_messages else {}
+        except Exception:
+            if getattr(conn, "closed", False) or getattr(conn, "broken", False):
+                self._reset_cached_connection()
+            raise
 
         tickets: list[dict[str, Any]] = []
         for row in rows:
@@ -394,7 +425,8 @@ class PostgresTicketRepository:
         return tickets
 
     def get_ticket(self, ticket_id: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        conn = self._cached_connection()
+        try:
             with conn.cursor() as cur:
                 cur.execute(
                     sql.SQL(
@@ -422,6 +454,10 @@ class PostgresTicketRepository:
                 return None
             message_map = self._fetch_messages(conn, [ticket_id])
             return self._row_to_ticket(row, message_map.get(ticket_id, []))
+        except Exception:
+            if getattr(conn, "closed", False) or getattr(conn, "broken", False):
+                self._reset_cached_connection()
+            raise
 
     def list_tickets(self, include_messages: bool = True) -> list[dict[str, Any]]:
         return self._fetch_tickets(include_messages=include_messages)
@@ -444,100 +480,111 @@ class PostgresTicketRepository:
         engineer_mode = _normalize_mode(ticket.get("engineer_mode"))
         last_action = ticket.get("last_engineer_action")
 
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    sql.SQL(
-                        """
-                        INSERT INTO {} (
-                            ticket_id,
-                            customer_id,
-                            requester,
-                            subject,
-                            status,
-                            priority,
-                            engineer_mode,
-                            pending_engineer_question,
-                            last_engineer_action,
-                            created_at,
-                            updated_at
-                        )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (ticket_id) DO UPDATE SET
-                            customer_id = EXCLUDED.customer_id,
-                            requester = EXCLUDED.requester,
-                            subject = EXCLUDED.subject,
-                            status = EXCLUDED.status,
-                            priority = EXCLUDED.priority,
-                            engineer_mode = EXCLUDED.engineer_mode,
-                            pending_engineer_question = EXCLUDED.pending_engineer_question,
-                            last_engineer_action = EXCLUDED.last_engineer_action,
-                            updated_at = EXCLUDED.updated_at
-                        """
-                    ).format(self._table("support_tickets")),
-                    (
-                        ticket_id,
-                        str(ticket.get("customer_id") or "C-001"),
-                        requester,
-                        subject,
-                        status,
-                        priority,
-                        engineer_mode,
-                        ticket.get("pending_engineer_question"),
-                        Json(last_action) if isinstance(last_action, dict) else None,
-                        created_at,
-                        updated_at,
-                    ),
-                )
-
-                for message in new_messages or []:
-                    content = str(message.get("content", "")).strip()
-                    if not content:
-                        continue
-                    sources = message.get("sources")
-                    citations = message.get("citations")
+        conn = self._cached_connection()
+        try:
+            with conn.transaction():
+                with conn.cursor() as cur:
                     cur.execute(
                         sql.SQL(
                             """
                             INSERT INTO {} (
                                 ticket_id,
-                                role,
-                                content,
+                                customer_id,
+                                requester,
+                                subject,
+                                status,
+                                priority,
+                                engineer_mode,
+                                pending_engineer_question,
+                                last_engineer_action,
                                 created_at,
-                                sources,
-                                citations
+                                updated_at
                             )
-                            VALUES (%s, %s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (ticket_id) DO UPDATE SET
+                                customer_id = EXCLUDED.customer_id,
+                                requester = EXCLUDED.requester,
+                                subject = EXCLUDED.subject,
+                                status = EXCLUDED.status,
+                                priority = EXCLUDED.priority,
+                                engineer_mode = EXCLUDED.engineer_mode,
+                                pending_engineer_question = EXCLUDED.pending_engineer_question,
+                                last_engineer_action = EXCLUDED.last_engineer_action,
+                                updated_at = EXCLUDED.updated_at
                             """
-                        ).format(self._table("support_ticket_messages")),
+                        ).format(self._table("support_tickets")),
                         (
                             ticket_id,
-                            _normalize_role(message.get("role")),
-                            content,
-                            message.get("created_at") or updated_at,
-                            Json(sources) if sources else None,
-                            Json(citations) if citations else None,
+                            str(ticket.get("customer_id") or "C-001"),
+                            requester,
+                            subject,
+                            status,
+                            priority,
+                            engineer_mode,
+                            ticket.get("pending_engineer_question"),
+                            Json(last_action) if isinstance(last_action, dict) else None,
+                            created_at,
+                            updated_at,
                         ),
                     )
-            conn.commit()
+
+                    for message in new_messages or []:
+                        content = str(message.get("content", "")).strip()
+                        if not content:
+                            continue
+                        sources = message.get("sources")
+                        citations = message.get("citations")
+                        cur.execute(
+                            sql.SQL(
+                                """
+                                INSERT INTO {} (
+                                    ticket_id,
+                                    role,
+                                    content,
+                                    created_at,
+                                    sources,
+                                    citations
+                                )
+                                VALUES (%s, %s, %s, %s, %s, %s)
+                                """
+                            ).format(self._table("support_ticket_messages")),
+                            (
+                                ticket_id,
+                                _normalize_role(message.get("role")),
+                                content,
+                                message.get("created_at") or updated_at,
+                                Json(sources) if sources else None,
+                                Json(citations) if citations else None,
+                            ),
+                        )
+        except Exception:
+            if getattr(conn, "closed", False) or getattr(conn, "broken", False):
+                self._reset_cached_connection()
+            raise
 
     def record_event(self, ticket_id: str | None, event_type: str, payload: dict[str, Any]) -> None:
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    sql.SQL(
-                        """
-                        INSERT INTO {} (ticket_id, event_type, payload)
-                        VALUES (%s, %s, %s)
-                        """
-                    ).format(self._table("support_ticket_events")),
-                    (ticket_id, event_type, Json(payload)),
-                )
-            conn.commit()
+        conn = self._cached_connection()
+        try:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (ticket_id, event_type, payload)
+                            VALUES (%s, %s, %s)
+                            """
+                        ).format(self._table("support_ticket_events")),
+                        (ticket_id, event_type, Json(payload)),
+                    )
+        except Exception:
+            if getattr(conn, "closed", False) or getattr(conn, "broken", False):
+                self._reset_cached_connection()
+            raise
 
     def list_events(self, limit: int = 20) -> list[dict[str, Any]]:
         safe_limit = _safe_positive_int(limit, 20)
-        with self._connect() as conn:
+        conn = self._cached_connection()
+        try:
             with conn.cursor() as cur:
                 cur.execute(
                     sql.SQL(
@@ -551,6 +598,10 @@ class PostgresTicketRepository:
                     (safe_limit,),
                 )
                 rows = cur.fetchall()
+        except Exception:
+            if getattr(conn, "closed", False) or getattr(conn, "broken", False):
+                self._reset_cached_connection()
+            raise
         events: list[dict[str, Any]] = []
         for row in rows:
             events.append(
@@ -565,7 +616,8 @@ class PostgresTicketRepository:
 
     def list_ticket_events(self, ticket_id: str, limit: int = 100) -> list[dict[str, Any]]:
         safe_limit = _safe_positive_int(limit, 100)
-        with self._connect() as conn:
+        conn = self._cached_connection()
+        try:
             with conn.cursor() as cur:
                 cur.execute(
                     sql.SQL(
@@ -580,6 +632,10 @@ class PostgresTicketRepository:
                     (ticket_id, safe_limit),
                 )
                 rows = cur.fetchall()
+        except Exception:
+            if getattr(conn, "closed", False) or getattr(conn, "broken", False):
+                self._reset_cached_connection()
+            raise
         events: list[dict[str, Any]] = []
         for row in rows:
             events.append(

@@ -183,6 +183,11 @@ def generate_emotion_reply(
     fallback = fallback_reply_for_bucket(bucket)
     intent = detect_intent(customer_message, bucket)
 
+    # Negative tickets already take the fixed escalation path, so avoid adding
+    # an extra OpenAI round-trip just to produce the same apology/escalation reply.
+    if bucket == "negative":
+        return EmotionReply(text=fallback, source="fallback", intent=intent)
+
     api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
     model_name = (os.getenv("OPENAI_EMOTION_REPLY_MODEL") or DEFAULT_EMOTION_REPLY_MODEL).strip()
     timeout_seconds = _safe_float_env(
