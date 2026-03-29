@@ -17,10 +17,12 @@
 4. If a UI change needs new tokens, component rules, or page-level exceptions, update `design.md` before implementing the code.
 
 ## Container Handling After Changes
-1. After completing code changes, always restart containers with compose down first, then compose up:
+1. Restart containers after completing changes only when a restart is required for the change to take effect. Typical cases include backend or service code that is loaded only at container start, dependency or image changes, startup configuration or environment changes, and compose or deployment changes.
+2. Do not restart containers for changes that do not require it, such as documentation-only updates or other edits that do not affect the running containers.
+3. When a restart is required, restart containers with compose down first, then compose up:
    - `podman-compose -f deployment/docker-compose.single-host.yml down`
    - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
-2. After restart, verify running status:
+4. After any restart, verify running status:
    - `podman-compose -f deployment/docker-compose.single-host.yml ps`
 
 ## RAG Change Logging
