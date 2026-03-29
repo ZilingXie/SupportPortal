@@ -229,6 +229,121 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_client_context_bar_supports_request_engineer_assistance_wait_time(self) -> None:
+        css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
+        self.assertIn(".context-assistance-note", css)
+        self.assertIn(".context-chip.is-escalated {\n  color: var(--warning);", css)
+        self.assertIn(".status-escalated {\n  color: var(--warning);", css)
+
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const ticket = createTicket(state.user.id);
+                updateTicketTitle(ticket.id, "Need direct engineer review");
+                saveTicketMessages(ticket.id, [
+                  {
+                    id: "msg-1",
+                    role: "user",
+                    content: "Can an engineer check my routing issue?",
+                    createdAt: new Date().toISOString(),
+                  },
+                ]);
+                updateTicketStatus(ticket.id, "waiting_for_support");
+
+                state.view = "chat-ticket";
+                state.activeTicketId = ticket.id;
+
+                const initialBar = renderContextBar();
+                if (!initialBar.includes("AI-SOLVING")) {
+                  throw new Error("Active ticket should start in AI-SOLVING mode before escalation.");
+                }
+                if (!initialBar.includes('data-action="request-engineer-assistance"')) {
+                  throw new Error("Active non-empty ticket should render the request engineer assistance button.");
+                }
+                if (!initialBar.includes("Request Engineer Assistance")) {
+                  throw new Error("Engineer assistance button should render its copy.");
+                }
+                if (!initialBar.includes("Close Ticket")) {
+                  throw new Error("Active non-empty ticket should still render Close Ticket.");
+                }
+                if (
+                  initialBar.indexOf("Request Engineer Assistance") >
+                  initialBar.indexOf("Close Ticket")
+                ) {
+                  throw new Error("Engineer assistance button should render to the left of Close Ticket.");
+                }
+                if (initialBar.includes("Estimate waiting time: 3 hours")) {
+                  throw new Error("Waiting time note should not render before the user requests assistance.");
+                }
+
+                const changed = requestEngineerAssistance(ticket.id);
+                if (!changed) {
+                  throw new Error("Requesting engineer assistance should update the local view state.");
+                }
+
+                const escalatedTicket = getTicketById(ticket.id);
+                if (escalatedTicket.status !== "escalated") {
+                  throw new Error(`Engineer assistance should mark the ticket as escalated, got ${escalatedTicket.status}.`);
+                }
+                if (escalatedTicket.messages.length !== 2) {
+                  throw new Error("Engineer assistance should append exactly one escalation message.");
+                }
+                const latestMessage = escalatedTicket.messages[1];
+                if (latestMessage.role !== "assistant") {
+                  throw new Error(`Escalation notice should be rendered as an assistant message, got ${latestMessage.role}.`);
+                }
+                if (
+                  latestMessage.content !==
+                  "your request has been escalated to an engineer, and he/she will contact you at earlist possible. Estimated waiting time: 3 hours."
+                ) {
+                  throw new Error(`Unexpected escalation notice content: ${latestMessage.content}`);
+                }
+
+                const requestedBar = renderContextBar();
+                if (!requestedBar.includes("Estimate waiting time: 3 hours")) {
+                  throw new Error("Requested engineer assistance should render the inline waiting estimate.");
+                }
+                if (requestedBar.includes("Request Engineer Assistance")) {
+                  throw new Error("After requesting assistance, the button should be replaced by the waiting estimate.");
+                }
+                if (requestedBar.includes("AI-SOLVING")) {
+                  throw new Error("Escalated ticket should no longer display the AI-SOLVING label.");
+                }
+                if (!requestedBar.includes("Escalated")) {
+                  throw new Error("Escalated ticket should display the Escalated status label.");
+                }
+                if (!requestedBar.includes("Waiting for Engineer")) {
+                  throw new Error("Escalated ticket should show Waiting for Engineer as the ticket status badge.");
+                }
+                const escalatedMatches = requestedBar.match(/Escalated/g) || [];
+                if (escalatedMatches.length !== 1) {
+                  throw new Error(`Escalated label should render only once in the context bar, got ${escalatedMatches.length}.`);
+                }
+                if (!requestedBar.includes("Close Ticket")) {
+                  throw new Error("Close Ticket should remain available after requesting assistance.");
+                }
+                if (
+                  requestedBar.indexOf("Estimate waiting time: 3 hours") >
+                  requestedBar.indexOf("Close Ticket")
+                ) {
+                  throw new Error("The waiting estimate should render in the original assistance button position.");
+                }
+
+                const chatHtml = renderChatTicket();
+                if (
+                  !chatHtml.includes(
+                    "your request has been escalated to an engineer, and he/she will contact you at earlist possible. Estimated waiting time: 3 hours."
+                  )
+                ) {
+                  throw new Error("Escalation request should append the escalation notice into the chat transcript.");
+                }
+              """
+            )
+        )
+
     def test_client_session_history_uses_shared_history_rows_for_page_and_sidebar(self) -> None:
         css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
         self.assertIn(".history-list", css)

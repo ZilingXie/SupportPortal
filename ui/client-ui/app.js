@@ -7,11 +7,15 @@ const COUNTER_KEY = "helpdesk_ticket_counter";
 const MAX_RECENT = 5;
 
 const DEMO_USERS = [{ id: "user-1", name: "Admin", email: "admin", password: "admin" }];
+const ENGINEER_ASSISTANCE_WAIT_TEXT = "Estimate waiting time: 3 hours";
+const ENGINEER_ASSISTANCE_ESCALATION_MESSAGE =
+  "your request has been escalated to an engineer, and he/she will contact you at earlist possible. Estimated waiting time: 3 hours.";
 
 const STATUS_CONFIG = {
   new: { label: "New", className: "status-new" },
   waiting_for_support: { label: "Waiting for Support", className: "status-waiting_for_support" },
   waiting_for_agent: { label: "Waiting for Customer", className: "status-waiting_for_agent" },
+  escalated: { label: "Waiting for Engineer", className: "status-escalated" },
   resolved: { label: "Resolved", className: "status-resolved" },
 };
 
@@ -66,6 +70,7 @@ let clientSocket = null;
 let clientReconnectTimer = null;
 let clientHeartbeatTimer = null;
 let pendingStatusPollTimer = null;
+const engineerAssistanceRequestedTicketIds = new Set();
 
 function escapeHtml(value) {
   return String(value)
@@ -209,6 +214,7 @@ function login(email, password) {
 function logout() {
   clearPendingRequestState();
   closeClientRealtimeConnection();
+  engineerAssistanceRequestedTicketIds.clear();
   localStorage.removeItem(AUTH_KEY);
   state.user = null;
 }
@@ -492,8 +498,11 @@ function mapBackendStatusToClientStatus(ticket) {
   if (status === "resolved") {
     return "resolved";
   }
+  if (status === "escalated") {
+    return "escalated";
+  }
   if (status === "waiting_for_engineer") {
-    return "waiting_for_support";
+    return "escalated";
   }
 
   const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
@@ -693,6 +702,15 @@ function updateTicketStatus(ticketId, status) {
   saveAllTickets(all);
 }
 
+function appendTicketMessage(ticketId, message) {
+  const ticket = getTicketById(ticketId);
+  if (!ticket) {
+    return false;
+  }
+  saveTicketMessages(ticketId, [...(ticket.messages || []), message]);
+  return true;
+}
+
 function updateTicketTitle(ticketId, title) {
   const all = getAllTickets();
   const idx = all.findIndex((ticket) => ticket.id === ticketId);
@@ -702,6 +720,50 @@ function updateTicketTitle(ticketId, title) {
   all[idx].title = title;
   all[idx].updatedAt = new Date().toISOString();
   saveAllTickets(all);
+}
+
+function canRequestEngineerAssistance(ticket) {
+  return Boolean(
+    ticket &&
+      String(ticket.status || "").trim().toLowerCase() !== "resolved" &&
+      !isTicketEmpty(ticket)
+  );
+}
+
+function hasRequestedEngineerAssistance(ticketId) {
+  const normalizedId = String(ticketId || "").trim();
+  if (!normalizedId) {
+    return false;
+  }
+  return engineerAssistanceRequestedTicketIds.has(normalizedId);
+}
+
+function clearEngineerAssistanceRequest(ticketId) {
+  const normalizedId = String(ticketId || "").trim();
+  if (!normalizedId) {
+    return;
+  }
+  engineerAssistanceRequestedTicketIds.delete(normalizedId);
+}
+
+function requestEngineerAssistance(ticketId) {
+  const normalizedId = String(ticketId || "").trim();
+  const ticket = getTicketById(normalizedId);
+  if (!normalizedId || !canRequestEngineerAssistance(ticket)) {
+    return false;
+  }
+  if (engineerAssistanceRequestedTicketIds.has(normalizedId)) {
+    return false;
+  }
+  appendTicketMessage(normalizedId, {
+    id: crypto.randomUUID(),
+    role: "assistant",
+    content: ENGINEER_ASSISTANCE_ESCALATION_MESSAGE,
+    createdAt: new Date().toISOString(),
+  });
+  updateTicketStatus(normalizedId, "escalated");
+  engineerAssistanceRequestedTicketIds.add(normalizedId);
+  return true;
 }
 
 function saveTicketMessages(ticketId, messages) {
@@ -1144,18 +1206,39 @@ function renderContextBar() {
   if (state.view === "chat-ticket") {
     const ticket = getTicketById(state.activeTicketId);
     if (ticket && ticket.userId === state.user.id) {
-      const actionButton =
+      const assistanceRequested =
+        String(ticket.status || "").trim().toLowerCase() === "escalated" ||
+        hasRequestedEngineerAssistance(ticket.id);
+      const canRequestAssistance = canRequestEngineerAssistance(ticket) && !assistanceRequested;
+      const assistanceControl = assistanceRequested
+        ? `<span class="context-assistance-note">${escapeHtml(
+            ENGINEER_ASSISTANCE_WAIT_TEXT
+          )}</span>`
+        : `
+              <button
+                class="btn btn-outline btn-inline context-assistance-btn"
+                data-action="request-engineer-assistance"
+                data-ticket-id="${ticket.id}"
+                type="button"
+              >Request Engineer Assistance</button>
+            `;
+      const contextChipLabel = assistanceRequested ? "Escalated" : "AI-SOLVING";
+      const contextChipClass = assistanceRequested ? "context-chip is-escalated" : "context-chip";
+      const actionButtons =
         ticket.status === "resolved"
           ? `<button class="btn btn-outline" data-action="reopen-ticket" data-ticket-id="${ticket.id}" type="button">Reopen Ticket</button>`
           : isTicketEmpty(ticket)
           ? ""
-          : `<button class="btn btn-outline btn-danger" data-action="resolve-ticket" data-ticket-id="${ticket.id}" type="button">Close Ticket</button>`;
+          : `
+              ${assistanceControl}
+              <button class="btn btn-outline btn-danger" data-action="resolve-ticket" data-ticket-id="${ticket.id}" type="button">Close Ticket</button>
+            `;
       return `
         <section class="context-bar">
           <div class="context-copy">
-            <div class="context-chip">
+            <div class="${contextChipClass}">
               <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
-              <span>AI-SOLVING</span>
+              <span>${contextChipLabel}</span>
             </div>
             <div class="context-divider" aria-hidden="true"></div>
             <div class="context-ticket">
@@ -1163,7 +1246,7 @@ function renderContextBar() {
               ${statusBadge(ticket.status)}
             </div>
           </div>
-          ${actionButton ? `<div class="context-actions">${actionButton}</div>` : ""}
+          ${actionButtons ? `<div class="context-actions">${actionButtons}</div>` : ""}
         </section>
       `;
     }
@@ -1543,7 +1626,10 @@ async function handleSendMessage(text, options = {}) {
   if (ticket.title === "New Session") {
     updateTicketTitle(ticketId, generateTitle(text));
   }
-  updateTicketStatus(ticketId, "waiting_for_support");
+  const hasEscalatedAssistance =
+    String(ticket.status || "").trim().toLowerCase() === "escalated" ||
+    hasRequestedEngineerAssistance(ticketId);
+  updateTicketStatus(ticketId, hasEscalatedAssistance ? "escalated" : "waiting_for_support");
   state.editingMessageId = null;
   state.inputDraft = "";
   state.isSending = true;
@@ -1591,10 +1677,12 @@ async function handleSendMessage(text, options = {}) {
       : [...(updated?.messages || messages)];
     saveTicketMessages(ticketId, nextMessages);
     const nextStatus =
-      payload?.queued_for_ai
+      hasEscalatedAssistance
+        ? "escalated"
+        : payload?.queued_for_ai
         ? "waiting_for_support"
         : payload?.status === "waiting_for_engineer" || payload?.needs_engineer_input
-        ? "waiting_for_support"
+        ? "escalated"
         : "waiting_for_agent";
     updateTicketStatus(ticketId, nextStatus);
     await syncTicketsFromBackend({ silent: true });
@@ -1664,6 +1752,7 @@ function bindAuthedEvents() {
       if (!ticketId) {
         return;
       }
+      clearEngineerAssistanceRequest(ticketId);
       updateTicketStatus(ticketId, "resolved");
       render();
       await syncBackendTicketAction(ticketId, "resolved");
@@ -1679,12 +1768,25 @@ function bindAuthedEvents() {
       if (!ticketId) {
         return;
       }
+      clearEngineerAssistanceRequest(ticketId);
       updateTicketStatus(ticketId, "waiting_for_support");
       render();
       await syncBackendTicketAction(ticketId, "processing");
       await syncTicketsFromBackend({ silent: true });
       render();
       toast("Session reopened");
+    });
+  });
+
+  appRoot.querySelectorAll("[data-action='request-engineer-assistance']").forEach((element) => {
+    element.addEventListener("click", () => {
+      const ticketId = element.getAttribute("data-ticket-id");
+      if (!ticketId) {
+        return;
+      }
+      if (requestEngineerAssistance(ticketId)) {
+        render();
+      }
     });
   });
 
