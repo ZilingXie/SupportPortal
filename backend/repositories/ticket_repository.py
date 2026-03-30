@@ -7,6 +7,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Protocol
+from uuid import uuid4
 
 import psycopg
 from psycopg import sql
@@ -14,10 +15,11 @@ from psycopg.types.json import Json
 
 LOGGER = logging.getLogger(__name__)
 
-_VALID_STATUSES = {"open", "waiting_for_engineer", "resolved"}
+_VALID_STATUSES = {"open", "investigating", "waiting_for_engineer", "resolved"}
 _VALID_PRIORITIES = {"urgent", "high", "normal", "low"}
 _VALID_MODES = {"managed", "takeover"}
 _VALID_ROLES = {"customer", "assistant", "engineer", "system"}
+_VALID_INVESTIGATION_ROLES = {"engineer_ai", "engineer", "system"}
 
 
 def _utc_now() -> str:
@@ -34,6 +36,8 @@ def _to_iso(value: Any) -> str:
 
 def _normalize_status(value: Any) -> str:
     status = str(value or "open").strip().lower()
+    if status == "waiting_for_engineer":
+        return "investigating"
     return status if status in _VALID_STATUSES else "open"
 
 
@@ -50,6 +54,11 @@ def _normalize_mode(value: Any) -> str:
 def _normalize_role(value: Any) -> str:
     role = str(value or "assistant").strip().lower()
     return role if role in _VALID_ROLES else "assistant"
+
+
+def _normalize_investigation_role(value: Any) -> str:
+    role = str(value or "engineer_ai").strip().lower()
+    return role if role in _VALID_INVESTIGATION_ROLES else "engineer_ai"
 
 
 def _safe_positive_int(value: Any, default_value: int) -> int:
@@ -91,6 +100,24 @@ class TicketRepository(Protocol):
     ) -> None:
         ...
 
+    def get_active_investigation(self, ticket_id: str) -> dict[str, Any] | None:
+        ...
+
+    def list_ticket_investigations(
+        self,
+        ticket_id: str,
+        include_messages: bool = True,
+    ) -> list[dict[str, Any]]:
+        ...
+
+    def save_investigation(
+        self,
+        ticket_id: str,
+        investigation: dict[str, Any],
+        new_messages: list[dict[str, Any]] | None = None,
+    ) -> None:
+        ...
+
     def record_event(self, ticket_id: str | None, event_type: str, payload: dict[str, Any]) -> None:
         ...
 
@@ -105,6 +132,7 @@ class InMemoryTicketRepository:
     def __init__(self) -> None:
         self._tickets: dict[str, dict[str, Any]] = {}
         self._events: list[dict[str, Any]] = []
+        self._investigations: dict[str, list[dict[str, Any]]] = {}
 
     def initialize(self) -> None:
         return None
@@ -117,12 +145,21 @@ class InMemoryTicketRepository:
 
     def get_ticket(self, ticket_id: str) -> dict[str, Any] | None:
         ticket = self._tickets.get(ticket_id)
-        return copy.deepcopy(ticket) if ticket is not None else None
+        if ticket is None:
+            return None
+        item = copy.deepcopy(ticket)
+        investigations = self.list_ticket_investigations(ticket_id, include_messages=True)
+        active = next((inv for inv in investigations if str(inv.get("state") or "").lower() != "closed"), None)
+        history = [inv for inv in investigations if str(inv.get("state") or "").lower() == "closed"]
+        item["active_investigation"] = copy.deepcopy(active) if active is not None else None
+        item["investigation_history"] = copy.deepcopy(history)
+        item["status"] = _normalize_status(item.get("status"))
+        return item
 
     def list_tickets(self, include_messages: bool = True) -> list[dict[str, Any]]:
         tickets: list[dict[str, Any]] = []
         for ticket in self._tickets.values():
-            item = copy.deepcopy(ticket)
+            item = self.get_ticket(str(ticket.get("ticket_id") or "")) or copy.deepcopy(ticket)
             if not include_messages:
                 item["messages"] = []
             tickets.append(item)
@@ -137,7 +174,95 @@ class InMemoryTicketRepository:
         ticket_id = str(ticket.get("ticket_id", "")).strip()
         if not ticket_id:
             raise ValueError("ticket_id is required")
-        self._tickets[ticket_id] = copy.deepcopy(ticket)
+        saved_ticket = copy.deepcopy(ticket)
+        saved_ticket["status"] = _normalize_status(saved_ticket.get("status"))
+        self._tickets[ticket_id] = saved_ticket
+
+        investigations: list[dict[str, Any]] = []
+        active = saved_ticket.get("active_investigation")
+        if isinstance(active, dict):
+            investigations.append(copy.deepcopy(active))
+        history = saved_ticket.get("investigation_history")
+        if isinstance(history, list):
+            investigations.extend(copy.deepcopy(item) for item in history if isinstance(item, dict))
+        if investigations:
+            self._investigations[ticket_id] = investigations
+
+    def get_active_investigation(self, ticket_id: str) -> dict[str, Any] | None:
+        investigations = self._investigations.get(ticket_id, [])
+        for item in investigations:
+            if str(item.get("state") or "").strip().lower() != "closed":
+                return copy.deepcopy(item)
+        return None
+
+    def list_ticket_investigations(
+        self,
+        ticket_id: str,
+        include_messages: bool = True,
+    ) -> list[dict[str, Any]]:
+        investigations = self._investigations.get(str(ticket_id).strip(), [])
+        rows: list[dict[str, Any]] = []
+        for item in investigations:
+            copied = copy.deepcopy(item)
+            if not include_messages:
+                copied["messages"] = []
+            copied["state"] = str(copied.get("state") or "active").strip().lower()
+            copied["draft_customer_reply"] = str(copied.get("draft_customer_reply") or "").strip()
+            copied["final_confirmation_requested_at"] = copied.get("final_confirmation_requested_at")
+            rows.append(copied)
+        rows.sort(
+            key=lambda item: (
+                str(item.get("state") or "").lower() == "closed",
+                str(item.get("updated_at") or item.get("opened_at") or ""),
+            ),
+            reverse=False,
+        )
+        return rows
+
+    def save_investigation(
+        self,
+        ticket_id: str,
+        investigation: dict[str, Any],
+        new_messages: list[dict[str, Any]] | None = None,
+    ) -> None:
+        normalized_ticket_id = str(ticket_id).strip()
+        if not normalized_ticket_id:
+            raise ValueError("ticket_id is required")
+        investigation_id = str(investigation.get("id") or "").strip()
+        if not investigation_id:
+            raise ValueError("investigation.id is required")
+
+        saved = copy.deepcopy(investigation)
+        saved["state"] = str(saved.get("state") or "active").strip().lower()
+        saved["draft_customer_reply"] = str(saved.get("draft_customer_reply") or "").strip()
+        saved.setdefault("messages", [])
+        if new_messages:
+            existing_ids = {str(item.get("id") or "").strip() for item in saved["messages"]}
+            for item in new_messages:
+                message_id = str(item.get("id") or "").strip()
+                if message_id and message_id not in existing_ids:
+                    saved["messages"].append(copy.deepcopy(item))
+                    existing_ids.add(message_id)
+
+        investigations = self._investigations.setdefault(normalized_ticket_id, [])
+        for index, current in enumerate(investigations):
+            if str(current.get("id") or "").strip() == investigation_id:
+                investigations[index] = saved
+                break
+        else:
+            investigations.append(saved)
+
+        ticket = self._tickets.get(normalized_ticket_id)
+        if ticket is not None:
+            ticket["active_investigation"] = (
+                copy.deepcopy(saved) if saved["state"] != "closed" else None
+            )
+            history = [
+                copy.deepcopy(item)
+                for item in investigations
+                if str(item.get("state") or "").strip().lower() == "closed"
+            ]
+            ticket["investigation_history"] = history
 
     def record_event(self, ticket_id: str | None, event_type: str, payload: dict[str, Any]) -> None:
         created_at = payload.get("created_at") or _utc_now()
@@ -292,6 +417,45 @@ class PostgresTicketRepository:
                     )
                 )
                 cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            investigation_id TEXT PRIMARY KEY,
+                            ticket_id TEXT NOT NULL REFERENCES {}(ticket_id) ON DELETE CASCADE,
+                            state TEXT NOT NULL,
+                            trigger_reason TEXT NOT NULL,
+                            trigger_source TEXT NOT NULL,
+                            draft_customer_reply TEXT,
+                            final_confirmation_requested_at TIMESTAMPTZ,
+                            opened_at TIMESTAMPTZ NOT NULL,
+                            updated_at TIMESTAMPTZ NOT NULL,
+                            closed_at TIMESTAMPTZ
+                        )
+                        """
+                    ).format(
+                        self._table("support_ticket_investigations"),
+                        self._table("support_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            id BIGSERIAL PRIMARY KEY,
+                            message_id TEXT NOT NULL,
+                            investigation_id TEXT NOT NULL REFERENCES {}(investigation_id) ON DELETE CASCADE,
+                            role TEXT NOT NULL,
+                            content TEXT NOT NULL,
+                            created_at TIMESTAMPTZ NOT NULL,
+                            meta JSONB
+                        )
+                        """
+                    ).format(
+                        self._table("support_ticket_investigation_messages"),
+                        self._table("support_ticket_investigations"),
+                    )
+                )
+                cur.execute(
                     sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (status, updated_at DESC)").format(
                         sql.Identifier("idx_support_tickets_status_updated"),
                         self._table("support_tickets"),
@@ -317,6 +481,20 @@ class PostgresTicketRepository:
                     sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (ticket_id, created_at DESC)").format(
                         sql.Identifier("idx_support_ticket_events_ticket_created"),
                         self._table("support_ticket_events"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (ticket_id, updated_at DESC)").format(
+                        sql.Identifier("idx_support_ticket_investigations_ticket_updated"),
+                        self._table("support_ticket_investigations"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE INDEX IF NOT EXISTS {} ON {} (investigation_id, created_at ASC, id ASC)"
+                    ).format(
+                        sql.Identifier("idx_support_ticket_investigation_messages_created"),
+                        self._table("support_ticket_investigation_messages"),
                     )
                 )
             conn.commit()
@@ -366,11 +544,102 @@ class PostgresTicketRepository:
                 grouped[str(row[0])].append(message)
         return grouped
 
+    def _fetch_investigations(
+        self,
+        conn: psycopg.Connection[Any],
+        ticket_ids: list[str],
+        *,
+        include_messages: bool,
+    ) -> dict[str, list[dict[str, Any]]]:
+        grouped: dict[str, list[dict[str, Any]]] = {ticket_id: [] for ticket_id in ticket_ids}
+        if not ticket_ids:
+            return grouped
+
+        investigation_rows: list[tuple[Any, ...]]
+        with conn.cursor() as cur:
+            cur.execute(
+                sql.SQL(
+                    """
+                    SELECT
+                        investigation_id,
+                        ticket_id,
+                        state,
+                        trigger_reason,
+                        trigger_source,
+                        draft_customer_reply,
+                        final_confirmation_requested_at,
+                        opened_at,
+                        updated_at,
+                        closed_at
+                    FROM {}
+                    WHERE ticket_id = ANY(%s)
+                    ORDER BY updated_at DESC, opened_at DESC
+                    """
+                ).format(self._table("support_ticket_investigations")),
+                (ticket_ids,),
+            )
+            investigation_rows = cur.fetchall()
+
+        message_map: dict[str, list[dict[str, Any]]] = {}
+        investigation_ids = [str(row[0]) for row in investigation_rows]
+        if include_messages and investigation_ids:
+            message_map = {investigation_id: [] for investigation_id in investigation_ids}
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT message_id, investigation_id, role, content, created_at, meta
+                        FROM {}
+                        WHERE investigation_id = ANY(%s)
+                        ORDER BY created_at ASC, id ASC
+                        """
+                    ).format(self._table("support_ticket_investigation_messages")),
+                    (investigation_ids,),
+                )
+                for row in cur.fetchall():
+                    investigation_id = str(row[1])
+                    message_map.setdefault(investigation_id, []).append(
+                        {
+                            "id": str(row[0]),
+                            "role": _normalize_investigation_role(row[2]),
+                            "content": str(row[3]),
+                            "created_at": _to_iso(row[4]),
+                            "meta": row[5] if isinstance(row[5], dict) else None,
+                        }
+                    )
+
+        for row in investigation_rows:
+            investigation = {
+                "id": str(row[0]),
+                "state": str(row[2]),
+                "trigger_reason": str(row[3]),
+                "trigger_source": str(row[4]),
+                "draft_customer_reply": str(row[5] or ""),
+                "final_confirmation_requested_at": _to_iso(row[6]) if row[6] is not None else None,
+                "opened_at": _to_iso(row[7]),
+                "updated_at": _to_iso(row[8]),
+                "closed_at": _to_iso(row[9]) if row[9] is not None else None,
+                "messages": message_map.get(str(row[0]), []) if include_messages else [],
+            }
+            grouped[str(row[1])].append(investigation)
+        return grouped
+
     def _row_to_ticket(
         self,
         row: tuple[Any, ...],
         messages: list[dict[str, Any]],
+        investigations: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        all_investigations = investigations or []
+        active_investigation = next(
+            (copy.deepcopy(item) for item in all_investigations if str(item.get("state") or "").strip().lower() != "closed"),
+            None,
+        )
+        history = [
+            copy.deepcopy(item)
+            for item in all_investigations
+            if str(item.get("state") or "").strip().lower() == "closed"
+        ]
         return {
             "ticket_id": str(row[0]),
             "customer_id": str(row[1]),
@@ -384,6 +653,8 @@ class PostgresTicketRepository:
             "created_at": _to_iso(row[9]),
             "updated_at": _to_iso(row[10]),
             "messages": messages,
+            "active_investigation": active_investigation,
+            "investigation_history": history,
         }
 
     def _fetch_tickets(self, include_messages: bool) -> list[dict[str, Any]]:
@@ -412,6 +683,11 @@ class PostgresTicketRepository:
                 rows = cur.fetchall()
             ticket_ids = [str(row[0]) for row in rows]
             message_map = self._fetch_messages(conn, ticket_ids) if include_messages else {}
+            investigation_map = self._fetch_investigations(
+                conn,
+                ticket_ids,
+                include_messages=include_messages,
+            )
         except Exception:
             if getattr(conn, "closed", False) or getattr(conn, "broken", False):
                 self._reset_cached_connection()
@@ -420,7 +696,11 @@ class PostgresTicketRepository:
         tickets: list[dict[str, Any]] = []
         for row in rows:
             ticket_id = str(row[0])
-            ticket = self._row_to_ticket(row, message_map.get(ticket_id, []))
+            ticket = self._row_to_ticket(
+                row,
+                message_map.get(ticket_id, []),
+                investigation_map.get(ticket_id, []),
+            )
             tickets.append(ticket)
         return tickets
 
@@ -453,7 +733,16 @@ class PostgresTicketRepository:
             if row is None:
                 return None
             message_map = self._fetch_messages(conn, [ticket_id])
-            return self._row_to_ticket(row, message_map.get(ticket_id, []))
+            investigation_map = self._fetch_investigations(
+                conn,
+                [ticket_id],
+                include_messages=True,
+            )
+            return self._row_to_ticket(
+                row,
+                message_map.get(ticket_id, []),
+                investigation_map.get(ticket_id, []),
+            )
         except Exception:
             if getattr(conn, "closed", False) or getattr(conn, "broken", False):
                 self._reset_cached_connection()
@@ -555,6 +844,125 @@ class PostgresTicketRepository:
                                 message.get("created_at") or updated_at,
                                 Json(sources) if sources else None,
                                 Json(citations) if citations else None,
+                            ),
+                        )
+        except Exception:
+            if getattr(conn, "closed", False) or getattr(conn, "broken", False):
+                self._reset_cached_connection()
+            raise
+
+    def get_active_investigation(self, ticket_id: str) -> dict[str, Any] | None:
+        investigations = self.list_ticket_investigations(ticket_id=ticket_id, include_messages=True)
+        for item in investigations:
+            if str(item.get("state") or "").strip().lower() != "closed":
+                return item
+        return None
+
+    def list_ticket_investigations(
+        self,
+        ticket_id: str,
+        include_messages: bool = True,
+    ) -> list[dict[str, Any]]:
+        conn = self._cached_connection()
+        try:
+            return self._fetch_investigations(
+                conn,
+                [ticket_id],
+                include_messages=include_messages,
+            ).get(ticket_id, [])
+        except Exception:
+            if getattr(conn, "closed", False) or getattr(conn, "broken", False):
+                self._reset_cached_connection()
+            raise
+
+    def save_investigation(
+        self,
+        ticket_id: str,
+        investigation: dict[str, Any],
+        new_messages: list[dict[str, Any]] | None = None,
+    ) -> None:
+        investigation_id = str(investigation.get("id") or "").strip()
+        if not investigation_id:
+            raise ValueError("investigation.id is required")
+
+        state = str(investigation.get("state") or "active").strip().lower()
+        trigger_reason = str(investigation.get("trigger_reason") or "unspecified").strip() or "unspecified"
+        trigger_source = str(investigation.get("trigger_source") or "unknown").strip() or "unknown"
+        draft_customer_reply = str(investigation.get("draft_customer_reply") or "").strip()
+        final_confirmation_requested_at = investigation.get("final_confirmation_requested_at")
+        opened_at = investigation.get("opened_at") or _utc_now()
+        updated_at = investigation.get("updated_at") or _utc_now()
+        closed_at = investigation.get("closed_at")
+
+        conn = self._cached_connection()
+        try:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (
+                                investigation_id,
+                                ticket_id,
+                                state,
+                                trigger_reason,
+                                trigger_source,
+                                draft_customer_reply,
+                                final_confirmation_requested_at,
+                                opened_at,
+                                updated_at,
+                                closed_at
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (investigation_id) DO UPDATE SET
+                                state = EXCLUDED.state,
+                                trigger_reason = EXCLUDED.trigger_reason,
+                                trigger_source = EXCLUDED.trigger_source,
+                                draft_customer_reply = EXCLUDED.draft_customer_reply,
+                                final_confirmation_requested_at = EXCLUDED.final_confirmation_requested_at,
+                                updated_at = EXCLUDED.updated_at,
+                                closed_at = EXCLUDED.closed_at
+                            """
+                        ).format(self._table("support_ticket_investigations")),
+                        (
+                            investigation_id,
+                            ticket_id,
+                            state,
+                            trigger_reason,
+                            trigger_source,
+                            draft_customer_reply,
+                            final_confirmation_requested_at,
+                            opened_at,
+                            updated_at,
+                            closed_at,
+                        ),
+                    )
+
+                    for message in new_messages or []:
+                        content = str(message.get("content") or "").strip()
+                        if not content:
+                            continue
+                        cur.execute(
+                            sql.SQL(
+                                """
+                                INSERT INTO {} (
+                                    message_id,
+                                    investigation_id,
+                                    role,
+                                    content,
+                                    created_at,
+                                    meta
+                                )
+                                VALUES (%s, %s, %s, %s, %s, %s)
+                                """
+                            ).format(self._table("support_ticket_investigation_messages")),
+                            (
+                                str(message.get("id") or f"{investigation_id}-{uuid4().hex[:8]}"),
+                                investigation_id,
+                                _normalize_investigation_role(message.get("role")),
+                                content,
+                                message.get("created_at") or updated_at,
+                                Json(message.get("meta")) if isinstance(message.get("meta"), dict) else None,
                             ),
                         )
         except Exception:

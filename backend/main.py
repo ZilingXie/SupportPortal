@@ -26,6 +26,16 @@ from backend.services.embedding_provider import (
     embedding_model_id,
 )
 from backend.services.emotion_reply import generate_emotion_reply
+from backend.services.investigation_flow import (
+    INVESTIGATING_STATUS,
+    append_engineer_investigation_message,
+    apply_investigation_confirmation,
+    default_investigation_prompt as generate_investigation_ai_turn,
+    ensure_ticket_investigation_defaults,
+    normalize_ticket_status,
+    start_or_refresh_investigation,
+    surface_legacy_pending_question,
+)
 from backend.services.dashboard_ticket_ops import (
     build_ticket_dashboard_metrics,
     normalize_ticket_dashboard_events,
@@ -68,7 +78,7 @@ load_dotenv(dotenv_path=BASE_DIR / ".env", override=False)
 
 MANAGED_MODE = "managed"
 TAKEOVER_MODE = "takeover"
-OPEN_STATUSES = {"open", "waiting_for_engineer"}
+OPEN_STATUSES = {"open", INVESTIGATING_STATUS}
 PRIORITY_RANK = {"urgent": 4, "high": 3, "normal": 2, "low": 1}
 LOGGER = logging.getLogger(__name__)
 _UNAVAILABLE_MODELS: set[str] = set()
@@ -166,6 +176,17 @@ class DatasetBenchmarkRunRequest(BaseModel):
 class ManagedResponseRequest(BaseModel):
     engineer_id: str = Field(default="eng")
     solution: str = Field(min_length=1, max_length=4000)
+
+
+class InvestigationMessageRequest(BaseModel):
+    engineer_id: str = Field(default="eng")
+    message: str = Field(min_length=1, max_length=4000)
+
+
+class InvestigationConfirmationRequest(BaseModel):
+    engineer_id: str = Field(default="eng")
+    decision: str = Field(pattern="^(approve|revise)$")
+    note: str | None = Field(default=None, max_length=4000)
 
 
 class TakeoverReplyRequest(BaseModel):
@@ -267,21 +288,24 @@ def ensure_ticket_defaults(ticket: dict[str, Any]) -> None:
     ticket["created_at"] = created_at
     ticket.setdefault("updated_at", created_at)
     ticket.setdefault("priority", "normal")
-    ticket.setdefault("status", "open")
+    ticket["status"] = normalize_ticket_status(ticket.get("status"))
     ticket.setdefault("messages", [])
     ticket.setdefault("subject", "General support request")
     ticket.setdefault("requester", ticket.get("customer_id") or "Unknown")
     ticket.setdefault("engineer_mode", MANAGED_MODE)
     ticket.setdefault("pending_engineer_question", None)
+    ensure_ticket_investigation_defaults(ticket)
+    surface_legacy_pending_question(ticket)
 
 
 def ticket_matches_status_filter(ticket: dict[str, Any], status_filter: str) -> bool:
-    status = str(ticket.get("status", "open"))
+    normalized_filter = normalize_ticket_status(status_filter)
+    status = normalize_ticket_status(ticket.get("status", "open"))
     if status_filter == "all":
         return True
-    if status_filter == "open":
+    if normalized_filter == "open":
         return status in OPEN_STATUSES
-    return status == status_filter
+    return status == normalized_filter
 
 
 def _managed_followup_fallback(solution: str) -> str:
@@ -525,6 +549,22 @@ def _summary_fallback(ticket: dict[str, Any]) -> tuple[str, str]:
     priority = str(ticket.get("priority", "normal")).strip().lower()
     mode = str(ticket.get("engineer_mode", MANAGED_MODE)).strip().lower()
     pending_question = str(ticket.get("pending_engineer_question", "")).strip()
+    active_investigation = (
+        ticket.get("active_investigation")
+        if isinstance(ticket.get("active_investigation"), dict)
+        else None
+    )
+    investigation_state = ""
+    latest_internal_update = ""
+    if active_investigation is not None:
+        investigation_state = str(active_investigation.get("state") or "active").strip().lower()
+        internal_messages = active_investigation.get("messages")
+        if isinstance(internal_messages, list):
+            for internal_message in reversed(internal_messages):
+                content = " ".join(str(internal_message.get("content", "")).split()).strip()
+                if content:
+                    latest_internal_update = content
+                    break
 
     latest_customer = ""
     latest_assistant = ""
@@ -548,9 +588,17 @@ def _summary_fallback(ticket: dict[str, Any]) -> tuple[str, str]:
         summary_parts.append(f"Latest customer request: {latest_customer[:260]}")
     if latest_assistant:
         summary_parts.append(f"Latest AI response: {latest_assistant[:260]}")
-    if pending_question:
+    if active_investigation is not None:
+        summary_parts.append(
+            f"Active investigation state is {investigation_state or 'active'}."
+        )
+        if latest_internal_update:
+            summary_parts.append(
+                f"Latest internal investigation update: {latest_internal_update[:260]}"
+            )
+    elif pending_question:
         summary_parts.append(f"Pending engineer request: {pending_question[:260]}")
-    if not latest_customer and not latest_assistant and not pending_question:
+    if not latest_customer and not latest_assistant and not pending_question and active_investigation is None:
         summary_parts.append("No conversation history is available yet.")
     summary = " ".join(summary_parts).strip()
 
@@ -558,9 +606,9 @@ def _summary_fallback(ticket: dict[str, Any]) -> tuple[str, str]:
         next_action = (
             "Confirm resolution details with the customer and close the ticket if no additional issue remains."
         )
-    elif status == "waiting_for_engineer":
+    elif status == INVESTIGATING_STATUS:
         next_action = (
-            "Investigate the unresolved gap, gather required logs or reproduction details, and send a concrete reply."
+            "Continue the internal investigation, gather the next missing detail, and request final confirmation when the customer reply is ready."
         )
     else:
         next_action = (
@@ -691,6 +739,19 @@ def build_ticket_summary(ticket: dict[str, Any]) -> tuple[str, str, str]:
     mode = str(ticket.get("engineer_mode", MANAGED_MODE)).strip()
     requester = str(ticket.get("requester") or ticket.get("customer_id") or "").strip()
     pending_question = str(ticket.get("pending_engineer_question", "")).strip()
+    active_investigation = (
+        ticket.get("active_investigation")
+        if isinstance(ticket.get("active_investigation"), dict)
+        else None
+    )
+    investigation_summary = "None"
+    if active_investigation is not None:
+        investigation_summary = (
+            f"state={active_investigation.get('state') or 'active'}; "
+            f"trigger_reason={active_investigation.get('trigger_reason') or 'unknown'}; "
+            f"trigger_source={active_investigation.get('trigger_source') or 'unknown'}; "
+            f"draft_customer_reply={str(active_investigation.get('draft_customer_reply') or '').strip()[:220] or 'None'}"
+        )
 
     prompt = (
         "Return a JSON object with exactly two keys: summary and next_action_needed.\n"
@@ -706,6 +767,7 @@ def build_ticket_summary(ticket: dict[str, Any]) -> tuple[str, str, str]:
         f"Priority: {priority}\n"
         f"Mode: {mode}\n"
         f"Pending engineer question: {pending_question or 'None'}\n"
+        f"Active investigation: {investigation_summary}\n"
         "Recent messages:\n"
         + "\n".join(lines)
     )
@@ -872,7 +934,7 @@ def build_client_sync_event(ticket: dict[str, Any], event_name: str, message: st
         "event": event_name,
         "ticket_id": str(ticket.get("ticket_id") or ""),
         "customer_id": str(ticket.get("customer_id") or ""),
-        "status": str(ticket.get("status") or "open"),
+        "status": normalize_ticket_status(ticket.get("status") or "open"),
         "engineer_mode": str(ticket.get("engineer_mode") or MANAGED_MODE),
         "updated_at": str(ticket.get("updated_at") or now_iso()),
         "created_at": now_iso(),
@@ -880,6 +942,109 @@ def build_client_sync_event(ticket: dict[str, Any], event_name: str, message: st
     if message:
         event["message"] = message
     return event
+
+
+def _persist_investigation_update(
+    ticket_id: str,
+    investigation: dict[str, Any] | None,
+    *,
+    new_messages: list[dict[str, Any]] | None = None,
+) -> None:
+    if not isinstance(investigation, dict):
+        return
+    ticket_repository.save_investigation(
+        ticket_id=ticket_id,
+        investigation=investigation,
+        new_messages=new_messages or [],
+    )
+
+
+def _investigation_event_name(investigation: dict[str, Any], *, created: bool = False) -> str:
+    state = str(investigation.get("state") or "").strip().lower()
+    if state == "awaiting_confirmation":
+        return "ticket_investigation_confirmation_requested"
+    if created:
+        return "ticket_investigation_started"
+    if state == "closed":
+        return "ticket_investigation_closed"
+    return "ticket_investigation_updated"
+
+
+def _build_investigation_event(
+    ticket: dict[str, Any],
+    investigation: dict[str, Any],
+    *,
+    created: bool = False,
+) -> dict[str, Any]:
+    event_name = _investigation_event_name(investigation, created=created)
+    latest_message = ""
+    messages = investigation.get("messages")
+    if isinstance(messages, list) and messages:
+        latest_message = str(messages[-1].get("content") or "").strip()
+    return {
+        "event": event_name,
+        "ticket_id": str(ticket.get("ticket_id") or ""),
+        "investigation_id": str(investigation.get("id") or ""),
+        "status": normalize_ticket_status(ticket.get("status")),
+        "engineer_mode": str(ticket.get("engineer_mode") or MANAGED_MODE),
+        "investigation_state": str(investigation.get("state") or "active"),
+        "message": latest_message[:200],
+        "created_at": now_iso(),
+    }
+
+
+async def _record_and_dispatch_investigation_event(
+    ticket: dict[str, Any],
+    investigation: dict[str, Any] | None,
+    *,
+    created: bool = False,
+) -> None:
+    if not isinstance(investigation, dict):
+        return
+    payload = _build_investigation_event(ticket, investigation, created=created)
+    ticket_repository.record_event(str(ticket.get("ticket_id") or ""), payload["event"], payload)
+    await dispatch_event(["engineer", "dashboard"], payload)
+
+
+def _close_active_investigation(
+    ticket: dict[str, Any],
+    *,
+    now_value: str,
+    system_note: str | None = None,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    ensure_ticket_defaults(ticket)
+    active_investigation = ticket.get("active_investigation")
+    if not isinstance(active_investigation, dict):
+        return None, []
+
+    appended_messages: list[dict[str, Any]] = []
+    if system_note:
+        next_sequence = len(active_investigation.get("messages", [])) + 1
+        system_message = {
+            "id": f"{active_investigation.get('id')}-m-{next_sequence}",
+            "role": "system",
+            "content": str(system_note).strip(),
+            "created_at": now_value,
+        }
+        active_investigation.setdefault("messages", []).append(system_message)
+        appended_messages.append(system_message)
+
+    active_investigation["state"] = "closed"
+    active_investigation["draft_customer_reply"] = str(
+        active_investigation.get("draft_customer_reply") or ""
+    ).strip()
+    active_investigation["final_confirmation_requested_at"] = None
+    active_investigation["updated_at"] = now_value
+    active_investigation["closed_at"] = now_value
+
+    history = ticket.get("investigation_history")
+    if not isinstance(history, list):
+        history = []
+        ticket["investigation_history"] = history
+    history.insert(0, active_investigation)
+    ticket["active_investigation"] = None
+    ticket["pending_engineer_question"] = None
+    return active_investigation, appended_messages
 
 
 def build_engineer_request_records(ticket_id: str) -> list[dict[str, Any]]:
@@ -1128,6 +1293,7 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
         "search_used": False,
     }
     route_context = build_emotion_context(ticket, limit=6, max_chars=400)
+    investigation_result: dict[str, Any] | None = None
 
     if ticket.get("engineer_mode") == TAKEOVER_MODE:
         answer = compose_emotion_and_answer(
@@ -1143,11 +1309,37 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
             "Customer sent a new message in takeover mode. Please contact the customer directly."
         )
         needs_engineer_input = True
-    elif is_alert:
-        answer = emotion_reply.text
+    elif isinstance(ticket.get("active_investigation"), dict):
+        investigation_result = start_or_refresh_investigation(
+            ticket,
+            trigger_reason="customer_follow_up",
+            trigger_source="customer_follow_up",
+            now_value=now_iso(),
+            ai_turn_builder=generate_investigation_ai_turn,
+        )
+        answer = compose_emotion_and_answer(
+            emotion_reply.text,
+            str(investigation_result.get("public_reply") or "").strip(),
+        )
         confidence = 0.0
-        ticket["status"] = "waiting_for_engineer"
-        ticket["pending_engineer_question"] = _engineer_request_fallback(ticket, customer_message)
+        sources = []
+        citations = []
+        needs_engineer_input = True
+    elif is_alert:
+        investigation_result = start_or_refresh_investigation(
+            ticket,
+            trigger_reason="sentiment_alert",
+            trigger_source="support_query",
+            now_value=now_iso(),
+            ai_turn_builder=generate_investigation_ai_turn,
+        )
+        answer = compose_emotion_and_answer(
+            emotion_reply.text,
+            str(investigation_result.get("public_reply") or "").strip(),
+        )
+        confidence = 0.0
+        sources = []
+        citations = []
         needs_engineer_input = True
     else:
         route_decision = decide_support_route(
@@ -1212,19 +1404,20 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
                 answer = resolution.answer
 
     if not needs_engineer_input and needs_engineer_guidance:
-        engineer_request = build_engineer_followup_request(ticket, customer_message)
+        investigation_result = start_or_refresh_investigation(
+            ticket,
+            trigger_reason=str(route_payload.get("route_reason") or "rag_insufficient_evidence"),
+            trigger_source="support_query",
+            now_value=now_iso(),
+            ai_turn_builder=generate_investigation_ai_turn,
+        )
         answer = compose_emotion_and_answer(
             emotion_reply.text,
-            (
-                "I could not find enough reliable information in the knowledge sources for this issue. "
-                "I have contacted an engineer to continue investigation and will follow up shortly."
-            ),
+            str(investigation_result.get("public_reply") or "").strip(),
         )
         confidence = min(confidence, 0.55)
         sources = []
         citations = []
-        ticket["status"] = "waiting_for_engineer"
-        ticket["pending_engineer_question"] = engineer_request
         needs_engineer_input = True
     elif not needs_engineer_input:
         ticket["status"] = "open"
@@ -1253,6 +1446,12 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
     ticket["updated_at"] = now_iso()
     new_messages = ticket.get("messages", [])[initial_message_count:]
     ticket_repository.save_ticket(ticket, new_messages=new_messages)
+    if investigation_result is not None:
+        _persist_investigation_update(
+            ticket_id,
+            investigation_result.get("active_investigation"),
+            new_messages=investigation_result.get("new_internal_messages"),
+        )
 
     event = {
         "event": "ticket_created" if is_new_ticket else "ticket_updated",
@@ -1275,6 +1474,12 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
         ["client"],
         build_client_sync_event(ticket, event["event"], customer_message[:200]),
     )
+    if investigation_result is not None:
+        await _record_and_dispatch_investigation_event(
+            ticket,
+            investigation_result.get("active_investigation"),
+            created=bool(investigation_result.get("created")),
+        )
 
     if task_enqueued:
         processing_event = {
@@ -1294,13 +1499,23 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
         )
 
     if needs_engineer_input:
+        attention_message = str(ticket.get("pending_engineer_question") or "").strip()
+        active_investigation = (
+            ticket.get("active_investigation")
+            if isinstance(ticket.get("active_investigation"), dict)
+            else None
+        )
+        if active_investigation is not None:
+            internal_messages = active_investigation.get("messages")
+            if isinstance(internal_messages, list) and internal_messages:
+                attention_message = str(internal_messages[-1].get("content") or "").strip()
         attention_event = {
             "event": "engineer_attention_required",
             "ticket_id": ticket_id,
             "priority": priority,
             "status": ticket["status"],
             "engineer_mode": ticket["engineer_mode"],
-            "message": ticket.get("pending_engineer_question") or "Engineer attention required",
+            "message": attention_message or "Engineer attention required",
             "created_at": now_iso(),
         }
         ticket_repository.record_event(ticket_id, attention_event["event"], attention_event)
@@ -1353,7 +1568,7 @@ async def create_or_update_ticket(request: TicketQueryRequest) -> dict[str, Any]
 
 @app.get("/api/engineer/tickets")
 def list_tickets(
-    status: str = Query(default="open", pattern="^(open|all|resolved|waiting_for_engineer)$"),
+    status: str = Query(default="open", pattern="^(open|all|resolved|investigating|waiting_for_engineer)$"),
 ) -> dict[str, Any]:
     all_tickets = ticket_repository.list_tickets(include_messages=True)
     filtered_tickets: list[dict[str, Any]] = []
@@ -1365,12 +1580,14 @@ def list_tickets(
     tickets = sorted(
         filtered_tickets,
         key=lambda item: (
+            1 if normalize_ticket_status(item.get("status")) == INVESTIGATING_STATUS else 0,
             priority_sort_value(item.get("priority")),
             item.get("updated_at", item.get("created_at", "")),
         ),
         reverse=True,
     )
-    return {"tickets": tickets, "status_filter": status}
+    normalized_filter = status if status == "all" else normalize_ticket_status(status)
+    return {"tickets": tickets, "status_filter": normalized_filter}
 
 
 @app.get("/api/engineer/tickets/{ticket_id}")
@@ -1409,16 +1626,33 @@ async def update_ticket(ticket_id: str, request: TicketActionRequest) -> dict[st
         "processing": "open",
         "reopen": "open",
         "resolved": "resolved",
-        "handoff": "waiting_for_engineer",
+        "handoff": INVESTIGATING_STATUS,
     }
 
     ensure_ticket_defaults(ticket)
     initial_message_count = len(ticket.get("messages", []))
     ticket["status"] = status_map[request.action]
+    investigation_to_persist: dict[str, Any] | None = None
+    investigation_messages: list[dict[str, Any]] = []
+    investigation_created = False
     if request.action == "handoff":
         ticket["engineer_mode"] = MANAGED_MODE
-        ticket["pending_engineer_question"] = latest_customer_message(ticket)
+        handoff_result = start_or_refresh_investigation(
+            ticket,
+            trigger_reason="engineer_handoff",
+            trigger_source="engineer_action",
+            now_value=now_iso(),
+            ai_turn_builder=generate_investigation_ai_turn,
+        )
+        investigation_to_persist = handoff_result.get("active_investigation")
+        investigation_messages = handoff_result.get("new_internal_messages") or []
+        investigation_created = bool(handoff_result.get("created"))
     elif request.action == "resolved":
+        investigation_to_persist, investigation_messages = _close_active_investigation(
+            ticket,
+            now_value=now_iso(),
+            system_note="Investigation closed because the ticket was marked resolved.",
+        )
         ticket["pending_engineer_question"] = None
 
     ticket["updated_at"] = now_iso()
@@ -1430,6 +1664,12 @@ async def update_ticket(ticket_id: str, request: TicketActionRequest) -> dict[st
     }
     new_messages = ticket.get("messages", [])[initial_message_count:]
     ticket_repository.save_ticket(ticket, new_messages=new_messages)
+    if investigation_to_persist is not None:
+        _persist_investigation_update(
+            ticket_id,
+            investigation_to_persist,
+            new_messages=investigation_messages,
+        )
 
     payload = {
         "event": "ticket_updated",
@@ -1442,6 +1682,12 @@ async def update_ticket(ticket_id: str, request: TicketActionRequest) -> dict[st
     ticket_repository.record_event(ticket_id, payload["event"], payload)
     await dispatch_event(["engineer", "dashboard"], payload)
     await dispatch_event(["client"], build_client_sync_event(ticket, payload["event"]))
+    if investigation_to_persist is not None:
+        await _record_and_dispatch_investigation_event(
+            ticket,
+            investigation_to_persist,
+            created=investigation_created,
+        )
 
     return {
         "ticket_id": ticket_id,
@@ -1504,12 +1750,18 @@ async def update_ticket_mode(ticket_id: str, request: TicketModeRequest) -> dict
     ensure_ticket_defaults(ticket)
     initial_message_count = len(ticket.get("messages", []))
     previous_mode = ticket.get("engineer_mode", MANAGED_MODE)
+    closed_investigation: dict[str, Any] | None = None
+    closed_messages: list[dict[str, Any]] = []
 
     ticket["engineer_mode"] = request.mode
     if request.mode == TAKEOVER_MODE:
-        if ticket.get("status") == "waiting_for_engineer":
+        if normalize_ticket_status(ticket.get("status")) == INVESTIGATING_STATUS:
             ticket["status"] = "open"
-        # Clear stale pending engineer requests when a ticket enters takeover mode.
+        closed_investigation, closed_messages = _close_active_investigation(
+            ticket,
+            now_value=now_iso(),
+            system_note="Investigation closed because the engineer switched the ticket to Human Takeover mode.",
+        )
         ticket["pending_engineer_question"] = None
 
     ticket["updated_at"] = now_iso()
@@ -1522,6 +1774,12 @@ async def update_ticket_mode(ticket_id: str, request: TicketModeRequest) -> dict
     }
     new_messages = ticket.get("messages", [])[initial_message_count:]
     ticket_repository.save_ticket(ticket, new_messages=new_messages)
+    if closed_investigation is not None:
+        _persist_investigation_update(
+            ticket_id,
+            closed_investigation,
+            new_messages=closed_messages,
+        )
 
     payload = {
         "event": "ticket_mode_changed",
@@ -1539,11 +1797,139 @@ async def update_ticket_mode(ticket_id: str, request: TicketModeRequest) -> dict
     ticket_repository.record_event(ticket_id, payload["event"], payload)
     await dispatch_event(["engineer", "dashboard"], payload)
     await dispatch_event(["client"], build_client_sync_event(ticket, payload["event"]))
+    if closed_investigation is not None:
+        await _record_and_dispatch_investigation_event(ticket, closed_investigation)
 
     return {
         "ticket_id": ticket_id,
         "status": ticket["status"],
         "engineer_mode": request.mode,
+        "updated_at": ticket["updated_at"],
+    }
+
+
+@app.post("/api/engineer/tickets/{ticket_id}/investigation/messages")
+async def post_investigation_message(
+    ticket_id: str,
+    request: InvestigationMessageRequest,
+) -> dict[str, Any]:
+    ticket = ticket_repository.get_ticket(ticket_id)
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    ensure_ticket_defaults(ticket)
+    if ticket.get("engineer_mode") != MANAGED_MODE:
+        raise HTTPException(status_code=400, detail="Ticket is in takeover mode")
+    if not isinstance(ticket.get("active_investigation"), dict):
+        raise HTTPException(status_code=400, detail="No active investigation exists")
+
+    timestamp = now_iso()
+    result = append_engineer_investigation_message(
+        ticket,
+        engineer_message=request.message.strip(),
+        now_value=timestamp,
+        ai_turn_builder=generate_investigation_ai_turn,
+    )
+    ticket["updated_at"] = timestamp
+    ticket["last_engineer_action"] = {
+        "action": "investigation_message",
+        "engineer_id": request.engineer_id,
+        "note": request.message.strip(),
+        "created_at": timestamp,
+    }
+    ticket_repository.save_ticket(ticket, new_messages=[])
+    _persist_investigation_update(
+        ticket_id,
+        result.get("active_investigation"),
+        new_messages=result.get("new_internal_messages"),
+    )
+    await _record_and_dispatch_investigation_event(ticket, result.get("active_investigation"))
+
+    return {
+        "ticket_id": ticket_id,
+        "status": ticket["status"],
+        "engineer_mode": ticket["engineer_mode"],
+        "active_investigation": result.get("active_investigation"),
+        "updated_at": ticket["updated_at"],
+    }
+
+
+@app.post("/api/engineer/tickets/{ticket_id}/investigation/confirmation")
+async def confirm_investigation_reply(
+    ticket_id: str,
+    request: InvestigationConfirmationRequest,
+) -> dict[str, Any]:
+    ticket = ticket_repository.get_ticket(ticket_id)
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    ensure_ticket_defaults(ticket)
+    if ticket.get("engineer_mode") != MANAGED_MODE:
+        raise HTTPException(status_code=400, detail="Ticket is in takeover mode")
+    if not isinstance(ticket.get("active_investigation"), dict):
+        raise HTTPException(status_code=400, detail="No active investigation exists")
+
+    timestamp = now_iso()
+    result = apply_investigation_confirmation(
+        ticket,
+        decision=request.decision,
+        note=str(request.note or "").strip(),
+        now_value=timestamp,
+        ai_turn_builder=generate_investigation_ai_turn,
+    )
+
+    initial_message_count = len(ticket.get("messages", []))
+    customer_reply = str(result.get("customer_reply") or "").strip()
+    if request.decision == "approve" and customer_reply:
+        ticket["messages"].append(
+            {
+                "role": "assistant",
+                "content": customer_reply,
+                "created_at": timestamp,
+            }
+        )
+
+    ticket["updated_at"] = timestamp
+    ticket["last_engineer_action"] = {
+        "action": f"investigation_{request.decision}",
+        "engineer_id": request.engineer_id,
+        "note": str(request.note or "").strip() or customer_reply,
+        "created_at": timestamp,
+    }
+    new_messages = ticket.get("messages", [])[initial_message_count:]
+    ticket_repository.save_ticket(ticket, new_messages=new_messages)
+
+    investigation_to_persist = (
+        result.get("closed_investigation")
+        if request.decision == "approve"
+        else result.get("active_investigation")
+    )
+    _persist_investigation_update(
+        ticket_id,
+        investigation_to_persist,
+        new_messages=result.get("new_internal_messages"),
+    )
+    await _record_and_dispatch_investigation_event(ticket, investigation_to_persist)
+
+    if request.decision == "approve" and customer_reply:
+        payload = {
+            "event": "ticket_guidance_applied",
+            "ticket_id": ticket_id,
+            "status": ticket["status"],
+            "engineer_mode": ticket["engineer_mode"],
+            "engineer_id": request.engineer_id,
+            "message": customer_reply[:200],
+            "created_at": timestamp,
+        }
+        ticket_repository.record_event(ticket_id, payload["event"], payload)
+        await dispatch_event(["engineer", "dashboard"], payload)
+        await dispatch_event(["client"], build_client_sync_event(ticket, payload["event"]))
+
+    return {
+        "ticket_id": ticket_id,
+        "status": ticket["status"],
+        "engineer_mode": ticket["engineer_mode"],
+        "active_investigation": ticket.get("active_investigation"),
         "updated_at": ticket["updated_at"],
     }
 
@@ -1563,26 +1949,38 @@ async def submit_managed_response(ticket_id: str, request: ManagedResponseReques
     if not solution:
         raise HTTPException(status_code=400, detail="Solution cannot be empty")
 
+    timestamp = now_iso()
+    closed_investigation, closed_messages = _close_active_investigation(
+        ticket,
+        now_value=timestamp,
+        system_note="Investigation closed because the engineer sent a legacy managed response.",
+    )
     ai_followup = await asyncio.to_thread(build_ai_followup, ticket, solution)
     ticket["messages"].append(
         {
             "role": "assistant",
             "content": ai_followup,
-            "created_at": now_iso(),
+            "created_at": timestamp,
         }
     )
 
     ticket["status"] = "open"
     ticket["pending_engineer_question"] = None
-    ticket["updated_at"] = now_iso()
+    ticket["updated_at"] = timestamp
     ticket["last_engineer_action"] = {
         "action": "managed_guidance",
         "engineer_id": request.engineer_id,
         "note": solution,
-        "created_at": now_iso(),
+        "created_at": timestamp,
     }
     new_messages = ticket.get("messages", [])[initial_message_count:]
     ticket_repository.save_ticket(ticket, new_messages=new_messages)
+    if closed_investigation is not None:
+        _persist_investigation_update(
+            ticket_id,
+            closed_investigation,
+            new_messages=closed_messages,
+        )
 
     payload = {
         "event": "ticket_guidance_applied",
@@ -1591,11 +1989,13 @@ async def submit_managed_response(ticket_id: str, request: ManagedResponseReques
         "engineer_mode": ticket["engineer_mode"],
         "engineer_id": request.engineer_id,
         "message": solution[:200],
-        "created_at": now_iso(),
+        "created_at": timestamp,
     }
     ticket_repository.record_event(ticket_id, payload["event"], payload)
     await dispatch_event(["engineer", "dashboard"], payload)
     await dispatch_event(["client"], build_client_sync_event(ticket, payload["event"]))
+    if closed_investigation is not None:
+        await _record_and_dispatch_investigation_event(ticket, closed_investigation)
 
     return {
         "ticket_id": ticket_id,
@@ -1620,27 +2020,39 @@ async def submit_takeover_reply(ticket_id: str, request: TakeoverReplyRequest) -
     if not message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
+    timestamp = now_iso()
+    closed_investigation, closed_messages = _close_active_investigation(
+        ticket,
+        now_value=timestamp,
+        system_note="Investigation closed because the engineer replied directly to the customer.",
+    )
     ticket["messages"].append(
         {
             "role": "engineer",
             "content": message,
-            "created_at": now_iso(),
+            "created_at": timestamp,
         }
     )
 
     ticket["status"] = "open"
     ticket["pending_engineer_question"] = None
-    ticket["updated_at"] = now_iso()
+    ticket["updated_at"] = timestamp
     action_name = "takeover_reply" if current_mode == TAKEOVER_MODE else "direct_reply"
     event_name = "ticket_takeover_reply" if current_mode == TAKEOVER_MODE else "ticket_direct_reply"
     ticket["last_engineer_action"] = {
         "action": action_name,
         "engineer_id": request.engineer_id,
         "note": message,
-        "created_at": now_iso(),
+        "created_at": timestamp,
     }
     new_messages = ticket.get("messages", [])[initial_message_count:]
     ticket_repository.save_ticket(ticket, new_messages=new_messages)
+    if closed_investigation is not None:
+        _persist_investigation_update(
+            ticket_id,
+            closed_investigation,
+            new_messages=closed_messages,
+        )
 
     payload = {
         "event": event_name,
@@ -1649,11 +2061,13 @@ async def submit_takeover_reply(ticket_id: str, request: TakeoverReplyRequest) -
         "engineer_mode": ticket["engineer_mode"],
         "engineer_id": request.engineer_id,
         "message": message[:200],
-        "created_at": now_iso(),
+        "created_at": timestamp,
     }
     ticket_repository.record_event(ticket_id, payload["event"], payload)
     await dispatch_event(["engineer", "dashboard"], payload)
     await dispatch_event(["client"], build_client_sync_event(ticket, payload["event"], message[:200]))
+    if closed_investigation is not None:
+        await _record_and_dispatch_investigation_event(ticket, closed_investigation)
 
     return {
         "ticket_id": ticket_id,
