@@ -109,6 +109,27 @@ class RagDashboardContractTests(unittest.TestCase):
         self.assertIn("/internal/dashboard/rag/datasets/{dataset_id}/benchmark-runs", rag_api_source)
         self.assertIn("/internal/dashboard/rag/datasets/{dataset_id}/export", rag_api_source)
 
+    def test_benchmark_session_routes_and_request_model_are_exposed(self) -> None:
+        main_source = Path("backend/main.py").read_text(encoding="utf-8")
+        rag_api_source = Path("backend/rag_api.py").read_text(encoding="utf-8")
+        repository_source = Path("backend/repositories/knowledge_repository.py").read_text(encoding="utf-8")
+        service_client_source = Path("backend/services/rag_service_client.py").read_text(encoding="utf-8")
+
+        for source in [main_source, rag_api_source]:
+            self.assertIn("class BenchmarkSessionRunRequest(BaseModel):", source)
+            self.assertIn("session_name: str | None = Field(default=None, max_length=160)", source)
+            self.assertIn("top_k: int | None = Field(default=None, ge=1, le=20)", source)
+        self.assertIn("/api/dashboard/rag/benchmarks/sessions/local-run", main_source)
+        self.assertIn("/internal/dashboard/rag/benchmarks/sessions/local-run", rag_api_source)
+        self.assertIn("create_local_benchmark_session_run", service_client_source)
+        for marker in [
+            "benchmark_session",
+            "_benchmark_session_payload_for_eval_run",
+            "improvement_summary",
+            "improvement_entries",
+        ]:
+            self.assertIn(marker, repository_source)
+
     def test_dashboard_repository_exposes_case_results_and_route_fields(self) -> None:
         source = Path("backend/repositories/knowledge_repository.py").read_text(encoding="utf-8")
         for marker in [

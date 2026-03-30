@@ -173,6 +173,11 @@ class DatasetBenchmarkRunRequest(BaseModel):
     tier: str = Field(default="gold", pattern="^(gold|silver)$")
 
 
+class BenchmarkSessionRunRequest(BaseModel):
+    session_name: str | None = Field(default=None, max_length=160)
+    top_k: int | None = Field(default=None, ge=1, le=20)
+
+
 class ManagedResponseRequest(BaseModel):
     engineer_id: str = Field(default="eng")
     solution: str = Field(min_length=1, max_length=4000)
@@ -2281,6 +2286,19 @@ def dashboard_create_dataset_generation_run(
 def dashboard_sync_local_benchmarks() -> dict[str, Any]:
     try:
         return rag_service_client.sync_local_benchmarks()
+    except RagServiceError as exc:
+        _raise_rag_service_http_error(exc)
+
+
+@app.post("/api/dashboard/rag/benchmarks/sessions/local-run", status_code=202)
+def dashboard_create_local_benchmark_session_run(
+    request: BenchmarkSessionRunRequest,
+) -> dict[str, Any]:
+    try:
+        return rag_service_client.create_local_benchmark_session_run(
+            session_name=request.session_name,
+            top_k=request.top_k,
+        )
     except RagServiceError as exc:
         _raise_rag_service_http_error(exc)
 

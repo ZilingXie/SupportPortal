@@ -4,6 +4,7 @@ import importlib.util
 import sys
 import types
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -444,6 +445,122 @@ class RagScorecardRepositoryTests(unittest.TestCase):
         self.assertEqual(selector["current_benchmark_version"], "agora_rag_testset_100_canonical_en")
         self.assertEqual(selector["available_experiments"][0]["experiment_id"], "canonical-latest")
         self.assertEqual(selector["available_experiments"][1]["experiment_id"], "mixed-older")
+
+    def test_scorecard_page_includes_benchmark_session_for_current_run(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+
+        baseline = {
+            "experiment_id": "canonical-latest",
+            "eval_run_id": "run-canonical-latest",
+            "benchmark_version": "agora_rag_testset_100_canonical_en",
+            "finished_at": "2026-03-25T12:00:00+00:00",
+            "created_at": "2026-03-25T11:00:00+00:00",
+        }
+        candidate = {
+            "experiment_id": "mixed-older",
+            "eval_run_id": "run-mixed-older",
+            "benchmark_version": "agora_rag_testset_100_mixed_en_v2",
+            "finished_at": "2026-03-23T12:00:00+00:00",
+            "created_at": "2026-03-23T11:00:00+00:00",
+        }
+        experiments = [candidate, baseline]
+
+        with patch.object(repository, "_experiment_rows", return_value=experiments), patch.object(
+            repository,
+            "_select_scorecard_experiment_rows",
+            side_effect=[(baseline, candidate), (baseline, candidate)],
+        ), patch.object(
+            repository,
+            "_benchmark_case_summary_rows",
+            return_value={
+                "run-canonical-latest": {},
+                "run-mixed-older": {},
+            },
+        ), patch.object(
+            repository,
+            "_sample_deltas_from_cases",
+            return_value=([], []),
+        ), patch.object(
+            repository,
+            "_benchmark_session_payload_for_eval_run",
+            return_value={
+                "benchmark_session_id": "BSESS-1",
+                "session_name": "session-1",
+            },
+        ) as session_mock:
+            payload = repository._scorecard_workbench_page("7d", 7, {"limit": 20})
+
+        self.assertEqual(payload["benchmark_session"]["benchmark_session_id"], "BSESS-1")
+        session_mock.assert_called_once_with("run-canonical-latest")
+
+    def test_benchmark_session_payload_for_eval_run_orders_runs_by_catalog_snapshot(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        started_at = datetime(2026, 3, 30, 1, 0, tzinfo=timezone.utc)
+        finished_at = datetime(2026, 3, 30, 1, 30, tzinfo=timezone.utc)
+        session_row = (
+            "BSESS-1",
+            "session-1",
+            "completed",
+            "BSESS-0",
+            [
+                {
+                    "dataset_name": "agora_rag_testset_100_standrad_en",
+                    "label": "Canonical",
+                    "benchmark_version": "agora_rag_testset_100_standrad_en",
+                },
+                {
+                    "dataset_name": "agora_rag_testset_100_mixed_en",
+                    "label": "Mixed",
+                    "benchmark_version": "agora_rag_testset_100_mixed_en",
+                },
+            ],
+            "- Canonical cleanup: improved retrieval coverage",
+            [{"entry_index": 4, "title": "Canonical cleanup", "summary": "improved retrieval coverage"}],
+            4,
+            "",
+            started_at,
+            finished_at,
+        )
+        run_rows = [
+            (
+                "EVAL-MIXED",
+                "agora_rag_testset_100_mixed_en",
+                "offline_benchmark",
+                "session-1::agora_rag_testset_100_mixed_en",
+                "agora_rag_testset_100_mixed_en",
+                "canonical_v1",
+                "completed",
+                started_at,
+                finished_at,
+            ),
+            (
+                "EVAL-STANDRAD",
+                "agora_rag_testset_100_standrad_en",
+                "offline_benchmark",
+                "session-1::agora_rag_testset_100_standrad_en",
+                "agora_rag_testset_100_standrad_en",
+                "canonical_v1",
+                "completed",
+                started_at,
+                finished_at,
+            ),
+        ]
+
+        with patch.object(repository, "_query_rows", side_effect=[[session_row], run_rows]):
+            payload = repository._benchmark_session_payload_for_eval_run("EVAL-MIXED")
+
+        assert payload is not None
+        self.assertEqual(payload["benchmark_session_id"], "BSESS-1")
+        self.assertEqual(
+            [row["benchmark_version"] for row in payload["runs"]],
+            [
+                "agora_rag_testset_100_standrad_en",
+                "agora_rag_testset_100_mixed_en",
+            ],
+        )
+        self.assertEqual(payload["runs"][0]["label"], "Canonical")
+        self.assertFalse(payload["runs"][0]["is_current"])
+        self.assertTrue(payload["runs"][1]["is_current"])
 
     def test_scorecard_page_uses_eval_run_selector_rows_when_metric_experiments_are_empty(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
