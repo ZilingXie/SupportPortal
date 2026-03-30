@@ -501,6 +501,22 @@ class RagServiceClient:
             "/internal/dashboard/rag/benchmarks/local-sync",
         )
 
+    def create_local_benchmark_session_run(
+        self,
+        *,
+        session_name: str | None = None,
+        top_k: int | None = None,
+    ) -> dict[str, Any]:
+        payload = {
+            "session_name": session_name,
+            "top_k": top_k,
+        }
+        return self._request(
+            "POST",
+            "/internal/dashboard/rag/benchmarks/sessions/local-run",
+            json_body=payload,
+        )
+
     def create_dataset_benchmark_run(
         self,
         dataset_id: str,

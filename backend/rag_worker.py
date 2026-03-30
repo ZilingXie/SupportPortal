@@ -11,6 +11,7 @@ from typing import Any
 from backend.repositories.event_repository import create_event_repository
 from backend.repositories.knowledge_repository import create_knowledge_repository
 from backend.services.rag_benchmark_runner import run_benchmark
+from backend.services.rag_benchmark_session import run_local_benchmark_session
 from backend.services.rag_eval_dataset_factory import process_dataset_generation
 from backend.services.event_bus import SyncRedisEventBus
 from backend.services.knowledge_ingestion import process_knowledge_ingestion
@@ -173,6 +174,24 @@ def _process_dataset_benchmark(task: dict[str, Any]) -> None:
         raise
 
 
+def _process_benchmark_session(task: dict[str, Any]) -> None:
+    benchmark_session_id = str(task.get("benchmark_session_id") or "").strip()
+    if not benchmark_session_id:
+        LOGGER.warning("RAG worker skipped benchmark_session task without benchmark_session_id")
+        return
+    if not knowledge_repository.is_enabled():
+        LOGGER.warning(
+            "RAG worker skipped benchmark_session %s because repository is disabled",
+            benchmark_session_id,
+        )
+        return
+    run_local_benchmark_session(
+        repository=knowledge_repository,
+        benchmark_session_id=benchmark_session_id,
+        top_k=int(task.get("top_k")) if task.get("top_k") is not None else None,
+    )
+
+
 def main() -> int:
     logging.basicConfig(
         level=logging.INFO,
@@ -209,6 +228,8 @@ def main() -> int:
                 _process_dataset_generation(task)
             elif task_type == "dataset_benchmark":
                 _process_dataset_benchmark(task)
+            elif task_type == "benchmark_session":
+                _process_benchmark_session(task)
             else:
                 LOGGER.info("RAG worker skipped unsupported task type: %s", task_type or "(missing)")
         except Exception as exc:

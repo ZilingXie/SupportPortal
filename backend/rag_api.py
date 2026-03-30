@@ -32,6 +32,7 @@ from backend.services.knowledge_monitoring import (
     build_knowledge_event_payload,
     now_iso,
 )
+from backend.services.rag_benchmark_session import build_local_benchmark_session_record
 from backend.services.local_source_sync import ingest_source_document, stage_source_document
 from backend.services.local_benchmark_sync import sync_default_local_benchmarks
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, run_rag_query
@@ -100,6 +101,11 @@ class DatasetBenchmarkRunRequest(BaseModel):
     experiment_id: str | None = Field(default=None, max_length=160)
     top_k: int | None = Field(default=None, ge=1, le=20)
     tier: str = Field(default="gold", pattern="^(gold|silver)$")
+
+
+class BenchmarkSessionRunRequest(BaseModel):
+    session_name: str | None = Field(default=None, max_length=160)
+    top_k: int | None = Field(default=None, ge=1, le=20)
 
 
 app = FastAPI(title="SupportPortal RAG API", version="0.1.0")
@@ -255,6 +261,19 @@ def _build_dataset_benchmark_task(
         "experiment_id": experiment_id,
         "top_k": top_k,
         "tier": tier,
+        "created_at": now_iso(),
+    }
+
+
+def _build_local_benchmark_session_task(
+    *,
+    benchmark_session_id: str,
+    top_k: int | None,
+) -> dict[str, Any]:
+    return {
+        "task_type": "benchmark_session",
+        "benchmark_session_id": benchmark_session_id,
+        "top_k": top_k,
         "created_at": now_iso(),
     }
 
@@ -773,6 +792,43 @@ def internal_sync_local_benchmarks(
         "datasets": synced,
         "synced_at": now_iso(),
         "source_of_truth": "local_benchmarks",
+    }
+
+
+@app.post("/internal/dashboard/rag/benchmarks/sessions/local-run", status_code=202)
+async def internal_create_local_benchmark_session_run(
+    request: BenchmarkSessionRunRequest,
+    _: None = Depends(_require_internal_auth),
+) -> dict[str, Any]:
+    repository = _require_knowledge_repository()
+    session_record = build_local_benchmark_session_record(
+        repository=repository,
+        session_name=request.session_name,
+    )
+    repository.upsert_rag_benchmark_session(session=session_record)
+    enqueued = await task_queue.enqueue(
+        _build_local_benchmark_session_task(
+            benchmark_session_id=_clean_text(session_record.get("benchmark_session_id")),
+            top_k=request.top_k,
+        )
+    )
+    if not enqueued:
+        repository.upsert_rag_benchmark_session(
+            session={
+                **session_record,
+                "status": "failed",
+                "error_message": "RAG benchmark session queue is unavailable",
+                "finished_at": now_iso(),
+            }
+        )
+        raise HTTPException(status_code=503, detail="RAG benchmark session queue is unavailable")
+    return {
+        "benchmark_session_id": session_record.get("benchmark_session_id"),
+        "session_name": session_record.get("session_name"),
+        "previous_session_id": session_record.get("previous_session_id"),
+        "queued": True,
+        "runs_expected": len(list(session_record.get("benchmark_catalog_snapshot") or [])),
+        "improvement_summary_preview": session_record.get("improvement_summary"),
     }
 
 

@@ -522,6 +522,74 @@ function buildExperimentComparisonControls(summary, benchmarkSelector = null) {
   `;
 }
 
+function buildBenchmarkSessionPanel(benchmarkSession) {
+  const session = benchmarkSession && typeof benchmarkSession === "object" ? benchmarkSession : null;
+  if (!normalizeString(session?.benchmark_session_id)) {
+    return "";
+  }
+  const improvementEntries = Array.isArray(session.improvement_entries) ? session.improvement_entries : [];
+  const runs = Array.isArray(session.runs) ? session.runs : [];
+  const improvementSummary = normalizeString(session.improvement_summary);
+  const runRows = runs.map((run) => ({
+    label: run.label || run.dataset_name || run.benchmark_version || run.eval_run_id,
+    benchmark_version: run.benchmark_version,
+    status: run.is_current ? `${run.status || "-"} (current)` : run.status,
+    experiment_id: run.experiment_id,
+    eval_run_id: run.eval_run_id,
+    finished_at: run.finished_at || run.started_at || "",
+  }));
+  return `
+    <section class="panel-card benchmark-session-panel">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Benchmark Session</p>
+          <h3>${escapeHtml(session.session_name || session.benchmark_session_id || "Benchmark Session")}</h3>
+          <p>Persist the changelog delta and sibling benchmark runs for the current selected benchmark context.</p>
+        </div>
+        <span class="chip chip-neutral">${escapeHtml(session.status || "queued")}</span>
+      </div>
+      ${buildDefinitionGrid([
+        { label: "Session Id", value: session.benchmark_session_id },
+        { label: "Previous Session", value: session.previous_session_id || "(none)" },
+        { label: "Started At", value: session.started_at ? formatDateTime(session.started_at) : "-" },
+        { label: "Finished At", value: session.finished_at ? formatDateTime(session.finished_at) : "-" },
+      ])}
+      <div class="section-stack">
+        <article class="sample-item">
+          <div class="sample-item-header">
+            <div>
+              <h4>Improvements Since Previous Benchmark Session</h4>
+              <p>Snapshot stored when this 3-run benchmark session was queued.</p>
+            </div>
+          </div>
+          ${
+            improvementSummary
+              ? `<p>${escapeHtml(improvementSummary).replaceAll("\n", "<br />")}</p>`
+              : `<div class="empty-state">No improvement summary recorded for this benchmark session.</div>`
+          }
+          <div class="chip-row">
+            ${
+              improvementEntries.length
+                ? improvementEntries
+                    .map(
+                      (entry) => `
+                        <span class="chip chip-neutral">${escapeHtml(entry.title || `Entry ${entry.entry_index ?? ""}`)}</span>
+                      `
+                    )
+                    .join("")
+                : `<span class="chip chip-neutral">No changelog entries linked</span>`
+            }
+          </div>
+        </article>
+      </div>
+    </section>
+    ${buildTableSection("Session Runs", runRows, {
+      columns: ["label", "benchmark_version", "status", "experiment_id", "eval_run_id", "finished_at"],
+      emptyLabel: "No linked benchmark runs have been recorded for this session yet.",
+    })}
+  `;
+}
+
 function renderBenchmarkRunSelector(benchmarkSelector) {
   if (!currentBenchmarkRunSelectorEl || !currentBenchmarkRunMetaEl) {
     return;
@@ -1601,6 +1669,7 @@ function renderScorecardPage(payload) {
       ${buildExperimentComparisonControls(summary, payload.benchmark_selector)}
       ${buildMetricCards(summary.cards || {})}
     </section>
+    ${buildBenchmarkSessionPanel(payload.benchmark_session)}
     ${buildTableSection("Layer Scorecard", layerScorecard, {
       columns: ["layer", "metric", "candidate", "baseline", "delta"],
       emptyLabel: "No scorecard layers available yet.",
@@ -1644,6 +1713,7 @@ function renderRoutingPage(payload) {
         formatters: buildRoutingSummaryCardFormatters(summary.cards || {}),
       })}
     </section>
+    ${buildBenchmarkSessionPanel(payload.benchmark_session)}
     ${buildTableSection("Per Category Route Health", categoryPassRate, {
       columns: ["category", "case_count", "pass_rate"],
       emptyLabel: "No routing slices available yet.",
@@ -1696,6 +1766,7 @@ function renderRetrievalDashboardPage(payload) {
       </div>
       ${buildMetricCards(summary.cards || {})}
     </section>
+    ${buildBenchmarkSessionPanel(payload.benchmark_session)}
     ${buildCaseExplorerSection("Retrieval Errors", incorrectRows, {
       subtitle: "Every retrieval-eligible case where the miss was attributed to retrieval.",
       tone: "danger",
@@ -1746,6 +1817,7 @@ function renderGenerationDashboardPage(payload) {
       </div>
       ${buildMetricCards(summary.cards || {})}
     </section>
+    ${buildBenchmarkSessionPanel(payload.benchmark_session)}
     ${buildCaseExplorerSection("Generation Errors", incorrectRows, {
       subtitle: "Cases where answer quality or policy behavior failed after routing.",
       tone: "danger",
@@ -1805,6 +1877,7 @@ function renderDataSupplyPage(payload) {
       </div>
       ${buildMetricCards(summary.cards || {})}
     </section>
+    ${buildBenchmarkSessionPanel(payload.benchmark_session)}
     <section class="panel-card">
       <div class="panel-header">
         <div>
@@ -1942,6 +2015,7 @@ function renderDiagnosisPage(payload) {
   const selectedListKey = summary.selected_list_key || "top_regressions";
 
   root.innerHTML = `
+    ${buildBenchmarkSessionPanel(payload.benchmark_session)}
     <div class="diagnosis-layout">
       <div class="diagnosis-chooser-stack">
         ${buildDiagnosisChooserSection("Top Regressions", sampleList.top_regressions || [], "danger", {
@@ -2327,6 +2401,7 @@ function renderReviewPage(payload) {
       </div>
       ${buildMetricCards(summary.cards || {})}
     </section>
+    ${buildBenchmarkSessionPanel(payload.benchmark_session)}
     ${buildReviewQueue(reviewQueue.pending_rows || [], "Pending First")}
     <div class="two-column-grid">
       ${buildReviewQueue(reviewQueue.benchmark_rows || [], "Benchmark Samples")}
