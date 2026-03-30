@@ -615,12 +615,18 @@ def compute_retrieval_metrics(
     top_ks: tuple[int, ...] = (1, 3, 5),
 ) -> dict[str, Any]:
     expected_docs = {_clean_text(item) for item in expected_document_ids if _clean_text(item)}
-    expected_headings = {_normalize_heading_path(item) for item in (expected_heading_paths or []) if _normalize_heading_path(item)}
     evidence_refs = expected_evidence_refs or []
+    expected_headings = {_normalize_heading_path(item) for item in (expected_heading_paths or []) if _normalize_heading_path(item)}
+    expected_headings.update(
+        _normalize_heading_path(ref.get("heading"))
+        for ref in evidence_refs
+        if _normalize_heading_path(ref.get("heading"))
+    )
     key_points = answer_key_points or []
     ordered_candidates = candidate_rows or []
 
     relevance_scores: list[int] = []
+    document_match_scores: list[int] = []
     matched_docs: set[str] = set()
     reciprocal_rank = 0.0
     for index, candidate in enumerate(ordered_candidates, start=1):
@@ -628,6 +634,7 @@ def compute_retrieval_metrics(
         heading = _normalize_heading_path(candidate.get("title"))
         doc_match = doc_id in expected_docs if expected_docs else False
         heading_match = heading in expected_headings if expected_headings else True
+        document_match_scores.append(1 if doc_match else 0)
         relevant = 1 if doc_match and heading_match else 0
         relevance_scores.append(relevant)
         if relevant and not reciprocal_rank:
@@ -645,8 +652,8 @@ def compute_retrieval_metrics(
     expected_doc_count = max(1, len(expected_docs))
     matched_docs_at_5 = {
         _clean_text(candidate.get("doc_id"))
-        for candidate, relevance in zip(ordered_candidates[:5], relevance_scores[:5], strict=False)
-        if relevance and _clean_text(candidate.get("doc_id"))
+        for candidate, doc_match in zip(ordered_candidates[:5], document_match_scores[:5], strict=False)
+        if doc_match and _clean_text(candidate.get("doc_id"))
     }
     metrics["recall_at_5"] = round(len(matched_docs_at_5) / expected_doc_count, 4)
     metrics["mrr"] = round(reciprocal_rank, 4)
@@ -655,7 +662,7 @@ def compute_retrieval_metrics(
         sum(relevance_scores[:5]) / max(1, min(5, len(ordered_candidates[:5]))),
         4,
     )
-    metrics["document_hit_at_5"] = metrics.get("hit_at_5")
+    metrics["document_hit_at_5"] = 1.0 if any(document_match_scores[:5]) else 0.0
     metrics["evidence_hit_at_5"] = 1.0 if matched_evidence_ids else 0.0
     metrics["evidence_coverage"] = round(_evidence_coverage(key_points, matched_evidence_ids), 4)
     metrics["noise_rate"] = round(_noise_rate(ordered_candidates[:max_top_k], matched_evidence_ids, key_points), 4)

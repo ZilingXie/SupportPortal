@@ -10,6 +10,36 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-03-29 - Retrieval metric alignment, BM25 query-noise cleanup, and final-context diversity
+
+- Summary: Fixed retrieval benchmark matching so full headings from evidence refs count as exact heading hits, separated `document_hit_at_5` from exact `hit_at_k`, filtered conversational noise terms from BM25 query token selection, and diversified `final_chunks` so the final top-k prefers distinct `product + source_path stem` families before backfilling same-family chunks.
+- Reason: Retrieval scorecards were under-reporting exact hits when benchmark datasets stored heading paths as path segments, BM25 lexical retrieval was over-weighting filler terms such as `i`, `m`, `getting`, `mean`, `me`, and `before`, and final selected contexts were still vulnerable to being crowded out by same-family platform variants even after reranking.
+- Affected files or config:
+  - `backend/services/rag_benchmark.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/rag_tokenizer.py`
+  - `backend/tests/test_rag_benchmark.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_rag_tokenizer.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No vector-table rebuild or BM25 backfill required
+  - New benchmark runs will treat evidence-ref full headings as the source of truth for exact heading matches when `expected_heading_paths` is stored as path segments
+  - `document_hit_at_5` now reports doc-level recall independently of exact heading hits
+  - BM25 query terms now drop conversational filler/pronoun tokens before term-frequency filtering and scoring
+  - Final selected contexts now prefer unique `product + source_path stem` families before filling remaining top-k slots from the original reranked order
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_rag_benchmark.RagBenchmarkHelperTests.test_compute_retrieval_metrics_matches_full_heading_from_evidence_refs backend.tests.test_rag_benchmark.RagBenchmarkHelperTests.test_compute_retrieval_metrics_tracks_doc_hit_without_exact_heading_hit`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_rag_tokenizer.RagTokenizerTests.test_tokenize_bm25_query_filters_conversational_noise_terms backend.tests.test_rag_tokenizer.RagTokenizerTests.test_tokenize_bm25_query_filters_pronouns_and_low_signal_prepositions backend.tests.test_rag_qa.RagQaHybridTests.test_select_bm25_query_terms_discards_conversational_noise`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_rag_qa.RagQaHybridTests.test_select_diverse_chunks_prefers_unique_family_before_backfill backend.tests.test_rag_qa.RagQaHybridTests.test_select_diverse_chunks_backfills_original_order_when_unique_families_run_out backend.tests.test_rag_qa.RagQaHybridTests.test_run_rag_query_diversifies_final_chunks_before_generation`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_rag_benchmark backend.tests.test_rag_benchmark_runner backend.tests.test_rag_qa backend.tests.test_rag_tokenizer`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_benchmark.py backend/services/rag_qa.py backend/services/rag_tokenizer.py backend/tests/test_rag_benchmark.py backend/tests/test_rag_qa.py backend/tests/test_rag_tokenizer.py`
+  - Function spot checks:
+    - `tokenize_bm25_query(\"I'm getting error 109 when users join. Does that mean the token expired?\") -> ['error', '109', 'users', 'join', 'token', 'expired']`
+    - `tokenize_bm25_query(\"How early does Agora warn me before a token expires?\") -> ['early', 'agora', 'warn', 'token', 'expires']`
+    - `compute_retrieval_metrics(...)` now returns `hit_at_1=1.0` and `document_hit_at_5=1.0` for full-heading evidence-ref matches stored as path segments
+    - `_select_diverse_chunks(...)` now yields `['auth-android', 'error-codes']` before backfilling `auth-ios` for a same-family `authentication-workflow` duplicate set
+
 ## 2026-03-21 - Stable local ingestion hardening for `ag_docs`
 
 ## 2026-03-26 - Technical-question routing consolidation and route-aware benchmark rerun

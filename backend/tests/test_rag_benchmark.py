@@ -280,6 +280,46 @@ class RagBenchmarkHelperTests(unittest.TestCase):
         self.assertEqual(metrics["evidence_hit_at_3"], 1.0)
         self.assertEqual(metrics["evidence_hit_at_5"], 1.0)
 
+    def test_compute_retrieval_metrics_matches_full_heading_from_evidence_refs(self) -> None:
+        metrics = compute_retrieval_metrics(
+            [
+                {
+                    "chunk_id": "chunk-1",
+                    "doc_id": "official-doc-1",
+                    "title": "Use tokens > Implement basic authentication > Token expiration",
+                }
+            ],
+            expected_document_ids=["official-doc-1"],
+            expected_heading_paths=["Use tokens", "Implement basic authentication", "Token expiration"],
+            expected_evidence_refs=[
+                {
+                    "chunk_id": "chunk-1",
+                    "doc_id": "official-doc-1",
+                    "heading": "Use tokens > Implement basic authentication > Token expiration",
+                }
+            ],
+        )
+
+        self.assertEqual(metrics["hit_at_1"], 1.0)
+        self.assertEqual(metrics["document_hit_at_5"], 1.0)
+        self.assertEqual(metrics["evidence_hit_at_1"], 1.0)
+
+    def test_compute_retrieval_metrics_tracks_doc_hit_without_exact_heading_hit(self) -> None:
+        metrics = compute_retrieval_metrics(
+            [
+                {
+                    "chunk_id": "chunk-1",
+                    "doc_id": "official-doc-1",
+                    "title": "Wrong Heading",
+                }
+            ],
+            expected_document_ids=["official-doc-1"],
+            expected_heading_paths=["Overview"],
+        )
+
+        self.assertEqual(metrics["hit_at_1"], 0.0)
+        self.assertEqual(metrics["document_hit_at_5"], 1.0)
+
     def test_compute_retrieval_metrics_reports_document_hit_coverage_and_noise(self) -> None:
         metrics = compute_retrieval_metrics(
             [

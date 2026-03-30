@@ -8,6 +8,8 @@ _ASCII_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")
 _CJK_SEGMENT_RE = re.compile(r"[\u4e00-\u9fff]+")
 _BM25_QUERY_STOPWORDS_EN = {
     "a",
+    "about",
+    "after",
     "an",
     "and",
     "are",
@@ -23,19 +25,33 @@ _BM25_QUERY_STOPWORDS_EN = {
     "does",
     "for",
     "from",
+    "get",
+    "getting",
+    "got",
+    "help",
     "how",
+    "i",
     "if",
+    "m",
+    "me",
+    "mean",
+    "means",
     "in",
     "into",
     "is",
     "it",
     "just",
+    "my",
+    "need",
+    "needs",
     "of",
     "on",
     "only",
     "or",
     "over",
+    "please",
     "should",
+    "still",
     "than",
     "that",
     "the",
@@ -51,6 +67,8 @@ _BM25_QUERY_STOPWORDS_EN = {
     "use",
     "used",
     "using",
+    "want",
+    "wants",
     "was",
     "what",
     "when",
@@ -62,6 +80,7 @@ _BM25_QUERY_STOPWORDS_EN = {
     "with",
     "without",
     "would",
+    "before",
 }
 
 
@@ -132,10 +151,14 @@ def tokenize_bm25_query(text: str) -> list[str]:
     unique_tokens: list[str] = []
     seen: set[str] = set()
     for token in tokens:
-        if token in _BM25_QUERY_STOPWORDS_EN:
+        if is_bm25_query_stopword(token):
             continue
         if token in seen:
             continue
         seen.add(token)
         unique_tokens.append(token)
     return unique_tokens
+
+
+def is_bm25_query_stopword(token: str) -> bool:
+    return str(token or "").strip().lower() in _BM25_QUERY_STOPWORDS_EN

@@ -16,7 +16,7 @@ from backend.services.embedding_provider import (
     embedding_provider_name,
     get_embedding_provider,
 )
-from backend.services.rag_tokenizer import tokenize_bm25_query
+from backend.services.rag_tokenizer import is_bm25_query_stopword, tokenize_bm25_query
 
 logger = logging.getLogger(__name__)
 _UNAVAILABLE_MODELS: set[str] = set()
@@ -718,7 +718,11 @@ def _select_bm25_query_terms(
     max_term_doc_freq_ratio: float,
     max_query_terms: int,
 ) -> list[str]:
-    normalized_terms = [str(term or "").strip().lower() for term in terms if str(term or "").strip()]
+    normalized_terms = [
+        str(term or "").strip().lower()
+        for term in terms
+        if str(term or "").strip() and not is_bm25_query_stopword(str(term or "").strip().lower())
+    ]
     if not normalized_terms:
         return []
     safe_doc_count = max(0, int(doc_count or 0))
@@ -1580,6 +1584,62 @@ def _unique_doc_ids(chunks: list[RetrievedChunk]) -> list[str]:
     return values
 
 
+def _chunk_family_key(chunk: RetrievedChunk) -> str:
+    metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+    product = (
+        str(metadata.get("product") or "").strip().lower()
+        or str(metadata.get("product_area") or "").strip().lower()
+    )
+    source_path = str(chunk.source_path or "").strip().replace("\\", "/")
+    source_stem = os.path.splitext(os.path.basename(source_path))[0].strip().lower()
+    doc_id = str(chunk.doc_id or "").strip().lower()
+    family = source_stem or doc_id
+    if not family:
+        return ""
+    return f"{product}::{family}" if product else family
+
+
+def _select_diverse_chunks(chunks: list[RetrievedChunk], *, limit: int) -> list[RetrievedChunk]:
+    safe_limit = max(1, int(limit or 1))
+    if not chunks:
+        return []
+
+    selected: list[RetrievedChunk] = []
+    selected_chunk_keys: set[str] = set()
+    selected_families: set[str] = set()
+
+    def _chunk_key(chunk: RetrievedChunk, index: int) -> str:
+        if chunk.chunk_id:
+            return chunk.chunk_id
+        return f"{index}:{chunk.source_path}:{chunk.text[:120]}"
+
+    # Pass 1: keep the best-ranked chunk for each family.
+    for index, chunk in enumerate(chunks):
+        chunk_key = _chunk_key(chunk, index)
+        family_key = _chunk_family_key(chunk)
+        if chunk_key in selected_chunk_keys:
+            continue
+        if family_key and family_key in selected_families:
+            continue
+        selected.append(chunk)
+        selected_chunk_keys.add(chunk_key)
+        if family_key:
+            selected_families.add(family_key)
+        if len(selected) >= safe_limit:
+            return selected
+
+    # Pass 2: if unique families are exhausted, backfill by the original order.
+    for index, chunk in enumerate(chunks):
+        chunk_key = _chunk_key(chunk, index)
+        if chunk_key in selected_chunk_keys:
+            continue
+        selected.append(chunk)
+        selected_chunk_keys.add(chunk_key)
+        if len(selected) >= safe_limit:
+            break
+    return selected
+
+
 def _selected_contexts(chunks: list[RetrievedChunk]) -> list[dict[str, Any]]:
     contexts: list[dict[str, Any]] = []
     for chunk in chunks:
@@ -1945,7 +2005,7 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
         rerank_latency_ms = round(rerank_latency_ms + ((time.perf_counter() - rerank_started_at) * 1000), 2)
         chunks = externally_reranked or chunks
 
-    final_chunks = chunks[: int(config["top_k"])] or chunks
+    final_chunks = _select_diverse_chunks(chunks, limit=int(config["top_k"])) or chunks[: int(config["top_k"])] or chunks
     allowed_chunk_ids = {chunk.chunk_id for chunk in final_chunks}
     payload: dict[str, Any] | None = None
     try:
