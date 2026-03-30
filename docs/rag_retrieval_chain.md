@@ -127,11 +127,17 @@ Input:
 - reranked candidate list
 
 Output:
-- first `top_k` chunks
+- first `top_k` grounded chunks after query-aware coverage and diversity selection
 - citation pool for generation
 
 Default:
 - `top_k = 6`
+
+Selection responsibilities:
+- preserve strong method coverage for explicit method-comparison queries before generic chunks consume the top-k budget
+- keep the earlier family-level diversity rule so one doc family does not crowd out the whole answer
+- avoid repeated same-section / same-use-case context when a distinct section is available
+- fall back to the original reranked order when diversity constraints would otherwise under-fill `top_k`
 
 ### 7. Generation
 
@@ -144,6 +150,12 @@ Output:
 - `answer`
 - `citations`
 - `insufficient_evidence`
+
+Generation behavior:
+- first attempt uses the normal grounded JSON answer prompt
+- if the payload is invalid, uncited, or incorrectly claims insufficient evidence despite strong grounded overlap, generation performs one stricter repair attempt
+- only after the repair attempt fails does the system use extractive fallback
+- extractive fallback is intentionally short and evidence-oriented so the response stays readable and remains tied to retrieved headings
 
 ## Runtime Config
 

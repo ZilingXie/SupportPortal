@@ -10,6 +10,33 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-03-30 - Generation repair hardening and query-aware final-context selection
+
+- Summary: Hardened generation after reranking by making final context selection query-aware, preferring method coverage for comparison questions, soft-demoting advanced-permission samples for generic token-generation queries, retrying once with a stricter repair prompt before falling back, and shortening extractive fallback into an evidence-oriented response.
+- Reason: Generation benchmarks were still losing score on faithfulness, response relevance, and policy-followed rate because same-doc repeated sections could crowd out more useful context, generic token queries could over-prefer advanced-permission samples, and false insufficient-evidence answers were dropping directly into extractive fallback instead of attempting a stricter grounded repair.
+- Affected files or config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_retrieval_chain.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No vector-table rebuild, ingestion backfill, or schema migration required
+  - Online final-context selection now preserves explicit method coverage first, then family diversity, then section/use-case diversity before backfilling by reranked order
+  - Generic token-generation queries now prefer `basic_authentication` context over `advanced_permissions` unless the query explicitly asks for privileges
+  - Generation now performs one stricter repair attempt when the first structured response is invalid, uncited, or incorrectly claims insufficient evidence despite strong grounded overlap
+  - Extractive fallback remains the last resort, but now returns a shorter evidence-oriented answer keyed by retrieved headings
+- Verification:
+  - `./.venv/bin/python -m pytest -q backend/tests/test_rag_qa.py`
+  - `./.venv/bin/python -m pytest -q backend/tests/test_rag_benchmark_runner.py`
+  - `./.venv/bin/python -m py_compile backend/services/rag_qa.py backend/tests/test_rag_qa.py`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - Full baseline benchmark launched with experiment id `generation-baseline` as eval run `EVAL-19F2AF76DABA` and remained in `running` state during implementation verification
+  - Full candidate benchmark launched with experiment id `generation-candidate` as eval run `EVAL-AFC896039D5B` and remained in `running` state during implementation verification
+  - Post-change smoke benchmark completed with experiment id `generation-candidate-smoke` as eval run `EVAL-0ECA142C79C9`
+  - Post-change token-generation benchmark completed with experiment id `generation-candidate-token-case` as eval run `EVAL-5A02194FD127`, with `answer_accuracy_score=1.0`, `faithfulness_score=1.0`, `response_relevance_score=1.0`, `response_policy_followed_rate=1.0`, and `hallucination_rate=0.0`
+
 ## 2026-03-29 - Retrieval metric alignment, BM25 query-noise cleanup, and final-context diversity
 
 - Summary: Fixed retrieval benchmark matching so full headings from evidence refs count as exact heading hits, separated `document_hit_at_5` from exact `hit_at_k`, filtered conversational noise terms from BM25 query token selection, and diversified `final_chunks` so the final top-k prefers distinct `product + source_path stem` families before backfilling same-family chunks.
@@ -977,3 +1004,42 @@ For each new entry, record:
   - Containerized verification on the local worktree required linking the worktree `.env` to the repo root `.env`, because git worktrees do not automatically include the untracked local environment file.
   - Compose `ps` showed all expected containers up: `deployment_redis_1`, `deployment_rag_api_1`, `deployment_rag_worker_1`, `deployment_ws_gateway_1`, `deployment_api_1`, `deployment_worker_1`, `deployment_nginx_1`.
   - Final `/health` returned `status=ok`, `ticket_storage=postgres`, `knowledge_storage=unreachable`, and `rag_service=unreachable`; `deployment_rag_api_1` logs showed `Knowledge repository connection failed attempt 1/4: connection timeout expired`, so the remaining runtime issue is in the deployed knowledge repository connectivity rather than the ticket investigation flow boot path.
+
+## 2026-03-30 - Add changelog-driven local benchmark sessions
+
+- Summary: Added a first-class benchmark session flow that groups the 3 local benchmark datasets into one tracked session, snapshots “what improved since the previous benchmark session” from `docs/rag_change_log.md`, links each child eval run back to that session, and surfaces the session context in the RAG dashboard and CLI.
+- Reason: Single benchmark runs were not enough to explain what changed between one real benchmark pass and the next. We need every full 3-dataset benchmark execution to persist its delta from the previous tracked benchmark session so benchmark results can be read together with the RAG changes that motivated them.
+- Affected files or config:
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/services/rag_benchmark_session.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/rag_api.py`
+  - `backend/main.py`
+  - `backend/rag_worker.py`
+  - `backend/services/rag_service_client.py`
+  - `scripts/run_rag_benchmark_session.py`
+  - `backend/tests/test_rag_benchmark_session.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `backend/tests/test_rag_dashboard_contract.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_run_rag_benchmark_session_cli.py`
+  - `ui/dashboard-ui/rag/app.js`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Adds `support_rag_benchmark_sessions` to persist benchmark session metadata, changelog-derived improvement summaries, linked changelog entries, and run timestamps.
+  - Extends `support_rag_eval_runs` with nullable `benchmark_session_id`, allowing each child eval run to link back to its parent benchmark session.
+  - Dashboard benchmark pages now return an optional `benchmark_session` payload for the currently selected benchmark run, including sibling runs within the same session.
+  - Adds async API and worker support for queued local benchmark sessions plus a local CLI entrypoint for direct execution.
+  - No historical benchmark backfill is performed; the first tracked benchmark session establishes the baseline for future changelog diffs.
+- Verification:
+  - `./.venv/bin/python -m unittest backend.tests.test_rag_benchmark_session backend.tests.test_rag_benchmark_runner backend.tests.test_rag_service_client backend.tests.test_rag_scorecard_repository backend.tests.test_rag_dashboard_contract backend.tests.test_dashboard_ui_contract backend.tests.test_run_rag_benchmark_cli backend.tests.test_run_rag_benchmark_session_cli`
+  - `./.venv/bin/python -m py_compile backend/repositories/knowledge_repository.py backend/services/rag_benchmark_session.py backend/services/rag_benchmark_runner.py backend/rag_api.py backend/main.py backend/rag_worker.py backend/services/rag_service_client.py scripts/run_rag_benchmark_session.py`
+  - `node --check ui/dashboard-ui/rag/app.js`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - Verification result: `78 passed`.
+  - Container restart from the git worktree initially failed because the worktree did not contain the untracked local `.env`; linking the worktree `.env` to `/Users/xieziling/Desktop/personal_proj/SupportPortal/.env` resolved `TICKET_DB_DSN is required`.
+  - Final compose `ps` showed all expected containers up: `deployment_redis_1`, `deployment_rag_api_1`, `deployment_rag_worker_1`, `deployment_ws_gateway_1`, `deployment_api_1`, `deployment_worker_1`, `deployment_nginx_1`.

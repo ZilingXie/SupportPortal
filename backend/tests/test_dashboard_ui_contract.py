@@ -257,6 +257,18 @@ class DashboardUiContractTests(unittest.TestCase):
 
         self.assertIn('option value="external_benchmark"', html_source)
 
+    def test_benchmark_session_panel_is_rendered_for_benchmark_pages(self) -> None:
+        js_source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
+
+        for marker in [
+            "buildBenchmarkSessionPanel",
+            "payload.benchmark_session",
+            "Improvements Since Previous Benchmark Session",
+            "Session Runs",
+            "No changelog entries linked",
+        ]:
+            self.assertIn(marker, js_source)
+
 
 if __name__ == "__main__":
     unittest.main()

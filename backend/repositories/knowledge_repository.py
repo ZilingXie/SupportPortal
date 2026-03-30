@@ -51,6 +51,7 @@ _VALID_DATASET_STATUSES = {"draft", "silver_only", "gold_ready", "failed"}
 _VALID_DATASET_ITEM_STATUSES = {"draft", "silver", "gold", "needs_fix", "rejected"}
 _VALID_DATASET_DECISIONS = {"promote_gold", "keep_silver", "needs_fix", "reject"}
 _VALID_DATASET_TIERS = {"silver", "gold"}
+_VALID_BENCHMARK_SESSION_STATUSES = {"queued", "running", "completed", "failed"}
 _VALID_DASHBOARD_PAGES = {
     "overview",
     "ingestion",
@@ -220,6 +221,22 @@ def _json_list(value: Any) -> list[Any]:
 
 def _json_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _benchmark_session_payload_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "benchmark_session_id": row[0],
+        "session_name": row[1],
+        "status": row[2],
+        "previous_session_id": row[3],
+        "benchmark_catalog_snapshot": _json_list(row[4]),
+        "improvement_summary": _clean_text(row[5]),
+        "improvement_entries": _json_list(row[6]),
+        "changelog_end_entry_index": int(row[7]) if row[7] is not None else None,
+        "error_message": _clean_text(row[8]),
+        "started_at": _to_iso(row[9]) if row[9] is not None else None,
+        "finished_at": _to_iso(row[10]) if row[10] is not None else None,
+    }
 
 
 def _experiment_quality_score(row: dict[str, Any]) -> float:
@@ -743,6 +760,19 @@ class KnowledgeRepository(Protocol):
     ) -> None:
         ...
 
+    def upsert_rag_benchmark_session(
+        self,
+        *,
+        session: dict[str, Any],
+    ) -> None:
+        ...
+
+    def get_latest_completed_rag_benchmark_session(self) -> dict[str, Any] | None:
+        ...
+
+    def get_rag_benchmark_session(self, benchmark_session_id: str) -> dict[str, Any] | None:
+        ...
+
     def replace_rag_eval_results(
         self,
         *,
@@ -1248,6 +1278,21 @@ class DisabledKnowledgeRepository:
     ) -> None:
         _ = eval_run
         self._raise()
+
+    def upsert_rag_benchmark_session(
+        self,
+        *,
+        session: dict[str, Any],
+    ) -> None:
+        _ = session
+        self._raise()
+
+    def get_latest_completed_rag_benchmark_session(self) -> dict[str, Any] | None:
+        return None
+
+    def get_rag_benchmark_session(self, benchmark_session_id: str) -> dict[str, Any] | None:
+        _ = benchmark_session_id
+        return None
 
     def replace_rag_eval_results(
         self,
@@ -2160,10 +2205,30 @@ class PostgresKnowledgeRepository:
                     sql.SQL(
                         """
                         CREATE TABLE IF NOT EXISTS {} (
+                            benchmark_session_id TEXT PRIMARY KEY,
+                            session_name TEXT NOT NULL,
+                            status TEXT NOT NULL,
+                            previous_session_id TEXT,
+                            benchmark_catalog_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            improvement_summary TEXT NOT NULL DEFAULT '',
+                            improvement_entries JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            changelog_end_entry_index INTEGER,
+                            error_message TEXT,
+                            started_at TIMESTAMPTZ,
+                            finished_at TIMESTAMPTZ
+                        )
+                        """
+                    ).format(self._table("support_rag_benchmark_sessions"))
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
                             eval_run_id TEXT PRIMARY KEY,
                             dataset_name TEXT NOT NULL,
                             eval_type TEXT NOT NULL,
                             experiment_id TEXT,
+                            benchmark_session_id TEXT,
                             strategy_snapshot JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                             judge_models JSONB NOT NULL DEFAULT '[]'::jsonb,
                             benchmark_version TEXT,
@@ -2435,6 +2500,7 @@ class PostgresKnowledgeRepository:
                     )
                 )
                 eval_run_alters = [
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS benchmark_session_id TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS judge_models JSONB NOT NULL DEFAULT '[]'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS benchmark_version TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS dataset_schema_version TEXT",
@@ -5243,6 +5309,7 @@ class PostgresKnowledgeRepository:
             "dataset_name",
             "eval_type",
             "experiment_id",
+            "benchmark_session_id",
             "strategy_snapshot",
             "judge_models",
             "benchmark_version",
@@ -5256,6 +5323,7 @@ class PostgresKnowledgeRepository:
             _clean_text(eval_run.get("dataset_name")) or "supportportal_faq",
             _clean_text(eval_run.get("eval_type")) or "offline_benchmark",
             _clean_text(eval_run.get("experiment_id")),
+            _clean_text(eval_run.get("benchmark_session_id")),
             Json(eval_run.get("strategy_snapshot") or {}),
             Json(eval_run.get("judge_models") or []),
             _clean_text(eval_run.get("benchmark_version")),
@@ -5290,6 +5358,135 @@ class PostgresKnowledgeRepository:
                     values,
                 )
             conn.commit()
+
+    def upsert_rag_benchmark_session(
+        self,
+        *,
+        session: dict[str, Any],
+    ) -> None:
+        benchmark_session_id = _clean_text(session.get("benchmark_session_id"))
+        if not benchmark_session_id:
+            raise ValueError("benchmark_session_id is required")
+        status = _clean_text(session.get("status")) or "queued"
+        if status not in _VALID_BENCHMARK_SESSION_STATUSES:
+            raise ValueError(f"Unsupported benchmark session status: {status}")
+        changelog_end_entry_index = session.get("changelog_end_entry_index")
+        if changelog_end_entry_index is not None:
+            try:
+                changelog_end_entry_index = int(changelog_end_entry_index)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("changelog_end_entry_index must be an integer or null") from exc
+        columns = [
+            "benchmark_session_id",
+            "session_name",
+            "status",
+            "previous_session_id",
+            "benchmark_catalog_snapshot",
+            "improvement_summary",
+            "improvement_entries",
+            "changelog_end_entry_index",
+            "error_message",
+            "started_at",
+            "finished_at",
+        ]
+        values = (
+            benchmark_session_id,
+            _clean_text(session.get("session_name")) or benchmark_session_id,
+            status,
+            _clean_text(session.get("previous_session_id")),
+            Json(session.get("benchmark_catalog_snapshot") or []),
+            _clean_text(session.get("improvement_summary")),
+            Json(session.get("improvement_entries") or []),
+            changelog_end_entry_index,
+            _clean_text(session.get("error_message")),
+            _clean_text(session.get("started_at")) or _utc_now(),
+            _clean_text(session.get("finished_at")),
+        )
+        update_fields = [column for column in columns if column != "benchmark_session_id"]
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} ({columns})
+                        VALUES ({placeholders})
+                        ON CONFLICT (benchmark_session_id) DO UPDATE SET
+                            {updates}
+                        """
+                    ).format(
+                        self._table("support_rag_benchmark_sessions"),
+                        columns=sql.SQL(", ").join(sql.Identifier(column) for column in columns),
+                        placeholders=sql.SQL(", ").join(
+                            sql.SQL("%s::jsonb")
+                            if column in {"benchmark_catalog_snapshot", "improvement_entries"}
+                            else sql.SQL("%s")
+                            for column in columns
+                        ),
+                        updates=sql.SQL(", ").join(
+                            sql.SQL("{} = EXCLUDED.{}").format(sql.Identifier(column), sql.Identifier(column))
+                            for column in update_fields
+                        ),
+                    ),
+                    values,
+                )
+            conn.commit()
+
+    def get_latest_completed_rag_benchmark_session(self) -> dict[str, Any] | None:
+        rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    benchmark_session_id,
+                    session_name,
+                    status,
+                    previous_session_id,
+                    benchmark_catalog_snapshot,
+                    improvement_summary,
+                    improvement_entries,
+                    changelog_end_entry_index,
+                    error_message,
+                    started_at,
+                    finished_at
+                FROM {}
+                WHERE status = 'completed'
+                ORDER BY COALESCE(finished_at, started_at) DESC, benchmark_session_id DESC
+                LIMIT 1
+                """
+            ).format(self._table("support_rag_benchmark_sessions")),
+        )
+        if not rows:
+            return None
+        return _benchmark_session_payload_from_row(rows[0])
+
+    def get_rag_benchmark_session(self, benchmark_session_id: str) -> dict[str, Any] | None:
+        normalized_session_id = _clean_text(benchmark_session_id)
+        if not normalized_session_id:
+            return None
+        rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    benchmark_session_id,
+                    session_name,
+                    status,
+                    previous_session_id,
+                    benchmark_catalog_snapshot,
+                    improvement_summary,
+                    improvement_entries,
+                    changelog_end_entry_index,
+                    error_message,
+                    started_at,
+                    finished_at
+                FROM {}
+                WHERE benchmark_session_id = %s
+                LIMIT 1
+                """
+            ).format(self._table("support_rag_benchmark_sessions")),
+            (normalized_session_id,),
+        )
+        if not rows:
+            return None
+        return _benchmark_session_payload_from_row(rows[0])
 
     def replace_rag_eval_results(
         self,
@@ -6965,6 +7162,7 @@ class PostgresKnowledgeRepository:
         sections: dict[str, Any],
         has_eval_data: bool,
         benchmark_selector: dict[str, Any] | None = None,
+        benchmark_session: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         envelope = {
             "layout": layout,
@@ -6976,6 +7174,8 @@ class PostgresKnowledgeRepository:
         }
         if benchmark_selector is not None:
             envelope["benchmark_selector"] = benchmark_selector
+        if benchmark_session is not None:
+            envelope["benchmark_session"] = benchmark_session
         return envelope
 
     def _review_queue_summary(self, days: int) -> tuple[int, int, int, int]:
@@ -10502,6 +10702,9 @@ class PostgresKnowledgeRepository:
         selector_experiments = experiments or self._benchmark_selector_rows(days, filters)
         _selector_baseline, selector_candidate = self._select_experiment_rows(selector_experiments, filters)
         benchmark_selector = self._build_benchmark_selector(selector_experiments, candidate or selector_candidate)
+        benchmark_session = self._benchmark_session_payload_for_eval_run(
+            _clean_text((benchmark_selector or {}).get("current_eval_run_id"))
+        )
         cases_by_run = self._benchmark_case_summary_rows(
             [
                 _clean_text((baseline or {}).get("eval_run_id")),
@@ -10582,6 +10785,7 @@ class PostgresKnowledgeRepository:
             sections=sections,
             has_eval_data=bool(experiments),
             benchmark_selector=benchmark_selector,
+            benchmark_session=benchmark_session,
         )
 
     def _knowledge_supply_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
@@ -10715,6 +10919,9 @@ class PostgresKnowledgeRepository:
         selector_experiments = experiments or self._benchmark_selector_rows(days, filters)
         _selector_baseline, selector_candidate = self._select_experiment_rows(selector_experiments, filters)
         benchmark_selector = self._build_benchmark_selector(selector_experiments, selector_candidate)
+        benchmark_session = self._benchmark_session_payload_for_eval_run(
+            _clean_text((benchmark_selector or {}).get("current_eval_run_id"))
+        )
         review_rows = self._review_queue_rows(days, filters)
         pending_review_count, live_review_count, benchmark_review_count, dataset_review_count = self._review_queue_summary(
             days
@@ -10747,6 +10954,7 @@ class PostgresKnowledgeRepository:
             sections=sections,
             has_eval_data=True,
             benchmark_selector=benchmark_selector,
+            benchmark_session=benchmark_session,
         )
 
     def _datasets_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
@@ -11109,6 +11317,139 @@ class PostgresKnowledgeRepository:
             "available_experiments": options,
         }
 
+    def _benchmark_session_payload_for_eval_run(self, eval_run_id: str) -> dict[str, Any] | None:
+        normalized_eval_run_id = _clean_text(eval_run_id)
+        if not normalized_eval_run_id:
+            return None
+        optional_query_errors = tuple(
+            error_type
+            for error_type in (
+                getattr(psycopg, "OperationalError", None),
+                getattr(psycopg, "Error", None),
+                OSError,
+                TimeoutError,
+                AttributeError,
+            )
+            if isinstance(error_type, type)
+        )
+        try:
+            session_rows = self._query_rows(
+                sql.SQL(
+                    """
+                    SELECT
+                        s.benchmark_session_id,
+                        s.session_name,
+                        s.status,
+                        s.previous_session_id,
+                        s.benchmark_catalog_snapshot,
+                        s.improvement_summary,
+                        s.improvement_entries,
+                        s.changelog_end_entry_index,
+                        s.error_message,
+                        s.started_at,
+                        s.finished_at
+                    FROM {} AS e
+                    JOIN {} AS s
+                      ON s.benchmark_session_id = e.benchmark_session_id
+                    WHERE e.eval_run_id = %s
+                    LIMIT 1
+                    """
+                ).format(
+                    self._table("support_rag_eval_runs"),
+                    self._table("support_rag_benchmark_sessions"),
+                ),
+                (normalized_eval_run_id,),
+            )
+        except optional_query_errors:
+            return None
+        if not session_rows:
+            return None
+
+        payload = _benchmark_session_payload_from_row(session_rows[0])
+        benchmark_session_id = _clean_text(payload.get("benchmark_session_id"))
+        if not benchmark_session_id:
+            return None
+
+        catalog_snapshot = list(payload.get("benchmark_catalog_snapshot") or [])
+        snapshot_by_benchmark_version = {
+            _clean_text(item.get("benchmark_version")): item
+            for item in catalog_snapshot
+            if isinstance(item, dict) and _clean_text(item.get("benchmark_version"))
+        }
+        snapshot_by_dataset_name = {
+            _clean_text(item.get("dataset_name")): item
+            for item in catalog_snapshot
+            if isinstance(item, dict) and _clean_text(item.get("dataset_name"))
+        }
+        snapshot_order = {
+            key: index
+            for index, key in enumerate(
+                [
+                    _clean_text(item.get("benchmark_version")) or _clean_text(item.get("dataset_name"))
+                    for item in catalog_snapshot
+                    if isinstance(item, dict)
+                ]
+            )
+            if key
+        }
+        try:
+            run_rows = self._query_rows(
+                sql.SQL(
+                    """
+                    SELECT
+                        eval_run_id,
+                        dataset_name,
+                        eval_type,
+                        COALESCE(experiment_id, eval_run_id) AS experiment_id,
+                        benchmark_version,
+                        dataset_schema_version,
+                        status,
+                        started_at,
+                        finished_at
+                    FROM {}
+                    WHERE benchmark_session_id = %s
+                    ORDER BY COALESCE(finished_at, started_at) ASC NULLS LAST, eval_run_id ASC
+                    """
+                ).format(self._table("support_rag_eval_runs")),
+                (benchmark_session_id,),
+            )
+        except optional_query_errors:
+            return None
+        runs: list[dict[str, Any]] = []
+        for row in run_rows:
+            benchmark_version = _clean_text(row[4])
+            dataset_name = _clean_text(row[1])
+            snapshot_entry = snapshot_by_benchmark_version.get(benchmark_version) or snapshot_by_dataset_name.get(
+                dataset_name
+            )
+            runs.append(
+                {
+                    "eval_run_id": row[0],
+                    "dataset_name": dataset_name,
+                    "label": _clean_text((snapshot_entry or {}).get("label")) or dataset_name or benchmark_version,
+                    "eval_type": row[2],
+                    "experiment_id": row[3],
+                    "benchmark_version": benchmark_version or None,
+                    "dataset_schema_version": _clean_text(row[5]) or None,
+                    "status": row[6],
+                    "started_at": _to_iso(row[7]) if row[7] is not None else None,
+                    "finished_at": _to_iso(row[8]) if row[8] is not None else None,
+                    "is_current": _clean_text(row[0]) == normalized_eval_run_id,
+                }
+            )
+        runs.sort(
+            key=lambda item: (
+                snapshot_order.get(
+                    _clean_text(item.get("benchmark_version")) or _clean_text(item.get("dataset_name")),
+                    len(snapshot_order),
+                ),
+                _clean_text(item.get("started_at")) or _clean_text(item.get("finished_at")) or "",
+                _clean_text(item.get("eval_run_id")),
+            )
+        )
+        payload["runs"] = runs
+        return payload
+
     def _category_pass_rows(self, candidate_cases: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
         grouped: dict[str, list[dict[str, Any]]] = {}
         for row in candidate_cases.values():
@@ -11146,6 +11487,9 @@ class PostgresKnowledgeRepository:
         display_baseline = baseline or selector_baseline
         display_candidate = candidate or selector_candidate
         benchmark_selector = self._build_benchmark_selector(selector_experiments, display_baseline)
+        benchmark_session = self._benchmark_session_payload_for_eval_run(
+            _clean_text((benchmark_selector or {}).get("current_eval_run_id"))
+        )
         cases_by_run = self._benchmark_case_summary_rows(
             [
                 _clean_text((display_baseline or {}).get("eval_run_id")),
@@ -11227,6 +11571,7 @@ class PostgresKnowledgeRepository:
             sections=sections,
             has_eval_data=bool(experiments),
             benchmark_selector=benchmark_selector,
+            benchmark_session=benchmark_session,
         )
 
     def _routing_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
@@ -11237,6 +11582,9 @@ class PostgresKnowledgeRepository:
         selector_experiments = experiments or self._benchmark_selector_rows(days, filters)
         _selector_baseline, selector_candidate = self._select_experiment_rows(selector_experiments, filters)
         benchmark_selector = self._build_benchmark_selector(selector_experiments, candidate or selector_candidate)
+        benchmark_session = self._benchmark_session_payload_for_eval_run(
+            _clean_text((benchmark_selector or {}).get("current_eval_run_id"))
+        )
         candidate_rows = list(candidate_cases.values())
         non_agora_rows = [row for row in candidate_rows if _clean_text(row.get("expected_route_family")) != "agora_docs_rag"]
         agora_rows = [row for row in candidate_rows if _clean_text(row.get("expected_route_family")) == "agora_docs_rag"]
@@ -11280,6 +11628,7 @@ class PostgresKnowledgeRepository:
             sections=sections,
             has_eval_data=bool(experiments),
             benchmark_selector=benchmark_selector,
+            benchmark_session=benchmark_session,
         )
 
     def _retrieval_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
@@ -11290,6 +11639,9 @@ class PostgresKnowledgeRepository:
         selector_experiments = experiments or self._benchmark_selector_rows(days, filters)
         _selector_baseline, selector_candidate = self._select_experiment_rows(selector_experiments, filters)
         benchmark_selector = self._build_benchmark_selector(selector_experiments, candidate or selector_candidate)
+        benchmark_session = self._benchmark_session_payload_for_eval_run(
+            _clean_text((benchmark_selector or {}).get("current_eval_run_id"))
+        )
         rag_rows = [row for row in candidate_cases.values() if _clean_text(row.get("expected_route_family")) == "agora_docs_rag"]
         sections = {
             "summary": {
@@ -11314,6 +11666,7 @@ class PostgresKnowledgeRepository:
             sections=sections,
             has_eval_data=bool(experiments),
             benchmark_selector=benchmark_selector,
+            benchmark_session=benchmark_session,
         )
 
     def _generation_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
@@ -11324,6 +11677,9 @@ class PostgresKnowledgeRepository:
         selector_experiments = experiments or self._benchmark_selector_rows(days, filters)
         _selector_baseline, selector_candidate = self._select_experiment_rows(selector_experiments, filters)
         benchmark_selector = self._build_benchmark_selector(selector_experiments, candidate or selector_candidate)
+        benchmark_session = self._benchmark_session_payload_for_eval_run(
+            _clean_text((benchmark_selector or {}).get("current_eval_run_id"))
+        )
         candidate_rows = list(candidate_cases.values())
         sections = {
             "summary": {
@@ -11349,6 +11705,7 @@ class PostgresKnowledgeRepository:
             sections=sections,
             has_eval_data=bool(experiments),
             benchmark_selector=benchmark_selector,
+            benchmark_session=benchmark_session,
         )
 
     def _data_supply_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
@@ -11356,6 +11713,9 @@ class PostgresKnowledgeRepository:
         selector_experiments = experiments or self._benchmark_selector_rows(days, filters)
         _selector_baseline, selector_candidate = self._select_experiment_rows(selector_experiments, filters)
         benchmark_selector = self._build_benchmark_selector(selector_experiments, selector_candidate)
+        benchmark_session = self._benchmark_session_payload_for_eval_run(
+            _clean_text((benchmark_selector or {}).get("current_eval_run_id"))
+        )
         selected_benchmark_version = _clean_text((selector_candidate or {}).get("benchmark_version"))
         datasets_filters = dict(filters)
         if selected_benchmark_version:
@@ -11386,6 +11746,7 @@ class PostgresKnowledgeRepository:
             sections=sections,
             has_eval_data=bool(datasets_page.get("has_eval_data") or knowledge_supply_page.get("has_eval_data")),
             benchmark_selector=benchmark_selector,
+            benchmark_session=benchmark_session,
         )
 
     def rag_dashboard_page(

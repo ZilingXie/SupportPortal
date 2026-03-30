@@ -487,6 +487,40 @@ class RagServiceClientTests(unittest.TestCase):
         self.assertEqual(captured["body"]["tier"], "gold")
         self.assertEqual(payload["eval_run_id"], "EVAL-1")
 
+    def test_create_local_benchmark_session_run_uses_internal_endpoint(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+        captured = {}
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"benchmark_session_id":"BSESS-1","queued":true,"runs_expected":3}'
+
+        def _fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["authorization"] = request.headers.get("Authorization")
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return _FakeResponse()
+
+        with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            payload = client.create_local_benchmark_session_run(
+                session_name="session-1",
+                top_k=8,
+            )
+
+        self.assertEqual(
+            captured["url"],
+            "http://rag-api.internal/internal/dashboard/rag/benchmarks/sessions/local-run",
+        )
+        self.assertEqual(captured["body"]["session_name"], "session-1")
+        self.assertEqual(captured["body"]["top_k"], 8)
+        self.assertEqual(payload["benchmark_session_id"], "BSESS-1")
+
     def test_sync_local_benchmarks_uses_internal_endpoint(self) -> None:
         client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
         captured = {}
