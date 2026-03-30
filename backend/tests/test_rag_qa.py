@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from backend.services.rag_qa import (
+    INSUFFICIENT_EVIDENCE_REPLY,
     RetrievedChunk,
     _extract_metadata_hints,
     _get_rag_config,
@@ -213,6 +214,55 @@ class RagQaHybridTests(unittest.TestCase):
 
         self.assertEqual([chunk.chunk_id for chunk in selected], ["auth-android", "error-codes", "auth-ios"])
 
+    def test_select_diverse_chunks_dedupes_repeated_sections_before_backfill(self) -> None:
+        chunks = [
+            RetrievedChunk(
+                chunk_id="wildcard-precautions-a",
+                text="Set uid to 0 when you generate a wildcard token.",
+                source_path="official/deploy-token-server.md",
+                similarity=0.99,
+                h1="Deploy a token server",
+                h2="Generate wildcard tokens",
+                h3="Precautions",
+                metadata={
+                    "product": "video-calling",
+                    "section_path": ["Deploy a token server", "Generate wildcard tokens", "Precautions"],
+                    "use_case": "wildcard_tokens",
+                },
+            ),
+            RetrievedChunk(
+                chunk_id="wildcard-precautions-b",
+                text="Wildcard tokens should still be generated on the app server.",
+                source_path="official/deploy-token-server.md",
+                similarity=0.98,
+                h1="Deploy a token server",
+                h2="Generate wildcard tokens",
+                h3="Precautions",
+                metadata={
+                    "product": "video-calling",
+                    "section_path": ["Deploy a token server", "Generate wildcard tokens", "Precautions"],
+                    "use_case": "wildcard_tokens",
+                },
+            ),
+            RetrievedChunk(
+                chunk_id="wildcard-main",
+                text="Generate wildcard tokens only when you need a token that works for all users.",
+                source_path="official/deploy-token-server.md",
+                similarity=0.97,
+                h1="Deploy a token server",
+                h2="Generate wildcard tokens",
+                metadata={
+                    "product": "video-calling",
+                    "section_path": ["Deploy a token server", "Generate wildcard tokens"],
+                    "use_case": "wildcard_tokens",
+                },
+            ),
+        ]
+
+        selected = _select_diverse_chunks(chunks, limit=2)
+
+        self.assertEqual([chunk.chunk_id for chunk in selected], ["wildcard-precautions-a", "wildcard-main"])
+
     def test_retrieval_queries_filter_primary_index_role(self) -> None:
         source = Path("backend/services/rag_qa.py").read_text(encoding="utf-8")
         self.assertGreaterEqual(source.count("index_role = 'primary'"), 3)
@@ -329,6 +379,54 @@ class RagQaHybridTests(unittest.TestCase):
         self.assertIn("method_name:BuildTokenWithUidAndPrivilege", info["candidate_reasons"]["node-method"])
         self.assertEqual(reranked[0].candidate_trace.get("metadata_rank"), 1)
         self.assertEqual(reranked[1].candidate_trace.get("metadata_rank"), 2)
+
+    def test_metadata_rerank_prefers_basic_auth_for_generic_token_generation_query(self) -> None:
+        advanced_chunk = RetrievedChunk(
+            chunk_id="advanced-node",
+            text="Node.js sample for generating a token with advanced privileges.",
+            source_path="official/deploy-token-server.md",
+            similarity=0.91,
+            h1="Deploy a token server",
+            h2="Token generation code",
+            h3="Generate a token with advanced permissions",
+            metadata={
+                "language": "nodejs",
+                "chunk_type": "code",
+                "section_path": [
+                    "Deploy a token server",
+                    "Token generation code",
+                    "Generate a token with advanced permissions",
+                ],
+                "topic": ["token", "permissions"],
+                "use_case": "advanced_permissions",
+            },
+        )
+        basic_chunk = RetrievedChunk(
+            chunk_id="basic-node",
+            text="Node.js sample for generating a token with basic authentication.",
+            source_path="official/deploy-token-server.md",
+            similarity=0.84,
+            h1="Deploy a token server",
+            h2="Token generation code",
+            h3="Basic authentication",
+            metadata={
+                "language": "nodejs",
+                "chunk_type": "code",
+                "section_path": ["Deploy a token server", "Token generation code", "Basic authentication"],
+                "topic": ["token", "authentication"],
+                "use_case": "basic_authentication",
+            },
+        )
+
+        hints = _extract_metadata_hints("Node.js 怎么生成 token")
+        reranked, _ = _metadata_rerank(
+            query="Node.js 怎么生成 token",
+            chunks=[advanced_chunk, basic_chunk],
+            top_k=2,
+            hints=hints,
+        )
+
+        self.assertEqual([chunk.chunk_id for chunk in reranked[:2]], ["basic-node", "advanced-node"])
 
     def test_metadata_rerank_filters_technical_case_chunks_by_strong_intent(self) -> None:
         issue_chunk = RetrievedChunk(
@@ -638,6 +736,379 @@ class RagQaHybridTests(unittest.TestCase):
         assert result is not None
         self.assertEqual(captured_final_chunk_ids[0], ["auth-android", "error-codes"])
         self.assertEqual(result.trace.selected_chunk_ids, ["auth-android", "error-codes"])
+
+    def test_run_rag_query_preserves_method_coverage_for_comparison_queries(self) -> None:
+        wildcard_chunk = RetrievedChunk(
+            chunk_id="wildcard-token",
+            text="Wildcard tokens allow all users to join the same channel.",
+            source_path="official/deploy-token-server.md",
+            similarity=0.96,
+            h1="Deploy a token server",
+            h2="Generate wildcard tokens",
+            metadata={
+                "product": "video-calling",
+                "section_path": ["Deploy a token server", "Generate wildcard tokens"],
+                "use_case": "wildcard_tokens",
+            },
+        )
+        build_token_chunk = RetrievedChunk(
+            chunk_id="build-token-with-uid",
+            text="BuildTokenWithUid generates a token with appId, appCertificate, channelName, uid, role, and expiration.",
+            source_path="official/deploy-token-server.md",
+            similarity=0.93,
+            h1="Deploy a token server",
+            h2="Reference",
+            h3="BuildTokenWithUid",
+            metadata={
+                "product": "video-calling",
+                "language": "nodejs",
+                "method_name": "BuildTokenWithUid",
+                "section_path": ["Reference", "API Reference", "BuildTokenWithUid"],
+                "use_case": "basic_authentication",
+            },
+        )
+        privilege_chunk = RetrievedChunk(
+            chunk_id="build-token-with-uid-privilege",
+            text="BuildTokenWithUidAndPrivilege adds per-privilege expirations to the token payload.",
+            source_path="official/deploy-token-server.md",
+            similarity=0.92,
+            h1="Deploy a token server",
+            h2="Reference",
+            h3="BuildTokenWithUidAndPrivilege",
+            metadata={
+                "product": "video-calling",
+                "language": "nodejs",
+                "method_name": "BuildTokenWithUidAndPrivilege",
+                "section_path": ["Reference", "API Reference", "BuildTokenWithUidAndPrivilege"],
+                "use_case": "advanced_permissions",
+            },
+        )
+        captured_final_chunk_ids: list[list[str]] = []
+
+        def _capture_payload(
+            message: str,
+            chunks: list[RetrievedChunk],
+            config: dict[str, object],
+            *,
+            strict_retry: bool = False,
+        ) -> tuple[dict[str, object], int, int, str]:
+            _ = message
+            _ = config
+            _ = strict_retry
+            captured_final_chunk_ids.append([chunk.chunk_id for chunk in chunks])
+            return (
+                {
+                    "answer": "The privilege variant supports privilege-level expirations.",
+                    "key_steps": [],
+                    "citations": [chunk.chunk_id for chunk in chunks[:2]],
+                    "insufficient_evidence": False,
+                },
+                10,
+                5,
+                "gpt-4.1",
+            )
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 2,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-4.1",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+            }
+            with patch("backend.services.rag_qa.get_embedding_provider", return_value=self._FakeProvider()):
+                with patch("backend.services.rag_qa._retrieve_chunks", return_value=[wildcard_chunk]):
+                    with patch("backend.services.rag_qa._retrieve_bm25_chunks", return_value=[build_token_chunk, privilege_chunk]):
+                        with patch(
+                            "backend.services.rag_qa._metadata_rerank",
+                            return_value=(
+                                [wildcard_chunk, build_token_chunk, privilege_chunk],
+                                {"post_rerank_count": 3, "hints": {}, "applied_filter": False, "filter_type": None},
+                            ),
+                        ):
+                            with patch(
+                                "backend.services.rag_qa._rerank_chunks",
+                                return_value=[wildcard_chunk, build_token_chunk, privilege_chunk],
+                            ):
+                                with patch("backend.services.rag_qa._invoke_llm_payload_with_trace", side_effect=_capture_payload):
+                                    result = run_rag_query(
+                                        "BuildTokenWithUid 和 BuildTokenWithUidAndPrivilege 有什么区别？"
+                                    )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(
+            captured_final_chunk_ids[0],
+            ["build-token-with-uid", "build-token-with-uid-privilege"],
+        )
+        self.assertEqual(
+            result.trace.selected_chunk_ids,
+            ["build-token-with-uid", "build-token-with-uid-privilege"],
+        )
+
+    def test_run_rag_query_repairs_false_insufficient_evidence_before_fallback(self) -> None:
+        token_server_chunk = RetrievedChunk(
+            chunk_id="token-server",
+            text="In production, your app server should generate the Agora token instead of the mobile client.",
+            source_path="official/deploy-token-server.md",
+            similarity=0.95,
+            h1="Deploy a token server",
+            h2="Token generation code",
+            h3="Basic authentication",
+            metadata={
+                "product": "video-calling",
+                "section_path": ["Deploy a token server", "Token generation code", "Basic authentication"],
+                "use_case": "basic_authentication",
+            },
+        )
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 1,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-4.1",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+            }
+            with patch("backend.services.rag_qa.get_embedding_provider", return_value=self._FakeProvider()):
+                with patch("backend.services.rag_qa._retrieve_chunks", return_value=[token_server_chunk]):
+                    with patch("backend.services.rag_qa._retrieve_bm25_chunks", return_value=[]):
+                        with patch(
+                            "backend.services.rag_qa._metadata_rerank",
+                            return_value=([token_server_chunk], {"post_rerank_count": 1, "hints": {}, "applied_filter": False, "filter_type": None}),
+                        ):
+                            with patch("backend.services.rag_qa._rerank_chunks", return_value=[token_server_chunk]):
+                                with patch("backend.services.rag_qa._has_grounded_keyword_overlap", return_value=True):
+                                    with patch(
+                                        "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                                        side_effect=[
+                                            (
+                                                {
+                                                    "answer": INSUFFICIENT_EVIDENCE_REPLY,
+                                                    "key_steps": [],
+                                                    "citations": [],
+                                                    "insufficient_evidence": True,
+                                                },
+                                                10,
+                                                5,
+                                                "gpt-4.1",
+                                            ),
+                                            (
+                                                {
+                                                    "answer": "Generate the Agora token on your app server in production.",
+                                                    "key_steps": [],
+                                                    "citations": ["token-server"],
+                                                    "insufficient_evidence": False,
+                                                },
+                                                12,
+                                                6,
+                                                "gpt-4.1",
+                                            ),
+                                        ],
+                                    ):
+                                        result = run_rag_query(
+                                            "Should I generate the Agora token on the mobile app or on my backend?"
+                                        )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(
+            result.answer.answer,
+            "Generate the Agora token on your app server in production.",
+        )
+        self.assertTrue(result.trace.structured_retry_used)
+        self.assertEqual(result.trace.generation_mode, "structured_answer")
+        self.assertFalse(result.trace.extractive_fallback_used)
+
+    def test_run_rag_query_repairs_invalid_structured_payload_before_returning_answer(self) -> None:
+        token_server_chunk = RetrievedChunk(
+            chunk_id="token-server",
+            text="In production, your app server should generate the Agora token instead of the mobile client.",
+            source_path="official/deploy-token-server.md",
+            similarity=0.95,
+            h1="Deploy a token server",
+            h2="Token generation code",
+            h3="Basic authentication",
+            metadata={
+                "product": "video-calling",
+                "section_path": ["Deploy a token server", "Token generation code", "Basic authentication"],
+                "use_case": "basic_authentication",
+            },
+        )
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 1,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-4.1",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+            }
+            with patch("backend.services.rag_qa.get_embedding_provider", return_value=self._FakeProvider()):
+                with patch("backend.services.rag_qa._retrieve_chunks", return_value=[token_server_chunk]):
+                    with patch("backend.services.rag_qa._retrieve_bm25_chunks", return_value=[]):
+                        with patch(
+                            "backend.services.rag_qa._metadata_rerank",
+                            return_value=([token_server_chunk], {"post_rerank_count": 1, "hints": {}, "applied_filter": False, "filter_type": None}),
+                        ):
+                            with patch("backend.services.rag_qa._rerank_chunks", return_value=[token_server_chunk]):
+                                with patch(
+                                    "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                                    side_effect=[
+                                        (
+                                            {
+                                                "answer": "Generate the Agora token on your app server in production.",
+                                                "key_steps": [],
+                                                "citations": [],
+                                                "insufficient_evidence": False,
+                                            },
+                                            10,
+                                            5,
+                                            "gpt-4.1",
+                                        ),
+                                        (
+                                            {
+                                                "answer": "Generate the Agora token on your app server in production.",
+                                                "key_steps": [],
+                                                "citations": ["token-server"],
+                                                "insufficient_evidence": False,
+                                            },
+                                            12,
+                                            6,
+                                            "gpt-4.1",
+                                        ),
+                                    ],
+                                ):
+                                    result = run_rag_query(
+                                        "Should I generate the Agora token on the mobile app or on my backend?"
+                                    )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(
+            result.answer.answer,
+            "Generate the Agora token on your app server in production.",
+        )
+        self.assertTrue(result.trace.structured_retry_used)
+        self.assertEqual(result.trace.cited_chunk_ids, ["token-server"])
+        self.assertEqual(result.trace.generation_mode, "structured_answer")
+
+    def test_run_rag_query_uses_evidence_oriented_extractive_fallback_as_last_resort(self) -> None:
+        token_server_chunk = RetrievedChunk(
+            chunk_id="token-server",
+            text="In production, your app server should generate the Agora token instead of the mobile client.",
+            source_path="official/deploy-token-server.md",
+            similarity=0.95,
+            h1="Deploy a token server",
+            h2="Token generation code",
+            h3="Basic authentication",
+            metadata={
+                "product": "video-calling",
+                "section_path": ["Deploy a token server", "Token generation code", "Basic authentication"],
+                "use_case": "basic_authentication",
+            },
+        )
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 1,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-4.1",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+            }
+            with patch("backend.services.rag_qa.get_embedding_provider", return_value=self._FakeProvider()):
+                with patch("backend.services.rag_qa._retrieve_chunks", return_value=[token_server_chunk]):
+                    with patch("backend.services.rag_qa._retrieve_bm25_chunks", return_value=[]):
+                        with patch(
+                            "backend.services.rag_qa._metadata_rerank",
+                            return_value=([token_server_chunk], {"post_rerank_count": 1, "hints": {}, "applied_filter": False, "filter_type": None}),
+                        ):
+                            with patch("backend.services.rag_qa._rerank_chunks", return_value=[token_server_chunk]):
+                                with patch(
+                                    "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                                    side_effect=[
+                                        (None, 10, 5, "gpt-4.1"),
+                                        (None, 11, 5, "gpt-4.1"),
+                                    ],
+                                ):
+                                    result = run_rag_query("How do I generate a token?")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.trace.generation_mode, "extractive_fallback")
+        self.assertTrue(result.trace.extractive_fallback_used)
+        self.assertIn("Evidence:", result.answer.answer)
+        self.assertIn("Token generation code", result.answer.answer)
+        self.assertNotIn("Key Steps:", result.answer.answer)
 
     def test_resolve_active_vector_table_prefers_populated_fallback_when_configured_table_empty(self) -> None:
         config = {

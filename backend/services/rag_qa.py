@@ -341,12 +341,45 @@ def _extract_metadata_hints(query: str) -> MetadataHints:
 
 
 def _mentioned_method_names(query: str) -> list[str]:
+    matches: list[tuple[int, str]] = []
+    raw_query = str(query or "")
+    for method_name in ["BuildTokenWithUidAndPrivilege", "BuildTokenWithUid"]:
+        pattern = rf"\b{re.escape(method_name)}\b"
+        for match in re.finditer(pattern, raw_query, flags=re.IGNORECASE):
+            matches.append((match.start(), method_name))
     methods: list[str] = []
-    if re.search(r"\bBuildTokenWithUidAndPrivilege\b", str(query or ""), flags=re.IGNORECASE):
-        methods.append("BuildTokenWithUidAndPrivilege")
-    if re.search(r"\bBuildTokenWithUid\b", str(query or ""), flags=re.IGNORECASE):
-        methods.append("BuildTokenWithUid")
+    seen: set[str] = set()
+    for _, method_name in sorted(matches, key=lambda item: item[0]):
+        if method_name in seen:
+            continue
+        seen.add(method_name)
+        methods.append(method_name)
     return methods
+
+
+def _is_method_comparison_query(query: str, mentioned_methods: list[str]) -> bool:
+    if len(mentioned_methods) < 2:
+        return False
+    return any(
+        marker in str(query or "").lower()
+        for marker in ["区别", "difference", "compare", "vs", "versus", " and "]
+    )
+
+
+def _is_generic_token_generation_query(query: str, hints: MetadataHints) -> bool:
+    lower = str(query or "").lower()
+    if hints.method_name or _mentioned_method_names(query):
+        return False
+    if any(term in hints.intent_terms for term in ("parameter", "wildcard", "compatibility", "api reference")):
+        return False
+    if any(
+        marker in lower
+        for marker in ["privilege", "permission", "advanced", "granular", "fine-grained", "权限", "高级"]
+    ):
+        return False
+    has_token = "token" in lower
+    has_generation_intent = any(marker in lower for marker in ["generate", "生成", "create token", "token server"])
+    return has_token and has_generation_intent
 
 
 def _metadata_rerank(
@@ -358,10 +391,8 @@ def _metadata_rerank(
 ) -> tuple[list[RetrievedChunk], dict[str, Any]]:
     resolved_hints = hints or _extract_metadata_hints(query)
     mentioned_methods = _mentioned_method_names(query)
-    comparison_mode = len(mentioned_methods) > 1 and any(
-        marker in str(query or "").lower()
-        for marker in ["区别", "difference", "compare", "vs", "versus", " and "]
-    )
+    comparison_mode = _is_method_comparison_query(query, mentioned_methods)
+    generic_token_generation_query = _is_generic_token_generation_query(query, resolved_hints)
     filtered_chunks = list(chunks)
     filter_type: str | None = None
     normalized_language = _normalize_language_hint(resolved_hints.language)
@@ -428,6 +459,12 @@ def _metadata_rerank(
         elif resolved_hints.method_name and chunk_method_name == resolved_hints.method_name:
             boost += 2.5
             reasons.append(f"method_name:{resolved_hints.method_name}")
+        if generic_token_generation_query and use_case == "basic_authentication":
+            boost += 0.8
+            reasons.append("intent:generic_token_basic_auth")
+        if generic_token_generation_query and use_case == "advanced_permissions":
+            boost -= 0.45
+            reasons.append("intent:generic_token_advanced_penalty")
         if "docker" in resolved_hints.intent_terms and (
             use_case == "docker_deployment" or "docker" in topics or "docker" in section_path
         ):
@@ -1273,7 +1310,11 @@ def _format_context(chunks: list[RetrievedChunk]) -> str:
 
 
 def _build_answer_prompt(question: str, context_block: str) -> str:
-    return f"""Question:
+    return _build_answer_prompt_for_mode(question, context_block, repair_mode=False)
+
+
+def _build_answer_prompt_for_mode(question: str, context_block: str, *, repair_mode: bool) -> str:
+    base_prompt = f"""Question:
 {question}
 
 Context Chunks:
@@ -1288,7 +1329,11 @@ Return JSON with this exact schema:
 }}
 
 Requirements:
-- "citations" must contain chunk_id values that exist in Context Chunks.
+- Use only facts explicitly supported by the Context Chunks.
+- Start "answer" with a direct answer to the user's question.
+- Keep "key_steps" short and include only grounded actions or checks supported by the cited chunks.
+- Every factual claim in "answer" and "key_steps" must be supported by the cited chunks.
+- "citations" must contain only chunk_id values that exist in Context Chunks.
 - If insufficient evidence, return:
   {{
     "answer": "{INSUFFICIENT_EVIDENCE_REPLY}",
@@ -1297,6 +1342,19 @@ Requirements:
     "insufficient_evidence": true
   }}
 """
+    if not repair_mode:
+        return base_prompt
+    return (
+        base_prompt
+        + """
+
+Repair requirements:
+- The previous response attempt was invalid, too weak, or failed to ground a supported answer.
+- Re-read the chunks and return the smallest grounded answer that directly resolves the question.
+- If the chunks clearly overlap with the question, prefer a concise grounded answer over an unnecessary insufficient-evidence response.
+- Return JSON only with no extra prose.
+"""
+    )
 
 
 def _response_to_text(response: Any) -> str:
@@ -1366,13 +1424,14 @@ def _build_answer_text(answer: str, key_steps: list[str]) -> str:
 
 def _build_extractive_fallback(chunks: list[RetrievedChunk]) -> str:
     lines = [
-        "I found related knowledge base content, but I could not produce a fully grounded structured response.",
+        "I found relevant support evidence, but I could not verify a complete grounded answer.",
         "",
-        "Key Steps:",
+        "Evidence:",
     ]
-    for index, chunk in enumerate(chunks[:3], start=1):
+    for index, chunk in enumerate(chunks[:2], start=1):
         snippet = " ".join(chunk.text.split())
-        lines.append(f"{index}. {snippet[:220]}")
+        heading = _build_heading(chunk)
+        lines.append(f"{index}. {heading}: {snippet[:160]}")
     return "\n".join(lines)
 
 
@@ -1412,10 +1471,10 @@ def _citation_records_from_chunks(chunks: list[RetrievedChunk], limit: int = 3) 
 
 
 def _build_extractive_rag_answer(chunks: list[RetrievedChunk]) -> RagAnswer:
-    sources: list[str] = [f"rag:{chunk.chunk_id}" for chunk in chunks[:3] if chunk.chunk_id]
+    sources: list[str] = [f"rag:{chunk.chunk_id}" for chunk in chunks[:2] if chunk.chunk_id]
     if not sources:
-        sources = [f"rag:{chunk.source_path}" for chunk in chunks[:3] if chunk.source_path]
-    citations = _citation_records_from_chunks(chunks, limit=3)
+        sources = [f"rag:{chunk.source_path}" for chunk in chunks[:2] if chunk.source_path]
+    citations = _citation_records_from_chunks(chunks, limit=2)
     url_sources = [record["source_url"] for record in citations if record.get("source_url")]
     if url_sources:
         sources = url_sources
@@ -1435,14 +1494,7 @@ def _invoke_llm_payload(
 ) -> dict[str, Any] | None:
     ChatOpenAI = _import_langchain()
     context_block = _format_context(chunks)
-    prompt = _build_answer_prompt(message, context_block)
-    if strict_retry:
-        prompt += (
-            "\n\nRetry requirement:\n"
-            "- Return JSON only.\n"
-            "- Every citation must be one of the provided chunk ids.\n"
-            f'- If unsure, use this exact insufficient answer: "{INSUFFICIENT_EVIDENCE_REPLY}".\n'
-        )
+    prompt = _build_answer_prompt_for_mode(message, context_block, repair_mode=strict_retry)
 
     model_candidates: list[str] = []
     for candidate in [config["chat_model"], "gpt-4.1", "gpt-4o-mini"]:
@@ -1482,14 +1534,7 @@ def _invoke_llm_payload_with_trace(
 ) -> tuple[dict[str, Any] | None, int, int, str | None]:
     ChatOpenAI = _import_langchain()
     context_block = _format_context(chunks)
-    prompt = _build_answer_prompt(message, context_block)
-    if strict_retry:
-        prompt += (
-            "\n\nRetry requirement:\n"
-            "- Return JSON only.\n"
-            "- Every citation must be one of the provided chunk ids.\n"
-            f'- If unsure, use this exact insufficient answer: "{INSUFFICIENT_EVIDENCE_REPLY}".\n'
-        )
+    prompt = _build_answer_prompt_for_mode(message, context_block, repair_mode=strict_retry)
 
     model_candidates: list[str] = []
     for candidate in [config["chat_model"], "gpt-4.1", "gpt-4o-mini"]:
@@ -1599,7 +1644,21 @@ def _chunk_family_key(chunk: RetrievedChunk) -> str:
     return f"{product}::{family}" if product else family
 
 
-def _select_diverse_chunks(chunks: list[RetrievedChunk], *, limit: int) -> list[RetrievedChunk]:
+def _chunk_section_key(chunk: RetrievedChunk) -> str:
+    metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+    section_path = " > ".join(_chunk_metadata_list(metadata.get("section_path"))).strip().lower()
+    use_case = str(metadata.get("use_case") or "").strip().lower()
+    chunk_type = str(metadata.get("chunk_type") or "").strip().lower()
+    signature = " | ".join(part for part in [section_path, use_case, chunk_type] if part)
+    return signature
+
+
+def _chunk_method_name(chunk: RetrievedChunk) -> str:
+    metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+    return str(metadata.get("method_name") or "").strip()
+
+
+def _select_diverse_chunks(chunks: list[RetrievedChunk], *, limit: int, query: str | None = None) -> list[RetrievedChunk]:
     safe_limit = max(1, int(limit or 1))
     if not chunks:
         return []
@@ -1607,11 +1666,38 @@ def _select_diverse_chunks(chunks: list[RetrievedChunk], *, limit: int) -> list[
     selected: list[RetrievedChunk] = []
     selected_chunk_keys: set[str] = set()
     selected_families: set[str] = set()
+    selected_sections: set[str] = set()
+    mentioned_methods = _mentioned_method_names(query or "")
+    comparison_mode = _is_method_comparison_query(query or "", mentioned_methods)
 
     def _chunk_key(chunk: RetrievedChunk, index: int) -> str:
         if chunk.chunk_id:
             return chunk.chunk_id
         return f"{index}:{chunk.source_path}:{chunk.text[:120]}"
+
+    def _select_chunk(chunk: RetrievedChunk, index: int) -> None:
+        chunk_key = _chunk_key(chunk, index)
+        family_key = _chunk_family_key(chunk)
+        section_key = _chunk_section_key(chunk)
+        selected.append(chunk)
+        selected_chunk_keys.add(chunk_key)
+        if family_key:
+            selected_families.add(family_key)
+        if section_key:
+            selected_sections.add(section_key)
+
+    if comparison_mode:
+        for method_name in mentioned_methods:
+            for index, chunk in enumerate(chunks):
+                chunk_key = _chunk_key(chunk, index)
+                if chunk_key in selected_chunk_keys:
+                    continue
+                if _chunk_method_name(chunk) != method_name:
+                    continue
+                _select_chunk(chunk, index)
+                break
+            if len(selected) >= safe_limit:
+                return selected
 
     # Pass 1: keep the best-ranked chunk for each family.
     for index, chunk in enumerate(chunks):
@@ -1621,20 +1707,28 @@ def _select_diverse_chunks(chunks: list[RetrievedChunk], *, limit: int) -> list[
             continue
         if family_key and family_key in selected_families:
             continue
-        selected.append(chunk)
-        selected_chunk_keys.add(chunk_key)
-        if family_key:
-            selected_families.add(family_key)
+        _select_chunk(chunk, index)
         if len(selected) >= safe_limit:
             return selected
 
-    # Pass 2: if unique families are exhausted, backfill by the original order.
+    # Pass 2: prefer new sections/use-cases before backfilling repeated context.
     for index, chunk in enumerate(chunks):
         chunk_key = _chunk_key(chunk, index)
         if chunk_key in selected_chunk_keys:
             continue
-        selected.append(chunk)
-        selected_chunk_keys.add(chunk_key)
+        section_key = _chunk_section_key(chunk)
+        if not section_key or section_key in selected_sections:
+            continue
+        _select_chunk(chunk, index)
+        if len(selected) >= safe_limit:
+            return selected
+
+    # Pass 3: if diversity signals are exhausted, backfill by the original order.
+    for index, chunk in enumerate(chunks):
+        chunk_key = _chunk_key(chunk, index)
+        if chunk_key in selected_chunk_keys:
+            continue
+        _select_chunk(chunk, index)
         if len(selected) >= safe_limit:
             break
     return selected
@@ -2005,8 +2099,9 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
         rerank_latency_ms = round(rerank_latency_ms + ((time.perf_counter() - rerank_started_at) * 1000), 2)
         chunks = externally_reranked or chunks
 
-    final_chunks = _select_diverse_chunks(chunks, limit=int(config["top_k"])) or chunks[: int(config["top_k"])] or chunks
+    final_chunks = _select_diverse_chunks(chunks, limit=int(config["top_k"]), query=message) or chunks[: int(config["top_k"])] or chunks
     allowed_chunk_ids = {chunk.chunk_id for chunk in final_chunks}
+    grounded_overlap = _has_grounded_keyword_overlap(message, final_chunks)
     payload: dict[str, Any] | None = None
     try:
         generation_started_at = time.perf_counter()
@@ -2016,14 +2111,23 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
             config,
             strict_retry=False,
         )
-        if payload is None or not _is_valid_response(payload, allowed_chunk_ids):
+        retry_required = (
+            payload is None
+            or not _is_valid_response(payload, allowed_chunk_ids)
+            or (payload.get("insufficient_evidence") is True and grounded_overlap)
+        )
+        if retry_required:
             structured_retry_used = True
-            payload, prompt_tokens, completion_tokens, model_name = _invoke_llm_payload_with_trace(
+            retry_payload, retry_prompt_tokens, retry_completion_tokens, retry_model_name = _invoke_llm_payload_with_trace(
                 message,
                 final_chunks,
                 config,
                 strict_retry=True,
             )
+            prompt_tokens += retry_prompt_tokens
+            completion_tokens += retry_completion_tokens
+            model_name = retry_model_name or model_name
+            payload = retry_payload
         generation_latency_ms = round((time.perf_counter() - generation_started_at) * 1000, 2)
     except Exception as exc:
         logger.warning("RAG answer generation failed: %s", exc)
@@ -2102,9 +2206,9 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
 
     if payload is not None and _is_valid_response(payload, allowed_chunk_ids):
         if payload["insufficient_evidence"] is True:
-            if _has_grounded_keyword_overlap(message, final_chunks):
+            if grounded_overlap:
                 logger.info(
-                    "RAG insufficient evidence but keyword overlap was found. "
+                    "RAG insufficient evidence persisted after grounded overlap was found. "
                     "Using extractive fallback."
                 )
                 generation_mode = "extractive_fallback"
