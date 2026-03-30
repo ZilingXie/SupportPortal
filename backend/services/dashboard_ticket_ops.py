@@ -4,10 +4,10 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-_STATUS_ORDER = ("open", "waiting_for_engineer", "resolved")
+_STATUS_ORDER = ("open", "investigating", "resolved")
 _STATUS_LABELS = {
     "open": "Open",
-    "waiting_for_engineer": "Waiting for Engineer",
+    "investigating": "Investigating",
     "resolved": "Resolved",
 }
 _PRIORITY_ORDER = ("urgent", "high", "normal", "low")
@@ -34,6 +34,15 @@ def _utc_now() -> datetime:
 
 def _utc_now_iso() -> str:
     return _utc_now().isoformat()
+
+
+def _normalize_ticket_status(value: Any) -> str:
+    status = _clean_text(value).lower()
+    if status == "waiting_for_engineer":
+        return "investigating"
+    if status in {"open", "investigating", "resolved"}:
+        return status
+    return "open"
 
 
 def _parse_datetime(value: Any) -> datetime | None:
@@ -87,7 +96,7 @@ def normalize_ticket_dashboard_events(rows: list[dict[str, Any]]) -> list[dict[s
                 "ingestion_id": str(ingestion_id) if ingestion_id is not None else None,
                 "title": payload.get("title"),
                 "message": payload.get("message"),
-                "status": payload.get("status"),
+                "status": _normalize_ticket_status(payload.get("status")),
                 "priority": payload.get("priority"),
                 "engineer_mode": payload.get("engineer_mode"),
                 "knowledge_type": payload.get("knowledge_type"),
@@ -152,9 +161,9 @@ def _latest_escalation_event(events: list[dict[str, Any]]) -> dict[str, Any] | N
     )
     for event in ordered:
         priority = _clean_text(event.get("priority")).lower()
-        status = _clean_text(event.get("status")).lower()
+        status = _normalize_ticket_status(event.get("status"))
         event_name = _clean_text(event.get("event")).lower()
-        if priority in {"urgent", "high"} or status == "waiting_for_engineer" or "alert" in event_name or "attention" in event_name:
+        if priority in {"urgent", "high"} or status == "investigating" or "alert" in event_name or "attention" in event_name:
             return event
     return ordered[0] if ordered else None
 
@@ -166,35 +175,36 @@ def build_ticket_dashboard_metrics(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     safe_now = now.astimezone(timezone.utc) if isinstance(now, datetime) else _utc_now()
+    normalized_tickets = [{**ticket, "status": _normalize_ticket_status(ticket.get("status"))} for ticket in tickets]
     ticket_events = [event for event in events if is_ticket_dashboard_event(event)]
 
-    total = len(tickets)
-    resolved_count = sum(_clean_text(ticket.get("status")).lower() == "resolved" for ticket in tickets)
+    total = len(normalized_tickets)
+    resolved_count = sum(_clean_text(ticket.get("status")).lower() == "resolved" for ticket in normalized_tickets)
     resolution_rate = round((resolved_count / total) * 100, 1) if total else 0.0
-    sentiment_alert_count = sum(_clean_text(ticket.get("priority")).lower() == "high" for ticket in tickets)
+    sentiment_alert_count = sum(_clean_text(ticket.get("priority")).lower() == "high" for ticket in normalized_tickets)
 
-    waiting_for_engineer_count = sum(_clean_text(ticket.get("status")).lower() == "waiting_for_engineer" for ticket in tickets)
-    open_ticket_count = sum(_clean_text(ticket.get("status")).lower() == "open" for ticket in tickets)
-    managed_ticket_count = sum(_clean_text(ticket.get("engineer_mode")).lower() == "managed" for ticket in tickets)
-    takeover_ticket_count = sum(_clean_text(ticket.get("engineer_mode")).lower() == "takeover" for ticket in tickets)
-    urgent_ticket_count = sum(_clean_text(ticket.get("priority")).lower() == "urgent" for ticket in tickets)
+    investigating_ticket_count = sum(_clean_text(ticket.get("status")).lower() == "investigating" for ticket in normalized_tickets)
+    open_ticket_count = sum(_clean_text(ticket.get("status")).lower() == "open" for ticket in normalized_tickets)
+    managed_ticket_count = sum(_clean_text(ticket.get("engineer_mode")).lower() == "managed" for ticket in normalized_tickets)
+    takeover_ticket_count = sum(_clean_text(ticket.get("engineer_mode")).lower() == "takeover" for ticket in normalized_tickets)
+    urgent_ticket_count = sum(_clean_text(ticket.get("priority")).lower() == "urgent" for ticket in normalized_tickets)
 
     charts = {
         "event_volume_12h": _event_volume_12h(ticket_events, safe_now),
         "status_breakdown": _ordered_breakdown(
-            tickets,
+            normalized_tickets,
             field="status",
             order=_STATUS_ORDER,
             labels=_STATUS_LABELS,
         ),
         "priority_breakdown": _ordered_breakdown(
-            tickets,
+            normalized_tickets,
             field="priority",
             order=_PRIORITY_ORDER,
             labels=_PRIORITY_LABELS,
         ),
         "mode_breakdown": _ordered_breakdown(
-            tickets,
+            normalized_tickets,
             field="engineer_mode",
             order=_MODE_ORDER,
             labels=_MODE_LABELS,
@@ -202,7 +212,8 @@ def build_ticket_dashboard_metrics(
     }
 
     cards = {
-        "waiting_for_engineer_count": waiting_for_engineer_count,
+        "investigating_ticket_count": investigating_ticket_count,
+        "waiting_for_engineer_count": investigating_ticket_count,
         "open_ticket_count": open_ticket_count,
         "resolved_ticket_count": resolved_count,
         "managed_ticket_count": managed_ticket_count,
@@ -210,21 +221,21 @@ def build_ticket_dashboard_metrics(
         "urgent_ticket_count": urgent_ticket_count,
     }
 
-    active_count = open_ticket_count + waiting_for_engineer_count
+    active_count = open_ticket_count + investigating_ticket_count
     latest_event = _latest_event(ticket_events)
     escalation_event = _latest_escalation_event(ticket_events)
     recent_volume = sum(item["value"] for item in charts["event_volume_12h"][-3:])
 
     if active_count == 0:
         queue_health_label = "Queue is clear."
-    elif waiting_for_engineer_count or urgent_ticket_count:
+    elif investigating_ticket_count or urgent_ticket_count:
         queue_health_label = "Escalation pressure is active."
     else:
         queue_health_label = "Queue is stable but active."
 
     queue_health_detail = (
         f"{active_count} active {_pluralize(active_count, 'ticket')}, "
-        f"{waiting_for_engineer_count} waiting for engineer, and "
+        f"{investigating_ticket_count} investigating, and "
         f"{recent_volume} {_pluralize(recent_volume, 'event')} in the last 3 hours."
     )
 

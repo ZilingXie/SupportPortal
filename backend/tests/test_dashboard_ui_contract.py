@@ -29,7 +29,7 @@ class DashboardUiContractTests(unittest.TestCase):
             "Escalation Watch",
             "Operator Summary",
             "Live Ticket Feed",
-            "Waiting for Engineer",
+            "Investigating",
         ]:
             self.assertIn(required_copy, source)
 

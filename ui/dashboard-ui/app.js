@@ -133,7 +133,7 @@ function eventTone(payload) {
   if (priority === "urgent" || priority === "high") {
     return priority;
   }
-  if (status === "waiting_for_engineer") {
+  if (status === "investigating" || status === "waiting_for_engineer") {
     return "waiting";
   }
   if (mode === "takeover" || mode === "managed") {
@@ -316,7 +316,10 @@ async function loadMetrics() {
   setText(ticketVolumeEl, formatNumber(payload?.today_ticket_count));
   setText(resolutionRateEl, `${formatDecimal(payload?.resolution_rate)}%`);
   setText(sentimentAlertsEl, formatNumber(payload?.sentiment_alert_count));
-  setText(waitingForEngineerEl, formatNumber(cards?.waiting_for_engineer_count));
+  setText(
+    waitingForEngineerEl,
+    formatNumber(cards?.investigating_ticket_count ?? cards?.waiting_for_engineer_count),
+  );
 
   setText(queueHealthTitleEl, normalizeString(summaries?.queue_health_label) || "Monitoring live queue balance.");
   setText(
@@ -328,7 +331,10 @@ async function loadMetrics() {
   setText(managedTicketCountEl, formatNumber(cards?.managed_ticket_count));
   setText(takeoverTicketCountEl, formatNumber(cards?.takeover_ticket_count));
   setText(urgentTicketCountEl, formatNumber(cards?.urgent_ticket_count));
-  setText(waitingTicketChipEl, formatNumber(cards?.waiting_for_engineer_count));
+  setText(
+    waitingTicketChipEl,
+    formatNumber(cards?.investigating_ticket_count ?? cards?.waiting_for_engineer_count),
+  );
   setText(managedTicketChipEl, formatNumber(cards?.managed_ticket_count));
   setText(takeoverTicketChipEl, formatNumber(cards?.takeover_ticket_count));
   setText(

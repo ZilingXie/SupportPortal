@@ -150,7 +150,7 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertNotIn(".ticket-pool-grid", css)
         self.assertIn(".ticket-workspace", css)
 
-    def test_engineer_ticket_pool_uses_list_rows_and_prioritizes_waiting_for_engineer(self) -> None:
+    def test_engineer_ticket_pool_uses_list_rows_and_prioritizes_investigating(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
                 """
@@ -167,15 +167,28 @@ class EngineerUiContractTests(unittest.TestCase):
                     pending_engineer_question: "",
                   },
                   {
-                    ticket_id: "TK-WAITING-LOW",
-                    subject: "waiting engineer ticket",
+                    ticket_id: "TK-INVESTIGATING-LOW",
+                    subject: "investigating ticket",
                     requester: "user-2",
                     priority: "low",
-                    status: "waiting_for_engineer",
+                    status: "investigating",
                     engineer_mode: "managed",
                     created_at: "2026-03-24T08:00:00+00:00",
                     updated_at: "2026-03-24T08:30:00+00:00",
-                    pending_engineer_question: "Engineer Request\\nIssue: Need engineer review.",
+                    pending_engineer_question: "",
+                    active_investigation: {
+                      id: "INV-200",
+                      state: "active",
+                      draft_customer_reply: "",
+                      messages: [
+                        {
+                          id: "INV-200-m1",
+                          role: "engineer_ai",
+                          content: "Please confirm whether the issue only reproduces on Android 14.",
+                          created_at: "2026-03-24T08:25:00+00:00",
+                        },
+                      ],
+                    },
                   },
                 ];
 
@@ -208,27 +221,27 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!html.includes("mode-pill")) {{
                   throw new Error("Ticket pool rows should render the mode badge in the first line.");
                 }}
-                if (!html.includes("Engineer Request")) {{
-                  throw new Error("Ticket pool rows should render the engineer request label when present.");
+                if (!html.includes("Investigation Update")) {{
+                  throw new Error("Ticket pool rows should render the latest investigation update label when present.");
                 }}
-                if (!html.includes("Issue: Need engineer review.")) {{
-                  throw new Error("Ticket pool rows should render the engineer request preview inline.");
+                if (!html.includes("Please confirm whether the issue only reproduces on Android 14.")) {{
+                  throw new Error("Ticket pool rows should render the latest investigation preview inline.");
                 }}
                 const requestMatches = html.match(/ticket-row-request/g) || [];
                 if (requestMatches.length !== 1) {{
-                  throw new Error("Only tickets with pending engineer request text should render a request block.");
+                  throw new Error("Only tickets with investigation preview text should render a request block.");
                 }}
 
-                const waitingIndex = html.indexOf("TK-WAITING-LOW");
+                const waitingIndex = html.indexOf("TK-INVESTIGATING-LOW");
                 const openIndex = html.indexOf("TK-OPEN-URGENT");
                 if (waitingIndex === -1 || openIndex === -1) {{
                   throw new Error("Expected both sample tickets in rendered HTML.");
                 }}
                 if (waitingIndex > openIndex) {{
-                  throw new Error("Waiting for engineer tickets should render ahead of normal open tickets.");
+                  throw new Error("Investigating tickets should render ahead of normal open tickets.");
                 }}
 
-                const waitingRowStart = html.indexOf('data-ticket-id="TK-WAITING-LOW"');
+                const waitingRowStart = html.indexOf('data-ticket-id="TK-INVESTIGATING-LOW"');
                 const waitingRowEnd = html.indexOf("</article>", waitingRowStart);
                 const waitingRowMarkup = html.slice(waitingRowStart, waitingRowEnd);
                 const modeIndex = waitingRowMarkup.indexOf("mode-pill");
@@ -237,6 +250,147 @@ class EngineerUiContractTests(unittest.TestCase):
                   throw new Error("Mode badge should stay in the first row alongside title and status badges.");
                 }}
                 """
+            )
+        )
+
+    def test_engineer_detail_prioritizes_internal_investigation_workspace_and_confirmation(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                selectedTicketId = "TK-DETAIL-INV";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-INV",
+                  subject: "Android 14 token renew regression",
+                  requester: "user-7",
+                  priority: "high",
+                  status: "investigating",
+                  engineer_mode: "managed",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [
+                    {
+                      role: "customer",
+                      content: "Token renew callback does not fire on Android 14.",
+                      created_at: "2026-03-24T08:00:00+00:00",
+                    },
+                    {
+                      role: "assistant",
+                      content: "We are investigating this further. Please wait while we continue checking.",
+                      created_at: "2026-03-24T08:01:00+00:00",
+                    },
+                  ],
+                  active_investigation: {
+                    id: "INV-DETAIL-1",
+                    state: "awaiting_confirmation",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                    final_confirmation_requested_at: "2026-03-24T09:05:00+00:00",
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-1-m1",
+                        role: "engineer_ai",
+                        content: "Please confirm whether the issue only reproduces on Android 14.",
+                        created_at: "2026-03-24T08:02:00+00:00",
+                      },
+                      {
+                        id: "INV-DETAIL-1-m2",
+                        role: "engineer",
+                        content: "Confirmed. Reproduces on Android 14 with SDK 4.2.1 only.",
+                        created_at: "2026-03-24T08:20:00+00:00",
+                      },
+                      {
+                        id: "INV-DETAIL-1-m3",
+                        role: "engineer_ai",
+                        content: "I have enough information now. Please confirm this draft before I reply to the customer.",
+                        created_at: "2026-03-24T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  investigation_history: [
+                    {
+                      id: "INV-DETAIL-0",
+                      state: "closed",
+                      trigger_reason: "legacy_pending_question",
+                      trigger_source: "legacy_waiting_for_engineer",
+                      draft_customer_reply: "",
+                      opened_at: "2026-03-23T10:00:00+00:00",
+                      updated_at: "2026-03-23T10:20:00+00:00",
+                      closed_at: "2026-03-23T10:20:00+00:00",
+                      messages: [],
+                    },
+                  ],
+                  engineer_request_records: [],
+                };
+                selectedTicketSummary = "Customer-facing answer is drafted and waiting for engineer confirmation.";
+                selectedTicketNextAction = "Approve the prepared reply or ask the AI to revise it.";
+
+                const html = renderTicketDetailView();
+                const headerTopStart = html.indexOf('class="workspace-header-top"');
+                const headerMainStart = html.indexOf('class="workspace-header-main"');
+                if (headerTopStart === -1 || headerMainStart === -1 || headerTopStart > headerMainStart) {{
+                  throw new Error("Detail header should render a toolbar row ahead of the title block.");
+                }}
+                const headerTopMarkup = html.slice(headerTopStart, headerMainStart);
+                if (!headerTopMarkup.includes("Back to Pool")) {{
+                  throw new Error("Toolbar row should keep the back action.");
+                }}
+                if (!headerTopMarkup.includes("Sync Ticket")) {{
+                  throw new Error("Toolbar row should include the sync action.");
+                }}
+                if (!headerTopMarkup.includes("workspace-eyebrow")) {{
+                  throw new Error("Toolbar row should keep the ticket id label.");
+                }}
+                if (!headerTopMarkup.includes("priority-badge") || !headerTopMarkup.includes("status-badge") || !headerTopMarkup.includes("mode-pill")) {{
+                  throw new Error("Toolbar row should carry the ticket badges after the header compaction.");
+                }}
+                if (headerTopMarkup.includes("workspace-ticket-title")) {{
+                  throw new Error("Ticket title should stay below the compact toolbar row.");
+                }}
+                if (!html.includes("Internal Investigation Thread")) {{
+                  throw new Error("Detail workspace should foreground the internal investigation thread.");
+                }}
+                if (!html.includes("Customer Timeline")) {{
+                  throw new Error("Detail workspace should still render the customer timeline in the supporting column.");
+                }}
+                if (!html.includes("Approve Reply")) {{
+                  throw new Error("Awaiting-confirmation investigations should expose the approve action.");
+                }}
+                if (!html.includes("Ask AI to Revise")) {{
+                  throw new Error("Awaiting-confirmation investigations should expose the revise action.");
+                }}
+                if (!html.includes("Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.")) {{
+                  throw new Error("Detail workspace should render the draft customer reply for final confirmation.");
+                }}
+                if (html.includes("Mode, Status, and Routing")) {{
+                  throw new Error("Detail workspace should no longer render the mode/status/routing section.");
+                }}
+                if (html.includes("Reply To Engineer AI")) {{
+                  throw new Error("Detail workspace should no longer render the engineer AI reply section.");
+                }}
+                if (html.includes("Investigation History")) {{
+                  throw new Error("Detail workspace should no longer render the investigation history section.");
+                }}
+                if (html.includes("Customer Response Channel")) {{
+                  throw new Error("Detail workspace should no longer render the direct customer response section.");
+                }}
+                if (html.includes("Tell AI")) {{
+                  throw new Error("Detail workspace should use the reply section instead of the old Tell AI button copy.");
+                }}
+                if (html.includes("Send to AI")) {{
+                  throw new Error("Detail workspace should no longer render the internal reply composer action.");
+                }}
+                if (html.includes("Engineer Request Records")) {{
+                  throw new Error("Detail workspace should use investigation history instead of legacy engineer request records.");
+                }}
+                const internalIndex = html.indexOf("Internal Investigation Thread");
+                const customerIndex = html.indexOf("Customer Timeline");
+                if (internalIndex === -1 || customerIndex === -1 || internalIndex > customerIndex) {{
+                  throw new Error("Internal investigation thread should render ahead of the customer timeline.");
+                }}
+              """
             )
         )
 

@@ -1062,6 +1062,8 @@ a {
 .ticket-row-secondary,
 .ticket-row-badges,
 .workspace-header-top,
+.workspace-header-toolbar-start,
+.workspace-header-toolbar-end,
 .workspace-header-main,
 .workspace-header-actions,
 .workspace-header-badges,
@@ -1071,6 +1073,10 @@ a {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.detail-inline-actions-spacious {
+  margin-top: 4px;
 }
 
 .ticket-row-header {
@@ -1215,13 +1221,29 @@ a {
   justify-content: space-between;
 }
 
+.workspace-header-toolbar-start,
+.workspace-header-toolbar-end {
+  min-width: 0;
+}
+
+.workspace-header-toolbar-end {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
 .workspace-header-main {
   align-items: flex-start;
-  justify-content: space-between;
+  justify-content: flex-start;
 }
 
 .workspace-header-badges {
-  margin-bottom: 12px;
+  margin-bottom: 0;
+}
+
+.workspace-header-copy {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
 }
 
 .workspace-layout {
@@ -1251,6 +1273,12 @@ a {
 .conversation-panel {
   min-height: 0;
   align-content: start;
+}
+
+.tell-ai-composer,
+.takeover-composer {
+  display: grid;
+  gap: 12px;
 }
 
 .message-list,
@@ -1700,6 +1728,17 @@ a {
   .workspace-header-main {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .workspace-header-toolbar-start,
+  .workspace-header-toolbar-end {
+    width: 100%;
+  }
+
+  .workspace-header-toolbar-end {
+    margin-left: 0;
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .workspace-header-actions {

@@ -52,7 +52,7 @@ const PRIORITY_RANK = {
   low: 1,
 };
 const POOL_STATUS_RANK = {
-  waiting_for_engineer: 3,
+  investigating: 3,
   open: 2,
   resolved: 1,
 };
@@ -256,7 +256,7 @@ function renderRailNav() {
 function renderWorkspaceChrome() {
   if (routeState.view === "detail" && routeState.ticketId) {
     const detailStatus = selectedTicket
-      ? `${statusLabel(String(selectedTicket.status || "open").toLowerCase())} · ${modeLabel(
+      ? `${statusLabel(normalizeStatusValue(selectedTicket.status || "open"))} · ${modeLabel(
           String(selectedTicket.engineer_mode || "managed").toLowerCase()
         )}`
       : "Loading ticket context...";
@@ -430,25 +430,38 @@ function priorityLabel(value) {
   return "Normal";
 }
 
+function normalizeStatusValue(value) {
+  const normalized = String(value || "open").toLowerCase();
+  if (normalized === "waiting_for_engineer") {
+    return "investigating";
+  }
+  if (normalized === "resolved") {
+    return "resolved";
+  }
+  return normalized === "investigating" ? "investigating" : "open";
+}
+
 function modeLabel(value) {
   return value === "takeover" ? "Human Takeover" : "AI Managing";
 }
 
 function statusLabel(value) {
-  if (value === "waiting_for_engineer") {
-    return "Waiting Engineer";
+  const normalized = normalizeStatusValue(value);
+  if (normalized === "investigating") {
+    return "Investigating";
   }
-  if (value === "resolved") {
+  if (normalized === "resolved") {
     return "Resolved";
   }
   return "Open";
 }
 
 function statusClass(value) {
-  if (value === "resolved") {
+  const normalized = normalizeStatusValue(value);
+  if (normalized === "resolved") {
     return "status-resolved";
   }
-  if (value === "waiting_for_engineer") {
+  if (normalized === "investigating") {
     return "status-waiting";
   }
   return "status-open";
@@ -457,6 +470,9 @@ function statusClass(value) {
 function roleLabel(role) {
   if (role === "customer") {
     return "Customer";
+  }
+  if (role === "engineer_ai") {
+    return "Engineer AI";
   }
   if (role === "assistant") {
     return "AI";
@@ -470,6 +486,9 @@ function roleLabel(role) {
 function roleClass(role) {
   if (role === "customer") {
     return "msg-customer";
+  }
+  if (role === "engineer_ai") {
+    return "msg-assistant";
   }
   if (role === "assistant") {
     return "msg-assistant";
@@ -535,6 +554,40 @@ function parseEngineerRequest(rawValue) {
   };
 }
 
+function getActiveInvestigation(ticket) {
+  if (!ticket || typeof ticket !== "object") {
+    return null;
+  }
+  return ticket.active_investigation && typeof ticket.active_investigation === "object"
+    ? ticket.active_investigation
+    : null;
+}
+
+function latestInvestigationUpdate(ticket) {
+  const activeInvestigation = getActiveInvestigation(ticket);
+  if (activeInvestigation) {
+    const messages = Array.isArray(activeInvestigation.messages) ? activeInvestigation.messages : [];
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const content = String(messages[index]?.content || "").trim();
+      if (content) {
+        return content;
+      }
+    }
+  }
+  return String(ticket?.pending_engineer_question || "").trim();
+}
+
+function investigationStateLabel(value) {
+  const normalized = String(value || "active").toLowerCase();
+  if (normalized === "awaiting_confirmation") {
+    return "Awaiting Confirmation";
+  }
+  if (normalized === "closed") {
+    return "Closed";
+  }
+  return "Active Investigation";
+}
+
 function engineerRequestStatusLabel(status) {
   const normalized = String(status || "").trim().toLowerCase();
   if (normalized === "engineer replied") {
@@ -580,7 +633,7 @@ function clearModeComboboxBlurTimer() {
 function detailStatusOptions() {
   return [
     { value: "open", label: statusLabel("open") },
-    { value: "waiting_for_engineer", label: statusLabel("waiting_for_engineer") },
+    { value: "investigating", label: statusLabel("investigating") },
     { value: "resolved", label: statusLabel("resolved") },
   ];
 }
@@ -621,7 +674,7 @@ function headerFilterOptions(key) {
     return [
       { value: "all", label: "All Status" },
       { value: "open", label: statusLabel("open") },
-      { value: "waiting_for_engineer", label: statusLabel("waiting_for_engineer") },
+      { value: "investigating", label: statusLabel("investigating") },
       { value: "resolved", label: statusLabel("resolved") },
     ];
   }
@@ -860,7 +913,7 @@ function applyTicketFilters(items) {
   return items.filter((ticket) => {
     const priority = String(ticket?.priority || "normal").toLowerCase();
     const mode = String(ticket?.engineer_mode || "managed").toLowerCase();
-    const status = String(ticket?.status || "open").toLowerCase();
+    const status = normalizeStatusValue(ticket?.status || "open");
 
     if (filterValues.priority !== "all" && priority !== filterValues.priority) {
       return false;
@@ -956,11 +1009,15 @@ function setRealtimeStatus(text) {
 
 function summaryCacheKey(ticket) {
   const messageCount = Array.isArray(ticket?.messages) ? ticket.messages.length : 0;
+  const investigationUpdatedAt = String(
+    ticket?.active_investigation?.updated_at || ticket?.active_investigation?.opened_at || ""
+  );
   return [
     String(ticket?.updated_at || ""),
     String(ticket?.status || ""),
     String(ticket?.engineer_mode || ""),
     String(messageCount),
+    investigationUpdatedAt,
   ].join("|");
 }
 
@@ -1001,10 +1058,11 @@ function refreshSelectedSummaryPreview(ticketId) {
 }
 
 function buildLocalSummaryFallback(ticket) {
-  const status = statusLabel(String(ticket?.status || "open").toLowerCase());
+  const status = statusLabel(normalizeStatusValue(ticket?.status || "open"));
   const mode = modeLabel(String(ticket?.engineer_mode || "managed").toLowerCase());
   const priority = priorityLabel(String(ticket?.priority || "normal"));
   const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
+  const activeInvestigation = getActiveInvestigation(ticket);
 
   let latestCustomer = "";
   let latestAssistant = "";
@@ -1035,9 +1093,20 @@ function buildLocalSummaryFallback(ticket) {
   if (latestAssistant) {
     summaryLines.push(`Latest AI response: ${latestAssistant.slice(0, 220)}`);
   }
+  if (activeInvestigation) {
+    summaryLines.push(
+      `Internal investigation is ${investigationStateLabel(activeInvestigation.state).toLowerCase()}.`
+    );
+    const latestInternal = latestInvestigationUpdate(ticket);
+    if (latestInternal) {
+      summaryLines.push(`Latest internal update: ${latestInternal.slice(0, 220)}`);
+    }
+  }
 
   const nextAction =
-    latestCustomer || latestAssistant
+    activeInvestigation
+      ? "Continue the internal investigation, confirm the next missing detail, or approve the prepared customer reply."
+      : latestCustomer || latestAssistant
       ? "Review the latest messages, confirm missing technical details, and provide a concrete response or switch to takeover if manual handling is required."
       : "Collect initial issue details from the customer and define the first troubleshooting step.";
 
@@ -1181,10 +1250,8 @@ async function detectStorageMode() {
 
 function sortTicketsByPriority(items) {
   return [...items].sort((a, b) => {
-    const statusRankA =
-      POOL_STATUS_RANK[String(a.status || "open").toLowerCase()] || 0;
-    const statusRankB =
-      POOL_STATUS_RANK[String(b.status || "open").toLowerCase()] || 0;
+    const statusRankA = POOL_STATUS_RANK[normalizeStatusValue(a.status || "open")] || 0;
+    const statusRankB = POOL_STATUS_RANK[normalizeStatusValue(b.status || "open")] || 0;
     if (statusRankA !== statusRankB) {
       return statusRankB - statusRankA;
     }
@@ -1208,8 +1275,8 @@ function renderTicketPoolView() {
   const takeoverCount = tickets.filter(
     (ticket) => String(ticket.engineer_mode || "managed").toLowerCase() === "takeover"
   ).length;
-  const waitingCount = tickets.filter(
-    (ticket) => String(ticket.status || "open").toLowerCase() === "waiting_for_engineer"
+  const investigatingCount = tickets.filter(
+    (ticket) => normalizeStatusValue(ticket.status) === "investigating"
   ).length;
 
   return `
@@ -1231,9 +1298,9 @@ function renderTicketPoolView() {
           <p>Tickets with direct engineer ownership right now.</p>
         </article>
         <article class="metric-card">
-          <span class="metric-label">Waiting Engineer</span>
-          <strong>${waitingCount}</strong>
-          <p>Requests that need engineer review or direct reply.</p>
+          <span class="metric-label">Investigating</span>
+          <strong>${investigatingCount}</strong>
+          <p>Tickets with an active internal investigation thread.</p>
         </article>
       </section>
 
@@ -1246,18 +1313,19 @@ function renderTicketPoolView() {
           .map((ticket) => {
             const ticketId = String(ticket.ticket_id || "-");
             const priority = String(ticket.priority || "normal").toLowerCase();
-            const status = String(ticket.status || "open").toLowerCase();
+            const status = normalizeStatusValue(ticket.status || "open");
             const mode = String(ticket.engineer_mode || "managed").toLowerCase();
             const subject = String(ticket.subject || "(No subject)");
             const requester = String(ticket.requester || ticket.customer_id || "Unknown");
-            const pendingQuestion = String(ticket.pending_engineer_question || "").trim();
+            const investigationPreview = latestInvestigationUpdate(ticket);
+            const pendingQuestion = String(investigationPreview || "").trim();
             const parsedEngineerRequest = parseEngineerRequest(pendingQuestion);
             const previewSource = parsedEngineerRequest.issue
               ? `Issue: ${parsedEngineerRequest.issue}`
-              : parsedEngineerRequest.formatted || pendingQuestion;
+              : pendingQuestion;
             const pendingPreview =
               previewSource.length > 180 ? `${previewSource.slice(0, 180)}...` : previewSource;
-            const waitingRowClass = status === "waiting_for_engineer" ? " ticket-row-waiting" : "";
+            const waitingRowClass = status === "investigating" ? " ticket-row-waiting" : "";
 
             return `
               <article
@@ -1293,7 +1361,7 @@ function renderTicketPoolView() {
                       pendingQuestion
                         ? `
                     <span class="ticket-row-request">
-                      <strong>Engineer Request</strong>
+                      <strong>Investigation Update</strong>
                       ${escapeHtml(pendingPreview)}
                     </span>
                   `
@@ -1359,6 +1427,46 @@ function renderConversationHtml(messages) {
   `;
 }
 
+function renderInvestigationHistoryHtml(historyItems) {
+  if (!historyItems.length) {
+    return '<p class="request-record-empty">No prior investigation cycles yet.</p>';
+  }
+
+  return `
+    <div class="request-record-list">
+      ${historyItems
+        .map((item) => {
+          const stateText = investigationStateLabel(item?.state);
+          const reason = String(item?.trigger_reason || "").trim();
+          const source = String(item?.trigger_source || "").trim();
+          const updatedAt = formatDateTime(item?.updated_at || item?.closed_at || item?.opened_at);
+          const draft = String(item?.draft_customer_reply || "").trim();
+          return `
+            <article class="request-record-item">
+              <header>
+                <span class="request-record-status ${String(item?.state || "").toLowerCase() === "closed" ? "record-status-answer" : "record-status-replied"}">${escapeHtml(stateText)}</span>
+                <span class="request-record-time">${escapeHtml(updatedAt)}</span>
+              </header>
+              ${
+                reason || source
+                  ? `<p class="request-record-detail">${escapeHtml(
+                      [reason, source].filter(Boolean).join(" · ")
+                    )}</p>`
+                  : ""
+              }
+              ${
+                draft
+                  ? `<p class="request-record-meta">Last draft: ${escapeHtml(draft.slice(0, 220))}</p>`
+                  : ""
+              }
+            </article>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
 function renderTicketDetailView() {
   if (!selectedTicketId) {
     return '<div class="empty-state">Select a ticket to open the active workspace.</div>';
@@ -1381,94 +1489,38 @@ function renderTicketDetailView() {
 
   const ticket = selectedTicket;
   const ticketId = String(ticket.ticket_id || selectedTicketId || "-");
-  const status = String(ticket.status || "open").toLowerCase();
+  const status = normalizeStatusValue(ticket.status || "open");
   const mode = String(ticket.engineer_mode || "managed").toLowerCase();
   const priority = String(ticket.priority || "normal").toLowerCase();
   const requester = String(ticket.requester || ticket.customer_id || "Unknown");
-  const pendingQuestion = String(ticket.pending_engineer_question || "").trim();
-  const parsedEngineerRequest = parseEngineerRequest(pendingQuestion);
-  const showPendingQuestion = Boolean(pendingQuestion);
-  const pendingDetailText = parsedEngineerRequest.formatted || pendingQuestion;
-  const pendingDetailBodyText =
-    parsedEngineerRequest.issue || parsedEngineerRequest.action
-      ? `Issue: ${parsedEngineerRequest.issue || "N/A"}\nAction Needed: ${
-          parsedEngineerRequest.action || "N/A"
-        }`
-      : pendingDetailText;
-  const isTakeoverMode = mode === "takeover";
-  const controlsDisabled = tellAiSubmitting || takeoverSubmitting || modeSwitching;
-  const takeoverComposerDisabled = takeoverSubmitting;
-  const statusComboboxDisabled = tellAiSubmitting || takeoverSubmitting || modeSwitching;
-  const modeComboboxDisabled = modeSwitching || tellAiSubmitting || takeoverSubmitting;
-  const takeoverButtonLabel = modeSwitching
-    ? `<span class="btn-spinner-inline loading-spinner loading-spinner-sm" aria-hidden="true"></span>Switching...`
-    : "Takeover";
-  const modeSwitchNotice = modeSwitching
-    ? `<p class="mode-switch-notice" role="status" aria-live="polite"><span class="loading-spinner loading-spinner-sm" aria-hidden="true"></span>Applying mode change...</p>`
-    : "";
-  const statusComboboxHtml = buildDetailComboboxHtml({
-    kind: "status",
-    selectedValue: status,
-    options: detailStatusOptions(),
-    isOpen: statusComboboxOpen,
-    query: statusComboboxQuery,
-    disabled: statusComboboxDisabled,
-    placeholder: "Search status",
-  });
-  const modeComboboxHtml = buildDetailComboboxHtml({
-    kind: "mode",
-    selectedValue: mode,
-    options: detailModeOptions(),
-    isOpen: modeComboboxOpen,
-    query: modeComboboxQuery,
-    disabled: modeComboboxDisabled,
-    placeholder: "Search mode",
-  });
-  const messages = Array.isArray(ticket.messages) ? ticket.messages : [];
-  const engineerRequestRecords = Array.isArray(ticket.engineer_request_records)
-    ? ticket.engineer_request_records
+  const activeInvestigation = getActiveInvestigation(ticket);
+  const investigationState = String(activeInvestigation?.state || "active").toLowerCase();
+  const investigationPreview = latestInvestigationUpdate(ticket);
+  const investigationMessages = Array.isArray(activeInvestigation?.messages)
+    ? activeInvestigation.messages
+    : investigationPreview
+    ? [
+        {
+          role: "system",
+          content: investigationPreview,
+          created_at: ticket.updated_at || ticket.created_at || new Date().toISOString(),
+        },
+      ]
     : [];
-  const engineerRequestRecordsHtml =
-    engineerRequestRecords.length === 0
-      ? '<p class="request-record-empty">No completed engineer request records yet.</p>'
-      : `<div class="request-record-list">${engineerRequestRecords
-          .map((record) => {
-            const statusText = engineerRequestStatusLabel(record.status);
-            const statusClassName = engineerRequestStatusClass(record.status);
-            const detailText = String(record.detail || "").trim();
-            const engineerText = String(record.engineer_id || "").trim();
-            const createdAt = formatDateTime(record.created_at);
-            return `
-              <article class="request-record-item">
-                <header>
-                  <span class="request-record-status ${statusClassName}">${escapeHtml(statusText)}</span>
-                  <span class="request-record-time">${escapeHtml(createdAt)}</span>
-                </header>
-                ${
-                  detailText
-                    ? `<p class="request-record-detail">${formatMultiline(detailText)}</p>`
-                    : ""
-                }
-                ${
-                  engineerText
-                    ? `<p class="request-record-meta">Engineer: ${escapeHtml(engineerText)}</p>`
-                    : ""
-                }
-              </article>
-            `;
-          })
-          .join("")}</div>`;
+  const showConfirmationCard = Boolean(activeInvestigation) && investigationState === "awaiting_confirmation";
+  const draftCustomerReply = String(activeInvestigation?.draft_customer_reply || "").trim();
+  const controlsDisabled = tellAiSubmitting || takeoverSubmitting || modeSwitching;
+  const internalComposerPlaceholder = activeInvestigation
+    ? "Share the next technical detail or revision note for Engineer AI..."
+    : "Provide guidance for the AI-managed customer reply...";
+  const messages = Array.isArray(ticket.messages) ? ticket.messages : [];
 
   return `
     <section class="ticket-workspace">
       <header class="workspace-header">
         <div class="workspace-header-top">
-          <button class="btn btn-ghost" type="button" data-detail-action="back-to-pool">Back to Pool</button>
-          <span class="workspace-eyebrow">Ticket #${escapeHtml(ticketId)}</span>
-        </div>
-
-        <div class="workspace-header-main">
-          <div>
+          <div class="workspace-header-toolbar-start">
+            <button class="btn btn-ghost" type="button" data-detail-action="back-to-pool">Back to Pool</button>
             <div class="workspace-header-badges">
               <span class="priority-badge priority-${escapeHtml(priority)}">${escapeHtml(
                 priorityLabel(priority)
@@ -1476,6 +1528,17 @@ function renderTicketDetailView() {
               <span class="status-badge ${statusClass(status)}">${escapeHtml(statusLabel(status))}</span>
               <span class="mode-pill mode-pill-${escapeHtml(mode)}">${escapeHtml(modeLabel(mode))}</span>
             </div>
+          </div>
+          <div class="workspace-header-toolbar-end">
+            <span class="workspace-eyebrow">Ticket #${escapeHtml(ticketId)}</span>
+            <div class="workspace-header-actions">
+              <button class="btn btn-outline" type="button" data-detail-action="refresh-ticket">Sync Ticket</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="workspace-header-main">
+          <div class="workspace-header-copy">
             <h2 class="workspace-ticket-title">${escapeHtml(
               String(ticket.subject || "(No subject)")
             )}</h2>
@@ -1485,9 +1548,6 @@ function renderTicketDetailView() {
               <span>Updated ${escapeHtml(formatDateTime(ticket.updated_at))}</span>
             </div>
           </div>
-          <div class="workspace-header-actions">
-            <button class="btn btn-outline" type="button" data-detail-action="refresh-ticket">Sync Ticket</button>
-          </div>
         </div>
       </header>
 
@@ -1495,14 +1555,35 @@ function renderTicketDetailView() {
         <section class="panel-card conversation-panel">
           <div class="panel-card-head">
             <div>
-              <p class="panel-card-kicker">Conversation Timeline</p>
-              <h3 class="panel-card-title">Evidence-Aware Message History</h3>
+              <p class="panel-card-kicker">Internal Investigation</p>
+              <h3 class="panel-card-title">Internal Investigation Thread</h3>
+              ${
+                activeInvestigation
+                  ? `<p class="mode-switch-hint">State: ${escapeHtml(
+                      investigationStateLabel(activeInvestigation.state)
+                    )}</p>`
+                  : ""
+              }
             </div>
           </div>
-          ${renderConversationHtml(messages)}
+          ${
+            investigationMessages.length
+              ? renderConversationHtml(investigationMessages)
+              : '<div class="empty-state">No active internal investigation thread yet.</div>'
+          }
         </section>
 
         <aside class="insight-panel">
+          <section class="panel-card">
+            <div class="panel-card-head">
+              <div>
+                <p class="panel-card-kicker">Customer Timeline</p>
+                <h3 class="panel-card-title">Customer Timeline</h3>
+              </div>
+            </div>
+            ${renderConversationHtml(messages)}
+          </section>
+
           <section class="panel-card">
             <div class="panel-card-head">
               <div>
@@ -1517,145 +1598,37 @@ function renderTicketDetailView() {
             )}</p>
           </section>
 
-          <section class="panel-card">
-            <div class="panel-card-head">
-              <div>
-                <p class="panel-card-kicker">Ticket Controls</p>
-                <h3 class="panel-card-title">Mode, Status, and Routing</h3>
-              </div>
-            </div>
-            <div class="detail-grid">
-              <div class="detail-item">
-                <span>Priority</span>
-                <strong>${escapeHtml(priorityLabel(ticket.priority))}</strong>
-              </div>
-              <div class="detail-item detail-item-status">
-                <span>Status</span>
-                ${statusComboboxHtml}
-              </div>
-              <div class="detail-item detail-item-mode">
-                <span>Mode</span>
-                ${modeComboboxHtml}
-                ${modeSwitchNotice}
-              </div>
-              <div class="detail-item">
-                <span>Requester</span>
-                <strong>${escapeHtml(requester)}</strong>
-              </div>
-            </div>
-          </section>
-
           ${
-            showPendingQuestion
+            showConfirmationCard
               ? `
             <section class="panel-card detail-block-engineer-request">
               <div class="panel-card-head">
                 <div>
-                  <p class="panel-card-kicker">Engineer Request</p>
-                  <h3 class="panel-card-title">Pending AI Guidance</h3>
+                  <p class="panel-card-kicker">Final Confirmation</p>
+                  <h3 class="panel-card-title">Approve Customer Reply</h3>
                 </div>
               </div>
-              <p class="engineer-request-body">${formatMultiline(pendingDetailBodyText)}</p>
-              ${
-                isTakeoverMode
-                  ? '<p class="mode-switch-hint" role="status" aria-live="polite">Human Takeover is active. Please reply to the customer directly.</p>'
-                  : `
-                <div class="engineer-request-actions">
-                  <button
-                    type="button"
-                    class="btn btn-outline"
-                    data-detail-action="toggle-tell-ai"
-                    ${controlsDisabled ? "disabled" : ""}
-                  >
-                    Tell AI
-                  </button>
-                  <button
-                    type="button"
-                    class="btn btn-outline"
-                    data-detail-action="takeover-mode"
-                    ${controlsDisabled ? "disabled" : ""}
-                  >
-                    ${takeoverButtonLabel}
-                  </button>
-                </div>
-              `
-              }
-              ${
-                showTellAiComposer && !isTakeoverMode
-                  ? `
-                <div class="tell-ai-composer">
-                  <textarea
-                    id="detail-tell-ai-input"
-                    class="detail-textarea"
-                    rows="4"
-                    placeholder="Tell AI what to say or what guidance to provide..."
-                    ${controlsDisabled ? "disabled" : ""}
-                  >${escapeHtml(tellAiDraft)}</textarea>
-                  <div class="detail-inline-actions">
-                    <button
-                      type="button"
-                      class="btn btn-primary"
-                      data-detail-action="send-tell-ai"
-                      ${controlsDisabled ? "disabled" : ""}
-                    >${tellAiSubmitting ? "Sending..." : "Send to AI"}</button>
-                    <button
-                      type="button"
-                      class="btn btn-ghost"
-                      data-detail-action="cancel-tell-ai"
-                      ${controlsDisabled ? "disabled" : ""}
-                    >Cancel</button>
-                  </div>
-                </div>
-              `
-                  : ""
-              }
-            </section>
-          `
-              : ""
-          }
-
-          <section class="panel-card">
-            <div class="panel-card-head">
-              <div>
-                <p class="panel-card-kicker">Request Records</p>
-                <h3 class="panel-card-title">Completed Engineer Actions</h3>
-              </div>
-            </div>
-            ${engineerRequestRecordsHtml}
-          </section>
-
-          <section class="panel-card">
-            <div class="panel-card-head">
-              <div>
-                <p class="panel-card-kicker">Direct Reply</p>
-                <h3 class="panel-card-title">Customer Response Channel</h3>
-              </div>
-            </div>
-            <p class="mode-switch-hint">
-              ${
-                isTakeoverMode
-                  ? "Human Takeover is active. Replies will be sent as direct engineer responses."
-                  : "You can still send a direct response. In managed mode it will be logged as a direct reply."
-              }
-            </p>
-            <div class="takeover-composer">
-              <textarea
-                id="detail-takeover-input"
-                class="detail-textarea"
-                rows="4"
-                placeholder="Type your direct reply to the customer..."
-                ${takeoverComposerDisabled ? "disabled" : ""}
-              >${escapeHtml(takeoverReplyDraft)}</textarea>
+              <p class="engineer-request-body">${formatMultiline(
+                draftCustomerReply || "Draft reply is not ready yet."
+              )}</p>
               <div class="detail-inline-actions">
                 <button
                   type="button"
                   class="btn btn-primary"
-                  data-detail-action="send-takeover-reply"
-                  ${takeoverComposerDisabled ? "disabled" : ""}
-                >${takeoverSubmitting ? "Sending..." : "Send to Customer"}</button>
+                  data-detail-action="approve-investigation"
+                  ${controlsDisabled ? "disabled" : ""}
+                >Approve Reply</button>
+                <button
+                  type="button"
+                  class="btn btn-ghost"
+                  data-detail-action="revise-investigation"
+                  ${controlsDisabled ? "disabled" : ""}
+                >Ask AI to Revise</button>
               </div>
-            </div>
-          </section>
+            </section>
+          `
+              : ""
+          }
         </aside>
       </div>
     </section>
@@ -1902,10 +1875,11 @@ async function switchTicketModeOptimistic(ticketId, nextMode) {
     pendingTakeoverComposerFocus = true;
     showTellAiComposer = false;
     tellAiDraft = "";
-    const currentStatus = String(selectedTicket?.status || "").toLowerCase();
-    if (currentStatus === "waiting_for_engineer") {
+    const currentStatus = normalizeStatusValue(selectedTicket?.status || "");
+    if (currentStatus === "investigating") {
       localPatch.status = "open";
       localPatch.pending_engineer_question = null;
+      localPatch.active_investigation = null;
     }
   }
 
@@ -1965,6 +1939,33 @@ async function updateTicketStatus(ticketId, action) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action, engineer_id: ENGINEER_ID }),
+  });
+}
+
+async function submitInvestigationMessage(ticketId, messageText) {
+  const cleaned = String(messageText || "").trim();
+  if (!cleaned) {
+    window.alert("Please enter the next technical detail for Engineer AI.");
+    return;
+  }
+  await fetchJson(`/api/engineer/tickets/${encodeURIComponent(ticketId)}/investigation/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message: cleaned, engineer_id: ENGINEER_ID }),
+    timeoutMs: TELL_AI_FETCH_TIMEOUT_MS,
+  });
+}
+
+async function submitInvestigationConfirmation(ticketId, decision, note = "") {
+  await fetchJson(`/api/engineer/tickets/${encodeURIComponent(ticketId)}/investigation/confirmation`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      decision: String(decision || "approve").toLowerCase(),
+      note: String(note || "").trim() || undefined,
+      engineer_id: ENGINEER_ID,
+    }),
+    timeoutMs: TELL_AI_FETCH_TIMEOUT_MS,
   });
 }
 
@@ -2275,13 +2276,71 @@ async function handleDetailClick(event) {
     tellAiSubmitting = true;
     renderTicketDetail();
     try {
-      await submitManagedResponse(selectedTicketId, cleaned);
-      showTellAiComposer = false;
+      if (getActiveInvestigation(selectedTicket)) {
+        await submitInvestigationMessage(selectedTicketId, cleaned);
+      } else {
+        await submitManagedResponse(selectedTicketId, cleaned);
+      }
       tellAiDraft = "";
       await loadTickets({ refreshDetail: false });
       await refreshSelectedTicket({ silent: true });
     } catch (error) {
-      window.alert(`Tell AI failed: ${error.message}`);
+      window.alert(`Engineer AI update failed: ${error.message}`);
+      await refreshSelectedTicket({ silent: true });
+    } finally {
+      tellAiSubmitting = false;
+      renderTicketDetail();
+      button.disabled = false;
+    }
+    return;
+  }
+
+  if (action === "approve-investigation") {
+    if (!getActiveInvestigation(selectedTicket)) {
+      return;
+    }
+    button.disabled = true;
+    tellAiSubmitting = true;
+    renderTicketDetail();
+    try {
+      await submitInvestigationConfirmation(selectedTicketId, "approve");
+      tellAiDraft = "";
+      await loadTickets({ refreshDetail: false });
+      await refreshSelectedTicket({ silent: true });
+    } catch (error) {
+      window.alert(`Approve reply failed: ${error.message}`);
+      await refreshSelectedTicket({ silent: true });
+    } finally {
+      tellAiSubmitting = false;
+      renderTicketDetail();
+      button.disabled = false;
+    }
+    return;
+  }
+
+  if (action === "revise-investigation") {
+    if (!getActiveInvestigation(selectedTicket)) {
+      return;
+    }
+    const revisionNote = window.prompt("Tell Engineer AI what to revise before replying to the customer:");
+    if (revisionNote === null) {
+      return;
+    }
+    const cleaned = String(revisionNote || "").trim();
+    if (!cleaned) {
+      window.alert("Please add a revision note for Engineer AI.");
+      return;
+    }
+    button.disabled = true;
+    tellAiSubmitting = true;
+    renderTicketDetail();
+    try {
+      await submitInvestigationConfirmation(selectedTicketId, "revise", cleaned);
+      tellAiDraft = "";
+      await loadTickets({ refreshDetail: false });
+      await refreshSelectedTicket({ silent: true });
+    } catch (error) {
+      window.alert(`Revision request failed: ${error.message}`);
       await refreshSelectedTicket({ silent: true });
     } finally {
       tellAiSubmitting = false;
@@ -2490,10 +2549,11 @@ function handleDetailKeydown(event) {
 }
 
 function statusValueToAction(status) {
-  if (status === "resolved") {
+  const normalized = normalizeStatusValue(status);
+  if (normalized === "resolved") {
     return "resolved";
   }
-  if (status === "waiting_for_engineer") {
+  if (normalized === "investigating") {
     return "handoff";
   }
   return "reopen";
@@ -2502,8 +2562,8 @@ function statusValueToAction(status) {
 async function handleDetailChange(event) {
   const statusSelect = event.target.closest("#detail-status-select");
   if (statusSelect && selectedTicketId) {
-    const nextStatus = String(statusSelect.value || "open");
-    const currentStatus = String(selectedTicket?.status || "open");
+    const nextStatus = normalizeStatusValue(statusSelect.value || "open");
+    const currentStatus = normalizeStatusValue(selectedTicket?.status || "open");
     if (nextStatus === currentStatus) {
       return;
     }

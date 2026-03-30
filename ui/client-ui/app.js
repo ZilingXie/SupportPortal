@@ -11,6 +11,7 @@ const DEMO_USERS = [{ id: "user-1", name: "Admin", email: "admin", password: "ad
 const STATUS_CONFIG = {
   new: { label: "New", className: "status-new" },
   waiting_for_support: { label: "Waiting for Support", className: "status-waiting_for_support" },
+  investigating: { label: "Investigating", className: "status-investigating" },
   waiting_for_agent: { label: "Waiting for Customer", className: "status-waiting_for_agent" },
   resolved: { label: "Resolved", className: "status-resolved" },
 };
@@ -492,8 +493,8 @@ function mapBackendStatusToClientStatus(ticket) {
   if (status === "resolved") {
     return "resolved";
   }
-  if (status === "waiting_for_engineer") {
-    return "waiting_for_support";
+  if (status === "investigating" || status === "waiting_for_engineer") {
+    return "investigating";
   }
 
   const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
@@ -1593,8 +1594,10 @@ async function handleSendMessage(text, options = {}) {
     const nextStatus =
       payload?.queued_for_ai
         ? "waiting_for_support"
-        : payload?.status === "waiting_for_engineer" || payload?.needs_engineer_input
-        ? "waiting_for_support"
+        : payload?.status === "investigating" ||
+          payload?.status === "waiting_for_engineer" ||
+          payload?.needs_engineer_input
+        ? "investigating"
         : "waiting_for_agent";
     updateTicketStatus(ticketId, nextStatus);
     await syncTicketsFromBackend({ silent: true });

@@ -902,3 +902,48 @@ For each new entry, record:
   - `podman-compose -f deployment/docker-compose.single-host.yml ps`
   - Container recovery replay on `deployment_api_1` patched `rag_service_client.query` to raise `RagServiceError` while `rag_service_client.rag_dashboard_live_case_detail` returned a grounded `primary` payload; `_build_rag_answer("how to join channel")` returned the recovered answer, preserved citations/sources, and `needs_engineer=false`.
   - Containerized live-path replay on `deployment_api_1` ran `resolve_support_message("how to join channel", ...)` after restart and returned `answer_route=rag`, `scope_label=agora_technical`, `needs_engineer_guidance=false`, `confidence=0.95`, `source_count=6`, and `citation_count=6`.
+
+## 2026-03-29 - Replace RAG engineer handoff with ticket-linked internal investigations
+
+- Summary: Replaced the legacy `waiting_for_engineer` / `pending_engineer_question` one-shot handoff with a first-class `investigating` workflow that stores internal engineer-AI investigation threads on the ticket, routes sync and async RAG misses into that workflow, and requires explicit final confirmation before sending the customer reply.
+- Reason: The old escalation path could only ask a single engineer question and could not keep structured internal context when RAG had insufficient evidence. The new flow keeps the full customer ticket context, allows iterative engineer-AI investigation, and prevents premature customer replies when the missing information must be gathered manually.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `backend/services/investigation_flow.py`
+  - `backend/repositories/ticket_repository.py`
+  - `backend/sql/ticket_storage.sql`
+  - `backend/services/dashboard_ticket_ops.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_worker.py`
+  - `backend/tests/test_engineer_ui_contract.py`
+  - `backend/tests/test_client_ui_contract.py`
+  - `backend/tests/test_dashboard_metrics_contract.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `ui/engineer-ui/app.js`
+  - `ui/engineer-ui/styles.css`
+  - `ui/client-ui/app.js`
+  - `ui/client-ui/styles.css`
+  - `ui/dashboard-ui/app.js`
+  - `ui/dashboard-ui/index.html`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Adds dedicated ticket-linked investigation storage tables: `support_ticket_investigations` and `support_ticket_investigation_messages`.
+  - Existing `waiting_for_engineer` ticket rows are normalized to `investigating` on read while legacy filters continue to work during transition.
+  - RAG insufficient-evidence escalations now append a public investigation acknowledgement to the customer conversation and persist an internal engineer-only investigation thread instead of only storing `pending_engineer_question`.
+  - Async worker escalations now follow the same investigation flow as synchronous support queries, including the dedicated investigation lifecycle events.
+  - Dashboard and client surfaces now treat the escalation state as `investigating`; old `waiting_for_engineer` data is tolerated but no longer emitted as the primary state.
+- Verification:
+  - `./.venv/bin/python -m pytest -q backend/tests/test_investigation_flow.py backend/tests/test_worker.py backend/tests/test_engineer_ui_contract.py backend/tests/test_client_ui_contract.py backend/tests/test_dashboard_metrics_contract.py backend/tests/test_dashboard_ui_contract.py`
+  - `./.venv/bin/python -m py_compile backend/main.py backend/worker.py backend/services/investigation_flow.py backend/services/dashboard_ticket_ops.py backend/repositories/ticket_repository.py`
+  - `node --check ui/engineer-ui/app.js`
+  - `node --check ui/client-ui/app.js`
+  - `node --check ui/dashboard-ui/app.js`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health`
+  - Verification result: `40 passed`.
+  - Containerized verification on the local worktree required linking the worktree `.env` to the repo root `.env`, because git worktrees do not automatically include the untracked local environment file.
+  - Compose `ps` showed all expected containers up: `deployment_redis_1`, `deployment_rag_api_1`, `deployment_rag_worker_1`, `deployment_ws_gateway_1`, `deployment_api_1`, `deployment_worker_1`, `deployment_nginx_1`.
+  - Final `/health` returned `status=ok`, `ticket_storage=postgres`, `knowledge_storage=unreachable`, and `rag_service=unreachable`; `deployment_rag_api_1` logs showed `Knowledge repository connection failed attempt 1/4: connection timeout expired`, so the remaining runtime issue is in the deployed knowledge repository connectivity rather than the ticket investigation flow boot path.

@@ -33,6 +33,29 @@ CREATE TABLE IF NOT EXISTS support_ticket_events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS support_ticket_investigations (
+    investigation_id TEXT PRIMARY KEY,
+    ticket_id TEXT NOT NULL REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
+    state TEXT NOT NULL,
+    trigger_reason TEXT NOT NULL,
+    trigger_source TEXT NOT NULL,
+    draft_customer_reply TEXT,
+    final_confirmation_requested_at TIMESTAMPTZ,
+    opened_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    closed_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS support_ticket_investigation_messages (
+    id BIGSERIAL PRIMARY KEY,
+    message_id TEXT NOT NULL,
+    investigation_id TEXT NOT NULL REFERENCES support_ticket_investigations(investigation_id) ON DELETE CASCADE,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    meta JSONB
+);
+
 CREATE INDEX IF NOT EXISTS idx_support_tickets_status_updated
     ON support_tickets (status, updated_at DESC);
 
@@ -44,3 +67,9 @@ CREATE INDEX IF NOT EXISTS idx_support_ticket_messages_ticket_created
 
 CREATE INDEX IF NOT EXISTS idx_support_ticket_events_ticket_created
     ON support_ticket_events (ticket_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_support_ticket_investigations_ticket_updated
+    ON support_ticket_investigations (ticket_id, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_support_ticket_investigation_messages_created
+    ON support_ticket_investigation_messages (investigation_id, created_at ASC, id ASC);
