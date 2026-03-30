@@ -6,6 +6,7 @@ import signal
 import sys
 import time
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any
 
 import psycopg
@@ -15,13 +16,18 @@ from backend.main import (
     TAKEOVER_MODE,
     build_answer,
     build_client_sync_event,
-    build_engineer_followup_request,
     ensure_ticket_defaults,
     now_iso,
     resolve_support_message,
     ticket_repository,
 )
 from backend.services.event_bus import SyncRedisEventBus
+from backend.services.investigation_flow import (
+    INVESTIGATING_STATUS,
+    default_investigation_prompt as generate_investigation_ai_turn,
+    normalize_ticket_status,
+    start_or_refresh_investigation,
+)
 from backend.services.task_queue import SyncRedisTaskQueue
 
 LOGGER = logging.getLogger(__name__)
@@ -87,6 +93,75 @@ def _publish(bus: SyncRedisEventBus, channels: list[str], payload: dict[str, Any
     bus_payload = dict(payload)
     bus_payload["targets"] = channels
     bus.publish(bus_payload)
+
+
+def _build_worker_investigation_event(
+    ticket: dict[str, Any],
+    investigation: dict[str, Any],
+    *,
+    created: bool = False,
+) -> dict[str, Any]:
+    state = str(investigation.get("state") or "").strip().lower()
+    if state == "awaiting_confirmation":
+        event_name = "ticket_investigation_confirmation_requested"
+    elif created:
+        event_name = "ticket_investigation_started"
+    elif state == "closed":
+        event_name = "ticket_investigation_closed"
+    else:
+        event_name = "ticket_investigation_updated"
+
+    latest_message = ""
+    messages = investigation.get("messages")
+    if isinstance(messages, list) and messages:
+        latest_message = str(messages[-1].get("content") or "").strip()
+    return {
+        "event": event_name,
+        "ticket_id": str(ticket.get("ticket_id") or ""),
+        "investigation_id": str(investigation.get("id") or ""),
+        "status": normalize_ticket_status(ticket.get("status")),
+        "engineer_mode": str(ticket.get("engineer_mode") or MANAGED_MODE),
+        "investigation_state": state or "active",
+        "message": latest_message[:200],
+        "created_at": now_iso(),
+    }
+
+
+def _resolve_worker_support_message(
+    customer_message: str,
+    *,
+    ticket_id: str,
+    customer_id: str | None,
+    ticket_subject: str | None,
+    ticket_context: list[dict[str, str]],
+) -> Any:
+    resolution = resolve_support_message(
+        customer_message,
+        ticket_id=ticket_id,
+        customer_id=customer_id,
+        ticket_subject=ticket_subject,
+        ticket_context=ticket_context,
+    )
+    if resolution is not None and hasattr(resolution, "answer"):
+        return resolution
+
+    answer, confidence, sources, citations, needs_engineer_guidance = build_answer(
+        customer_message,
+        ticket_id=ticket_id,
+        customer_id=customer_id,
+    )
+    return SimpleNamespace(
+        answer=answer,
+        confidence=confidence,
+        sources=sources,
+        citations=citations,
+        needs_engineer_guidance=needs_engineer_guidance,
+        answer_route="rag",
+        scope_label=None,
+        route_reason=None,
+        route_confidence=0.0,
+        search_used=False,
+    )
 
 
 def _is_retryable_ticket_storage_error(exc: BaseException) -> bool:
@@ -332,7 +407,7 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         for item in ticket.get("messages", [])
         if " ".join(str(item.get("content", "")).split()).strip()
     ]
-    resolution = resolve_support_message(
+    resolution = _resolve_worker_support_message(
         customer_message,
         ticket_id=ticket_id,
         customer_id=str(ticket.get("customer_id") or "").strip() or None,
@@ -365,6 +440,7 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
     ticket = refreshed_ticket
     existing_response = _find_existing_worker_response(ticket, customer_message, message_created_at)
     needs_engineer_input = False
+    investigation_result: dict[str, Any] | None = None
     if existing_response is not None:
         LOGGER.info(
             "Worker detected an existing final assistant response for ticket %s and skipped duplicate save",
@@ -377,19 +453,20 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
             if isinstance(existing_response.get("citations"), list)
             else citations
         )
-        needs_engineer_input = str(ticket.get("status") or "").strip().lower() == "waiting_for_engineer"
+        needs_engineer_input = normalize_ticket_status(ticket.get("status")) == INVESTIGATING_STATUS
     else:
         initial_message_count = len(ticket.get("messages", []))
         if needs_engineer_guidance:
-            engineer_request = build_engineer_followup_request(ticket, customer_message)
-            answer = (
-                "I could not find enough reliable information in the knowledge sources for this issue. "
-                "I have contacted an engineer to continue investigation and will follow up shortly."
+            investigation_result = start_or_refresh_investigation(
+                ticket,
+                trigger_reason=str(getattr(resolution, "route_reason", None) or "rag_insufficient_evidence"),
+                trigger_source="worker_async_rag",
+                now_value=now_iso(),
+                ai_turn_builder=generate_investigation_ai_turn,
             )
+            answer = str(investigation_result.get("public_reply") or "").strip()
             sources = []
             citations = []
-            ticket["status"] = "waiting_for_engineer"
-            ticket["pending_engineer_question"] = engineer_request
             needs_engineer_input = True
         else:
             ticket["status"] = "open"
@@ -417,6 +494,15 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
             "save_ticket",
             lambda: ticket_repository.save_ticket(ticket, new_messages=new_messages),
         )
+        if investigation_result is not None:
+            _call_ticket_repository(
+                "save_investigation",
+                lambda: ticket_repository.save_investigation(
+                    ticket_id=ticket_id,
+                    investigation=investigation_result["active_investigation"],
+                    new_messages=investigation_result.get("new_internal_messages") or [],
+                ),
+            )
 
     event = {
         "event": "ticket_ai_response_ready",
@@ -439,15 +525,40 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
     )
     _publish(bus, ["engineer", "dashboard"], event)
     _publish(bus, ["client"], build_client_sync_event(ticket, event["event"]))
+    if investigation_result is not None:
+        investigation_event = _build_worker_investigation_event(
+            ticket,
+            investigation_result["active_investigation"],
+            created=bool(investigation_result.get("created")),
+        )
+        _call_ticket_repository(
+            "record_event",
+            lambda: ticket_repository.record_event(
+                ticket_id,
+                investigation_event["event"],
+                investigation_event,
+            ),
+        )
+        _publish(bus, ["engineer", "dashboard"], investigation_event)
 
     if needs_engineer_input:
+        attention_message = str(ticket.get("pending_engineer_question") or "").strip()
+        active_investigation = (
+            ticket.get("active_investigation")
+            if isinstance(ticket.get("active_investigation"), dict)
+            else None
+        )
+        if active_investigation is not None:
+            internal_messages = active_investigation.get("messages")
+            if isinstance(internal_messages, list) and internal_messages:
+                attention_message = str(internal_messages[-1].get("content") or "").strip()
         attention_event = {
             "event": "engineer_attention_required",
             "ticket_id": ticket_id,
             "priority": ticket.get("priority", "normal"),
             "status": ticket["status"],
             "engineer_mode": ticket["engineer_mode"],
-            "message": ticket.get("pending_engineer_question") or "Engineer attention required",
+            "message": attention_message or "Engineer attention required",
             "message_created_at": message_created_at,
             "created_at": now_iso(),
         }

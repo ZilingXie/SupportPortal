@@ -69,7 +69,7 @@ class DashboardMetricsContractTests(unittest.TestCase):
         self.assertEqual(payload["resolution_rate"], 33.3)
         self.assertEqual(payload["sentiment_alert_count"], 1)
 
-        self.assertEqual(payload["cards"]["waiting_for_engineer_count"], 1)
+        self.assertEqual(payload["cards"]["investigating_ticket_count"], 1)
         self.assertEqual(payload["cards"]["open_ticket_count"], 1)
         self.assertEqual(payload["cards"]["resolved_ticket_count"], 1)
         self.assertEqual(payload["cards"]["managed_ticket_count"], 2)
@@ -88,8 +88,10 @@ class DashboardMetricsContractTests(unittest.TestCase):
         self.assertEqual(payload["charts"]["event_volume_12h"][-2]["value"], 1)
 
         self.assertEqual(payload["charts"]["status_breakdown"][0]["label"], "Open")
+        self.assertEqual(payload["charts"]["status_breakdown"][1]["label"], "Investigating")
         self.assertEqual(payload["charts"]["priority_breakdown"][0]["label"], "Urgent")
         self.assertEqual(payload["charts"]["mode_breakdown"][0]["label"], "AI Managed")
+        self.assertIn("investigating", payload["summaries"]["queue_health_detail"].lower())
 
     def test_dashboard_metrics_route_uses_ticket_ops_helper(self) -> None:
         main_source = Path("backend/main.py").read_text(encoding="utf-8")

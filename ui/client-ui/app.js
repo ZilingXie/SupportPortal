@@ -14,6 +14,7 @@ const ENGINEER_ASSISTANCE_ESCALATION_MESSAGE =
 const STATUS_CONFIG = {
   new: { label: "New", className: "status-new" },
   waiting_for_support: { label: "Waiting for Support", className: "status-waiting_for_support" },
+  investigating: { label: "Investigating", className: "status-investigating" },
   waiting_for_agent: { label: "Waiting for Customer", className: "status-waiting_for_agent" },
   escalated: { label: "Waiting for Engineer", className: "status-escalated" },
   resolved: { label: "Resolved", className: "status-resolved" },
@@ -501,8 +502,8 @@ function mapBackendStatusToClientStatus(ticket) {
   if (status === "escalated") {
     return "escalated";
   }
-  if (status === "waiting_for_engineer") {
-    return "escalated";
+  if (status === "investigating" || status === "waiting_for_engineer") {
+    return "investigating";
   }
 
   const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
@@ -1681,8 +1682,10 @@ async function handleSendMessage(text, options = {}) {
         ? "escalated"
         : payload?.queued_for_ai
         ? "waiting_for_support"
-        : payload?.status === "waiting_for_engineer" || payload?.needs_engineer_input
-        ? "escalated"
+        : payload?.status === "investigating" ||
+          payload?.status === "waiting_for_engineer" ||
+          payload?.needs_engineer_input
+        ? "investigating"
         : "waiting_for_agent";
     updateTicketStatus(ticketId, nextStatus);
     await syncTicketsFromBackend({ silent: true });

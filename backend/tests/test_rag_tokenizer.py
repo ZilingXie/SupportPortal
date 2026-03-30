@@ -64,6 +64,30 @@ class RagTokenizerTests(unittest.TestCase):
         self.assertIn("app", tokens)
         self.assertIn("id", tokens)
 
+    def test_tokenize_bm25_query_filters_conversational_noise_terms(self) -> None:
+        tokens = tokenize_bm25_query(
+            "I'm getting error 109 when users join. Does that mean the token expired?"
+        )
+
+        self.assertNotIn("i", tokens)
+        self.assertNotIn("m", tokens)
+        self.assertNotIn("getting", tokens)
+        self.assertNotIn("mean", tokens)
+        self.assertIn("109", tokens)
+        self.assertIn("error", tokens)
+        self.assertIn("token", tokens)
+        self.assertIn("expired", tokens)
+
+    def test_tokenize_bm25_query_filters_pronouns_and_low_signal_prepositions(self) -> None:
+        tokens = tokenize_bm25_query("How early does Agora warn me before a token expires?")
+
+        self.assertNotIn("me", tokens)
+        self.assertNotIn("before", tokens)
+        self.assertIn("early", tokens)
+        self.assertIn("warn", tokens)
+        self.assertIn("token", tokens)
+        self.assertIn("expires", tokens)
+
 
 if __name__ == "__main__":
     unittest.main()

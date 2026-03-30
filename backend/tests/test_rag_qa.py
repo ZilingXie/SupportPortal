@@ -12,6 +12,7 @@ from backend.services.rag_qa import (
     _metadata_rerank,
     _resolve_active_vector_table,
     _rrf_merge,
+    _select_diverse_chunks,
     _select_bm25_query_terms,
     _split_table_name,
     run_rag_query,
@@ -92,6 +93,35 @@ class RagQaHybridTests(unittest.TestCase):
 
         self.assertEqual(selected, ["id", "app"])
 
+    def test_select_bm25_query_terms_discards_conversational_noise(self) -> None:
+        selected = _select_bm25_query_terms(
+            terms=["i", "m", "getting", "error", "109", "users", "join", "mean", "token", "expired"],
+            term_doc_freqs={
+                "i": 1,
+                "m": 2,
+                "getting": 12,
+                "error": 4500,
+                "109": 40,
+                "users": 9000,
+                "join": 8000,
+                "mean": 15,
+                "token": 4497,
+                "expired": 120,
+            },
+            doc_count=65890,
+            max_term_doc_freq_ratio=0.08,
+            max_query_terms=6,
+        )
+
+        self.assertNotIn("i", selected)
+        self.assertNotIn("m", selected)
+        self.assertNotIn("getting", selected)
+        self.assertNotIn("mean", selected)
+        self.assertIn("109", selected)
+        self.assertIn("error", selected)
+        self.assertIn("token", selected)
+        self.assertIn("expired", selected)
+
     def test_rrf_merge_dedupes_and_limits_results(self) -> None:
         shared = RetrievedChunk(
             chunk_id="shared",
@@ -124,6 +154,64 @@ class RagQaHybridTests(unittest.TestCase):
         merged_ids = [chunk.chunk_id for chunk in merged]
         self.assertIn("shared", merged_ids)
         self.assertEqual(len(set(merged_ids)), 2)
+
+    def test_select_diverse_chunks_prefers_unique_family_before_backfill(self) -> None:
+        chunks = [
+            RetrievedChunk(
+                chunk_id="auth-android",
+                text="Android authentication workflow",
+                source_path="en/android/authentication-workflow.md",
+                similarity=0.99,
+                metadata={"product": "video-calling"},
+            ),
+            RetrievedChunk(
+                chunk_id="auth-ios",
+                text="iOS authentication workflow",
+                source_path="en/ios/authentication-workflow.md",
+                similarity=0.98,
+                metadata={"product": "video-calling"},
+            ),
+            RetrievedChunk(
+                chunk_id="error-codes",
+                text="Common SDK error codes",
+                source_path="en/android/error-codes.md",
+                similarity=0.97,
+                metadata={"product": "video-calling"},
+            ),
+        ]
+
+        selected = _select_diverse_chunks(chunks, limit=2)
+
+        self.assertEqual([chunk.chunk_id for chunk in selected], ["auth-android", "error-codes"])
+
+    def test_select_diverse_chunks_backfills_original_order_when_unique_families_run_out(self) -> None:
+        chunks = [
+            RetrievedChunk(
+                chunk_id="auth-android",
+                text="Android authentication workflow",
+                source_path="en/android/authentication-workflow.md",
+                similarity=0.99,
+                metadata={"product": "video-calling"},
+            ),
+            RetrievedChunk(
+                chunk_id="auth-ios",
+                text="iOS authentication workflow",
+                source_path="en/ios/authentication-workflow.md",
+                similarity=0.98,
+                metadata={"product": "video-calling"},
+            ),
+            RetrievedChunk(
+                chunk_id="error-codes",
+                text="Common SDK error codes",
+                source_path="en/android/error-codes.md",
+                similarity=0.97,
+                metadata={"product": "video-calling"},
+            ),
+        ]
+
+        selected = _select_diverse_chunks(chunks, limit=3)
+
+        self.assertEqual([chunk.chunk_id for chunk in selected], ["auth-android", "error-codes", "auth-ios"])
 
     def test_retrieval_queries_filter_primary_index_role(self) -> None:
         source = Path("backend/services/rag_qa.py").read_text(encoding="utf-8")
@@ -462,6 +550,94 @@ class RagQaHybridTests(unittest.TestCase):
             result.trace.retrieval_candidates[1]["candidate_trace"].get("retrieval_sources"),
             ["keyword_fallback"],
         )
+
+    def test_run_rag_query_diversifies_final_chunks_before_generation(self) -> None:
+        auth_android = RetrievedChunk(
+            chunk_id="auth-android",
+            text="Android authentication workflow",
+            source_path="en/android/authentication-workflow.md",
+            similarity=0.99,
+            metadata={"product": "video-calling"},
+        )
+        auth_ios = RetrievedChunk(
+            chunk_id="auth-ios",
+            text="iOS authentication workflow",
+            source_path="en/ios/authentication-workflow.md",
+            similarity=0.98,
+            metadata={"product": "video-calling"},
+        )
+        error_codes = RetrievedChunk(
+            chunk_id="error-codes",
+            text="Common SDK error codes",
+            source_path="en/android/error-codes.md",
+            similarity=0.97,
+            metadata={"product": "video-calling"},
+        )
+        captured_final_chunk_ids: list[list[str]] = []
+
+        def _capture_payload(
+            message: str,
+            chunks: list[RetrievedChunk],
+            config: dict[str, object],
+            *,
+            strict_retry: bool = False,
+        ) -> tuple[dict[str, object], int, int, str]:
+            _ = message
+            _ = config
+            _ = strict_retry
+            captured_final_chunk_ids.append([chunk.chunk_id for chunk in chunks])
+            return (
+                {
+                    "answer": "Use the selected chunks.",
+                    "key_steps": [],
+                    "citations": ["auth-android"],
+                    "insufficient_evidence": False,
+                },
+                10,
+                5,
+                "gpt-4.1",
+            )
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 2,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-4.1",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+            }
+            with patch("backend.services.rag_qa.get_embedding_provider", return_value=self._FakeProvider()):
+                with patch("backend.services.rag_qa._retrieve_chunks", return_value=[auth_android]):
+                    with patch("backend.services.rag_qa._retrieve_bm25_chunks", return_value=[auth_ios, error_codes]):
+                        with patch(
+                            "backend.services.rag_qa._metadata_rerank",
+                            return_value=([auth_android, auth_ios, error_codes], {"post_rerank_count": 3, "hints": {}, "applied_filter": False, "filter_type": None}),
+                        ):
+                            with patch("backend.services.rag_qa._rerank_chunks", return_value=[auth_android, auth_ios, error_codes]):
+                                with patch("backend.services.rag_qa._invoke_llm_payload_with_trace", side_effect=_capture_payload):
+                                    result = run_rag_query("how do I handle token authentication errors?")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(captured_final_chunk_ids[0], ["auth-android", "error-codes"])
+        self.assertEqual(result.trace.selected_chunk_ids, ["auth-android", "error-codes"])
 
     def test_resolve_active_vector_table_prefers_populated_fallback_when_configured_table_empty(self) -> None:
         config = {

@@ -127,6 +127,62 @@ class ClientUiContractTests(unittest.TestCase):
         css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
         self.assertIn(".sidebar:not(:hover):not(:focus-within) .user-row", css)
 
+    def test_client_shows_investigating_status_without_leaking_internal_thread(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                const normalized = normalizeBackendTicket({
+                  ticket_id: "TK-CLIENT-INV",
+                  customer_id: "user-1",
+                  subject: "Android token renew issue",
+                  status: "investigating",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T08:10:00+00:00",
+                  messages: [
+                    {
+                      role: "customer",
+                      content: "Token renew callback does not fire.",
+                      created_at: "2026-03-24T08:00:00+00:00",
+                    },
+                    {
+                      role: "assistant",
+                      content: "We are investigating this further. Please wait while we continue checking.",
+                      created_at: "2026-03-24T08:01:00+00:00",
+                    },
+                  ],
+                  active_investigation: {
+                    id: "INV-CLIENT-1",
+                    state: "active",
+                    messages: [
+                      {
+                        id: "INV-CLIENT-1-m1",
+                        role: "engineer_ai",
+                        content: "Please confirm the SDK version first.",
+                        created_at: "2026-03-24T08:02:00+00:00",
+                      },
+                    ],
+                  },
+                });
+
+                if (!normalized) {
+                  throw new Error("Expected backend ticket normalization to return a ticket object.");
+                }
+                if (normalized.status !== "investigating") {
+                  throw new Error(`Expected investigating status, got ${normalized.status}.`);
+                }
+                if (!statusBadge("investigating").includes("Investigating")) {
+                  throw new Error("Client badge rendering should expose Investigating as a first-class state.");
+                }
+                if (normalized.messages.some((message) => message.role === "engineer_ai")) {
+                  throw new Error("Client normalization must never leak internal investigation thread messages.");
+                }
+                if (mapBackendStatusToClientStatus({ status: "waiting_for_engineer" }) !== "investigating") {
+                  throw new Error("Legacy waiting_for_engineer status should normalize to investigating on the client.");
+                }
+              """
+            )
+        )
+
     def test_client_new_session_reuses_existing_empty_ticket_and_hides_close_actions(self) -> None:
         self.run_client_app_script(
             textwrap.dedent(

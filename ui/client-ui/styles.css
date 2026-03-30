@@ -1793,6 +1793,11 @@ a.citation-pill:hover {
   background: rgba(159, 93, 18, 0.12);
 }
 
+.status-investigating {
+  color: var(--warning);
+  background: rgba(159, 93, 18, 0.18);
+}
+
 .status-waiting_for_agent {
   color: var(--primary);
   background: rgba(0, 100, 147, 0.12);
