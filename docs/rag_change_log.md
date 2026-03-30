@@ -10,6 +10,33 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-03-30 - Generation repair hardening and query-aware final-context selection
+
+- Summary: Hardened generation after reranking by making final context selection query-aware, preferring method coverage for comparison questions, soft-demoting advanced-permission samples for generic token-generation queries, retrying once with a stricter repair prompt before falling back, and shortening extractive fallback into an evidence-oriented response.
+- Reason: Generation benchmarks were still losing score on faithfulness, response relevance, and policy-followed rate because same-doc repeated sections could crowd out more useful context, generic token queries could over-prefer advanced-permission samples, and false insufficient-evidence answers were dropping directly into extractive fallback instead of attempting a stricter grounded repair.
+- Affected files or config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_retrieval_chain.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No vector-table rebuild, ingestion backfill, or schema migration required
+  - Online final-context selection now preserves explicit method coverage first, then family diversity, then section/use-case diversity before backfilling by reranked order
+  - Generic token-generation queries now prefer `basic_authentication` context over `advanced_permissions` unless the query explicitly asks for privileges
+  - Generation now performs one stricter repair attempt when the first structured response is invalid, uncited, or incorrectly claims insufficient evidence despite strong grounded overlap
+  - Extractive fallback remains the last resort, but now returns a shorter evidence-oriented answer keyed by retrieved headings
+- Verification:
+  - `./.venv/bin/python -m pytest -q backend/tests/test_rag_qa.py`
+  - `./.venv/bin/python -m pytest -q backend/tests/test_rag_benchmark_runner.py`
+  - `./.venv/bin/python -m py_compile backend/services/rag_qa.py backend/tests/test_rag_qa.py`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - Full baseline benchmark launched with experiment id `generation-baseline` as eval run `EVAL-19F2AF76DABA` and remained in `running` state during implementation verification
+  - Full candidate benchmark launched with experiment id `generation-candidate` as eval run `EVAL-AFC896039D5B` and remained in `running` state during implementation verification
+  - Post-change smoke benchmark completed with experiment id `generation-candidate-smoke` as eval run `EVAL-0ECA142C79C9`
+  - Post-change token-generation benchmark completed with experiment id `generation-candidate-token-case` as eval run `EVAL-5A02194FD127`, with `answer_accuracy_score=1.0`, `faithfulness_score=1.0`, `response_relevance_score=1.0`, `response_policy_followed_rate=1.0`, and `hallucination_rate=0.0`
+
 ## 2026-03-29 - Retrieval metric alignment, BM25 query-noise cleanup, and final-context diversity
 
 - Summary: Fixed retrieval benchmark matching so full headings from evidence refs count as exact heading hits, separated `document_hit_at_5` from exact `hit_at_k`, filtered conversational noise terms from BM25 query token selection, and diversified `final_chunks` so the final top-k prefers distinct `product + source_path stem` families before backfilling same-family chunks.
