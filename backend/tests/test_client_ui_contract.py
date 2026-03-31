@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 import textwrap
 import unittest
@@ -712,6 +713,30 @@ class ClientUiContractTests(unittest.TestCase):
               """
             )
         )
+
+    def test_client_chat_layout_uses_viewport_locked_internal_scroll(self) -> None:
+        css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
+
+        def rule_block(selector_pattern: str) -> str:
+            match = re.search(rf"{selector_pattern}\s*\{{([^}}]+)\}}", css, re.S)
+            self.assertIsNotNone(match, msg=f"Expected CSS rule for {selector_pattern}.")
+            return match.group(1)
+
+        app_shell = rule_block(r"\.app-shell")
+        self.assertIn("display: flex;", app_shell)
+        self.assertIn("height: 100vh;", app_shell)
+        self.assertIn("overflow: hidden;", app_shell)
+
+        workspace_shell = rule_block(r"\.workspace-shell")
+        self.assertIn("height: 100vh;", workspace_shell)
+        self.assertIn("min-height: 0;", workspace_shell)
+        self.assertIn("overflow: hidden;", workspace_shell)
+
+        main = rule_block(r"\.main")
+        self.assertIn("overflow: hidden;", main)
+
+        page_panels = rule_block(r"\.welcome,\s*\.tickets-root")
+        self.assertIn("overflow: auto;", page_panels)
 
     def test_client_async_polling_ignores_placeholder_reply_until_final_answer_arrives(self) -> None:
         self.run_client_app_script(
