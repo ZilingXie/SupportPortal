@@ -16,8 +16,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+import psycopg
 
 from backend.repositories.ticket_repository import (
+    InMemoryTicketRepository,
     TicketRepository,
     create_ticket_repository,
 )
@@ -1111,12 +1113,16 @@ def logout() -> dict[str, Any]:
 
 @app.on_event("startup")
 def startup_event() -> None:
+    global ticket_repository
     try:
         ticket_repository.initialize()
         LOGGER.info("Ticket repository initialized: %s", ticket_repository.storage_mode())
-    except Exception as exc:
+    except (psycopg.OperationalError, psycopg.Error, OSError, TimeoutError) as exc:
         LOGGER.error("Ticket repository initialization failed: %s", exc)
-        raise
+        fallback_repository = InMemoryTicketRepository()
+        fallback_repository.initialize()
+        ticket_repository = fallback_repository
+        LOGGER.warning("Falling back to in-memory ticket repository for this process.")
 
 
 @app.on_event("shutdown")
