@@ -85,19 +85,10 @@ class InvestigationFlowTests(unittest.TestCase):
     def test_ticket_query_escalation_starts_active_investigation_and_public_reply(self) -> None:
         with patch.object(
             main,
-            "detect_sentiment",
+            "build_initial_ack",
             return_value=types.SimpleNamespace(
-                bucket="neutral",
-                raw_label="neutral",
-                confidence=0.99,
-                provider="test",
-            ),
-        ), patch.object(
-            main,
-            "generate_emotion_reply",
-            return_value=types.SimpleNamespace(
-                text="",
-                source="test",
+                text="收到，我先帮你看一下。",
+                source="rule",
                 intent="question",
             ),
         ), patch.object(
@@ -125,7 +116,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["status"], "investigating")
-        self.assertIn("正在进一步调查中", payload["answer"])
+        self.assertEqual(payload["answer"], "收到，我先帮你看一下。")
 
         detail = self.client.get("/api/engineer/tickets/TK-INV-100")
         self.assertEqual(detail.status_code, 200, detail.text)
@@ -136,6 +127,9 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(ticket["active_investigation"]["trigger_source"], "support_query")
         self.assertEqual(ticket["active_investigation"]["messages"][0]["role"], "engineer_ai")
         self.assertEqual(ticket["messages"][-1]["role"], "assistant")
+        assistant_messages = [message["content"] for message in ticket["messages"] if message["role"] == "assistant"]
+        self.assertIn("收到，我先帮你看一下。", assistant_messages)
+        self.assertTrue(any("正在进一步调查中" in content for content in assistant_messages))
         self.assertNotIn("engineer_ai", [message["role"] for message in ticket["messages"]])
 
     def test_customer_follow_up_during_investigation_keeps_same_thread_and_clears_confirmation(self) -> None:
@@ -164,17 +158,12 @@ class InvestigationFlowTests(unittest.TestCase):
 
         with patch.object(
             main,
-            "detect_sentiment",
+            "build_initial_ack",
             return_value=types.SimpleNamespace(
-                bucket="neutral",
-                raw_label="neutral",
-                confidence=0.88,
-                provider="test",
+                text="收到，我先帮你看一下。",
+                source="rule",
+                intent="question",
             ),
-        ), patch.object(
-            main,
-            "generate_emotion_reply",
-            return_value=types.SimpleNamespace(text="", source="test", intent="question"),
         ), patch.object(
             main,
             "resolve_support_message",
@@ -204,6 +193,116 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(ticket["active_investigation"]["state"], "active")
         self.assertIsNone(ticket["active_investigation"]["final_confirmation_requested_at"])
         self.assertEqual(ticket["active_investigation"]["draft_customer_reply"], "")
+
+    def test_negative_customer_message_no_longer_auto_escalates_or_sets_high_priority(self) -> None:
+        resolution = SupportResolution(
+            answer="Please verify the token server configuration.",
+            confidence=0.89,
+            sources=[],
+            citations=[],
+            needs_engineer_guidance=False,
+            answer_route="rag",
+            scope_label="agora_technical",
+            route_reason="docs_match",
+            route_confidence=0.93,
+            search_used=False,
+        )
+        enqueue_mock = AsyncMock(return_value=True)
+        with patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="Got it, let me check this for you.",
+                source="rule",
+                intent="complaint",
+            ),
+        ), patch.object(
+            main,
+            "resolve_support_message",
+            return_value=resolution,
+        ), patch.object(
+            main.task_queue,
+            "enqueue",
+            enqueue_mock,
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-ACK-NEG-100",
+                    "customer_id": "C-001",
+                    "message": "My service is down and this is so frustrated!",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "open")
+        self.assertEqual(payload["priority"], "normal")
+        self.assertFalse(payload["needs_engineer_input"])
+        self.assertEqual(payload["answer"], "Got it, let me check this for you.")
+        self.assertEqual(
+            payload["sentiment"],
+            {
+                "label": None,
+                "raw_label": None,
+                "score": None,
+                "is_alert": False,
+                "provider": "deferred",
+                "intent": "complaint",
+            },
+        )
+        self.assertEqual(enqueue_mock.await_count, 1)
+        task = enqueue_mock.await_args_list[0].args[0]
+        self.assertEqual(task["task_type"], "ticket_message_sentiment")
+
+    def test_customer_message_sentiment_falls_back_to_background_tagging_when_queue_is_unavailable(self) -> None:
+        resolution = SupportResolution(
+            answer="Please confirm whether the token server allows renewal.",
+            confidence=0.84,
+            sources=[],
+            citations=[],
+            needs_engineer_guidance=False,
+            answer_route="rag",
+            scope_label="agora_technical",
+            route_reason="docs_match",
+            route_confidence=0.88,
+            search_used=False,
+        )
+        enqueue_mock = AsyncMock(return_value=False)
+        fallback_mock = AsyncMock()
+        with patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="Got it, let me check this for you.",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main,
+            "resolve_support_message",
+            return_value=resolution,
+        ), patch.object(
+            main.task_queue,
+            "enqueue",
+            enqueue_mock,
+        ), patch.object(
+            main,
+            "_apply_deferred_message_sentiment_tag",
+            fallback_mock,
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-ACK-FALLBACK-100",
+                    "customer_id": "C-001",
+                    "message": "How can I debug token renewal on Android?",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(enqueue_mock.await_count, 1)
+        self.assertEqual(fallback_mock.await_count, 1)
 
     def test_engineer_internal_message_generates_next_ai_turn_and_draft(self) -> None:
         self._seed_ticket(

@@ -317,6 +317,76 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(event_payload["answer_route"], "web_search")
         self.assertEqual(event_payload["scope_label"], "agora_non_technical")
 
+    def test_process_ticket_message_sentiment_persists_label_and_records_event(self) -> None:
+        repository = Mock()
+        repository.get_ticket.return_value = copy.deepcopy(_build_ticket())
+        repository.update_message_sentiment_label.return_value = True
+        repository.record_event.return_value = None
+        bus = Mock()
+        task = {
+            "task_type": "ticket_message_sentiment",
+            "ticket_id": "T-RETRY",
+            "customer_message": "Need help with token generation",
+            "message_created_at": "2026-03-22T00:00:00+00:00",
+            "created_at": "2026-03-22T00:00:01+00:00",
+        }
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "classify_sentiment",
+            return_value=types.SimpleNamespace(
+                bucket="negative",
+                raw_label="anger",
+                confidence=0.91,
+                provider="test",
+            ),
+        ), patch.object(worker, "now_iso", return_value="2026-03-22T00:03:00+00:00"), patch.object(
+            worker,
+            "_publish",
+        ) as publish_mock:
+            worker._process_ticket_message_sentiment(bus, task)
+
+        repository.update_message_sentiment_label.assert_called_once_with(
+            ticket_id="T-RETRY",
+            role="customer",
+            content="Need help with token generation",
+            created_at="2026-03-22T00:00:00+00:00",
+            sentiment_label="bad",
+        )
+        event_payload = repository.record_event.call_args.args[2]
+        self.assertEqual(event_payload["event"], "ticket_message_sentiment_tagged")
+        self.assertEqual(event_payload["sentiment_label"], "bad")
+        publish_mock.assert_called_once()
+
+    def test_process_ticket_message_sentiment_skips_when_customer_message_cannot_be_updated(self) -> None:
+        repository = Mock()
+        repository.get_ticket.return_value = copy.deepcopy(_build_ticket())
+        repository.update_message_sentiment_label.return_value = False
+        repository.record_event.return_value = None
+        bus = Mock()
+        task = {
+            "task_type": "ticket_message_sentiment",
+            "ticket_id": "T-RETRY",
+            "customer_message": "Need help with token generation",
+            "message_created_at": "2026-03-22T00:00:00+00:00",
+            "created_at": "2026-03-22T00:00:01+00:00",
+        }
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "classify_sentiment",
+            return_value=types.SimpleNamespace(
+                bucket="neutral",
+                raw_label="neutral",
+                confidence=0.51,
+                provider="test",
+            ),
+        ), patch.object(worker, "_publish") as publish_mock:
+            worker._process_ticket_message_sentiment(bus, task)
+
+        repository.record_event.assert_not_called()
+        publish_mock.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
