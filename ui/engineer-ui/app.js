@@ -16,6 +16,7 @@ const workspaceSubtitleEl = document.getElementById("workspace-subtitle");
 const railNavEl = document.getElementById("rail-nav");
 
 let tickets = [];
+let boardLoading = false;
 let selectedTicketId = null;
 let selectedTicket = null;
 let selectedTicketSummary = "";
@@ -1290,6 +1291,7 @@ function renderTicketPoolView() {
   const investigatingCount = tickets.filter(
     (ticket) => normalizeStatusValue(ticket.status) === "investigating"
   ).length;
+  const showLoadingState = boardLoading && allCount === 0;
 
   return `
     <section class="ticket-pool-page">
@@ -1317,7 +1319,15 @@ function renderTicketPoolView() {
       </section>
 
       ${
-        rows.length === 0
+        showLoadingState
+          ? `
+      <section class="empty-state pool-loading-state" role="status" aria-live="polite" aria-busy="true">
+        <span class="loading-spinner pool-loading-spinner" aria-hidden="true"></span>
+        <strong>Loading tickets...</strong>
+        <p>Fetching the latest engineer queue snapshot.</p>
+      </section>
+    `
+          : rows.length === 0
           ? '<div class="empty-state">No tickets match the current filters.</div>'
           : `
       <section class="ticket-pool-list" role="list">
@@ -1904,23 +1914,35 @@ async function openTicketDetail(ticketId) {
 }
 
 async function loadTickets(options = {}) {
-  const { refreshDetail = true } = options;
-  const params = new URLSearchParams({ status: "all" });
-  const payload = await fetchJson(`/api/engineer/tickets?${params.toString()}`);
-  tickets = Array.isArray(payload.tickets) ? payload.tickets : [];
-  parseRoute();
-  if (routeState.view === "pool") {
+  const { refreshDetail = true, showLoading = tickets.length === 0 } = options;
+  const shouldShowPoolLoading = showLoading && routeState.view === "pool" && tickets.length === 0;
+  if (shouldShowPoolLoading) {
+    boardLoading = true;
     renderTickets();
-  } else {
-    renderWorkspaceChrome();
   }
+  const params = new URLSearchParams({ status: "all" });
+  try {
+    const payload = await fetchJson(`/api/engineer/tickets?${params.toString()}`);
+    tickets = Array.isArray(payload.tickets) ? payload.tickets : [];
+    boardLoading = false;
+    parseRoute();
+    if (routeState.view === "pool") {
+      renderTickets();
+    } else {
+      renderWorkspaceChrome();
+    }
 
-  if (refreshDetail && selectedTicketId) {
-    await refreshSelectedTicket({ silent: true });
+    if (refreshDetail && selectedTicketId) {
+      await refreshSelectedTicket({ silent: true });
+    }
+  } catch (error) {
+    boardLoading = false;
+    throw error;
   }
 }
 
 function showBoardError(message) {
+  boardLoading = false;
   renderWorkspaceChrome();
   if (!workspaceRegionEl) {
     return;
@@ -2894,6 +2916,7 @@ function setupWebSocket() {
 async function enterBoard() {
   toggleScreens();
   parseRoute();
+  boardLoading = routeState.view === "pool" && tickets.length === 0;
   renderWorkspace();
   await detectStorageMode();
   setRealtimeStatus("Realtime: connecting...");
@@ -2930,6 +2953,7 @@ async function handleLoginSubmit(event) {
 function handleLocalLogout() {
   setAuthenticated(false);
   storageMode = "unknown";
+  boardLoading = false;
   closeSocket();
   tickets = [];
   filterValues.priority = "all";

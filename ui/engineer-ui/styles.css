@@ -1570,6 +1570,29 @@ a {
   color: var(--ink-soft);
 }
 
+.pool-loading-state {
+  align-content: center;
+  min-height: 240px;
+}
+
+.pool-loading-state strong {
+  font-family: "Manrope", sans-serif;
+  font-size: 24px;
+  color: var(--ink);
+}
+
+.pool-loading-state p {
+  margin: 0;
+  font-size: 15px;
+  color: var(--ink-soft);
+}
+
+.pool-loading-spinner {
+  width: 28px;
+  height: 28px;
+  border-width: 3px;
+}
+
 .workspace-feedback {
   align-content: center;
 }
