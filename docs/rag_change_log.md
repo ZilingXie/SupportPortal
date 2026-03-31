@@ -10,6 +10,45 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-03-31 - Formal source-family metadata and pre-rerank family diversification
+
+- Summary: Added canonical `source_family` metadata to normalized official and technical documents, propagated it into document and chunk metadata JSONB, and moved family-aware diversification forward so the external rerank window now prefers distinct families before the final top-k selection step.
+- Reason: Retrieval was still treating sibling platform variants as separate families because fallback keys were based on `source_path` stems, and same-family duplicates could still crowd the external rerank window before final-context diversification had a chance to help.
+- Affected files or config:
+  - `backend/services/knowledge_ingestion.py`
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_knowledge_ingestion.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema migration; `source_family` is stored inside existing document/chunk metadata JSONB payloads
+  - Official docs now derive `source_family` from canonical doc URL paths such as `video-calling/get-started/get-started-sdk`, falling back to `source_path` only when `source_url` is missing
+  - Technical docs now derive `source_family` from the source URL path when present and fall back to their generated `technical/<slug>` source path when absent
+  - Existing corpora must be re-ingested to populate `source_family` on historical rows; legacy rows still fall back to the prior `source_path`-stem heuristic at query time
+  - External rerank candidate windows now preserve comparison-method coverage first, then distinct families, then original-order backfill before final-context selection runs the same diversity policy again
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_knowledge_ingestion backend.tests.test_rag_qa backend.tests.test_agora_doc_sync backend.tests.test_rag_benchmark backend.tests.test_rag_benchmark_runner backend.tests.test_rag_tokenizer`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/knowledge_ingestion.py backend/services/rag_qa.py backend/tests/test_knowledge_ingestion.py backend/tests/test_rag_qa.py backend/tests/test_agora_doc_sync.py backend/tests/test_rag_benchmark.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_rag_tokenizer.py`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python scripts/reset_rag_database.py --execute`
+  - Local official-doc refresh downloaded `3026` markdown files into `local_knowledge/official/raw`
+  - Targeted local smoke re-ingestion completed for:
+    - `en/video-calling/get-started/get-started-sdk_android.md`
+    - `en/video-calling/get-started/get-started-sdk_ios.md`
+    - `en/video-calling/token-authentication/authentication-workflow_android.md`
+    - `en/video-calling/token-authentication/authentication-workflow_ios.md`
+    - `en/video-calling/token-authentication/deploy-token-server.md`
+    - `en/video-calling/troubleshooting/error-codes_android.md`
+  - Post-ingest document metadata query confirmed sibling docs now share canonical `source_family` values, including:
+    - `official/get-started-sdk_android.md` and `official/get-started-sdk_ios.md` -> `video-calling/get-started/get-started-sdk`
+    - `official/authentication-workflow_android.md` and `official/authentication-workflow_ios.md` -> `video-calling/token-authentication/authentication-workflow`
+  - Retrieval smoke checks after the targeted ingest showed:
+    - `How do I generate a token for the Video SDK?` selected `official/authentication-workflow_android.md` plus `official/error-codes_android.md`, not both `get-started-sdk` platform siblings
+    - `I'm getting error 109. Does that mean the token expired?` selected `official/error-codes_android.md` as the top context
+    - `What's the difference between BuildTokenWithUid and BuildTokenWithUidAndPrivilege?` selected `Deploy a token server > Reference > \`BuildTokenWithUid\`` and `Deploy a token server > Reference > \`BuildTokenWithUidAndPrivilege\``
+
 ## 2026-03-30 - Generation repair hardening and query-aware final-context selection
 
 - Summary: Hardened generation after reranking by making final context selection query-aware, preferring method coverage for comparison questions, soft-demoting advanced-permission samples for generic token-generation queries, retrying once with a stricter repair prompt before falling back, and shortening extractive fallback into an evidence-oriented response.
