@@ -84,6 +84,19 @@ class _ReusableCursor:
         return False
 
 
+class _ExecuteFailsOnceCursor(_ReusableCursor):
+    def __init__(self, *, error: Exception, fetchall_results=None, fetchone_results=None) -> None:
+        super().__init__(fetchall_results=fetchall_results, fetchone_results=fetchone_results)
+        self._error = error
+        self._raised = False
+
+    def execute(self, *args, **kwargs) -> None:
+        self.executed.append((args, kwargs))
+        if not self._raised:
+            self._raised = True
+            raise self._error
+
+
 class _ReusableConnection:
     def __init__(self, cursor: _ReusableCursor) -> None:
         self._cursor = cursor
@@ -290,6 +303,179 @@ class RepositoryConfigurationTests(unittest.TestCase):
 
         self.assertEqual(connect_mock.call_count, 1)
         self.assertEqual(connection.commit_count, 2)
+
+    def test_ticket_repository_retries_get_ticket_after_retryable_query_disconnect(self) -> None:
+        repository = PostgresTicketRepository(dsn="postgresql://example")
+        first_connection = _ReusableConnection(
+            _ExecuteFailsOnceCursor(
+                error=psycopg.OperationalError(
+                    "consuming input failed: SSL error: unexpected eof while reading"
+                )
+            )
+        )
+        second_connection = _ReusableConnection(
+            _ReusableCursor(
+                fetchone_results=[
+                    (
+                        "T-1",
+                        "C-1",
+                        "Requester",
+                        "Subject",
+                        "open",
+                        "normal",
+                        "managed",
+                        None,
+                        None,
+                        "2026-03-31T00:00:00+00:00",
+                        "2026-03-31T00:00:00+00:00",
+                    )
+                ]
+            )
+        )
+
+        with patch(
+            "backend.repositories.ticket_repository.psycopg.connect",
+            side_effect=[first_connection, second_connection],
+        ) as connect_mock:
+            with patch.object(repository, "_fetch_messages", return_value={"T-1": []}):
+                with patch.object(repository, "_fetch_investigations", return_value={"T-1": []}):
+                    ticket = repository.get_ticket("T-1")
+
+        self.assertIsNotNone(ticket)
+        self.assertEqual(ticket["ticket_id"], "T-1")
+        self.assertEqual(connect_mock.call_count, 2)
+        self.assertEqual(first_connection.close_count, 1)
+
+    def test_ticket_repository_retries_list_tickets_after_retryable_query_disconnect(self) -> None:
+        repository = PostgresTicketRepository(dsn="postgresql://example")
+        first_connection = _ReusableConnection(
+            _ExecuteFailsOnceCursor(
+                error=psycopg.OperationalError(
+                    "consuming input failed: SSL error: unexpected eof while reading"
+                )
+            )
+        )
+        second_connection = _ReusableConnection(
+            _ReusableCursor(
+                fetchall_results=[
+                    [
+                        (
+                            "T-1",
+                            "C-1",
+                            "Requester",
+                            "Subject",
+                            "open",
+                            "normal",
+                            "managed",
+                            None,
+                            None,
+                            "2026-03-31T00:00:00+00:00",
+                            "2026-03-31T00:00:00+00:00",
+                        )
+                    ]
+                ]
+            )
+        )
+
+        with patch(
+            "backend.repositories.ticket_repository.psycopg.connect",
+            side_effect=[first_connection, second_connection],
+        ) as connect_mock:
+            with patch.object(repository, "_fetch_messages", return_value={"T-1": []}):
+                with patch.object(repository, "_fetch_investigations", return_value={"T-1": []}):
+                    tickets = repository.list_tickets(include_messages=True)
+
+        self.assertEqual(len(tickets), 1)
+        self.assertEqual(tickets[0]["ticket_id"], "T-1")
+        self.assertEqual(connect_mock.call_count, 2)
+        self.assertEqual(first_connection.close_count, 1)
+
+    def test_ticket_repository_retries_save_ticket_after_retryable_query_disconnect(self) -> None:
+        repository = PostgresTicketRepository(dsn="postgresql://example")
+        first_connection = _ReusableConnection(
+            _ExecuteFailsOnceCursor(
+                error=psycopg.OperationalError(
+                    "consuming input failed: SSL error: unexpected eof while reading"
+                )
+            )
+        )
+        second_connection = _ReusableConnection(_ReusableCursor())
+        ticket = {
+            "ticket_id": "T-1",
+            "customer_id": "C-1",
+            "requester": "Requester",
+            "subject": "Subject",
+            "status": "open",
+            "priority": "normal",
+            "engineer_mode": "managed",
+            "pending_engineer_question": None,
+            "last_engineer_action": None,
+            "created_at": "2026-03-31T00:00:00+00:00",
+            "updated_at": "2026-03-31T00:00:00+00:00",
+        }
+
+        with patch(
+            "backend.repositories.ticket_repository.psycopg.connect",
+            side_effect=[first_connection, second_connection],
+        ) as connect_mock:
+            repository.save_ticket(ticket, new_messages=[])
+
+        self.assertEqual(connect_mock.call_count, 2)
+        self.assertEqual(first_connection.close_count, 1)
+        self.assertEqual(second_connection.commit_count, 1)
+
+    def test_ticket_repository_retries_save_investigation_after_retryable_query_disconnect(self) -> None:
+        repository = PostgresTicketRepository(dsn="postgresql://example")
+        first_connection = _ReusableConnection(
+            _ExecuteFailsOnceCursor(
+                error=psycopg.OperationalError(
+                    "consuming input failed: SSL error: unexpected eof while reading"
+                )
+            )
+        )
+        second_connection = _ReusableConnection(_ReusableCursor())
+        investigation = {
+            "id": "INV-1",
+            "state": "awaiting_confirmation",
+            "trigger_reason": "rag_miss",
+            "trigger_source": "sync",
+            "draft_customer_reply": "Reply draft",
+            "final_confirmation_requested_at": "2026-03-31T00:00:00+00:00",
+            "opened_at": "2026-03-31T00:00:00+00:00",
+            "updated_at": "2026-03-31T00:00:00+00:00",
+            "closed_at": None,
+        }
+
+        with patch(
+            "backend.repositories.ticket_repository.psycopg.connect",
+            side_effect=[first_connection, second_connection],
+        ) as connect_mock:
+            repository.save_investigation("T-1", investigation, new_messages=[])
+
+        self.assertEqual(connect_mock.call_count, 2)
+        self.assertEqual(first_connection.close_count, 1)
+        self.assertEqual(second_connection.commit_count, 1)
+
+    def test_ticket_repository_retries_record_event_after_retryable_query_disconnect(self) -> None:
+        repository = PostgresTicketRepository(dsn="postgresql://example")
+        first_connection = _ReusableConnection(
+            _ExecuteFailsOnceCursor(
+                error=psycopg.OperationalError(
+                    "consuming input failed: SSL error: unexpected eof while reading"
+                )
+            )
+        )
+        second_connection = _ReusableConnection(_ReusableCursor())
+
+        with patch(
+            "backend.repositories.ticket_repository.psycopg.connect",
+            side_effect=[first_connection, second_connection],
+        ) as connect_mock:
+            repository.record_event("T-1", "ticket_investigation_updated", {"ticket_id": "T-1"})
+
+        self.assertEqual(connect_mock.call_count, 2)
+        self.assertEqual(first_connection.close_count, 1)
+        self.assertEqual(second_connection.commit_count, 1)
 
     def test_vector_type_dimension_extracts_pgvector_dim(self) -> None:
         self.assertEqual(_vector_type_dimension("vector(1024)"), 1024)

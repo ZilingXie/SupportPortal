@@ -6,7 +6,7 @@ import os
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol, TypeVar
 from uuid import uuid4
 
 import psycopg
@@ -20,6 +20,15 @@ _VALID_PRIORITIES = {"urgent", "high", "normal", "low"}
 _VALID_MODES = {"managed", "takeover"}
 _VALID_ROLES = {"customer", "assistant", "engineer", "system"}
 _VALID_INVESTIGATION_ROLES = {"engineer_ai", "engineer", "system"}
+_RETRYABLE_STORAGE_ERROR_SNIPPETS = (
+    "connection timeout expired",
+    "server closed the connection unexpectedly",
+    "ssl error",
+    "unexpected eof while reading",
+    "consuming input failed",
+)
+
+_ResultT = TypeVar("_ResultT")
 
 
 def _utc_now() -> str:
@@ -75,6 +84,17 @@ def _safe_positive_float(value: Any, default_value: float) -> float:
     except (TypeError, ValueError):
         return default_value
     return parsed if parsed > 0 else default_value
+
+
+def _clean_error_text(value: Any) -> str:
+    return " ".join(str(value or "").split()).strip()
+
+
+def _is_retryable_storage_error(exc: BaseException) -> bool:
+    if isinstance(exc, psycopg.OperationalError):
+        return True
+    message = _clean_error_text(exc).lower()
+    return any(snippet in message for snippet in _RETRYABLE_STORAGE_ERROR_SNIPPETS)
 
 
 class TicketRepository(Protocol):
@@ -353,6 +373,38 @@ class PostgresTicketRepository:
             raise last_error
         raise RuntimeError("Ticket repository connection failed without an exception")
 
+    def _should_retry_connection_error(
+        self,
+        conn: psycopg.Connection[Any],
+        exc: Exception,
+    ) -> bool:
+        if getattr(conn, "closed", False) or getattr(conn, "broken", False):
+            return True
+        return _is_retryable_storage_error(exc)
+
+    def _run_with_connection_retry(
+        self,
+        operation_name: str,
+        action: Callable[[psycopg.Connection[Any]], _ResultT],
+    ) -> _ResultT:
+        attempt = 0
+        while True:
+            conn = self._cached_connection()
+            try:
+                return action(conn)
+            except Exception as exc:
+                should_retry = self._should_retry_connection_error(conn, exc)
+                if should_retry:
+                    self._reset_cached_connection()
+                if not should_retry or attempt >= 1:
+                    raise
+                attempt += 1
+                LOGGER.warning(
+                    "Ticket repository %s hit a retryable storage error; resetting cached connection and retrying once: %s",
+                    operation_name,
+                    exc,
+                )
+
     def initialize(self) -> None:
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -500,8 +552,7 @@ class PostgresTicketRepository:
             conn.commit()
 
     def exists(self, ticket_id: str) -> bool:
-        conn = self._cached_connection()
-        try:
+        def _operation(conn: psycopg.Connection[Any]) -> bool:
             with conn.cursor() as cur:
                 cur.execute(
                     sql.SQL("SELECT 1 FROM {} WHERE ticket_id = %s").format(
@@ -510,10 +561,8 @@ class PostgresTicketRepository:
                     (ticket_id,),
                 )
                 return cur.fetchone() is not None
-        except Exception:
-            if getattr(conn, "closed", False) or getattr(conn, "broken", False):
-                self._reset_cached_connection()
-            raise
+
+        return self._run_with_connection_retry("exists", _operation)
 
     def _fetch_messages(self, conn: psycopg.Connection[Any], ticket_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
         grouped: dict[str, list[dict[str, Any]]] = {ticket_id: [] for ticket_id in ticket_ids}
@@ -658,8 +707,7 @@ class PostgresTicketRepository:
         }
 
     def _fetch_tickets(self, include_messages: bool) -> list[dict[str, Any]]:
-        conn = self._cached_connection()
-        try:
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
             with conn.cursor() as cur:
                 cur.execute(
                     sql.SQL(
@@ -688,25 +736,21 @@ class PostgresTicketRepository:
                 ticket_ids,
                 include_messages=include_messages,
             )
-        except Exception:
-            if getattr(conn, "closed", False) or getattr(conn, "broken", False):
-                self._reset_cached_connection()
-            raise
+            tickets: list[dict[str, Any]] = []
+            for row in rows:
+                ticket_id = str(row[0])
+                ticket = self._row_to_ticket(
+                    row,
+                    message_map.get(ticket_id, []),
+                    investigation_map.get(ticket_id, []),
+                )
+                tickets.append(ticket)
+            return tickets
 
-        tickets: list[dict[str, Any]] = []
-        for row in rows:
-            ticket_id = str(row[0])
-            ticket = self._row_to_ticket(
-                row,
-                message_map.get(ticket_id, []),
-                investigation_map.get(ticket_id, []),
-            )
-            tickets.append(ticket)
-        return tickets
+        return self._run_with_connection_retry("list_tickets", _operation)
 
     def get_ticket(self, ticket_id: str) -> dict[str, Any] | None:
-        conn = self._cached_connection()
-        try:
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
             with conn.cursor() as cur:
                 cur.execute(
                     sql.SQL(
@@ -743,10 +787,8 @@ class PostgresTicketRepository:
                 message_map.get(ticket_id, []),
                 investigation_map.get(ticket_id, []),
             )
-        except Exception:
-            if getattr(conn, "closed", False) or getattr(conn, "broken", False):
-                self._reset_cached_connection()
-            raise
+
+        return self._run_with_connection_retry("get_ticket", _operation)
 
     def list_tickets(self, include_messages: bool = True) -> list[dict[str, Any]]:
         return self._fetch_tickets(include_messages=include_messages)
@@ -769,8 +811,7 @@ class PostgresTicketRepository:
         engineer_mode = _normalize_mode(ticket.get("engineer_mode"))
         last_action = ticket.get("last_engineer_action")
 
-        conn = self._cached_connection()
-        try:
+        def _operation(conn: psycopg.Connection[Any]) -> None:
             with conn.transaction():
                 with conn.cursor() as cur:
                     cur.execute(
@@ -846,10 +887,8 @@ class PostgresTicketRepository:
                                 Json(citations) if citations else None,
                             ),
                         )
-        except Exception:
-            if getattr(conn, "closed", False) or getattr(conn, "broken", False):
-                self._reset_cached_connection()
-            raise
+
+        self._run_with_connection_retry("save_ticket", _operation)
 
     def get_active_investigation(self, ticket_id: str) -> dict[str, Any] | None:
         investigations = self.list_ticket_investigations(ticket_id=ticket_id, include_messages=True)
@@ -863,17 +902,14 @@ class PostgresTicketRepository:
         ticket_id: str,
         include_messages: bool = True,
     ) -> list[dict[str, Any]]:
-        conn = self._cached_connection()
-        try:
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
             return self._fetch_investigations(
                 conn,
                 [ticket_id],
                 include_messages=include_messages,
             ).get(ticket_id, [])
-        except Exception:
-            if getattr(conn, "closed", False) or getattr(conn, "broken", False):
-                self._reset_cached_connection()
-            raise
+
+        return self._run_with_connection_retry("list_ticket_investigations", _operation)
 
     def save_investigation(
         self,
@@ -894,8 +930,7 @@ class PostgresTicketRepository:
         updated_at = investigation.get("updated_at") or _utc_now()
         closed_at = investigation.get("closed_at")
 
-        conn = self._cached_connection()
-        try:
+        def _operation(conn: psycopg.Connection[Any]) -> None:
             with conn.transaction():
                 with conn.cursor() as cur:
                     cur.execute(
@@ -965,14 +1000,11 @@ class PostgresTicketRepository:
                                 Json(message.get("meta")) if isinstance(message.get("meta"), dict) else None,
                             ),
                         )
-        except Exception:
-            if getattr(conn, "closed", False) or getattr(conn, "broken", False):
-                self._reset_cached_connection()
-            raise
+
+        self._run_with_connection_retry("save_investigation", _operation)
 
     def record_event(self, ticket_id: str | None, event_type: str, payload: dict[str, Any]) -> None:
-        conn = self._cached_connection()
-        try:
+        def _operation(conn: psycopg.Connection[Any]) -> None:
             with conn.transaction():
                 with conn.cursor() as cur:
                     cur.execute(
@@ -984,15 +1016,12 @@ class PostgresTicketRepository:
                         ).format(self._table("support_ticket_events")),
                         (ticket_id, event_type, Json(payload)),
                     )
-        except Exception:
-            if getattr(conn, "closed", False) or getattr(conn, "broken", False):
-                self._reset_cached_connection()
-            raise
+
+        self._run_with_connection_retry("record_event", _operation)
 
     def list_events(self, limit: int = 20) -> list[dict[str, Any]]:
         safe_limit = _safe_positive_int(limit, 20)
-        conn = self._cached_connection()
-        try:
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
             with conn.cursor() as cur:
                 cur.execute(
                     sql.SQL(
@@ -1006,26 +1035,23 @@ class PostgresTicketRepository:
                     (safe_limit,),
                 )
                 rows = cur.fetchall()
-        except Exception:
-            if getattr(conn, "closed", False) or getattr(conn, "broken", False):
-                self._reset_cached_connection()
-            raise
-        events: list[dict[str, Any]] = []
-        for row in rows:
-            events.append(
-                {
-                    "ticket_id": str(row[0]) if row[0] is not None else None,
-                    "event_type": str(row[1]),
-                    "payload": row[2] if isinstance(row[2], dict) else {},
-                    "created_at": _to_iso(row[3]),
-                }
-            )
-        return events
+            events: list[dict[str, Any]] = []
+            for row in rows:
+                events.append(
+                    {
+                        "ticket_id": str(row[0]) if row[0] is not None else None,
+                        "event_type": str(row[1]),
+                        "payload": row[2] if isinstance(row[2], dict) else {},
+                        "created_at": _to_iso(row[3]),
+                    }
+                )
+            return events
+
+        return self._run_with_connection_retry("list_events", _operation)
 
     def list_ticket_events(self, ticket_id: str, limit: int = 100) -> list[dict[str, Any]]:
         safe_limit = _safe_positive_int(limit, 100)
-        conn = self._cached_connection()
-        try:
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
             with conn.cursor() as cur:
                 cur.execute(
                     sql.SQL(
@@ -1040,21 +1066,19 @@ class PostgresTicketRepository:
                     (ticket_id, safe_limit),
                 )
                 rows = cur.fetchall()
-        except Exception:
-            if getattr(conn, "closed", False) or getattr(conn, "broken", False):
-                self._reset_cached_connection()
-            raise
-        events: list[dict[str, Any]] = []
-        for row in rows:
-            events.append(
-                {
-                    "ticket_id": str(row[0]) if row[0] is not None else None,
-                    "event_type": str(row[1]),
-                    "payload": row[2] if isinstance(row[2], dict) else {},
-                    "created_at": _to_iso(row[3]),
-                }
-            )
-        return events
+            events: list[dict[str, Any]] = []
+            for row in rows:
+                events.append(
+                    {
+                        "ticket_id": str(row[0]) if row[0] is not None else None,
+                        "event_type": str(row[1]),
+                        "payload": row[2] if isinstance(row[2], dict) else {},
+                        "created_at": _to_iso(row[3]),
+                    }
+                )
+            return events
+
+        return self._run_with_connection_retry("list_ticket_events", _operation)
 
 
 def create_ticket_repository() -> TicketRepository:
