@@ -1070,3 +1070,63 @@ For each new entry, record:
   - `curl -sS 'http://localhost:8080/api/dashboard/rag/scorecard?range=7d'`
   - After the fix, `/health` returned `status=ok` with `ticket_storage=memory`, and `/api/dashboard/rag/scorecard?range=7d` returned HTTP 200 instead of 504/502.
   - Residual runtime issue remains external to this code change: both host-side and container-side `psycopg.connect(PGVECTOR_DSN, connect_timeout=5)` now fail with `connection timeout expired`, so the scorecard payload currently falls back to `has_eval_data=false` until PGVector/Postgres connectivity is restored.
+
+## 2026-03-31 - Collapse ticket flow into single AI-managed states with orchestrator seam
+
+- Summary: Replaced the old managed/takeover ticket flow with a single AI-managed state machine (`open | communicating | escalated | investigating | resolved`), added a shared ticket execution orchestrator for sync and async query handling, introduced a formal customer `request-engineer-assistance` backend flow, and removed direct engineer-to-customer takeover paths from the client, engineer, and dashboard surfaces.
+- Reason: The ticket system needed a hard cutover away from `engineer_mode`, direct takeover replies, and local fake escalation behavior. We also needed a single execution seam that keeps current routing/RAG behavior intact while leaving room for a future agentic planner/skill registry without splitting orchestration logic across API and worker code again.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/services/investigation_flow.py`
+  - `backend/services/dashboard_ticket_ops.py`
+  - `backend/repositories/ticket_repository.py`
+  - `backend/sql/ticket_storage.sql`
+  - `ui/client-ui/app.js`
+  - `ui/client-ui/styles.css`
+  - `ui/engineer-ui/app.js`
+  - `ui/engineer-ui/index.html`
+  - `ui/engineer-ui/styles.css`
+  - `ui/dashboard-ui/app.js`
+  - `ui/dashboard-ui/index.html`
+  - `ui/dashboard-ui/styles.css`
+  - `ui/client-ui/next-prototype/*`
+  - `backend/tests/test_ticket_routing.py`
+  - `backend/tests/test_worker.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_repository_configuration.py`
+  - `backend/tests/test_ticket_message_sentiment.py`
+  - `backend/tests/test_client_ui_contract.py`
+  - `backend/tests/test_engineer_ui_contract.py`
+  - `backend/tests/test_dashboard_metrics_contract.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `docs/ticket_db_design.md`
+  - `docs/ticket_db_architecture.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - `support_tickets` no longer stores `engineer_mode` or `pending_engineer_question`.
+  - Ticket storage now uses a schema-version reset path (`2026-single-ai-managed-v1`), which drops and recreates ticket, message, investigation, and event tables when the old flow schema is detected.
+  - Ticket statuses now persist only `open`, `communicating`, `escalated`, `investigating`, and `resolved`.
+  - Customer-side engineer assistance is now a real persisted backend transition to `escalated`, rather than a client-local synthetic status/message.
+  - Sync API and async worker RAG flows now share `ticket_orchestrator.py`, which emits a stable internal execution contract (`route_family`, `execution_action`, `tooling_profile`, `needs_investigating`, `next_status`, etc.) for future agentic expansion.
+  - Engineer UI no longer exposes mode switching, takeover reply, or `managed-response`; customer-facing replies remain investigation-confirmed AI output only.
+- Verification:
+  - `./.venv/bin/python -m pytest backend/tests/test_ticket_routing.py backend/tests/test_worker.py backend/tests/test_investigation_flow.py backend/tests/test_repository_configuration.py backend/tests/test_ticket_message_sentiment.py backend/tests/test_client_ui_contract.py backend/tests/test_engineer_ui_contract.py backend/tests/test_dashboard_metrics_contract.py backend/tests/test_dashboard_ui_contract.py -q`
+  - `./.venv/bin/python -m pytest backend/tests -q`
+  - `./.venv/bin/python -m py_compile backend/main.py backend/worker.py backend/services/ticket_orchestrator.py backend/services/investigation_flow.py backend/services/dashboard_ticket_ops.py backend/repositories/ticket_repository.py backend/services/ticket_message_sentiment.py`
+  - `node --check ui/client-ui/app.js`
+  - `node --check ui/engineer-ui/app.js`
+  - `node --check ui/dashboard-ui/app.js`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health`
+  - `curl -sS -X POST http://localhost:8080/api/tickets/query -H 'Content-Type: application/json' -d '{"customer_id":"smoke-user","message":"Need help joining a channel"}'`
+  - `curl -sS -X POST http://localhost:8080/api/tickets/T-C2518A/request-engineer-assistance -H 'Content-Type: application/json' -d '{}'`
+  - Verification result:
+    - Targeted contract suite passed: `85 passed`.
+    - Full backend suite passed: `321 passed`.
+    - Container restart completed successfully and `podman-compose ... ps` showed `deployment_redis_1`, `deployment_rag_api_1`, `deployment_rag_worker_1`, `deployment_ws_gateway_1`, `deployment_api_1`, `deployment_worker_1`, and `deployment_nginx_1` all `Up`.
+    - Runtime smoke checks returned `/health` with `status=ok`, `ticket_storage=postgres`, `knowledge_storage=postgres`, `rag_service=ok`.
+    - Runtime query smoke returned `status="communicating"` with the short ACK `Got it, let me check this for you.`, and the follow-up engineer-assistance request returned `status="escalated"` for the same ticket.

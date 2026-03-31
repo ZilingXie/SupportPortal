@@ -13,25 +13,29 @@ class DashboardMetricsContractTests(unittest.TestCase):
         tickets = [
             {
                 "ticket_id": "TK-001",
-                "status": "open",
+                "status": "communicating",
                 "priority": "normal",
-                "engineer_mode": "managed",
                 "created_at": "2026-03-21T07:15:00+00:00",
                 "updated_at": "2026-03-21T11:20:00+00:00",
             },
             {
                 "ticket_id": "TK-002",
-                "status": "waiting_for_engineer",
+                "status": "escalated",
                 "priority": "high",
-                "engineer_mode": "takeover",
                 "created_at": "2026-03-21T08:10:00+00:00",
                 "updated_at": "2026-03-21T11:40:00+00:00",
             },
             {
                 "ticket_id": "TK-003",
+                "status": "investigating",
+                "priority": "urgent",
+                "created_at": "2026-03-21T05:30:00+00:00",
+                "updated_at": "2026-03-21T10:30:00+00:00",
+            },
+            {
+                "ticket_id": "TK-004",
                 "status": "resolved",
                 "priority": "urgent",
-                "engineer_mode": "managed",
                 "created_at": "2026-03-21T05:00:00+00:00",
                 "updated_at": "2026-03-21T10:10:00+00:00",
             },
@@ -41,40 +45,37 @@ class DashboardMetricsContractTests(unittest.TestCase):
                 "event": "ticket_created",
                 "ticket_id": "TK-001",
                 "priority": "normal",
-                "status": "open",
-                "engineer_mode": "managed",
+                "status": "communicating",
                 "created_at": "2026-03-21T01:15:00+00:00",
             },
             {
-                "event": "engineer_attention_needed",
+                "event": "ticket_escalated",
                 "ticket_id": "TK-002",
                 "priority": "high",
-                "status": "waiting_for_engineer",
-                "engineer_mode": "takeover",
+                "status": "escalated",
                 "created_at": "2026-03-21T11:35:00+00:00",
             },
             {
-                "event": "ticket_resolved",
+                "event": "engineer_attention_required",
                 "ticket_id": "TK-003",
                 "priority": "urgent",
-                "status": "resolved",
-                "engineer_mode": "managed",
+                "status": "investigating",
                 "created_at": "2026-03-21T10:05:00+00:00",
             },
         ]
 
         payload = build_ticket_dashboard_metrics(tickets, events, now=now)
 
-        self.assertEqual(payload["today_ticket_count"], 3)
-        self.assertEqual(payload["resolution_rate"], 33.3)
+        self.assertEqual(payload["today_ticket_count"], 4)
+        self.assertEqual(payload["resolution_rate"], 25.0)
         self.assertEqual(payload["sentiment_alert_count"], 1)
 
         self.assertEqual(payload["cards"]["investigating_ticket_count"], 1)
-        self.assertEqual(payload["cards"]["open_ticket_count"], 1)
+        self.assertEqual(payload["cards"]["open_ticket_count"], 0)
+        self.assertEqual(payload["cards"]["communicating_ticket_count"], 1)
+        self.assertEqual(payload["cards"]["escalated_ticket_count"], 1)
         self.assertEqual(payload["cards"]["resolved_ticket_count"], 1)
-        self.assertEqual(payload["cards"]["managed_ticket_count"], 2)
-        self.assertEqual(payload["cards"]["takeover_ticket_count"], 1)
-        self.assertEqual(payload["cards"]["urgent_ticket_count"], 1)
+        self.assertEqual(payload["cards"]["urgent_ticket_count"], 2)
 
         self.assertIn("queue_health_label", payload["summaries"])
         self.assertIn("queue_health_detail", payload["summaries"])
@@ -87,11 +88,11 @@ class DashboardMetricsContractTests(unittest.TestCase):
         self.assertEqual(payload["charts"]["event_volume_12h"][-1]["value"], 1)
         self.assertEqual(payload["charts"]["event_volume_12h"][-2]["value"], 1)
 
-        self.assertEqual(payload["charts"]["status_breakdown"][0]["label"], "Open")
-        self.assertEqual(payload["charts"]["status_breakdown"][1]["label"], "Investigating")
+        self.assertEqual(payload["charts"]["status_breakdown"][0]["label"], "Communicating")
+        self.assertEqual(payload["charts"]["status_breakdown"][1]["label"], "Escalated")
         self.assertEqual(payload["charts"]["priority_breakdown"][0]["label"], "Urgent")
-        self.assertEqual(payload["charts"]["mode_breakdown"][0]["label"], "AI Managed")
-        self.assertIn("investigating", payload["summaries"]["queue_health_detail"].lower())
+        self.assertEqual(payload["charts"]["flow_breakdown"][0]["label"], "Communicating")
+        self.assertIn("escalated", payload["summaries"]["queue_health_detail"].lower())
 
     def test_dashboard_metrics_route_uses_ticket_ops_helper(self) -> None:
         main_source = Path("backend/main.py").read_text(encoding="utf-8")

@@ -38,14 +38,24 @@ from backend.services.embedding_provider import (
 )
 from backend.services.emotion_reply import build_initial_ack
 from backend.services.investigation_flow import (
+    COMMUNICATING_STATUS,
+    ESCALATED_STATUS,
     INVESTIGATING_STATUS,
+    OPEN_STATUS,
+    RESOLVED_STATUS,
     append_engineer_investigation_message,
     apply_investigation_confirmation,
     default_investigation_prompt as generate_investigation_ai_turn,
     ensure_ticket_investigation_defaults,
     normalize_ticket_status,
-    start_or_refresh_investigation,
     surface_legacy_pending_question,
+    start_or_refresh_investigation,
+)
+from backend.services.ticket_orchestrator import (
+    TicketExecutionResult,
+    analyze_ticket_message,
+    orchestrate_ticket_execution,
+    resolve_next_ticket_status,
 )
 from backend.services.dashboard_ticket_ops import (
     build_ticket_dashboard_metrics,
@@ -59,12 +69,7 @@ from backend.services.rag_service_client import (
     RagServiceError,
     async_to_thread,
 )
-from backend.services.support_router import (
-    SupportResolution,
-    SupportRouteDecision,
-    decide_support_route,
-    resolve_support_message as resolve_support_route_message,
-)
+from backend.services.support_router import SupportResolution, SupportRouteDecision, resolve_support_message as resolve_support_route_message
 from backend.services.task_queue import AsyncRedisTaskQueue
 from backend.services.ticket_message_sentiment import (
     build_ticket_message_sentiment_event,
@@ -90,9 +95,12 @@ PRIMARY_RAG_WORKBENCH_PAGES = (
 # Auto-load project environment variables from repository root.
 load_dotenv(dotenv_path=BASE_DIR / ".env", override=False)
 
-MANAGED_MODE = "managed"
-TAKEOVER_MODE = "takeover"
-OPEN_STATUSES = {"open", INVESTIGATING_STATUS}
+ACTIVE_TICKET_STATUSES = {
+    OPEN_STATUS,
+    COMMUNICATING_STATUS,
+    ESCALATED_STATUS,
+    INVESTIGATING_STATUS,
+}
 PRIORITY_RANK = {"urgent": 4, "high": 3, "normal": 2, "low": 1}
 LOGGER = logging.getLogger(__name__)
 _UNAVAILABLE_MODELS: set[str] = set()
@@ -147,15 +155,9 @@ class TicketQueryRequest(BaseModel):
 
 
 class TicketActionRequest(BaseModel):
-    action: str = Field(pattern="^(processing|resolved|handoff|reopen)$")
+    action: str = Field(pattern="^(processing|resolved|investigate|reopen)$")
     engineer_id: str = Field(default="eng")
     note: str | None = None
-
-
-class TicketModeRequest(BaseModel):
-    mode: str = Field(pattern="^(managed|takeover)$")
-    engineer_id: str = Field(default="eng")
-
 
 class ReviewSampleUpdateRequest(BaseModel):
     review_status: str | None = Field(default=None, pattern="^(pending|reviewed|dismissed)$")
@@ -192,11 +194,6 @@ class BenchmarkSessionRunRequest(BaseModel):
     top_k: int | None = Field(default=None, ge=1, le=20)
 
 
-class ManagedResponseRequest(BaseModel):
-    engineer_id: str = Field(default="eng")
-    solution: str = Field(min_length=1, max_length=4000)
-
-
 class InvestigationMessageRequest(BaseModel):
     engineer_id: str = Field(default="eng")
     message: str = Field(min_length=1, max_length=4000)
@@ -206,11 +203,6 @@ class InvestigationConfirmationRequest(BaseModel):
     engineer_id: str = Field(default="eng")
     decision: str = Field(pattern="^(approve|revise)$")
     note: str | None = Field(default=None, max_length=4000)
-
-
-class TakeoverReplyRequest(BaseModel):
-    engineer_id: str = Field(default="eng")
-    message: str = Field(min_length=1, max_length=4000)
 
 
 class CancelPendingRequest(BaseModel):
@@ -311,8 +303,6 @@ def ensure_ticket_defaults(ticket: dict[str, Any]) -> None:
     ticket.setdefault("messages", [])
     ticket.setdefault("subject", "General support request")
     ticket.setdefault("requester", ticket.get("customer_id") or "Unknown")
-    ticket.setdefault("engineer_mode", MANAGED_MODE)
-    ticket.setdefault("pending_engineer_question", None)
     ensure_ticket_investigation_defaults(ticket)
     surface_legacy_pending_question(ticket)
 
@@ -322,8 +312,8 @@ def ticket_matches_status_filter(ticket: dict[str, Any], status_filter: str) -> 
     status = normalize_ticket_status(ticket.get("status", "open"))
     if status_filter == "all":
         return True
-    if normalized_filter == "open":
-        return status in OPEN_STATUSES
+    if normalized_filter == OPEN_STATUS:
+        return status in ACTIVE_TICKET_STATUSES
     return status == normalized_filter
 
 
@@ -523,7 +513,7 @@ def build_engineer_followup_request(ticket: dict[str, Any], customer_message: st
         return fallback
 
     prompt = (
-        "You are assisting support escalation handoff.\n"
+        "You are assisting support investigation routing.\n"
         "Based on the full ticket context, create a concise engineer request.\n"
         "Output plain text only, exactly 3 lines in this exact format:\n"
         "Engineer Request:\n"
@@ -566,8 +556,6 @@ def _summary_fallback(ticket: dict[str, Any]) -> tuple[str, str]:
     subject = str(ticket.get("subject", "")).strip() or "General support request"
     status = str(ticket.get("status", "open")).strip().lower()
     priority = str(ticket.get("priority", "normal")).strip().lower()
-    mode = str(ticket.get("engineer_mode", MANAGED_MODE)).strip().lower()
-    pending_question = str(ticket.get("pending_engineer_question", "")).strip()
     active_investigation = (
         ticket.get("active_investigation")
         if isinstance(ticket.get("active_investigation"), dict)
@@ -600,9 +588,7 @@ def _summary_fallback(ticket: dict[str, Any]) -> tuple[str, str]:
         if latest_customer and latest_assistant:
             break
 
-    summary_parts = [
-        f"Ticket subject is '{subject}' with status {status}, priority {priority}, and mode {mode}."
-    ]
+    summary_parts = [f"Ticket subject is '{subject}' with status {status} and priority {priority}."]
     if latest_customer:
         summary_parts.append(f"Latest customer request: {latest_customer[:260]}")
     if latest_assistant:
@@ -615,13 +601,11 @@ def _summary_fallback(ticket: dict[str, Any]) -> tuple[str, str]:
             summary_parts.append(
                 f"Latest internal investigation update: {latest_internal_update[:260]}"
             )
-    elif pending_question:
-        summary_parts.append(f"Pending engineer request: {pending_question[:260]}")
-    if not latest_customer and not latest_assistant and not pending_question and active_investigation is None:
+    if not latest_customer and not latest_assistant and active_investigation is None:
         summary_parts.append("No conversation history is available yet.")
     summary = " ".join(summary_parts).strip()
 
-    if status == "resolved":
+    if status == RESOLVED_STATUS:
         next_action = (
             "Confirm resolution details with the customer and close the ticket if no additional issue remains."
         )
@@ -629,13 +613,14 @@ def _summary_fallback(ticket: dict[str, Any]) -> tuple[str, str]:
         next_action = (
             "Continue the internal investigation, gather the next missing detail, and request final confirmation when the customer reply is ready."
         )
+    elif status == ESCALATED_STATUS:
+        next_action = (
+            "Review the customer escalation request, decide whether investigation must start now, and return the ticket to normal communication when safe."
+        )
     else:
         next_action = (
             "Continue troubleshooting based on the latest customer message, then provide the next actionable step."
         )
-
-    if mode == TAKEOVER_MODE:
-        next_action += " Keep the response in human takeover mode."
 
     return summary, next_action
 
@@ -755,9 +740,7 @@ def build_ticket_summary(ticket: dict[str, Any]) -> tuple[str, str, str]:
     subject = str(ticket.get("subject", "")).strip()
     status = str(ticket.get("status", "")).strip()
     priority = str(ticket.get("priority", "")).strip()
-    mode = str(ticket.get("engineer_mode", MANAGED_MODE)).strip()
     requester = str(ticket.get("requester") or ticket.get("customer_id") or "").strip()
-    pending_question = str(ticket.get("pending_engineer_question", "")).strip()
     active_investigation = (
         ticket.get("active_investigation")
         if isinstance(ticket.get("active_investigation"), dict)
@@ -784,8 +767,6 @@ def build_ticket_summary(ticket: dict[str, Any]) -> tuple[str, str, str]:
         f"Requester: {requester}\n"
         f"Status: {status}\n"
         f"Priority: {priority}\n"
-        f"Mode: {mode}\n"
-        f"Pending engineer question: {pending_question or 'None'}\n"
         f"Active investigation: {investigation_summary}\n"
         "Recent messages:\n"
         + "\n".join(lines)
@@ -1017,7 +998,6 @@ def build_client_sync_event(ticket: dict[str, Any], event_name: str, message: st
         "ticket_id": str(ticket.get("ticket_id") or ""),
         "customer_id": str(ticket.get("customer_id") or ""),
         "status": normalize_ticket_status(ticket.get("status") or "open"),
-        "engineer_mode": str(ticket.get("engineer_mode") or MANAGED_MODE),
         "updated_at": str(ticket.get("updated_at") or now_iso()),
         "created_at": now_iso(),
     }
@@ -1068,7 +1048,6 @@ def _build_investigation_event(
         "ticket_id": str(ticket.get("ticket_id") or ""),
         "investigation_id": str(investigation.get("id") or ""),
         "status": normalize_ticket_status(ticket.get("status")),
-        "engineer_mode": str(ticket.get("engineer_mode") or MANAGED_MODE),
         "investigation_state": str(investigation.get("state") or "active"),
         "message": latest_message[:200],
         "created_at": now_iso(),
@@ -1125,7 +1104,6 @@ def _close_active_investigation(
         ticket["investigation_history"] = history
     history.insert(0, active_investigation)
     ticket["active_investigation"] = None
-    ticket["pending_engineer_question"] = None
     return active_investigation, appended_messages
 
 
@@ -1140,20 +1118,14 @@ def build_engineer_request_records(ticket_id: str) -> list[dict[str, Any]]:
         detail = str(payload.get("message") or "").strip()
 
         status = ""
-        if event_type in {"ticket_takeover_reply", "ticket_direct_reply"}:
-            status = "engineer replied"
-            if not detail:
-                detail = "Engineer sent a direct reply to the customer."
-        elif event_type == "ticket_guidance_applied":
+        if event_type == "ticket_guidance_applied":
             status = "received answer"
             if not detail:
                 detail = "Engineer provided guidance for AI response."
-        elif event_type == "ticket_mode_changed":
-            target_mode = str(payload.get("engineer_mode") or payload.get("new_mode") or "").strip().lower()
-            if target_mode == TAKEOVER_MODE:
-                status = "engineer takeover"
-                if not detail:
-                    detail = "Engineer switched this case to Human Takeover mode."
+        elif event_type == "ticket_escalated":
+            status = "customer escalated"
+            if not detail:
+                detail = "Customer requested engineer assistance."
 
         if not status:
             continue
@@ -1316,10 +1288,9 @@ async def create_or_update_ticket(
     ticket = existing_ticket or {
         "ticket_id": ticket_id,
         "customer_id": request.customer_id,
-        "status": "open",
+        "status": OPEN_STATUS,
         "created_at": now_iso(),
         "messages": [],
-        "engineer_mode": MANAGED_MODE,
     }
     ensure_ticket_defaults(ticket)
     priority = str(ticket.get("priority") or "normal").strip().lower() or "normal"
@@ -1337,8 +1308,8 @@ async def create_or_update_ticket(
     elif is_new_ticket or not existing_subject or existing_subject == "General support request":
         ticket["subject"] = derive_subject(request.message)
 
-    if ticket.get("status") == "resolved":
-        ticket["status"] = "open"
+    if normalize_ticket_status(ticket.get("status")) == RESOLVED_STATUS:
+        ticket["status"] = COMMUNICATING_STATUS
 
     timestamp = now_iso()
     customer_message = request.message.strip()
@@ -1355,19 +1326,23 @@ async def create_or_update_ticket(
     follow_up_answer = ""
     follow_up_sources: list[str] = []
     follow_up_citations: list[dict[str, str]] = []
-    needs_engineer_guidance = False
     needs_engineer_input = False
     ai_replied = bool(str(response_answer).strip())
     task_enqueued = False
     route_payload: dict[str, Any] = {
         "answer_route": None,
         "scope_label": None,
+        "route_family": None,
+        "execution_action": None,
+        "tooling_profile": None,
         "route_reason": None,
         "route_confidence": None,
         "search_used": False,
+        "matched_signals": [],
     }
     route_context = build_emotion_context(ticket, limit=6, max_chars=400)
     investigation_result: dict[str, Any] | None = None
+    execution: TicketExecutionResult | None = None
 
     if ai_replied:
         ticket["messages"].append(
@@ -1378,17 +1353,7 @@ async def create_or_update_ticket(
             }
         )
 
-    if ticket.get("engineer_mode") == TAKEOVER_MODE:
-        follow_up_answer = (
-            "I have forwarded your question to the assigned engineer. "
-            "The engineer will reply to you shortly."
-        )
-        ticket["status"] = "open"
-        ticket["pending_engineer_question"] = (
-            "Customer sent a new message in takeover mode. Please contact the customer directly."
-        )
-        needs_engineer_input = True
-    elif isinstance(ticket.get("active_investigation"), dict):
+    if isinstance(ticket.get("active_investigation"), dict):
         investigation_result = start_or_refresh_investigation(
             ticket,
             trigger_reason="customer_follow_up",
@@ -1399,23 +1364,26 @@ async def create_or_update_ticket(
         follow_up_answer = str(investigation_result.get("public_reply") or "").strip()
         needs_engineer_input = True
     else:
-        route_decision = decide_support_route(
+        route_decision = analyze_ticket_message(
             customer_message,
             ticket_subject=str(ticket.get("subject") or "").strip() or None,
             ticket_context=route_context,
         )
         route_payload.update(
             {
-                "answer_route": "rag" if route_decision.route == "rag" else route_decision.route,
+                "answer_route": "rag" if route_decision.execution_action == "rag" else route_decision.execution_action,
                 "scope_label": route_decision.scope_label,
+                "route_family": route_decision.route_family,
+                "execution_action": route_decision.execution_action,
+                "tooling_profile": route_decision.tooling_profile,
                 "route_reason": route_decision.reason,
                 "route_confidence": round(float(route_decision.confidence), 4),
                 "search_used": False,
+                "matched_signals": list(route_decision.matched_signals),
             }
         )
-        if route_decision.route == "rag" and ASYNC_QUERY_ENABLED:
-            ticket["status"] = "open"
-            ticket["pending_engineer_question"] = None
+        if route_decision.execution_action == "rag" and ASYNC_QUERY_ENABLED:
+            ticket["status"] = resolve_next_ticket_status(ticket.get("status"), COMMUNICATING_STATUS)
             task_enqueued = await task_queue.enqueue(
                 build_query_task(
                     ticket_id=ticket_id,
@@ -1424,50 +1392,46 @@ async def create_or_update_ticket(
                 )
             )
             if not task_enqueued:
-                resolution = resolve_support_message(
+                execution = orchestrate_ticket_execution(
                     customer_message,
                     ticket_id=ticket_id,
                     customer_id=request.customer_id,
                     ticket_subject=str(ticket.get("subject") or "").strip() or None,
                     ticket_context=route_context,
                     decision=route_decision,
+                    resolution_builder=resolve_support_message,
                 )
-                route_payload.update(resolution.route_payload())
-                follow_up_answer = resolution.answer
-                follow_up_sources = list(resolution.sources)
-                follow_up_citations = [dict(item) for item in resolution.citations]
-                needs_engineer_guidance = resolution.needs_engineer_guidance
         else:
-            resolution = resolve_support_message(
+            execution = orchestrate_ticket_execution(
                 customer_message,
                 ticket_id=ticket_id,
                 customer_id=request.customer_id,
                 ticket_subject=str(ticket.get("subject") or "").strip() or None,
                 ticket_context=route_context,
                 decision=route_decision,
+                resolution_builder=resolve_support_message,
             )
-            route_payload.update(resolution.route_payload())
-            follow_up_answer = resolution.answer
-            follow_up_sources = list(resolution.sources)
-            follow_up_citations = [dict(item) for item in resolution.citations]
-            needs_engineer_guidance = resolution.needs_engineer_guidance
-
-    if not needs_engineer_input and needs_engineer_guidance:
-        investigation_result = start_or_refresh_investigation(
-            ticket,
-            trigger_reason=str(route_payload.get("route_reason") or "rag_insufficient_evidence"),
-            trigger_source="support_query",
-            now_value=now_iso(),
-            ai_turn_builder=generate_investigation_ai_turn,
-        )
-        follow_up_answer = str(investigation_result.get("public_reply") or "").strip()
-        follow_up_sources = []
-        follow_up_citations = []
-        needs_engineer_input = True
-    elif not needs_engineer_input:
-        ticket["status"] = "open"
-        if not task_enqueued:
-            ticket["pending_engineer_question"] = None
+        if execution is not None:
+            route_payload.update(execution.route_payload())
+            follow_up_answer = execution.answer
+            follow_up_sources = list(execution.sources)
+            follow_up_citations = [dict(item) for item in execution.citations]
+            if execution.needs_investigating:
+                investigation_result = start_or_refresh_investigation(
+                    ticket,
+                    trigger_reason=str(route_payload.get("route_reason") or "rag_insufficient_evidence"),
+                    trigger_source="support_query",
+                    now_value=now_iso(),
+                    ai_turn_builder=generate_investigation_ai_turn,
+                )
+                follow_up_answer = str(investigation_result.get("public_reply") or "").strip()
+                follow_up_sources = []
+                follow_up_citations = []
+                needs_engineer_input = True
+            else:
+                ticket["status"] = resolve_next_ticket_status(ticket.get("status"), execution.next_status)
+        else:
+            ticket["status"] = resolve_next_ticket_status(ticket.get("status"), COMMUNICATING_STATUS)
 
     if str(follow_up_answer).strip():
         assistant_message: dict[str, Any] = {
@@ -1478,9 +1442,13 @@ async def create_or_update_ticket(
         if route_payload.get("answer_route"):
             assistant_message["answer_route"] = route_payload.get("answer_route")
             assistant_message["scope_label"] = route_payload.get("scope_label")
+            assistant_message["route_family"] = route_payload.get("route_family")
+            assistant_message["execution_action"] = route_payload.get("execution_action")
+            assistant_message["tooling_profile"] = route_payload.get("tooling_profile")
             assistant_message["route_reason"] = route_payload.get("route_reason")
             assistant_message["route_confidence"] = route_payload.get("route_confidence")
             assistant_message["search_used"] = bool(route_payload.get("search_used"))
+            assistant_message["matched_signals"] = list(route_payload.get("matched_signals") or [])
         if follow_up_sources:
             assistant_message["sources"] = follow_up_sources
         if follow_up_citations:
@@ -1510,16 +1478,19 @@ async def create_or_update_ticket(
         "ticket_id": ticket_id,
         "priority": priority,
         "status": ticket["status"],
-        "engineer_mode": ticket["engineer_mode"],
         "message": customer_message,
         "created_at": now_iso(),
     }
     if route_payload.get("answer_route"):
         event["answer_route"] = route_payload.get("answer_route")
         event["scope_label"] = route_payload.get("scope_label")
+        event["route_family"] = route_payload.get("route_family")
+        event["execution_action"] = route_payload.get("execution_action")
+        event["tooling_profile"] = route_payload.get("tooling_profile")
         event["route_reason"] = route_payload.get("route_reason")
         event["route_confidence"] = route_payload.get("route_confidence")
         event["search_used"] = bool(route_payload.get("search_used"))
+        event["matched_signals"] = list(route_payload.get("matched_signals") or [])
     ticket_repository.record_event(ticket_id, event["event"], event)
     await dispatch_event(["engineer", "dashboard"], event)
     await dispatch_event(
@@ -1539,7 +1510,6 @@ async def create_or_update_ticket(
             "ticket_id": ticket_id,
             "status": ticket["status"],
             "priority": priority,
-            "engineer_mode": ticket["engineer_mode"],
             "message": "AI is processing this request asynchronously.",
             "created_at": now_iso(),
         }
@@ -1551,7 +1521,7 @@ async def create_or_update_ticket(
         )
 
     if needs_engineer_input:
-        attention_message = str(ticket.get("pending_engineer_question") or "").strip()
+        attention_message = ""
         active_investigation = (
             ticket.get("active_investigation")
             if isinstance(ticket.get("active_investigation"), dict)
@@ -1566,7 +1536,6 @@ async def create_or_update_ticket(
             "ticket_id": ticket_id,
             "priority": priority,
             "status": ticket["status"],
-            "engineer_mode": ticket["engineer_mode"],
             "message": attention_message or "Engineer attention required",
             "created_at": now_iso(),
         }
@@ -1593,7 +1562,6 @@ async def create_or_update_ticket(
         },
         "priority": priority,
         "status": ticket["status"],
-        "engineer_mode": ticket["engineer_mode"],
         "ai_replied": ai_replied,
         "needs_engineer_input": needs_engineer_input,
         "queued_for_ai": task_enqueued,
@@ -1609,7 +1577,7 @@ async def create_or_update_ticket(
 
 @app.get("/api/engineer/tickets")
 def list_tickets(
-    status: str = Query(default="open", pattern="^(open|all|resolved|investigating|waiting_for_engineer)$"),
+    status: str = Query(default="open", pattern="^(open|all|resolved|communicating|escalated|investigating)$"),
 ) -> dict[str, Any]:
     all_tickets = ticket_repository.list_tickets(include_messages=True)
     filtered_tickets: list[dict[str, Any]] = []
@@ -1657,6 +1625,43 @@ def get_ticket_summary(ticket_id: str) -> dict[str, Any]:
     }
 
 
+@app.post("/api/tickets/{ticket_id}/request-engineer-assistance")
+async def request_engineer_assistance(ticket_id: str) -> dict[str, Any]:
+    ticket = ticket_repository.get_ticket(ticket_id)
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    ensure_ticket_defaults(ticket)
+    if normalize_ticket_status(ticket.get("status")) == INVESTIGATING_STATUS:
+        return {
+            "ticket_id": ticket_id,
+            "status": ticket["status"],
+            "updated_at": ticket["updated_at"],
+        }
+
+    ticket["status"] = ESCALATED_STATUS
+    ticket["updated_at"] = now_iso()
+    ticket_repository.save_ticket(ticket, new_messages=[])
+
+    payload = {
+        "event": "ticket_escalated",
+        "ticket_id": ticket_id,
+        "status": ticket["status"],
+        "priority": ticket.get("priority", "normal"),
+        "message": "Customer requested engineer assistance.",
+        "created_at": now_iso(),
+    }
+    ticket_repository.record_event(ticket_id, payload["event"], payload)
+    await dispatch_event(["engineer", "dashboard"], payload)
+    await dispatch_event(["client"], build_client_sync_event(ticket, payload["event"], payload["message"]))
+
+    return {
+        "ticket_id": ticket_id,
+        "status": ticket["status"],
+        "updated_at": ticket["updated_at"],
+    }
+
+
 @app.post("/api/tickets/{ticket_id}/action")
 async def update_ticket(ticket_id: str, request: TicketActionRequest) -> dict[str, Any]:
     ticket = ticket_repository.get_ticket(ticket_id)
@@ -1664,10 +1669,10 @@ async def update_ticket(ticket_id: str, request: TicketActionRequest) -> dict[st
         raise HTTPException(status_code=404, detail="Ticket not found")
 
     status_map = {
-        "processing": "open",
-        "reopen": "open",
-        "resolved": "resolved",
-        "handoff": INVESTIGATING_STATUS,
+        "processing": COMMUNICATING_STATUS,
+        "reopen": COMMUNICATING_STATUS,
+        "resolved": RESOLVED_STATUS,
+        "investigate": INVESTIGATING_STATUS,
     }
 
     ensure_ticket_defaults(ticket)
@@ -1676,25 +1681,29 @@ async def update_ticket(ticket_id: str, request: TicketActionRequest) -> dict[st
     investigation_to_persist: dict[str, Any] | None = None
     investigation_messages: list[dict[str, Any]] = []
     investigation_created = False
-    if request.action == "handoff":
-        ticket["engineer_mode"] = MANAGED_MODE
-        handoff_result = start_or_refresh_investigation(
+    if request.action == "investigate":
+        investigate_result = start_or_refresh_investigation(
             ticket,
-            trigger_reason="engineer_handoff",
+            trigger_reason="engineer_investigate",
             trigger_source="engineer_action",
             now_value=now_iso(),
             ai_turn_builder=generate_investigation_ai_turn,
         )
-        investigation_to_persist = handoff_result.get("active_investigation")
-        investigation_messages = handoff_result.get("new_internal_messages") or []
-        investigation_created = bool(handoff_result.get("created"))
+        investigation_to_persist = investigate_result.get("active_investigation")
+        investigation_messages = investigate_result.get("new_internal_messages") or []
+        investigation_created = bool(investigate_result.get("created"))
     elif request.action == "resolved":
         investigation_to_persist, investigation_messages = _close_active_investigation(
             ticket,
             now_value=now_iso(),
             system_note="Investigation closed because the ticket was marked resolved.",
         )
-        ticket["pending_engineer_question"] = None
+    elif request.action in {"processing", "reopen"}:
+        investigation_to_persist, investigation_messages = _close_active_investigation(
+            ticket,
+            now_value=now_iso(),
+            system_note="Investigation closed because the ticket returned to the normal AI-managed communication flow.",
+        )
 
     ticket["updated_at"] = now_iso()
     ticket["last_engineer_action"] = {
@@ -1716,7 +1725,6 @@ async def update_ticket(ticket_id: str, request: TicketActionRequest) -> dict[st
         "event": "ticket_updated",
         "ticket_id": ticket_id,
         "status": ticket["status"],
-        "engineer_mode": ticket["engineer_mode"],
         "engineer_id": request.engineer_id,
         "created_at": now_iso(),
     }
@@ -1733,7 +1741,6 @@ async def update_ticket(ticket_id: str, request: TicketActionRequest) -> dict[st
     return {
         "ticket_id": ticket_id,
         "status": ticket["status"],
-        "engineer_mode": ticket["engineer_mode"],
         "updated_at": ticket["updated_at"],
     }
 
@@ -1762,7 +1769,6 @@ async def cancel_pending_ticket_query(ticket_id: str, request: CancelPendingRequ
         "ticket_id": ticket_id,
         "customer_id": customer_id,
         "status": ticket["status"],
-        "engineer_mode": ticket["engineer_mode"],
         "message_created_at": message_created_at,
         "message": "AI generation stopped by customer.",
         "created_at": now_iso(),
@@ -1782,73 +1788,6 @@ async def cancel_pending_ticket_query(ticket_id: str, request: CancelPendingRequ
     }
 
 
-@app.post("/api/engineer/tickets/{ticket_id}/mode")
-async def update_ticket_mode(ticket_id: str, request: TicketModeRequest) -> dict[str, Any]:
-    ticket = ticket_repository.get_ticket(ticket_id)
-    if ticket is None:
-        raise HTTPException(status_code=404, detail="Ticket not found")
-
-    ensure_ticket_defaults(ticket)
-    initial_message_count = len(ticket.get("messages", []))
-    previous_mode = ticket.get("engineer_mode", MANAGED_MODE)
-    closed_investigation: dict[str, Any] | None = None
-    closed_messages: list[dict[str, Any]] = []
-
-    ticket["engineer_mode"] = request.mode
-    if request.mode == TAKEOVER_MODE:
-        if normalize_ticket_status(ticket.get("status")) == INVESTIGATING_STATUS:
-            ticket["status"] = "open"
-        closed_investigation, closed_messages = _close_active_investigation(
-            ticket,
-            now_value=now_iso(),
-            system_note="Investigation closed because the engineer switched the ticket to Human Takeover mode.",
-        )
-        ticket["pending_engineer_question"] = None
-
-    ticket["updated_at"] = now_iso()
-    ticket["last_engineer_action"] = {
-        "action": "mode_switch",
-        "previous_mode": previous_mode,
-        "new_mode": request.mode,
-        "engineer_id": request.engineer_id,
-        "created_at": now_iso(),
-    }
-    new_messages = ticket.get("messages", [])[initial_message_count:]
-    ticket_repository.save_ticket(ticket, new_messages=new_messages)
-    if closed_investigation is not None:
-        _persist_investigation_update(
-            ticket_id,
-            closed_investigation,
-            new_messages=closed_messages,
-        )
-
-    payload = {
-        "event": "ticket_mode_changed",
-        "ticket_id": ticket_id,
-        "status": ticket["status"],
-        "engineer_mode": request.mode,
-        "engineer_id": request.engineer_id,
-        "message": (
-            "Engineer switched this case to Human Takeover mode."
-            if request.mode == TAKEOVER_MODE
-            else "Engineer switched this case to AI Managing mode."
-        ),
-        "created_at": now_iso(),
-    }
-    ticket_repository.record_event(ticket_id, payload["event"], payload)
-    await dispatch_event(["engineer", "dashboard"], payload)
-    await dispatch_event(["client"], build_client_sync_event(ticket, payload["event"]))
-    if closed_investigation is not None:
-        await _record_and_dispatch_investigation_event(ticket, closed_investigation)
-
-    return {
-        "ticket_id": ticket_id,
-        "status": ticket["status"],
-        "engineer_mode": request.mode,
-        "updated_at": ticket["updated_at"],
-    }
-
-
 @app.post("/api/engineer/tickets/{ticket_id}/investigation/messages")
 async def post_investigation_message(
     ticket_id: str,
@@ -1859,8 +1798,6 @@ async def post_investigation_message(
         raise HTTPException(status_code=404, detail="Ticket not found")
 
     ensure_ticket_defaults(ticket)
-    if ticket.get("engineer_mode") != MANAGED_MODE:
-        raise HTTPException(status_code=400, detail="Ticket is in takeover mode")
     if not isinstance(ticket.get("active_investigation"), dict):
         raise HTTPException(status_code=400, detail="No active investigation exists")
 
@@ -1889,7 +1826,6 @@ async def post_investigation_message(
     return {
         "ticket_id": ticket_id,
         "status": ticket["status"],
-        "engineer_mode": ticket["engineer_mode"],
         "active_investigation": result.get("active_investigation"),
         "updated_at": ticket["updated_at"],
     }
@@ -1905,8 +1841,6 @@ async def confirm_investigation_reply(
         raise HTTPException(status_code=404, detail="Ticket not found")
 
     ensure_ticket_defaults(ticket)
-    if ticket.get("engineer_mode") != MANAGED_MODE:
-        raise HTTPException(status_code=400, detail="Ticket is in takeover mode")
     if not isinstance(ticket.get("active_investigation"), dict):
         raise HTTPException(status_code=400, detail="No active investigation exists")
 
@@ -1957,7 +1891,6 @@ async def confirm_investigation_reply(
             "event": "ticket_guidance_applied",
             "ticket_id": ticket_id,
             "status": ticket["status"],
-            "engineer_mode": ticket["engineer_mode"],
             "engineer_id": request.engineer_id,
             "message": customer_reply[:200],
             "created_at": timestamp,
@@ -1969,152 +1902,7 @@ async def confirm_investigation_reply(
     return {
         "ticket_id": ticket_id,
         "status": ticket["status"],
-        "engineer_mode": ticket["engineer_mode"],
         "active_investigation": ticket.get("active_investigation"),
-        "updated_at": ticket["updated_at"],
-    }
-
-
-@app.post("/api/engineer/tickets/{ticket_id}/managed-response")
-async def submit_managed_response(ticket_id: str, request: ManagedResponseRequest) -> dict[str, Any]:
-    ticket = ticket_repository.get_ticket(ticket_id)
-    if ticket is None:
-        raise HTTPException(status_code=404, detail="Ticket not found")
-
-    ensure_ticket_defaults(ticket)
-    initial_message_count = len(ticket.get("messages", []))
-    if ticket.get("engineer_mode") != MANAGED_MODE:
-        raise HTTPException(status_code=400, detail="Ticket is in takeover mode")
-
-    solution = request.solution.strip()
-    if not solution:
-        raise HTTPException(status_code=400, detail="Solution cannot be empty")
-
-    timestamp = now_iso()
-    closed_investigation, closed_messages = _close_active_investigation(
-        ticket,
-        now_value=timestamp,
-        system_note="Investigation closed because the engineer sent a legacy managed response.",
-    )
-    ai_followup = await asyncio.to_thread(build_ai_followup, ticket, solution)
-    ticket["messages"].append(
-        {
-            "role": "assistant",
-            "content": ai_followup,
-            "created_at": timestamp,
-        }
-    )
-
-    ticket["status"] = "open"
-    ticket["pending_engineer_question"] = None
-    ticket["updated_at"] = timestamp
-    ticket["last_engineer_action"] = {
-        "action": "managed_guidance",
-        "engineer_id": request.engineer_id,
-        "note": solution,
-        "created_at": timestamp,
-    }
-    new_messages = ticket.get("messages", [])[initial_message_count:]
-    ticket_repository.save_ticket(ticket, new_messages=new_messages)
-    if closed_investigation is not None:
-        _persist_investigation_update(
-            ticket_id,
-            closed_investigation,
-            new_messages=closed_messages,
-        )
-
-    payload = {
-        "event": "ticket_guidance_applied",
-        "ticket_id": ticket_id,
-        "status": ticket["status"],
-        "engineer_mode": ticket["engineer_mode"],
-        "engineer_id": request.engineer_id,
-        "message": solution[:200],
-        "created_at": timestamp,
-    }
-    ticket_repository.record_event(ticket_id, payload["event"], payload)
-    await dispatch_event(["engineer", "dashboard"], payload)
-    await dispatch_event(["client"], build_client_sync_event(ticket, payload["event"]))
-    if closed_investigation is not None:
-        await _record_and_dispatch_investigation_event(ticket, closed_investigation)
-
-    return {
-        "ticket_id": ticket_id,
-        "status": ticket["status"],
-        "engineer_mode": ticket["engineer_mode"],
-        "ai_followup": ai_followup,
-        "updated_at": ticket["updated_at"],
-    }
-
-
-@app.post("/api/engineer/tickets/{ticket_id}/takeover-reply")
-async def submit_takeover_reply(ticket_id: str, request: TakeoverReplyRequest) -> dict[str, Any]:
-    ticket = ticket_repository.get_ticket(ticket_id)
-    if ticket is None:
-        raise HTTPException(status_code=404, detail="Ticket not found")
-
-    ensure_ticket_defaults(ticket)
-    initial_message_count = len(ticket.get("messages", []))
-    current_mode = str(ticket.get("engineer_mode") or MANAGED_MODE).strip().lower()
-
-    message = request.message.strip()
-    if not message:
-        raise HTTPException(status_code=400, detail="Message cannot be empty")
-
-    timestamp = now_iso()
-    closed_investigation, closed_messages = _close_active_investigation(
-        ticket,
-        now_value=timestamp,
-        system_note="Investigation closed because the engineer replied directly to the customer.",
-    )
-    ticket["messages"].append(
-        {
-            "role": "engineer",
-            "content": message,
-            "created_at": timestamp,
-        }
-    )
-
-    ticket["status"] = "open"
-    ticket["pending_engineer_question"] = None
-    ticket["updated_at"] = timestamp
-    action_name = "takeover_reply" if current_mode == TAKEOVER_MODE else "direct_reply"
-    event_name = "ticket_takeover_reply" if current_mode == TAKEOVER_MODE else "ticket_direct_reply"
-    ticket["last_engineer_action"] = {
-        "action": action_name,
-        "engineer_id": request.engineer_id,
-        "note": message,
-        "created_at": timestamp,
-    }
-    new_messages = ticket.get("messages", [])[initial_message_count:]
-    ticket_repository.save_ticket(ticket, new_messages=new_messages)
-    if closed_investigation is not None:
-        _persist_investigation_update(
-            ticket_id,
-            closed_investigation,
-            new_messages=closed_messages,
-        )
-
-    payload = {
-        "event": event_name,
-        "ticket_id": ticket_id,
-        "status": ticket["status"],
-        "engineer_mode": ticket["engineer_mode"],
-        "engineer_id": request.engineer_id,
-        "message": message[:200],
-        "created_at": timestamp,
-    }
-    ticket_repository.record_event(ticket_id, payload["event"], payload)
-    await dispatch_event(["engineer", "dashboard"], payload)
-    await dispatch_event(["client"], build_client_sync_event(ticket, payload["event"], message[:200]))
-    if closed_investigation is not None:
-        await _record_and_dispatch_investigation_event(ticket, closed_investigation)
-
-    return {
-        "ticket_id": ticket_id,
-        "status": ticket["status"],
-        "engineer_mode": ticket["engineer_mode"],
-        "sent_message": message,
         "updated_at": ticket["updated_at"],
     }
 

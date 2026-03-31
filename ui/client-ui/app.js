@@ -8,14 +8,11 @@ const MAX_RECENT = 5;
 
 const DEMO_USERS = [{ id: "user-1", name: "Admin", email: "admin", password: "admin" }];
 const ENGINEER_ASSISTANCE_WAIT_TEXT = "Estimate waiting time: 3 hours";
-const ENGINEER_ASSISTANCE_ESCALATION_MESSAGE =
-  "your request has been escalated to an engineer, and he/she will contact you at earlist possible. Estimated waiting time: 3 hours.";
 
 const STATUS_CONFIG = {
-  new: { label: "New", className: "status-new" },
-  waiting_for_support: { label: "Waiting for Support", className: "status-waiting_for_support" },
+  open: { label: "Open", className: "status-open" },
+  communicating: { label: "Communicating", className: "status-communicating" },
   investigating: { label: "Investigating", className: "status-investigating" },
-  waiting_for_agent: { label: "Waiting for Customer", className: "status-waiting_for_agent" },
   escalated: { label: "Waiting for Engineer", className: "status-escalated" },
   resolved: { label: "Resolved", className: "status-resolved" },
 };
@@ -72,7 +69,6 @@ let clientReconnectTimer = null;
 let clientHeartbeatTimer = null;
 let pendingStatusPollTimer = null;
 let lastChatScrollKey = "";
-const engineerAssistanceRequestedTicketIds = new Set();
 
 function escapeHtml(value) {
   return String(value)
@@ -216,7 +212,6 @@ function login(email, password) {
 function logout() {
   clearPendingRequestState();
   closeClientRealtimeConnection();
-  engineerAssistanceRequestedTicketIds.clear();
   lastChatScrollKey = "";
   localStorage.removeItem(AUTH_KEY);
   state.user = null;
@@ -498,6 +493,13 @@ function mapBackendRoleToClientRole(role) {
 
 function mapBackendStatusToClientStatus(ticket) {
   const status = String(ticket?.status || "open").toLowerCase();
+  if (status === "open") {
+    const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
+    return messages.length > 0 ? "communicating" : "open";
+  }
+  if (status === "communicating") {
+    return "communicating";
+  }
   if (status === "resolved") {
     return "resolved";
   }
@@ -507,14 +509,7 @@ function mapBackendStatusToClientStatus(ticket) {
   if (status === "investigating" || status === "waiting_for_engineer") {
     return "investigating";
   }
-
-  const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
-  const latest = messages.length > 0 ? messages[messages.length - 1] : null;
-  const latestRole = String(latest?.role || "").toLowerCase();
-  if (latestRole === "customer") {
-    return "waiting_for_support";
-  }
-  return "waiting_for_agent";
+  return "open";
 }
 
 function normalizeBackendTicket(ticket) {
@@ -633,7 +628,7 @@ function createTicket(userId) {
   const ticket = {
     id: ticketId,
     title: "New Session",
-    status: "new",
+    status: "open",
     createdAt: now,
     updatedAt: now,
     userId,
@@ -728,45 +723,41 @@ function updateTicketTitle(ticketId, title) {
 function canRequestEngineerAssistance(ticket) {
   return Boolean(
     ticket &&
-      String(ticket.status || "").trim().toLowerCase() !== "resolved" &&
+      !["resolved", "escalated", "investigating"].includes(
+        String(ticket.status || "").trim().toLowerCase()
+      ) &&
       !isTicketEmpty(ticket)
   );
 }
 
-function hasRequestedEngineerAssistance(ticketId) {
-  const normalizedId = String(ticketId || "").trim();
-  if (!normalizedId) {
-    return false;
-  }
-  return engineerAssistanceRequestedTicketIds.has(normalizedId);
-}
-
-function clearEngineerAssistanceRequest(ticketId) {
-  const normalizedId = String(ticketId || "").trim();
-  if (!normalizedId) {
-    return;
-  }
-  engineerAssistanceRequestedTicketIds.delete(normalizedId);
-}
-
-function requestEngineerAssistance(ticketId) {
+async function requestEngineerAssistance(ticketId) {
   const normalizedId = String(ticketId || "").trim();
   const ticket = getTicketById(normalizedId);
   if (!normalizedId || !canRequestEngineerAssistance(ticket)) {
     return false;
   }
-  if (engineerAssistanceRequestedTicketIds.has(normalizedId)) {
+  try {
+    const response = await fetch(
+      `/api/tickets/${encodeURIComponent(normalizedId)}/request-engineer-assistance`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`Request failed with status ${response.status}`);
+    }
+    const payload = await response.json();
+    updateTicketStatus(
+      normalizedId,
+      mapBackendStatusToClientStatus({ status: payload?.status, messages: ticket.messages })
+    );
+    return true;
+  } catch (error) {
+    toast(`Failed to request engineer assistance: ${error.message}`, "error");
     return false;
   }
-  appendTicketMessage(normalizedId, {
-    id: crypto.randomUUID(),
-    role: "assistant",
-    content: ENGINEER_ASSISTANCE_ESCALATION_MESSAGE,
-    createdAt: new Date().toISOString(),
-  });
-  updateTicketStatus(normalizedId, "escalated");
-  engineerAssistanceRequestedTicketIds.add(normalizedId);
-  return true;
 }
 
 function saveTicketMessages(ticketId, messages) {
@@ -790,7 +781,7 @@ function formatDate(iso) {
 }
 
 function statusBadge(status) {
-  const config = STATUS_CONFIG[status] || STATUS_CONFIG.new;
+  const config = STATUS_CONFIG[status] || STATUS_CONFIG.open;
   return `<span class="status-badge ${config.className}">${config.label}</span>`;
 }
 
@@ -1209,9 +1200,7 @@ function renderContextBar() {
   if (state.view === "chat-ticket") {
     const ticket = getTicketById(state.activeTicketId);
     if (ticket && ticket.userId === state.user.id) {
-      const assistanceRequested =
-        String(ticket.status || "").trim().toLowerCase() === "escalated" ||
-        hasRequestedEngineerAssistance(ticket.id);
+      const assistanceRequested = String(ticket.status || "").trim().toLowerCase() === "escalated";
       const canRequestAssistance = canRequestEngineerAssistance(ticket) && !assistanceRequested;
       const assistanceControl = assistanceRequested
         ? `<span class="context-assistance-note">${escapeHtml(
@@ -1672,9 +1661,8 @@ async function handleSendMessage(text, options = {}) {
     updateTicketTitle(ticketId, generateTitle(text));
   }
   const hasEscalatedAssistance =
-    String(ticket.status || "").trim().toLowerCase() === "escalated" ||
-    hasRequestedEngineerAssistance(ticketId);
-  updateTicketStatus(ticketId, hasEscalatedAssistance ? "escalated" : "waiting_for_support");
+    String(ticket.status || "").trim().toLowerCase() === "escalated";
+  updateTicketStatus(ticketId, hasEscalatedAssistance ? "escalated" : "communicating");
   state.editingMessageId = null;
   state.inputDraft = "";
   state.isSending = true;
@@ -1724,21 +1712,17 @@ async function handleSendMessage(text, options = {}) {
     const nextStatus =
       hasEscalatedAssistance
         ? "escalated"
-        : payload?.queued_for_ai
-        ? "waiting_for_support"
         : payload?.status === "investigating" ||
           payload?.status === "waiting_for_engineer" ||
           payload?.needs_engineer_input
         ? "investigating"
-        : "waiting_for_agent";
+        : payload?.status === "escalated"
+        ? "escalated"
+        : payload?.status === "resolved"
+        ? "resolved"
+        : "communicating";
     updateTicketStatus(ticketId, nextStatus);
     await syncTicketsFromBackend({ silent: true });
-    if (!allowAssistantReply && String(payload?.engineer_mode || "").toLowerCase() === "takeover") {
-      toast("This case is in Human Takeover mode. Engineer will reply directly.");
-    }
-    if (payload.sentiment?.is_alert) {
-      toast("Urgent escalation triggered.", "error");
-    }
   } catch (error) {
     if (error.name === "AbortError") {
       const updated = getTicketById(ticketId);
@@ -1799,7 +1783,6 @@ function bindAuthedEvents() {
       if (!ticketId) {
         return;
       }
-      clearEngineerAssistanceRequest(ticketId);
       updateTicketStatus(ticketId, "resolved");
       render();
       await syncBackendTicketAction(ticketId, "resolved");
@@ -1815,8 +1798,7 @@ function bindAuthedEvents() {
       if (!ticketId) {
         return;
       }
-      clearEngineerAssistanceRequest(ticketId);
-      updateTicketStatus(ticketId, "waiting_for_support");
+      updateTicketStatus(ticketId, "communicating");
       render();
       await syncBackendTicketAction(ticketId, "processing");
       await syncTicketsFromBackend({ silent: true });
@@ -1826,12 +1808,12 @@ function bindAuthedEvents() {
   });
 
   appRoot.querySelectorAll("[data-action='request-engineer-assistance']").forEach((element) => {
-    element.addEventListener("click", () => {
+    element.addEventListener("click", async () => {
       const ticketId = element.getAttribute("data-ticket-id");
       if (!ticketId) {
         return;
       }
-      if (requestEngineerAssistance(ticketId)) {
+      if (await requestEngineerAssistance(ticketId)) {
         render();
       }
     });

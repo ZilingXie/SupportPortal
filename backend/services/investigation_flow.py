@@ -5,8 +5,11 @@ import re
 from typing import Any, Callable
 from uuid import uuid4
 
-
+OPEN_STATUS = "open"
+COMMUNICATING_STATUS = "communicating"
+ESCALATED_STATUS = "escalated"
 INVESTIGATING_STATUS = "investigating"
+RESOLVED_STATUS = "resolved"
 INVESTIGATION_STATE_ACTIVE = "active"
 INVESTIGATION_STATE_AWAITING_CONFIRMATION = "awaiting_confirmation"
 INVESTIGATION_STATE_CLOSED = "closed"
@@ -15,12 +18,12 @@ _CJK_RE = re.compile(r"[\u3400-\u9fff]")
 
 
 def normalize_ticket_status(value: Any) -> str:
-    normalized = str(value or "open").strip().lower()
+    normalized = str(value or OPEN_STATUS).strip().lower()
     if normalized == "waiting_for_engineer":
         return INVESTIGATING_STATUS
-    if normalized in {"open", INVESTIGATING_STATUS, "resolved"}:
+    if normalized in {OPEN_STATUS, COMMUNICATING_STATUS, ESCALATED_STATUS, INVESTIGATING_STATUS, RESOLVED_STATUS}:
         return normalized
-    return "open"
+    return OPEN_STATUS
 
 
 def default_public_investigation_reply(latest_customer_message: str) -> str:
@@ -79,14 +82,6 @@ def default_investigation_prompt(
             "draft_customer_reply": draft,
         }
 
-    legacy_question = str(ticket.get("pending_engineer_question") or "").strip()
-    if legacy_question:
-        return {
-            "state": INVESTIGATION_STATE_ACTIVE,
-            "message": legacy_question,
-            "draft_customer_reply": "",
-        }
-
     if _CJK_RE.search(customer_text):
         request = f"请先确认该问题的复现场景、SDK 版本，以及是否只影响当前平台。客户原始问题：{customer_text or subject}"
     else:
@@ -131,31 +126,7 @@ def ensure_ticket_investigation_defaults(ticket: dict[str, Any]) -> None:
 
 def surface_legacy_pending_question(ticket: dict[str, Any]) -> None:
     ensure_ticket_investigation_defaults(ticket)
-    if ticket.get("active_investigation"):
-        return
-    pending_question = str(ticket.get("pending_engineer_question") or "").strip()
-    if not pending_question:
-        return
-    opened_at = str(ticket.get("updated_at") or ticket.get("created_at") or "")
-    ticket["active_investigation"] = {
-        "id": f"legacy-{ticket.get('ticket_id')}",
-        "state": INVESTIGATION_STATE_ACTIVE,
-        "trigger_reason": "legacy_pending_question",
-        "trigger_source": "legacy_waiting_for_engineer",
-        "draft_customer_reply": "",
-        "final_confirmation_requested_at": None,
-        "opened_at": opened_at,
-        "updated_at": opened_at,
-        "messages": [
-            build_internal_message(
-                f"legacy-{ticket.get('ticket_id')}",
-                "engineer_ai",
-                pending_question,
-                opened_at,
-                sequence=1,
-            )
-        ],
-    }
+    return None
 
 
 def _apply_ai_turn_to_active_investigation(
@@ -239,11 +210,6 @@ def start_or_refresh_investigation(
     )
     ticket["status"] = INVESTIGATING_STATUS
     ticket["active_investigation"] = active_investigation
-    ticket["pending_engineer_question"] = (
-        str(active_investigation.get("messages", [{}])[-1].get("content") or "").strip()
-        if active_investigation.get("state") == INVESTIGATION_STATE_ACTIVE and active_investigation.get("messages")
-        else None
-    )
     return {
         "active_investigation": active_investigation,
         "new_internal_messages": new_internal_messages,
@@ -283,7 +249,6 @@ def append_engineer_investigation_message(
     active_investigation["updated_at"] = now_value
     ticket["status"] = INVESTIGATING_STATUS
     ticket["active_investigation"] = active_investigation
-    ticket["pending_engineer_question"] = None
     return {
         "active_investigation": active_investigation,
         "new_internal_messages": new_internal_messages,
@@ -332,8 +297,7 @@ def apply_investigation_confirmation(
             ticket["investigation_history"] = history
         history.insert(0, active_investigation)
         ticket["active_investigation"] = None
-        ticket["status"] = "open"
-        ticket["pending_engineer_question"] = None
+        ticket["status"] = COMMUNICATING_STATUS
         return {
             "active_investigation": None,
             "closed_investigation": active_investigation,
@@ -358,7 +322,6 @@ def apply_investigation_confirmation(
     active_investigation["updated_at"] = now_value
     ticket["status"] = INVESTIGATING_STATUS
     ticket["active_investigation"] = active_investigation
-    ticket["pending_engineer_question"] = None
     return {
         "active_investigation": active_investigation,
         "closed_investigation": None,

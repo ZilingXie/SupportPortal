@@ -57,8 +57,6 @@ class InvestigationFlowTests(unittest.TestCase):
             "subject": "Token renew callback missing",
             "status": status,
             "priority": "normal",
-            "engineer_mode": "managed",
-            "pending_engineer_question": None,
             "last_engineer_action": None,
             "created_at": "2026-03-29T09:00:00+00:00",
             "updated_at": "2026-03-29T09:00:00+00:00",
@@ -236,10 +234,11 @@ class InvestigationFlowTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["status"], "open")
+        self.assertEqual(payload["status"], "communicating")
         self.assertEqual(payload["priority"], "normal")
         self.assertFalse(payload["needs_engineer_input"])
         self.assertEqual(payload["answer"], "Got it, let me check this for you.")
+        self.assertNotIn("engineer_mode", payload)
         self.assertEqual(
             payload["sentiment"],
             {
@@ -387,12 +386,12 @@ class InvestigationFlowTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["status"], "open")
+        self.assertEqual(payload["status"], "communicating")
         self.assertIsNone(payload["active_investigation"])
 
         detail = self.client.get("/api/engineer/tickets/TK-INV-103")
         ticket = detail.json()["ticket"]
-        self.assertEqual(ticket["status"], "open")
+        self.assertEqual(ticket["status"], "communicating")
         self.assertIsNone(ticket["active_investigation"])
         self.assertEqual(ticket["messages"][-1]["role"], "assistant")
         self.assertIn("Please upgrade to SDK 4.2.2", ticket["messages"][-1]["content"])
@@ -456,6 +455,69 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertIn("def get_active_investigation", repo_source)
         self.assertIn("def list_ticket_investigations", repo_source)
         self.assertIn("def save_investigation", repo_source)
+
+    def test_request_engineer_assistance_marks_ticket_escalated(self) -> None:
+        self._seed_ticket(ticket_id="TK-INV-105", status="communicating")
+
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/TK-INV-105/request-engineer-assistance",
+                json={},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "escalated")
+        self.assertNotIn("engineer_mode", payload)
+
+        detail = self.client.get("/api/engineer/tickets/TK-INV-105")
+        self.assertEqual(detail.status_code, 200, detail.text)
+        self.assertEqual(detail.json()["ticket"]["status"], "escalated")
+
+    def test_investigate_action_moves_escalated_ticket_into_investigating(self) -> None:
+        self._seed_ticket(ticket_id="TK-INV-106", status="escalated")
+
+        with patch.object(
+            main,
+            "generate_investigation_ai_turn",
+            return_value={
+                "state": "active",
+                "message": "Please confirm the SDK version and reproduction scope.",
+                "draft_customer_reply": None,
+            },
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/TK-INV-106/action",
+                json={
+                    "action": "investigate",
+                    "engineer_id": "eng",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "investigating")
+        self.assertNotIn("engineer_mode", payload)
+
+        detail = self.client.get("/api/engineer/tickets/TK-INV-106")
+        ticket = detail.json()["ticket"]
+        self.assertEqual(ticket["status"], "investigating")
+        self.assertIsNotNone(ticket["active_investigation"])
+
+    def test_legacy_mode_and_takeover_reply_endpoints_are_unavailable(self) -> None:
+        self._seed_ticket(ticket_id="TK-INV-107", status="communicating")
+
+        mode_response = self.client.post(
+            "/api/engineer/tickets/TK-INV-107/mode",
+            json={"mode": "takeover"},
+        )
+        takeover_reply_response = self.client.post(
+            "/api/engineer/tickets/TK-INV-107/takeover-reply",
+            json={"engineer_id": "eng", "message": "manual reply"},
+        )
+
+        self.assertEqual(mode_response.status_code, 404, mode_response.text)
+        self.assertEqual(takeover_reply_response.status_code, 404, takeover_reply_response.text)
 
 
 if __name__ == "__main__":

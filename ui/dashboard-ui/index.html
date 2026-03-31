@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600;700&family=Material+Symbols+Outlined:wght@300;400;500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20260325-dashboard-admin-ops-3" />
+    <link rel="stylesheet" href="./styles.css?v=20260331-dashboard-single-flow-1" />
   </head>
   <body>
     <div class="dashboard-app">
@@ -69,13 +69,6 @@
             </p>
           </div>
           <div class="ops-header-actions">
-            <div class="ai-managing-pill" aria-label="AI Managing active">
-              <span class="ai-managing-label">AI Managing</span>
-              <span class="ai-managing-track" aria-hidden="true">
-                <span class="ai-managing-knob"></span>
-              </span>
-              <span class="ai-managing-state">Active</span>
-            </div>
             <button id="refresh-button" class="ghost-button" type="button">Refresh Feed</button>
           </div>
         </header>
@@ -141,12 +134,12 @@
                 <p class="mini-kpi-value" id="resolved-ticket-count">0</p>
               </article>
               <article class="mini-kpi">
-                <p class="mini-kpi-label">Managed</p>
-                <p class="mini-kpi-value" id="managed-ticket-count">0</p>
+                <p class="mini-kpi-label">Communicating</p>
+                <p class="mini-kpi-value" id="communicating-ticket-count">0</p>
               </article>
               <article class="mini-kpi">
-                <p class="mini-kpi-label">Takeover</p>
-                <p class="mini-kpi-value" id="takeover-ticket-count">0</p>
+                <p class="mini-kpi-label">Escalated</p>
+                <p class="mini-kpi-value" id="escalated-ticket-count">0</p>
               </article>
             </div>
 
@@ -181,9 +174,9 @@
               <article class="breakdown-card">
                 <div class="breakdown-head">
                   <p class="eyebrow">Operator Summary</p>
-                  <h3>Mode Breakdown</h3>
+                  <h3>Flow Breakdown</h3>
                 </div>
-                <ul id="mode-breakdown" class="breakdown-list"></ul>
+                <ul id="flow-breakdown" class="breakdown-list"></ul>
               </article>
             </div>
           </section>
@@ -208,15 +201,15 @@
             <article class="signal-card signal-card-neutral">
               <p class="eyebrow">Operator Summary</p>
               <h2 id="operator-summary-title">Reading operator workload.</h2>
-              <p id="operator-summary-detail">Loading managed and takeover balance.</p>
+              <p id="operator-summary-detail">Loading communicating and escalated balance.</p>
               <div class="signal-meta">
                 <span class="signal-meta-pill">
-                  Managed
-                  <strong id="managed-ticket-chip">0</strong>
+                  Communicating
+                  <strong id="communicating-ticket-chip">0</strong>
                 </span>
                 <span class="signal-meta-pill">
-                  Takeover
-                  <strong id="takeover-ticket-chip">0</strong>
+                  Escalated
+                  <strong id="escalated-ticket-chip">0</strong>
                 </span>
               </div>
             </article>
@@ -248,6 +241,6 @@
       </main>
     </div>
 
-    <script src="./app.js?v=20260325-dashboard-admin-ops-3"></script>
+    <script src="./app.js?v=20260331-dashboard-single-flow-1"></script>
   </body>
 </html>

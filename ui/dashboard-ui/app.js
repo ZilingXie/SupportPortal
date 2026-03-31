@@ -9,12 +9,12 @@ const queueHealthTitleEl = document.getElementById("queue-health-title");
 const queueHealthDetailEl = document.getElementById("queue-health-detail");
 const openTicketCountEl = document.getElementById("open-ticket-count");
 const resolvedTicketCountEl = document.getElementById("resolved-ticket-count");
-const managedTicketCountEl = document.getElementById("managed-ticket-count");
-const takeoverTicketCountEl = document.getElementById("takeover-ticket-count");
+const communicatingTicketCountEl = document.getElementById("communicating-ticket-count");
+const escalatedTicketCountEl = document.getElementById("escalated-ticket-count");
 const urgentTicketCountEl = document.getElementById("urgent-ticket-count");
 const waitingTicketChipEl = document.getElementById("waiting-ticket-chip");
-const managedTicketChipEl = document.getElementById("managed-ticket-chip");
-const takeoverTicketChipEl = document.getElementById("takeover-ticket-chip");
+const communicatingTicketChipEl = document.getElementById("communicating-ticket-chip");
+const escalatedTicketChipEl = document.getElementById("escalated-ticket-chip");
 const escalationWatchTitleEl = document.getElementById("escalation-watch-title");
 const escalationWatchDetailEl = document.getElementById("escalation-watch-detail");
 const operatorSummaryTitleEl = document.getElementById("operator-summary-title");
@@ -22,7 +22,7 @@ const operatorSummaryDetailEl = document.getElementById("operator-summary-detail
 const eventVolumeBarsEl = document.getElementById("event-volume-bars");
 const statusBreakdownEl = document.getElementById("status-breakdown");
 const priorityBreakdownEl = document.getElementById("priority-breakdown");
-const modeBreakdownEl = document.getElementById("mode-breakdown");
+const flowBreakdownEl = document.getElementById("flow-breakdown");
 const eventStreamEl = document.getElementById("event-stream");
 
 const DASHBOARD_USER = {
@@ -128,16 +128,12 @@ function isTicketEvent(payload) {
 function eventTone(payload) {
   const priority = normalizeString(payload?.priority).toLowerCase();
   const status = normalizeString(payload?.status).toLowerCase();
-  const mode = normalizeString(payload?.engineer_mode).toLowerCase();
 
   if (priority === "urgent" || priority === "high") {
     return priority;
   }
-  if (status === "investigating" || status === "waiting_for_engineer") {
+  if (status === "investigating" || status === "waiting_for_engineer" || status === "escalated") {
     return "waiting";
-  }
-  if (mode === "takeover" || mode === "managed") {
-    return mode;
   }
   return "default";
 }
@@ -255,7 +251,6 @@ function renderEventItem(event) {
   const ticketId = normalizeString(event?.ticket_id) || "-";
   const status = normalizeString(event?.status);
   const priority = normalizeString(event?.priority);
-  const mode = normalizeString(event?.engineer_mode);
   const createdAt = formatDateTime(event?.created_at);
   const tone = eventTone(event);
   const title = ticketId === "-" ? eventName : ticketId;
@@ -272,7 +267,6 @@ function renderEventItem(event) {
         <span class="timestamp">${escapeHtml(ticketId)}</span>
         ${status ? `<span>Status ${escapeHtml(humanizeToken(status))}</span>` : ""}
         ${priority ? `<span>Priority ${escapeHtml(humanizeToken(priority))}</span>` : ""}
-        ${mode ? `<span>Mode ${escapeHtml(humanizeToken(mode))}</span>` : ""}
       </div>
     </li>
   `;
@@ -318,7 +312,7 @@ async function loadMetrics() {
   setText(sentimentAlertsEl, formatNumber(payload?.sentiment_alert_count));
   setText(
     waitingForEngineerEl,
-    formatNumber(cards?.investigating_ticket_count ?? cards?.waiting_for_engineer_count),
+    formatNumber(cards?.investigating_ticket_count),
   );
 
   setText(queueHealthTitleEl, normalizeString(summaries?.queue_health_label) || "Monitoring live queue balance.");
@@ -328,15 +322,15 @@ async function loadMetrics() {
   );
   setText(openTicketCountEl, formatNumber(cards?.open_ticket_count));
   setText(resolvedTicketCountEl, formatNumber(cards?.resolved_ticket_count));
-  setText(managedTicketCountEl, formatNumber(cards?.managed_ticket_count));
-  setText(takeoverTicketCountEl, formatNumber(cards?.takeover_ticket_count));
+  setText(communicatingTicketCountEl, formatNumber(cards?.communicating_ticket_count));
+  setText(escalatedTicketCountEl, formatNumber(cards?.escalated_ticket_count));
   setText(urgentTicketCountEl, formatNumber(cards?.urgent_ticket_count));
   setText(
     waitingTicketChipEl,
-    formatNumber(cards?.investigating_ticket_count ?? cards?.waiting_for_engineer_count),
+    formatNumber(cards?.investigating_ticket_count),
   );
-  setText(managedTicketChipEl, formatNumber(cards?.managed_ticket_count));
-  setText(takeoverTicketChipEl, formatNumber(cards?.takeover_ticket_count));
+  setText(communicatingTicketChipEl, formatNumber(cards?.communicating_ticket_count));
+  setText(escalatedTicketChipEl, formatNumber(cards?.escalated_ticket_count));
   setText(
     escalationWatchTitleEl,
     normalizeString(summaries?.escalation_summary_title) || "Watching live queue pressure.",
@@ -351,13 +345,14 @@ async function loadMetrics() {
   );
   setText(
     operatorSummaryDetailEl,
-    normalizeString(summaries?.operator_summary_detail) || "Loading managed and takeover balance.",
+    normalizeString(summaries?.operator_summary_detail)
+      || "Loading communicating and escalated balance.",
   );
 
   renderEventVolumeBars(charts?.event_volume_12h);
   renderBreakdownList(statusBreakdownEl, charts?.status_breakdown);
   renderBreakdownList(priorityBreakdownEl, charts?.priority_breakdown);
-  renderBreakdownList(modeBreakdownEl, charts?.mode_breakdown);
+  renderBreakdownList(flowBreakdownEl, charts?.flow_breakdown);
 }
 
 async function loadRecentEvents() {

@@ -1017,16 +1017,6 @@ button {
   color: var(--danger);
 }
 
-.event-chip-managed {
-  background: rgba(76, 86, 175, 0.14);
-  color: var(--secondary);
-}
-
-.event-chip-takeover {
-  background: rgba(255, 245, 235, 0.92);
-  color: var(--warning);
-}
-
 .event-time,
 .event-meta span {
   color: var(--ink-muted);

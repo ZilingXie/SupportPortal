@@ -24,12 +24,13 @@ class DashboardUiContractTests(unittest.TestCase):
 
         for required_copy in [
             "Admin Operations",
-            "AI Managing",
             "Queue Health &amp; Throughput",
             "Escalation Watch",
             "Operator Summary",
             "Live Ticket Feed",
             "Investigating",
+            "Communicating",
+            "Escalated",
         ]:
             self.assertIn(required_copy, source)
 

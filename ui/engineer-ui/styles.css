@@ -1342,6 +1342,16 @@ a {
   background: rgba(224, 224, 255, 0.92);
 }
 
+.status-active {
+  color: var(--primary);
+  background: rgba(202, 230, 255, 0.88);
+}
+
+.status-escalated {
+  color: var(--warning);
+  background: rgba(255, 234, 205, 0.92);
+}
+
 .status-waiting {
   color: var(--warning);
   background: rgba(255, 234, 205, 0.92);
@@ -1461,6 +1471,12 @@ a {
   justify-content: flex-end;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.detail-ticket-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .message-list,

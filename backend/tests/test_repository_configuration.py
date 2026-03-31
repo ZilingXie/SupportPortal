@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
@@ -405,10 +406,8 @@ class RepositoryConfigurationTests(unittest.TestCase):
             "customer_id": "C-1",
             "requester": "Requester",
             "subject": "Subject",
-            "status": "open",
+            "status": "communicating",
             "priority": "normal",
-            "engineer_mode": "managed",
-            "pending_engineer_question": None,
             "last_engineer_action": None,
             "created_at": "2026-03-31T00:00:00+00:00",
             "updated_at": "2026-03-31T00:00:00+00:00",
@@ -526,6 +525,15 @@ class RepositoryConfigurationTests(unittest.TestCase):
                 repository.prepare_rag_benchmark_run()
 
         initialize_mock.assert_called_once_with()
+
+    def test_ticket_storage_contract_removes_mode_fields_and_uses_single_flow_statuses(self) -> None:
+        sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
+        repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("engineer_mode TEXT", sql_source)
+        self.assertNotIn("pending_engineer_question", sql_source)
+        self.assertIn("communicating", repo_source)
+        self.assertIn("escalated", repo_source)
 
 
 if __name__ == "__main__":

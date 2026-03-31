@@ -67,7 +67,7 @@ export function createTicket(userId: string): Ticket {
   const ticket: Ticket = {
     id,
     title: "New Session",
-    status: "new",
+    status: "open",
     createdAt: now,
     updatedAt: now,
     userId,
