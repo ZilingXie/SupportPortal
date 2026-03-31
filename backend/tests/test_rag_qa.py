@@ -8,6 +8,7 @@ from unittest.mock import patch
 from backend.services.rag_qa import (
     INSUFFICIENT_EVIDENCE_REPLY,
     RetrievedChunk,
+    _chunk_family_key,
     _extract_metadata_hints,
     _get_rag_config,
     _metadata_rerank,
@@ -155,6 +156,23 @@ class RagQaHybridTests(unittest.TestCase):
         merged_ids = [chunk.chunk_id for chunk in merged]
         self.assertIn("shared", merged_ids)
         self.assertEqual(len(set(merged_ids)), 2)
+
+    def test_chunk_family_key_prefers_metadata_source_family_before_source_path_heuristic(self) -> None:
+        chunk = RetrievedChunk(
+            chunk_id="auth-ios",
+            text="iOS authentication workflow",
+            source_path="en/ios/authentication-workflow_ios.md",
+            similarity=0.98,
+            metadata={
+                "product": "video-calling",
+                "source_family": "video-calling/get-started/authentication-workflow",
+            },
+        )
+
+        self.assertEqual(
+            _chunk_family_key(chunk),
+            "video-calling::video-calling/get-started/authentication-workflow",
+        )
 
     def test_select_diverse_chunks_prefers_unique_family_before_backfill(self) -> None:
         chunks = [
@@ -737,6 +755,108 @@ class RagQaHybridTests(unittest.TestCase):
         self.assertEqual(captured_final_chunk_ids[0], ["auth-android", "error-codes"])
         self.assertEqual(result.trace.selected_chunk_ids, ["auth-android", "error-codes"])
 
+    def test_run_rag_query_diversifies_rerank_candidates_before_external_rerank(self) -> None:
+        auth_android = RetrievedChunk(
+            chunk_id="auth-android",
+            text="Android authentication workflow",
+            source_path="en/android/authentication-workflow.md",
+            similarity=0.99,
+            metadata={
+                "product": "video-calling",
+                "source_family": "video-calling/get-started/authentication-workflow",
+            },
+        )
+        auth_ios = RetrievedChunk(
+            chunk_id="auth-ios",
+            text="iOS authentication workflow",
+            source_path="en/ios/authentication-workflow.md",
+            similarity=0.98,
+            metadata={
+                "product": "video-calling",
+                "source_family": "video-calling/get-started/authentication-workflow",
+            },
+        )
+        error_codes = RetrievedChunk(
+            chunk_id="error-codes",
+            text="Common SDK error codes",
+            source_path="en/android/error-codes.md",
+            similarity=0.97,
+            metadata={
+                "product": "video-calling",
+                "source_family": "video-calling/reference/error-codes",
+            },
+        )
+        captured_rerank_inputs: list[list[str]] = []
+
+        def _capture_rerank(
+            query: str,
+            chunks: list[RetrievedChunk],
+            config: dict[str, object],
+            *,
+            limit: int,
+        ) -> list[RetrievedChunk]:
+            _ = query
+            _ = config
+            _ = limit
+            captured_rerank_inputs.append([chunk.chunk_id for chunk in chunks])
+            return list(chunks)
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 2,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 3,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-4.1",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+            }
+            with patch("backend.services.rag_qa.get_embedding_provider", return_value=self._FakeProvider()):
+                with patch("backend.services.rag_qa._retrieve_chunks", return_value=[auth_android]):
+                    with patch("backend.services.rag_qa._retrieve_bm25_chunks", return_value=[auth_ios, error_codes]):
+                        with patch(
+                            "backend.services.rag_qa._metadata_rerank",
+                            return_value=(
+                                [auth_android, auth_ios, error_codes],
+                                {"post_rerank_count": 3, "hints": {}, "applied_filter": False, "filter_type": None},
+                            ),
+                        ):
+                            with patch("backend.services.rag_qa._rerank_chunks", side_effect=_capture_rerank):
+                                with patch(
+                                    "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                                    return_value=(
+                                        {
+                                            "answer": "Use the selected chunks.",
+                                            "key_steps": [],
+                                            "citations": ["auth-android"],
+                                            "insufficient_evidence": False,
+                                        },
+                                        10,
+                                        5,
+                                        "gpt-4.1",
+                                    ),
+                                ):
+                                    result = run_rag_query("how do I handle token authentication errors?")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(captured_rerank_inputs[0], ["auth-android", "error-codes", "auth-ios"])
+
     def test_run_rag_query_preserves_method_coverage_for_comparison_queries(self) -> None:
         wildcard_chunk = RetrievedChunk(
             chunk_id="wildcard-token",
@@ -861,6 +981,123 @@ class RagQaHybridTests(unittest.TestCase):
         self.assertEqual(
             result.trace.selected_chunk_ids,
             ["build-token-with-uid", "build-token-with-uid-privilege"],
+        )
+
+    def test_run_rag_query_preserves_method_coverage_in_rerank_candidate_window_for_comparison_queries(self) -> None:
+        wildcard_chunk = RetrievedChunk(
+            chunk_id="wildcard-token",
+            text="Wildcard tokens allow all users to join the same channel.",
+            source_path="official/deploy-token-server.md",
+            similarity=0.96,
+            metadata={
+                "product": "video-calling",
+                "source_family": "video-calling/get-started/wildcard-tokens",
+                "section_path": ["Deploy a token server", "Generate wildcard tokens"],
+                "use_case": "wildcard_tokens",
+            },
+        )
+        build_token_chunk = RetrievedChunk(
+            chunk_id="build-token-with-uid",
+            text="BuildTokenWithUid generates a token with appId, appCertificate, channelName, uid, role, and expiration.",
+            source_path="official/deploy-token-server.md",
+            similarity=0.93,
+            metadata={
+                "product": "video-calling",
+                "source_family": "video-calling/reference/deploy-token-server",
+                "language": "nodejs",
+                "method_name": "BuildTokenWithUid",
+                "section_path": ["Reference", "API Reference", "BuildTokenWithUid"],
+                "use_case": "basic_authentication",
+            },
+        )
+        privilege_chunk = RetrievedChunk(
+            chunk_id="build-token-with-uid-privilege",
+            text="BuildTokenWithUidAndPrivilege adds per-privilege expirations to the token payload.",
+            source_path="official/deploy-token-server.md",
+            similarity=0.92,
+            metadata={
+                "product": "video-calling",
+                "source_family": "video-calling/reference/deploy-token-server",
+                "language": "nodejs",
+                "method_name": "BuildTokenWithUidAndPrivilege",
+                "section_path": ["Reference", "API Reference", "BuildTokenWithUidAndPrivilege"],
+                "use_case": "advanced_permissions",
+            },
+        )
+        captured_rerank_inputs: list[list[str]] = []
+
+        def _capture_rerank(
+            query: str,
+            chunks: list[RetrievedChunk],
+            config: dict[str, object],
+            *,
+            limit: int,
+        ) -> list[RetrievedChunk]:
+            _ = query
+            _ = config
+            _ = limit
+            captured_rerank_inputs.append([chunk.chunk_id for chunk in chunks])
+            return list(chunks)
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 2,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 3,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-4.1",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+            }
+            with patch("backend.services.rag_qa.get_embedding_provider", return_value=self._FakeProvider()):
+                with patch("backend.services.rag_qa._retrieve_chunks", return_value=[wildcard_chunk]):
+                    with patch("backend.services.rag_qa._retrieve_bm25_chunks", return_value=[build_token_chunk, privilege_chunk]):
+                        with patch(
+                            "backend.services.rag_qa._metadata_rerank",
+                            return_value=(
+                                [wildcard_chunk, build_token_chunk, privilege_chunk],
+                                {"post_rerank_count": 3, "hints": {}, "applied_filter": False, "filter_type": None},
+                            ),
+                        ):
+                            with patch("backend.services.rag_qa._rerank_chunks", side_effect=_capture_rerank):
+                                with patch(
+                                    "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                                    return_value=(
+                                        {
+                                            "answer": "The privilege variant supports privilege-level expirations.",
+                                            "key_steps": [],
+                                            "citations": ["build-token-with-uid", "build-token-with-uid-privilege"],
+                                            "insufficient_evidence": False,
+                                        },
+                                        10,
+                                        5,
+                                        "gpt-4.1",
+                                    ),
+                                ):
+                                    result = run_rag_query(
+                                        "BuildTokenWithUid 和 BuildTokenWithUidAndPrivilege 有什么区别？"
+                                    )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(
+            captured_rerank_inputs[0],
+            ["build-token-with-uid", "build-token-with-uid-privilege", "wildcard-token"],
         )
 
     def test_run_rag_query_repairs_false_insufficient_evidence_before_fallback(self) -> None:

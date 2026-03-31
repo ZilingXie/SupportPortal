@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -116,6 +116,7 @@ class NormalizedKnowledgeDocument:
     product: str | None = None
     module: str | None = None
     language: str | None = None
+    source_family: str | None = None
 
 
 @dataclass
@@ -235,6 +236,130 @@ def _slugify(value: str) -> str:
     text = re.sub(r"[^a-zA-Z0-9]+", "-", str(value or "").strip().lower())
     text = re.sub(r"-{2,}", "-", text).strip("-")
     return text or "document"
+
+
+_KNOWN_SOURCE_FAMILY_PLATFORM_SUFFIXES = {
+    "android",
+    "ios",
+    "web",
+    "windows",
+    "macos",
+    "linux",
+    "flutter",
+    "unity",
+    "unreal",
+    "react-native",
+    "react_native",
+    "react-js",
+    "reactjs",
+    "blueprint",
+    "cpp",
+    "csharp",
+    "java",
+    "nodejs",
+    "php",
+    "python",
+    "go",
+}
+
+_KNOWN_SOURCE_FAMILY_LOCALES = {
+    "ar",
+    "cs",
+    "de",
+    "en",
+    "es",
+    "fr",
+    "id",
+    "it",
+    "ja",
+    "ko",
+    "pl",
+    "pt",
+    "ru",
+    "th",
+    "tr",
+    "vi",
+    "zh",
+}
+
+
+def _looks_like_locale_segment(value: str) -> bool:
+    normalized = str(value or "").strip().lower()
+    if normalized in _KNOWN_SOURCE_FAMILY_LOCALES:
+        return True
+    if "-" not in normalized:
+        return False
+    prefix, _, suffix = normalized.partition("-")
+    return prefix in _KNOWN_SOURCE_FAMILY_LOCALES and bool(suffix)
+
+
+def _source_family_suffix_candidates(platform: str | None) -> list[str]:
+    candidates = set(_KNOWN_SOURCE_FAMILY_PLATFORM_SUFFIXES)
+    normalized_platform = _slugify(platform or "")
+    if normalized_platform and normalized_platform != "document":
+        candidates.add(normalized_platform)
+        candidates.add(normalized_platform.replace("-", "_"))
+    return sorted({candidate for candidate in candidates if candidate}, key=len, reverse=True)
+
+
+def _strip_source_family_platform_suffix(value: str, *, platform: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return ""
+    for candidate in _source_family_suffix_candidates(platform):
+        for separator in ("_", "-"):
+            suffix = f"{separator}{candidate}"
+            if normalized.endswith(suffix):
+                stripped = normalized[: -len(suffix)].strip("_-")
+                if stripped:
+                    return stripped
+    return normalized
+
+
+def _source_family_from_path(
+    raw_path: str | None,
+    *,
+    platform: str | None,
+    drop_leading_segments: set[str] | None = None,
+) -> str | None:
+    normalized_path = str(raw_path or "").strip().replace("\\", "/")
+    if not normalized_path:
+        return None
+    parts = [unquote(part).strip() for part in normalized_path.split("/") if str(part).strip() and str(part).strip() != "."]
+    if not parts:
+        return None
+    while parts and _looks_like_locale_segment(parts[0]):
+        parts = parts[1:]
+    if drop_leading_segments:
+        while parts and parts[0].strip().lower() in drop_leading_segments:
+            parts = parts[1:]
+    if not parts:
+        return None
+    stem = Path(parts[-1]).stem if "." in parts[-1] else parts[-1]
+    parts[-1] = _strip_source_family_platform_suffix(stem, platform=platform) or _slugify(stem)
+    normalized_parts = [_slugify(part) for part in parts]
+    return "/".join(part for part in normalized_parts if part) or None
+
+
+def _infer_source_family(
+    *,
+    source_url: str | None,
+    source_path: str | None,
+    platform: str | None,
+    knowledge_type: str,
+) -> str | None:
+    normalized_url = str(source_url or "").strip()
+    if normalized_url:
+        try:
+            parsed = urlparse(normalized_url)
+        except Exception:
+            parsed = None
+        if parsed is not None:
+            family_from_url = _source_family_from_path(parsed.path, platform=platform)
+            if family_from_url:
+                return family_from_url
+    drop_segments = {"official"} if str(knowledge_type or "").strip().lower() == "official" else None
+    return _source_family_from_path(source_path, platform=platform, drop_leading_segments=drop_segments)
 
 
 def _sha256_text(value: str) -> str:
@@ -1086,6 +1211,13 @@ def parse_official_markdown_content(
     exported_file = front_matter.get("exported_file") or normalized_file_name
     source_path = f"official/{exported_file}"
     product, module = _infer_url_taxonomy(source_url)
+    platform = _clean_text(front_matter.get("platform")) or None
+    source_family = _infer_source_family(
+        source_url=source_url,
+        source_path=source_path,
+        platform=platform,
+        knowledge_type="official",
+    )
     language = _infer_language(body)
     checksum = _sha256_text(raw_markdown)
     headings = _markdown_heading_records(body, title)
@@ -1115,8 +1247,9 @@ def parse_official_markdown_content(
         "updated_at": source_updated_at,
         "product": product,
         "module": module,
-        "platform": _clean_text(front_matter.get("platform")),
+        "platform": platform,
         "language": language,
+        "source_family": source_family,
         "headings": headings,
         "description": description,
         "front_matter": front_matter,
@@ -1154,10 +1287,11 @@ def parse_official_markdown_content(
         content_blocks=content_blocks,
         parser_name="official_markdown_parser",
         parser_version=_PARSER_VERSION,
-        platform=_clean_text(front_matter.get("platform")) or None,
+        platform=platform,
         product=product,
         module=module,
         language=language,
+        source_family=source_family,
     )
 
 
@@ -1214,6 +1348,12 @@ def parse_technical_article(
     source_path = f"technical/{_slugify(normalized_title)}.md"
     identity = source_url or source_path or normalized_title
     checksum = _sha256_text(f"{normalized_title}\n{normalized_content}\n{source_url or ''}")
+    source_family = _infer_source_family(
+        source_url=source_url,
+        source_path=source_path,
+        platform=platform_text,
+        knowledge_type="technical",
+    )
 
     sections: list[DocumentSection] = []
     issue_summary_text = _build_technical_issue_summary(
@@ -1346,6 +1486,7 @@ def parse_technical_article(
         "related_links": reference_links,
         "section_names": sorted(sections_map.keys()),
         "language": language,
+        "source_family": source_family,
     }
     cleaning_report: dict[str, Any] = {
         "parser_name": "technical_article_parser",
@@ -1384,6 +1525,7 @@ def parse_technical_article(
         product=product,
         module=None,
         language=language,
+        source_family=source_family,
     )
 
 
@@ -1559,6 +1701,11 @@ def _document_language(metadata: dict[str, Any], fallback: str | None) -> str | 
     return normalized or None
 
 
+def _document_source_family(metadata: dict[str, Any], fallback: str | None) -> str | None:
+    normalized = _clean_text(metadata.get("source_family")) or _clean_text(fallback)
+    return normalized or None
+
+
 def _normalized_payload(
     document: NormalizedKnowledgeDocument,
     metadata: dict[str, Any],
@@ -1574,6 +1721,7 @@ def _normalized_payload(
         "language": _document_language(metadata, document.language),
         "product": _document_product(metadata, document.product),
         "module": _document_module(metadata, document.module),
+        "source_family": _document_source_family(metadata, document.source_family),
         "checksum": document.checksum,
         "metadata": metadata,
         "cleaning_report": document.cleaning_report,
@@ -1617,6 +1765,7 @@ def _build_normalized_summary(
         "language": _document_language(metadata, document.language),
         "product": _document_product(metadata, document.product),
         "module": _document_module(metadata, document.module),
+        "source_family": _document_source_family(metadata, document.source_family),
         "section_count": len(document.sections),
         "block_count": len(document.content_blocks),
         "block_counts_by_type": dict(block_counter),
@@ -1793,6 +1942,7 @@ def _base_chunk_metadata(
         "product": product,
         "module": module,
         "language": language,
+        "source_family": _document_source_family(metadata, document.source_family),
         "tags": metadata.get("tags", []),
         "doc_title": document.title,
         "section_path": section_path,
