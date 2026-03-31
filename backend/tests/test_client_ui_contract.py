@@ -624,6 +624,78 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_client_chat_auto_scrolls_only_when_transcript_changes(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                const queuedFrames = [];
+                globalThis.requestAnimationFrame = (callback) => {
+                  queuedFrames.push(callback);
+                  return queuedFrames.length;
+                };
+
+                const flushFrames = () => {
+                  while (queuedFrames.length > 0) {
+                    const callback = queuedFrames.shift();
+                    callback();
+                  }
+                };
+
+                state.user = { id: "user-1", name: "Admin", email: "admin@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const ticket = createTicket(state.user.id);
+                saveTicketMessages(ticket.id, [
+                  {
+                    id: "msg-1",
+                    role: "assistant",
+                    content: "Initial reply",
+                    createdAt: "2026-03-31T15:24:00.000Z",
+                  },
+                ]);
+
+                state.view = "chat-ticket";
+                state.activeTicketId = ticket.id;
+
+                const chatMain = {
+                  scrollTop: 0,
+                  scrollHeight: 180,
+                };
+                appRoot.querySelector = (selector) => (selector === ".chat-main" ? chatMain : null);
+
+                syncChatScrollToBottom();
+                flushFrames();
+                if (chatMain.scrollTop !== 180) {
+                  throw new Error(`Expected initial chat render to scroll to bottom, got ${chatMain.scrollTop}.`);
+                }
+
+                chatMain.scrollTop = 0;
+                updateTicketStatus(ticket.id, "waiting_for_agent");
+                syncChatScrollToBottom();
+                flushFrames();
+                if (chatMain.scrollTop !== 0) {
+                  throw new Error("Chat should not force-scroll when the transcript is unchanged.");
+                }
+
+                chatMain.scrollHeight = 420;
+                saveTicketMessages(ticket.id, [
+                  ...getTicketById(ticket.id).messages,
+                  {
+                    id: "msg-2",
+                    role: "user",
+                    content: "Follow-up question",
+                    createdAt: "2026-03-31T15:25:00.000Z",
+                  },
+                ]);
+                syncChatScrollToBottom();
+                flushFrames();
+                if (chatMain.scrollTop !== 420) {
+                  throw new Error(`Expected new transcript entries to scroll to bottom, got ${chatMain.scrollTop}.`);
+                }
+              """
+            )
+        )
+
     def test_client_async_polling_ignores_placeholder_reply_until_final_answer_arrives(self) -> None:
         self.run_client_app_script(
             textwrap.dedent(
