@@ -1043,3 +1043,30 @@ For each new entry, record:
   - Verification result: `78 passed`.
   - Container restart from the git worktree initially failed because the worktree did not contain the untracked local `.env`; linking the worktree `.env` to `/Users/xieziling/Desktop/personal_proj/SupportPortal/.env` resolved `TICKET_DB_DSN is required`.
   - Final compose `ps` showed all expected containers up: `deployment_redis_1`, `deployment_rag_api_1`, `deployment_rag_worker_1`, `deployment_ws_gateway_1`, `deployment_api_1`, `deployment_worker_1`, `deployment_nginx_1`.
+
+## 2026-03-31 - Degrade startup dependencies to stop benchmark dashboard 504s
+
+- Summary: Changed `backend/main.py` and `backend/rag_api.py` startup so transient ticket-event Postgres connection failures no longer crash the public API and RAG API processes, allowing `/api/dashboard/rag/scorecard` to return a fast 200 fallback instead of timing out behind nginx with 504/502.
+- Reason: The benchmark dashboard failure was not caused by the scorecard query itself. The apps were repeatedly failing during startup because `ticket_repository.initialize()` and `event_repository.initialize()` were treated as hard dependencies, so transient database connection timeouts took down the processes before the dashboard proxy chain could respond cleanly.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/rag_api.py`
+  - `backend/tests/test_startup_repository_fallbacks.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema or persisted data changes.
+  - When ticket storage bootstrap fails at startup, the public API now falls back to `InMemoryTicketRepository` for that process instead of exiting.
+  - When RAG event storage bootstrap fails at startup, the RAG API now falls back to `InMemoryEventRepository` for that process instead of exiting.
+  - `knowledge_repository.initialize()` remains a hard dependency, so RAG benchmark data still requires a healthy PGVector/Postgres connection.
+- Verification:
+  - `./.venv/bin/python -m unittest backend.tests.test_startup_repository_fallbacks`
+  - `./.venv/bin/python -m unittest backend.tests.test_startup_repository_fallbacks backend.tests.test_repository_configuration backend.tests.test_rag_service_client backend.tests.test_investigation_flow`
+  - `./.venv/bin/python -m unittest backend.tests.test_rag_dashboard_contract backend.tests.test_dashboard_routes backend.tests.test_dashboard_ui_contract`
+  - `./.venv/bin/python -m py_compile backend/main.py backend/rag_api.py backend/tests/test_startup_repository_fallbacks.py`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health`
+  - `curl -sS 'http://localhost:8080/api/dashboard/rag/scorecard?range=7d'`
+  - After the fix, `/health` returned `status=ok` with `ticket_storage=memory`, and `/api/dashboard/rag/scorecard?range=7d` returned HTTP 200 instead of 504/502.
+  - Residual runtime issue remains external to this code change: both host-side and container-side `psycopg.connect(PGVECTOR_DSN, connect_timeout=5)` now fail with `connection timeout expired`, so the scorecard payload currently falls back to `has_eval_data=false` until PGVector/Postgres connectivity is restored.
