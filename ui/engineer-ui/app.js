@@ -59,6 +59,7 @@ const POOL_STATUS_RANK = {
 };
 const DEFAULT_FETCH_TIMEOUT_MS = 25000;
 const TELL_AI_FETCH_TIMEOUT_MS = 70000;
+const TICKET_POOL_VIEW_STORAGE_KEY = "engineer_ticket_pool_view_mode";
 
 const FILTER_KEYS = ["priority", "mode", "status"];
 const FILTER_BLUR_DELAY_MS = 140;
@@ -72,6 +73,7 @@ const filterComboboxState = {
   mode: { open: false, query: "", blurTimer: null },
   status: { open: false, query: "", blurTimer: null },
 };
+let ticketPoolViewMode = "list";
 const filterComboboxConfig = {
   priority: {
     label: "Priority",
@@ -717,6 +719,84 @@ function selectedHeaderFilterOption(key) {
   return selected || options[0] || { value: "all", label: "All" };
 }
 
+function normalizeTicketPoolViewMode(value) {
+  return String(value || "").toLowerCase() === "grid" ? "grid" : "list";
+}
+
+function hydrateTicketPoolViewMode() {
+  try {
+    ticketPoolViewMode = normalizeTicketPoolViewMode(localStorage.getItem(TICKET_POOL_VIEW_STORAGE_KEY));
+  } catch (_error) {
+    ticketPoolViewMode = "list";
+  }
+  return ticketPoolViewMode;
+}
+
+function applyTicketPoolViewMode(value, { render = true } = {}) {
+  const normalized = normalizeTicketPoolViewMode(value);
+  ticketPoolViewMode = normalized;
+  try {
+    localStorage.setItem(TICKET_POOL_VIEW_STORAGE_KEY, normalized);
+  } catch (_error) {
+    // Ignore storage errors and keep the in-memory mode.
+  }
+  if (render && routeState.view === "pool") {
+    renderTickets();
+  }
+  return ticketPoolViewMode;
+}
+
+function poolViewToggleIcon(mode) {
+  if (mode === "grid") {
+    return `
+      <svg class="pool-view-toggle-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+        <rect x="3" y="3" width="5" height="5" rx="1.3" stroke="currentColor" stroke-width="1.4"></rect>
+        <rect x="12" y="3" width="5" height="5" rx="1.3" stroke="currentColor" stroke-width="1.4"></rect>
+        <rect x="3" y="12" width="5" height="5" rx="1.3" stroke="currentColor" stroke-width="1.4"></rect>
+        <rect x="12" y="12" width="5" height="5" rx="1.3" stroke="currentColor" stroke-width="1.4"></rect>
+      </svg>
+    `;
+  }
+  return `
+    <svg class="pool-view-toggle-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M4 5H16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
+      <path d="M4 10H16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
+      <path d="M4 15H16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
+    </svg>
+  `;
+}
+
+function buildPoolViewToggleHtml() {
+  const viewMode = normalizeTicketPoolViewMode(ticketPoolViewMode);
+  const options = [
+    { value: "list", label: "List view" },
+    { value: "grid", label: "Grid view" },
+  ];
+
+  return `
+    <div class="pool-view-toggle" role="group" aria-label="Ticket pool layout">
+      ${options
+        .map((option) => {
+          const isSelected = option.value === viewMode;
+          return `
+            <button
+              type="button"
+              class="pool-view-toggle-btn ${isSelected ? "is-active" : ""}"
+              data-pool-view-option="${escapeHtml(option.value)}"
+              aria-label="${escapeHtml(option.label)}"
+              title="${escapeHtml(option.label)}"
+              aria-pressed="${isSelected ? "true" : "false"}"
+            >
+              ${poolViewToggleIcon(option.value)}
+              <span class="sr-only">${escapeHtml(option.label)}</span>
+            </button>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
 function buildHeaderFilterComboboxHtml(key) {
   const config = filterComboboxConfig[key];
   if (!config) {
@@ -807,7 +887,12 @@ function renderFilterControls() {
   if (!filterControlsEl) {
     return;
   }
-  filterControlsEl.innerHTML = FILTER_KEYS.map((key) => buildHeaderFilterComboboxHtml(key)).join("");
+  filterControlsEl.innerHTML = `
+    <div class="filter-control-group">
+      ${FILTER_KEYS.map((key) => buildHeaderFilterComboboxHtml(key)).join("")}
+    </div>
+    ${buildPoolViewToggleHtml()}
+  `;
 }
 
 function clearFilterBlurTimer(key) {
@@ -1287,8 +1372,139 @@ function sortTicketsByPriority(items) {
   });
 }
 
+function describeTicketPoolTicket(ticket) {
+  const ticketId = String(ticket.ticket_id || "-");
+  const priority = String(ticket.priority || "normal").toLowerCase();
+  const status = normalizeStatusValue(ticket.status || "open");
+  const mode = String(ticket.engineer_mode || "managed").toLowerCase();
+  const subject = String(ticket.subject || "(No subject)");
+  const requester = String(ticket.requester || ticket.customer_id || "Unknown");
+  const investigationPreview = latestInvestigationUpdate(ticket);
+  const pendingQuestion = String(investigationPreview || "").trim();
+  const parsedEngineerRequest = parseEngineerRequest(pendingQuestion);
+  const previewSource = parsedEngineerRequest.issue ? `Issue: ${parsedEngineerRequest.issue}` : pendingQuestion;
+  const pendingPreview = previewSource.length > 180 ? `${previewSource.slice(0, 180)}...` : previewSource;
+  return {
+    ticketId,
+    priority,
+    status,
+    mode,
+    subject,
+    requester,
+    pendingQuestion,
+    pendingPreview,
+    isInvestigating: status === "investigating",
+  };
+}
+
+function renderTicketPoolList(rows) {
+  return `
+    <section class="ticket-pool-list" role="list">
+      ${rows
+        .map((ticket) => {
+          const item = describeTicketPoolTicket(ticket);
+          return `
+            <article
+              class="ticket-row${item.isInvestigating ? " ticket-row-waiting" : ""}"
+              role="button"
+              tabindex="0"
+              data-ticket-row="true"
+              data-ticket-id="${escapeHtml(item.ticketId)}"
+              aria-label="Open ticket ${escapeHtml(item.ticketId)} detail"
+            >
+              <div class="ticket-row-header">
+                <div class="ticket-row-title-group">
+                  <div class="ticket-row-headline">
+                    <p class="ticket-row-kicker mono">${escapeHtml(item.ticketId)}</p>
+                    <h3 class="ticket-row-title">${escapeHtml(item.subject)}</h3>
+                  </div>
+                </div>
+                <div class="ticket-row-badges">
+                  <span class="priority-badge priority-${escapeHtml(item.priority)}">${escapeHtml(
+                    priorityLabel(item.priority)
+                  )}</span>
+                  <span class="status-badge ${statusClass(item.status)}">${escapeHtml(statusLabel(item.status))}</span>
+                  <span class="mode-pill mode-pill-${escapeHtml(item.mode)}">${escapeHtml(modeLabel(item.mode))}</span>
+                </div>
+              </div>
+
+              <div class="ticket-row-secondary">
+                <div class="ticket-row-meta">
+                  <span><strong>Requester</strong> ${escapeHtml(item.requester)}</span>
+                  <span><strong>Updated</strong> ${escapeHtml(formatDateTime(ticket.updated_at))}</span>
+                  <span><strong>Created</strong> ${escapeHtml(formatDateTime(ticket.created_at))}</span>
+                  ${
+                    item.pendingQuestion
+                      ? `
+                    <span class="ticket-row-request">
+                      <strong>Investigation Update</strong>
+                      ${escapeHtml(item.pendingPreview)}
+                    </span>
+                  `
+                      : ""
+                  }
+                </div>
+              </div>
+            </article>
+          `;
+        })
+        .join("")}
+    </section>
+  `;
+}
+
+function renderTicketPoolGrid(rows) {
+  return `
+    <section class="ticket-pool-grid" role="list">
+      ${rows
+        .map((ticket) => {
+          const item = describeTicketPoolTicket(ticket);
+          return `
+            <article
+              class="ticket-pool-card${item.isInvestigating ? " ticket-pool-card-waiting" : ""}"
+              role="button"
+              tabindex="0"
+              data-ticket-row="true"
+              data-ticket-id="${escapeHtml(item.ticketId)}"
+              aria-label="Open ticket ${escapeHtml(item.ticketId)} detail"
+            >
+              <div class="ticket-pool-card-top">
+                <p class="ticket-row-kicker mono">${escapeHtml(item.ticketId)}</p>
+                <div class="ticket-pool-card-badges">
+                  <span class="priority-badge priority-${escapeHtml(item.priority)}">${escapeHtml(
+                    priorityLabel(item.priority)
+                  )}</span>
+                  <span class="status-badge ${statusClass(item.status)}">${escapeHtml(statusLabel(item.status))}</span>
+                  <span class="mode-pill mode-pill-${escapeHtml(item.mode)}">${escapeHtml(modeLabel(item.mode))}</span>
+                </div>
+              </div>
+              <h3 class="ticket-pool-card-title">${escapeHtml(item.subject)}</h3>
+              <div class="ticket-pool-card-meta">
+                <span><strong>Requester</strong> ${escapeHtml(item.requester)}</span>
+                <span><strong>Updated</strong> ${escapeHtml(formatDateTime(ticket.updated_at))}</span>
+                <span><strong>Created</strong> ${escapeHtml(formatDateTime(ticket.created_at))}</span>
+              </div>
+              ${
+                item.pendingQuestion
+                  ? `
+                <div class="ticket-pool-card-preview">
+                  <span class="ticket-pool-card-preview-label">Investigation Update</span>
+                  <p>${escapeHtml(item.pendingPreview)}</p>
+                </div>
+              `
+                  : ""
+              }
+            </article>
+          `;
+        })
+        .join("")}
+    </section>
+  `;
+}
+
 function renderTicketPoolView() {
   const rows = sortTicketsByPriority(applyTicketFilters(tickets));
+  const viewMode = normalizeTicketPoolViewMode(ticketPoolViewMode);
   const allCount = tickets.length;
   const managedCount = tickets.filter(
     (ticket) => String(ticket.engineer_mode || "managed").toLowerCase() === "managed"
@@ -1302,7 +1518,7 @@ function renderTicketPoolView() {
   const showLoadingState = boardLoading && allCount === 0;
 
   return `
-    <section class="ticket-pool-page">
+    <section class="ticket-pool-page" data-pool-view-mode="${escapeHtml(viewMode)}">
       <section class="pool-metrics" aria-label="Engineer queue metrics">
         <article class="metric-card">
           <span class="metric-label">Total Tickets</span>
@@ -1337,74 +1553,9 @@ function renderTicketPoolView() {
     `
           : rows.length === 0
           ? '<div class="empty-state">No tickets match the current filters.</div>'
-          : `
-      <section class="ticket-pool-list" role="list">
-        ${rows
-          .map((ticket) => {
-            const ticketId = String(ticket.ticket_id || "-");
-            const priority = String(ticket.priority || "normal").toLowerCase();
-            const status = normalizeStatusValue(ticket.status || "open");
-            const mode = String(ticket.engineer_mode || "managed").toLowerCase();
-            const subject = String(ticket.subject || "(No subject)");
-            const requester = String(ticket.requester || ticket.customer_id || "Unknown");
-            const investigationPreview = latestInvestigationUpdate(ticket);
-            const pendingQuestion = String(investigationPreview || "").trim();
-            const parsedEngineerRequest = parseEngineerRequest(pendingQuestion);
-            const previewSource = parsedEngineerRequest.issue
-              ? `Issue: ${parsedEngineerRequest.issue}`
-              : pendingQuestion;
-            const pendingPreview =
-              previewSource.length > 180 ? `${previewSource.slice(0, 180)}...` : previewSource;
-            const waitingRowClass = status === "investigating" ? " ticket-row-waiting" : "";
-
-            return `
-              <article
-                class="ticket-row${waitingRowClass}"
-                role="button"
-                tabindex="0"
-                data-ticket-row="true"
-                data-ticket-id="${escapeHtml(ticketId)}"
-                aria-label="Open ticket ${escapeHtml(ticketId)} detail"
-              >
-                <div class="ticket-row-header">
-                  <div class="ticket-row-title-group">
-                    <div class="ticket-row-headline">
-                      <p class="ticket-row-kicker mono">${escapeHtml(ticketId)}</p>
-                      <h3 class="ticket-row-title">${escapeHtml(subject)}</h3>
-                    </div>
-                  </div>
-                  <div class="ticket-row-badges">
-                    <span class="priority-badge priority-${escapeHtml(priority)}">${escapeHtml(
-                      priorityLabel(priority)
-                    )}</span>
-                    <span class="status-badge ${statusClass(status)}">${escapeHtml(statusLabel(status))}</span>
-                    <span class="mode-pill mode-pill-${escapeHtml(mode)}">${escapeHtml(modeLabel(mode))}</span>
-                  </div>
-                </div>
-
-                <div class="ticket-row-secondary">
-                  <div class="ticket-row-meta">
-                    <span><strong>Requester</strong> ${escapeHtml(requester)}</span>
-                    <span><strong>Updated</strong> ${escapeHtml(formatDateTime(ticket.updated_at))}</span>
-                    <span><strong>Created</strong> ${escapeHtml(formatDateTime(ticket.created_at))}</span>
-                    ${
-                      pendingQuestion
-                        ? `
-                    <span class="ticket-row-request">
-                      <strong>Investigation Update</strong>
-                      ${escapeHtml(pendingPreview)}
-                    </span>
-                  `
-                        : ""
-                    }
-                  </div>
-                </div>
-              </article>
-            `;
-          })
-          .join("")}
-      </section>
-    `
+          : viewMode === "grid"
+          ? renderTicketPoolGrid(rows)
+          : renderTicketPoolList(rows)
       }
     </section>
   `;
@@ -2709,6 +2860,12 @@ async function handleDetailChange(event) {
 }
 
 function handleFilterControlsClick(event) {
+  const viewToggleButton = event.target.closest("button[data-pool-view-option]");
+  if (viewToggleButton) {
+    applyTicketPoolViewMode(viewToggleButton.dataset.poolViewOption);
+    return;
+  }
+
   const actionButton = event.target.closest("[data-filter-action]");
   if (actionButton) {
     const action = actionButton.dataset.filterAction;
@@ -2985,6 +3142,8 @@ function handleLocalLogout() {
   toggleScreens();
   resetLoginForm();
 }
+
+hydrateTicketPoolViewMode();
 
 async function handleLogoutClick() {
   if (logoutLoading) {
