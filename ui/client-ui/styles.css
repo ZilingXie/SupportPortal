@@ -634,7 +634,11 @@ button {
 
 .app-shell {
   position: relative;
+  display: flex;
   min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
 }
 
 .sidebar {
@@ -1044,11 +1048,16 @@ button {
 }
 
 .workspace-shell {
+  flex: 1 1 auto;
+  min-width: 0;
   width: calc(100% - 88px);
-  min-height: 100vh;
+  min-height: 0;
+  height: 100vh;
+  height: 100dvh;
   margin-left: 88px;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .topbar {
@@ -1249,6 +1258,7 @@ button {
   display: flex;
   flex-direction: column;
   padding: 0 32px 32px;
+  overflow: hidden;
 }
 
 .welcome,
@@ -1256,6 +1266,11 @@ button {
 .tickets-root {
   flex: 1;
   min-height: 0;
+}
+
+.welcome,
+.tickets-root {
+  overflow: auto;
 }
 
 .welcome {
@@ -1836,6 +1851,10 @@ a.citation-pill:hover {
     margin-top: 12px;
   }
 
+  .app-shell {
+    flex-direction: column;
+  }
+
   .sidebar {
     position: relative;
     inset: auto;
@@ -1861,7 +1880,9 @@ a.citation-pill:hover {
   }
 
   .workspace-shell {
+    flex: 1 1 auto;
     width: 100%;
+    height: auto;
     margin-left: 0;
   }
 
