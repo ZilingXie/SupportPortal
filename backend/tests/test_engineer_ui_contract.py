@@ -10,8 +10,10 @@ class EngineerUiContractTests(unittest.TestCase):
     def run_engineer_app_script(self, script: str) -> None:
         node_script = textwrap.dedent(
             f"""
+            (async () => {{
             const fs = require("fs");
             const vm = require("vm");
+            const userScript = {script!r};
 
             let source = fs.readFileSync("ui/engineer-ui/app.js", "utf8");
             source = source.replace(/\\nloginFormEl\\.addEventListener\\([\\s\\S]*$/, "\\n");
@@ -23,12 +25,20 @@ class EngineerUiContractTests(unittest.TestCase):
                 value: "",
                 dataset: {{}},
                 disabled: false,
+                classList: {{
+                  add() {{}},
+                  remove() {{}},
+                  toggle() {{}},
+                  contains() {{ return false; }},
+                }},
                 addEventListener() {{}},
                 removeEventListener() {{}},
                 querySelector() {{ return null; }},
                 querySelectorAll() {{ return []; }},
                 closest() {{ return null; }},
                 focus() {{}},
+                scrollIntoView() {{}},
+                setSelectionRange() {{}},
               }};
             }}
 
@@ -77,6 +87,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 this.close = () => {{}};
                 this.send = () => {{}};
               }},
+              HTMLTextAreaElement: function HTMLTextAreaElement() {{}},
               setTimeout() {{
                 return 0;
               }},
@@ -90,7 +101,11 @@ class EngineerUiContractTests(unittest.TestCase):
             sandbox.globalThis = sandbox;
             vm.createContext(sandbox);
             vm.runInContext(source, sandbox);
-            vm.runInContext({script!r}, sandbox);
+            await vm.runInContext(`(async () => {{\\n${{userScript}}\\n}})()`, sandbox);
+            }})().catch((error) => {{
+              console.error(error);
+              process.exit(1);
+            }});
             """
         )
         result = subprocess.run(
@@ -361,8 +376,14 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!html.includes("Ask AI to Revise")) {{
                   throw new Error("Awaiting-confirmation investigations should expose the revise action.");
                 }}
+                if (!html.includes("detail-investigation-inline-actions")) {{
+                  throw new Error("Confirmation actions should render inline inside the investigation chat thread.");
+                }}
                 if (!html.includes("Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.")) {{
                   throw new Error("Detail workspace should render the draft customer reply for final confirmation.");
+                }}
+                if (!html.includes("detail-investigation-draft")) {{
+                  throw new Error("Final confirmation state should render the draft reply inside the chat thread.");
                 }}
                 if (html.includes("Mode, Status, and Routing")) {{
                   throw new Error("Detail workspace should no longer render the mode/status/routing section.");
@@ -376,11 +397,8 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (html.includes("Customer Response Channel")) {{
                   throw new Error("Detail workspace should no longer render the direct customer response section.");
                 }}
-                if (html.includes("Tell AI")) {{
-                  throw new Error("Detail workspace should use the reply section instead of the old Tell AI button copy.");
-                }}
-                if (html.includes("Send to AI")) {{
-                  throw new Error("Detail workspace should no longer render the internal reply composer action.");
+                if (html.includes("Approve Customer Reply")) {{
+                  throw new Error("Awaiting-confirmation state should no longer use a separate confirmation card.");
                 }}
                 if (html.includes("Engineer Request Records")) {{
                   throw new Error("Detail workspace should use investigation history instead of legacy engineer request records.");
@@ -389,6 +407,337 @@ class EngineerUiContractTests(unittest.TestCase):
                 const customerIndex = html.indexOf("Customer Timeline");
                 if (internalIndex === -1 || customerIndex === -1 || internalIndex > customerIndex) {{
                   throw new Error("Internal investigation thread should render ahead of the customer timeline.");
+                }}
+                const decisionIndex = html.indexOf("I have enough information now. Please confirm this draft before I reply to the customer.");
+                const inlineActionsIndex = html.indexOf("detail-investigation-inline-actions");
+                if (decisionIndex === -1 || inlineActionsIndex === -1 || inlineActionsIndex < decisionIndex) {{
+                  throw new Error("Inline confirmation actions should appear after the final Engineer AI message.");
+                }}
+                if (html.includes('id="detail-investigation-input"')) {{
+                  throw new Error("Normal investigation composer should stay hidden while awaiting confirmation.");
+                }}
+              """
+            )
+        )
+
+    def test_engineer_detail_shows_closed_investigation_thread_without_composer(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                selectedTicketId = "TK-DETAIL-CLOSED";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-CLOSED",
+                  subject: "Android 14 token renew regression",
+                  requester: "user-7",
+                  priority: "high",
+                  status: "open",
+                  engineer_mode: "managed",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [
+                    {
+                      role: "customer",
+                      content: "Token renew callback does not fire on Android 14.",
+                      created_at: "2026-03-24T08:00:00+00:00",
+                    },
+                    {
+                      role: "assistant",
+                      content: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                      created_at: "2026-03-24T09:06:00+00:00",
+                    },
+                  ],
+                  active_investigation: null,
+                  investigation_history: [
+                    {
+                      id: "INV-DETAIL-1",
+                      state: "closed",
+                      trigger_reason: "rag_insufficient_evidence",
+                      trigger_source: "support_query",
+                      draft_customer_reply: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                      final_confirmation_requested_at: null,
+                      opened_at: "2026-03-24T08:01:00+00:00",
+                      updated_at: "2026-03-24T09:06:00+00:00",
+                      closed_at: "2026-03-24T09:06:00+00:00",
+                      messages: [
+                        {
+                          id: "INV-DETAIL-1-m1",
+                          role: "engineer_ai",
+                          content: "Please confirm whether the issue only reproduces on Android 14.",
+                          created_at: "2026-03-24T08:02:00+00:00",
+                        },
+                        {
+                          id: "INV-DETAIL-1-m2",
+                          role: "engineer",
+                          content: "Confirmed. Reproduces on Android 14 with SDK 4.2.1 only.",
+                          created_at: "2026-03-24T08:20:00+00:00",
+                        },
+                        {
+                          id: "INV-DETAIL-1-m3",
+                          role: "engineer_ai",
+                          content: "I have enough information now. Please confirm this draft before I reply to the customer.",
+                          created_at: "2026-03-24T09:05:00+00:00",
+                        },
+                        {
+                          id: "INV-DETAIL-1-m4",
+                          role: "engineer",
+                          content: "Approved final reply.",
+                          created_at: "2026-03-24T09:06:00+00:00",
+                        },
+                      ],
+                    },
+                  ],
+                  engineer_request_records: [],
+                };
+                selectedTicketSummary = "Customer-facing answer was approved and sent.";
+                selectedTicketNextAction = "Monitor for customer follow-up if they reply again.";
+
+                const html = renderTicketDetailView();
+                if (!html.includes("Approved final reply.")) {{
+                  throw new Error("Closed investigations should keep rendering the latest internal transcript.");
+                }}
+                if (!html.includes("State: Closed")) {{
+                  throw new Error("Closed investigations should label the thread as closed.");
+                }}
+                if (html.includes('id="detail-investigation-input"')) {{
+                  throw new Error("Closed investigations should not render an active composer.");
+                }}
+                if (html.includes("Approve Reply") || html.includes("Ask AI to Revise")) {{
+                  throw new Error("Closed investigations should not keep rendering confirmation actions.");
+                }}
+              """
+            )
+        )
+
+    def test_engineer_detail_revise_action_reuses_main_composer_and_submit_targets_confirmation_endpoint(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                routeState.view = "detail";
+                selectedTicketId = "TK-DETAIL-REV";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-REV",
+                  subject: "Android 14 token renew regression",
+                  requester: "user-7",
+                  priority: "high",
+                  status: "investigating",
+                  engineer_mode: "managed",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: {
+                    id: "INV-DETAIL-REV",
+                    state: "awaiting_confirmation",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                    final_confirmation_requested_at: "2026-03-24T09:05:00+00:00",
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-REV-m1",
+                        role: "engineer_ai",
+                        content: "I have enough information now. Please confirm this draft before I reply to the customer.",
+                        created_at: "2026-03-24T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+                selectedTicketSummary = "Customer-facing answer is drafted and waiting for engineer confirmation.";
+                selectedTicketNextAction = "Approve the prepared reply or ask the AI to revise it.";
+
+                const reviseButton = {
+                  dataset: { detailAction: "revise-investigation" },
+                  disabled: false,
+                };
+                const reviseTarget = {
+                  closest(selector) {
+                    if (selector === "button[data-detail-action]") {
+                      return reviseButton;
+                    }
+                    return null;
+                  },
+                };
+
+                handleDetailClick({ target: reviseTarget });
+                const reviseHtml = renderTicketDetailView();
+                if (!reviseHtml.includes('id="detail-investigation-input"')) {{
+                  throw new Error("Ask AI to Revise should reopen the main investigation composer.");
+                }}
+                if (!reviseHtml.includes("Tell Engineer AI what to revise before replying to the customer")) {{
+                  throw new Error("Revise mode should update the composer placeholder.");
+                }}
+                if (!reviseHtml.includes(">Send Revision Note<")) {{
+                  throw new Error("Revise mode should relabel the composer submit action.");
+                }}
+
+                let capturedUrl = null;
+                let capturedOptions = null;
+                fetchJson = async (url, options = undefined) => {
+                  capturedUrl = url;
+                  capturedOptions = options;
+                  return {
+                    ticket_id: "TK-DETAIL-REV",
+                    status: "investigating",
+                    engineer_mode: "managed",
+                    active_investigation: selectedTicket.active_investigation,
+                    updated_at: "2026-03-24T09:11:00+00:00",
+                  };
+                };
+                loadTickets = async () => {};
+                refreshSelectedTicket = async () => {};
+
+                tellAiDraft = "Add a cache-clear step before asking the customer to retry.";
+                const sendButton = {
+                  dataset: { detailAction: "send-tell-ai" },
+                  disabled: false,
+                };
+                const sendTarget = {
+                  closest(selector) {
+                    if (selector === "button[data-detail-action]") {
+                      return sendButton;
+                    }
+                    return null;
+                  },
+                };
+
+                handleDetailClick({ target: sendTarget });
+                if (capturedUrl !== "/api/engineer/tickets/TK-DETAIL-REV/investigation/confirmation") {{
+                  throw new Error("Revise submit should call the investigation confirmation endpoint.");
+                }}
+                const parsedBody = JSON.parse(capturedOptions.body);
+                if (parsedBody.decision !== "revise") {{
+                  throw new Error("Revise submit should post decision=revise.");
+                }}
+                if (parsedBody.note !== "Add a cache-clear step before asking the customer to retry.") {{
+                  throw new Error("Revise submit should send the engineer revision note.");
+                }}
+              """
+            )
+        )
+
+    def test_engineer_detail_approve_action_refreshes_into_closed_read_only_thread(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                routeState.view = "detail";
+                selectedTicketId = "TK-DETAIL-APPROVE";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-APPROVE",
+                  subject: "Android 14 token renew regression",
+                  requester: "user-7",
+                  priority: "high",
+                  status: "investigating",
+                  engineer_mode: "managed",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: {
+                    id: "INV-DETAIL-APPROVE",
+                    state: "awaiting_confirmation",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                    final_confirmation_requested_at: "2026-03-24T09:05:00+00:00",
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-APPROVE-m1",
+                        role: "engineer_ai",
+                        content: "I have enough information now. Please confirm this draft before I reply to the customer.",
+                        created_at: "2026-03-24T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+                selectedTicketSummary = "Customer-facing answer is drafted and waiting for engineer confirmation.";
+                selectedTicketNextAction = "Approve the prepared reply or ask the AI to revise it.";
+
+                let capturedUrl = null;
+                let capturedOptions = null;
+                fetchJson = async (url, options = undefined) => {
+                  capturedUrl = url;
+                  capturedOptions = options;
+                  return {
+                    ticket_id: "TK-DETAIL-APPROVE",
+                    status: "open",
+                    engineer_mode: "managed",
+                    active_investigation: null,
+                    updated_at: "2026-03-24T09:11:00+00:00",
+                  };
+                };
+                loadTickets = async () => {};
+                refreshSelectedTicket = async () => {
+                  selectedTicket = {
+                    ...selectedTicket,
+                    status: "open",
+                    active_investigation: null,
+                    investigation_history: [
+                      {
+                        id: "INV-DETAIL-APPROVE",
+                        state: "closed",
+                        trigger_reason: "rag_insufficient_evidence",
+                        trigger_source: "support_query",
+                        draft_customer_reply: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                        final_confirmation_requested_at: null,
+                        opened_at: "2026-03-24T08:01:00+00:00",
+                        updated_at: "2026-03-24T09:11:00+00:00",
+                        closed_at: "2026-03-24T09:11:00+00:00",
+                        messages: [
+                          {
+                            id: "INV-DETAIL-APPROVE-m1",
+                            role: "engineer_ai",
+                            content: "I have enough information now. Please confirm this draft before I reply to the customer.",
+                            created_at: "2026-03-24T09:05:00+00:00",
+                          },
+                          {
+                            id: "INV-DETAIL-APPROVE-m2",
+                            role: "engineer",
+                            content: "Approved final reply.",
+                            created_at: "2026-03-24T09:11:00+00:00",
+                          },
+                        ],
+                      },
+                    ],
+                  };
+                  renderTicketDetail();
+                };
+
+                const approveButton = {
+                  dataset: { detailAction: "approve-investigation" },
+                  disabled: false,
+                };
+                const approveTarget = {
+                  closest(selector) {
+                    if (selector === "button[data-detail-action]") {
+                      return approveButton;
+                    }
+                    return null;
+                  },
+                };
+
+                await handleDetailClick({ target: approveTarget });
+                if (capturedUrl !== "/api/engineer/tickets/TK-DETAIL-APPROVE/investigation/confirmation") {{
+                  throw new Error("Approve should call the investigation confirmation endpoint.");
+                }}
+                const parsedBody = JSON.parse(capturedOptions.body);
+                if (parsedBody.decision !== "approve") {{
+                  throw new Error("Approve should post decision=approve.");
+                }}
+                const html = workspaceRegionEl.innerHTML;
+                if (!html.includes("Approved final reply.")) {{
+                  throw new Error("Approve flow should refresh into the closed investigation transcript.");
+                }}
+                if (!html.includes("State: Closed")) {{
+                  throw new Error("Approve flow should render the investigation as closed after refresh.");
+                }}
+                if (html.includes('id="detail-investigation-input"')) {{
+                  throw new Error("Approve flow should hide the composer after the investigation is closed.");
                 }}
               """
             )

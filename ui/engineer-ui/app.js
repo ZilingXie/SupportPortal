@@ -21,8 +21,8 @@ let selectedTicket = null;
 let selectedTicketSummary = "";
 let selectedTicketNextAction = "";
 let detailLoading = false;
-let showTellAiComposer = false;
 let tellAiDraft = "";
+let investigationReviseMode = false;
 let takeoverReplyDraft = "";
 let tellAiSubmitting = false;
 let takeoverSubmitting = false;
@@ -561,6 +561,18 @@ function getActiveInvestigation(ticket) {
   return ticket.active_investigation && typeof ticket.active_investigation === "object"
     ? ticket.active_investigation
     : null;
+}
+
+function getLatestClosedInvestigation(ticket) {
+  if (!ticket || typeof ticket !== "object") {
+    return null;
+  }
+  const history = Array.isArray(ticket.investigation_history) ? ticket.investigation_history : [];
+  return history.find((item) => item && typeof item === "object") || null;
+}
+
+function getDisplayInvestigation(ticket) {
+  return getActiveInvestigation(ticket) || getLatestClosedInvestigation(ticket);
 }
 
 function latestInvestigationUpdate(ticket) {
@@ -1388,8 +1400,8 @@ function resetDetailWorkspaceState() {
   selectedTicketSummary = "";
   selectedTicketNextAction = "";
   detailLoading = false;
-  showTellAiComposer = false;
   tellAiDraft = "";
+  investigationReviseMode = false;
   takeoverReplyDraft = "";
   tellAiSubmitting = false;
   takeoverSubmitting = false;
@@ -1400,17 +1412,77 @@ function resetDetailWorkspaceState() {
   modeComboboxQuery = "";
 }
 
-function renderConversationHtml(messages) {
+function renderInvestigationDecisionHtml({ draftCustomerReply, controlsDisabled }) {
+  return `
+    <div class="detail-investigation-draft">
+      <p class="detail-investigation-draft-label">Draft Customer Reply</p>
+      <div class="detail-investigation-draft-body">${formatMultiline(
+        draftCustomerReply || "Draft reply is not ready yet."
+      )}</div>
+    </div>
+    <div class="detail-investigation-inline-actions">
+      <button
+        type="button"
+        class="btn btn-primary"
+        data-detail-action="approve-investigation"
+        ${controlsDisabled ? "disabled" : ""}
+      >Approve Reply</button>
+      <button
+        type="button"
+        class="btn btn-ghost"
+        data-detail-action="revise-investigation"
+        ${controlsDisabled ? "disabled" : ""}
+      >Ask AI to Revise</button>
+    </div>
+  `;
+}
+
+function renderInvestigationComposerHtml({ draft, controlsDisabled, reviseMode }) {
+  const placeholder = reviseMode
+    ? "Tell Engineer AI what to revise before replying to the customer..."
+    : "Share the next technical detail for Engineer AI...";
+  const submitLabel = reviseMode ? "Send Revision Note" : "Send Update";
+
+  return `
+    <div class="detail-investigation-composer">
+      <textarea
+        id="detail-investigation-input"
+        class="detail-textarea"
+        placeholder="${escapeHtml(placeholder)}"
+        ${controlsDisabled ? "disabled" : ""}
+      >${escapeHtml(draft)}</textarea>
+      <div class="detail-investigation-composer-actions">
+        <button
+          type="button"
+          class="btn btn-primary"
+          data-detail-action="send-tell-ai"
+          ${controlsDisabled ? "disabled" : ""}
+        >${escapeHtml(submitLabel)}</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderConversationHtml(messages, options = {}) {
   if (!messages.length) {
     return '<div class="empty-state">No messages on this ticket yet.</div>';
   }
 
+  const inlineDecisionIndex = Number.isInteger(options.inlineDecisionIndex)
+    ? options.inlineDecisionIndex
+    : -1;
+  const showInlineConfirmation = Boolean(options.showInlineConfirmation);
+  const draftCustomerReply = String(options.draftCustomerReply || "").trim();
+  const controlsDisabled = Boolean(options.controlsDisabled);
+
   return `
     <div class="message-list">
       ${messages
-        .map((message) => {
+        .map((message, index) => {
           const role = String(message.role || "system").toLowerCase();
           const createdAt = formatDateTime(message.created_at);
+          const shouldRenderDecision =
+            showInlineConfirmation && inlineDecisionIndex === index && role === "engineer_ai";
           return `
             <article class="message-item ${roleClass(role)}">
               <header>
@@ -1418,6 +1490,11 @@ function renderConversationHtml(messages) {
                 <span class="message-time">${escapeHtml(createdAt)}</span>
               </header>
               <div class="message-content">${formatMultiline(String(message.content || ""))}</div>
+              ${
+                shouldRenderDecision
+                  ? renderInvestigationDecisionHtml({ draftCustomerReply, controlsDisabled })
+                  : ""
+              }
               ${buildMessageReferences(message)}
             </article>
           `;
@@ -1494,10 +1571,11 @@ function renderTicketDetailView() {
   const priority = String(ticket.priority || "normal").toLowerCase();
   const requester = String(ticket.requester || ticket.customer_id || "Unknown");
   const activeInvestigation = getActiveInvestigation(ticket);
-  const investigationState = String(activeInvestigation?.state || "active").toLowerCase();
+  const displayInvestigation = getDisplayInvestigation(ticket);
+  const investigationState = String(displayInvestigation?.state || "active").toLowerCase();
   const investigationPreview = latestInvestigationUpdate(ticket);
-  const investigationMessages = Array.isArray(activeInvestigation?.messages)
-    ? activeInvestigation.messages
+  const investigationMessages = Array.isArray(displayInvestigation?.messages)
+    ? displayInvestigation.messages
     : investigationPreview
     ? [
         {
@@ -1507,12 +1585,16 @@ function renderTicketDetailView() {
         },
       ]
     : [];
-  const showConfirmationCard = Boolean(activeInvestigation) && investigationState === "awaiting_confirmation";
-  const draftCustomerReply = String(activeInvestigation?.draft_customer_reply || "").trim();
+  const showInlineConfirmation =
+    Boolean(activeInvestigation) &&
+    investigationState === "awaiting_confirmation" &&
+    !investigationReviseMode;
+  const showInvestigationComposer =
+    Boolean(activeInvestigation) &&
+    mode !== "takeover" &&
+    (investigationState === "active" || investigationReviseMode);
+  const draftCustomerReply = String(displayInvestigation?.draft_customer_reply || "").trim();
   const controlsDisabled = tellAiSubmitting || takeoverSubmitting || modeSwitching;
-  const internalComposerPlaceholder = activeInvestigation
-    ? "Share the next technical detail or revision note for Engineer AI..."
-    : "Provide guidance for the AI-managed customer reply...";
   const messages = Array.isArray(ticket.messages) ? ticket.messages : [];
 
   return `
@@ -1558,9 +1640,9 @@ function renderTicketDetailView() {
               <p class="panel-card-kicker">Internal Investigation</p>
               <h3 class="panel-card-title">Internal Investigation Thread</h3>
               ${
-                activeInvestigation
+                displayInvestigation
                   ? `<p class="mode-switch-hint">State: ${escapeHtml(
-                      investigationStateLabel(activeInvestigation.state)
+                      investigationStateLabel(displayInvestigation.state)
                     )}</p>`
                   : ""
               }
@@ -1568,8 +1650,22 @@ function renderTicketDetailView() {
           </div>
           ${
             investigationMessages.length
-              ? renderConversationHtml(investigationMessages)
+              ? renderConversationHtml(investigationMessages, {
+                  inlineDecisionIndex: showInlineConfirmation ? investigationMessages.length - 1 : -1,
+                  showInlineConfirmation,
+                  draftCustomerReply,
+                  controlsDisabled,
+                })
               : '<div class="empty-state">No active internal investigation thread yet.</div>'
+          }
+          ${
+            showInvestigationComposer
+              ? renderInvestigationComposerHtml({
+                  draft: tellAiDraft,
+                  controlsDisabled,
+                  reviseMode: investigationReviseMode,
+                })
+              : ""
           }
         </section>
 
@@ -1597,42 +1693,29 @@ function renderTicketDetailView() {
               selectedTicketNextAction || "Analyzing next action needed..."
             )}</p>
           </section>
-
-          ${
-            showConfirmationCard
-              ? `
-            <section class="panel-card detail-block-engineer-request">
-              <div class="panel-card-head">
-                <div>
-                  <p class="panel-card-kicker">Final Confirmation</p>
-                  <h3 class="panel-card-title">Approve Customer Reply</h3>
-                </div>
-              </div>
-              <p class="engineer-request-body">${formatMultiline(
-                draftCustomerReply || "Draft reply is not ready yet."
-              )}</p>
-              <div class="detail-inline-actions">
-                <button
-                  type="button"
-                  class="btn btn-primary"
-                  data-detail-action="approve-investigation"
-                  ${controlsDisabled ? "disabled" : ""}
-                >Approve Reply</button>
-                <button
-                  type="button"
-                  class="btn btn-ghost"
-                  data-detail-action="revise-investigation"
-                  ${controlsDisabled ? "disabled" : ""}
-                >Ask AI to Revise</button>
-              </div>
-            </section>
-          `
-              : ""
-          }
         </aside>
       </div>
     </section>
   `;
+}
+
+function focusInvestigationComposerInput(retries = 8) {
+  const input = document.getElementById("detail-investigation-input");
+  if (!(input instanceof HTMLTextAreaElement)) {
+    if (retries > 0) {
+      setTimeout(() => focusInvestigationComposerInput(retries - 1), 90);
+    }
+    return;
+  }
+
+  input.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+  try {
+    input.focus({ preventScroll: true });
+  } catch {
+    input.focus();
+  }
+  const end = input.value.length;
+  input.setSelectionRange(end, end);
 }
 
 function renderTickets() {
@@ -1768,12 +1851,17 @@ async function refreshSelectedTicket(options = {}) {
       return;
     }
     selectedTicket = payload.ticket || null;
+    const refreshedInvestigation = getActiveInvestigation(selectedTicket);
+    if (String(refreshedInvestigation?.state || "").toLowerCase() !== "awaiting_confirmation") {
+      investigationReviseMode = false;
+    }
     if (selectedTicket) {
       selectedTicketSummary = "Generating AI summary for this ticket...";
       selectedTicketNextAction = "Determining next action needed...";
     } else {
       selectedTicketSummary = "";
       selectedTicketNextAction = "";
+      investigationReviseMode = false;
     }
     detailLoading = false;
     renderTicketDetail();
@@ -1864,7 +1952,7 @@ async function switchTicketModeOptimistic(ticketId, nextMode) {
   const previousSelectedTicket = selectedTicket ? { ...selectedTicket } : null;
   const previousSummary = selectedTicketSummary;
   const previousNextAction = selectedTicketNextAction;
-  const previousShowTellAiComposer = showTellAiComposer;
+  const previousInvestigationReviseMode = investigationReviseMode;
   const previousTellAiDraft = tellAiDraft;
   const localPatch = {
     engineer_mode: targetMode,
@@ -1873,7 +1961,7 @@ async function switchTicketModeOptimistic(ticketId, nextMode) {
 
   if (targetMode === "takeover") {
     pendingTakeoverComposerFocus = true;
-    showTellAiComposer = false;
+    investigationReviseMode = false;
     tellAiDraft = "";
     const currentStatus = normalizeStatusValue(selectedTicket?.status || "");
     if (currentStatus === "investigating") {
@@ -1920,7 +2008,7 @@ async function switchTicketModeOptimistic(ticketId, nextMode) {
     selectedTicket = previousSelectedTicket;
     selectedTicketSummary = previousSummary;
     selectedTicketNextAction = previousNextAction;
-    showTellAiComposer = previousShowTellAiComposer;
+    investigationReviseMode = previousInvestigationReviseMode;
     tellAiDraft = previousTellAiDraft;
     renderTickets();
     renderTicketDetail();
@@ -2222,16 +2310,13 @@ async function handleDetailClick(event) {
       window.alert("Ticket is in Human Takeover mode. Switch back to AI Managing first.");
       return;
     }
-    showTellAiComposer = !showTellAiComposer;
-    if (!showTellAiComposer) {
+    investigationReviseMode = !investigationReviseMode;
+    if (!investigationReviseMode) {
       tellAiDraft = "";
     }
     renderTicketDetail();
-    if (showTellAiComposer) {
-      setTimeout(() => {
-        const input = document.getElementById("detail-tell-ai-input");
-        input?.focus();
-      }, 0);
+    if (investigationReviseMode) {
+      focusInvestigationComposerInput();
     }
     return;
   }
@@ -2240,7 +2325,7 @@ async function handleDetailClick(event) {
     if (modeSwitching) {
       return;
     }
-    showTellAiComposer = false;
+    investigationReviseMode = false;
     tellAiDraft = "";
     renderTicketDetail();
     return;
@@ -2269,7 +2354,7 @@ async function handleDetailClick(event) {
     }
     const cleaned = tellAiDraft.trim();
     if (!cleaned) {
-      window.alert("Please input guidance for AI.");
+      window.alert("Please enter the next message for Engineer AI.");
       return;
     }
     button.disabled = true;
@@ -2277,7 +2362,12 @@ async function handleDetailClick(event) {
     renderTicketDetail();
     try {
       if (getActiveInvestigation(selectedTicket)) {
-        await submitInvestigationMessage(selectedTicketId, cleaned);
+        if (investigationReviseMode) {
+          await submitInvestigationConfirmation(selectedTicketId, "revise", cleaned);
+          investigationReviseMode = false;
+        } else {
+          await submitInvestigationMessage(selectedTicketId, cleaned);
+        }
       } else {
         await submitManagedResponse(selectedTicketId, cleaned);
       }
@@ -2304,6 +2394,7 @@ async function handleDetailClick(event) {
     renderTicketDetail();
     try {
       await submitInvestigationConfirmation(selectedTicketId, "approve");
+      investigationReviseMode = false;
       tellAiDraft = "";
       await loadTickets({ refreshDetail: false });
       await refreshSelectedTicket({ silent: true });
@@ -2322,31 +2413,10 @@ async function handleDetailClick(event) {
     if (!getActiveInvestigation(selectedTicket)) {
       return;
     }
-    const revisionNote = window.prompt("Tell Engineer AI what to revise before replying to the customer:");
-    if (revisionNote === null) {
-      return;
-    }
-    const cleaned = String(revisionNote || "").trim();
-    if (!cleaned) {
-      window.alert("Please add a revision note for Engineer AI.");
-      return;
-    }
-    button.disabled = true;
-    tellAiSubmitting = true;
+    investigationReviseMode = true;
+    tellAiDraft = "";
     renderTicketDetail();
-    try {
-      await submitInvestigationConfirmation(selectedTicketId, "revise", cleaned);
-      tellAiDraft = "";
-      await loadTickets({ refreshDetail: false });
-      await refreshSelectedTicket({ silent: true });
-    } catch (error) {
-      window.alert(`Revision request failed: ${error.message}`);
-      await refreshSelectedTicket({ silent: true });
-    } finally {
-      tellAiSubmitting = false;
-      renderTicketDetail();
-      button.disabled = false;
-    }
+    focusInvestigationComposerInput();
     return;
   }
 
@@ -2435,7 +2505,7 @@ function handleDetailInput(event) {
     return;
   }
 
-  const tellAiInput = event.target.closest("#detail-tell-ai-input");
+  const tellAiInput = event.target.closest("#detail-investigation-input");
   if (tellAiInput) {
     tellAiDraft = String(tellAiInput.value || "");
     return;

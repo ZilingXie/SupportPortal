@@ -17,5 +17,7 @@ env/
 *.log
 artifacts/
 .env
+.DS_Store
+.superpowers/
 official_doc/
 local_knowledge/
