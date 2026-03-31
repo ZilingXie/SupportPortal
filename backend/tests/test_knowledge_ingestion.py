@@ -63,6 +63,31 @@ exported_file: preload-channels_web.md
 """
 
 
+def _build_official_markdown(
+    *,
+    title: str,
+    description: str,
+    platform: str,
+    exported_from: str,
+    exported_file: str,
+) -> str:
+    return f"""---
+title: {title}
+description: {description}
+platform: {platform}
+exported_from: {exported_from}
+exported_on: '2026-01-20T05:44:18.970947Z'
+exported_file: {exported_file}
+---
+
+[HTML Version]({exported_from})
+
+# {title}
+
+{description}
+"""
+
+
 SAMPLE_TECHNICAL_ARTICLE = """**Issue Description:**
 A livestream archive was missing approximately the first 64 seconds of content. The delay occurred between the initiation of the Cloud Transcoder creation request and the time the first RTMP frame was received by the streaming service (AWS IVS).
 
@@ -208,6 +233,62 @@ class KnowledgeIngestionParsingTests(unittest.TestCase):
         self.assertEqual(document.sections[0].h2, "Overview")
         self.assertIn("Preloading channels for faster rendering.", document.content_blocks[0].text)
 
+    def test_parse_official_markdown_content_assigns_same_source_family_to_platform_variants(self) -> None:
+        android_document = parse_official_markdown_content(
+            raw_markdown=_build_official_markdown(
+                title="Get started with Video SDK",
+                description="Android quickstart.",
+                platform="android",
+                exported_from="https://docs.agora.io/en/video-calling/get-started/get-started-sdk?platform=android",
+                exported_file="get-started-sdk_android.md",
+            ),
+            file_name="get-started-sdk_android.md",
+            ingestion_id="KI-TEST-OFFICIAL-FAMILY-ANDROID",
+        )
+        ios_document = parse_official_markdown_content(
+            raw_markdown=_build_official_markdown(
+                title="Get started with Video SDK",
+                description="iOS quickstart.",
+                platform="ios",
+                exported_from="https://docs.agora.io/en/video-calling/get-started/get-started-sdk?platform=ios",
+                exported_file="get-started-sdk_ios.md",
+            ),
+            file_name="get-started-sdk_ios.md",
+            ingestion_id="KI-TEST-OFFICIAL-FAMILY-IOS",
+        )
+
+        self.assertEqual(android_document.source_family, "video-calling/get-started/get-started-sdk")
+        self.assertEqual(ios_document.source_family, "video-calling/get-started/get-started-sdk")
+        self.assertEqual(android_document.metadata["source_family"], ios_document.metadata["source_family"])
+
+    def test_parse_official_markdown_content_distinguishes_same_basename_on_different_paths(self) -> None:
+        get_started_document = parse_official_markdown_content(
+            raw_markdown=_build_official_markdown(
+                title="Authentication workflow",
+                description="Get started authentication guide.",
+                platform="android",
+                exported_from="https://docs.agora.io/en/video-calling/get-started/authentication-workflow?platform=android",
+                exported_file="authentication-workflow_android.md",
+            ),
+            file_name="authentication-workflow_android.md",
+            ingestion_id="KI-TEST-OFFICIAL-FAMILY-GET-STARTED",
+        )
+        token_document = parse_official_markdown_content(
+            raw_markdown=_build_official_markdown(
+                title="Authentication workflow",
+                description="Token authentication guide.",
+                platform="android",
+                exported_from="https://docs.agora.io/en/video-calling/token-authentication/authentication-workflow?platform=android",
+                exported_file="authentication-workflow_android.md",
+            ),
+            file_name="authentication-workflow_android.md",
+            ingestion_id="KI-TEST-OFFICIAL-FAMILY-TOKEN",
+        )
+
+        self.assertEqual(get_started_document.source_family, "video-calling/get-started/authentication-workflow")
+        self.assertEqual(token_document.source_family, "video-calling/token-authentication/authentication-workflow")
+        self.assertNotEqual(get_started_document.source_family, token_document.source_family)
+
     def test_parse_official_markdown_ignores_fenced_code_headings_and_preserves_heading_path(self) -> None:
         document = parse_official_markdown_file(
             DEPLOY_TOKEN_SERVER_DOC,
@@ -264,6 +345,25 @@ class KnowledgeIngestionParsingTests(unittest.TestCase):
         self.assertFalse(document.metadata["error_present"])
         self.assertGreater(len(document.content_blocks), 0)
 
+    def test_parse_technical_article_assigns_source_family_from_url_and_source_path_fallback(self) -> None:
+        url_backed = parse_technical_article(
+            title="Livestream archive missing first 64 seconds",
+            content=SAMPLE_TECHNICAL_ARTICLE,
+            source_url="https://internal.example.com/kb/stream-start-delay",
+            ingestion_id="KI-TEST-TECHNICAL-FAMILY-URL",
+        )
+        path_backed = parse_technical_article(
+            title="Livestream archive missing first 64 seconds",
+            content=SAMPLE_TECHNICAL_ARTICLE,
+            source_url=None,
+            ingestion_id="KI-TEST-TECHNICAL-FAMILY-PATH",
+        )
+
+        self.assertEqual(url_backed.source_family, "kb/stream-start-delay")
+        self.assertEqual(url_backed.metadata["source_family"], "kb/stream-start-delay")
+        self.assertEqual(path_backed.source_family, "technical/livestream-archive-missing-first-64-seconds")
+        self.assertEqual(path_backed.metadata["source_family"], "technical/livestream-archive-missing-first-64-seconds")
+
     def test_chunk_rows_include_context_prefix_for_technical_articles(self) -> None:
         document = parse_technical_article(
             title="Livestream archive missing first 64 seconds",
@@ -291,6 +391,7 @@ class KnowledgeIngestionParsingTests(unittest.TestCase):
         self.assertEqual(len(rows[0]["metadata"]["related_links"]), 3)
         self.assertEqual(rows[0]["chunk_strategy"], "technical_case_units_v1")
         self.assertEqual(rows[0]["metadata"]["section_path"], ["Issue Summary"])
+        self.assertEqual(rows[0]["metadata"]["source_family"], "kb/stream-start-delay")
 
     def test_technical_case_primary_chunk_rows_keep_links_in_metadata_without_reference_chunk(self) -> None:
         document = parse_technical_article(

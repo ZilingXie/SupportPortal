@@ -1635,10 +1635,11 @@ def _chunk_family_key(chunk: RetrievedChunk) -> str:
         str(metadata.get("product") or "").strip().lower()
         or str(metadata.get("product_area") or "").strip().lower()
     )
+    source_family = str(metadata.get("source_family") or "").strip().replace("\\", "/").strip("/").lower()
     source_path = str(chunk.source_path or "").strip().replace("\\", "/")
     source_stem = os.path.splitext(os.path.basename(source_path))[0].strip().lower()
     doc_id = str(chunk.doc_id or "").strip().lower()
-    family = source_stem or doc_id
+    family = source_family or source_stem or doc_id
     if not family:
         return ""
     return f"{product}::{family}" if product else family
@@ -1658,6 +1659,12 @@ def _chunk_method_name(chunk: RetrievedChunk) -> str:
     return str(metadata.get("method_name") or "").strip()
 
 
+def _chunk_selection_key(chunk: RetrievedChunk, index: int) -> str:
+    if chunk.chunk_id:
+        return chunk.chunk_id
+    return f"{index}:{chunk.source_path}:{chunk.text[:120]}"
+
+
 def _select_diverse_chunks(chunks: list[RetrievedChunk], *, limit: int, query: str | None = None) -> list[RetrievedChunk]:
     safe_limit = max(1, int(limit or 1))
     if not chunks:
@@ -1670,13 +1677,8 @@ def _select_diverse_chunks(chunks: list[RetrievedChunk], *, limit: int, query: s
     mentioned_methods = _mentioned_method_names(query or "")
     comparison_mode = _is_method_comparison_query(query or "", mentioned_methods)
 
-    def _chunk_key(chunk: RetrievedChunk, index: int) -> str:
-        if chunk.chunk_id:
-            return chunk.chunk_id
-        return f"{index}:{chunk.source_path}:{chunk.text[:120]}"
-
     def _select_chunk(chunk: RetrievedChunk, index: int) -> None:
-        chunk_key = _chunk_key(chunk, index)
+        chunk_key = _chunk_selection_key(chunk, index)
         family_key = _chunk_family_key(chunk)
         section_key = _chunk_section_key(chunk)
         selected.append(chunk)
@@ -1689,7 +1691,7 @@ def _select_diverse_chunks(chunks: list[RetrievedChunk], *, limit: int, query: s
     if comparison_mode:
         for method_name in mentioned_methods:
             for index, chunk in enumerate(chunks):
-                chunk_key = _chunk_key(chunk, index)
+                chunk_key = _chunk_selection_key(chunk, index)
                 if chunk_key in selected_chunk_keys:
                     continue
                 if _chunk_method_name(chunk) != method_name:
@@ -1701,7 +1703,7 @@ def _select_diverse_chunks(chunks: list[RetrievedChunk], *, limit: int, query: s
 
     # Pass 1: keep the best-ranked chunk for each family.
     for index, chunk in enumerate(chunks):
-        chunk_key = _chunk_key(chunk, index)
+        chunk_key = _chunk_selection_key(chunk, index)
         family_key = _chunk_family_key(chunk)
         if chunk_key in selected_chunk_keys:
             continue
@@ -1713,7 +1715,7 @@ def _select_diverse_chunks(chunks: list[RetrievedChunk], *, limit: int, query: s
 
     # Pass 2: prefer new sections/use-cases before backfilling repeated context.
     for index, chunk in enumerate(chunks):
-        chunk_key = _chunk_key(chunk, index)
+        chunk_key = _chunk_selection_key(chunk, index)
         if chunk_key in selected_chunk_keys:
             continue
         section_key = _chunk_section_key(chunk)
@@ -1725,13 +1727,27 @@ def _select_diverse_chunks(chunks: list[RetrievedChunk], *, limit: int, query: s
 
     # Pass 3: if diversity signals are exhausted, backfill by the original order.
     for index, chunk in enumerate(chunks):
-        chunk_key = _chunk_key(chunk, index)
+        chunk_key = _chunk_selection_key(chunk, index)
         if chunk_key in selected_chunk_keys:
             continue
         _select_chunk(chunk, index)
         if len(selected) >= safe_limit:
             break
     return selected
+
+
+def _reorder_chunks_for_rerank(chunks: list[RetrievedChunk], *, limit: int, query: str | None = None) -> list[RetrievedChunk]:
+    if not chunks:
+        return []
+    safe_limit = min(len(chunks), max(1, int(limit or 1)))
+    prioritized = _select_diverse_chunks(chunks, limit=safe_limit, query=query) or list(chunks[:safe_limit])
+    prioritized_objects = {id(chunk) for chunk in prioritized}
+    ordered = list(prioritized)
+    for chunk in chunks:
+        if id(chunk) in prioritized_objects:
+            continue
+        ordered.append(chunk)
+    return ordered
 
 
 def _selected_contexts(chunks: list[RetrievedChunk]) -> list[dict[str, Any]]:
@@ -2089,6 +2105,11 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
         )
         rerank_latency_ms = round((time.perf_counter() - rerank_started_at) * 1000, 2)
         chunks = reranked_chunks or chunks
+        chunks = _reorder_chunks_for_rerank(
+            chunks,
+            limit=int(config["rerank_top_n"]),
+            query=message,
+        ) or chunks
         rerank_started_at = time.perf_counter()
         externally_reranked = _rerank_chunks(
             message,
