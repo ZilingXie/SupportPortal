@@ -1783,12 +1783,12 @@ a.citation-pill:hover {
   text-transform: uppercase;
 }
 
-.status-new {
+.status-open {
   color: var(--secondary);
   background: rgba(76, 86, 175, 0.12);
 }
 
-.status-waiting_for_support {
+.status-communicating {
   color: var(--warning);
   background: rgba(159, 93, 18, 0.12);
 }
@@ -1796,11 +1796,6 @@ a.citation-pill:hover {
 .status-investigating {
   color: var(--warning);
   background: rgba(159, 93, 18, 0.18);
-}
-
-.status-waiting_for_agent {
-  color: var(--primary);
-  background: rgba(0, 100, 147, 0.12);
 }
 
 .status-escalated {

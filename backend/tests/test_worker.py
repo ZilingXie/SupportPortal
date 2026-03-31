@@ -53,8 +53,6 @@ def _load_worker_module():
         raise RuntimeError("Unable to load backend.worker for tests")
 
     fake_main = types.ModuleType("backend.main")
-    fake_main.MANAGED_MODE = "managed"
-    fake_main.TAKEOVER_MODE = "takeover"
     fake_main.build_answer = lambda *_args, **_kwargs: ("", 0.0, [], [], False)
     fake_main.resolve_support_message = lambda *_args, **_kwargs: None
     fake_main.build_client_sync_event = lambda *_args, **_kwargs: {}
@@ -83,10 +81,8 @@ def _build_ticket(
         "customer_id": "C-123",
         "requester": "Customer",
         "subject": "Token question",
-        "status": "open",
+        "status": "communicating",
         "priority": "normal",
-        "engineer_mode": worker.MANAGED_MODE,
-        "pending_engineer_question": None,
         "created_at": "2026-03-22T00:00:00+00:00",
         "updated_at": "2026-03-22T00:00:00+00:00",
         "messages": [
@@ -128,17 +124,28 @@ class WorkerResilienceTests(unittest.TestCase):
         ]
         repository.record_event.return_value = None
         bus = Mock()
+        execution = types.SimpleNamespace(
+            answer="Use the Node.js token builder sample.",
+            confidence=0.91,
+            sources=["official/deploy-token-server.md"],
+            citations=[{"source": "official/deploy-token-server.md", "label": "Deploy a token server"}],
+            needs_engineer_guidance=False,
+            answer_route="rag",
+            scope_label="agora_technical",
+            route_reason="docs_match",
+            route_confidence=0.91,
+            search_used=False,
+            matched_signals=["token", "node.js"],
+            route_family="agora_docs_rag",
+            execution_action="rag",
+            tooling_profile="agora_docs_only",
+        )
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker,
-            "build_answer",
-            return_value=(
-                "Use the Node.js token builder sample.",
-                0.91,
-                ["official/deploy-token-server.md"],
-                [{"source": "official/deploy-token-server.md", "label": "Deploy a token server"}],
-                False,
-            ),
+            "resolve_support_message",
+            return_value=execution,
+            create=True,
         ), patch.object(
             worker,
             "build_client_sync_event",
@@ -224,17 +231,28 @@ class WorkerResilienceTests(unittest.TestCase):
         repository.save_ticket.return_value = None
         repository.record_event.return_value = None
         bus = Mock()
+        execution = types.SimpleNamespace(
+            answer="Use the Node.js token builder sample.",
+            confidence=0.91,
+            sources=["official/deploy-token-server.md"],
+            citations=[{"source": "official/deploy-token-server.md", "label": "Deploy a token server"}],
+            needs_engineer_guidance=False,
+            answer_route="rag",
+            scope_label="agora_technical",
+            route_reason="docs_match",
+            route_confidence=0.91,
+            search_used=False,
+            matched_signals=["token", "node.js"],
+            route_family="agora_docs_rag",
+            execution_action="rag",
+            tooling_profile="agora_docs_only",
+        )
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker,
-            "build_answer",
-            return_value=(
-                "Use the Node.js token builder sample.",
-                0.91,
-                ["official/deploy-token-server.md"],
-                [{"source": "official/deploy-token-server.md", "label": "Deploy a token server"}],
-                False,
-            ),
+            "resolve_support_message",
+            return_value=execution,
+            create=True,
         ), patch.object(
             worker,
             "build_client_sync_event",
@@ -282,6 +300,9 @@ class WorkerResilienceTests(unittest.TestCase):
             route_confidence=0.93,
             search_used=True,
             matched_signals=["agora", "ceo"],
+            route_family="web_company_info",
+            execution_action="web_search",
+            tooling_profile="official_web_search",
         )
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
@@ -289,10 +310,6 @@ class WorkerResilienceTests(unittest.TestCase):
             "resolve_support_message",
             return_value=resolution,
             create=True,
-        ), patch.object(
-            worker,
-            "build_answer",
-            side_effect=AssertionError("legacy build_answer should not be called"),
         ), patch.object(
             worker,
             "build_client_sync_event",
@@ -310,12 +327,15 @@ class WorkerResilienceTests(unittest.TestCase):
 
         saved_ticket = repository.save_ticket.call_args.args[0]
         assistant_message = saved_ticket["messages"][-1]
+        self.assertEqual(saved_ticket["status"], "communicating")
         self.assertEqual(assistant_message["answer_route"], "web_search")
         self.assertEqual(assistant_message["scope_label"], "agora_non_technical")
         self.assertTrue(assistant_message["search_used"])
         event_payload = repository.record_event.call_args.args[2]
+        self.assertEqual(event_payload["status"], "communicating")
         self.assertEqual(event_payload["answer_route"], "web_search")
         self.assertEqual(event_payload["scope_label"], "agora_non_technical")
+        self.assertNotIn("engineer_mode", event_payload)
 
     def test_process_ticket_message_sentiment_persists_label_and_records_event(self) -> None:
         repository = Mock()

@@ -15,9 +15,8 @@ from psycopg.types.json import Json
 
 LOGGER = logging.getLogger(__name__)
 
-_VALID_STATUSES = {"open", "investigating", "waiting_for_engineer", "resolved"}
+_VALID_STATUSES = {"open", "communicating", "escalated", "investigating", "resolved"}
 _VALID_PRIORITIES = {"urgent", "high", "normal", "low"}
-_VALID_MODES = {"managed", "takeover"}
 _VALID_ROLES = {"customer", "assistant", "engineer", "system"}
 _VALID_INVESTIGATION_ROLES = {"engineer_ai", "engineer", "system"}
 _RETRYABLE_STORAGE_ERROR_SNIPPETS = (
@@ -30,6 +29,8 @@ _RETRYABLE_STORAGE_ERROR_SNIPPETS = (
 
 _ResultT = TypeVar("_ResultT")
 _VALID_MESSAGE_SENTIMENTS = {"good", "bad", "neutral"}
+_TICKET_SCHEMA_VERSION_KEY = "ticket_flow_schema_version"
+_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v1"
 
 
 def _utc_now() -> str:
@@ -54,11 +55,6 @@ def _normalize_status(value: Any) -> str:
 def _normalize_priority(value: Any) -> str:
     priority = str(value or "normal").strip().lower()
     return priority if priority in _VALID_PRIORITIES else "normal"
-
-
-def _normalize_mode(value: Any) -> str:
-    mode = str(value or "managed").strip().lower()
-    return mode if mode in _VALID_MODES else "managed"
 
 
 def _normalize_role(value: Any) -> str:
@@ -472,14 +468,43 @@ class PostgresTicketRepository:
                     sql.SQL(
                         """
                         CREATE TABLE IF NOT EXISTS {} (
+                            config_key TEXT PRIMARY KEY,
+                            config_value TEXT NOT NULL,
+                            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    ).format(self._table("support_ticket_schema_meta"))
+                )
+                cur.execute(
+                    sql.SQL("SELECT config_value FROM {} WHERE config_key = %s").format(
+                        self._table("support_ticket_schema_meta")
+                    ),
+                    (_TICKET_SCHEMA_VERSION_KEY,),
+                )
+                version_row = cur.fetchone()
+                existing_version = str(version_row[0]).strip() if version_row else ""
+                if existing_version != _TICKET_SCHEMA_VERSION:
+                    for table_name in (
+                        "support_ticket_investigation_messages",
+                        "support_ticket_investigations",
+                        "support_ticket_events",
+                        "support_ticket_messages",
+                        "support_tickets",
+                    ):
+                        cur.execute(
+                            sql.SQL("DROP TABLE IF EXISTS {}").format(self._table(table_name))
+                        )
+
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
                             ticket_id TEXT PRIMARY KEY,
                             customer_id TEXT NOT NULL,
                             requester TEXT NOT NULL,
                             subject TEXT NOT NULL,
                             status TEXT NOT NULL,
                             priority TEXT NOT NULL,
-                            engineer_mode TEXT NOT NULL,
-                            pending_engineer_question TEXT,
                             last_engineer_action JSONB,
                             created_at TIMESTAMPTZ NOT NULL,
                             updated_at TIMESTAMPTZ NOT NULL
@@ -505,11 +530,6 @@ class PostgresTicketRepository:
                         self._table("support_ticket_messages"),
                         self._table("support_tickets"),
                     )
-                )
-                cur.execute(
-                    sql.SQL(
-                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS sentiment_label TEXT"
-                    ).format(self._table("support_ticket_messages"))
                 )
                 cur.execute(
                     sql.SQL(
@@ -565,6 +585,18 @@ class PostgresTicketRepository:
                         self._table("support_ticket_investigation_messages"),
                         self._table("support_ticket_investigations"),
                     )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} (config_key, config_value, updated_at)
+                        VALUES (%s, %s, NOW())
+                        ON CONFLICT (config_key) DO UPDATE SET
+                            config_value = EXCLUDED.config_value,
+                            updated_at = EXCLUDED.updated_at
+                        """
+                    ).format(self._table("support_ticket_schema_meta")),
+                    (_TICKET_SCHEMA_VERSION_KEY, _TICKET_SCHEMA_VERSION),
                 )
                 cur.execute(
                     sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (status, updated_at DESC)").format(
@@ -757,11 +789,9 @@ class PostgresTicketRepository:
             "subject": str(row[3]),
             "status": _normalize_status(row[4]),
             "priority": _normalize_priority(row[5]),
-            "engineer_mode": _normalize_mode(row[6]),
-            "pending_engineer_question": row[7],
-            "last_engineer_action": row[8],
-            "created_at": _to_iso(row[9]),
-            "updated_at": _to_iso(row[10]),
+            "last_engineer_action": row[6],
+            "created_at": _to_iso(row[7]),
+            "updated_at": _to_iso(row[8]),
             "messages": messages,
             "active_investigation": active_investigation,
             "investigation_history": history,
@@ -780,8 +810,6 @@ class PostgresTicketRepository:
                             subject,
                             status,
                             priority,
-                            engineer_mode,
-                            pending_engineer_question,
                             last_engineer_action,
                             created_at,
                             updated_at
@@ -823,8 +851,6 @@ class PostgresTicketRepository:
                             subject,
                             status,
                             priority,
-                            engineer_mode,
-                            pending_engineer_question,
                             last_engineer_action,
                             created_at,
                             updated_at
@@ -869,7 +895,6 @@ class PostgresTicketRepository:
         subject = str(ticket.get("subject") or "General support request")
         status = _normalize_status(ticket.get("status"))
         priority = _normalize_priority(ticket.get("priority"))
-        engineer_mode = _normalize_mode(ticket.get("engineer_mode"))
         last_action = ticket.get("last_engineer_action")
 
         def _operation(conn: psycopg.Connection[Any]) -> None:
@@ -885,21 +910,17 @@ class PostgresTicketRepository:
                                 subject,
                                 status,
                                 priority,
-                                engineer_mode,
-                                pending_engineer_question,
                                 last_engineer_action,
                                 created_at,
                                 updated_at
                             )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                             ON CONFLICT (ticket_id) DO UPDATE SET
                                 customer_id = EXCLUDED.customer_id,
                                 requester = EXCLUDED.requester,
                                 subject = EXCLUDED.subject,
                                 status = EXCLUDED.status,
                                 priority = EXCLUDED.priority,
-                                engineer_mode = EXCLUDED.engineer_mode,
-                                pending_engineer_question = EXCLUDED.pending_engineer_question,
                                 last_engineer_action = EXCLUDED.last_engineer_action,
                                 updated_at = EXCLUDED.updated_at
                             """
@@ -911,8 +932,6 @@ class PostgresTicketRepository:
                             subject,
                             status,
                             priority,
-                            engineer_mode,
-                            ticket.get("pending_engineer_question"),
                             Json(last_action) if isinstance(last_action, dict) else None,
                             created_at,
                             updated_at,

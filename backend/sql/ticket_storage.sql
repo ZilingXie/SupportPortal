@@ -1,6 +1,12 @@
 -- SupportPortal ticket storage schema (PostgreSQL)
 -- This file documents the table design used by backend/repositories/ticket_repository.py.
 
+CREATE TABLE IF NOT EXISTS support_ticket_schema_meta (
+    config_key TEXT PRIMARY KEY,
+    config_value TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS support_tickets (
     ticket_id TEXT PRIMARY KEY,
     customer_id TEXT NOT NULL,
@@ -8,8 +14,6 @@ CREATE TABLE IF NOT EXISTS support_tickets (
     subject TEXT NOT NULL,
     status TEXT NOT NULL,
     priority TEXT NOT NULL,
-    engineer_mode TEXT NOT NULL,
-    pending_engineer_question TEXT,
     last_engineer_action JSONB,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL

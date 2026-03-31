@@ -6,15 +6,11 @@ import signal
 import sys
 import time
 from datetime import datetime, timezone
-from types import SimpleNamespace
 from typing import Any
 
 import psycopg
 
 from backend.main import (
-    MANAGED_MODE,
-    TAKEOVER_MODE,
-    build_answer,
     build_client_sync_event,
     ensure_ticket_defaults,
     now_iso,
@@ -23,10 +19,16 @@ from backend.main import (
 )
 from backend.services.event_bus import SyncRedisEventBus
 from backend.services.investigation_flow import (
+    COMMUNICATING_STATUS,
     INVESTIGATING_STATUS,
     default_investigation_prompt as generate_investigation_ai_turn,
     normalize_ticket_status,
     start_or_refresh_investigation,
+)
+from backend.services.ticket_orchestrator import (
+    TicketExecutionResult,
+    orchestrate_ticket_execution,
+    resolve_next_ticket_status,
 )
 from backend.services.sentiment_classifier import classify_sentiment
 from backend.services.task_queue import SyncRedisTaskQueue
@@ -125,47 +127,27 @@ def _build_worker_investigation_event(
         "ticket_id": str(ticket.get("ticket_id") or ""),
         "investigation_id": str(investigation.get("id") or ""),
         "status": normalize_ticket_status(ticket.get("status")),
-        "engineer_mode": str(ticket.get("engineer_mode") or MANAGED_MODE),
         "investigation_state": state or "active",
         "message": latest_message[:200],
         "created_at": now_iso(),
     }
 
 
-def _resolve_worker_support_message(
+def _orchestrate_worker_support_message(
     customer_message: str,
     *,
     ticket_id: str,
     customer_id: str | None,
     ticket_subject: str | None,
     ticket_context: list[dict[str, str]],
-) -> Any:
-    resolution = resolve_support_message(
+) -> TicketExecutionResult:
+    return orchestrate_ticket_execution(
         customer_message,
         ticket_id=ticket_id,
         customer_id=customer_id,
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
-    )
-    if resolution is not None and hasattr(resolution, "answer"):
-        return resolution
-
-    answer, confidence, sources, citations, needs_engineer_guidance = build_answer(
-        customer_message,
-        ticket_id=ticket_id,
-        customer_id=customer_id,
-    )
-    return SimpleNamespace(
-        answer=answer,
-        confidence=confidence,
-        sources=sources,
-        citations=citations,
-        needs_engineer_guidance=needs_engineer_guidance,
-        answer_route="rag",
-        scope_label=None,
-        route_reason=None,
-        route_confidence=0.0,
-        search_used=False,
+        resolution_builder=resolve_support_message,
     )
 
 
@@ -439,26 +421,6 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         LOGGER.info("Worker skipped cancelled task for ticket %s", ticket_id)
         return
 
-    current_mode = str(ticket.get("engineer_mode") or MANAGED_MODE).strip().lower()
-    if current_mode == TAKEOVER_MODE:
-        attention_event = {
-            "event": "engineer_attention_required",
-            "ticket_id": ticket_id,
-            "priority": ticket.get("priority", "normal"),
-            "status": ticket.get("status", "open"),
-            "engineer_mode": TAKEOVER_MODE,
-            "message": "Customer sent a new message in takeover mode. Please contact the customer directly.",
-            "message_created_at": message_created_at,
-            "created_at": now_iso(),
-        }
-        _call_ticket_repository(
-            "record_event",
-            lambda: ticket_repository.record_event(ticket_id, attention_event["event"], attention_event),
-        )
-        _publish(bus, ["engineer", "dashboard"], attention_event)
-        _publish(bus, ["client"], build_client_sync_event(ticket, attention_event["event"]))
-        return
-
     route_context = [
         {
             "role": str(item.get("role", "system")).strip().lower() or "system",
@@ -467,17 +429,16 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         for item in ticket.get("messages", [])
         if " ".join(str(item.get("content", "")).split()).strip()
     ]
-    resolution = _resolve_worker_support_message(
+    execution = _orchestrate_worker_support_message(
         customer_message,
         ticket_id=ticket_id,
         customer_id=str(ticket.get("customer_id") or "").strip() or None,
         ticket_subject=str(ticket.get("subject") or "").strip() or None,
         ticket_context=route_context[-6:],
     )
-    answer = resolution.answer
-    sources = list(resolution.sources)
-    citations = [dict(item) for item in resolution.citations]
-    needs_engineer_guidance = resolution.needs_engineer_guidance
+    answer = execution.answer
+    sources = list(execution.sources)
+    citations = [dict(item) for item in execution.citations]
     if _is_task_cancelled(ticket_id, message_created_at):
         LOGGER.info("Worker dropped result for cancelled task %s", ticket_id)
         return
@@ -491,10 +452,6 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
     ensure_ticket_defaults(refreshed_ticket)
     if not _is_latest_customer_message(refreshed_ticket, customer_message, message_created_at):
         LOGGER.info("Worker dropped stale result for ticket %s", ticket_id)
-        return
-    refreshed_mode = str(refreshed_ticket.get("engineer_mode") or MANAGED_MODE).strip().lower()
-    if refreshed_mode == TAKEOVER_MODE:
-        LOGGER.info("Worker dropped AI result because ticket %s switched to takeover mode", ticket_id)
         return
 
     ticket = refreshed_ticket
@@ -516,10 +473,10 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         needs_engineer_input = normalize_ticket_status(ticket.get("status")) == INVESTIGATING_STATUS
     else:
         initial_message_count = len(ticket.get("messages", []))
-        if needs_engineer_guidance:
+        if execution.needs_investigating:
             investigation_result = start_or_refresh_investigation(
                 ticket,
-                trigger_reason=str(getattr(resolution, "route_reason", None) or "rag_insufficient_evidence"),
+                trigger_reason=str(execution.route_reason or "rag_insufficient_evidence"),
                 trigger_source="worker_async_rag",
                 now_value=now_iso(),
                 ai_turn_builder=generate_investigation_ai_turn,
@@ -529,19 +486,22 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
             citations = []
             needs_engineer_input = True
         else:
-            ticket["status"] = "open"
-            ticket["pending_engineer_question"] = None
+            ticket["status"] = resolve_next_ticket_status(ticket.get("status"), execution.next_status)
 
         assistant_message: dict[str, Any] = {
             "role": "assistant",
             "content": answer,
             "created_at": now_iso(),
         }
-        assistant_message["answer_route"] = resolution.answer_route
-        assistant_message["scope_label"] = resolution.scope_label
-        assistant_message["route_reason"] = resolution.route_reason
-        assistant_message["route_confidence"] = round(float(resolution.route_confidence), 4)
-        assistant_message["search_used"] = bool(resolution.search_used)
+        assistant_message["answer_route"] = execution.answer_route
+        assistant_message["scope_label"] = execution.scope_label
+        assistant_message["route_family"] = execution.route_family
+        assistant_message["execution_action"] = execution.execution_action
+        assistant_message["tooling_profile"] = execution.tooling_profile
+        assistant_message["route_reason"] = execution.route_reason
+        assistant_message["route_confidence"] = round(float(execution.route_confidence), 4)
+        assistant_message["search_used"] = bool(execution.search_used)
+        assistant_message["matched_signals"] = list(execution.matched_signals)
         if sources:
             assistant_message["sources"] = sources
         if citations:
@@ -569,15 +529,18 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         "ticket_id": ticket_id,
         "priority": ticket.get("priority", "normal"),
         "status": ticket["status"],
-        "engineer_mode": ticket["engineer_mode"],
         "message": answer[:200],
         "message_created_at": message_created_at,
         "created_at": now_iso(),
-        "answer_route": resolution.answer_route,
-        "scope_label": resolution.scope_label,
-        "route_reason": resolution.route_reason,
-        "route_confidence": round(float(resolution.route_confidence), 4),
-        "search_used": bool(resolution.search_used),
+        "answer_route": execution.answer_route,
+        "scope_label": execution.scope_label,
+        "route_family": execution.route_family,
+        "execution_action": execution.execution_action,
+        "tooling_profile": execution.tooling_profile,
+        "route_reason": execution.route_reason,
+        "route_confidence": round(float(execution.route_confidence), 4),
+        "search_used": bool(execution.search_used),
+        "matched_signals": list(execution.matched_signals),
     }
     _call_ticket_repository(
         "record_event",
@@ -602,7 +565,7 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         _publish(bus, ["engineer", "dashboard"], investigation_event)
 
     if needs_engineer_input:
-        attention_message = str(ticket.get("pending_engineer_question") or "").strip()
+        attention_message = ""
         active_investigation = (
             ticket.get("active_investigation")
             if isinstance(ticket.get("active_investigation"), dict)
@@ -617,7 +580,6 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
             "ticket_id": ticket_id,
             "priority": ticket.get("priority", "normal"),
             "status": ticket["status"],
-            "engineer_mode": ticket["engineer_mode"],
             "message": attention_message or "Engineer attention required",
             "message_created_at": message_created_at,
             "created_at": now_iso(),

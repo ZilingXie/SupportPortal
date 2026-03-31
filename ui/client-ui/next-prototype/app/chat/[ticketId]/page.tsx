@@ -58,7 +58,7 @@ export default function TicketChatPage() {
     onFinish: () => {
       setTimeout(() => {
         persistMessages()
-        updateTicketStatus(ticketId, "waiting_for_agent")
+        updateTicketStatus(ticketId, "communicating")
         refreshTicket()
       }, 100)
     },
@@ -117,11 +117,11 @@ export default function TicketChatPage() {
       generateTitle(text)
     }
 
-    if (ticket?.status === "new") {
-      updateTicketStatus(ticketId, "waiting_for_support")
+    if (ticket?.status === "open") {
+      updateTicketStatus(ticketId, "communicating")
       refreshTicket()
-    } else if (ticket?.status === "waiting_for_agent") {
-      updateTicketStatus(ticketId, "waiting_for_support")
+    } else if (ticket?.status === "investigating") {
+      updateTicketStatus(ticketId, "communicating")
       refreshTicket()
     }
   }
@@ -133,7 +133,7 @@ export default function TicketChatPage() {
   }
 
   function handleReopen() {
-    updateTicketStatus(ticketId, "waiting_for_support")
+    updateTicketStatus(ticketId, "communicating")
     refreshTicket()
     toast.success("Session reopened")
   }

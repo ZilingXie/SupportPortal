@@ -1,12 +1,18 @@
-export type TicketStatus = "new" | "waiting_for_support" | "waiting_for_agent" | "resolved"
+export type TicketStatus =
+  | "open"
+  | "communicating"
+  | "escalated"
+  | "investigating"
+  | "resolved"
 
 export const TICKET_STATUS_CONFIG: Record<
   TicketStatus,
   { label: string; variant: "default" | "secondary" | "destructive" | "outline" }
 > = {
-  new: { label: "New", variant: "default" },
-  waiting_for_support: { label: "Waiting for Support", variant: "secondary" },
-  waiting_for_agent: { label: "Waiting for Customer", variant: "outline" },
+  open: { label: "Open", variant: "outline" },
+  communicating: { label: "Communicating", variant: "secondary" },
+  escalated: { label: "Waiting for Engineer", variant: "destructive" },
+  investigating: { label: "Investigating", variant: "secondary" },
   resolved: { label: "Resolved", variant: "secondary" },
 }
 

@@ -24,17 +24,7 @@ let selectedTicketNextAction = "";
 let detailLoading = false;
 let tellAiDraft = "";
 let investigationReviseMode = false;
-let takeoverReplyDraft = "";
 let tellAiSubmitting = false;
-let takeoverSubmitting = false;
-let modeSwitching = false;
-let pendingTakeoverComposerFocus = false;
-let statusComboboxOpen = false;
-let modeComboboxOpen = false;
-let statusComboboxQuery = "";
-let modeComboboxQuery = "";
-let statusComboboxBlurTimer = null;
-let modeComboboxBlurTimer = null;
 let socket = null;
 let heartbeatTimer = null;
 let reconnectTimer = null;
@@ -53,40 +43,30 @@ const PRIORITY_RANK = {
   low: 1,
 };
 const POOL_STATUS_RANK = {
-  investigating: 3,
-  open: 2,
+  investigating: 4,
+  escalated: 3,
+  communicating: 2,
+  open: 1,
   resolved: 1,
 };
 const DEFAULT_FETCH_TIMEOUT_MS = 25000;
 const TELL_AI_FETCH_TIMEOUT_MS = 70000;
 const TICKET_POOL_VIEW_STORAGE_KEY = "engineer_ticket_pool_view_mode";
 
-const FILTER_KEYS = ["priority", "mode", "status"];
+const FILTER_KEYS = ["priority", "status"];
 const FILTER_BLUR_DELAY_MS = 140;
 const filterValues = {
   priority: "all",
-  mode: "all",
   status: "all",
 };
 const filterComboboxState = {
   priority: { open: false, query: "", blurTimer: null },
-  mode: { open: false, query: "", blurTimer: null },
   status: { open: false, query: "", blurTimer: null },
 };
 let ticketPoolViewMode = "list";
 const filterComboboxConfig = {
   priority: {
     label: "Priority",
-    searchable: true,
-    strictSelection: true,
-    disabled: false,
-    autoSubmit: false,
-    onValueChange: () => {
-      renderTickets();
-    },
-  },
-  mode: {
-    label: "Mode",
     searchable: true,
     strictSelection: true,
     disabled: false,
@@ -259,9 +239,7 @@ function renderRailNav() {
 function renderWorkspaceChrome() {
   if (routeState.view === "detail" && routeState.ticketId) {
     const detailStatus = selectedTicket
-      ? `${statusLabel(normalizeStatusValue(selectedTicket.status || "open"))} · ${modeLabel(
-          String(selectedTicket.engineer_mode || "managed").toLowerCase()
-        )}`
+      ? statusLabel(normalizeStatusValue(selectedTicket.status || "open"))
       : "Loading ticket context...";
     if (workspaceTitleEl) {
       workspaceTitleEl.textContent = "Active Ticket Workspace";
@@ -438,18 +416,26 @@ function normalizeStatusValue(value) {
   if (normalized === "waiting_for_engineer") {
     return "investigating";
   }
+  if (normalized === "escalated") {
+    return "escalated";
+  }
+  if (normalized === "communicating") {
+    return "communicating";
+  }
   if (normalized === "resolved") {
     return "resolved";
   }
   return normalized === "investigating" ? "investigating" : "open";
 }
 
-function modeLabel(value) {
-  return value === "takeover" ? "Human Takeover" : "AI Managing";
-}
-
 function statusLabel(value) {
   const normalized = normalizeStatusValue(value);
+  if (normalized === "communicating") {
+    return "Communicating";
+  }
+  if (normalized === "escalated") {
+    return "Escalated";
+  }
   if (normalized === "investigating") {
     return "Investigating";
   }
@@ -466,6 +452,12 @@ function statusClass(value) {
   }
   if (normalized === "investigating") {
     return "status-waiting";
+  }
+  if (normalized === "escalated") {
+    return "status-escalated";
+  }
+  if (normalized === "communicating") {
+    return "status-active";
   }
   return "status-open";
 }
@@ -597,7 +589,7 @@ function latestInvestigationUpdate(ticket) {
       }
     }
   }
-  return String(ticket?.pending_engineer_question || "").trim();
+  return "";
 }
 
 function investigationStateLabel(value) {
@@ -616,9 +608,6 @@ function engineerRequestStatusLabel(status) {
   if (normalized === "engineer replied") {
     return "Engineer Replied";
   }
-  if (normalized === "engineer takeover") {
-    return "Engineer Takeover";
-  }
   if (normalized === "received answer") {
     return "Received Answer";
   }
@@ -630,9 +619,6 @@ function engineerRequestStatusClass(status) {
   if (normalized === "engineer replied") {
     return "record-status-replied";
   }
-  if (normalized === "engineer takeover") {
-    return "record-status-takeover";
-  }
   if (normalized === "received answer") {
     return "record-status-answer";
   }
@@ -640,31 +626,20 @@ function engineerRequestStatusClass(status) {
 }
 
 function clearStatusComboboxBlurTimer() {
-  if (statusComboboxBlurTimer) {
-    clearTimeout(statusComboboxBlurTimer);
-    statusComboboxBlurTimer = null;
-  }
-}
-
-function clearModeComboboxBlurTimer() {
-  if (modeComboboxBlurTimer) {
-    clearTimeout(modeComboboxBlurTimer);
-    modeComboboxBlurTimer = null;
+  const state = filterComboboxState.status;
+  if (state?.blurTimer) {
+    clearTimeout(state.blurTimer);
+    state.blurTimer = null;
   }
 }
 
 function detailStatusOptions() {
   return [
     { value: "open", label: statusLabel("open") },
+    { value: "communicating", label: statusLabel("communicating") },
+    { value: "escalated", label: statusLabel("escalated") },
     { value: "investigating", label: statusLabel("investigating") },
     { value: "resolved", label: statusLabel("resolved") },
-  ];
-}
-
-function detailModeOptions() {
-  return [
-    { value: "managed", label: "AI Managing" },
-    { value: "takeover", label: "Human Takeover" },
   ];
 }
 
@@ -686,17 +661,12 @@ function headerFilterOptions(key) {
       { value: "low", label: priorityLabel("low") },
     ];
   }
-  if (key === "mode") {
-    return [
-      { value: "all", label: "All Mode" },
-      { value: "managed", label: modeLabel("managed") },
-      { value: "takeover", label: modeLabel("takeover") },
-    ];
-  }
   if (key === "status") {
     return [
       { value: "all", label: "All Status" },
       { value: "open", label: statusLabel("open") },
+      { value: "communicating", label: statusLabel("communicating") },
+      { value: "escalated", label: statusLabel("escalated") },
       { value: "investigating", label: statusLabel("investigating") },
       { value: "resolved", label: statusLabel("resolved") },
     ];
@@ -1018,13 +988,9 @@ function applyHeaderFilterValue(key, value) {
 function applyTicketFilters(items) {
   return items.filter((ticket) => {
     const priority = String(ticket?.priority || "normal").toLowerCase();
-    const mode = String(ticket?.engineer_mode || "managed").toLowerCase();
     const status = normalizeStatusValue(ticket?.status || "open");
 
     if (filterValues.priority !== "all" && priority !== filterValues.priority) {
-      return false;
-    }
-    if (filterValues.mode !== "all" && mode !== filterValues.mode) {
       return false;
     }
     if (filterValues.status !== "all" && status !== filterValues.status) {
@@ -1121,7 +1087,6 @@ function summaryCacheKey(ticket) {
   return [
     String(ticket?.updated_at || ""),
     String(ticket?.status || ""),
-    String(ticket?.engineer_mode || ""),
     String(messageCount),
     investigationUpdatedAt,
   ].join("|");
@@ -1165,7 +1130,6 @@ function refreshSelectedSummaryPreview(ticketId) {
 
 function buildLocalSummaryFallback(ticket) {
   const status = statusLabel(normalizeStatusValue(ticket?.status || "open"));
-  const mode = modeLabel(String(ticket?.engineer_mode || "managed").toLowerCase());
   const priority = priorityLabel(String(ticket?.priority || "normal"));
   const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
   const activeInvestigation = getActiveInvestigation(ticket);
@@ -1191,7 +1155,7 @@ function buildLocalSummaryFallback(ticket) {
   }
 
   const summaryLines = [
-    `Ticket is currently ${status} in ${mode} mode with ${priority} priority.`,
+    `Ticket is currently ${status} with ${priority} priority.`,
   ];
   if (latestCustomer) {
     summaryLines.push(`Latest customer request: ${latestCustomer.slice(0, 220)}`);
@@ -1213,7 +1177,7 @@ function buildLocalSummaryFallback(ticket) {
     activeInvestigation
       ? "Continue the internal investigation, confirm the next missing detail, or approve the prepared customer reply."
       : latestCustomer || latestAssistant
-      ? "Review the latest messages, confirm missing technical details, and provide a concrete response or switch to takeover if manual handling is required."
+      ? "Review the latest messages and either continue communicating, start an investigation, or resolve the ticket."
       : "Collect initial issue details from the customer and define the first troubleshooting step.";
 
   return {
@@ -1376,7 +1340,6 @@ function describeTicketPoolTicket(ticket) {
   const ticketId = String(ticket.ticket_id || "-");
   const priority = String(ticket.priority || "normal").toLowerCase();
   const status = normalizeStatusValue(ticket.status || "open");
-  const mode = String(ticket.engineer_mode || "managed").toLowerCase();
   const subject = String(ticket.subject || "(No subject)");
   const requester = String(ticket.requester || ticket.customer_id || "Unknown");
   const investigationPreview = latestInvestigationUpdate(ticket);
@@ -1388,7 +1351,6 @@ function describeTicketPoolTicket(ticket) {
     ticketId,
     priority,
     status,
-    mode,
     subject,
     requester,
     pendingQuestion,
@@ -1424,7 +1386,6 @@ function renderTicketPoolList(rows) {
                     priorityLabel(item.priority)
                   )}</span>
                   <span class="status-badge ${statusClass(item.status)}">${escapeHtml(statusLabel(item.status))}</span>
-                  <span class="mode-pill mode-pill-${escapeHtml(item.mode)}">${escapeHtml(modeLabel(item.mode))}</span>
                 </div>
               </div>
 
@@ -1475,7 +1436,6 @@ function renderTicketPoolGrid(rows) {
                     priorityLabel(item.priority)
                   )}</span>
                   <span class="status-badge ${statusClass(item.status)}">${escapeHtml(statusLabel(item.status))}</span>
-                  <span class="mode-pill mode-pill-${escapeHtml(item.mode)}">${escapeHtml(modeLabel(item.mode))}</span>
                 </div>
               </div>
               <h3 class="ticket-pool-card-title">${escapeHtml(item.subject)}</h3>
@@ -1506,11 +1466,11 @@ function renderTicketPoolView() {
   const rows = sortTicketsByPriority(applyTicketFilters(tickets));
   const viewMode = normalizeTicketPoolViewMode(ticketPoolViewMode);
   const allCount = tickets.length;
-  const managedCount = tickets.filter(
-    (ticket) => String(ticket.engineer_mode || "managed").toLowerCase() === "managed"
+  const communicatingCount = tickets.filter(
+    (ticket) => normalizeStatusValue(ticket.status) === "communicating"
   ).length;
-  const takeoverCount = tickets.filter(
-    (ticket) => String(ticket.engineer_mode || "managed").toLowerCase() === "takeover"
+  const escalatedCount = tickets.filter(
+    (ticket) => normalizeStatusValue(ticket.status) === "escalated"
   ).length;
   const investigatingCount = tickets.filter(
     (ticket) => normalizeStatusValue(ticket.status) === "investigating"
@@ -1523,17 +1483,17 @@ function renderTicketPoolView() {
         <article class="metric-card">
           <span class="metric-label">Total Tickets</span>
           <strong>${allCount}</strong>
-          <p>Across AI-managed and human-owned workflows.</p>
+          <p>Across the current AI-managed support queue.</p>
         </article>
         <article class="metric-card">
-          <span class="metric-label">AI Managing</span>
-          <strong>${managedCount}</strong>
-          <p>Tickets currently staying in AI-guided handling.</p>
+          <span class="metric-label">Communicating</span>
+          <strong>${communicatingCount}</strong>
+          <p>Tickets currently progressing in the customer-facing AI flow.</p>
         </article>
         <article class="metric-card">
-          <span class="metric-label">Human Takeover</span>
-          <strong>${takeoverCount}</strong>
-          <p>Tickets with direct engineer ownership right now.</p>
+          <span class="metric-label">Escalated</span>
+          <strong>${escalatedCount}</strong>
+          <p>Tickets where the customer has requested engineer assistance.</p>
         </article>
         <article class="metric-card">
           <span class="metric-label">Investigating</span>
@@ -1563,7 +1523,6 @@ function renderTicketPoolView() {
 
 function resetDetailWorkspaceState() {
   clearStatusComboboxBlurTimer();
-  clearModeComboboxBlurTimer();
   selectedTicketId = null;
   selectedTicket = null;
   selectedTicketSummary = "";
@@ -1571,14 +1530,7 @@ function resetDetailWorkspaceState() {
   detailLoading = false;
   tellAiDraft = "";
   investigationReviseMode = false;
-  takeoverReplyDraft = "";
   tellAiSubmitting = false;
-  takeoverSubmitting = false;
-  modeSwitching = false;
-  statusComboboxOpen = false;
-  modeComboboxOpen = false;
-  statusComboboxQuery = "";
-  modeComboboxQuery = "";
 }
 
 function renderInvestigationDecisionHtml({ draftCustomerReply, controlsDisabled }) {
@@ -1628,6 +1580,56 @@ function renderInvestigationComposerHtml({ draft, controlsDisabled, reviseMode }
           ${controlsDisabled ? "disabled" : ""}
         >${escapeHtml(submitLabel)}</button>
       </div>
+    </div>
+  `;
+}
+
+function renderTicketStateActionsHtml({ ticketStatus, controlsDisabled, hasActiveInvestigation }) {
+  const status = normalizeStatusValue(ticketStatus);
+
+  if (status === "resolved") {
+    return `
+      <div class="detail-ticket-actions">
+        <button
+          type="button"
+          class="btn btn-outline"
+          data-detail-action="reopen-ticket"
+          ${controlsDisabled ? "disabled" : ""}
+        >Reopen to Communicating</button>
+      </div>
+    `;
+  }
+
+  const primaryAction =
+    status === "investigating"
+      ? `
+        <button
+          type="button"
+          class="btn btn-outline"
+          data-detail-action="resume-communicating"
+          ${controlsDisabled ? "disabled" : ""}
+        >Back to Communicating</button>
+      `
+      : !hasActiveInvestigation
+      ? `
+        <button
+          type="button"
+          class="btn btn-outline"
+          data-detail-action="start-investigation"
+          ${controlsDisabled ? "disabled" : ""}
+        >Start Investigation</button>
+      `
+      : "";
+
+  return `
+    <div class="detail-ticket-actions">
+      ${primaryAction}
+      <button
+        type="button"
+        class="btn btn-ghost"
+        data-detail-action="resolve-ticket"
+        ${controlsDisabled ? "disabled" : ""}
+      >Resolve Ticket</button>
     </div>
   `;
 }
@@ -1745,7 +1747,6 @@ function renderTicketDetailView() {
   const ticket = selectedTicket;
   const ticketId = String(ticket.ticket_id || selectedTicketId || "-");
   const status = normalizeStatusValue(ticket.status || "open");
-  const mode = String(ticket.engineer_mode || "managed").toLowerCase();
   const priority = String(ticket.priority || "normal").toLowerCase();
   const requester = String(ticket.requester || ticket.customer_id || "Unknown");
   const activeInvestigation = getActiveInvestigation(ticket);
@@ -1769,10 +1770,9 @@ function renderTicketDetailView() {
     !investigationReviseMode;
   const showInvestigationComposer =
     Boolean(activeInvestigation) &&
-    mode !== "takeover" &&
     (investigationState === "active" || investigationReviseMode);
   const draftCustomerReply = String(displayInvestigation?.draft_customer_reply || "").trim();
-  const controlsDisabled = tellAiSubmitting || takeoverSubmitting || modeSwitching;
+  const controlsDisabled = tellAiSubmitting;
   const messages = Array.isArray(ticket.messages) ? ticket.messages : [];
 
   return `
@@ -1786,7 +1786,6 @@ function renderTicketDetailView() {
                 priorityLabel(priority)
               )}</span>
               <span class="status-badge ${statusClass(status)}">${escapeHtml(statusLabel(status))}</span>
-              <span class="mode-pill mode-pill-${escapeHtml(mode)}">${escapeHtml(modeLabel(mode))}</span>
             </div>
           </div>
           <div class="workspace-header-toolbar-end">
@@ -1870,6 +1869,11 @@ function renderTicketDetailView() {
             <p class="summary-text">${formatMultiline(
               selectedTicketNextAction || "Analyzing next action needed..."
             )}</p>
+            ${renderTicketStateActionsHtml({
+              ticketStatus: status,
+              controlsDisabled,
+              hasActiveInvestigation: Boolean(activeInvestigation),
+            })}
           </section>
         </aside>
       </div>
@@ -1919,37 +1923,6 @@ function renderTicketDetail() {
   }
   renderWorkspaceChrome();
   workspaceRegionEl.innerHTML = renderTicketDetailView();
-}
-
-function focusTakeoverComposerInput(retries = 8) {
-  if (!pendingTakeoverComposerFocus) {
-    return;
-  }
-
-  if (String(selectedTicket?.engineer_mode || "").toLowerCase() !== "takeover") {
-    pendingTakeoverComposerFocus = false;
-    return;
-  }
-
-  const input = document.getElementById("detail-takeover-input");
-  if (!(input instanceof HTMLTextAreaElement)) {
-    if (retries > 0) {
-      setTimeout(() => focusTakeoverComposerInput(retries - 1), 90);
-    } else {
-      pendingTakeoverComposerFocus = false;
-    }
-    return;
-  }
-
-  input.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
-  try {
-    input.focus({ preventScroll: true });
-  } catch {
-    input.focus();
-  }
-  const end = input.value.length;
-  input.setSelectionRange(end, end);
-  pendingTakeoverComposerFocus = false;
 }
 
 async function refreshSelectedSummary(options = {}) {
@@ -2123,95 +2096,6 @@ function showBoardError(message) {
   `;
 }
 
-async function updateTicketMode(ticketId, mode) {
-  return fetchJson(`/api/engineer/tickets/${encodeURIComponent(ticketId)}/mode`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mode, engineer_id: ENGINEER_ID }),
-  });
-}
-
-async function switchTicketModeOptimistic(ticketId, nextMode) {
-  const normalizedId = String(ticketId || "").trim();
-  const targetMode = String(nextMode || "managed").toLowerCase() === "takeover" ? "takeover" : "managed";
-  if (!normalizedId) {
-    return;
-  }
-
-  const previousTickets = tickets.map((ticket) => ({ ...ticket }));
-  const previousSelectedTicket = selectedTicket ? { ...selectedTicket } : null;
-  const previousSummary = selectedTicketSummary;
-  const previousNextAction = selectedTicketNextAction;
-  const previousInvestigationReviseMode = investigationReviseMode;
-  const previousTellAiDraft = tellAiDraft;
-  const localPatch = {
-    engineer_mode: targetMode,
-    updated_at: new Date().toISOString(),
-  };
-
-  if (targetMode === "takeover") {
-    pendingTakeoverComposerFocus = true;
-    investigationReviseMode = false;
-    tellAiDraft = "";
-    const currentStatus = normalizeStatusValue(selectedTicket?.status || "");
-    if (currentStatus === "investigating") {
-      localPatch.status = "open";
-      localPatch.pending_engineer_question = null;
-      localPatch.active_investigation = null;
-    }
-  }
-
-  modeSwitching = true;
-  applyLocalTicketPatch(normalizedId, localPatch);
-  refreshSelectedSummaryPreview(normalizedId);
-  renderTickets();
-  renderTicketDetail();
-
-  try {
-    const payload = await updateTicketMode(normalizedId, targetMode);
-    const serverMode = String(payload?.engineer_mode || targetMode).toLowerCase();
-    const serverPatch = {
-      engineer_mode: serverMode,
-      status: String(payload?.status || localPatch.status || selectedTicket?.status || "open").toLowerCase(),
-      updated_at: String(payload?.updated_at || new Date().toISOString()),
-    };
-    if (serverMode === "takeover") {
-      serverPatch.pending_engineer_question = null;
-    }
-    applyLocalTicketPatch(normalizedId, serverPatch);
-    refreshSelectedSummaryPreview(normalizedId);
-    renderTickets();
-    renderTicketDetail();
-    if (targetMode === "takeover") {
-      focusTakeoverComposerInput();
-    }
-
-    loadTickets({ refreshDetail: false }).catch(() => {
-      // websocket or next poll will re-sync.
-    });
-    refreshSelectedSummary({ silent: true }).catch(() => {
-      // Keep local summary if async summary fails.
-    });
-  } catch (error) {
-    pendingTakeoverComposerFocus = false;
-    tickets = previousTickets;
-    selectedTicket = previousSelectedTicket;
-    selectedTicketSummary = previousSummary;
-    selectedTicketNextAction = previousNextAction;
-    investigationReviseMode = previousInvestigationReviseMode;
-    tellAiDraft = previousTellAiDraft;
-    renderTickets();
-    renderTicketDetail();
-    throw error;
-  } finally {
-    if (targetMode !== "takeover") {
-      pendingTakeoverComposerFocus = false;
-    }
-    modeSwitching = false;
-    renderTicketDetail();
-  }
-}
-
 async function updateTicketStatus(ticketId, action) {
   await fetchJson(`/api/tickets/${encodeURIComponent(ticketId)}/action`, {
     method: "POST",
@@ -2247,43 +2131,6 @@ async function submitInvestigationConfirmation(ticketId, decision, note = "") {
   });
 }
 
-async function submitManagedResponse(ticketId, solutionText = null) {
-  let cleaned = "";
-  if (typeof solutionText === "string") {
-    cleaned = solutionText.trim();
-  } else {
-    const solution = window.prompt("请输入给 AI 的处理建议，AI 会总结后回复客户：");
-    if (solution === null) {
-      return;
-    }
-    cleaned = solution.trim();
-  }
-
-  if (!cleaned) {
-    window.alert("内容不能为空。");
-    return;
-  }
-  await fetchJson(`/api/engineer/tickets/${encodeURIComponent(ticketId)}/managed-response`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ solution: cleaned, engineer_id: ENGINEER_ID }),
-    timeoutMs: TELL_AI_FETCH_TIMEOUT_MS,
-  });
-}
-
-async function submitTakeoverReply(ticketId, messageText) {
-  const cleaned = String(messageText || "").trim();
-  if (!cleaned) {
-    window.alert("回复内容不能为空。");
-    return;
-  }
-  await fetchJson(`/api/engineer/tickets/${encodeURIComponent(ticketId)}/takeover-reply`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message: cleaned, engineer_id: ENGINEER_ID }),
-  });
-}
-
 async function handleTableClick(event) {
   const row = getTicketRowTarget(event.target);
   if (row) {
@@ -2311,11 +2158,7 @@ async function handleTableClick(event) {
       await openTicketDetail(ticketId);
       return;
     }
-    if (action === "managed-response") {
-      await submitManagedResponse(ticketId);
-    } else {
-      await updateTicketStatus(ticketId, action);
-    }
+    await updateTicketStatus(ticketId, action);
     await loadTickets({ refreshDetail: false });
     if (selectedTicketId === ticketId) {
       await refreshSelectedTicket({ silent: true });
@@ -2407,139 +2250,32 @@ async function handleDetailClick(event) {
     return;
   }
 
-  if (action === "toggle-status-combobox") {
-    if (tellAiSubmitting || takeoverSubmitting || modeSwitching) {
-      return;
-    }
-    clearStatusComboboxBlurTimer();
-    statusComboboxOpen = !statusComboboxOpen;
-    modeComboboxOpen = false;
-    modeComboboxQuery = "";
-    if (!statusComboboxOpen) {
-      statusComboboxQuery = "";
-    }
-    renderTicketDetail();
-    if (statusComboboxOpen) {
-      setTimeout(() => {
-        const input = document.getElementById("detail-status-input");
-        input?.focus();
-      }, 0);
-    }
-    return;
-  }
-
-  if (action === "toggle-mode-combobox") {
-    if (tellAiSubmitting || takeoverSubmitting || modeSwitching) {
-      return;
-    }
-    clearModeComboboxBlurTimer();
-    modeComboboxOpen = !modeComboboxOpen;
-    statusComboboxOpen = false;
-    statusComboboxQuery = "";
-    if (!modeComboboxOpen) {
-      modeComboboxQuery = "";
-    }
-    renderTicketDetail();
-    if (modeComboboxOpen) {
-      setTimeout(() => {
-        const input = document.getElementById("detail-mode-input");
-        input?.focus();
-      }, 0);
-    }
-    return;
-  }
-
-  if (action === "select-status-option") {
-    const nextStatus = String(button.dataset.value || "").trim().toLowerCase();
-    if (!nextStatus) {
-      return;
-    }
-    statusComboboxOpen = false;
-    statusComboboxQuery = "";
-    renderTicketDetail();
-
-    const currentStatus = String(selectedTicket?.status || "open");
-    if (nextStatus === currentStatus) {
-      return;
-    }
-
-    const statusAction = statusValueToAction(nextStatus);
+  if (action === "start-investigation" || action === "resume-communicating" || action === "resolve-ticket" || action === "reopen-ticket") {
+    const actionMap = {
+      "start-investigation": "investigate",
+      "resume-communicating": "processing",
+      "resolve-ticket": "resolved",
+      "reopen-ticket": "reopen",
+    };
+    button.disabled = true;
     try {
-      await updateTicketStatus(selectedTicketId, statusAction);
+      await updateTicketStatus(selectedTicketId, actionMap[action]);
+      investigationReviseMode = false;
+      tellAiDraft = "";
       await loadTickets({ refreshDetail: false });
       await refreshSelectedTicket({ silent: true });
     } catch (error) {
-      window.alert(`Status update failed: ${error.message}`);
+      window.alert(`Ticket action failed: ${error.message}`);
       await refreshSelectedTicket({ silent: true });
-    }
-    return;
-  }
-
-  if (action === "select-mode-option") {
-    const nextMode = String(button.dataset.value || "managed");
-    modeComboboxOpen = false;
-    modeComboboxQuery = "";
-    renderTicketDetail();
-
-    if (modeSwitching || nextMode === String(selectedTicket?.engineer_mode || "managed")) {
-      return;
-    }
-    try {
-      await switchTicketModeOptimistic(selectedTicketId, nextMode);
-    } catch (error) {
-      window.alert(`Mode update failed: ${error.message}`);
-    }
-    return;
-  }
-
-  if (action === "toggle-tell-ai") {
-    if (modeSwitching) {
-      return;
-    }
-    if (String(selectedTicket?.engineer_mode || "managed") === "takeover") {
-      window.alert("Ticket is in Human Takeover mode. Switch back to AI Managing first.");
-      return;
-    }
-    investigationReviseMode = !investigationReviseMode;
-    if (!investigationReviseMode) {
-      tellAiDraft = "";
-    }
-    renderTicketDetail();
-    if (investigationReviseMode) {
-      focusInvestigationComposerInput();
-    }
-    return;
-  }
-
-  if (action === "cancel-tell-ai") {
-    if (modeSwitching) {
-      return;
-    }
-    investigationReviseMode = false;
-    tellAiDraft = "";
-    renderTicketDetail();
-    return;
-  }
-
-  if (action === "takeover-mode") {
-    if (modeSwitching) {
-      return;
-    }
-    try {
-      await switchTicketModeOptimistic(selectedTicketId, "takeover");
-    } catch (error) {
-      window.alert(`Takeover failed: ${error.message}`);
+    } finally {
+      button.disabled = false;
     }
     return;
   }
 
   if (action === "send-tell-ai") {
-    if (modeSwitching) {
-      window.alert("Mode is switching. Please wait.");
-      return;
-    }
-    if (String(selectedTicket?.engineer_mode || "managed") === "takeover") {
-      window.alert("Ticket is in Human Takeover mode. Switch back to AI Managing first.");
+    if (!getActiveInvestigation(selectedTicket)) {
+      window.alert("Start an investigation before sending a note to Engineer AI.");
       return;
     }
     const cleaned = tellAiDraft.trim();
@@ -2558,8 +2294,6 @@ async function handleDetailClick(event) {
         } else {
           await submitInvestigationMessage(selectedTicketId, cleaned);
         }
-      } else {
-        await submitManagedResponse(selectedTicketId, cleaned);
       }
       tellAiDraft = "";
       await loadTickets({ refreshDetail: false });
@@ -2609,255 +2343,22 @@ async function handleDetailClick(event) {
     focusInvestigationComposerInput();
     return;
   }
-
-  if (action === "send-takeover-reply") {
-    const cleaned = takeoverReplyDraft.trim();
-    if (!cleaned) {
-      window.alert("Please input your reply to customer.");
-      return;
-    }
-    button.disabled = true;
-    takeoverSubmitting = true;
-    renderTicketDetail();
-    try {
-      await submitTakeoverReply(selectedTicketId, cleaned);
-      takeoverReplyDraft = "";
-      await loadTickets({ refreshDetail: false });
-      await refreshSelectedTicket({ silent: true });
-    } catch (error) {
-      window.alert(`Send reply failed: ${error.message}`);
-      await refreshSelectedTicket({ silent: true });
-    } finally {
-      takeoverSubmitting = false;
-      renderTicketDetail();
-      button.disabled = false;
-    }
-    return;
-  }
-
-  if (action !== "managed-response") {
-    return;
-  }
-
-  button.disabled = true;
-  try {
-    await submitManagedResponse(selectedTicketId);
-
-    await loadTickets({ refreshDetail: false });
-    await refreshSelectedTicket({ silent: true });
-  } catch (error) {
-    window.alert(`Operation failed: ${error.message}`);
-    await loadTickets({ refreshDetail: false });
-    await refreshSelectedTicket({ silent: true });
-  } finally {
-    button.disabled = false;
-  }
 }
 
 function handleDetailInput(event) {
-  const statusInput = event.target.closest("#detail-status-input");
-  if (statusInput) {
-    clearStatusComboboxBlurTimer();
-    statusComboboxOpen = true;
-    modeComboboxOpen = false;
-    modeComboboxQuery = "";
-    statusComboboxQuery = String(statusInput.value || "");
-    renderTicketDetail();
-    setTimeout(() => {
-      const input = document.getElementById("detail-status-input");
-      if (!input) {
-        return;
-      }
-      input.focus();
-      const end = statusComboboxQuery.length;
-      input.setSelectionRange(end, end);
-    }, 0);
-    return;
-  }
-
-  const modeInput = event.target.closest("#detail-mode-input");
-  if (modeInput) {
-    clearModeComboboxBlurTimer();
-    modeComboboxOpen = true;
-    statusComboboxOpen = false;
-    statusComboboxQuery = "";
-    modeComboboxQuery = String(modeInput.value || "");
-    renderTicketDetail();
-    setTimeout(() => {
-      const input = document.getElementById("detail-mode-input");
-      if (!input) {
-        return;
-      }
-      input.focus();
-      const end = modeComboboxQuery.length;
-      input.setSelectionRange(end, end);
-    }, 0);
-    return;
-  }
-
   const tellAiInput = event.target.closest("#detail-investigation-input");
   if (tellAiInput) {
     tellAiDraft = String(tellAiInput.value || "");
-    return;
-  }
-
-  const takeoverInput = event.target.closest("#detail-takeover-input");
-  if (takeoverInput) {
-    takeoverReplyDraft = String(takeoverInput.value || "");
   }
 }
 
-function closeStatusComboboxWithDelay() {
-  clearStatusComboboxBlurTimer();
-  statusComboboxBlurTimer = setTimeout(() => {
-    statusComboboxBlurTimer = null;
-    const root = workspaceRegionEl?.querySelector('[data-combobox-root="status"]');
-    const active = document.activeElement;
-    if (root && active && root.contains(active)) {
-      return;
-    }
-    if (!statusComboboxOpen && !statusComboboxQuery) {
-      return;
-    }
-    statusComboboxOpen = false;
-    statusComboboxQuery = "";
-    renderTicketDetail();
-  }, 140);
-}
+function handleDetailFocusIn() {}
 
-function closeModeComboboxWithDelay() {
-  clearModeComboboxBlurTimer();
-  modeComboboxBlurTimer = setTimeout(() => {
-    modeComboboxBlurTimer = null;
-    const root = workspaceRegionEl?.querySelector('[data-combobox-root="mode"]');
-    const active = document.activeElement;
-    if (root && active && root.contains(active)) {
-      return;
-    }
-    if (!modeComboboxOpen && !modeComboboxQuery) {
-      return;
-    }
-    modeComboboxOpen = false;
-    modeComboboxQuery = "";
-    renderTicketDetail();
-  }, 140);
-}
+function handleDetailFocusOut() {}
 
-function handleDetailFocusIn(event) {
-  if (event.target.closest('[data-combobox-root="status"]')) {
-    clearStatusComboboxBlurTimer();
-  }
-  if (event.target.closest('[data-combobox-root="mode"]')) {
-    clearModeComboboxBlurTimer();
-  }
+function handleDetailKeydown() {}
 
-  if (event.target.closest("#detail-status-input")) {
-    if (!statusComboboxOpen) {
-      statusComboboxOpen = true;
-      statusComboboxQuery = "";
-      modeComboboxOpen = false;
-      modeComboboxQuery = "";
-      renderTicketDetail();
-      setTimeout(() => {
-        const input = document.getElementById("detail-status-input");
-        input?.focus();
-      }, 0);
-    }
-    return;
-  }
-
-  if (event.target.closest("#detail-mode-input")) {
-    if (!modeComboboxOpen) {
-      modeComboboxOpen = true;
-      modeComboboxQuery = "";
-      statusComboboxOpen = false;
-      statusComboboxQuery = "";
-      renderTicketDetail();
-      setTimeout(() => {
-        const input = document.getElementById("detail-mode-input");
-        input?.focus();
-      }, 0);
-    }
-  }
-}
-
-function handleDetailFocusOut(event) {
-  if (event.target.closest('[data-combobox-root="status"]')) {
-    closeStatusComboboxWithDelay();
-  }
-  if (event.target.closest('[data-combobox-root="mode"]')) {
-    closeModeComboboxWithDelay();
-  }
-}
-
-function handleDetailKeydown(event) {
-  if (event.key !== "Escape") {
-    return;
-  }
-  if (!statusComboboxOpen && !modeComboboxOpen) {
-    return;
-  }
-  event.preventDefault();
-  event.stopPropagation();
-  statusComboboxOpen = false;
-  modeComboboxOpen = false;
-  statusComboboxQuery = "";
-  modeComboboxQuery = "";
-  clearStatusComboboxBlurTimer();
-  clearModeComboboxBlurTimer();
-  renderTicketDetail();
-}
-
-function statusValueToAction(status) {
-  const normalized = normalizeStatusValue(status);
-  if (normalized === "resolved") {
-    return "resolved";
-  }
-  if (normalized === "investigating") {
-    return "handoff";
-  }
-  return "reopen";
-}
-
-async function handleDetailChange(event) {
-  const statusSelect = event.target.closest("#detail-status-select");
-  if (statusSelect && selectedTicketId) {
-    const nextStatus = normalizeStatusValue(statusSelect.value || "open");
-    const currentStatus = normalizeStatusValue(selectedTicket?.status || "open");
-    if (nextStatus === currentStatus) {
-      return;
-    }
-    const action = statusValueToAction(nextStatus);
-
-    statusSelect.disabled = true;
-    try {
-      await updateTicketStatus(selectedTicketId, action);
-      await loadTickets({ refreshDetail: false });
-      await refreshSelectedTicket({ silent: true });
-    } catch (error) {
-      window.alert(`Status update failed: ${error.message}`);
-      await refreshSelectedTicket({ silent: true });
-    } finally {
-      statusSelect.disabled = false;
-    }
-    return;
-  }
-
-  const modeSelect = event.target.closest("#detail-mode-select");
-  if (!modeSelect || !selectedTicketId) {
-    return;
-  }
-
-  const mode = String(modeSelect.value || "managed");
-  if (modeSwitching || mode === String(selectedTicket?.engineer_mode || "managed")) {
-    return;
-  }
-  try {
-    await switchTicketModeOptimistic(selectedTicketId, mode);
-  } catch (error) {
-    window.alert(`Mode update failed: ${error.message}`);
-  }
-}
+async function handleDetailChange() {}
 
 function handleFilterControlsClick(event) {
   const viewToggleButton = event.target.closest("button[data-pool-view-option]");
@@ -3131,7 +2632,6 @@ function handleLocalLogout() {
   closeSocket();
   tickets = [];
   filterValues.priority = "all";
-  filterValues.mode = "all";
   filterValues.status = "all";
   closeAllHeaderFilterComboboxes({ render: false });
   resetDetailWorkspaceState();
