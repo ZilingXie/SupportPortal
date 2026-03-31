@@ -13,8 +13,9 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
+import psycopg
 
-from backend.repositories.event_repository import EventRepository, create_event_repository
+from backend.repositories.event_repository import EventRepository, InMemoryEventRepository, create_event_repository
 from backend.repositories.knowledge_repository import (
     KnowledgeRepository,
     create_knowledge_repository,
@@ -369,12 +370,16 @@ async def _run_knowledge_ingestion_or_enqueue(ingestion_id: str) -> tuple[dict[s
 
 @app.on_event("startup")
 def startup_event() -> None:
+    global event_repository
     try:
         event_repository.initialize()
         LOGGER.info("RAG event repository initialized: %s", event_repository.storage_mode())
-    except Exception as exc:
+    except (psycopg.OperationalError, psycopg.Error, OSError, TimeoutError) as exc:
         LOGGER.error("RAG event repository initialization failed: %s", exc)
-        raise
+        fallback_repository = InMemoryEventRepository()
+        fallback_repository.initialize()
+        event_repository = fallback_repository
+        LOGGER.warning("Falling back to in-memory RAG event repository for this process.")
     try:
         knowledge_repository.initialize()
         LOGGER.info("RAG knowledge repository initialized: %s", knowledge_repository.storage_mode())
