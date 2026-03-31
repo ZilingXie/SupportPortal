@@ -12,8 +12,6 @@ erDiagram
         text subject
         text status
         text priority
-        text engineer_mode
-        text pending_engineer_question
         jsonb last_engineer_action
         timestamptz created_at
         timestamptz updated_at
@@ -27,6 +25,7 @@ erDiagram
         timestamptz created_at
         jsonb sources
         jsonb citations
+        text sentiment_label
     }
 
     support_ticket_events {

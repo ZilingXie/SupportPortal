@@ -4,11 +4,13 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-_STATUS_ORDER = ("open", "investigating", "resolved")
+_STATUS_ORDER = ("communicating", "escalated", "investigating", "resolved", "open")
 _STATUS_LABELS = {
-    "open": "Open",
+    "communicating": "Communicating",
+    "escalated": "Escalated",
     "investigating": "Investigating",
     "resolved": "Resolved",
+    "open": "Open",
 }
 _PRIORITY_ORDER = ("urgent", "high", "normal", "low")
 _PRIORITY_LABELS = {
@@ -17,10 +19,12 @@ _PRIORITY_LABELS = {
     "normal": "Normal",
     "low": "Low",
 }
-_MODE_ORDER = ("managed", "takeover")
-_MODE_LABELS = {
-    "managed": "AI Managed",
-    "takeover": "Human Takeover",
+_FLOW_ORDER = ("communicating", "escalated", "investigating", "resolved")
+_FLOW_LABELS = {
+    "communicating": "Communicating",
+    "escalated": "Escalated",
+    "investigating": "Investigating",
+    "resolved": "Resolved",
 }
 
 
@@ -40,7 +44,7 @@ def _normalize_ticket_status(value: Any) -> str:
     status = _clean_text(value).lower()
     if status == "waiting_for_engineer":
         return "investigating"
-    if status in {"open", "investigating", "resolved"}:
+    if status in {"open", "communicating", "escalated", "investigating", "resolved"}:
         return status
     return "open"
 
@@ -98,7 +102,6 @@ def normalize_ticket_dashboard_events(rows: list[dict[str, Any]]) -> list[dict[s
                 "message": payload.get("message"),
                 "status": _normalize_ticket_status(payload.get("status")),
                 "priority": payload.get("priority"),
-                "engineer_mode": payload.get("engineer_mode"),
                 "knowledge_type": payload.get("knowledge_type"),
                 "source_type": payload.get("source_type"),
                 "chunk_count": payload.get("chunk_count"),
@@ -185,8 +188,12 @@ def build_ticket_dashboard_metrics(
 
     investigating_ticket_count = sum(_clean_text(ticket.get("status")).lower() == "investigating" for ticket in normalized_tickets)
     open_ticket_count = sum(_clean_text(ticket.get("status")).lower() == "open" for ticket in normalized_tickets)
-    managed_ticket_count = sum(_clean_text(ticket.get("engineer_mode")).lower() == "managed" for ticket in normalized_tickets)
-    takeover_ticket_count = sum(_clean_text(ticket.get("engineer_mode")).lower() == "takeover" for ticket in normalized_tickets)
+    communicating_ticket_count = sum(
+        _clean_text(ticket.get("status")).lower() == "communicating" for ticket in normalized_tickets
+    )
+    escalated_ticket_count = sum(
+        _clean_text(ticket.get("status")).lower() == "escalated" for ticket in normalized_tickets
+    )
     urgent_ticket_count = sum(_clean_text(ticket.get("priority")).lower() == "urgent" for ticket in normalized_tickets)
 
     charts = {
@@ -203,53 +210,59 @@ def build_ticket_dashboard_metrics(
             order=_PRIORITY_ORDER,
             labels=_PRIORITY_LABELS,
         ),
-        "mode_breakdown": _ordered_breakdown(
+        "flow_breakdown": _ordered_breakdown(
             normalized_tickets,
-            field="engineer_mode",
-            order=_MODE_ORDER,
-            labels=_MODE_LABELS,
+            field="status",
+            order=_FLOW_ORDER,
+            labels=_FLOW_LABELS,
         ),
     }
 
     cards = {
         "investigating_ticket_count": investigating_ticket_count,
-        "waiting_for_engineer_count": investigating_ticket_count,
         "open_ticket_count": open_ticket_count,
+        "communicating_ticket_count": communicating_ticket_count,
+        "escalated_ticket_count": escalated_ticket_count,
         "resolved_ticket_count": resolved_count,
-        "managed_ticket_count": managed_ticket_count,
-        "takeover_ticket_count": takeover_ticket_count,
         "urgent_ticket_count": urgent_ticket_count,
     }
 
-    active_count = open_ticket_count + investigating_ticket_count
+    active_count = open_ticket_count + communicating_ticket_count + escalated_ticket_count + investigating_ticket_count
     latest_event = _latest_event(ticket_events)
     escalation_event = _latest_escalation_event(ticket_events)
     recent_volume = sum(item["value"] for item in charts["event_volume_12h"][-3:])
 
     if active_count == 0:
         queue_health_label = "Queue is clear."
-    elif investigating_ticket_count or urgent_ticket_count:
+    elif escalated_ticket_count or investigating_ticket_count or urgent_ticket_count:
         queue_health_label = "Escalation pressure is active."
+    elif communicating_ticket_count:
+        queue_health_label = "Communicating queue is stable."
     else:
         queue_health_label = "Queue is stable but active."
 
     queue_health_detail = (
         f"{active_count} active {_pluralize(active_count, 'ticket')}, "
+        f"{communicating_ticket_count} communicating, "
+        f"{escalated_ticket_count} escalated, "
         f"{investigating_ticket_count} investigating, and "
         f"{recent_volume} {_pluralize(recent_volume, 'event')} in the last 3 hours."
     )
 
-    if takeover_ticket_count:
-        operator_summary_title = f"{takeover_ticket_count} direct-response {_pluralize(takeover_ticket_count, 'case')} active."
-    elif managed_ticket_count:
-        operator_summary_title = "AI-managed queue is carrying the load."
+    if escalated_ticket_count or investigating_ticket_count:
+        attention_count = escalated_ticket_count + investigating_ticket_count
+        operator_summary_title = (
+            f"{attention_count} engineer-facing {_pluralize(attention_count, 'ticket')} active."
+        )
+    elif communicating_ticket_count:
+        operator_summary_title = "AI-managed conversations are progressing."
     else:
         operator_summary_title = "No active operator workload."
 
     operator_summary_detail = (
-        f"{managed_ticket_count} AI managed, "
-        f"{takeover_ticket_count} human takeover, "
-        f"{open_ticket_count} open, and {resolved_count} resolved."
+        f"{communicating_ticket_count} communicating, "
+        f"{escalated_ticket_count} escalated, "
+        f"{investigating_ticket_count} investigating, and {resolved_count} resolved."
     )
 
     if escalation_event is not None:

@@ -23,10 +23,8 @@ class TicketMessageSentimentTests(unittest.TestCase):
                 "customer_id": "C-001",
                 "requester": "Customer",
                 "subject": "Token renew question",
-                "status": "open",
+                "status": "communicating",
                 "priority": "normal",
-                "engineer_mode": "managed",
-                "pending_engineer_question": None,
                 "last_engineer_action": None,
                 "created_at": "2026-03-31T09:00:00+00:00",
                 "updated_at": "2026-03-31T09:00:00+00:00",
@@ -35,6 +33,7 @@ class TicketMessageSentimentTests(unittest.TestCase):
                         "role": "customer",
                         "content": "Token renew callback never fires.",
                         "created_at": "2026-03-31T09:00:00+00:00",
+                        "sentiment_label": None,
                     }
                 ],
             },
@@ -43,6 +42,7 @@ class TicketMessageSentimentTests(unittest.TestCase):
                     "role": "customer",
                     "content": "Token renew callback never fires.",
                     "created_at": "2026-03-31T09:00:00+00:00",
+                    "sentiment_label": None,
                 }
             ],
         )

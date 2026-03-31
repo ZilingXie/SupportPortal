@@ -14,10 +14,8 @@
   - `customer_id`
   - `requester`
   - `subject`
-  - `status`（`open|waiting_for_engineer|resolved`）
+  - `status`（`open|communicating|escalated|investigating|resolved`）
   - `priority`（`urgent|high|normal|low`）
-  - `engineer_mode`（`managed|takeover`）
-  - `pending_engineer_question`
   - `last_engineer_action`（JSONB）
   - `created_at` / `updated_at`
 
@@ -31,9 +29,10 @@
   - `created_at`
   - `sources`（JSONB，可空）
   - `citations`（JSONB，可空）
+  - `sentiment_label`（`good|bad|neutral`，可空，仅客户消息使用）
 
 ### 3. `support_ticket_events`
-- 记录业务事件（工单创建、升级、模式切换等）。
+- 记录业务事件（工单创建、升级、调查、确认等）。
 - 字段：
   - `id`（BIGSERIAL PK）
   - `ticket_id`（FK，可空）
@@ -53,7 +52,7 @@
   - 仅插入本次新增消息；
   - 更新工单快照；
   - 写入事件记录。
-- 工程师动作接口（action/mode/managed-response）
+- 工程师动作接口（action / investigation）
   - 更新 `support_tickets`；
   - 如有新增回复，写入 `support_ticket_messages`；
   - 写入 `support_ticket_events`。

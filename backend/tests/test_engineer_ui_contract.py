@@ -124,14 +124,15 @@ class EngineerUiContractTests(unittest.TestCase):
 
         self.assertIn("Concierge AI", html)
         self.assertIn("Manrope", html)
-        self.assertIn("./styles.css?v=20260331-engineer-grid-view-2", html)
-        self.assertIn('./app.js?v=20260331-engineer-grid-view-2', html)
+        self.assertIn("./styles.css?v=20260331-engineer-single-flow-1", html)
+        self.assertIn('./app.js?v=20260331-engineer-single-flow-1', html)
         self.assertIn("function parseRoute()", app_source)
         self.assertIn('path.startsWith("/tickets/")', app_source)
         self.assertIn("function renderTicketPoolView()", app_source)
         self.assertIn("function renderTicketDetailView()", app_source)
         self.assertIn("Next Action Needed", app_source)
-        self.assertIn("AI Managing", app_source)
+        self.assertIn("Investigation Command", html)
+        self.assertIn("Start Investigation", app_source)
         self.assertNotIn("Open Workspace", app_source)
         self.assertIn('window.addEventListener("hashchange"', app_source)
         self.assertIn('class="rail-footer"', html)
@@ -145,6 +146,9 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertNotIn("boardScreenEl", app_source)
         self.assertNotIn("ticketTableBodyEl", app_source)
         self.assertNotIn("detailBodyEl", app_source)
+        self.assertNotIn("AI Managing", app_source)
+        self.assertNotIn("Human Takeover", app_source)
+        self.assertNotIn("engineer_mode", app_source)
         self.assertNotIn("Noto Sans SC", css)
         self.assertIn("--surface:", css)
         self.assertIn("--primary:", css)
@@ -173,14 +177,12 @@ class EngineerUiContractTests(unittest.TestCase):
                 tickets = [
                   {
                     ticket_id: "TK-OPEN-URGENT",
-                    subject: "open urgent ticket",
+                    subject: "communicating urgent ticket",
                     requester: "user-1",
                     priority: "urgent",
-                    status: "open",
-                    engineer_mode: "managed",
+                    status: "communicating",
                     created_at: "2026-03-24T09:00:00+00:00",
                     updated_at: "2026-03-24T10:00:00+00:00",
-                    pending_engineer_question: "",
                   },
                   {
                     ticket_id: "TK-INVESTIGATING-LOW",
@@ -188,10 +190,8 @@ class EngineerUiContractTests(unittest.TestCase):
                     requester: "user-2",
                     priority: "low",
                     status: "investigating",
-                    engineer_mode: "managed",
                     created_at: "2026-03-24T08:00:00+00:00",
                     updated_at: "2026-03-24T08:30:00+00:00",
-                    pending_engineer_question: "",
                     active_investigation: {
                       id: "INV-200",
                       state: "active",
@@ -209,7 +209,6 @@ class EngineerUiContractTests(unittest.TestCase):
                 ];
 
                 filterValues.priority = "all";
-                filterValues.mode = "all";
                 filterValues.status = "all";
 
                 renderFilterControls();
@@ -249,8 +248,8 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!html.includes('tabindex="0"')) {{
                   throw new Error("Ticket pool rows should be keyboard focusable.");
                 }}
-                if (!html.includes("mode-pill")) {{
-                  throw new Error("Ticket pool rows should render the mode badge in the first line.");
+                if (html.includes("mode-pill")) {{
+                  throw new Error("Ticket pool rows should not render a mode badge anymore.");
                 }}
                 if (!html.includes("Investigation Update")) {{
                   throw new Error("Ticket pool rows should render the latest investigation update label when present.");
@@ -275,10 +274,10 @@ class EngineerUiContractTests(unittest.TestCase):
                 const waitingRowStart = html.indexOf('data-ticket-id="TK-INVESTIGATING-LOW"');
                 const waitingRowEnd = html.indexOf("</article>", waitingRowStart);
                 const waitingRowMarkup = html.slice(waitingRowStart, waitingRowEnd);
-                const modeIndex = waitingRowMarkup.indexOf("mode-pill");
+                const badgeIndex = waitingRowMarkup.indexOf("status-badge");
                 const secondLineIndex = waitingRowMarkup.indexOf("ticket-row-secondary");
-                if (modeIndex === -1 || secondLineIndex === -1 || modeIndex > secondLineIndex) {{
-                  throw new Error("Mode badge should stay in the first row alongside title and status badges.");
+                if (badgeIndex === -1 || secondLineIndex === -1 || badgeIndex > secondLineIndex) {{
+                  throw new Error("Status badges should stay in the first row alongside the title.");
                 }}
                 """
             )
@@ -291,7 +290,6 @@ class EngineerUiContractTests(unittest.TestCase):
                 tickets = [];
                 boardLoading = true;
                 filterValues.priority = "all";
-                filterValues.mode = "all";
                 filterValues.status = "all";
 
                 const html = renderTicketPoolView();
@@ -328,7 +326,6 @@ class EngineerUiContractTests(unittest.TestCase):
                     requester: "user-grid",
                     priority: "high",
                     status: "investigating",
-                    engineer_mode: "managed",
                     created_at: "2026-03-24T08:00:00+00:00",
                     updated_at: "2026-03-24T08:30:00+00:00",
                     active_investigation: {
@@ -347,14 +344,12 @@ class EngineerUiContractTests(unittest.TestCase):
                   },
                   {
                     ticket_id: "TK-GRID-002",
-                    subject: "open fallback ticket",
+                    subject: "escalated fallback ticket",
                     requester: "user-grid-2",
                     priority: "normal",
-                    status: "open",
-                    engineer_mode: "takeover",
+                    status: "escalated",
                     created_at: "2026-03-24T08:10:00+00:00",
                     updated_at: "2026-03-24T08:15:00+00:00",
-                    pending_engineer_question: "",
                   },
                 ];
 
@@ -430,7 +425,6 @@ class EngineerUiContractTests(unittest.TestCase):
                   requester: "user-7",
                   priority: "high",
                   status: "investigating",
-                  engineer_mode: "managed",
                   created_at: "2026-03-24T08:00:00+00:00",
                   updated_at: "2026-03-24T09:10:00+00:00",
                   messages: [
@@ -509,8 +503,11 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!headerTopMarkup.includes("workspace-eyebrow")) {{
                   throw new Error("Toolbar row should keep the ticket id label.");
                 }}
-                if (!headerTopMarkup.includes("priority-badge") || !headerTopMarkup.includes("status-badge") || !headerTopMarkup.includes("mode-pill")) {{
-                  throw new Error("Toolbar row should carry the ticket badges after the header compaction.");
+                if (!headerTopMarkup.includes("priority-badge") || !headerTopMarkup.includes("status-badge")) {{
+                  throw new Error("Toolbar row should carry the priority and status badges after the header compaction.");
+                }}
+                if (headerTopMarkup.includes("mode-pill")) {{
+                  throw new Error("Toolbar row should not render the removed mode pill.");
                 }}
                 if (headerTopMarkup.includes("workspace-ticket-title")) {{
                   throw new Error("Ticket title should stay below the compact toolbar row.");
@@ -529,6 +526,12 @@ class EngineerUiContractTests(unittest.TestCase):
                 }}
                 if (!html.includes("detail-investigation-inline-actions")) {{
                   throw new Error("Confirmation actions should render inline inside the investigation chat thread.");
+                }}
+                if (!html.includes("Back to Communicating")) {{
+                  throw new Error("Investigating tickets should surface the resume communicating action.");
+                }}
+                if (!html.includes("Resolve Ticket")) {{
+                  throw new Error("Investigating tickets should surface the resolve action.");
                 }}
                 if (!html.includes("Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.")) {{
                   throw new Error("Detail workspace should render the draft customer reply for final confirmation.");
@@ -581,8 +584,7 @@ class EngineerUiContractTests(unittest.TestCase):
                   subject: "Android 14 token renew regression",
                   requester: "user-7",
                   priority: "high",
-                  status: "open",
-                  engineer_mode: "managed",
+                  status: "communicating",
                   created_at: "2026-03-24T08:00:00+00:00",
                   updated_at: "2026-03-24T09:10:00+00:00",
                   messages: [
@@ -669,8 +671,7 @@ class EngineerUiContractTests(unittest.TestCase):
                   subject: "Android 14 token renew regression",
                   requester: "user-7",
                   priority: "normal",
-                  status: "open",
-                  engineer_mode: "managed",
+                  status: "communicating",
                   created_at: "2026-03-24T08:00:00+00:00",
                   updated_at: "2026-03-24T09:10:00+00:00",
                   messages: [
@@ -730,7 +731,6 @@ class EngineerUiContractTests(unittest.TestCase):
                   requester: "user-7",
                   priority: "high",
                   status: "investigating",
-                  engineer_mode: "managed",
                   created_at: "2026-03-24T08:00:00+00:00",
                   updated_at: "2026-03-24T09:10:00+00:00",
                   messages: [],
@@ -791,7 +791,6 @@ class EngineerUiContractTests(unittest.TestCase):
                   return {
                     ticket_id: "TK-DETAIL-REV",
                     status: "investigating",
-                    engineer_mode: "managed",
                     active_investigation: selectedTicket.active_investigation,
                     updated_at: "2026-03-24T09:11:00+00:00",
                   };
@@ -840,7 +839,6 @@ class EngineerUiContractTests(unittest.TestCase):
                   requester: "user-7",
                   priority: "high",
                   status: "investigating",
-                  engineer_mode: "managed",
                   created_at: "2026-03-24T08:00:00+00:00",
                   updated_at: "2026-03-24T09:10:00+00:00",
                   messages: [],
@@ -875,8 +873,7 @@ class EngineerUiContractTests(unittest.TestCase):
                   capturedOptions = options;
                   return {
                     ticket_id: "TK-DETAIL-APPROVE",
-                    status: "open",
-                    engineer_mode: "managed",
+                    status: "communicating",
                     active_investigation: null,
                     updated_at: "2026-03-24T09:11:00+00:00",
                   };
@@ -885,7 +882,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 refreshSelectedTicket = async () => {
                   selectedTicket = {
                     ...selectedTicket,
-                    status: "open",
+                    status: "communicating",
                     active_investigation: null,
                     investigation_history: [
                       {

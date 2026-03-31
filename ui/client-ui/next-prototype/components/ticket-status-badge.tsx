@@ -2,9 +2,10 @@ import { Badge } from "@/components/ui/badge"
 import { TICKET_STATUS_CONFIG, type TicketStatus } from "@/lib/constants"
 
 const statusColors: Record<TicketStatus, string> = {
-  new: "bg-primary text-primary-foreground hover:bg-primary/90",
-  waiting_for_support: "bg-warning text-warning-foreground hover:bg-warning/90",
-  waiting_for_agent: "bg-secondary text-secondary-foreground hover:bg-secondary/90",
+  open: "bg-primary text-primary-foreground hover:bg-primary/90",
+  communicating: "bg-warning text-warning-foreground hover:bg-warning/90",
+  escalated: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+  investigating: "bg-warning text-warning-foreground hover:bg-warning/90",
   resolved: "bg-success text-success-foreground hover:bg-success/90",
 }
 

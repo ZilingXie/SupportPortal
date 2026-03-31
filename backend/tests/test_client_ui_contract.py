@@ -10,8 +10,10 @@ class ClientUiContractTests(unittest.TestCase):
     def run_client_app_script(self, script: str) -> None:
         node_script = textwrap.dedent(
             f"""
+            (async () => {{
             const fs = require("fs");
             const vm = require("vm");
+            const userScript = {script!r};
 
             let source = fs.readFileSync("ui/client-ui/app.js", "utf8");
             source = source.replace(/\\nbootstrap\\(\\);\\s*$/, "\\n");
@@ -88,7 +90,11 @@ class ClientUiContractTests(unittest.TestCase):
             sandbox.globalThis = sandbox;
             vm.createContext(sandbox);
             vm.runInContext(source, sandbox);
-            vm.runInContext({script!r}, sandbox);
+            await vm.runInContext(`(async () => {{\\n${{userScript}}\\n}})()`, sandbox);
+            }})().catch((error) => {{
+              console.error(error);
+              process.exit(1);
+            }});
             """
         )
         result = subprocess.run(
@@ -214,7 +220,7 @@ class ClientUiContractTests(unittest.TestCase):
                     createdAt: new Date().toISOString(),
                   },
                 ]);
-                updateTicketStatus(firstDraft.id, "waiting_for_support");
+                updateTicketStatus(firstDraft.id, "communicating");
                 const filledContextBar = renderContextBar();
                 if (!filledContextBar.includes("Close Ticket")) {
                   throw new Error("Non-empty session should show Close Ticket in chat view.");
@@ -285,7 +291,7 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
-    def test_client_context_bar_supports_request_engineer_assistance_wait_time(self) -> None:
+    def test_client_context_bar_requests_engineer_assistance_via_backend_without_fake_chat_message(self) -> None:
         css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
         self.assertIn(".context-assistance-note", css)
         self.assertIn(".context-chip.is-escalated {\n  color: var(--warning);", css)
@@ -307,7 +313,7 @@ class ClientUiContractTests(unittest.TestCase):
                     createdAt: new Date().toISOString(),
                   },
                 ]);
-                updateTicketStatus(ticket.id, "waiting_for_support");
+                updateTicketStatus(ticket.id, "communicating");
 
                 state.view = "chat-ticket";
                 state.activeTicketId = ticket.id;
@@ -335,27 +341,38 @@ class ClientUiContractTests(unittest.TestCase):
                   throw new Error("Waiting time note should not render before the user requests assistance.");
                 }
 
-                const changed = requestEngineerAssistance(ticket.id);
+                let capturedUrl = null;
+                let capturedOptions = null;
+                fetch = async (url, options = undefined) => {
+                  capturedUrl = url;
+                  capturedOptions = options;
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      ticket_id: ticket.id,
+                      status: "escalated",
+                      updated_at: "2026-03-31T16:00:00.000Z",
+                    }),
+                  };
+                };
+
+                const changed = await requestEngineerAssistance(ticket.id);
                 if (!changed) {
-                  throw new Error("Requesting engineer assistance should update the local view state.");
+                  throw new Error("Requesting engineer assistance should update the local view state from backend confirmation.");
+                }
+                if (capturedUrl !== `/api/tickets/${ticket.id}/request-engineer-assistance`) {
+                  throw new Error(`Expected request engineer assistance endpoint call, got ${capturedUrl}.`);
+                }
+                if (String(capturedOptions?.method || "").toUpperCase() !== "POST") {
+                  throw new Error("Engineer assistance should use POST.");
                 }
 
                 const escalatedTicket = getTicketById(ticket.id);
                 if (escalatedTicket.status !== "escalated") {
                   throw new Error(`Engineer assistance should mark the ticket as escalated, got ${escalatedTicket.status}.`);
                 }
-                if (escalatedTicket.messages.length !== 2) {
-                  throw new Error("Engineer assistance should append exactly one escalation message.");
-                }
-                const latestMessage = escalatedTicket.messages[1];
-                if (latestMessage.role !== "assistant") {
-                  throw new Error(`Escalation notice should be rendered as an assistant message, got ${latestMessage.role}.`);
-                }
-                if (
-                  latestMessage.content !==
-                  "your request has been escalated to an engineer, and he/she will contact you at earlist possible. Estimated waiting time: 3 hours."
-                ) {
-                  throw new Error(`Unexpected escalation notice content: ${latestMessage.content}`);
+                if (escalatedTicket.messages.length !== 1) {
+                  throw new Error("Engineer assistance should not append a fake escalation message into the transcript.");
                 }
 
                 const requestedBar = renderContextBar();
@@ -390,11 +407,11 @@ class ClientUiContractTests(unittest.TestCase):
 
                 const chatHtml = renderChatTicket();
                 if (
-                  !chatHtml.includes(
+                  chatHtml.includes(
                     "your request has been escalated to an engineer, and he/she will contact you at earlist possible. Estimated waiting time: 3 hours."
                   )
                 ) {
-                  throw new Error("Escalation request should append the escalation notice into the chat transcript.");
+                  throw new Error("Escalation request should not append a fake escalation notice into the chat transcript.");
                 }
               """
             )
@@ -423,7 +440,7 @@ class ClientUiContractTests(unittest.TestCase):
                     createdAt: new Date().toISOString(),
                   },
                 ]);
-                updateTicketStatus(activeTicket.id, "waiting_for_support");
+                updateTicketStatus(activeTicket.id, "communicating");
 
                 const resolvedTicket = createTicket(state.user.id);
                 updateTicketTitle(resolvedTicket.id, "Database restore follow-up");
@@ -670,7 +687,7 @@ class ClientUiContractTests(unittest.TestCase):
                 }
 
                 chatMain.scrollTop = 0;
-                updateTicketStatus(ticket.id, "waiting_for_agent");
+                updateTicketStatus(ticket.id, "communicating");
                 syncChatScrollToBottom();
                 flushFrames();
                 if (chatMain.scrollTop !== 0) {
@@ -709,7 +726,7 @@ class ClientUiContractTests(unittest.TestCase):
                   id: "TK-015",
                   userId: "user-1",
                   title: "how to join channel",
-                  status: "waiting_for_support",
+                  status: "communicating",
                   createdAt: "2026-03-22T12:38:23.235078+00:00",
                   updatedAt: "2026-03-22T12:38:25.168026+00:00",
                   messages: [

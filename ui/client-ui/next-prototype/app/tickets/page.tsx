@@ -74,7 +74,7 @@ export default function TicketsPage() {
   }
 
   function handleReopen(ticketId: string) {
-    updateTicketStatus(ticketId, "waiting_for_support")
+    updateTicketStatus(ticketId, "communicating")
     refreshTickets()
     toast.success("Session reopened")
   }
