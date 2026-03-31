@@ -71,6 +71,7 @@ let clientSocket = null;
 let clientReconnectTimer = null;
 let clientHeartbeatTimer = null;
 let pendingStatusPollTimer = null;
+let lastChatScrollKey = "";
 const engineerAssistanceRequestedTicketIds = new Set();
 
 function escapeHtml(value) {
@@ -216,6 +217,7 @@ function logout() {
   clearPendingRequestState();
   closeClientRealtimeConnection();
   engineerAssistanceRequestedTicketIds.clear();
+  lastChatScrollKey = "";
   localStorage.removeItem(AUTH_KEY);
   state.user = null;
 }
@@ -1480,15 +1482,57 @@ function renderTicketsPage() {
   `;
 }
 
-function syncChatScrollToBottom() {
+function getActiveChatTicket() {
   if (state.view !== "chat-ticket") {
+    return null;
+  }
+  const ticket = getTicketById(state.activeTicketId);
+  if (!ticket || ticket.userId !== state.user?.id) {
+    return null;
+  }
+  return ticket;
+}
+
+function buildChatScrollKey(ticket) {
+  const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
+  const latestMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+  return [
+    String(ticket?.id || ""),
+    messages.length,
+    String(latestMessage?.id || ""),
+    String(latestMessage?.role || ""),
+    String(latestMessage?.createdAt || ""),
+    String(latestMessage?.content || ""),
+    Array.isArray(latestMessage?.citations) ? latestMessage.citations.length : 0,
+  ].join("|");
+}
+
+function runOnNextFrame(callback) {
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(callback);
     return;
   }
-  const chatMain = appRoot.querySelector(".chat-main");
-  if (!(chatMain instanceof HTMLElement)) {
+  setTimeout(callback, 0);
+}
+
+function syncChatScrollToBottom() {
+  const ticket = getActiveChatTicket();
+  if (!ticket) {
+    lastChatScrollKey = "";
     return;
   }
-  requestAnimationFrame(() => {
+
+  const nextScrollKey = buildChatScrollKey(ticket);
+  if (nextScrollKey === lastChatScrollKey) {
+    return;
+  }
+  lastChatScrollKey = nextScrollKey;
+
+  runOnNextFrame(() => {
+    const chatMain = appRoot.querySelector(".chat-main");
+    if (!chatMain || typeof chatMain.scrollHeight !== "number") {
+      return;
+    }
     chatMain.scrollTop = chatMain.scrollHeight;
   });
 }
