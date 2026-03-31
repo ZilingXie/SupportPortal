@@ -499,6 +499,14 @@ function roleClass(role) {
   return "msg-system";
 }
 
+function normalizeMessageSentimentLabel(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "good" || normalized === "bad" || normalized === "neutral") {
+    return normalized;
+  }
+  return "";
+}
+
 function parseEngineerRequest(rawValue) {
   const raw = String(rawValue || "").trim();
   if (!raw) {
@@ -1481,12 +1489,21 @@ function renderConversationHtml(messages, options = {}) {
         .map((message, index) => {
           const role = String(message.role || "system").toLowerCase();
           const createdAt = formatDateTime(message.created_at);
+          const sentimentLabel =
+            role === "customer" ? normalizeMessageSentimentLabel(message.sentiment_label) : "";
           const shouldRenderDecision =
             showInlineConfirmation && inlineDecisionIndex === index && role === "engineer_ai";
           return `
             <article class="message-item ${roleClass(role)}">
               <header>
-                <span class="message-role">${escapeHtml(roleLabel(role))}</span>
+                <div class="message-header-primary">
+                  <span class="message-role">${escapeHtml(roleLabel(role))}</span>
+                  ${
+                    sentimentLabel
+                      ? `<span class="message-sentiment-pill sentiment-${escapeHtml(sentimentLabel)}">${escapeHtml(sentimentLabel)}</span>`
+                      : ""
+                  }
+                </div>
                 <span class="message-time">${escapeHtml(createdAt)}</span>
               </header>
               <div class="message-content">${formatMultiline(String(message.content || ""))}</div>

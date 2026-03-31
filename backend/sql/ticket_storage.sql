@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS support_ticket_messages (
     role TEXT NOT NULL,
     content TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
+    sentiment_label TEXT,
     sources JSONB,
     citations JSONB
 );

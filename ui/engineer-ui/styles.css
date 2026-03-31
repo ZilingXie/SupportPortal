@@ -1328,6 +1328,13 @@ a {
   gap: 12px;
 }
 
+.message-header-primary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
 .msg-customer {
   background: rgba(228, 233, 239, 0.74);
 }
@@ -1348,6 +1355,35 @@ a {
   font-family: "Manrope", sans-serif;
   font-size: 14px;
   font-weight: 700;
+}
+
+.message-sentiment-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink-muted);
+}
+
+.message-sentiment-pill.sentiment-good {
+  background: rgba(180, 227, 191, 0.72);
+  color: #185a2a;
+}
+
+.message-sentiment-pill.sentiment-bad {
+  background: rgba(255, 209, 209, 0.82);
+  color: #8a2430;
+}
+
+.message-sentiment-pill.sentiment-neutral {
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--ink-muted);
 }
 
 .message-time {
