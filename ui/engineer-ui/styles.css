@@ -1273,12 +1273,33 @@ a {
 .conversation-panel {
   min-height: 0;
   align-content: start;
+  grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
 .tell-ai-composer,
 .takeover-composer {
   display: grid;
   gap: 12px;
+}
+
+.detail-investigation-composer {
+  position: sticky;
+  bottom: 0;
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(239, 244, 251, 0.96)),
+    rgba(255, 255, 255, 0.9);
+  box-shadow: 0 -8px 24px rgba(17, 28, 33, 0.04);
+}
+
+.detail-investigation-composer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .message-list,
@@ -1339,6 +1360,35 @@ a {
   color: var(--ink);
   font-size: 14px;
   line-height: 1.65;
+}
+
+.detail-investigation-draft {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.48);
+}
+
+.detail-investigation-draft-label {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.detail-investigation-draft-body {
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.detail-investigation-inline-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .message-references {
