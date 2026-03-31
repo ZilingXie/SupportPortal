@@ -124,8 +124,8 @@ class EngineerUiContractTests(unittest.TestCase):
 
         self.assertIn("Concierge AI", html)
         self.assertIn("Manrope", html)
-        self.assertIn("./styles.css?v=20260326-engineer-stitch-7", html)
-        self.assertIn('./app.js?v=20260326-engineer-stitch-7', html)
+        self.assertIn("./styles.css?v=20260331-engineer-loading-1", html)
+        self.assertIn('./app.js?v=20260331-engineer-loading-1', html)
         self.assertIn("function parseRoute()", app_source)
         self.assertIn('path.startsWith("/tickets/")', app_source)
         self.assertIn("function renderTicketPoolView()", app_source)
@@ -265,6 +265,36 @@ class EngineerUiContractTests(unittest.TestCase):
                   throw new Error("Mode badge should stay in the first row alongside title and status badges.");
                 }}
                 """
+            )
+        )
+
+    def test_engineer_ticket_pool_shows_loading_state_before_first_queue_snapshot(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                tickets = [];
+                boardLoading = true;
+                filterValues.priority = "all";
+                filterValues.mode = "all";
+                filterValues.status = "all";
+
+                const html = renderTicketPoolView();
+                if (!html.includes("pool-loading-state")) {{
+                  throw new Error("Ticket pool should render a dedicated loading state before the first queue snapshot arrives.");
+                }}
+                if (!html.includes("Loading tickets...")) {{
+                  throw new Error("Ticket pool loading state should explain that tickets are loading.");
+                }}
+                if (!html.includes("Fetching the latest engineer queue snapshot.")) {{
+                  throw new Error("Ticket pool loading state should render supporting copy.");
+                }}
+                if (!html.includes("loading-spinner")) {{
+                  throw new Error("Ticket pool loading state should include the loading spinner.");
+                }}
+                if (html.includes("No tickets match the current filters.")) {{
+                  throw new Error("Initial queue loading should not render the empty filter state.");
+                }}
+              """
             )
         )
 
