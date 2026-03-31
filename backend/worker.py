@@ -28,7 +28,12 @@ from backend.services.investigation_flow import (
     normalize_ticket_status,
     start_or_refresh_investigation,
 )
+from backend.services.sentiment_classifier import classify_sentiment
 from backend.services.task_queue import SyncRedisTaskQueue
+from backend.services.ticket_message_sentiment import (
+    build_ticket_message_sentiment_event,
+    classify_customer_message_sentiment,
+)
 
 LOGGER = logging.getLogger(__name__)
 SHUTTING_DOWN = False
@@ -214,6 +219,33 @@ def _is_latest_customer_message(ticket: dict[str, Any], message: str, created_at
     return _find_latest_customer_message_index(ticket, message, created_at) is not None
 
 
+def _find_matching_customer_message_index(
+    ticket: dict[str, Any],
+    message: str,
+    created_at: str,
+) -> int | None:
+    expected_content = str(message).strip()
+    expected_created_at = str(created_at).strip()
+    messages = ticket.get("messages", [])
+    if not isinstance(messages, list):
+        return None
+    for index in range(len(messages) - 1, -1, -1):
+        item = messages[index]
+        if str(item.get("role", "")).strip().lower() != "customer":
+            continue
+        if expected_content and str(item.get("content", "")).strip() != expected_content:
+            continue
+        ts = str(item.get("created_at", "")).strip()
+        if expected_created_at and ts and not _timestamps_match(ts, expected_created_at):
+            continue
+        return index
+    return None
+
+
+def _has_matching_customer_message(ticket: dict[str, Any], message: str, created_at: str) -> bool:
+    return _find_matching_customer_message_index(ticket, message, created_at) is not None
+
+
 def _parse_iso_datetime(value: str) -> datetime | None:
     raw = str(value or "").strip()
     if not raw:
@@ -274,6 +306,34 @@ def _load_ticket_with_retry(
     )
     while True:
         if ticket is not None and _is_latest_customer_message(
+            ticket,
+            expected_message,
+            expected_created_at,
+        ):
+            return ticket, attempt, True
+        if attempt >= TICKET_LOOKUP_RETRY_MAX:
+            break
+        attempt += 1
+        time.sleep(TICKET_LOOKUP_RETRY_BASE_DELAY_SECONDS * attempt)
+        ticket = _call_ticket_repository(
+            "get_ticket",
+            lambda: ticket_repository.get_ticket(ticket_id),
+        )
+    return ticket, attempt, False
+
+
+def _load_ticket_message_with_retry(
+    ticket_id: str,
+    expected_message: str,
+    expected_created_at: str,
+) -> tuple[dict[str, Any] | None, int, bool]:
+    attempt = 0
+    ticket = _call_ticket_repository(
+        "get_ticket",
+        lambda: ticket_repository.get_ticket(ticket_id),
+    )
+    while True:
+        if ticket is not None and _has_matching_customer_message(
             ticket,
             expected_message,
             expected_created_at,
@@ -570,6 +630,70 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         _publish(bus, ["client"], build_client_sync_event(ticket, attention_event["event"]))
 
 
+def _process_ticket_message_sentiment(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
+    ticket_id = str(task.get("ticket_id", "")).strip()
+    customer_message = str(task.get("customer_message", "")).strip()
+    message_created_at = str(task.get("message_created_at", "")).strip()
+    if not ticket_id or not customer_message or not message_created_at:
+        return
+
+    ticket, lookup_attempts, message_found = _load_ticket_message_with_retry(
+        ticket_id,
+        customer_message,
+        message_created_at,
+    )
+    if ticket is None:
+        LOGGER.warning(
+            "Worker skipped sentiment tagging: ticket not found (%s) after %s retries",
+            ticket_id,
+            lookup_attempts,
+        )
+        return
+    if not message_found:
+        LOGGER.info(
+            "Worker skipped stale sentiment task for ticket %s after %s retries",
+            ticket_id,
+            lookup_attempts,
+        )
+        return
+    if lookup_attempts > 0:
+        LOGGER.info(
+            "Worker recovered delayed ticket/message state for sentiment task %s after %s retries",
+            ticket_id,
+            lookup_attempts,
+        )
+
+    sentiment_result, sentiment_label = classify_customer_message_sentiment(
+        customer_message,
+        classifier=classify_sentiment,
+    )
+    updated = _call_ticket_repository(
+        "update_message_sentiment_label",
+        lambda: ticket_repository.update_message_sentiment_label(
+            ticket_id=ticket_id,
+            role="customer",
+            content=customer_message,
+            created_at=message_created_at,
+            sentiment_label=sentiment_label,
+        ),
+    )
+    if not updated:
+        return
+
+    event = build_ticket_message_sentiment_event(
+        ticket_id=ticket_id,
+        message_created_at=message_created_at,
+        sentiment_label=sentiment_label,
+        sentiment_result=sentiment_result,
+        created_at=now_iso(),
+    )
+    _call_ticket_repository(
+        "record_event",
+        lambda: ticket_repository.record_event(ticket_id, event["event"], event),
+    )
+    _publish(bus, ["engineer", "dashboard"], event)
+
+
 def run_worker() -> int:
     logging.basicConfig(
         level=logging.INFO,
@@ -602,6 +726,14 @@ def run_worker() -> int:
                 if _schedule_ticket_task_retry(queue, task, exc):
                     continue
                 LOGGER.exception("Worker failed to process ticket task: %s", exc)
+            continue
+        if task_type == "ticket_message_sentiment":
+            try:
+                _process_ticket_message_sentiment(bus, task)
+            except Exception as exc:
+                if _schedule_ticket_task_retry(queue, task, exc):
+                    continue
+                LOGGER.exception("Worker failed to process sentiment task: %s", exc)
             continue
         if task_type:
             LOGGER.warning("Worker ignored unknown task type: %s", task_type)

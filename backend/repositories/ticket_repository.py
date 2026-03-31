@@ -29,6 +29,7 @@ _RETRYABLE_STORAGE_ERROR_SNIPPETS = (
 )
 
 _ResultT = TypeVar("_ResultT")
+_VALID_MESSAGE_SENTIMENTS = {"good", "bad", "neutral"}
 
 
 def _utc_now() -> str:
@@ -68,6 +69,11 @@ def _normalize_role(value: Any) -> str:
 def _normalize_investigation_role(value: Any) -> str:
     role = str(value or "engineer_ai").strip().lower()
     return role if role in _VALID_INVESTIGATION_ROLES else "engineer_ai"
+
+
+def _normalize_message_sentiment_label(value: Any) -> str | None:
+    label = str(value or "").strip().lower()
+    return label if label in _VALID_MESSAGE_SENTIMENTS else None
 
 
 def _safe_positive_int(value: Any, default_value: int) -> int:
@@ -118,6 +124,17 @@ class TicketRepository(Protocol):
         ticket: dict[str, Any],
         new_messages: list[dict[str, Any]] | None = None,
     ) -> None:
+        ...
+
+    def update_message_sentiment_label(
+        self,
+        *,
+        ticket_id: str,
+        role: str,
+        content: str,
+        created_at: str,
+        sentiment_label: str,
+    ) -> bool:
         ...
 
     def get_active_investigation(self, ticket_id: str) -> dict[str, Any] | None:
@@ -207,6 +224,42 @@ class InMemoryTicketRepository:
             investigations.extend(copy.deepcopy(item) for item in history if isinstance(item, dict))
         if investigations:
             self._investigations[ticket_id] = investigations
+
+    def update_message_sentiment_label(
+        self,
+        *,
+        ticket_id: str,
+        role: str,
+        content: str,
+        created_at: str,
+        sentiment_label: str,
+    ) -> bool:
+        ticket = self._tickets.get(str(ticket_id).strip())
+        if ticket is None:
+            return False
+        normalized_label = _normalize_message_sentiment_label(sentiment_label)
+        if normalized_label is None:
+            return False
+        expected_role = _normalize_role(role)
+        expected_content = str(content).strip()
+        expected_created_at = str(created_at).strip()
+        messages = ticket.get("messages")
+        if not isinstance(messages, list):
+            return False
+        for index in range(len(messages) - 1, -1, -1):
+            message = messages[index]
+            if _normalize_role(message.get("role")) != expected_role:
+                continue
+            if str(message.get("content") or "").strip() != expected_content:
+                continue
+            if str(message.get("created_at") or "").strip() != expected_created_at:
+                continue
+            if _normalize_message_sentiment_label(message.get("sentiment_label")) == normalized_label:
+                return False
+            message["sentiment_label"] = normalized_label
+            ticket["updated_at"] = ticket.get("updated_at") or _utc_now()
+            return True
+        return False
 
     def get_active_investigation(self, ticket_id: str) -> dict[str, Any] | None:
         investigations = self._investigations.get(ticket_id, [])
@@ -443,6 +496,7 @@ class PostgresTicketRepository:
                             role TEXT NOT NULL,
                             content TEXT NOT NULL,
                             created_at TIMESTAMPTZ NOT NULL,
+                            sentiment_label TEXT,
                             sources JSONB,
                             citations JSONB
                         )
@@ -451,6 +505,11 @@ class PostgresTicketRepository:
                         self._table("support_ticket_messages"),
                         self._table("support_tickets"),
                     )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS sentiment_label TEXT"
+                    ).format(self._table("support_ticket_messages"))
                 )
                 cur.execute(
                     sql.SQL(
@@ -572,7 +631,7 @@ class PostgresTicketRepository:
             cur.execute(
                 sql.SQL(
                     """
-                    SELECT ticket_id, role, content, created_at, sources, citations
+                    SELECT ticket_id, role, content, created_at, sentiment_label, sources, citations
                     FROM {}
                     WHERE ticket_id = ANY(%s)
                     ORDER BY created_at ASC, id ASC
@@ -587,9 +646,11 @@ class PostgresTicketRepository:
                     "created_at": _to_iso(row[3]),
                 }
                 if row[4]:
-                    message["sources"] = row[4]
+                    message["sentiment_label"] = str(row[4])
                 if row[5]:
-                    message["citations"] = row[5]
+                    message["sources"] = row[5]
+                if row[6]:
+                    message["citations"] = row[6]
                 grouped[str(row[0])].append(message)
         return grouped
 
@@ -862,6 +923,9 @@ class PostgresTicketRepository:
                         content = str(message.get("content", "")).strip()
                         if not content:
                             continue
+                        sentiment_label = _normalize_message_sentiment_label(
+                            message.get("sentiment_label")
+                        )
                         sources = message.get("sources")
                         citations = message.get("citations")
                         cur.execute(
@@ -872,10 +936,11 @@ class PostgresTicketRepository:
                                     role,
                                     content,
                                     created_at,
+                                    sentiment_label,
                                     sources,
                                     citations
                                 )
-                                VALUES (%s, %s, %s, %s, %s, %s)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s)
                                 """
                             ).format(self._table("support_ticket_messages")),
                             (
@@ -883,12 +948,65 @@ class PostgresTicketRepository:
                                 _normalize_role(message.get("role")),
                                 content,
                                 message.get("created_at") or updated_at,
+                                sentiment_label,
                                 Json(sources) if sources else None,
                                 Json(citations) if citations else None,
                             ),
                         )
 
         self._run_with_connection_retry("save_ticket", _operation)
+
+    def update_message_sentiment_label(
+        self,
+        *,
+        ticket_id: str,
+        role: str,
+        content: str,
+        created_at: str,
+        sentiment_label: str,
+    ) -> bool:
+        normalized_label = _normalize_message_sentiment_label(sentiment_label)
+        if normalized_label is None:
+            return False
+
+        def _operation(conn: psycopg.Connection[Any]) -> bool:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            WITH target AS (
+                                SELECT id
+                                FROM {}
+                                WHERE ticket_id = %s
+                                  AND role = %s
+                                  AND content = %s
+                                  AND created_at = %s
+                                ORDER BY id DESC
+                                LIMIT 1
+                            )
+                            UPDATE {} AS message
+                            SET sentiment_label = %s
+                            FROM target
+                            WHERE message.id = target.id
+                              AND message.sentiment_label IS DISTINCT FROM %s
+                            """
+                        ).format(
+                            self._table("support_ticket_messages"),
+                            self._table("support_ticket_messages"),
+                        ),
+                        (
+                            str(ticket_id).strip(),
+                            _normalize_role(role),
+                            str(content).strip(),
+                            str(created_at).strip(),
+                            normalized_label,
+                            normalized_label,
+                        ),
+                    )
+                    return cur.rowcount > 0
+
+        return self._run_with_connection_retry("update_message_sentiment_label", _operation)
 
     def get_active_investigation(self, ticket_id: str) -> dict[str, Any] | None:
         investigations = self.list_ticket_investigations(ticket_id=ticket_id, include_messages=True)

@@ -538,6 +538,65 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_engineer_detail_renders_customer_message_sentiment_pill_only_for_customer_messages(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                selectedTicketId = "TK-DETAIL-SENTIMENT";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-SENTIMENT",
+                  subject: "Android 14 token renew regression",
+                  requester: "user-7",
+                  priority: "normal",
+                  status: "open",
+                  engineer_mode: "managed",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [
+                    {
+                      role: "customer",
+                      content: "my service is down, it is so frustrated!",
+                      sentiment_label: "bad",
+                      created_at: "2026-03-24T08:00:00+00:00",
+                    },
+                    {
+                      role: "assistant",
+                      content: "Got it, let me check this for you.",
+                      created_at: "2026-03-24T08:00:05+00:00",
+                    },
+                  ],
+                  active_investigation: null,
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+                selectedTicketSummary = "Check the latest customer report.";
+                selectedTicketNextAction = "Inspect the customer timeline.";
+
+                const html = renderTicketDetailView();
+                if (!html.includes("message-sentiment-pill")) {
+                  throw new Error("Customer timeline should render the inline message sentiment pill.");
+                }
+                if (!html.includes(">bad<")) {
+                  throw new Error("Customer message sentiment pill should keep the lowercase sentiment token.");
+                }
+                const customerHeaderIndex = html.indexOf("Customer");
+                const pillIndex = html.indexOf("message-sentiment-pill");
+                const timeIndex = html.indexOf('class="message-time"', pillIndex);
+                if (customerHeaderIndex === -1 || pillIndex === -1 || timeIndex === -1) {
+                  throw new Error("Expected customer role, sentiment pill, and timestamp in the customer timeline.");
+                }
+                if (!(customerHeaderIndex < pillIndex && pillIndex < timeIndex)) {
+                  throw new Error("Sentiment pill should render after the Customer label and before the timestamp.");
+                }
+                const assistantHeaderIndex = html.indexOf(">AI<");
+                const assistantSection = assistantHeaderIndex === -1 ? "" : html.slice(assistantHeaderIndex, assistantHeaderIndex + 220);
+                if (assistantSection.includes("message-sentiment-pill")) {
+                  throw new Error("Assistant messages should not render a customer sentiment pill.");
+                }
+              """
+            )
+        )
+
     def test_engineer_detail_revise_action_reuses_main_composer_and_submit_targets_confirmation_endpoint(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
