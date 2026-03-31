@@ -841,10 +841,84 @@ a {
   gap: 18px;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .filter-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.filter-control-group {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+  min-width: 0;
+}
+
+.pool-view-toggle {
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--ghost-border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: var(--shadow-soft);
+}
+
+.pool-view-toggle-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-muted);
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
+}
+
+.pool-view-toggle-btn:hover {
+  color: var(--ink);
+  background: rgba(228, 233, 239, 0.78);
+}
+
+.pool-view-toggle-btn.is-active {
+  color: var(--primary);
+  background: rgba(202, 230, 255, 0.88);
+}
+
+.pool-view-toggle-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(0, 176, 255, 0.18);
+}
+
+.pool-view-toggle-btn:active {
+  transform: translateY(1px);
+}
+
+.pool-view-toggle-icon {
+  width: 18px;
+  height: 18px;
 }
 
 .filter-combobox,
@@ -1027,6 +1101,12 @@ a {
   gap: 12px;
 }
 
+.ticket-pool-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
 .ticket-row {
   display: grid;
   gap: 14px;
@@ -1056,6 +1136,87 @@ a {
 .ticket-row-waiting {
   border-color: rgba(159, 93, 18, 0.18);
   background: linear-gradient(180deg, rgba(255, 245, 235, 0.9) 0%, rgba(255, 255, 255, 0.9) 100%);
+}
+
+.ticket-pool-card {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  min-height: 240px;
+  padding: 18px 18px 20px;
+  border-radius: 24px;
+  cursor: pointer;
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease;
+}
+
+.ticket-pool-card:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.ticket-pool-card:focus-visible {
+  outline: none;
+  border-color: rgba(0, 100, 147, 0.28);
+  box-shadow:
+    var(--shadow-soft),
+    0 0 0 3px rgba(0, 176, 255, 0.16);
+}
+
+.ticket-pool-card-waiting {
+  border-color: rgba(159, 93, 18, 0.18);
+  background: linear-gradient(180deg, rgba(255, 245, 235, 0.9) 0%, rgba(255, 255, 255, 0.9) 100%);
+}
+
+.ticket-pool-card-top,
+.ticket-pool-card-badges {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ticket-pool-card-top {
+  justify-content: space-between;
+}
+
+.ticket-pool-card-title {
+  font-size: 24px;
+  line-height: 1.08;
+}
+
+.ticket-pool-card-meta {
+  display: grid;
+  gap: 8px;
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
+.ticket-pool-card-meta strong,
+.ticket-pool-card-preview-label {
+  margin-right: 4px;
+  color: var(--ink-muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ticket-pool-card-preview {
+  display: grid;
+  gap: 8px;
+  align-self: end;
+  padding-top: 2px;
+  border-top: 1px solid rgba(211, 219, 230, 0.7);
+}
+
+.ticket-pool-card-preview p {
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.6;
 }
 
 .ticket-row-header,
@@ -1641,6 +1802,10 @@ a {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .ticket-pool-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .workspace-layout {
     grid-template-columns: 1fr;
   }
@@ -1760,9 +1925,19 @@ a {
   }
 
   .filter-controls,
+  .filter-control-group,
   .pool-metrics,
+  .ticket-pool-grid,
   .detail-grid {
     grid-template-columns: 1fr;
+  }
+
+  .pool-view-toggle {
+    justify-self: stretch;
+  }
+
+  .pool-view-toggle-btn {
+    flex: 1 1 0;
   }
 
   .rail-footer {

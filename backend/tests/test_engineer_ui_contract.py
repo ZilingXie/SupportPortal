@@ -124,8 +124,8 @@ class EngineerUiContractTests(unittest.TestCase):
 
         self.assertIn("Concierge AI", html)
         self.assertIn("Manrope", html)
-        self.assertIn("./styles.css?v=20260326-engineer-stitch-7", html)
-        self.assertIn('./app.js?v=20260326-engineer-stitch-7', html)
+        self.assertIn("./styles.css?v=20260331-engineer-grid-view-1", html)
+        self.assertIn('./app.js?v=20260331-engineer-grid-view-1', html)
         self.assertIn("function parseRoute()", app_source)
         self.assertIn('path.startsWith("/tickets/")', app_source)
         self.assertIn("function renderTicketPoolView()", app_source)
@@ -162,10 +162,11 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn(".engineer-rail:hover .user-profile-chip {\n  display: flex;", css)
         self.assertIn(".ticket-pool-list", css)
         self.assertIn(".ticket-row", css)
-        self.assertNotIn(".ticket-pool-grid", css)
+        self.assertIn(".ticket-pool-grid", css)
+        self.assertIn(".pool-view-toggle", css)
         self.assertIn(".ticket-workspace", css)
 
-    def test_engineer_ticket_pool_uses_list_rows_and_prioritizes_investigating(self) -> None:
+    def test_engineer_ticket_pool_defaults_to_list_rows_and_prioritizes_investigating(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
                 """
@@ -211,6 +212,18 @@ class EngineerUiContractTests(unittest.TestCase):
                 filterValues.mode = "all";
                 filterValues.status = "all";
 
+                renderFilterControls();
+                const controlsHtml = filterControlsEl.innerHTML;
+                if (!controlsHtml.includes("pool-view-toggle")) {{
+                  throw new Error("Filter row should render the list/grid view toggle.");
+                }}
+                if (!controlsHtml.includes('data-pool-view-option="list"')) {{
+                  throw new Error("Filter row should expose the list view option.");
+                }}
+                if (!controlsHtml.includes('data-pool-view-option="grid"')) {{
+                  throw new Error("Filter row should expose the grid view option.");
+                }}
+
                 const html = renderTicketPoolView();
                 if (html.includes("ticket-card")) {{
                   throw new Error("Ticket pool should no longer render card layout.");
@@ -219,10 +232,13 @@ class EngineerUiContractTests(unittest.TestCase):
                   throw new Error("Ticket pool rows should no longer render an Open Workspace button.");
                 }}
                 if (!html.includes("ticket-pool-list")) {{
-                  throw new Error("Ticket pool should render the list container.");
+                  throw new Error("Ticket pool should render the list container by default.");
                 }}
                 if (!html.includes("ticket-row")) {{
                   throw new Error("Ticket pool should render list rows.");
+                }}
+                if (html.includes("ticket-pool-grid")) {{
+                  throw new Error("List mode should not render the grid container.");
                 }}
                 if (!html.includes('data-ticket-row="true"')) {{
                   throw new Error("Ticket pool rows should be marked as directly clickable rows.");
@@ -265,6 +281,111 @@ class EngineerUiContractTests(unittest.TestCase):
                   throw new Error("Mode badge should stay in the first row alongside title and status badges.");
                 }}
                 """
+            )
+        )
+
+    def test_engineer_ticket_pool_restores_grid_view_preference_and_renders_cards(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                localStorage.setItem(TICKET_POOL_VIEW_STORAGE_KEY, "grid");
+                hydrateTicketPoolViewMode();
+
+                tickets = [
+                  {
+                    ticket_id: "TK-GRID-001",
+                    subject: "investigating grid ticket",
+                    requester: "user-grid",
+                    priority: "high",
+                    status: "investigating",
+                    engineer_mode: "managed",
+                    created_at: "2026-03-24T08:00:00+00:00",
+                    updated_at: "2026-03-24T08:30:00+00:00",
+                    active_investigation: {
+                      id: "INV-GRID-001",
+                      state: "active",
+                      draft_customer_reply: "",
+                      messages: [
+                        {
+                          id: "INV-GRID-001-m1",
+                          role: "engineer_ai",
+                          content: "Please confirm whether the issue only reproduces on Android 14.",
+                          created_at: "2026-03-24T08:25:00+00:00",
+                        },
+                      ],
+                    },
+                  },
+                  {
+                    ticket_id: "TK-GRID-002",
+                    subject: "open fallback ticket",
+                    requester: "user-grid-2",
+                    priority: "normal",
+                    status: "open",
+                    engineer_mode: "takeover",
+                    created_at: "2026-03-24T08:10:00+00:00",
+                    updated_at: "2026-03-24T08:15:00+00:00",
+                    pending_engineer_question: "",
+                  },
+                ];
+
+                const html = renderTicketPoolView();
+                if (!html.includes('data-pool-view-mode="grid"')) {{
+                  throw new Error("Grid preference should restore the grid view container.");
+                }}
+                if (!html.includes("ticket-pool-grid")) {{
+                  throw new Error("Grid view should render the grid container.");
+                }}
+                if (html.includes("ticket-pool-list")) {{
+                  throw new Error("Grid mode should not render the list container.");
+                }}
+                if (!html.includes("ticket-pool-card")) {{
+                  throw new Error("Grid mode should render compact pool cards.");
+                }}
+                if (!html.includes('data-ticket-row="true"')) {{
+                  throw new Error("Grid cards should stay directly clickable.");
+                }}
+                if (!html.includes('role="button"')) {{
+                  throw new Error("Grid cards should expose button semantics.");
+                }}
+                if (!html.includes('tabindex="0"')) {{
+                  throw new Error("Grid cards should remain keyboard focusable.");
+                }}
+                if (!html.includes("ticket-pool-card-preview")) {{
+                  throw new Error("Grid cards should render an investigation preview block when text exists.");
+                }}
+                if (!html.includes("Please confirm whether the issue only reproduces on Android 14.")) {{
+                  throw new Error("Grid cards should include the latest investigation preview text.");
+                }}
+                const gridIndex = html.indexOf("TK-GRID-001");
+                const openIndex = html.indexOf("TK-GRID-002");
+                if (gridIndex === -1 || openIndex === -1 || gridIndex > openIndex) {{
+                  throw new Error("Grid mode should preserve the same sorted order as list mode.");
+                }}
+              """
+            )
+        )
+
+    def test_engineer_ticket_pool_view_toggle_persists_selected_mode(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                if (ticketPoolViewMode !== "list") {{
+                  throw new Error("Ticket pool view should default to list.");
+                }}
+
+                applyTicketPoolViewMode("grid");
+                if (ticketPoolViewMode !== "grid") {{
+                  throw new Error("Applying grid mode should update local state.");
+                }}
+                if (localStorage.getItem(TICKET_POOL_VIEW_STORAGE_KEY) !== "grid") {{
+                  throw new Error("Applying grid mode should persist the preference.");
+                }}
+
+                applyTicketPoolViewMode("list");
+                if (localStorage.getItem(TICKET_POOL_VIEW_STORAGE_KEY) !== "list") {{
+                  throw new Error("Applying list mode should overwrite the saved preference.");
+                }}
+              """
             )
         )
 
