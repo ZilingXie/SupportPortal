@@ -11,6 +11,7 @@ expected_branch="${1:-}"
 
 repo_root >/dev/null
 ensure_branch "$expected_branch"
+ensure_task_not_in_root_workspace "$expected_branch"
 
 tracked_changes=()
 known_artifacts=()
@@ -54,4 +55,3 @@ if (( ${#known_artifacts[@]} > 0 )); then
   info "Known non-task artifacts were detected and must stay out of the finalization commit:"
   printf ' - %s\n' "${known_artifacts[@]}"
 fi
-
