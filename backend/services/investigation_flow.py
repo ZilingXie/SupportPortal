@@ -15,6 +15,149 @@ INVESTIGATION_STATE_AWAITING_CONFIRMATION = "awaiting_confirmation"
 INVESTIGATION_STATE_CLOSED = "closed"
 
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
+_MAX_OPENING_CONTEXT_CITATIONS = 3
+_MAX_OPENING_CONTEXT_SOURCES = 3
+_MAX_OPENING_CONTEXT_ISSUE_CHARS = 220
+_MAX_OPENING_CONTEXT_ANSWER_CHARS = 260
+
+
+def _compact_text(value: Any) -> str:
+    return " ".join(str(value or "").split()).strip()
+
+
+def _truncate_text(value: Any, max_chars: int) -> str:
+    text = _compact_text(value)
+    if len(text) <= max_chars:
+        return text
+    shortened = text[: max_chars - 3].rstrip(" ,.;:")
+    return f"{shortened}..."
+
+
+def _limited_sources(raw_sources: Any) -> list[str]:
+    if not isinstance(raw_sources, list):
+        return []
+    items: list[str] = []
+    seen: set[str] = set()
+    for source in raw_sources:
+        text = _compact_text(source)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        items.append(text)
+        if len(items) >= _MAX_OPENING_CONTEXT_SOURCES:
+            break
+    return items
+
+
+def _limited_citations(raw_citations: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_citations, list):
+        return []
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for citation in raw_citations:
+        if not isinstance(citation, dict):
+            continue
+        normalized: dict[str, Any] = {}
+        for key in ("chunk_id", "source_path", "heading", "source_url", "title", "label"):
+            value = _compact_text(citation.get(key))
+            if value:
+                normalized[key] = value
+        identity = (
+            str(normalized.get("source_url") or "")
+            or str(normalized.get("source_path") or "")
+            or str(normalized.get("chunk_id") or "")
+            or str(normalized.get("heading") or "")
+            or str(normalized.get("title") or "")
+            or str(normalized.get("label") or "")
+        )
+        if not identity or identity in seen:
+            continue
+        seen.add(identity)
+        items.append(normalized)
+        if len(items) >= _MAX_OPENING_CONTEXT_CITATIONS:
+            break
+    return items
+
+
+def _latest_rag_assistant_message(ticket: dict[str, Any]) -> dict[str, Any] | None:
+    messages = ticket.get("messages", [])
+    if not isinstance(messages, list):
+        return None
+    for message in reversed(messages):
+        if str(message.get("role") or "").strip().lower() != "assistant":
+            continue
+        answer_route = _compact_text(message.get("answer_route")).lower()
+        execution_action = _compact_text(message.get("execution_action")).lower()
+        if answer_route == "rag" or execution_action == "rag":
+            return message
+    return None
+
+
+def build_investigation_opening_context(
+    ticket: dict[str, Any],
+    *,
+    trigger_reason: str,
+    rag_answer: str | None = None,
+    sources: list[str] | None = None,
+    citations: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    normalized_reason = _compact_text(trigger_reason).lower()
+    latest_customer = _truncate_text(
+        latest_customer_message(ticket) or ticket.get("subject") or "Unknown customer issue",
+        _MAX_OPENING_CONTEXT_ISSUE_CHARS,
+    )
+
+    normalized_answer = _compact_text(rag_answer)
+    normalized_sources = _limited_sources(sources)
+    normalized_citations = _limited_citations(citations)
+    if not normalized_answer and not normalized_sources and not normalized_citations:
+        latest_rag_message = _latest_rag_assistant_message(ticket)
+        if latest_rag_message is not None:
+            normalized_answer = _compact_text(latest_rag_message.get("content"))
+            normalized_sources = _limited_sources(latest_rag_message.get("sources"))
+            normalized_citations = _limited_citations(latest_rag_message.get("citations"))
+
+    has_rag_context = bool(normalized_answer or normalized_sources or normalized_citations)
+    if normalized_reason == "engineer_investigate" and not has_rag_context:
+        return None
+
+    if normalized_reason == "rag_insufficient_evidence":
+        rag_summary = "AI could not find enough grounded doc evidence to answer safely."
+        action_needed = (
+            "Reproduce the issue, confirm the affected platform, SDK version, and configuration, collect logs or "
+            "error traces, and provide a workaround or the missing doc path if available."
+        )
+    elif normalized_reason in {"rag_post_check_insufficient", "rag_post_check_error"}:
+        rag_summary = "AI found a tentative docs-backed answer but could not safely send it without engineer review."
+        if normalized_answer:
+            rag_summary = f"{rag_summary} Tentative guidance: {_truncate_text(normalized_answer, _MAX_OPENING_CONTEXT_ANSWER_CHARS)}"
+        action_needed = (
+            "Review the tentative docs-backed guidance, confirm whether it is valid for the customer's platform, "
+            "SDK version, and configuration, and provide corrected steps or a customer-safe workaround."
+        )
+    elif has_rag_context:
+        rag_summary = (
+            "AI attempted this docs-backed guidance: "
+            f"{_truncate_text(normalized_answer, _MAX_OPENING_CONTEXT_ANSWER_CHARS)}"
+        )
+        action_needed = (
+            "Review the latest docs-backed guidance, confirm whether it matches the customer's platform, "
+            "SDK version, and configuration, and provide the customer-safe next step or workaround."
+        )
+    else:
+        rag_summary = "AI could not find enough grounded doc evidence to answer safely."
+        action_needed = (
+            "Reproduce the issue, confirm the affected platform, SDK version, and configuration, collect logs or "
+            "error traces, and provide a workaround or the missing doc path if available."
+        )
+
+    return {
+        "issue_summary": latest_customer,
+        "rag_answer_summary": rag_summary,
+        "action_needed": _compact_text(action_needed),
+        "sources": normalized_sources,
+        "citations": normalized_citations,
+    }
 
 
 def normalize_ticket_status(value: Any) -> str:
@@ -39,7 +182,7 @@ def build_internal_message(
     created_at: str,
     *,
     sequence: int,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     return {
         "id": f"{investigation_id}-m-{sequence}",
         "role": role,
@@ -62,6 +205,7 @@ def default_investigation_prompt(
     *,
     engineer_message: str | None = None,
     revision_note: str | None = None,
+    opening_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     customer_text = latest_customer_message(ticket)
     subject = str(ticket.get("subject") or "this issue").strip()
@@ -80,6 +224,27 @@ def default_investigation_prompt(
             "state": INVESTIGATION_STATE_AWAITING_CONFIRMATION,
             "message": "I have enough information now. Please confirm this draft before I reply to the customer.",
             "draft_customer_reply": draft,
+        }
+
+    if isinstance(opening_context, dict):
+        issue_summary = _compact_text(opening_context.get("issue_summary")) or (customer_text or subject)
+        rag_answer_summary = _compact_text(opening_context.get("rag_answer_summary"))
+        action_needed = _compact_text(opening_context.get("action_needed"))
+        issue_line = issue_summary
+        if rag_answer_summary:
+            issue_line = f"{issue_line} {rag_answer_summary}".strip()
+        return {
+            "state": INVESTIGATION_STATE_ACTIVE,
+            "message": "\n".join(
+                [
+                    "Engineer Request:",
+                    f"Issue: {issue_line}",
+                    f"Action Needed: {action_needed}",
+                ]
+            ),
+            "draft_customer_reply": "",
+            "sources": _limited_sources(opening_context.get("sources")),
+            "citations": _limited_citations(opening_context.get("citations")),
         }
 
     if _CJK_RE.search(customer_text):
@@ -145,6 +310,12 @@ def _apply_ai_turn_to_active_investigation(
             now_value,
             sequence=next_sequence,
         )
+        sources = _limited_sources(ai_turn.get("sources"))
+        citations = _limited_citations(ai_turn.get("citations"))
+        if sources:
+            internal_message["sources"] = sources
+        if citations:
+            internal_message["citations"] = citations
         active_investigation.setdefault("messages", []).append(internal_message)
         appended_messages.append(internal_message)
 
@@ -173,6 +344,7 @@ def start_or_refresh_investigation(
     trigger_reason: str,
     trigger_source: str,
     now_value: str,
+    opening_context: dict[str, Any] | None = None,
     ai_turn_builder: Callable[..., dict[str, Any]] = default_investigation_prompt,
 ) -> dict[str, Any]:
     ensure_ticket_investigation_defaults(ticket)
@@ -204,7 +376,11 @@ def start_or_refresh_investigation(
             active_investigation["final_confirmation_requested_at"] = None
         active_investigation["updated_at"] = now_value
 
-    ai_turn = ai_turn_builder(ticket, active_investigation)
+    ai_turn = ai_turn_builder(
+        ticket,
+        active_investigation,
+        opening_context=opening_context if created else None,
+    )
     new_internal_messages.extend(
         _apply_ai_turn_to_active_investigation(active_investigation, ai_turn, now_value)
     )

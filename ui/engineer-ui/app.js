@@ -270,7 +270,7 @@ function sanitizeHttpUrl(value) {
 
 function buildMessageReferences(message) {
   const role = String(message?.role || "").toLowerCase();
-  if (role !== "assistant") {
+  if (role !== "assistant" && role !== "engineer_ai") {
     return "";
   }
 

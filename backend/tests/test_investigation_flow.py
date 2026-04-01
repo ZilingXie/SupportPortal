@@ -108,14 +108,6 @@ class InvestigationFlowTests(unittest.TestCase):
             main,
             "resolve_support_message",
             return_value=_resolution(needs_engineer_guidance=True),
-        ), patch.object(
-            main,
-            "generate_investigation_ai_turn",
-            return_value={
-                "state": "active",
-                "message": "Please confirm the SDK version and whether this reproduces on Android only.",
-                "draft_customer_reply": None,
-            },
         ), patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
                 "/api/tickets/query",
@@ -139,6 +131,13 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(ticket["active_investigation"]["state"], "active")
         self.assertEqual(ticket["active_investigation"]["trigger_source"], "support_query")
         self.assertEqual(ticket["active_investigation"]["messages"][0]["role"], "engineer_ai")
+        opening_message = ticket["active_investigation"]["messages"][0]
+        self.assertIn("Engineer Request:", opening_message["content"])
+        self.assertIn("Issue:", opening_message["content"])
+        self.assertIn("AI could not find enough grounded doc evidence to answer safely.", opening_message["content"])
+        self.assertIn("Action Needed:", opening_message["content"])
+        self.assertFalse(opening_message.get("sources"))
+        self.assertFalse(opening_message.get("citations"))
         self.assertEqual(ticket["messages"][-1]["role"], "assistant")
         assistant_messages = [message["content"] for message in ticket["messages"] if message["role"] == "assistant"]
         self.assertIn("收到，我先帮你看一下。", assistant_messages)
@@ -308,6 +307,10 @@ class InvestigationFlowTests(unittest.TestCase):
             ),
         ), patch.object(
             main,
+            "analyze_ticket_message",
+            return_value=_rag_route_decision(reason="conservative_agora_technical_fallback"),
+        ), patch.object(
+            main,
             "generate_investigation_ai_turn",
             return_value={
                 "state": "active",
@@ -446,14 +449,6 @@ class InvestigationFlowTests(unittest.TestCase):
                 reason="missing_android_14_specific_evidence",
                 confidence=0.89,
             ),
-        ), patch.object(
-            main,
-            "generate_investigation_ai_turn",
-            return_value={
-                "state": "active",
-                "message": "Please confirm whether Android 14 is the only affected platform.",
-                "draft_customer_reply": None,
-            },
         ), patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
                 "/api/tickets/query",
@@ -470,6 +465,28 @@ class InvestigationFlowTests(unittest.TestCase):
         ticket = detail.json()["ticket"]
         self.assertEqual(ticket["status"], "investigating")
         self.assertEqual(ticket["active_investigation"]["trigger_reason"], "rag_post_check_insufficient")
+        opening_message = ticket["active_investigation"]["messages"][0]
+        self.assertEqual(opening_message["role"], "engineer_ai")
+        self.assertIn("Engineer Request:", opening_message["content"])
+        self.assertIn("Issue:", opening_message["content"])
+        self.assertIn(
+            "AI found a tentative docs-backed answer but could not safely send it without engineer review.",
+            opening_message["content"],
+        )
+        self.assertIn(
+            "Please upgrade to SDK 4.2.2 and retry token renewal.",
+            opening_message["content"],
+        )
+        self.assertIn("Action Needed:", opening_message["content"])
+        self.assertEqual(
+            opening_message["sources"],
+            ["https://docs.agora.io/en/video-calling/token-authentication"],
+        )
+        self.assertEqual(
+            opening_message["citations"][0]["source_url"],
+            "https://docs.agora.io/en/video-calling/token-authentication",
+        )
+        self.assertNotIn("https://docs.agora.io/en/video-calling/token-authentication", opening_message["content"])
         assistant_messages = [message["content"] for message in ticket["messages"] if message["role"] == "assistant"]
         self.assertFalse(any("Please upgrade to SDK 4.2.2" in content for content in assistant_messages))
         self.assertTrue(
@@ -520,14 +537,6 @@ class InvestigationFlowTests(unittest.TestCase):
         ), patch(
             "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency",
             side_effect=RuntimeError("judge unavailable"),
-        ), patch.object(
-            main,
-            "generate_investigation_ai_turn",
-            return_value={
-                "state": "active",
-                "message": "The post-RAG sufficiency check failed and needs engineer review.",
-                "draft_customer_reply": None,
-            },
         ), patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
                 "/api/tickets/query",
@@ -543,6 +552,14 @@ class InvestigationFlowTests(unittest.TestCase):
         detail = self.client.get("/api/engineer/tickets/TK-INV-POSTCHECK-ERR-100")
         ticket = detail.json()["ticket"]
         self.assertEqual(ticket["active_investigation"]["trigger_reason"], "rag_post_check_error")
+        opening_message = ticket["active_investigation"]["messages"][0]
+        self.assertIn("Engineer Request:", opening_message["content"])
+        self.assertIn(
+            "AI found a tentative docs-backed answer but could not safely send it without engineer review.",
+            opening_message["content"],
+        )
+        self.assertIn("Action Needed:", opening_message["content"])
+        self.assertFalse(opening_message.get("citations"))
 
     def test_engineer_internal_message_generates_next_ai_turn_and_draft(self) -> None:
         self._seed_ticket(
@@ -718,18 +735,38 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(detail.status_code, 200, detail.text)
         self.assertEqual(detail.json()["ticket"]["status"], "escalated")
 
-    def test_investigate_action_moves_escalated_ticket_into_investigating(self) -> None:
-        self._seed_ticket(ticket_id="TK-INV-106", status="escalated")
+    def test_investigate_action_reuses_latest_rag_turn_when_escalated_ticket_enters_investigation(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-INV-106",
+            status="escalated",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "token renew callback never fires on Android 14",
+                    "created_at": "2026-03-29T09:00:00+00:00",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                    "created_at": "2026-03-29T09:01:00+00:00",
+                    "answer_route": "rag",
+                    "execution_action": "rag",
+                    "scope_label": "agora_technical",
+                    "route_reason": "grounded_answer",
+                    "sources": ["https://docs.agora.io/en/video-calling/token-authentication"],
+                    "citations": [
+                        {
+                            "chunk_id": "chunk-1",
+                            "source_path": "official/token-authentication.md",
+                            "heading": "Token authentication",
+                            "source_url": "https://docs.agora.io/en/video-calling/token-authentication",
+                        }
+                    ],
+                },
+            ],
+        )
 
-        with patch.object(
-            main,
-            "generate_investigation_ai_turn",
-            return_value={
-                "state": "active",
-                "message": "Please confirm the SDK version and reproduction scope.",
-                "draft_customer_reply": None,
-            },
-        ), patch.object(main, "dispatch_event", AsyncMock()):
+        with patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
                 "/api/tickets/TK-INV-106/action",
                 json={
@@ -747,6 +784,38 @@ class InvestigationFlowTests(unittest.TestCase):
         ticket = detail.json()["ticket"]
         self.assertEqual(ticket["status"], "investigating")
         self.assertIsNotNone(ticket["active_investigation"])
+        opening_message = ticket["active_investigation"]["messages"][0]
+        self.assertIn("Engineer Request:", opening_message["content"])
+        self.assertIn(
+            "AI attempted this docs-backed guidance: Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+            opening_message["content"],
+        )
+        self.assertEqual(
+            opening_message["citations"][0]["source_url"],
+            "https://docs.agora.io/en/video-calling/token-authentication",
+        )
+
+    def test_investigate_action_without_latest_rag_turn_falls_back_to_generic_prompt(self) -> None:
+        self._seed_ticket(ticket_id="TK-INV-106B", status="escalated")
+
+        with patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/TK-INV-106B/action",
+                json={
+                    "action": "investigate",
+                    "engineer_id": "eng",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        detail = self.client.get("/api/engineer/tickets/TK-INV-106B")
+        ticket = detail.json()["ticket"]
+        opening_message = ticket["active_investigation"]["messages"][0]
+        self.assertIn(
+            "Please confirm the reproduction scope, SDK version, and whether the issue is limited to a specific platform.",
+            opening_message["content"],
+        )
+        self.assertNotIn("Engineer Request:", opening_message["content"])
 
     def test_legacy_mode_and_takeover_reply_endpoints_are_unavailable(self) -> None:
         self._seed_ticket(ticket_id="TK-INV-107", status="communicating")

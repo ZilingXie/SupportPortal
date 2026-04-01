@@ -415,8 +415,11 @@ class WorkerResilienceTests(unittest.TestCase):
             },
             "new_internal_messages": [],
         }
+        captured_opening_context = None
 
-        def _start_or_refresh(ticket, **_kwargs):
+        def _start_or_refresh(ticket, **kwargs):
+            nonlocal captured_opening_context
+            captured_opening_context = copy.deepcopy(kwargs.get("opening_context"))
             ticket["status"] = "investigating"
             ticket["active_investigation"] = copy.deepcopy(investigation_result["active_investigation"])
             return copy.deepcopy(investigation_result)
@@ -448,6 +451,21 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(saved_ticket["status"], "investigating")
         self.assertEqual(saved_ticket["messages"][-1]["content"], investigation_result["public_reply"])
         self.assertEqual(repository.save_investigation.call_count, 1)
+        self.assertIsInstance(captured_opening_context, dict)
+        self.assertIn("Need help with token generation", captured_opening_context["issue_summary"])
+        self.assertIn(
+            "Please upgrade to SDK 4.2.2 and retry token renewal.",
+            captured_opening_context["rag_answer_summary"],
+        )
+        self.assertIn("Action Needed", f"Action Needed: {captured_opening_context['action_needed']}")
+        self.assertEqual(
+            captured_opening_context["sources"],
+            ["https://docs.agora.io/en/video-calling/token-authentication"],
+        )
+        self.assertEqual(
+            captured_opening_context["citations"][0]["source_url"],
+            "https://docs.agora.io/en/video-calling/token-authentication",
+        )
         first_event = repository.record_event.call_args_list[0].args[2]
         self.assertEqual(first_event["status"], "investigating")
         self.assertEqual(first_event["execution_action"], "rag")
