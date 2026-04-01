@@ -160,7 +160,7 @@ else
   info "Reusing existing PR $pr_url"
 fi
 
-gh pr merge "$pr_url" --squash --auto --delete-branch --match-head-commit "$head_sha"
+gh pr merge "$pr_url" --squash --auto --match-head-commit "$head_sha"
 
 merge_timeout_seconds="${CODEX_PR_MERGE_TIMEOUT_SECONDS:-300}"
 poll_interval_seconds="${CODEX_PR_POLL_INTERVAL_SECONDS:-2}"

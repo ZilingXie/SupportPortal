@@ -731,7 +731,7 @@ class WorkflowScriptTests(unittest.TestCase):
         merge_call = next(call for call in calls if call[:2] == ["pr", "merge"])
         self.assertIn("--squash", merge_call)
         self.assertIn("--auto", merge_call)
-        self.assertIn("--delete-branch", merge_call)
+        self.assertNotIn("--delete-branch", merge_call)
 
     def test_finalize_task_to_main_refreshes_branch_from_latest_origin_main(self) -> None:
         bare, seed, repo = self._init_remote_repo_on_main()
