@@ -11,7 +11,6 @@ erDiagram
         text requester
         text subject
         text status
-        text priority
         jsonb last_engineer_action
         timestamptz created_at
         timestamptz updated_at
@@ -39,9 +38,12 @@ erDiagram
 
 ## 索引
 - `support_tickets(status, updated_at DESC)`
-- `support_tickets(priority, updated_at DESC)`
 - `support_ticket_messages(ticket_id, created_at ASC, id ASC)`
 - `support_ticket_events(ticket_id, created_at DESC)`
+
+## Dashboard 情绪统计
+- 运营看板从 `support_ticket_messages.sentiment_label` 推导实时情绪信号。
+- 每张工单只取最新一条客户消息的 `sentiment_label` 参与 `sentiment_breakdown` 和 `sentiment_alert_count`。
 
 ## 语义分层
 - `support_tickets`：工单当前状态快照（查询列表/详情主入口）

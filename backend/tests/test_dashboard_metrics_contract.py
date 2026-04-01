@@ -14,51 +14,77 @@ class DashboardMetricsContractTests(unittest.TestCase):
             {
                 "ticket_id": "TK-001",
                 "status": "communicating",
-                "priority": "normal",
                 "created_at": "2026-03-21T07:15:00+00:00",
                 "updated_at": "2026-03-21T11:20:00+00:00",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Can you check this?",
+                        "created_at": "2026-03-21T11:10:00+00:00",
+                        "sentiment_label": "neutral",
+                    }
+                ],
             },
             {
                 "ticket_id": "TK-002",
                 "status": "escalated",
-                "priority": "high",
                 "created_at": "2026-03-21T08:10:00+00:00",
                 "updated_at": "2026-03-21T11:40:00+00:00",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "My service is down and I am frustrated.",
+                        "created_at": "2026-03-21T11:35:00+00:00",
+                        "sentiment_label": "bad",
+                    }
+                ],
             },
             {
                 "ticket_id": "TK-003",
                 "status": "investigating",
-                "priority": "urgent",
                 "created_at": "2026-03-21T05:30:00+00:00",
                 "updated_at": "2026-03-21T10:30:00+00:00",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Thank you, this is improving.",
+                        "created_at": "2026-03-21T10:00:00+00:00",
+                        "sentiment_label": "good",
+                    }
+                ],
             },
             {
                 "ticket_id": "TK-004",
                 "status": "resolved",
-                "priority": "urgent",
                 "created_at": "2026-03-21T05:00:00+00:00",
                 "updated_at": "2026-03-21T10:10:00+00:00",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Following up on the earlier request.",
+                        "created_at": "2026-03-21T09:55:00+00:00",
+                        "sentiment_label": None,
+                    }
+                ],
             },
         ]
         events = [
             {
                 "event": "ticket_created",
                 "ticket_id": "TK-001",
-                "priority": "normal",
                 "status": "communicating",
                 "created_at": "2026-03-21T01:15:00+00:00",
             },
             {
-                "event": "ticket_escalated",
+                "event": "ticket_message_sentiment_tagged",
                 "ticket_id": "TK-002",
-                "priority": "high",
+                "sentiment_label": "bad",
                 "status": "escalated",
                 "created_at": "2026-03-21T11:35:00+00:00",
             },
             {
                 "event": "engineer_attention_required",
                 "ticket_id": "TK-003",
-                "priority": "urgent",
                 "status": "investigating",
                 "created_at": "2026-03-21T10:05:00+00:00",
             },
@@ -75,7 +101,7 @@ class DashboardMetricsContractTests(unittest.TestCase):
         self.assertEqual(payload["cards"]["communicating_ticket_count"], 1)
         self.assertEqual(payload["cards"]["escalated_ticket_count"], 1)
         self.assertEqual(payload["cards"]["resolved_ticket_count"], 1)
-        self.assertEqual(payload["cards"]["urgent_ticket_count"], 2)
+        self.assertEqual(payload["cards"]["bad_sentiment_ticket_count"], 1)
 
         self.assertIn("queue_health_label", payload["summaries"])
         self.assertIn("queue_health_detail", payload["summaries"])
@@ -90,13 +116,17 @@ class DashboardMetricsContractTests(unittest.TestCase):
 
         self.assertEqual(payload["charts"]["status_breakdown"][0]["label"], "Communicating")
         self.assertEqual(payload["charts"]["status_breakdown"][1]["label"], "Escalated")
-        self.assertEqual(payload["charts"]["priority_breakdown"][0]["label"], "Urgent")
+        self.assertEqual(payload["charts"]["sentiment_breakdown"][0]["label"], "Bad")
+        self.assertEqual(payload["charts"]["sentiment_breakdown"][1]["label"], "Neutral")
+        self.assertEqual(payload["charts"]["sentiment_breakdown"][2]["label"], "Good")
+        self.assertEqual(payload["charts"]["sentiment_breakdown"][3]["label"], "Unclassified")
         self.assertEqual(payload["charts"]["flow_breakdown"][0]["label"], "Communicating")
         self.assertIn("escalated", payload["summaries"]["queue_health_detail"].lower())
 
     def test_dashboard_metrics_route_uses_ticket_ops_helper(self) -> None:
         main_source = Path("backend/main.py").read_text(encoding="utf-8")
         self.assertIn("build_ticket_dashboard_metrics", main_source)
+        self.assertIn("ticket_repository.list_tickets(include_messages=True)", main_source)
 
 
 if __name__ == "__main__":

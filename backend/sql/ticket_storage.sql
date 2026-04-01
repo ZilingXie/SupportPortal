@@ -13,7 +13,6 @@ CREATE TABLE IF NOT EXISTS support_tickets (
     requester TEXT NOT NULL,
     subject TEXT NOT NULL,
     status TEXT NOT NULL,
-    priority TEXT NOT NULL,
     last_engineer_action JSONB,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
@@ -63,9 +62,6 @@ CREATE TABLE IF NOT EXISTS support_ticket_investigation_messages (
 
 CREATE INDEX IF NOT EXISTS idx_support_tickets_status_updated
     ON support_tickets (status, updated_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_support_tickets_priority_updated
-    ON support_tickets (priority, updated_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_support_ticket_messages_ticket_created
     ON support_ticket_messages (ticket_id, created_at ASC, id ASC);

@@ -12,12 +12,12 @@ _STATUS_LABELS = {
     "resolved": "Resolved",
     "open": "Open",
 }
-_PRIORITY_ORDER = ("urgent", "high", "normal", "low")
-_PRIORITY_LABELS = {
-    "urgent": "Urgent",
-    "high": "High",
-    "normal": "Normal",
-    "low": "Low",
+_SENTIMENT_ORDER = ("bad", "neutral", "good", "unclassified")
+_SENTIMENT_LABELS = {
+    "bad": "Bad",
+    "neutral": "Neutral",
+    "good": "Good",
+    "unclassified": "Unclassified",
 }
 _FLOW_ORDER = ("communicating", "escalated", "investigating", "resolved")
 _FLOW_LABELS = {
@@ -74,6 +74,29 @@ def _humanize_token(value: Any) -> str:
     return normalized.replace("_", " ").title()
 
 
+def _normalize_sentiment_label(value: Any) -> str:
+    normalized = _clean_text(value).lower()
+    if normalized in {"bad", "neutral", "good"}:
+        return normalized
+    return "unclassified"
+
+
+def _latest_customer_sentiment_label(ticket: dict[str, Any]) -> str:
+    messages = ticket.get("messages")
+    if not isinstance(messages, list):
+        return "unclassified"
+    latest_created_at = datetime.min.replace(tzinfo=timezone.utc)
+    latest_label = "unclassified"
+    for message in messages:
+        if _clean_text(message.get("role")).lower() != "customer":
+            continue
+        parsed = _parse_datetime(message.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc)
+        if parsed >= latest_created_at:
+            latest_created_at = parsed
+            latest_label = _normalize_sentiment_label(message.get("sentiment_label"))
+    return latest_label
+
+
 def _pluralize(count: int, singular: str, plural: str | None = None) -> str:
     if count == 1:
         return singular
@@ -101,7 +124,7 @@ def normalize_ticket_dashboard_events(rows: list[dict[str, Any]]) -> list[dict[s
                 "title": payload.get("title"),
                 "message": payload.get("message"),
                 "status": _normalize_ticket_status(payload.get("status")),
-                "priority": payload.get("priority"),
+                "sentiment_label": _normalize_sentiment_label(payload.get("sentiment_label")),
                 "knowledge_type": payload.get("knowledge_type"),
                 "source_type": payload.get("source_type"),
                 "chunk_count": payload.get("chunk_count"),
@@ -163,10 +186,10 @@ def _latest_escalation_event(events: list[dict[str, Any]]) -> dict[str, Any] | N
         reverse=True,
     )
     for event in ordered:
-        priority = _clean_text(event.get("priority")).lower()
+        sentiment_label = _normalize_sentiment_label(event.get("sentiment_label"))
         status = _normalize_ticket_status(event.get("status"))
         event_name = _clean_text(event.get("event")).lower()
-        if priority in {"urgent", "high"} or status == "investigating" or "alert" in event_name or "attention" in event_name:
+        if sentiment_label == "bad" or status == "investigating" or "alert" in event_name or "attention" in event_name:
             return event
     return ordered[0] if ordered else None
 
@@ -178,13 +201,20 @@ def build_ticket_dashboard_metrics(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     safe_now = now.astimezone(timezone.utc) if isinstance(now, datetime) else _utc_now()
-    normalized_tickets = [{**ticket, "status": _normalize_ticket_status(ticket.get("status"))} for ticket in tickets]
+    normalized_tickets = [
+        {
+            **ticket,
+            "status": _normalize_ticket_status(ticket.get("status")),
+            "latest_customer_sentiment": _latest_customer_sentiment_label(ticket),
+        }
+        for ticket in tickets
+    ]
     ticket_events = [event for event in events if is_ticket_dashboard_event(event)]
 
     total = len(normalized_tickets)
     resolved_count = sum(_clean_text(ticket.get("status")).lower() == "resolved" for ticket in normalized_tickets)
     resolution_rate = round((resolved_count / total) * 100, 1) if total else 0.0
-    sentiment_alert_count = sum(_clean_text(ticket.get("priority")).lower() == "high" for ticket in normalized_tickets)
+    sentiment_alert_count = sum(ticket.get("latest_customer_sentiment") == "bad" for ticket in normalized_tickets)
 
     investigating_ticket_count = sum(_clean_text(ticket.get("status")).lower() == "investigating" for ticket in normalized_tickets)
     open_ticket_count = sum(_clean_text(ticket.get("status")).lower() == "open" for ticket in normalized_tickets)
@@ -194,7 +224,9 @@ def build_ticket_dashboard_metrics(
     escalated_ticket_count = sum(
         _clean_text(ticket.get("status")).lower() == "escalated" for ticket in normalized_tickets
     )
-    urgent_ticket_count = sum(_clean_text(ticket.get("priority")).lower() == "urgent" for ticket in normalized_tickets)
+    bad_sentiment_ticket_count = sum(
+        ticket.get("latest_customer_sentiment") == "bad" for ticket in normalized_tickets
+    )
 
     charts = {
         "event_volume_12h": _event_volume_12h(ticket_events, safe_now),
@@ -204,11 +236,11 @@ def build_ticket_dashboard_metrics(
             order=_STATUS_ORDER,
             labels=_STATUS_LABELS,
         ),
-        "priority_breakdown": _ordered_breakdown(
+        "sentiment_breakdown": _ordered_breakdown(
             normalized_tickets,
-            field="priority",
-            order=_PRIORITY_ORDER,
-            labels=_PRIORITY_LABELS,
+            field="latest_customer_sentiment",
+            order=_SENTIMENT_ORDER,
+            labels=_SENTIMENT_LABELS,
         ),
         "flow_breakdown": _ordered_breakdown(
             normalized_tickets,
@@ -224,7 +256,7 @@ def build_ticket_dashboard_metrics(
         "communicating_ticket_count": communicating_ticket_count,
         "escalated_ticket_count": escalated_ticket_count,
         "resolved_ticket_count": resolved_count,
-        "urgent_ticket_count": urgent_ticket_count,
+        "bad_sentiment_ticket_count": bad_sentiment_ticket_count,
     }
 
     active_count = open_ticket_count + communicating_ticket_count + escalated_ticket_count + investigating_ticket_count
@@ -234,7 +266,7 @@ def build_ticket_dashboard_metrics(
 
     if active_count == 0:
         queue_health_label = "Queue is clear."
-    elif escalated_ticket_count or investigating_ticket_count or urgent_ticket_count:
+    elif escalated_ticket_count or investigating_ticket_count or bad_sentiment_ticket_count:
         queue_health_label = "Escalation pressure is active."
     elif communicating_ticket_count:
         queue_health_label = "Communicating queue is stable."

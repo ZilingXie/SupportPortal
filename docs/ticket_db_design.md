@@ -15,7 +15,6 @@
   - `requester`
   - `subject`
   - `status`（`open|communicating|escalated|investigating|resolved`）
-  - `priority`（`urgent|high|normal|low`）
   - `last_engineer_action`（JSONB）
   - `created_at` / `updated_at`
 
@@ -42,9 +41,13 @@
 
 ## 索引
 - `support_tickets(status, updated_at desc)`
-- `support_tickets(priority, updated_at desc)`
 - `support_ticket_messages(ticket_id, created_at asc, id asc)`
 - `support_ticket_events(ticket_id, created_at desc)`
+
+## Dashboard 情绪信号
+- 仪表盘不再基于工单优先级统计。
+- `sentiment_alert_count` 与 `sentiment_breakdown` 都基于每张工单最新一条客户消息的 `sentiment_label`。
+- 未打标签的工单归入 `Unclassified`。
 
 ## 读写策略
 - `POST /api/tickets/query`

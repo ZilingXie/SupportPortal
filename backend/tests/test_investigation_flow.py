@@ -72,7 +72,6 @@ class InvestigationFlowTests(unittest.TestCase):
             "requester": "Customer",
             "subject": "Token renew callback missing",
             "status": status,
-            "priority": "normal",
             "last_engineer_action": None,
             "created_at": "2026-03-29T09:00:00+00:00",
             "updated_at": "2026-03-29T09:00:00+00:00",
@@ -208,7 +207,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertIsNone(ticket["active_investigation"]["final_confirmation_requested_at"])
         self.assertEqual(ticket["active_investigation"]["draft_customer_reply"], "")
 
-    def test_negative_customer_message_no_longer_auto_escalates_or_sets_high_priority(self) -> None:
+    def test_negative_customer_message_no_longer_auto_escalates_or_returns_priority_fields(self) -> None:
         resolution = SupportResolution(
             answer="Please verify the token server configuration.",
             confidence=0.89,
@@ -258,10 +257,11 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["status"], "communicating")
-        self.assertEqual(payload["priority"], "normal")
         self.assertFalse(payload["needs_engineer_input"])
         self.assertEqual(payload["answer"], "Got it, let me check this for you.")
         self.assertNotIn("engineer_mode", payload)
+        self.assertNotIn("priority", payload)
+        self.assertNotIn("eta_minutes", payload)
         self.assertEqual(
             payload["sentiment"],
             {
