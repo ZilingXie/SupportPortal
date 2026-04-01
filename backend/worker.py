@@ -21,6 +21,7 @@ from backend.services.event_bus import SyncRedisEventBus
 from backend.services.investigation_flow import (
     COMMUNICATING_STATUS,
     INVESTIGATING_STATUS,
+    build_investigation_opening_context,
     default_investigation_prompt as generate_investigation_ai_turn,
     normalize_ticket_status,
     start_or_refresh_investigation,
@@ -474,11 +475,19 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
     else:
         initial_message_count = len(ticket.get("messages", []))
         if execution.needs_investigating:
+            opening_context = build_investigation_opening_context(
+                ticket,
+                trigger_reason=str(execution.investigation_reason or "rag_insufficient_evidence"),
+                rag_answer=execution.answer,
+                sources=list(execution.sources),
+                citations=[dict(item) for item in execution.citations],
+            )
             investigation_result = start_or_refresh_investigation(
                 ticket,
                 trigger_reason=str(execution.investigation_reason or "rag_insufficient_evidence"),
                 trigger_source="worker_async_rag",
                 now_value=now_iso(),
+                opening_context=opening_context,
                 ai_turn_builder=generate_investigation_ai_turn,
             )
             answer = str(investigation_result.get("public_reply") or "").strip()

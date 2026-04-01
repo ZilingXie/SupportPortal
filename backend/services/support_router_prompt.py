@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-import json
 import re
 from typing import Any
+
+from backend.services.prompts.router import (
+    build_router_system_prompt as build_router_system_prompt_v2,
+    build_router_user_prompt as build_router_user_prompt_v2,
+)
 
 SYSTEM_TERMS = (
     "windows",
@@ -358,39 +362,8 @@ def build_route_user_payload(
             ticket_context=ticket_context,
         ),
     }
-    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return build_router_user_prompt_v2(payload=payload)
 
 
 def build_route_system_prompt() -> str:
-    rendered_examples = []
-    for index, example in enumerate(ROUTE_FEW_SHOT_EXAMPLES, start=1):
-        rendered_examples.append(
-            "\n".join(
-                [
-                    f"Example {index}",
-                    f"Message: {example['message']}",
-                    f"Hints: {json.dumps(example['hints'], ensure_ascii=False, sort_keys=True)}",
-                    f"Output: {json.dumps(example['output'], ensure_ascii=False, sort_keys=True)}",
-                ]
-            )
-        )
-    return (
-        "You are Agora's route classifier.\n"
-        "Classify the latest support message into exactly one scope_label.\n"
-        "Scope labels:\n"
-        "- small_talk: greeting, thanks, weather, chit-chat\n"
-        "- non_agora: unrelated request or general IT/support question that should not use Agora docs\n"
-        "- agora_non_technical: Agora-related company, pricing, policy, investor, or other public-business information\n"
-        "- agora_technical: Agora product usage, SDK/API integration, troubleshooting, configuration, feature fit, profile choice, permissions, recording strategy, notifications/signaling design, or docs-grounded benchmark/auth analysis\n"
-        "Treat supplied hints as weak evidence, not hard labels.\n"
-        "Use matched hints and ticket context when they help disambiguate.\n"
-        "If the message looks like RTC, audio/video, joining, rendering, or connectivity troubleshooting and there is no explicit non-Agora signal, prefer agora_technical.\n"
-        "If the message concerns product-mode comparisons, recording choices, auth diagnostics, or benchmark questions anchored in Agora docs topics, choose agora_technical.\n"
-        "If the message is only about company/public information, choose agora_non_technical.\n"
-        "If the message is clearly unrelated or general IT help such as printers, Outlook, Excel, office wifi, or a computer blue screen, choose non_agora.\n"
-        "Return JSON only with keys: scope_label, confidence, reason, matched_signals.\n"
-        "confidence must be between 0 and 1.\n"
-        "matched_signals must be a short list of helpful hint strings.\n\n"
-        "Few-shot examples:\n"
-        + "\n\n".join(rendered_examples)
-    )
+    return build_router_system_prompt_v2(route_examples=list(ROUTE_FEW_SHOT_EXAMPLES))

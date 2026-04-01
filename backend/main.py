@@ -45,6 +45,7 @@ from backend.services.investigation_flow import (
     RESOLVED_STATUS,
     append_engineer_investigation_message,
     apply_investigation_confirmation,
+    build_investigation_opening_context,
     default_investigation_prompt as generate_investigation_ai_turn,
     ensure_ticket_investigation_defaults,
     normalize_ticket_status,
@@ -1454,11 +1455,19 @@ async def create_or_update_ticket(
             follow_up_sources = list(execution.sources)
             follow_up_citations = [dict(item) for item in execution.citations]
             if execution.needs_investigating:
+                opening_context = build_investigation_opening_context(
+                    ticket,
+                    trigger_reason=str(execution.investigation_reason or "rag_insufficient_evidence"),
+                    rag_answer=execution.answer,
+                    sources=list(execution.sources),
+                    citations=[dict(item) for item in execution.citations],
+                )
                 investigation_result = start_or_refresh_investigation(
                     ticket,
                     trigger_reason=str(execution.investigation_reason or "rag_insufficient_evidence"),
                     trigger_source="support_query",
                     now_value=now_iso(),
+                    opening_context=opening_context,
                     ai_turn_builder=generate_investigation_ai_turn,
                 )
                 follow_up_answer = str(investigation_result.get("public_reply") or "").strip()
@@ -1711,11 +1720,16 @@ async def update_ticket(ticket_id: str, request: TicketActionRequest) -> dict[st
     investigation_messages: list[dict[str, Any]] = []
     investigation_created = False
     if request.action == "investigate":
+        opening_context = build_investigation_opening_context(
+            ticket,
+            trigger_reason="engineer_investigate",
+        )
         investigate_result = start_or_refresh_investigation(
             ticket,
             trigger_reason="engineer_investigate",
             trigger_source="engineer_action",
             now_value=now_iso(),
+            opening_context=opening_context,
             ai_turn_builder=generate_investigation_ai_turn,
         )
         investigation_to_persist = investigate_result.get("active_investigation")

@@ -1344,3 +1344,44 @@ For each new entry, record:
     - Fresh live query `T-026B8B` for `how to join channel` stayed in `status="communicating"` and persisted a final RAG answer instead of escalating to investigation.
     - Reproduced the user-facing `TK-*` flow with `TK-036` / `user-1`; the ticket stayed in `status="communicating"` and persisted `ticket_ai_response_ready` instead of `rag_post_check_insufficient`.
     - The same ticket recorded `ticket_ai_response_ready` with `answer_route="rag"` and a later `ticket_message_sentiment_tagged` event with `provider="legacy"`.
+
+## 2026-04-01 - Modularize client AI prompt surfaces and standardize RAG prompt guards
+
+- Summary: Extracted the client AI router, web-search, RAG answer, and RAG sufficiency prompt text into a dedicated `backend/services/prompts/` package and upgraded the RAG-side prompts to a consistent V2 structure with role locking, sectioned inputs, explicit fallback rules, and compact few-shot examples.
+- Reason: The RAG answer and sufficiency stages were already carrying important safety behavior, but their prompt definitions lived inline with service logic and had drifted apart from the router and web-search prompts. Pulling them into a dedicated prompt package makes future prompt/model iteration easier to track and strengthens the grounding/guardrail contract without changing external APIs.
+- Affected files or config:
+  - `AGENTS.md`
+  - `backend/services/prompts/__init__.py`
+  - `backend/services/prompts/router.py`
+  - `backend/services/prompts/web_search.py`
+  - `backend/services/prompts/rag_answer.py`
+  - `backend/services/prompts/rag_sufficiency.py`
+  - `backend/services/support_router_prompt.py`
+  - `backend/services/support_router.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/rag_sufficiency_prompt.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_rag_prompt_guards.py`
+  - `backend/tests/test_support_router.py`
+  - `backend/tests/test_rag_sufficiency_judge.py`
+  - `backend/tests/test_ticket_orchestrator.py`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, storage, or vector data changes.
+  - The exact insufficient-evidence reply remains unchanged.
+  - The RAG answer stage now consumes a centralized prompt builder instead of inline prompt text.
+  - The RAG sufficiency stage now consumes a centralized prompt builder with an explicit conservative `investigate` default and a structured user payload format.
+  - No model selection, reasoning effort, or temperature defaults were changed by this entry.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_prompt_modules.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_prompt_guards.py backend/tests/test_rag_sufficiency_judge.py backend/tests/test_support_router.py backend/tests/test_ticket_orchestrator.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/prompts/__init__.py backend/services/prompts/router.py backend/services/prompts/web_search.py backend/services/prompts/rag_answer.py backend/services/prompts/rag_sufficiency.py backend/services/support_router_prompt.py backend/services/support_router.py backend/services/rag_qa.py backend/services/rag_sufficiency_prompt.py backend/services/rag_sufficiency_judge.py`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
+  - `scripts/workflow/link_worktree_env.sh /Users/xieziling/.config/superpowers/worktrees/SupportPortal/client-ai-prompt-v2`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `podman exec deployment_api_1 python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=10).read().decode())"`
+  - `podman exec deployment_api_1 python -c "import json, urllib.request; payload=json.dumps({'customer_id':'prompt-smoke-web-4','message':'Who is Agora\\'s CEO?'}).encode(); req=urllib.request.Request('http://127.0.0.1:8000/api/tickets/query', data=payload, headers={'Content-Type':'application/json'}, method='POST'); print(urllib.request.urlopen(req, timeout=30).read().decode())"`
+  - `podman exec deployment_api_1 python -c "import json, urllib.request; payload=json.dumps({'customer_id':'prompt-smoke-rag-4','message':'How do I join a channel?'}).encode(); req=urllib.request.Request('http://127.0.0.1:8000/api/tickets/query', data=payload, headers={'Content-Type':'application/json'}, method='POST'); print(urllib.request.urlopen(req, timeout=30).read().decode())"`

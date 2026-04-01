@@ -840,6 +840,72 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_engineer_detail_renders_references_for_engineer_ai_handoff_messages(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                selectedTicketId = "TK-DETAIL-RAG-HANDOFF";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-RAG-HANDOFF",
+                  subject: "Android 14 token renew regression",
+                  requester: "user-7",
+                  status: "investigating",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [
+                    {
+                      role: "customer",
+                      content: "Token renew callback does not fire on Android 14.",
+                      created_at: "2026-03-24T08:00:00+00:00",
+                    },
+                  ],
+                  active_investigation: {
+                    id: "INV-DETAIL-RAG-HANDOFF",
+                    state: "active",
+                    trigger_reason: "rag_post_check_insufficient",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "",
+                    final_confirmation_requested_at: null,
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T08:02:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-RAG-HANDOFF-m1",
+                        role: "engineer_ai",
+                        content: "Engineer Request:\\nIssue: Customer reports token renew callback failing on Android 14. AI attempted this docs-backed guidance: Please upgrade to SDK 4.2.2 and retry token renewal.\\nAction Needed: Review the tentative docs-backed guidance and provide a customer-safe fix.",
+                        created_at: "2026-03-24T08:02:00+00:00",
+                        citations: [
+                          {
+                            chunk_id: "chunk-1",
+                            source_path: "official/token-authentication.md",
+                            heading: "Token authentication",
+                            source_url: "https://docs.agora.io/en/video-calling/token-authentication",
+                          },
+                        ],
+                        sources: ["https://docs.agora.io/en/video-calling/token-authentication"],
+                      },
+                    ],
+                  },
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+                selectedTicketSummary = "Engineer should review the tentative docs-backed guidance.";
+                selectedTicketNextAction = "Validate the SDK/platform constraints and confirm the customer-safe reply.";
+
+                const html = renderTicketDetailView();
+                if (!html.includes("References")) {{
+                  throw new Error("Engineer handoff messages should render the references section.");
+                }}
+                if (!html.includes("Token authentication")) {{
+                  throw new Error("Engineer handoff messages should render citation headings.");
+                }}
+                if (!html.includes('href="https://docs.agora.io/en/video-calling/token-authentication"')) {{
+                  throw new Error("Engineer handoff messages should render clickable citation links.");
+                }}
+              """
+            )
+        )
+
     def test_engineer_detail_renders_customer_message_sentiment_pill_only_for_customer_messages(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(

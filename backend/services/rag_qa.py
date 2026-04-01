@@ -16,6 +16,7 @@ from backend.services.embedding_provider import (
     embedding_provider_name,
     get_embedding_provider,
 )
+from backend.services.prompts.rag_answer import build_rag_answer_system_prompt, build_rag_answer_user_prompt
 from backend.services.rag_tokenizer import is_bm25_query_stopword, tokenize_bm25_query
 
 logger = logging.getLogger(__name__)
@@ -56,16 +57,7 @@ INSUFFICIENT_EVIDENCE_REPLY = (
     "I couldn't find enough information in the available support knowledge base to answer that question."
 )
 
-SYSTEM_PROMPT = """You are a technical support documentation QA assistant.
-
-Rules:
-1) Use only the provided context chunks.
-2) If evidence is insufficient, set "insufficient_evidence" to true and answer exactly:
-   "{insufficient_reply}"
-3) Do not fabricate APIs, versions, parameters, or steps.
-4) Every factual claim must be supported by citations.
-5) Output must be valid JSON only, no markdown fences.
-""".format(insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY)
+SYSTEM_PROMPT = build_rag_answer_system_prompt(insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY)
 
 
 @dataclass
@@ -1314,48 +1306,11 @@ def _build_answer_prompt(question: str, context_block: str) -> str:
 
 
 def _build_answer_prompt_for_mode(question: str, context_block: str, *, repair_mode: bool) -> str:
-    base_prompt = f"""Question:
-{question}
-
-Context Chunks:
-{context_block}
-
-Return JSON with this exact schema:
-{{
-  "answer": "string",
-  "key_steps": ["string"],
-  "citations": ["chunk_id"],
-  "insufficient_evidence": false
-}}
-
-Requirements:
-- Use only facts explicitly supported by the Context Chunks.
-- Start "answer" with a direct answer to the user's question.
-- If the user does not specify a platform or SDK, keep the answer at a safe cross-platform level.
-- Do not include platform-specific callback names or one-SDK-only details unless the question asks for that platform.
-- Keep "key_steps" short and include only grounded actions or checks supported by the cited chunks.
-- Every factual claim in "answer" and "key_steps" must be supported by the cited chunks.
-- "citations" must contain only chunk_id values that exist in Context Chunks.
-- If insufficient evidence, return:
-  {{
-    "answer": "{INSUFFICIENT_EVIDENCE_REPLY}",
-    "key_steps": [],
-    "citations": [],
-    "insufficient_evidence": true
-  }}
-"""
-    if not repair_mode:
-        return base_prompt
-    return (
-        base_prompt
-        + """
-
-Repair requirements:
-- The previous response attempt was invalid, too weak, or failed to ground a supported answer.
-- Re-read the chunks and return the smallest grounded answer that directly resolves the question.
-- If the chunks clearly overlap with the question, prefer a concise grounded answer over an unnecessary insufficient-evidence response.
-- Return JSON only with no extra prose.
-"""
+    return build_rag_answer_user_prompt(
+        question=question,
+        context_block=context_block,
+        insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
+        repair_mode=repair_mode,
     )
 
 
