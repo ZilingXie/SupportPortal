@@ -70,6 +70,22 @@ def _load_worker_module():
 worker = _load_worker_module()
 
 
+def _route_decision(*, action: str, scope_label: str, reason: str) -> types.SimpleNamespace:
+    route_family = "agora_docs_rag" if action == "rag" else "web_company_info" if action == "web_search" else "fallback_or_refuse"
+    tooling_profile = "agora_docs_only" if action == "rag" else "official_web_search" if action == "web_search" else "no_agora_docs_refusal"
+    return types.SimpleNamespace(
+        scope_label=scope_label,
+        route=action,
+        confidence=0.93,
+        reason=reason,
+        matched_signals=["token"] if action == "rag" else ["agora"],
+        response_language="en",
+        route_family=route_family,
+        execution_action=action,
+        tooling_profile=tooling_profile,
+    )
+
+
 def _build_ticket(
     *,
     ticket_id: str = "T-RETRY",
@@ -139,13 +155,14 @@ class WorkerResilienceTests(unittest.TestCase):
             route_family="agora_docs_rag",
             execution_action="rag",
             tooling_profile="agora_docs_only",
+            needs_investigating=False,
+            next_status="communicating",
         )
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker,
-            "resolve_support_message",
+            "_orchestrate_worker_support_message",
             return_value=execution,
-            create=True,
         ), patch.object(
             worker,
             "build_client_sync_event",
@@ -246,13 +263,14 @@ class WorkerResilienceTests(unittest.TestCase):
             route_family="agora_docs_rag",
             execution_action="rag",
             tooling_profile="agora_docs_only",
+            needs_investigating=False,
+            next_status="communicating",
         )
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker,
-            "resolve_support_message",
+            "_orchestrate_worker_support_message",
             return_value=execution,
-            create=True,
         ), patch.object(
             worker,
             "build_client_sync_event",
@@ -303,13 +321,14 @@ class WorkerResilienceTests(unittest.TestCase):
             route_family="web_company_info",
             execution_action="web_search",
             tooling_profile="official_web_search",
+            needs_investigating=False,
+            next_status="communicating",
         )
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker,
-            "resolve_support_message",
+            "_orchestrate_worker_support_message",
             return_value=resolution,
-            create=True,
         ), patch.object(
             worker,
             "build_client_sync_event",
@@ -336,6 +355,102 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(event_payload["answer_route"], "web_search")
         self.assertEqual(event_payload["scope_label"], "agora_non_technical")
         self.assertNotIn("engineer_mode", event_payload)
+
+    def test_process_ticket_query_post_check_rejection_starts_investigation(self) -> None:
+        initial_ticket = _build_ticket()
+        repository = Mock()
+        repository.get_ticket.side_effect = [
+            copy.deepcopy(initial_ticket),
+            copy.deepcopy(initial_ticket),
+        ]
+        repository.list_ticket_events.return_value = []
+        repository.save_ticket.return_value = None
+        repository.save_investigation.return_value = None
+        repository.record_event.return_value = None
+        bus = Mock()
+
+        execution = types.SimpleNamespace(
+            answer="Please upgrade to SDK 4.2.2 and retry token renewal.",
+            confidence=0.86,
+            sources=["https://docs.agora.io/en/video-calling/token-authentication"],
+            citations=[
+                {
+                    "chunk_id": "chunk-1",
+                    "source_path": "official/token-authentication.md",
+                    "heading": "Token authentication",
+                    "source_url": "https://docs.agora.io/en/video-calling/token-authentication",
+                }
+            ],
+            needs_engineer_guidance=False,
+            answer_route="rag",
+            scope_label="agora_technical",
+            route_reason="grounded_answer",
+            route_confidence=0.93,
+            search_used=False,
+            matched_signals=["token", "android 14"],
+            route_family="agora_docs_rag",
+            execution_action="rag",
+            tooling_profile="agora_docs_only",
+            needs_investigating=True,
+            next_status="investigating",
+            investigation_reason="rag_post_check_insufficient",
+        )
+
+        investigation_result = {
+            "created": True,
+            "public_reply": "We are investigating this further. Please wait while we continue checking.",
+            "active_investigation": {
+                "id": "INV-RETRY-1",
+                "state": "active",
+                "trigger_reason": "rag_post_check_insufficient",
+                "trigger_source": "worker_async_rag",
+                "messages": [
+                    {
+                        "id": "INV-RETRY-1-m1",
+                        "role": "engineer_ai",
+                        "content": "Please confirm whether Android 14 is the only affected platform.",
+                        "created_at": "2026-03-22T00:01:05+00:00",
+                    }
+                ],
+            },
+            "new_internal_messages": [],
+        }
+
+        def _start_or_refresh(ticket, **_kwargs):
+            ticket["status"] = "investigating"
+            ticket["active_investigation"] = copy.deepcopy(investigation_result["active_investigation"])
+            return copy.deepcopy(investigation_result)
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "_orchestrate_worker_support_message",
+            return_value=execution,
+        ), patch.object(
+            worker,
+            "start_or_refresh_investigation",
+            side_effect=_start_or_refresh,
+        ), patch.object(
+            worker,
+            "build_client_sync_event",
+            return_value={"event": "ticket_ai_response_ready"},
+        ), patch.object(
+            worker,
+            "ensure_ticket_defaults",
+            side_effect=lambda ticket: None,
+        ), patch.object(
+            worker,
+            "now_iso",
+            return_value="2026-03-22T00:01:05+00:00",
+        ):
+            worker._process_ticket_query(bus, dict(self.task))
+
+        saved_ticket = repository.save_ticket.call_args.args[0]
+        self.assertEqual(saved_ticket["status"], "investigating")
+        self.assertEqual(saved_ticket["messages"][-1]["content"], investigation_result["public_reply"])
+        self.assertEqual(repository.save_investigation.call_count, 1)
+        first_event = repository.record_event.call_args_list[0].args[2]
+        self.assertEqual(first_event["status"], "investigating")
+        self.assertEqual(first_event["execution_action"], "rag")
 
     def test_process_ticket_message_sentiment_persists_label_and_records_event(self) -> None:
         repository = Mock()

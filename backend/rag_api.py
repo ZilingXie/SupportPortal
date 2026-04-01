@@ -34,6 +34,7 @@ from backend.services.knowledge_monitoring import (
     now_iso,
 )
 from backend.services.rag_benchmark_session import build_local_benchmark_session_record
+from backend.services.rag_evidence_summary import build_rag_evidence_summary
 from backend.services.local_source_sync import ingest_source_document, stage_source_document
 from backend.services.local_benchmark_sync import sync_default_local_benchmarks
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, run_rag_query
@@ -59,6 +60,27 @@ _CHAT_MODEL_PRICING = {
     "gpt-4.1-mini": {"prompt_per_1k": 0.0004, "completion_per_1k": 0.0016},
     "gpt-4o-mini": {"prompt_per_1k": 0.00015, "completion_per_1k": 0.0006},
 }
+
+
+def _build_quality_signals(
+    *,
+    generation_mode: str | None,
+    selected_doc_count: int | None,
+    citation_coverage_ratio: float | None,
+    top1_similarity_score: float | None,
+    avg_selected_similarity_score: float | None,
+    handoff_reason: str | None,
+    needs_human: bool | None,
+) -> dict[str, Any]:
+    return {
+        "generation_mode": generation_mode,
+        "selected_doc_count": selected_doc_count,
+        "citation_coverage_ratio": citation_coverage_ratio,
+        "top1_similarity_score": top1_similarity_score,
+        "avg_selected_similarity_score": avg_selected_similarity_score,
+        "handoff_reason": handoff_reason,
+        "needs_human": needs_human,
+    }
 
 class RagQueryRequest(BaseModel):
     question: str = Field(min_length=1, max_length=20000)
@@ -476,6 +498,19 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
                 },
                 candidates=[],
             )
+        evidence_summary = build_rag_evidence_summary(
+            quality_signals=_build_quality_signals(
+                generation_mode="insufficient_evidence",
+                selected_doc_count=0,
+                citation_coverage_ratio=None,
+                top1_similarity_score=None,
+                avg_selected_similarity_score=None,
+                handoff_reason="rag_query_failed",
+                needs_human=True,
+            ),
+            selected_contexts=[],
+            cited_chunk_ids=set(),
+        )
         return {
             "decision": "escalate",
             "answer": "",
@@ -483,6 +518,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             "sources": [],
             "citations": [],
             "reason": "rag_query_failed",
+            "evidence_summary": evidence_summary,
         }
 
     if result is None:
@@ -544,6 +580,19 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
                 },
                 candidates=[],
             )
+        evidence_summary = build_rag_evidence_summary(
+            quality_signals=_build_quality_signals(
+                generation_mode="insufficient_evidence",
+                selected_doc_count=0,
+                citation_coverage_ratio=None,
+                top1_similarity_score=None,
+                avg_selected_similarity_score=None,
+                handoff_reason="rag_unavailable",
+                needs_human=True,
+            ),
+            selected_contexts=[],
+            cited_chunk_ids=set(),
+        )
         return {
             "decision": "escalate",
             "answer": "",
@@ -551,11 +600,25 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             "sources": [],
             "citations": [],
             "reason": "rag_unavailable",
+            "evidence_summary": evidence_summary,
         }
 
     rag_answer = result.answer
     trace = result.trace
     candidates = trace.retrieval_candidates or []
+    evidence_summary = build_rag_evidence_summary(
+        quality_signals=_build_quality_signals(
+            generation_mode=trace.generation_mode,
+            selected_doc_count=trace.selected_doc_count,
+            citation_coverage_ratio=trace.citation_coverage_ratio,
+            top1_similarity_score=trace.top1_similarity_score,
+            avg_selected_similarity_score=trace.avg_selected_similarity_score,
+            handoff_reason=trace.handoff_reason,
+            needs_human=trace.needs_human,
+        ),
+        selected_contexts=trace.selected_contexts,
+        cited_chunk_ids=set(trace.cited_chunk_ids or []),
+    )
     knowledge_repository.record_rag_query_run(
         run={
             "request_id": request.request_id,
@@ -627,6 +690,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             "sources": [],
             "citations": [],
             "reason": "insufficient_evidence",
+            "evidence_summary": evidence_summary,
         }
 
     return {
@@ -636,6 +700,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
         "sources": rag_answer.sources,
         "citations": rag_answer.citations,
         "reason": "grounded_answer",
+        "evidence_summary": evidence_summary,
     }
 
 

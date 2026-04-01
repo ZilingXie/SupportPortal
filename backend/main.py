@@ -65,6 +65,7 @@ from backend.services.event_bus import AsyncRedisEventBus
 from backend.services.knowledge_monitoring import build_empty_knowledge_metrics
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
 from backend.services.rag_service_client import (
+    RagTicketAnswerDetail,
     RagServiceClient,
     RagServiceError,
     async_to_thread,
@@ -803,15 +804,15 @@ def build_ticket_summary(ticket: dict[str, Any]) -> tuple[str, str, str]:
     return fallback_summary, fallback_next_action, "fallback"
 
 
-def _build_rag_answer(
+def _build_rag_answer_detail(
     message: str,
     *,
     ticket_id: str | None = None,
     customer_id: str | None = None,
-) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
+) -> RagTicketAnswerDetail:
     request_id = f"rag-{uuid4().hex[:12]}"
     try:
-        answer_tuple = rag_service_client.query_answer_with_recovery(
+        answer_detail = rag_service_client.query_answer_with_recovery_detail(
             question=message,
             request_id=request_id,
             ticket_id=ticket_id,
@@ -825,16 +826,37 @@ def _build_rag_answer(
             ticket_id,
             exc,
         )
-        return INSUFFICIENT_EVIDENCE_REPLY, 0.0, [], [], True
+        return RagTicketAnswerDetail(
+            answer=INSUFFICIENT_EVIDENCE_REPLY,
+            confidence=0.0,
+            sources=[],
+            citations=[],
+            needs_engineer_guidance=True,
+            reason="rag_unavailable",
+            evidence_summary=None,
+        )
 
-    if answer_tuple[-1] is False:
-        return answer_tuple
-    LOGGER.info(
-        "RAG service escalated request_id=%s ticket_id=%s",
-        request_id,
-        ticket_id,
-    )
-    return answer_tuple
+    if answer_detail.needs_engineer_guidance:
+        LOGGER.info(
+            "RAG service escalated request_id=%s ticket_id=%s reason=%s",
+            request_id,
+            ticket_id,
+            answer_detail.reason,
+        )
+    return answer_detail
+
+
+def _build_rag_answer(
+    message: str,
+    *,
+    ticket_id: str | None = None,
+    customer_id: str | None = None,
+) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
+    return _build_rag_answer_detail(
+        message,
+        ticket_id=ticket_id,
+        customer_id=customer_id,
+    ).as_answer_tuple()
 
 
 def resolve_support_message(
@@ -846,6 +868,34 @@ def resolve_support_message(
     ticket_context: list[dict[str, str]] | None = None,
     decision: SupportRouteDecision | None = None,
 ) -> SupportResolution:
+    active_decision = decision or analyze_ticket_message(
+        message,
+        ticket_subject=ticket_subject,
+        ticket_context=ticket_context,
+    )
+    if active_decision.execution_action == "rag":
+        rag_answer = _build_rag_answer_detail(
+            message,
+            ticket_id=ticket_id,
+            customer_id=customer_id,
+        )
+        return SupportResolution(
+            answer=rag_answer.answer,
+            confidence=rag_answer.confidence,
+            sources=list(rag_answer.sources),
+            citations=[dict(item) for item in rag_answer.citations],
+            needs_engineer_guidance=rag_answer.needs_engineer_guidance,
+            answer_route="rag",
+            scope_label=active_decision.scope_label,
+            route_family=active_decision.route_family,
+            execution_action=active_decision.execution_action,
+            tooling_profile=active_decision.tooling_profile,
+            route_reason=str(rag_answer.reason or active_decision.reason),
+            route_confidence=active_decision.confidence,
+            search_used=False,
+            matched_signals=list(active_decision.matched_signals),
+            evidence_summary=dict(rag_answer.evidence_summary or {}) or None,
+        )
     return resolve_support_route_message(
         message,
         ticket_subject=ticket_subject,
@@ -855,7 +905,7 @@ def resolve_support_message(
             ticket_id=ticket_id,
             customer_id=customer_id,
         ),
-        decision=decision,
+        decision=active_decision,
     )
 
 
@@ -1419,7 +1469,7 @@ async def create_or_update_ticket(
             if execution.needs_investigating:
                 investigation_result = start_or_refresh_investigation(
                     ticket,
-                    trigger_reason=str(route_payload.get("route_reason") or "rag_insufficient_evidence"),
+                    trigger_reason=str(execution.investigation_reason or "rag_insufficient_evidence"),
                     trigger_source="support_query",
                     now_value=now_iso(),
                     ai_turn_builder=generate_investigation_ai_turn,
