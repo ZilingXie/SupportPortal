@@ -131,7 +131,7 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn("function renderTicketPoolView()", app_source)
         self.assertIn("function renderTicketDetailView()", app_source)
         self.assertIn("Next Action Needed", app_source)
-        self.assertIn("Investigation Command", html)
+        self.assertIn("Engineer Ticket Command", html)
         self.assertIn("Start Investigation", app_source)
         self.assertNotIn("Open Workspace", app_source)
         self.assertIn('window.addEventListener("hashchange"', app_source)
@@ -609,7 +609,7 @@ class EngineerUiContractTests(unittest.TestCase):
                     },
                     {
                       role: "assistant",
-                      content: "We are investigating this further. Please wait while we continue checking.",
+                      content: "I've opened an engineer ticket for this issue and we're investigating further. I'll reply here as soon as the engineer review is confirmed.",
                       created_at: "2026-03-24T08:01:00+00:00",
                     },
                   ],
@@ -689,8 +689,11 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (headerTopMarkup.includes("workspace-ticket-title")) {{
                   throw new Error("Ticket title should stay below the compact toolbar row.");
                 }}
-                if (!html.includes("Internal Investigation Thread")) {{
-                  throw new Error("Detail workspace should foreground the internal investigation thread.");
+                if (!html.includes("Engineer Ticket Thread")) {{
+                  throw new Error("Detail workspace should foreground the engineer ticket thread.");
+                }}
+                if (html.includes("Internal Investigation Thread")) {{
+                  throw new Error("Detail workspace should stop using the old internal investigation label.");
                 }}
                 if (!html.includes("Customer Timeline")) {{
                   throw new Error("Detail workspace should still render the customer timeline in the supporting column.");
@@ -734,10 +737,10 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (html.includes("Engineer Request Records")) {{
                   throw new Error("Detail workspace should use investigation history instead of legacy engineer request records.");
                 }}
-                const internalIndex = html.indexOf("Internal Investigation Thread");
+                const internalIndex = html.indexOf("Engineer Ticket Thread");
                 const customerIndex = html.indexOf("Customer Timeline");
                 if (internalIndex === -1 || customerIndex === -1 || internalIndex > customerIndex) {{
-                  throw new Error("Internal investigation thread should render ahead of the customer timeline.");
+                  throw new Error("Engineer ticket thread should render ahead of the customer timeline.");
                 }}
                 const decisionIndex = html.indexOf("I have enough information now. Please confirm this draft before I reply to the customer.");
                 const inlineActionsIndex = html.indexOf("detail-investigation-inline-actions");

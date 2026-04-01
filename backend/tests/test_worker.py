@@ -398,7 +398,7 @@ class WorkerResilienceTests(unittest.TestCase):
 
         investigation_result = {
             "created": True,
-            "public_reply": "We are investigating this further. Please wait while we continue checking.",
+            "public_reply": "I've opened an engineer ticket for this issue and we're investigating further. I'll reply here as soon as the engineer review is confirmed.",
             "active_investigation": {
                 "id": "INV-RETRY-1",
                 "state": "active",

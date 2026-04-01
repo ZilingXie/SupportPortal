@@ -580,12 +580,12 @@ function latestInvestigationUpdate(ticket) {
 function investigationStateLabel(value) {
   const normalized = String(value || "active").toLowerCase();
   if (normalized === "awaiting_confirmation") {
-    return "Awaiting Confirmation";
+    return "Awaiting Engineer Approval";
   }
   if (normalized === "closed") {
     return "Closed";
   }
-  return "Active Investigation";
+  return "Open Engineer Ticket";
 }
 
 function engineerRequestStatusLabel(status) {
@@ -1127,17 +1127,17 @@ function buildLocalSummaryFallback(ticket) {
   }
   if (activeInvestigation) {
     summaryLines.push(
-      `Internal investigation is ${investigationStateLabel(activeInvestigation.state).toLowerCase()}.`
+      `Engineer ticket is ${investigationStateLabel(activeInvestigation.state).toLowerCase()}.`
     );
     const latestInternal = latestInvestigationUpdate(ticket);
     if (latestInternal) {
-      summaryLines.push(`Latest internal update: ${latestInternal.slice(0, 220)}`);
+      summaryLines.push(`Latest engineer ticket update: ${latestInternal.slice(0, 220)}`);
     }
   }
 
   const nextAction =
     activeInvestigation
-      ? "Continue the internal investigation, confirm the next missing detail, or approve the prepared customer reply."
+      ? "Continue the engineer ticket, confirm the next missing detail, or approve the prepared customer reply."
       : latestCustomer || latestAssistant
       ? "Review the latest messages and either continue communicating, start an investigation, or resolve the ticket."
       : "Collect initial issue details from the customer and define the first troubleshooting step.";
@@ -1438,7 +1438,7 @@ function renderTicketPoolView() {
         <article class="metric-card">
           <span class="metric-label">Investigating</span>
           <strong>${investigatingCount}</strong>
-          <p>Tickets with an active internal investigation thread.</p>
+          <p>Tickets with an open engineer ticket awaiting AI and engineer handling.</p>
         </article>
         <article class="metric-card">
           <span class="metric-label">Escalated</span>
@@ -1641,7 +1641,7 @@ function renderConversationHtml(messages, options = {}) {
 
 function renderInvestigationHistoryHtml(historyItems) {
   if (!historyItems.length) {
-    return '<p class="request-record-empty">No prior investigation cycles yet.</p>';
+    return '<p class="request-record-empty">No prior engineer ticket cycles yet.</p>';
   }
 
   return `
@@ -1765,8 +1765,8 @@ function renderTicketDetailView() {
         <section class="panel-card conversation-panel">
           <div class="panel-card-head">
             <div>
-              <p class="panel-card-kicker">Internal Investigation</p>
-              <h3 class="panel-card-title">Internal Investigation Thread</h3>
+              <p class="panel-card-kicker">Engineer Ticket</p>
+              <h3 class="panel-card-title">Engineer Ticket Thread</h3>
               ${
                 displayInvestigation
                   ? `<p class="mode-switch-hint">State: ${escapeHtml(
@@ -1784,7 +1784,7 @@ function renderTicketDetailView() {
                   draftCustomerReply,
                   controlsDisabled,
                 })
-              : '<div class="empty-state">No active internal investigation thread yet.</div>'
+              : '<div class="empty-state">No open engineer ticket yet.</div>'
           }
           ${
             showInvestigationComposer

@@ -586,11 +586,11 @@ def _summary_fallback(ticket: dict[str, Any]) -> tuple[str, str]:
         summary_parts.append(f"Latest AI response: {latest_assistant[:260]}")
     if active_investigation is not None:
         summary_parts.append(
-            f"Active investigation state is {investigation_state or 'active'}."
+            f"Open engineer ticket state is {investigation_state or 'active'}."
         )
         if latest_internal_update:
             summary_parts.append(
-                f"Latest internal investigation update: {latest_internal_update[:260]}"
+                f"Latest engineer ticket update: {latest_internal_update[:260]}"
             )
     if not latest_customer and not latest_assistant and active_investigation is None:
         summary_parts.append("No conversation history is available yet.")
@@ -602,7 +602,7 @@ def _summary_fallback(ticket: dict[str, Any]) -> tuple[str, str]:
         )
     elif status == INVESTIGATING_STATUS:
         next_action = (
-            "Continue the internal investigation, gather the next missing detail, and request final confirmation when the customer reply is ready."
+            "Continue the engineer ticket, gather the next missing detail, and request final confirmation when the customer reply is ready."
         )
     elif status == ESCALATED_STATUS:
         next_action = (
