@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 import backend.main as main
 from backend.repositories.ticket_repository import InMemoryTicketRepository
+from backend.services.rag_service_client import RagTicketAnswerDetail
 from backend.services.support_router import SupportResolution
 from backend.services.ticket_orchestrator import SufficiencyAssessment
 
@@ -233,6 +234,13 @@ class InvestigationFlowTests(unittest.TestCase):
             main,
             "resolve_support_message",
             return_value=resolution,
+        ), patch(
+            "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency",
+            return_value=types.SimpleNamespace(
+                decision="answer",
+                reason="sufficient_grounding",
+                confidence=0.93,
+            ),
         ), patch.object(
             main.task_queue,
             "enqueue",
@@ -284,8 +292,16 @@ class InvestigationFlowTests(unittest.TestCase):
             ),
         ), patch.object(
             main.rag_service_client,
-            "query_answer_with_recovery",
-            return_value=(main.INSUFFICIENT_EVIDENCE_REPLY, 0.0, [], [], True),
+            "query_answer_with_recovery_detail",
+            return_value=RagTicketAnswerDetail(
+                answer=main.INSUFFICIENT_EVIDENCE_REPLY,
+                confidence=0.0,
+                sources=[],
+                citations=[],
+                needs_engineer_guidance=True,
+                reason="rag_insufficient_evidence",
+                evidence_summary=None,
+            ),
         ), patch.object(
             main,
             "generate_investigation_ai_turn",
@@ -309,7 +325,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(payload["status"], "investigating")
         self.assertEqual(payload["answer_route"], "rag")
         self.assertEqual(payload["scope_label"], "agora_technical")
-        self.assertEqual(payload["route_reason"], "conservative_agora_technical_fallback")
+        self.assertEqual(payload["route_reason"], "rag_insufficient_evidence")
         self.assertEqual(payload["answer"], "Got it, let me check this for you.")
 
     def test_customer_message_sentiment_falls_back_to_background_tagging_when_queue_is_unavailable(self) -> None:
