@@ -1276,3 +1276,33 @@ For each new entry, record:
     - Container restart completed successfully and `podman-compose ... ps` showed `deployment_redis_1`, `deployment_rag_api_1`, `deployment_rag_worker_1`, `deployment_ws_gateway_1`, `deployment_api_1`, `deployment_worker_1`, and `deployment_nginx_1` all `Up`.
     - Runtime smoke checks returned `/health` with `status=ok`, `ticket_storage=postgres`, `knowledge_storage=postgres`, `rag_service=ok`.
     - Runtime query smoke returned `status="communicating"` with the short ACK `Got it, let me check this for you.`, and the follow-up engineer-assistance request returned `status="escalated"` for the same ticket.
+
+## 2026-04-01 - Relax generic RAG post-check escalation and unblock single-host async processing
+
+- Summary: Fixed async `how to join channel` style support questions so they no longer fail due the sufficiency judge's unsupported `temperature` parameter, no longer over-escalate generic high-level docs answers for missing platform detail alone, and no longer get stuck behind single-host worker sentiment model loading.
+- Reason: Customer-facing generic Agora docs questions were failing in two separate ways: the post-check judge could raise `rag_post_check_error` because `gpt-5.4-mini` rejected the `temperature` parameter, and even after that was fixed, generic join-flow answers could still be escalated or blocked because the single-host worker processed sentiment tasks with the default model pipeline and stalled the shared queue.
+- Affected files or config:
+  - `backend/services/rag_sufficiency_judge.py`
+  - `backend/services/rag_sufficiency_prompt.py`
+  - `backend/services/rag_qa.py`
+  - `deployment/docker-compose.single-host.yml`
+  - `backend/tests/test_rag_sufficiency_judge.py`
+  - `backend/tests/test_rag_prompt_guards.py`
+  - `backend/tests/test_single_host_compose.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema or persisted RAG data changes.
+  - The sufficiency judge now retries once without `temperature` when the Responses API rejects that parameter for the configured judge model.
+  - Generic high-level docs answers can now remain in `communicating` when the evidence is grounded and safe at a platform-agnostic level, instead of being escalated only because the original question omitted platform/version details.
+  - The ticket orchestrator now applies a deterministic allow-path for high-similarity, citation-backed generic how-to RAG answers, preventing single-run LLM judge variability from flipping the same answer between `communicating` and `investigating`.
+  - In the single-host deployment, the support worker now defaults async customer sentiment tagging to `legacy` and mounts the Hugging Face cache volume, preventing sentiment model startup from blocking the shared `support.tasks` queue that also carries async RAG query work.
+- Verification:
+  - `python3 -m unittest backend.tests.test_single_host_compose backend.tests.test_rag_prompt_guards backend.tests.test_rag_sufficiency_judge backend.tests.test_ticket_orchestrator`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - Runtime verification:
+    - Redis queue length returned to `0` after the rebuilt worker started with `SENTIMENT_PROVIDER=legacy`.
+    - Fresh live query `T-026B8B` for `how to join channel` stayed in `status="communicating"` and persisted a final RAG answer instead of escalating to investigation.
+    - Reproduced the user-facing `TK-*` flow with `TK-036` / `user-1`; the ticket stayed in `status="communicating"` and persisted `ticket_ai_response_ready` instead of `rag_post_check_insufficient`.
+    - The same ticket recorded `ticket_ai_response_ready` with `answer_route="rag"` and a later `ticket_message_sentiment_tagged` event with `provider="legacy"`.
