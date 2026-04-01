@@ -16,11 +16,15 @@ class TicketRoutingContractTests(unittest.TestCase):
         self.assertIn('"route_confidence":', source)
         self.assertIn('"search_used":', source)
         self.assertIn("class TicketExecutionResult", orchestrator_source)
+        self.assertIn("class AgenticExecutionPlan", orchestrator_source)
+        self.assertIn("class SkillExecutionResult", orchestrator_source)
+        self.assertIn("class SufficiencyAssessment", orchestrator_source)
         self.assertIn("route_family", orchestrator_source)
         self.assertIn("execution_action", orchestrator_source)
         self.assertIn("tooling_profile", orchestrator_source)
         self.assertIn("needs_investigating", orchestrator_source)
         self.assertIn("next_status", orchestrator_source)
+        self.assertIn("investigation_reason", orchestrator_source)
 
     def test_worker_uses_shared_ticket_orchestrator_and_persists_route_metadata(self) -> None:
         source = Path("backend/worker.py").read_text(encoding="utf-8")

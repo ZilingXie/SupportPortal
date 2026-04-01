@@ -9,11 +9,51 @@ from backend.services.investigation_flow import (
     INVESTIGATING_STATUS,
     normalize_ticket_status,
 )
+from backend.services.rag_sufficiency_judge import judge_rag_answer_sufficiency
 from backend.services.support_router import (
     SupportResolution,
     SupportRouteDecision,
     decide_support_route,
 )
+
+RAG_INSUFFICIENT_EVIDENCE_REASON = "rag_insufficient_evidence"
+RAG_POST_CHECK_INSUFFICIENT_REASON = "rag_post_check_insufficient"
+RAG_POST_CHECK_ERROR_REASON = "rag_post_check_error"
+
+
+@dataclass(frozen=True)
+class AgenticExecutionPlan:
+    route_family: str | None
+    execution_action: str
+    tooling_profile: str | None
+    stage_sequence: tuple[str, ...]
+    requires_sufficiency_assessment: bool = False
+
+
+@dataclass(frozen=True)
+class SkillExecutionResult:
+    answer: str
+    confidence: float
+    sources: list[str]
+    citations: list[dict[str, str]]
+    needs_investigating: bool
+    answer_route: str
+    scope_label: str
+    route_family: str | None
+    execution_action: str
+    tooling_profile: str | None
+    route_reason: str
+    route_confidence: float
+    search_used: bool
+    matched_signals: list[str] = field(default_factory=list)
+    evidence_summary: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class SufficiencyAssessment:
+    decision: str
+    reason: str
+    confidence: float
 
 
 @dataclass(frozen=True)
@@ -33,6 +73,7 @@ class TicketExecutionResult:
     route_confidence: float
     search_used: bool
     matched_signals: list[str] = field(default_factory=list)
+    investigation_reason: str | None = None
 
     def route_payload(self) -> dict[str, Any]:
         return {
@@ -61,6 +102,87 @@ def analyze_ticket_message(
     )
 
 
+def _choose_execution_plan(route_decision: SupportRouteDecision) -> AgenticExecutionPlan:
+    execution_action = str(route_decision.execution_action or route_decision.route).strip() or "refuse"
+    stage_sequence: tuple[str, ...] = (
+        "classify",
+        "choose_skill",
+        "execute_skill",
+        "assess_sufficiency",
+        "map_next_state",
+    ) if execution_action == "rag" else (
+        "classify",
+        "choose_skill",
+        "execute_skill",
+        "map_next_state",
+    )
+    return AgenticExecutionPlan(
+        route_family=route_decision.route_family,
+        execution_action=execution_action,
+        tooling_profile=route_decision.tooling_profile,
+        stage_sequence=stage_sequence,
+        requires_sufficiency_assessment=execution_action == "rag",
+    )
+
+
+def _build_skill_execution_result(
+    resolution: SupportResolution,
+    *,
+    route_decision: SupportRouteDecision,
+    plan: AgenticExecutionPlan,
+) -> SkillExecutionResult:
+    return SkillExecutionResult(
+        answer=str(resolution.answer or "").strip(),
+        confidence=float(resolution.confidence),
+        sources=list(resolution.sources),
+        citations=[dict(item) for item in resolution.citations],
+        needs_investigating=bool(resolution.needs_engineer_guidance),
+        answer_route=str(resolution.answer_route or plan.execution_action or route_decision.route),
+        scope_label=str(resolution.scope_label or route_decision.scope_label),
+        route_family=resolution.route_family or route_decision.route_family,
+        execution_action=str(resolution.execution_action or plan.execution_action or route_decision.route),
+        tooling_profile=resolution.tooling_profile or route_decision.tooling_profile,
+        route_reason=str(resolution.route_reason or route_decision.reason),
+        route_confidence=float(resolution.route_confidence or route_decision.confidence),
+        search_used=bool(resolution.search_used),
+        matched_signals=list(resolution.matched_signals or route_decision.matched_signals),
+        evidence_summary=dict(getattr(resolution, "evidence_summary", None) or {}) or None,
+    )
+
+
+def assess_rag_answer_sufficiency(
+    *,
+    message: str,
+    ticket_subject: str | None,
+    ticket_context: list[dict[str, str]] | None,
+    route_decision: SupportRouteDecision,
+    skill_result: SkillExecutionResult,
+) -> SufficiencyAssessment:
+    judged = judge_rag_answer_sufficiency(
+        message=message,
+        ticket_subject=ticket_subject,
+        ticket_context=ticket_context,
+        route_summary={
+            "scope_label": route_decision.scope_label,
+            "route_family": route_decision.route_family,
+            "execution_action": route_decision.execution_action,
+            "tooling_profile": route_decision.tooling_profile,
+            "reason": route_decision.reason,
+            "confidence": route_decision.confidence,
+            "matched_signals": list(route_decision.matched_signals),
+        },
+        rag_answer=skill_result.answer,
+        sources=skill_result.sources,
+        citations=skill_result.citations,
+        evidence_summary=skill_result.evidence_summary,
+    )
+    return SufficiencyAssessment(
+        decision=judged.decision,
+        reason=judged.reason,
+        confidence=judged.confidence,
+    )
+
+
 def orchestrate_ticket_execution(
     message: str,
     *,
@@ -76,6 +198,7 @@ def orchestrate_ticket_execution(
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
     )
+    execution_plan = _choose_execution_plan(route_decision)
     resolution = resolution_builder(
         message,
         ticket_id=ticket_id,
@@ -84,26 +207,51 @@ def orchestrate_ticket_execution(
         ticket_context=ticket_context,
         decision=route_decision,
     )
-    next_status = INVESTIGATING_STATUS if resolution.needs_engineer_guidance else COMMUNICATING_STATUS
-    execution_action = "investigate" if resolution.needs_engineer_guidance else str(
-        resolution.execution_action or resolution.answer_route or route_decision.execution_action or route_decision.route
+    skill_result = _build_skill_execution_result(
+        resolution,
+        route_decision=route_decision,
+        plan=execution_plan,
     )
+
+    needs_investigating = bool(skill_result.needs_investigating)
+    investigation_reason: str | None = None
+    if needs_investigating and execution_plan.execution_action == "rag":
+        investigation_reason = RAG_INSUFFICIENT_EVIDENCE_REASON
+    elif execution_plan.requires_sufficiency_assessment:
+        try:
+            sufficiency = assess_rag_answer_sufficiency(
+                message=message,
+                ticket_subject=ticket_subject,
+                ticket_context=ticket_context,
+                route_decision=route_decision,
+                skill_result=skill_result,
+            )
+        except Exception:
+            needs_investigating = True
+            investigation_reason = RAG_POST_CHECK_ERROR_REASON
+        else:
+            if sufficiency.decision == "investigate":
+                needs_investigating = True
+                investigation_reason = RAG_POST_CHECK_INSUFFICIENT_REASON
+
+    next_status = INVESTIGATING_STATUS if needs_investigating else COMMUNICATING_STATUS
     return TicketExecutionResult(
-        answer=str(resolution.answer or "").strip(),
-        confidence=float(resolution.confidence),
-        sources=list(resolution.sources),
-        citations=[dict(item) for item in resolution.citations],
-        needs_investigating=bool(resolution.needs_engineer_guidance),
+        answer=skill_result.answer,
+        confidence=skill_result.confidence,
+        sources=list(skill_result.sources),
+        citations=[dict(item) for item in skill_result.citations],
+        needs_investigating=needs_investigating,
         next_status=normalize_ticket_status(next_status),
-        answer_route=str(resolution.answer_route or route_decision.execution_action or route_decision.route),
-        scope_label=str(resolution.scope_label or route_decision.scope_label),
-        route_family=resolution.route_family or route_decision.route_family,
-        execution_action=execution_action,
-        tooling_profile=resolution.tooling_profile or route_decision.tooling_profile,
-        route_reason=str(resolution.route_reason or route_decision.reason),
-        route_confidence=float(resolution.route_confidence or route_decision.confidence),
-        search_used=bool(resolution.search_used),
-        matched_signals=list(resolution.matched_signals or route_decision.matched_signals),
+        answer_route=skill_result.answer_route,
+        scope_label=skill_result.scope_label,
+        route_family=skill_result.route_family,
+        execution_action=execution_plan.execution_action,
+        tooling_profile=skill_result.tooling_profile,
+        route_reason=skill_result.route_reason,
+        route_confidence=skill_result.route_confidence,
+        search_used=skill_result.search_used,
+        matched_signals=list(skill_result.matched_signals),
+        investigation_reason=investigation_reason,
     )
 
 

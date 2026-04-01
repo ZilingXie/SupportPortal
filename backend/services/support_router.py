@@ -100,6 +100,7 @@ class SupportResolution:
     route_family: str | None = None
     execution_action: str | None = None
     tooling_profile: str | None = None
+    evidence_summary: dict[str, Any] | None = None
 
     def as_answer_tuple(self) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
         return (
@@ -130,20 +131,11 @@ def _route_contract_for_scope(*, scope_label: str, action: str, reason: str) -> 
     clean_reason = _normalize_text(reason).lower()
 
     if clean_scope == "agora_technical":
-        actual_action = normalized_action if normalized_action in {"rag", "refuse"} else "rag"
-        tooling = "agora_docs_only" if actual_action == "rag" else "no_agora_docs_refusal"
-        return "agora_docs_rag", actual_action, tooling
+        return "agora_docs_rag", "rag", "agora_docs_only"
     if clean_scope == "agora_non_technical":
-        actual_action = normalized_action if normalized_action in {"web_search", "controlled_response", "refuse"} else "web_search"
-        if actual_action == "web_search":
-            tooling = "official_web_search"
-        elif actual_action == "controlled_response":
-            tooling = "no_agora_docs_controlled"
-        else:
-            tooling = "no_agora_docs_refusal"
-        return "web_company_info", actual_action, tooling
+        return "web_company_info", "web_search", "official_web_search"
     if clean_scope == "small_talk":
-        return "general_chat", "controlled_response", "no_agora_docs_controlled"
+        return "general_chat", "refuse", "no_agora_docs_refusal"
     if clean_scope == "non_agora":
         return "fallback_or_refuse", "refuse", "no_agora_docs_refusal"
     return "fallback_or_refuse", "refuse", "no_agora_docs_refusal"
@@ -478,8 +470,16 @@ def decide_support_route(
 
 def build_refusal_answer(decision: SupportRouteDecision) -> str:
     if decision.response_language == "zh":
-        return "我是 Agora 的 support agent，主要负责回答 Agora 相关的问题。这个问题不在我的支持范围内，所以我先不回答。"
-    return "I'm Agora's support agent and mainly handle Agora-related questions. I can't answer that request."
+        return (
+            "我是 Agora 的 Support AI，主要回答 Agora 相关问题。"
+            "这个问题不在我的支持范围内。"
+            "如果你有 Agora 产品、SDK、API 或集成相关问题，我可以继续帮你。"
+        )
+    return (
+        "I'm Agora's support AI and mainly answer Agora-related questions. "
+        "This request is outside my support scope. "
+        "If you have an Agora product, SDK, API, or integration question, I can help with that."
+    )
 
 
 def build_controlled_response(decision: SupportRouteDecision) -> str:

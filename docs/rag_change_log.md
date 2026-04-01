@@ -10,6 +10,80 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-04-01 - Finalize client Agentic stage runner routing and refusal mapping
+
+- Summary: Finalized the client-side Agentic ticket execution seam so customer queries now classify into fixed skills (`refuse | web_search | rag`), route `small_talk` and `non_agora` to explicit Agora-scope refusal replies, and keep `rag` behind the post-RAG sufficiency gate before any customer-facing answer is allowed.
+- Reason: The earlier sufficiency-gate work still left legacy `controlled_response` behavior in the live routing contract. This pass tightened the category-to-skill mapping so the stage runner matches the intended product behavior: refuse off-scope chat, web-search Agora non-technical questions, and only answer Agora technical issues after RAG evidence passes the sufficiency check.
+- Affected files or config:
+  - `backend/services/support_router.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `backend/services/rag_benchmark.py`
+  - `backend/tests/test_support_router.py`
+  - `backend/tests/test_ticket_orchestrator.py`
+  - `backend/tests/test_worker.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema migration and no backfill.
+  - `/api/tickets/query` now reports `answer_route="refuse"` for `small_talk` instead of exposing the legacy `controlled_response` action in the main client flow.
+  - Benchmark normalization for route-aware mixed cases now treats refusal as the canonical expected execution action instead of rewriting it to `controlled_response`.
+  - The richer internal RAG answer detail path and post-RAG investigation reasons remain in place and are now exercised by the finalized sync and async worker paths.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_support_router.py backend/tests/test_ticket_orchestrator.py backend/tests/test_rag_evidence_summary.py backend/tests/test_rag_service_client.py backend/tests/test_ticket_routing.py backend/tests/test_worker.py backend/tests/test_investigation_flow.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_rag_scorecard_repository.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/main.py backend/worker.py backend/rag_api.py backend/services/ticket_orchestrator.py backend/services/rag_service_client.py backend/services/support_router.py backend/services/rag_benchmark.py backend/services/rag_evidence_summary.py backend/services/rag_sufficiency_prompt.py backend/services/rag_sufficiency_judge.py backend/tests/test_ticket_orchestrator.py backend/tests/test_rag_evidence_summary.py`
+  - `scripts/workflow/link_worktree_env.sh /Users/xieziling/.config/superpowers/worktrees/SupportPortal/codex/agentic-rag-sufficiency`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health`
+  - `curl -sS -X POST http://localhost:8080/api/tickets/query -H 'Content-Type: application/json' -d '{"customer_id":"C-SMOKE-AGENTIC-V1","message":"How do I generate a token for the Agora Video SDK?"}'`
+  - `curl -sS -X POST http://localhost:8080/api/tickets/query -H 'Content-Type: application/json' -d '{"customer_id":"C-SMOKE-SMALLTALK","message":"How is the weather today?"}'`
+  - Verification result:
+    - Full backend suite passed: `339 passed`.
+    - `py_compile` completed without errors for all touched backend files and the new sufficiency/evidence modules.
+    - `podman-compose ... ps` showed `deployment_redis_1`, `deployment_rag_api_1`, `deployment_rag_worker_1`, `deployment_ws_gateway_1`, `deployment_api_1`, `deployment_worker_1`, and `deployment_nginx_1` all `Up`.
+    - `/health` returned `status=ok`, `ticket_storage=postgres`, `knowledge_storage=postgres`, `rag_service=ok`, `async_query_enabled=true`.
+    - Technical query smoke returned `status="communicating"` with short ACK, `queued_for_ai=true`, `answer_route="rag"`, and `scope_label="agora_technical"`.
+    - Small-talk smoke returned `answer_route="refuse"`, `scope_label="small_talk"`, and `queued_for_ai=false`, confirming the legacy `controlled_response` path is no longer used in the live client flow.
+
+## 2026-03-31 - Agentic post-RAG sufficiency check and evidence-summary contract
+
+- Summary: Upgraded the shared ticket orchestrator so `rag` now runs as an internal Agentic multi-stage path, added a post-RAG sufficiency judge that can veto a candidate answer into `investigating`, and expanded the internal RAG response contract to include a size-limited `evidence_summary` for that judge.
+- Reason: The ticket flow needed a true “RAG first, then judge whether the retrieved knowledge is sufficient” gate before answering customers, while preserving the existing client-facing ACK flow and leaving room for future skill-based Agentic expansion.
+- Affected files or config:
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `backend/rag_api.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/services/rag_evidence_summary.py`
+  - `backend/services/rag_sufficiency_prompt.py`
+  - `backend/services/rag_sufficiency_judge.py`
+  - `backend/tests/test_ticket_orchestrator.py`
+  - `backend/tests/test_rag_evidence_summary.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema migration and no ticket-table backfill
+  - Internal `/internal/rag/query` responses now optionally include `evidence_summary`, with capped `selected_contexts` excerpts for downstream ticket orchestration
+  - Legacy tuple-style RAG client callers remain compatible; the richer answer detail path is additive and used only by the ticket Agentic `rag` skill
+  - Ticket investigation trigger reasons now distinguish `rag_insufficient_evidence`, `rag_post_check_insufficient`, and `rag_post_check_error`
+- Verification:
+  - `./.venv/bin/python -m pytest backend/tests -q`
+  - `./.venv/bin/python -m py_compile backend/main.py backend/worker.py backend/rag_api.py backend/services/ticket_orchestrator.py backend/services/rag_service_client.py backend/services/rag_evidence_summary.py backend/services/rag_sufficiency_prompt.py backend/services/rag_sufficiency_judge.py`
+  - `scripts/workflow/link_worktree_env.sh /Users/xieziling/.config/superpowers/worktrees/SupportPortal/codex/agentic-rag-sufficiency`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health`
+  - `curl -sS -X POST http://localhost:8080/api/tickets/query -H 'Content-Type: application/json' -d '{"customer_id":"C-SMOKE-AGENTIC","message":"How do I generate a token for the Video SDK?"}'`
+  - `curl -sS http://localhost:8080/api/engineer/tickets/T-D58462`
+
 ## 2026-03-31 - Formal source-family metadata and pre-rerank family diversification
 
 - Summary: Added canonical `source_family` metadata to normalized official and technical documents, propagated it into document and chunk metadata JSONB, and moved family-aware diversification forward so the external rerank window now prefers distinct families before the final top-k selection step.

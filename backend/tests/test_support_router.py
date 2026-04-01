@@ -82,9 +82,9 @@ class SupportRouterTests(unittest.TestCase):
 
         self.assertEqual(decision.scope_label, "small_talk")
         self.assertEqual(decision.route_family, "general_chat")
-        self.assertEqual(decision.execution_action, "controlled_response")
-        self.assertEqual(decision.tooling_profile, "no_agora_docs_controlled")
-        self.assertEqual(decision.route, "controlled_response")
+        self.assertEqual(decision.execution_action, "refuse")
+        self.assertEqual(decision.tooling_profile, "no_agora_docs_refusal")
+        self.assertEqual(decision.route, "refuse")
         self.assertEqual(decision.reason, "few_shot_small_talk")
         self.assertEqual(decision.matched_signals, ["weather"])
 
@@ -322,13 +322,15 @@ class SupportRouterTests(unittest.TestCase):
             )
         )
 
-        self.assertIn("我是 Agora 的 support agent", answer)
-        self.assertIn("Agora 相关的问题", answer)
+        self.assertEqual(
+            answer,
+            "我是 Agora 的 Support AI，主要回答 Agora 相关问题。这个问题不在我的支持范围内。如果你有 Agora 产品、SDK、API 或集成相关问题，我可以继续帮你。",
+        )
 
-    def test_resolve_support_message_returns_controlled_response_for_general_chat(self) -> None:
+    def test_resolve_support_message_returns_refusal_for_general_chat(self) -> None:
         decision = SupportRouteDecision(
             scope_label="small_talk",
-            route="controlled_response",
+            route="refuse",
             confidence=0.92,
             reason="few_shot_small_talk",
             matched_signals=["hello"],
@@ -338,10 +340,13 @@ class SupportRouterTests(unittest.TestCase):
         resolution = resolve_support_message("hello there", decision=decision)
 
         self.assertEqual(resolution.route_family, "general_chat")
-        self.assertEqual(resolution.execution_action, "controlled_response")
-        self.assertEqual(resolution.tooling_profile, "no_agora_docs_controlled")
-        self.assertEqual(resolution.answer_route, "controlled_response")
-        self.assertTrue(resolution.answer)
+        self.assertEqual(resolution.execution_action, "refuse")
+        self.assertEqual(resolution.tooling_profile, "no_agora_docs_refusal")
+        self.assertEqual(resolution.answer_route, "refuse")
+        self.assertEqual(
+            resolution.answer,
+            "I'm Agora's support AI and mainly answer Agora-related questions. This request is outside my support scope. If you have an Agora product, SDK, API, or integration question, I can help with that.",
+        )
 
 
 class AgoraPublicInfoSearchTests(unittest.TestCase):

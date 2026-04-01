@@ -9,6 +9,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 from typing import Any
 
 LOGGER = logging.getLogger(__name__)
@@ -38,29 +39,76 @@ class RagServiceError(RuntimeError):
         self.payload = payload
 
 
+@dataclass(frozen=True)
+class RagTicketAnswerDetail:
+    answer: str
+    confidence: float
+    sources: list[str]
+    citations: list[dict[str, str]]
+    needs_engineer_guidance: bool
+    reason: str
+    evidence_summary: dict[str, Any] | None = None
+
+    def as_answer_tuple(self) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
+        return (
+            self.answer,
+            float(self.confidence),
+            list(self.sources),
+            [dict(item) for item in self.citations],
+            bool(self.needs_engineer_guidance),
+        )
+
+
+def map_rag_payload_to_ticket_answer_detail(
+    payload: dict[str, Any],
+    *,
+    insufficient_reply: str,
+) -> RagTicketAnswerDetail:
+    decision = str(payload.get("decision") or "").strip().lower()
+    raw_reason = str(payload.get("reason") or "").strip()
+    evidence_summary = payload.get("evidence_summary") if isinstance(payload.get("evidence_summary"), dict) else None
+    if decision == "answer":
+        answer = str(payload.get("answer") or "").strip()
+        if answer:
+            citations = payload.get("citations") if isinstance(payload.get("citations"), list) else []
+            sources = payload.get("sources") if isinstance(payload.get("sources"), list) else []
+            return RagTicketAnswerDetail(
+                answer=answer,
+                confidence=float(payload.get("confidence") or 0.0),
+                sources=[str(source) for source in sources if str(source).strip()],
+                citations=[item for item in citations if isinstance(item, dict)],
+                needs_engineer_guidance=False,
+                reason=raw_reason or "grounded_answer",
+                evidence_summary=evidence_summary,
+            )
+    return RagTicketAnswerDetail(
+        answer=insufficient_reply,
+        confidence=float(payload.get("confidence") or 0.0),
+        sources=[],
+        citations=[],
+        needs_engineer_guidance=True,
+        reason=raw_reason or "insufficient_evidence",
+        evidence_summary=evidence_summary,
+    )
+
+
 def map_rag_payload_to_ticket_answer(
     payload: dict[str, Any],
     *,
     insufficient_reply: str,
 ) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
-    decision = str(payload.get("decision") or "").strip().lower()
-    if decision == "answer":
-        answer = str(payload.get("answer") or "").strip()
-        if not answer:
-            return insufficient_reply, float(payload.get("confidence") or 0.0), [], [], True
-        citations = payload.get("citations") if isinstance(payload.get("citations"), list) else []
-        sources = payload.get("sources") if isinstance(payload.get("sources"), list) else []
-        return (
-            answer,
-            float(payload.get("confidence") or 0.0),
-            [str(source) for source in sources if str(source).strip()],
-            [item for item in citations if isinstance(item, dict)],
-            False,
-        )
-    return insufficient_reply, float(payload.get("confidence") or 0.0), [], [], True
+    return map_rag_payload_to_ticket_answer_detail(
+        payload,
+        insufficient_reply=insufficient_reply,
+    ).as_answer_tuple()
 
 
 def map_live_detail_payload_to_ticket_answer(payload: dict[str, Any]) -> tuple[str, float, list[str], list[dict[str, str]], bool] | None:
+    detail = map_live_detail_payload_to_ticket_answer_detail(payload)
+    return None if detail is None else detail.as_answer_tuple()
+
+
+def map_live_detail_payload_to_ticket_answer_detail(payload: dict[str, Any]) -> RagTicketAnswerDetail | None:
     primary = payload.get("primary") if isinstance(payload, dict) else None
     if not isinstance(primary, dict):
         return None
@@ -73,12 +121,21 @@ def map_live_detail_payload_to_ticket_answer(payload: dict[str, Any]) -> tuple[s
         confidence = 0.0
     citations = primary.get("answer_citations") if isinstance(primary.get("answer_citations"), list) else []
     sources = primary.get("answer_sources") if isinstance(primary.get("answer_sources"), list) else []
-    return (
-        answer,
-        confidence,
-        [str(source) for source in sources if str(source).strip()],
-        [item for item in citations if isinstance(item, dict)],
-        False,
+    evidence_summary = (
+        primary.get("evidence_summary")
+        if isinstance(primary.get("evidence_summary"), dict)
+        else payload.get("evidence_summary")
+        if isinstance(payload.get("evidence_summary"), dict)
+        else None
+    )
+    return RagTicketAnswerDetail(
+        answer=answer,
+        confidence=confidence,
+        sources=[str(source) for source in sources if str(source).strip()],
+        citations=[item for item in citations if isinstance(item, dict)],
+        needs_engineer_guidance=False,
+        reason="recovered_live_detail",
+        evidence_summary=evidence_summary,
     )
 
 
@@ -282,6 +339,30 @@ class RagServiceClient:
         recovery_attempts: int = 3,
         recovery_delay_seconds: float = 0.5,
     ) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
+        detail = self.query_answer_with_recovery_detail(
+            question=question,
+            request_id=request_id,
+            ticket_id=ticket_id,
+            customer_id=customer_id,
+            insufficient_reply=insufficient_reply,
+            top_k=top_k,
+            recovery_attempts=recovery_attempts,
+            recovery_delay_seconds=recovery_delay_seconds,
+        )
+        return detail.as_answer_tuple()
+
+    def query_answer_with_recovery_detail(
+        self,
+        *,
+        question: str,
+        request_id: str,
+        ticket_id: str | None,
+        customer_id: str | None,
+        insufficient_reply: str,
+        top_k: int | None = None,
+        recovery_attempts: int = 3,
+        recovery_delay_seconds: float = 0.5,
+    ) -> RagTicketAnswerDetail:
         try:
             payload = self.query(
                 question=question,
@@ -291,7 +372,7 @@ class RagServiceClient:
                 top_k=top_k,
             )
         except RagServiceError as exc:
-            recovered = self._recover_ticket_answer(
+            recovered = self._recover_ticket_answer_detail(
                 request_id=request_id,
                 recovery_attempts=recovery_attempts,
                 recovery_delay_seconds=recovery_delay_seconds,
@@ -304,7 +385,7 @@ class RagServiceClient:
                 )
                 return recovered
             raise
-        return map_rag_payload_to_ticket_answer(payload, insufficient_reply=insufficient_reply)
+        return map_rag_payload_to_ticket_answer_detail(payload, insufficient_reply=insufficient_reply)
 
     def _recover_ticket_answer(
         self,
@@ -313,6 +394,20 @@ class RagServiceClient:
         recovery_attempts: int,
         recovery_delay_seconds: float,
     ) -> tuple[str, float, list[str], list[dict[str, str]], bool] | None:
+        detail = self._recover_ticket_answer_detail(
+            request_id=request_id,
+            recovery_attempts=recovery_attempts,
+            recovery_delay_seconds=recovery_delay_seconds,
+        )
+        return None if detail is None else detail.as_answer_tuple()
+
+    def _recover_ticket_answer_detail(
+        self,
+        *,
+        request_id: str,
+        recovery_attempts: int,
+        recovery_delay_seconds: float,
+    ) -> RagTicketAnswerDetail | None:
         try:
             attempts = max(1, int(recovery_attempts))
         except (TypeError, ValueError):
@@ -337,7 +432,7 @@ class RagServiceClient:
                     continue
                 return None
 
-            recovered = map_live_detail_payload_to_ticket_answer(payload)
+            recovered = map_live_detail_payload_to_ticket_answer_detail(payload)
             if recovered is not None:
                 return recovered
             if attempt < attempts and delay_seconds > 0:

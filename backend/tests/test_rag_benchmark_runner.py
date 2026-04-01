@@ -76,9 +76,9 @@ def _fake_route_runner(question: str, **_: object):
         return {
             "scope_label": "small_talk",
             "route_family": "general_chat",
-            "execution_action": "controlled_response",
-            "tooling_profile": "no_agora_docs_controlled",
-            "route": "controlled_response",
+            "execution_action": "refuse",
+            "tooling_profile": "no_agora_docs_refusal",
+            "route": "refuse",
             "reason": "small_talk_detected",
             "confidence": 0.99,
             "matched_signals": ["weather"],
@@ -413,7 +413,7 @@ class RagBenchmarkRunnerTests(unittest.TestCase):
         self.assertEqual(repository.eval_runs[0]["benchmark_session_id"], "BSESS-123")
         self.assertEqual(repository.eval_runs[-1]["benchmark_session_id"], "BSESS-123")
 
-    def test_run_benchmark_supports_mixed_route_controlled_response_case(self) -> None:
+    def test_run_benchmark_supports_mixed_route_refusal_case(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             dataset_path = Path(tmpdir) / "dataset.json"
             dataset_path.write_text(
@@ -425,8 +425,8 @@ class RagBenchmarkRunnerTests(unittest.TestCase):
                             "question_type": "small_talk",
                             "category": "small_talk",
                             "expected_route_family": "general_chat",
-                            "expected_execution_action": "controlled_response",
-                            "expected_tooling_profile": "no_agora_docs_controlled",
+                            "expected_execution_action": "refuse",
+                            "expected_tooling_profile": "no_agora_docs_refusal",
                             "expected_behavior": "friendly_deflection",
                         }
                     ]
@@ -446,10 +446,10 @@ class RagBenchmarkRunnerTests(unittest.TestCase):
         first_row = repository.eval_results[0]["rows"][0]
         self.assertEqual(first_row["expected_route_family"], "general_chat")
         self.assertEqual(first_row["actual_route_family"], "general_chat")
-        self.assertEqual(first_row["expected_execution_action"], "controlled_response")
-        self.assertEqual(first_row["actual_execution_action"], "controlled_response")
-        self.assertEqual(first_row["expected_tooling_profile"], "no_agora_docs_controlled")
-        self.assertEqual(first_row["actual_tooling_profile"], "no_agora_docs_controlled")
+        self.assertEqual(first_row["expected_execution_action"], "refuse")
+        self.assertEqual(first_row["actual_execution_action"], "refuse")
+        self.assertEqual(first_row["expected_tooling_profile"], "no_agora_docs_refusal")
+        self.assertEqual(first_row["actual_tooling_profile"], "no_agora_docs_refusal")
         self.assertEqual(first_row["route_family_correct"], 1.0)
         self.assertEqual(first_row["execution_action_correct"], 1.0)
         self.assertEqual(first_row["tooling_profile_correct"], 1.0)
@@ -459,7 +459,7 @@ class RagBenchmarkRunnerTests(unittest.TestCase):
         self.assertTrue(first_row["response_policy_followed"])
         self.assertEqual(first_row["evidence_hit_at_5"], None)
         self.assertEqual(first_row["trace_payload"]["route_family"], "general_chat")
-        self.assertEqual(first_row["trace_payload"]["execution_action"], "controlled_response")
+        self.assertEqual(first_row["trace_payload"]["execution_action"], "refuse")
 
     def test_run_benchmark_marks_grounded_abstain_rag_case_as_policy_success_only_for_closeout(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

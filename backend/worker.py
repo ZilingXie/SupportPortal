@@ -476,7 +476,7 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         if execution.needs_investigating:
             investigation_result = start_or_refresh_investigation(
                 ticket,
-                trigger_reason=str(execution.route_reason or "rag_insufficient_evidence"),
+                trigger_reason=str(execution.investigation_reason or "rag_insufficient_evidence"),
                 trigger_source="worker_async_rag",
                 now_value=now_iso(),
                 ai_turn_builder=generate_investigation_ai_turn,
