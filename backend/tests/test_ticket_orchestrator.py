@@ -117,6 +117,25 @@ class TicketOrchestratorTests(unittest.TestCase):
         self.assertEqual(execution.execution_action, "rag")
         self.assertIsNone(execution.investigation_reason)
 
+    def test_generic_grounded_how_to_question_ignores_platform_gap_rejection(self) -> None:
+        with patch(
+            "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency",
+            return_value=SufficiencyAssessment(
+                decision="investigate",
+                reason="platform_specific_gap_without_explicit_platform",
+                confidence=0.89,
+            ),
+        ):
+            execution = orchestrate_ticket_execution(
+                "How to join channel?",
+                decision=_decision("rag"),
+                resolution_builder=lambda *_args, **_kwargs: _resolution(action="rag"),
+            )
+
+        self.assertFalse(execution.needs_investigating)
+        self.assertEqual(execution.next_status, COMMUNICATING_STATUS)
+        self.assertIsNone(execution.investigation_reason)
+
     def test_rag_answer_runs_post_check_and_investigates_when_rejected(self) -> None:
         with patch(
             "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency",
