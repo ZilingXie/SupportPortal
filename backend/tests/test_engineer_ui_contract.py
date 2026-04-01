@@ -124,8 +124,8 @@ class EngineerUiContractTests(unittest.TestCase):
 
         self.assertIn("Concierge AI", html)
         self.assertIn("Manrope", html)
-        self.assertIn("./styles.css?v=20260401-engineer-status-surfaces-1", html)
-        self.assertIn('./app.js?v=20260401-engineer-status-surfaces-1', html)
+        self.assertIn("./styles.css?v=20260401-engineer-status-tabs-1", html)
+        self.assertIn('./app.js?v=20260401-engineer-status-tabs-1', html)
         self.assertIn("function parseRoute()", app_source)
         self.assertIn('path.startsWith("/tickets/")', app_source)
         self.assertIn("function renderTicketPoolView()", app_source)
@@ -180,7 +180,7 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn(".status-surface-resolved", css)
         self.assertIn(".ticket-workspace", css)
 
-    def test_engineer_ticket_pool_defaults_to_list_rows_and_prioritizes_investigating(self) -> None:
+    def test_engineer_ticket_pool_defaults_to_investigating_tab_and_excludes_open(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
                 """
@@ -245,8 +245,37 @@ class EngineerUiContractTests(unittest.TestCase):
                   },
                 ];
 
-                filterValues.priority = "all";
-                filterValues.status = "all";
+                if (selectedPoolStatus !== "investigating") {{
+                  throw new Error("Engineer workspace should default to the investigating tab.");
+                }}
+
+                renderRailNav();
+                const railHtml = railNavEl.innerHTML;
+                if (railHtml.includes("Ticket Pool")) {{
+                  throw new Error("Rail should no longer render the legacy Ticket Pool button.");
+                }}
+                if (railHtml.includes("Active Ticket")) {{
+                  throw new Error("Rail should not render a dedicated detail item anymore.");
+                }}
+                const investigatingRailIndex = railHtml.indexOf("Investigating");
+                const escalatedRailIndex = railHtml.indexOf("Escalated");
+                const communicatingRailIndex = railHtml.indexOf("Communicating");
+                const resolvedRailIndex = railHtml.indexOf("Resolved");
+                if (
+                  investigatingRailIndex === -1 ||
+                  escalatedRailIndex === -1 ||
+                  communicatingRailIndex === -1 ||
+                  resolvedRailIndex === -1
+                ) {{
+                  throw new Error("Rail should render all four engineer status tabs.");
+                }}
+                if (
+                  !(investigatingRailIndex < escalatedRailIndex &&
+                    escalatedRailIndex < communicatingRailIndex &&
+                    communicatingRailIndex < resolvedRailIndex)
+                ) {{
+                  throw new Error("Rail tabs should be ordered investigating, escalated, communicating, resolved.");
+                }}
 
                 renderFilterControls();
                 const controlsHtml = filterControlsEl.innerHTML;
@@ -258,6 +287,12 @@ class EngineerUiContractTests(unittest.TestCase):
                 }}
                 if (!controlsHtml.includes('data-pool-view-option="grid"')) {{
                   throw new Error("Filter row should expose the grid view option.");
+                }}
+                if (!controlsHtml.includes("All Priority")) {{
+                  throw new Error("Filter row should keep the priority combobox.");
+                }}
+                if (controlsHtml.includes("All Status")) {{
+                  throw new Error("Engineer pool should no longer render the status combobox.");
                 }}
 
                 const html = renderTicketPoolView();
@@ -276,20 +311,8 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (html.includes("ticket-pool-grid")) {{
                   throw new Error("List mode should not render the grid container.");
                 }}
-                if (!html.includes("status-surface-open")) {{
-                  throw new Error("Open list cards should use the open surface class.");
-                }}
-                if (!html.includes("status-surface-communicating")) {{
-                  throw new Error("Communicating list cards should use the communicating surface class.");
-                }}
-                if (!html.includes("status-surface-escalated")) {{
-                  throw new Error("Escalated list cards should use the escalated surface class.");
-                }}
                 if (!html.includes("status-surface-investigating")) {{
                   throw new Error("Investigating list cards should use the investigating surface class.");
-                }}
-                if (!html.includes("status-surface-resolved")) {{
-                  throw new Error("Resolved list cards should use the resolved surface class.");
                 }}
                 if (!html.includes('data-ticket-row="true"')) {{
                   throw new Error("Ticket pool rows should be marked as directly clickable rows.");
@@ -314,16 +337,40 @@ class EngineerUiContractTests(unittest.TestCase):
                   throw new Error("Only tickets with investigation preview text should render a request block.");
                 }}
 
-                const waitingIndex = html.indexOf("TK-INVESTIGATING-LOW");
-                const escalatedIndex = html.indexOf("TK-ESCALATED-NORMAL");
-                const communicatingIndex = html.indexOf("TK-COMM-URGENT");
-                const openIndex = html.indexOf("TK-OPEN-LOW");
-                const resolvedIndex = html.indexOf("TK-RESOLVED-NORMAL");
-                if (waitingIndex === -1 || escalatedIndex === -1 || communicatingIndex === -1 || openIndex === -1 || resolvedIndex === -1) {{
-                  throw new Error("Expected all sample tickets in rendered HTML.");
+                if (!html.includes("Investigating</span>")) {{
+                  throw new Error("Metrics should include the investigating card.");
                 }}
-                if (waitingIndex > escalatedIndex || escalatedIndex > communicatingIndex || communicatingIndex > openIndex) {{
-                  throw new Error("Investigating should render ahead of escalated, which should render ahead of communicating and open.");
+                if (!html.includes("Escalated</span>")) {{
+                  throw new Error("Metrics should include the escalated card.");
+                }}
+                if (!html.includes("Communicating</span>")) {{
+                  throw new Error("Metrics should include the communicating card.");
+                }}
+                if (!html.includes("Resolved</span>")) {{
+                  throw new Error("Metrics should include the resolved card.");
+                }}
+                const metricMatches = html.match(/class="metric-card"/g) || [];
+                if (metricMatches.length !== 4) {{
+                  throw new Error("Engineer pool should render exactly four status metric cards.");
+                }}
+                if (html.includes("Total Tickets")) {{
+                  throw new Error("Engineer pool should no longer render the total tickets metric.");
+                }}
+
+                if (!html.includes("TK-INVESTIGATING-LOW")) {{
+                  throw new Error("Investigating tab should render investigating tickets.");
+                }}
+                if (html.includes("TK-COMM-URGENT")) {{
+                  throw new Error("Investigating tab should not render communicating tickets.");
+                }}
+                if (html.includes("TK-ESCALATED-NORMAL")) {{
+                  throw new Error("Investigating tab should not render escalated tickets.");
+                }}
+                if (html.includes("TK-RESOLVED-NORMAL")) {{
+                  throw new Error("Investigating tab should not render resolved tickets.");
+                }}
+                if (html.includes("TK-OPEN-LOW")) {{
+                  throw new Error("Open tickets should not appear anywhere in the engineer pool.");
                 }}
 
                 const waitingRowStart = html.indexOf('data-ticket-id="TK-INVESTIGATING-LOW"');
@@ -345,7 +392,6 @@ class EngineerUiContractTests(unittest.TestCase):
                 tickets = [];
                 boardLoading = true;
                 filterValues.priority = "all";
-                filterValues.status = "all";
 
                 const html = renderTicketPoolView();
                 if (!html.includes("pool-loading-state")) {{
@@ -373,6 +419,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 """
                 localStorage.setItem(TICKET_POOL_VIEW_STORAGE_KEY, "grid");
                 hydrateTicketPoolViewMode();
+                selectedPoolStatus = "escalated";
 
                 tickets = [
                   {
@@ -405,6 +452,28 @@ class EngineerUiContractTests(unittest.TestCase):
                     status: "escalated",
                     created_at: "2026-03-24T08:10:00+00:00",
                     updated_at: "2026-03-24T08:15:00+00:00",
+                    active_investigation: {
+                      id: "INV-GRID-002",
+                      state: "active",
+                      draft_customer_reply: "",
+                      messages: [
+                        {
+                          id: "INV-GRID-002-m1",
+                          role: "engineer_ai",
+                          content: "Need the exact failing room join URL from the customer.",
+                          created_at: "2026-03-24T08:14:00+00:00",
+                        },
+                      ],
+                    },
+                  },
+                  {
+                    ticket_id: "TK-GRID-003",
+                    subject: "open client-only ticket",
+                    requester: "user-grid-3",
+                    priority: "low",
+                    status: "open",
+                    created_at: "2026-03-24T08:10:00+00:00",
+                    updated_at: "2026-03-24T08:15:00+00:00",
                   },
                 ];
 
@@ -417,9 +486,6 @@ class EngineerUiContractTests(unittest.TestCase):
                 }}
                 if (html.includes("ticket-pool-list")) {{
                   throw new Error("Grid mode should not render the list container.");
-                }}
-                if (!html.includes("status-surface-investigating")) {{
-                  throw new Error("Investigating grid cards should use the investigating surface class.");
                 }}
                 if (!html.includes("status-surface-escalated")) {{
                   throw new Error("Escalated grid cards should use the escalated surface class.");
@@ -439,13 +505,45 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!html.includes("ticket-pool-card-preview")) {{
                   throw new Error("Grid cards should render an investigation preview block when text exists.");
                 }}
-                if (!html.includes("Please confirm whether the issue only reproduces on Android 14.")) {{
+                if (!html.includes("TK-GRID-002")) {{
+                  throw new Error("Escalated tab should render escalated tickets in grid mode.");
+                }}
+                if (!html.includes("Need the exact failing room join URL from the customer.")) {{
                   throw new Error("Grid cards should include the latest investigation preview text.");
                 }}
-                const gridIndex = html.indexOf("TK-GRID-001");
-                const openIndex = html.indexOf("TK-GRID-002");
-                if (gridIndex === -1 || openIndex === -1 || gridIndex > openIndex) {{
-                  throw new Error("Grid mode should preserve the same sorted order as list mode.");
+                if (html.includes("TK-GRID-001")) {{
+                  throw new Error("Escalated tab should not render investigating tickets in grid mode.");
+                }}
+                if (html.includes("TK-GRID-003")) {{
+                  throw new Error("Open tickets should remain hidden in grid mode.");
+                }}
+              """
+            )
+        )
+
+    def test_engineer_ticket_pool_empty_state_is_status_aware(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                tickets = [
+                  {
+                    ticket_id: "TK-EMPTY-COMM",
+                    subject: "communicating ticket",
+                    requester: "user-empty",
+                    priority: "normal",
+                    status: "communicating",
+                    created_at: "2026-03-24T09:00:00+00:00",
+                    updated_at: "2026-03-24T10:00:00+00:00",
+                  },
+                ];
+                selectedPoolStatus = "resolved";
+
+                const html = renderTicketPoolView();
+                if (!html.includes("No resolved tickets right now.")) {{
+                  throw new Error("Empty state should mention the currently selected engineer status tab.");
+                }}
+                if (html.includes("No tickets match the current filters.")) {{
+                  throw new Error("Engineer empty state should be status-aware instead of generic.");
                 }}
               """
             )
@@ -1006,6 +1104,171 @@ class EngineerUiContractTests(unittest.TestCase):
                 }}
                 if (html.includes('id="detail-investigation-input"')) {{
                   throw new Error("Approve flow should hide the composer after the investigation is closed.");
+                }}
+              """
+            )
+        )
+
+    def test_engineer_detail_status_actions_update_selected_pool_tab_and_back_to_pool_preserves_it(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                routeState.view = "detail";
+                selectedTicketId = "TK-STATE-ACTION";
+                selectedTicket = {
+                  ticket_id: "TK-STATE-ACTION",
+                  subject: "Ticket state action coverage",
+                  requester: "user-state",
+                  priority: "high",
+                  status: "communicating",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: null,
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+
+                let navigatedPath = null;
+                navigate = (path) => {
+                  navigatedPath = path;
+                  return true;
+                };
+                updateTicketStatus = async () => {};
+                loadTickets = async () => {};
+                refreshSelectedTicket = async () => {};
+
+                selectedPoolStatus = "escalated";
+                await handleDetailClick({
+                  target: {
+                    closest(selector) {
+                      if (selector === "button[data-detail-action]") {
+                        return { dataset: { detailAction: "start-investigation" }, disabled: false };
+                      }
+                      return null;
+                    },
+                  },
+                });
+                if (selectedPoolStatus !== "investigating") {{
+                  throw new Error("Start investigation should retarget the engineer pool to investigating.");
+                }}
+
+                selectedTicket = { ...selectedTicket, status: "investigating", active_investigation: { id: "INV-1" } };
+                await handleDetailClick({
+                  target: {
+                    closest(selector) {
+                      if (selector === "button[data-detail-action]") {
+                        return { dataset: { detailAction: "resume-communicating" }, disabled: false };
+                      }
+                      return null;
+                    },
+                  },
+                });
+                if (selectedPoolStatus !== "communicating") {{
+                  throw new Error("Back to communicating should retarget the engineer pool to communicating.");
+                }}
+
+                selectedTicket = { ...selectedTicket, status: "communicating", active_investigation: null };
+                await handleDetailClick({
+                  target: {
+                    closest(selector) {
+                      if (selector === "button[data-detail-action]") {
+                        return { dataset: { detailAction: "resolve-ticket" }, disabled: false };
+                      }
+                      return null;
+                    },
+                  },
+                });
+                if (selectedPoolStatus !== "resolved") {{
+                  throw new Error("Resolve should retarget the engineer pool to resolved.");
+                }}
+
+                selectedTicket = { ...selectedTicket, status: "resolved" };
+                await handleDetailClick({
+                  target: {
+                    closest(selector) {
+                      if (selector === "button[data-detail-action]") {
+                        return { dataset: { detailAction: "reopen-ticket" }, disabled: false };
+                      }
+                      return null;
+                    },
+                  },
+                });
+                if (selectedPoolStatus !== "communicating") {{
+                  throw new Error("Reopen should retarget the engineer pool back to communicating.");
+                }}
+
+                await handleDetailClick({
+                  target: {
+                    closest(selector) {
+                      if (selector === "button[data-detail-action]") {
+                        return { dataset: { detailAction: "back-to-pool" }, disabled: false };
+                      }
+                      return null;
+                    },
+                  },
+                });
+                if (selectedPoolStatus !== "communicating") {{
+                  throw new Error("Back to pool should preserve the currently selected engineer tab.");
+                }}
+                if (navigatedPath !== "/tickets") {{
+                  throw new Error("Back to pool should still navigate to the pool route.");
+                }}
+              """
+            )
+        )
+
+    def test_engineer_open_ticket_detail_redirects_back_to_investigating_pool_with_feedback(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                tickets = [
+                  {
+                    ticket_id: "TK-INVESTIGATING-RETURN",
+                    subject: "investigating fallback target",
+                    requester: "user-inv",
+                    priority: "high",
+                    status: "investigating",
+                    created_at: "2026-03-24T08:00:00+00:00",
+                    updated_at: "2026-03-24T08:30:00+00:00",
+                  },
+                ];
+                selectedPoolStatus = "resolved";
+                window.location.hash = "#/tickets/TK-OPEN-DETAIL";
+
+                fetchJson = async (url) => {
+                  if (url === "/api/engineer/tickets/TK-OPEN-DETAIL") {
+                    return {
+                      ticket: {
+                        ticket_id: "TK-OPEN-DETAIL",
+                        subject: "client-only open ticket",
+                        requester: "user-open",
+                        priority: "normal",
+                        status: "open",
+                        created_at: "2026-03-24T08:00:00+00:00",
+                        updated_at: "2026-03-24T08:30:00+00:00",
+                        messages: [],
+                        active_investigation: null,
+                        investigation_history: [],
+                      },
+                    };
+                  }
+                  throw new Error(`Unexpected url: ${url}`);
+                };
+
+                await syncRouteToWorkspace({ silent: true, showLoading: true });
+
+                if (routeState.view !== "pool") {{
+                  throw new Error("Open ticket detail should redirect back to the engineer pool.");
+                }}
+                if (selectedPoolStatus !== "investigating") {{
+                  throw new Error("Open ticket detail should return to the investigating tab.");
+                }}
+                if (!workspaceRegionEl.innerHTML.includes("workspace-feedback")) {{
+                  throw new Error("Redirected open detail should render workspace feedback.");
+                }}
+                if (!workspaceRegionEl.innerHTML.includes("This ticket is only visible in the client workspace.")) {{
+                  throw new Error("Redirected open detail should explain that open tickets stay on the client side.");
                 }}
               """
             )

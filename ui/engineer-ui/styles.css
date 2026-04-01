@@ -862,7 +862,7 @@ a {
 
 .filter-control-group {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(240px, 420px);
   gap: 12px;
   min-width: 0;
 }
