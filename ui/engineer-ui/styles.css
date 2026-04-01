@@ -1108,10 +1108,15 @@ a {
 }
 
 .ticket-row {
+  --ticket-pool-surface: rgba(255, 255, 255, 0.9);
+  --ticket-pool-surface-hover: rgba(255, 255, 255, 0.95);
+  --ticket-pool-border: rgba(110, 120, 130, 0.16);
   display: grid;
   gap: 14px;
   padding: 18px 20px;
   border-radius: 24px;
+  border-color: var(--ticket-pool-border);
+  background: var(--ticket-pool-surface);
   cursor: pointer;
   transition:
     transform 180ms ease,
@@ -1122,7 +1127,7 @@ a {
 
 .ticket-row:hover {
   transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--ticket-pool-surface-hover);
 }
 
 .ticket-row:focus-visible {
@@ -1133,18 +1138,19 @@ a {
     0 0 0 3px rgba(0, 176, 255, 0.16);
 }
 
-.ticket-row-waiting {
-  border-color: rgba(159, 93, 18, 0.18);
-  background: linear-gradient(180deg, rgba(255, 245, 235, 0.9) 0%, rgba(255, 255, 255, 0.9) 100%);
-}
-
 .ticket-pool-card {
+  --ticket-pool-surface: rgba(255, 255, 255, 0.9);
+  --ticket-pool-surface-hover: rgba(255, 255, 255, 0.95);
+  --ticket-pool-border: rgba(110, 120, 130, 0.16);
   display: grid;
   align-content: start;
   gap: 16px;
   min-height: 240px;
   padding: 18px 18px 20px;
   border-radius: 24px;
+  border: 1px solid var(--ticket-pool-border);
+  background: var(--ticket-pool-surface);
+  box-shadow: var(--shadow-soft);
   cursor: pointer;
   transition:
     transform 180ms ease,
@@ -1155,7 +1161,7 @@ a {
 
 .ticket-pool-card:hover {
   transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--ticket-pool-surface-hover);
 }
 
 .ticket-pool-card:focus-visible {
@@ -1166,9 +1172,34 @@ a {
     0 0 0 3px rgba(0, 176, 255, 0.16);
 }
 
-.ticket-pool-card-waiting {
-  border-color: rgba(159, 93, 18, 0.18);
-  background: linear-gradient(180deg, rgba(255, 245, 235, 0.9) 0%, rgba(255, 255, 255, 0.9) 100%);
+.status-surface-open {
+  --ticket-pool-border: rgba(47, 111, 68, 0.14);
+  --ticket-pool-surface: linear-gradient(180deg, rgba(238, 248, 239, 0.98) 0%, rgba(225, 243, 229, 0.95) 100%);
+  --ticket-pool-surface-hover: linear-gradient(180deg, rgba(243, 251, 244, 0.99) 0%, rgba(231, 246, 234, 0.98) 100%);
+}
+
+.status-surface-communicating {
+  --ticket-pool-border: rgba(0, 100, 147, 0.14);
+  --ticket-pool-surface: linear-gradient(180deg, rgba(240, 248, 255, 0.98) 0%, rgba(226, 239, 255, 0.95) 100%);
+  --ticket-pool-surface-hover: linear-gradient(180deg, rgba(245, 250, 255, 0.99) 0%, rgba(233, 243, 255, 0.98) 100%);
+}
+
+.status-surface-escalated {
+  --ticket-pool-border: rgba(186, 26, 26, 0.14);
+  --ticket-pool-surface: linear-gradient(180deg, rgba(255, 241, 243, 0.98) 0%, rgba(255, 226, 231, 0.95) 100%);
+  --ticket-pool-surface-hover: linear-gradient(180deg, rgba(255, 245, 246, 0.99) 0%, rgba(255, 233, 237, 0.98) 100%);
+}
+
+.status-surface-investigating {
+  --ticket-pool-border: rgba(159, 93, 18, 0.16);
+  --ticket-pool-surface: linear-gradient(180deg, rgba(255, 245, 236, 0.98) 0%, rgba(255, 232, 218, 0.95) 100%);
+  --ticket-pool-surface-hover: linear-gradient(180deg, rgba(255, 248, 241, 0.99) 0%, rgba(255, 238, 226, 0.98) 100%);
+}
+
+.status-surface-resolved {
+  --ticket-pool-border: rgba(110, 120, 130, 0.16);
+  --ticket-pool-surface: linear-gradient(180deg, rgba(241, 244, 247, 0.98) 0%, rgba(231, 235, 240, 0.96) 100%);
+  --ticket-pool-surface-hover: linear-gradient(180deg, rgba(245, 247, 250, 0.99) 0%, rgba(236, 239, 243, 0.98) 100%);
 }
 
 .ticket-pool-card-top,
@@ -1338,28 +1369,28 @@ a {
 }
 
 .status-open {
-  color: var(--secondary);
-  background: rgba(224, 224, 255, 0.92);
+  color: #2f6f44;
+  background: rgba(216, 242, 220, 0.96);
 }
 
-.status-active {
+.status-communicating {
   color: var(--primary);
-  background: rgba(202, 230, 255, 0.88);
+  background: rgba(202, 230, 255, 0.9);
 }
 
 .status-escalated {
-  color: var(--warning);
-  background: rgba(255, 234, 205, 0.92);
+  color: var(--danger);
+  background: rgba(255, 223, 228, 0.92);
 }
 
-.status-waiting {
+.status-investigating {
   color: var(--warning);
-  background: rgba(255, 234, 205, 0.92);
+  background: rgba(255, 232, 214, 0.94);
 }
 
 .status-resolved {
-  color: var(--success);
-  background: rgba(156, 240, 255, 0.44);
+  color: var(--ink-muted);
+  background: rgba(228, 233, 239, 0.96);
 }
 
 .mode-pill-managed {

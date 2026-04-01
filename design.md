@@ -132,11 +132,20 @@
    - cool/secondary: `managed`, `queued`, `source`
    - tertiary: `resolved`, `healthy`
 3. 统一使用全圆角 pill，不使用尖角状态块。
+4. Support ticket 状态语义固定为：
+   - `open`: 浅绿色
+   - `communicating`: 冷蓝浅底
+   - `escalated`: 淡红色
+   - `investigating`: 浅橙 / 桃色底
+   - `resolved`: 淡灰色
+5. case card 的 surface 和对应 status pill / chip 必须使用同一语义色系，禁止 badge 和卡片背景使用互相冲突的状态色。
+6. `client` 侧 sidebar 中的 compact history row 是唯一例外：允许保留深色 rail 语境，不强制切成浅色 status surface，但其状态 badge 仍必须遵守统一 palette。
 
 ### 5.3 Card
 1. 主卡片用大圆角。
 2. 内容型卡片采用 tonal surface，不用厚边框。
 3. hero / AI 摘要卡允许玻璃感与更强阴影。
+4. `/client` 和 `/engineer` 中的 case card 必须支持按状态切换 surface，并在 `hover`、`focus`、`active` 状态下保持原有状态色调，只做轻微提亮或 ring 强化，不能洗回纯白默认卡片。
 
 ### 5.4 Table / List
 1. 数据区优先使用“卡片化列表”而不是传统高密度网格线表格。

@@ -451,15 +451,32 @@ function statusClass(value) {
     return "status-resolved";
   }
   if (normalized === "investigating") {
-    return "status-waiting";
+    return "status-investigating";
   }
   if (normalized === "escalated") {
     return "status-escalated";
   }
   if (normalized === "communicating") {
-    return "status-active";
+    return "status-communicating";
   }
   return "status-open";
+}
+
+function statusSurfaceClass(value) {
+  const normalized = normalizeStatusValue(value);
+  if (normalized === "resolved") {
+    return "status-surface-resolved";
+  }
+  if (normalized === "investigating") {
+    return "status-surface-investigating";
+  }
+  if (normalized === "escalated") {
+    return "status-surface-escalated";
+  }
+  if (normalized === "communicating") {
+    return "status-surface-communicating";
+  }
+  return "status-surface-open";
 }
 
 function roleLabel(role) {
@@ -1355,7 +1372,7 @@ function describeTicketPoolTicket(ticket) {
     requester,
     pendingQuestion,
     pendingPreview,
-    isInvestigating: status === "investigating",
+    surfaceClass: statusSurfaceClass(status),
   };
 }
 
@@ -1367,7 +1384,7 @@ function renderTicketPoolList(rows) {
           const item = describeTicketPoolTicket(ticket);
           return `
             <article
-              class="ticket-row${item.isInvestigating ? " ticket-row-waiting" : ""}"
+              class="ticket-row ${item.surfaceClass}"
               role="button"
               tabindex="0"
               data-ticket-row="true"
@@ -1422,7 +1439,7 @@ function renderTicketPoolGrid(rows) {
           const item = describeTicketPoolTicket(ticket);
           return `
             <article
-              class="ticket-pool-card${item.isInvestigating ? " ticket-pool-card-waiting" : ""}"
+              class="ticket-pool-card ${item.surfaceClass}"
               role="button"
               tabindex="0"
               data-ticket-row="true"

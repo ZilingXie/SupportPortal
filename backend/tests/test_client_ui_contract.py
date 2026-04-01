@@ -110,9 +110,12 @@ class ClientUiContractTests(unittest.TestCase):
     def test_client_ui_uses_stitch_brand_language(self) -> None:
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
         app_source = Path("ui/client-ui/app.js").read_text(encoding="utf-8")
+        css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
 
         self.assertIn("Concierge AI", html)
         self.assertIn("Manrope", html)
+        self.assertIn("./styles.css?v=20260401-client-status-surfaces-1", html)
+        self.assertIn('./app.js?v=20260401-client-status-surfaces-1', html)
         self.assertIn("AI-SOLVING", app_source)
         self.assertIn("Session History", app_source)
         self.assertIn('navigate("/chat");', app_source)
@@ -131,8 +134,17 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertLess(new_session_pos, workspace_pos)
         self.assertLess(workspace_pos, history_pos)
 
-        css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
         self.assertIn(".sidebar:not(:hover):not(:focus-within) .user-row", css)
+        self.assertIn(".status-open {\n  color: #2f6f44;", css)
+        self.assertIn(".status-communicating {\n  color: var(--primary);", css)
+        self.assertIn(".status-escalated {\n  color: var(--danger);", css)
+        self.assertIn(".status-investigating {\n  color: var(--warning);", css)
+        self.assertIn(".status-resolved {\n  color: var(--ink-muted);", css)
+        self.assertIn(".status-surface-open", css)
+        self.assertIn(".status-surface-communicating", css)
+        self.assertIn(".status-surface-escalated", css)
+        self.assertIn(".status-surface-investigating", css)
+        self.assertIn(".status-surface-resolved", css)
 
     def test_client_shows_investigating_status_without_leaking_internal_thread(self) -> None:
         self.run_client_app_script(
@@ -295,8 +307,8 @@ class ClientUiContractTests(unittest.TestCase):
     def test_client_context_bar_requests_engineer_assistance_via_backend_without_fake_chat_message(self) -> None:
         css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
         self.assertIn(".context-assistance-note", css)
-        self.assertIn(".context-chip.is-escalated {\n  color: var(--warning);", css)
-        self.assertIn(".status-escalated {\n  color: var(--warning);", css)
+        self.assertIn(".context-chip.is-escalated {\n  color: var(--danger);", css)
+        self.assertIn(".status-escalated {\n  color: var(--danger);", css)
 
         self.run_client_app_script(
             textwrap.dedent(
@@ -443,6 +455,42 @@ class ClientUiContractTests(unittest.TestCase):
                 ]);
                 updateTicketStatus(activeTicket.id, "communicating");
 
+                const openTicket = createTicket(state.user.id);
+                updateTicketTitle(openTicket.id, "Account setup question");
+                saveTicketMessages(openTicket.id, [
+                  {
+                    id: "msg-open-1",
+                    role: "user",
+                    content: "I need help setting up my account",
+                    createdAt: new Date().toISOString(),
+                  },
+                ]);
+                updateTicketStatus(openTicket.id, "open");
+
+                const escalatedTicket = createTicket(state.user.id);
+                updateTicketTitle(escalatedTicket.id, "Need engineer help");
+                saveTicketMessages(escalatedTicket.id, [
+                  {
+                    id: "msg-escalated-1",
+                    role: "user",
+                    content: "Please involve an engineer",
+                    createdAt: new Date().toISOString(),
+                  },
+                ]);
+                updateTicketStatus(escalatedTicket.id, "escalated");
+
+                const investigatingTicket = createTicket(state.user.id);
+                updateTicketTitle(investigatingTicket.id, "Token investigation");
+                saveTicketMessages(investigatingTicket.id, [
+                  {
+                    id: "msg-investigating-1",
+                    role: "user",
+                    content: "Token callback is stuck",
+                    createdAt: new Date().toISOString(),
+                  },
+                ]);
+                updateTicketStatus(investigatingTicket.id, "investigating");
+
                 const resolvedTicket = createTicket(state.user.id);
                 updateTicketTitle(resolvedTicket.id, "Database restore follow-up");
                 saveTicketMessages(resolvedTicket.id, [
@@ -475,6 +523,21 @@ class ClientUiContractTests(unittest.TestCase):
                 if (!sidebarHtml.includes("history-row-meta")) {
                   throw new Error("Compact history rows should render shared session meta.");
                 }
+                if (sidebarHtml.includes("status-surface-open")) {
+                  throw new Error("Sidebar compact rows should not use the open surface class.");
+                }
+                if (sidebarHtml.includes("status-surface-communicating")) {
+                  throw new Error("Sidebar compact rows should not use the communicating surface class.");
+                }
+                if (sidebarHtml.includes("status-surface-escalated")) {
+                  throw new Error("Sidebar compact rows should not use the escalated surface class.");
+                }
+                if (sidebarHtml.includes("status-surface-investigating")) {
+                  throw new Error("Sidebar compact rows should not use the investigating surface class.");
+                }
+                if (sidebarHtml.includes("status-surface-resolved")) {
+                  throw new Error("Sidebar compact rows should not use the resolved surface class.");
+                }
 
                 const ticketsHtml = renderTicketsPage();
                 if (ticketsHtml.includes("tickets-grid")) {
@@ -498,11 +561,65 @@ class ClientUiContractTests(unittest.TestCase):
                 if (!ticketsHtml.includes("history-row-actions")) {
                   throw new Error("History rows should keep the explicit action area.");
                 }
+                if (!ticketsHtml.includes("status-surface-open")) {
+                  throw new Error("Session History page should render open status surfaces.");
+                }
+                if (!ticketsHtml.includes("status-surface-communicating")) {
+                  throw new Error("Session History page should render communicating status surfaces.");
+                }
+                if (!ticketsHtml.includes("status-surface-escalated")) {
+                  throw new Error("Session History page should render escalated status surfaces.");
+                }
+                if (!ticketsHtml.includes("status-surface-investigating")) {
+                  throw new Error("Session History page should render investigating status surfaces.");
+                }
+                if (!ticketsHtml.includes("status-surface-resolved")) {
+                  throw new Error("Session History page should render resolved status surfaces.");
+                }
                 if (!ticketsHtml.includes("Created")) {
                   throw new Error("History rows should render created metadata.");
                 }
                 if (!ticketsHtml.includes("Updated")) {
                   throw new Error("History rows should render updated metadata.");
+                }
+              """
+            )
+        )
+
+    def test_client_active_history_row_keeps_status_surface(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                const rowHtml = renderHistoryRow(
+                  {
+                    id: "TK-ACTIVE",
+                    title: "Open onboarding task",
+                    status: "open",
+                    createdAt: "2026-03-24T08:00:00+00:00",
+                    updatedAt: "2026-03-24T08:10:00+00:00",
+                  },
+                  { active: true }
+                );
+
+                if (!rowHtml.includes("status-surface-open")) {
+                  throw new Error("Active history rows should retain their status surface class.");
+                }
+                if (!rowHtml.includes("is-active")) {
+                  throw new Error("Active history rows should keep the active class.");
+                }
+
+                const compactHtml = renderHistoryRow(
+                  {
+                    id: "TK-COMPACT",
+                    title: "Compact sidebar row",
+                    status: "resolved",
+                    createdAt: "2026-03-24T08:00:00+00:00",
+                    updatedAt: "2026-03-24T08:10:00+00:00",
+                  },
+                  { compact: true, active: true }
+                );
+                if (compactHtml.includes("status-surface-resolved")) {
+                  throw new Error("Compact sidebar rows should not receive the shared light surface classes.");
                 }
               """
             )
