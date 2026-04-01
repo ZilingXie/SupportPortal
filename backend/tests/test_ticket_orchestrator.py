@@ -1,0 +1,172 @@
+from __future__ import annotations
+
+import unittest
+from unittest.mock import patch
+
+from backend.services.support_router import SupportResolution, SupportRouteDecision
+from backend.services.ticket_orchestrator import (
+    COMMUNICATING_STATUS,
+    INVESTIGATING_STATUS,
+    SufficiencyAssessment,
+    orchestrate_ticket_execution,
+)
+
+
+def _decision(action: str = "rag") -> SupportRouteDecision:
+    return SupportRouteDecision(
+        scope_label="agora_technical" if action == "rag" else "agora_non_technical",
+        route=action,
+        confidence=0.94,
+        reason="route_match",
+        matched_signals=["token"] if action == "rag" else ["ceo"],
+        response_language="en",
+    )
+
+
+def _resolution(
+    *,
+    action: str = "rag",
+    needs_engineer_guidance: bool = False,
+) -> SupportResolution:
+    return SupportResolution(
+        answer="Use the token server sample.",
+        confidence=0.88,
+        sources=["https://docs.agora.io/en/video-calling/token-authentication"],
+        citations=[
+            {
+                "chunk_id": "chunk-1",
+                "source_path": "official/token-authentication.md",
+                "heading": "Token authentication",
+                "source_url": "https://docs.agora.io/en/video-calling/token-authentication",
+            }
+        ],
+        needs_engineer_guidance=needs_engineer_guidance,
+        answer_route=action,
+        scope_label="agora_technical" if action == "rag" else "agora_non_technical",
+        route_family="agora_docs_rag" if action == "rag" else "web_company_info",
+        execution_action=action,
+        tooling_profile="agora_docs_only" if action == "rag" else "official_web_search",
+        route_reason="grounded_answer",
+        route_confidence=0.94,
+        search_used=action == "web_search",
+        matched_signals=["token"] if action == "rag" else ["ceo"],
+        evidence_summary={
+            "quality_signals": {
+                "generation_mode": "structured_answer",
+                "selected_doc_count": 1,
+                "citation_coverage_ratio": 1.0,
+                "top1_similarity_score": 0.95,
+                "avg_selected_similarity_score": 0.95,
+                "handoff_reason": None,
+                "needs_human": False,
+            },
+            "selected_contexts": [
+                {
+                    "chunk_id": "chunk-1",
+                    "heading": "Token authentication",
+                    "source_path": "official/token-authentication.md",
+                    "source_url": "https://docs.agora.io/en/video-calling/token-authentication",
+                    "text_excerpt": "Set a token server before joining the channel.",
+                    "similarity": 0.95,
+                    "cited_in_answer": True,
+                }
+            ],
+        }
+        if action == "rag"
+        else None,
+    )
+
+
+class TicketOrchestratorTests(unittest.TestCase):
+    def test_rag_insufficiency_skips_post_check_and_marks_investigating(self) -> None:
+        with patch(
+            "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency"
+        ) as sufficiency_mock:
+            execution = orchestrate_ticket_execution(
+                "How do I debug token renewal on Android 14?",
+                decision=_decision("rag"),
+                resolution_builder=lambda *_args, **_kwargs: _resolution(
+                    action="rag",
+                    needs_engineer_guidance=True,
+                ),
+            )
+
+        self.assertTrue(execution.needs_investigating)
+        self.assertEqual(execution.next_status, INVESTIGATING_STATUS)
+        self.assertEqual(execution.execution_action, "rag")
+        self.assertEqual(execution.investigation_reason, "rag_insufficient_evidence")
+        sufficiency_mock.assert_not_called()
+
+    def test_rag_answer_runs_post_check_and_stays_communicating_when_allowed(self) -> None:
+        with patch(
+            "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency",
+            return_value=SufficiencyAssessment(
+                decision="answer",
+                reason="sufficient_grounded_answer",
+                confidence=0.91,
+            ),
+        ):
+            execution = orchestrate_ticket_execution(
+                "How do I debug token renewal on Android 14?",
+                decision=_decision("rag"),
+                resolution_builder=lambda *_args, **_kwargs: _resolution(action="rag"),
+            )
+
+        self.assertFalse(execution.needs_investigating)
+        self.assertEqual(execution.next_status, COMMUNICATING_STATUS)
+        self.assertEqual(execution.execution_action, "rag")
+        self.assertIsNone(execution.investigation_reason)
+
+    def test_rag_answer_runs_post_check_and_investigates_when_rejected(self) -> None:
+        with patch(
+            "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency",
+            return_value=SufficiencyAssessment(
+                decision="investigate",
+                reason="missing_android_14_specific_evidence",
+                confidence=0.89,
+            ),
+        ):
+            execution = orchestrate_ticket_execution(
+                "How do I debug token renewal on Android 14?",
+                decision=_decision("rag"),
+                resolution_builder=lambda *_args, **_kwargs: _resolution(action="rag"),
+            )
+
+        self.assertTrue(execution.needs_investigating)
+        self.assertEqual(execution.next_status, INVESTIGATING_STATUS)
+        self.assertEqual(execution.execution_action, "rag")
+        self.assertEqual(execution.investigation_reason, "rag_post_check_insufficient")
+
+    def test_rag_post_check_error_falls_back_to_investigating(self) -> None:
+        with patch(
+            "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency",
+            side_effect=RuntimeError("judge unavailable"),
+        ):
+            execution = orchestrate_ticket_execution(
+                "How do I debug token renewal on Android 14?",
+                decision=_decision("rag"),
+                resolution_builder=lambda *_args, **_kwargs: _resolution(action="rag"),
+            )
+
+        self.assertTrue(execution.needs_investigating)
+        self.assertEqual(execution.next_status, INVESTIGATING_STATUS)
+        self.assertEqual(execution.investigation_reason, "rag_post_check_error")
+
+    def test_non_rag_action_skips_post_check(self) -> None:
+        with patch(
+            "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency"
+        ) as sufficiency_mock:
+            execution = orchestrate_ticket_execution(
+                "Who's the CEO of Agora?",
+                decision=_decision("web_search"),
+                resolution_builder=lambda *_args, **_kwargs: _resolution(action="web_search"),
+            )
+
+        self.assertFalse(execution.needs_investigating)
+        self.assertEqual(execution.next_status, COMMUNICATING_STATUS)
+        self.assertEqual(execution.execution_action, "web_search")
+        sufficiency_mock.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

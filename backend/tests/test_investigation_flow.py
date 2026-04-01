@@ -12,7 +12,9 @@ from fastapi.testclient import TestClient
 
 import backend.main as main
 from backend.repositories.ticket_repository import InMemoryTicketRepository
+from backend.services.rag_service_client import RagTicketAnswerDetail
 from backend.services.support_router import SupportResolution
+from backend.services.ticket_orchestrator import SufficiencyAssessment
 
 
 def _resolution(*, needs_engineer_guidance: bool) -> SupportResolution:
@@ -27,6 +29,20 @@ def _resolution(*, needs_engineer_guidance: bool) -> SupportResolution:
         route_reason="insufficient_evidence",
         route_confidence=0.91,
         search_used=False,
+    )
+
+
+def _rag_route_decision(*, reason: str = "technical_docs_match") -> main.SupportRouteDecision:
+    return main.SupportRouteDecision(
+        scope_label="agora_technical",
+        route="rag",
+        confidence=0.93,
+        reason=reason,
+        matched_signals=["token", "android 14"],
+        response_language="zh",
+        route_family="agora_docs_rag",
+        execution_action="rag",
+        tooling_profile="agora_docs_only",
     )
 
 
@@ -218,6 +234,13 @@ class InvestigationFlowTests(unittest.TestCase):
             main,
             "resolve_support_message",
             return_value=resolution,
+        ), patch(
+            "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency",
+            return_value=types.SimpleNamespace(
+                decision="answer",
+                reason="sufficient_grounding",
+                confidence=0.93,
+            ),
         ), patch.object(
             main.task_queue,
             "enqueue",
@@ -253,6 +276,57 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(enqueue_mock.await_count, 1)
         task = enqueue_mock.await_args_list[0].args[0]
         self.assertEqual(task["task_type"], "ticket_message_sentiment")
+
+    def test_black_screen_query_defaults_to_rag_and_investigates_when_rag_is_insufficient(self) -> None:
+        with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="Got it, let me check this for you.",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main.rag_service_client,
+            "query_answer_with_recovery_detail",
+            return_value=RagTicketAnswerDetail(
+                answer=main.INSUFFICIENT_EVIDENCE_REPLY,
+                confidence=0.0,
+                sources=[],
+                citations=[],
+                needs_engineer_guidance=True,
+                reason="rag_insufficient_evidence",
+                evidence_summary=None,
+            ),
+        ), patch.object(
+            main,
+            "generate_investigation_ai_turn",
+            return_value={
+                "state": "active",
+                "message": "Please confirm whether the black screen affects local preview or remote video only.",
+                "draft_customer_reply": None,
+            },
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-INV-110",
+                    "customer_id": "C-001",
+                    "message": "i got black screen issue, what should i do?",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "investigating")
+        self.assertEqual(payload["answer_route"], "rag")
+        self.assertEqual(payload["scope_label"], "agora_technical")
+        self.assertEqual(payload["route_reason"], "rag_insufficient_evidence")
+        self.assertEqual(payload["answer"], "Got it, let me check this for you.")
 
     def test_customer_message_sentiment_falls_back_to_background_tagging_when_queue_is_unavailable(self) -> None:
         resolution = SupportResolution(
@@ -302,6 +376,167 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(enqueue_mock.await_count, 1)
         self.assertEqual(fallback_mock.await_count, 1)
+
+    def test_ticket_query_post_rag_check_rejection_starts_investigation(self) -> None:
+        resolution = SupportResolution(
+            answer="Please upgrade to SDK 4.2.2 and retry token renewal.",
+            confidence=0.86,
+            sources=["https://docs.agora.io/en/video-calling/token-authentication"],
+            citations=[
+                {
+                    "chunk_id": "chunk-1",
+                    "source_path": "official/token-authentication.md",
+                    "heading": "Token authentication",
+                    "source_url": "https://docs.agora.io/en/video-calling/token-authentication",
+                }
+            ],
+            needs_engineer_guidance=False,
+            answer_route="rag",
+            scope_label="agora_technical",
+            route_reason="grounded_answer",
+            route_confidence=0.93,
+            search_used=False,
+            evidence_summary={
+                "quality_signals": {
+                    "generation_mode": "structured_answer",
+                    "selected_doc_count": 1,
+                    "citation_coverage_ratio": 1.0,
+                    "top1_similarity_score": 0.93,
+                    "avg_selected_similarity_score": 0.93,
+                    "handoff_reason": None,
+                    "needs_human": False,
+                },
+                "selected_contexts": [
+                    {
+                        "chunk_id": "chunk-1",
+                        "heading": "Token authentication",
+                        "source_path": "official/token-authentication.md",
+                        "source_url": "https://docs.agora.io/en/video-calling/token-authentication",
+                        "text_excerpt": "Token renewal requires a valid token server response.",
+                        "similarity": 0.93,
+                        "cited_in_answer": True,
+                    }
+                ],
+            },
+        )
+        with patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="收到，我先帮你看一下。",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main,
+            "resolve_support_message",
+            return_value=resolution,
+        ), patch.object(
+            main,
+            "analyze_ticket_message",
+            return_value=_rag_route_decision(),
+        ), patch(
+            "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency",
+            return_value=SufficiencyAssessment(
+                decision="investigate",
+                reason="missing_android_14_specific_evidence",
+                confidence=0.89,
+            ),
+        ), patch.object(
+            main,
+            "generate_investigation_ai_turn",
+            return_value={
+                "state": "active",
+                "message": "Please confirm whether Android 14 is the only affected platform.",
+                "draft_customer_reply": None,
+            },
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-INV-POSTCHECK-100",
+                    "customer_id": "C-001",
+                    "message": "Android 14 token renewal still fails after I upgraded the SDK.",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "investigating")
+        detail = self.client.get("/api/engineer/tickets/TK-INV-POSTCHECK-100")
+        ticket = detail.json()["ticket"]
+        self.assertEqual(ticket["status"], "investigating")
+        self.assertEqual(ticket["active_investigation"]["trigger_reason"], "rag_post_check_insufficient")
+        assistant_messages = [message["content"] for message in ticket["messages"] if message["role"] == "assistant"]
+        self.assertFalse(any("Please upgrade to SDK 4.2.2" in content for content in assistant_messages))
+        self.assertTrue(any("We are investigating this further." in content for content in assistant_messages))
+
+    def test_ticket_query_post_rag_check_error_starts_investigation(self) -> None:
+        resolution = SupportResolution(
+            answer="Please upgrade to SDK 4.2.2 and retry token renewal.",
+            confidence=0.86,
+            sources=["https://docs.agora.io/en/video-calling/token-authentication"],
+            citations=[],
+            needs_engineer_guidance=False,
+            answer_route="rag",
+            scope_label="agora_technical",
+            route_reason="grounded_answer",
+            route_confidence=0.93,
+            search_used=False,
+            evidence_summary={
+                "quality_signals": {
+                    "generation_mode": "structured_answer",
+                    "selected_doc_count": 1,
+                    "citation_coverage_ratio": 1.0,
+                    "top1_similarity_score": 0.93,
+                    "avg_selected_similarity_score": 0.93,
+                    "handoff_reason": None,
+                    "needs_human": False,
+                },
+                "selected_contexts": [],
+            },
+        )
+        with patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="收到，我先帮你看一下。",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main,
+            "resolve_support_message",
+            return_value=resolution,
+        ), patch.object(
+            main,
+            "analyze_ticket_message",
+            return_value=_rag_route_decision(),
+        ), patch(
+            "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency",
+            side_effect=RuntimeError("judge unavailable"),
+        ), patch.object(
+            main,
+            "generate_investigation_ai_turn",
+            return_value={
+                "state": "active",
+                "message": "The post-RAG sufficiency check failed and needs engineer review.",
+                "draft_customer_reply": None,
+            },
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-INV-POSTCHECK-ERR-100",
+                    "customer_id": "C-001",
+                    "message": "Android 14 token renewal still fails after I upgraded the SDK.",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "investigating")
+        detail = self.client.get("/api/engineer/tickets/TK-INV-POSTCHECK-ERR-100")
+        ticket = detail.json()["ticket"]
+        self.assertEqual(ticket["active_investigation"]["trigger_reason"], "rag_post_check_error")
 
     def test_engineer_internal_message_generates_next_ai_turn_and_draft(self) -> None:
         self._seed_ticket(

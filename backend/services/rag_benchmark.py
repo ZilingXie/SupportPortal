@@ -369,7 +369,7 @@ def _parse_benchmark_case(payload: dict[str, Any], *, line_number: int) -> Bench
                 "web_search": "web_company_info",
                 "refuse": "fallback_or_refuse",
             }.get(expected_route, "agora_docs_rag")
-            expected_execution_action = "controlled_response" if expected_route == "refuse" else expected_route
+            expected_execution_action = expected_route
             expected_behavior = {
                 "rag": "answer_with_docs",
                 "web_search": "answer_with_company_info",

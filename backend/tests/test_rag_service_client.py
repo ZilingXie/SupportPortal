@@ -11,10 +11,59 @@ from backend.services.rag_service_client import (
     RagServiceClient,
     RagServiceError,
     map_rag_payload_to_ticket_answer,
+    map_rag_payload_to_ticket_answer_detail,
 )
 
 
 class RagServiceClientTests(unittest.TestCase):
+    def test_map_answer_payload_to_ticket_answer_detail_preserves_evidence_summary(self) -> None:
+        detail = map_rag_payload_to_ticket_answer_detail(
+            {
+                "decision": "answer",
+                "answer": "Use the REST API endpoint.",
+                "confidence": 0.88,
+                "sources": ["https://docs.agora.io/en/example"],
+                "citations": [
+                    {
+                        "chunk_id": "chunk-1",
+                        "source_path": "official/agora.md",
+                        "heading": "API",
+                    }
+                ],
+                "evidence_summary": {
+                    "quality_signals": {
+                        "generation_mode": "structured_answer",
+                        "selected_doc_count": 1,
+                        "citation_coverage_ratio": 1.0,
+                        "top1_similarity_score": 0.96,
+                        "avg_selected_similarity_score": 0.96,
+                        "handoff_reason": None,
+                        "needs_human": False,
+                    },
+                    "selected_contexts": [
+                        {
+                            "chunk_id": "chunk-1",
+                            "heading": "API",
+                            "source_path": "official/agora.md",
+                            "source_url": "https://docs.agora.io/en/example",
+                            "text_excerpt": "Use the REST API endpoint.",
+                            "similarity": 0.96,
+                            "cited_in_answer": True,
+                        }
+                    ],
+                },
+            },
+            insufficient_reply="INSUFFICIENT",
+        )
+
+        self.assertEqual(detail.answer, "Use the REST API endpoint.")
+        self.assertFalse(detail.needs_engineer_guidance)
+        self.assertEqual(detail.reason, "grounded_answer")
+        self.assertEqual(
+            detail.evidence_summary["selected_contexts"][0]["text_excerpt"],
+            "Use the REST API endpoint.",
+        )
+
     def test_map_answer_payload_to_ticket_answer(self) -> None:
         answer, confidence, sources, citations, needs_engineer = map_rag_payload_to_ticket_answer(
             {
@@ -36,6 +85,31 @@ class RagServiceClientTests(unittest.TestCase):
         self.assertEqual(confidence, 0.88)
         self.assertEqual(sources, ["https://docs.agora.io/en/example"])
         self.assertEqual(citations[0]["chunk_id"], "chunk-1")
+        self.assertFalse(needs_engineer)
+
+    def test_legacy_tuple_mapping_ignores_evidence_summary(self) -> None:
+        answer, confidence, sources, citations, needs_engineer = map_rag_payload_to_ticket_answer(
+            {
+                "decision": "answer",
+                "answer": "Use the REST API endpoint.",
+                "confidence": 0.88,
+                "sources": ["https://docs.agora.io/en/example"],
+                "citations": [{"chunk_id": "chunk-1"}],
+                "evidence_summary": {
+                    "quality_signals": {
+                        "generation_mode": "structured_answer",
+                        "selected_doc_count": 1,
+                    },
+                    "selected_contexts": [{"chunk_id": "chunk-1"}],
+                },
+            },
+            insufficient_reply="INSUFFICIENT",
+        )
+
+        self.assertEqual(answer, "Use the REST API endpoint.")
+        self.assertEqual(confidence, 0.88)
+        self.assertEqual(sources, ["https://docs.agora.io/en/example"])
+        self.assertEqual(citations, [{"chunk_id": "chunk-1"}])
         self.assertFalse(needs_engineer)
 
     def test_map_escalate_payload_to_ticket_answer(self) -> None:

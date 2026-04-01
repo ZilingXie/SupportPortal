@@ -42,41 +42,31 @@ const PRIORITY_RANK = {
   normal: 2,
   low: 1,
 };
+const ENGINEER_POOL_STATUSES = ["investigating", "escalated", "communicating", "resolved"];
 const POOL_STATUS_RANK = {
   investigating: 4,
   escalated: 3,
   communicating: 2,
-  open: 1,
   resolved: 1,
+  open: 0,
 };
 const DEFAULT_FETCH_TIMEOUT_MS = 25000;
 const TELL_AI_FETCH_TIMEOUT_MS = 70000;
 const TICKET_POOL_VIEW_STORAGE_KEY = "engineer_ticket_pool_view_mode";
 
-const FILTER_KEYS = ["priority", "status"];
+const FILTER_KEYS = ["priority"];
 const FILTER_BLUR_DELAY_MS = 140;
 const filterValues = {
   priority: "all",
-  status: "all",
 };
 const filterComboboxState = {
   priority: { open: false, query: "", blurTimer: null },
-  status: { open: false, query: "", blurTimer: null },
 };
 let ticketPoolViewMode = "list";
+let selectedPoolStatus = "investigating";
 const filterComboboxConfig = {
   priority: {
     label: "Priority",
-    searchable: true,
-    strictSelection: true,
-    disabled: false,
-    autoSubmit: false,
-    onValueChange: () => {
-      renderTickets();
-    },
-  },
-  status: {
-    label: "Status",
     searchable: true,
     strictSelection: true,
     disabled: false,
@@ -198,45 +188,58 @@ function navigate(path) {
   return true;
 }
 
+function normalizeEngineerPoolStatus(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return ENGINEER_POOL_STATUSES.includes(normalized) ? normalized : "investigating";
+}
+
+function isEngineerVisibleStatus(value) {
+  return ENGINEER_POOL_STATUSES.includes(normalizeStatusValue(value));
+}
+
+function setSelectedPoolStatus(value, { render = true } = {}) {
+  selectedPoolStatus = normalizeEngineerPoolStatus(value);
+  if (render && routeState.view === "pool") {
+    renderTickets();
+  } else if (render) {
+    renderWorkspaceChrome();
+  }
+  return selectedPoolStatus;
+}
+
 function renderRailNav() {
   if (!railNavEl) {
     return;
   }
 
-  const isPool = routeState.view === "pool";
-  const detailLabel = selectedTicket
-    ? String(selectedTicket.subject || selectedTicket.ticket_id || "Active Ticket").trim()
-    : routeState.ticketId
-    ? `Ticket ${routeState.ticketId}`
-    : "Active Ticket";
-
   railNavEl.innerHTML = `
-    <button
-      class="rail-nav-item ${isPool ? "is-active" : ""}"
-      type="button"
-      data-nav-action="go-pool"
-    >
-      <span class="material-symbols-outlined" aria-hidden="true">confirmation_number</span>
-      <span class="rail-nav-label">Ticket Pool</span>
-    </button>
-    ${
-      routeState.view === "detail"
-        ? `
+    ${ENGINEER_POOL_STATUSES.map((status) => {
+      const isActive = selectedPoolStatus === status;
+      const icon =
+        status === "investigating"
+          ? "troubleshoot"
+          : status === "escalated"
+          ? "priority_high"
+          : status === "communicating"
+          ? "forum"
+          : "task_alt";
+      return `
       <button
-        class="rail-nav-item is-active"
+        class="rail-nav-item ${isActive ? "is-active" : ""}"
         type="button"
-        data-nav-action="go-detail"
+        data-nav-status="${escapeHtml(status)}"
+        aria-pressed="${isActive ? "true" : "false"}"
       >
-        <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
-        <span class="rail-nav-label">${escapeHtml(detailLabel)}</span>
+        <span class="material-symbols-outlined" aria-hidden="true">${icon}</span>
+        <span class="rail-nav-label">${escapeHtml(statusLabel(status))}</span>
       </button>
-    `
-        : ""
-    }
+    `;
+    }).join("")}
   `;
 }
 
 function renderWorkspaceChrome() {
+  const engineerVisibleTickets = tickets.filter((ticket) => isEngineerVisibleStatus(ticket?.status || "open"));
   if (routeState.view === "detail" && routeState.ticketId) {
     const detailStatus = selectedTicket
       ? statusLabel(normalizeStatusValue(selectedTicket.status || "open"))
@@ -256,7 +259,7 @@ function renderWorkspaceChrome() {
       workspaceTitleEl.textContent = "Engineer Command Center";
     }
     if (workspaceSubtitleEl) {
-      workspaceSubtitleEl.textContent = `${tickets.length} tickets across AI-managing and direct-response workflows.`;
+      workspaceSubtitleEl.textContent = `${engineerVisibleTickets.length} engineer-visible tickets across active support workflows.`;
     }
     filterControlsEl?.classList.remove("hidden");
     renderFilterControls();
@@ -678,16 +681,6 @@ function headerFilterOptions(key) {
       { value: "low", label: priorityLabel("low") },
     ];
   }
-  if (key === "status") {
-    return [
-      { value: "all", label: "All Status" },
-      { value: "open", label: statusLabel("open") },
-      { value: "communicating", label: statusLabel("communicating") },
-      { value: "escalated", label: statusLabel("escalated") },
-      { value: "investigating", label: statusLabel("investigating") },
-      { value: "resolved", label: statusLabel("resolved") },
-    ];
-  }
   return [];
 }
 
@@ -1007,10 +1000,13 @@ function applyTicketFilters(items) {
     const priority = String(ticket?.priority || "normal").toLowerCase();
     const status = normalizeStatusValue(ticket?.status || "open");
 
+    if (!isEngineerVisibleStatus(status)) {
+      return false;
+    }
     if (filterValues.priority !== "all" && priority !== filterValues.priority) {
       return false;
     }
-    if (filterValues.status !== "all" && status !== filterValues.status) {
+    if (status !== selectedPoolStatus) {
       return false;
     }
     return true;
@@ -1480,32 +1476,33 @@ function renderTicketPoolGrid(rows) {
 }
 
 function renderTicketPoolView() {
-  const rows = sortTicketsByPriority(applyTicketFilters(tickets));
+  const engineerVisibleTickets = tickets.filter((ticket) =>
+    isEngineerVisibleStatus(ticket?.status || "open")
+  );
+  const rows = sortTicketsByPriority(applyTicketFilters(engineerVisibleTickets));
   const viewMode = normalizeTicketPoolViewMode(ticketPoolViewMode);
-  const allCount = tickets.length;
-  const communicatingCount = tickets.filter(
+  const communicatingCount = engineerVisibleTickets.filter(
     (ticket) => normalizeStatusValue(ticket.status) === "communicating"
   ).length;
-  const escalatedCount = tickets.filter(
+  const escalatedCount = engineerVisibleTickets.filter(
     (ticket) => normalizeStatusValue(ticket.status) === "escalated"
   ).length;
-  const investigatingCount = tickets.filter(
+  const investigatingCount = engineerVisibleTickets.filter(
     (ticket) => normalizeStatusValue(ticket.status) === "investigating"
   ).length;
-  const showLoadingState = boardLoading && allCount === 0;
+  const resolvedCount = engineerVisibleTickets.filter(
+    (ticket) => normalizeStatusValue(ticket.status) === "resolved"
+  ).length;
+  const showLoadingState = boardLoading && engineerVisibleTickets.length === 0;
+  const emptyStateLabel = statusLabel(selectedPoolStatus).toLowerCase();
 
   return `
     <section class="ticket-pool-page" data-pool-view-mode="${escapeHtml(viewMode)}">
       <section class="pool-metrics" aria-label="Engineer queue metrics">
         <article class="metric-card">
-          <span class="metric-label">Total Tickets</span>
-          <strong>${allCount}</strong>
-          <p>Across the current AI-managed support queue.</p>
-        </article>
-        <article class="metric-card">
-          <span class="metric-label">Communicating</span>
-          <strong>${communicatingCount}</strong>
-          <p>Tickets currently progressing in the customer-facing AI flow.</p>
+          <span class="metric-label">Investigating</span>
+          <strong>${investigatingCount}</strong>
+          <p>Tickets with an active internal investigation thread.</p>
         </article>
         <article class="metric-card">
           <span class="metric-label">Escalated</span>
@@ -1513,9 +1510,14 @@ function renderTicketPoolView() {
           <p>Tickets where the customer has requested engineer assistance.</p>
         </article>
         <article class="metric-card">
-          <span class="metric-label">Investigating</span>
-          <strong>${investigatingCount}</strong>
-          <p>Tickets with an active internal investigation thread.</p>
+          <span class="metric-label">Communicating</span>
+          <strong>${communicatingCount}</strong>
+          <p>Tickets currently progressing in the customer-facing AI flow.</p>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Resolved</span>
+          <strong>${resolvedCount}</strong>
+          <p>Tickets already closed on the engineer side.</p>
         </article>
       </section>
 
@@ -1529,7 +1531,7 @@ function renderTicketPoolView() {
       </section>
     `
           : rows.length === 0
-          ? '<div class="empty-state">No tickets match the current filters.</div>'
+          ? `<div class="empty-state">No ${escapeHtml(emptyStateLabel)} tickets right now.</div>`
           : viewMode === "grid"
           ? renderTicketPoolGrid(rows)
           : renderTicketPoolList(rows)
@@ -1925,13 +1927,27 @@ function renderTickets() {
   workspaceRegionEl.innerHTML = renderTicketPoolView();
 }
 
-function closeTicketDetail() {
-  resetDetailWorkspaceState();
-  if (isAuthenticated()) {
-    navigate("/tickets");
+function showWorkspaceFeedback(title, message, { error = false } = {}) {
+  renderWorkspaceChrome();
+  if (!workspaceRegionEl) {
     return;
   }
-  renderWorkspace();
+  workspaceRegionEl.innerHTML = `
+    <section class="workspace-feedback ${error ? "workspace-feedback-error" : ""}" role="${
+      error ? "alert" : "status"
+    }">
+      <strong>${escapeHtml(title)}</strong>
+      <p>${escapeHtml(message)}</p>
+    </section>
+  `;
+}
+
+function closeTicketDetail() {
+  resetDetailWorkspaceState();
+  const hashChanged = navigate("/tickets");
+  if (!hashChanged) {
+    renderWorkspace();
+  }
 }
 
 function renderTicketDetail() {
@@ -1940,6 +1956,18 @@ function renderTicketDetail() {
   }
   renderWorkspaceChrome();
   workspaceRegionEl.innerHTML = renderTicketDetailView();
+}
+
+function redirectOpenTicketToPool() {
+  setSelectedPoolStatus("investigating", { render: false });
+  resetDetailWorkspaceState();
+  routeState.view = "pool";
+  routeState.ticketId = null;
+  window.location.hash = "#/tickets";
+  showWorkspaceFeedback(
+    "Client Workspace Only",
+    "This ticket is only visible in the client workspace."
+  );
 }
 
 async function refreshSelectedSummary(options = {}) {
@@ -2018,7 +2046,12 @@ async function refreshSelectedTicket(options = {}) {
     if (selectedTicketId !== requestedTicketId) {
       return;
     }
-    selectedTicket = payload.ticket || null;
+    const nextTicket = payload.ticket || null;
+    if (nextTicket && !isEngineerVisibleStatus(nextTicket.status || "open")) {
+      redirectOpenTicketToPool();
+      return;
+    }
+    selectedTicket = nextTicket;
     const refreshedInvestigation = getActiveInvestigation(selectedTicket);
     if (String(refreshedInvestigation?.state || "").toLowerCase() !== "awaiting_confirmation") {
       investigationReviseMode = false;
@@ -2101,16 +2134,7 @@ async function loadTickets(options = {}) {
 
 function showBoardError(message) {
   boardLoading = false;
-  renderWorkspaceChrome();
-  if (!workspaceRegionEl) {
-    return;
-  }
-  workspaceRegionEl.innerHTML = `
-    <section class="workspace-feedback workspace-feedback-error" role="alert">
-      <strong>Workspace Unavailable</strong>
-      <p>${escapeHtml(message)}</p>
-    </section>
-  `;
+  showWorkspaceFeedback("Workspace Unavailable", message, { error: true });
 }
 
 async function updateTicketStatus(ticketId, action) {
@@ -2274,9 +2298,16 @@ async function handleDetailClick(event) {
       "resolve-ticket": "resolved",
       "reopen-ticket": "reopen",
     };
+    const nextPoolStatusMap = {
+      "start-investigation": "investigating",
+      "resume-communicating": "communicating",
+      "resolve-ticket": "resolved",
+      "reopen-ticket": "communicating",
+    };
     button.disabled = true;
     try {
       await updateTicketStatus(selectedTicketId, actionMap[action]);
+      setSelectedPoolStatus(nextPoolStatusMap[action], { render: false });
       investigationReviseMode = false;
       tellAiDraft = "";
       await loadTickets({ refreshDetail: false });
@@ -2648,8 +2679,8 @@ function handleLocalLogout() {
   boardLoading = false;
   closeSocket();
   tickets = [];
+  selectedPoolStatus = "investigating";
   filterValues.priority = "all";
-  filterValues.status = "all";
   closeAllHeaderFilterComboboxes({ render: false });
   resetDetailWorkspaceState();
   window.location.hash = "#/tickets";
@@ -2716,14 +2747,16 @@ workspaceRegionEl?.addEventListener("change", (event) => {
 });
 railNavEl?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-nav-action]");
+  const statusButton = event.target.closest("[data-nav-status]");
+  if (statusButton) {
+    setSelectedPoolStatus(String(statusButton.dataset.navStatus || "investigating"), { render: false });
+    navigate("/tickets");
+    return;
+  }
   if (!button) {
     return;
   }
   const action = String(button.dataset.navAction || "").trim();
-  if (action === "go-pool") {
-    navigate("/tickets");
-    return;
-  }
   if (action === "go-detail" && selectedTicketId) {
     navigate(`/tickets/${encodeURIComponent(selectedTicketId)}`);
   }
