@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Any, Callable
 
 from backend.services.investigation_flow import (
@@ -19,6 +20,12 @@ from backend.services.support_router import (
 RAG_INSUFFICIENT_EVIDENCE_REASON = "rag_insufficient_evidence"
 RAG_POST_CHECK_INSUFFICIENT_REASON = "rag_post_check_insufficient"
 RAG_POST_CHECK_ERROR_REASON = "rag_post_check_error"
+_GENERIC_HOW_TO_RE = re.compile(r"^\s*(how\s+(?:do\s+i\s+)?(?:to|can\s+i)|what\s+is|what\s+are)\b", re.IGNORECASE)
+_TROUBLESHOOTING_SIGNAL_RE = re.compile(
+    r"\b(android|ios|macos|windows|linux|flutter|react native|unity|electron|sdk|version|error|"
+    r"crash|issue|problem|bug|fail|failing|failed|timeout|renew|renewal|callback|debug|troubleshoot)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -183,6 +190,51 @@ def assess_rag_answer_sufficiency(
     )
 
 
+def _quality_signal_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _quality_signal_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _should_keep_generic_grounded_rag_answer(
+    *,
+    message: str,
+    skill_result: SkillExecutionResult,
+    sufficiency: SufficiencyAssessment,
+) -> bool:
+    if str(sufficiency.decision).strip().lower() != "investigate":
+        return False
+    normalized_message = " ".join(str(message or "").split()).strip()
+    if not normalized_message or not _GENERIC_HOW_TO_RE.search(normalized_message):
+        return False
+    if _TROUBLESHOOTING_SIGNAL_RE.search(normalized_message):
+        return False
+
+    evidence_summary = skill_result.evidence_summary if isinstance(skill_result.evidence_summary, dict) else {}
+    quality_signals = (
+        evidence_summary.get("quality_signals")
+        if isinstance(evidence_summary.get("quality_signals"), dict)
+        else {}
+    )
+    if bool(quality_signals.get("needs_human")):
+        return False
+    if str(quality_signals.get("generation_mode") or "").strip().lower() != "structured_answer":
+        return False
+    if _quality_signal_float(quality_signals.get("top1_similarity_score")) < 0.9:
+        return False
+    if _quality_signal_int(quality_signals.get("selected_doc_count")) < 1:
+        return False
+    return bool(skill_result.citations)
+
+
 def orchestrate_ticket_execution(
     message: str,
     *,
@@ -231,8 +283,13 @@ def orchestrate_ticket_execution(
             investigation_reason = RAG_POST_CHECK_ERROR_REASON
         else:
             if sufficiency.decision == "investigate":
-                needs_investigating = True
-                investigation_reason = RAG_POST_CHECK_INSUFFICIENT_REASON
+                if not _should_keep_generic_grounded_rag_answer(
+                    message=message,
+                    skill_result=skill_result,
+                    sufficiency=sufficiency,
+                ):
+                    needs_investigating = True
+                    investigation_reason = RAG_POST_CHECK_INSUFFICIENT_REASON
 
     next_status = INVESTIGATING_STATUS if needs_investigating else COMMUNICATING_STATUS
     return TicketExecutionResult(

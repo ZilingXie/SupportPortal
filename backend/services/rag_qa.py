@@ -1331,6 +1331,8 @@ Return JSON with this exact schema:
 Requirements:
 - Use only facts explicitly supported by the Context Chunks.
 - Start "answer" with a direct answer to the user's question.
+- If the user does not specify a platform or SDK, keep the answer at a safe cross-platform level.
+- Do not include platform-specific callback names or one-SDK-only details unless the question asks for that platform.
 - Keep "key_steps" short and include only grounded actions or checks supported by the cited chunks.
 - Every factual claim in "answer" and "key_steps" must be supported by the cited chunks.
 - "citations" must contain only chunk_id values that exist in Context Chunks.
