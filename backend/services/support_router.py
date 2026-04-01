@@ -128,12 +128,16 @@ class SupportResolution:
 def _route_contract_for_scope(*, scope_label: str, action: str, reason: str) -> tuple[str, str, str]:
     clean_scope = _normalize_text(scope_label).lower()
     normalized_action = _normalize_text(action).lower()
-    clean_reason = _normalize_text(reason).lower()
 
     if clean_scope == "agora_technical":
         return "agora_docs_rag", "rag", "agora_docs_only"
     if clean_scope == "agora_non_technical":
-        return "web_company_info", "web_search", "official_web_search"
+        actual_action = normalized_action if normalized_action in {"web_search", "refuse"} else "web_search"
+        if actual_action == "web_search":
+            tooling = "official_web_search"
+        else:
+            tooling = "no_agora_docs_refusal"
+        return "web_company_info", actual_action, tooling
     if clean_scope == "small_talk":
         return "general_chat", "refuse", "no_agora_docs_refusal"
     if clean_scope == "non_agora":
@@ -459,10 +463,10 @@ def decide_support_route(
         return llm_decision
 
     return _build_route_decision(
-        scope_label="non_agora",
-        action="refuse",
+        scope_label="agora_technical",
+        action="rag",
         confidence=0.75,
-        reason="conservative_non_agora_fallback",
+        reason="conservative_agora_technical_fallback",
         matched_signals=[],
         response_language=response_language,
     )

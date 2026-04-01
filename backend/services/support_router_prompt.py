@@ -119,6 +119,26 @@ TECHNICAL_TERMS = (
     "test set",
     "automated test set",
     "auth benchmark",
+    "black screen",
+    "blank screen",
+    "black video",
+    "no video",
+    "no audio",
+    "frozen video",
+    "can't see remote video",
+    "cannot see remote video",
+    "can't hear",
+    "cannot hear",
+    "join failed",
+    "cannot join",
+    "can't join",
+    "crash",
+    "crashed",
+    "disconnect",
+    "disconnected",
+    "network quality",
+    "lag",
+    "laggy",
 )
 AGORA_SIGNALS = (
     "agora",
@@ -208,6 +228,16 @@ ROUTE_FEW_SHOT_EXAMPLES = (
             "confidence": 0.99,
             "reason": "small_talk_detected",
             "matched_signals": ["天气怎么样"],
+        },
+    },
+    {
+        "message": "I got black screen issue, what should I do?",
+        "hints": {"technical": ["black screen"], "flags": ["looks_like_question"]},
+        "output": {
+            "scope_label": "agora_technical",
+            "confidence": 0.86,
+            "reason": "technical_troubleshooting_symptom",
+            "matched_signals": ["black screen"],
         },
     },
     {
@@ -354,9 +384,10 @@ def build_route_system_prompt() -> str:
         "- agora_technical: Agora product usage, SDK/API integration, troubleshooting, configuration, feature fit, profile choice, permissions, recording strategy, notifications/signaling design, or docs-grounded benchmark/auth analysis\n"
         "Treat supplied hints as weak evidence, not hard labels.\n"
         "Use matched hints and ticket context when they help disambiguate.\n"
+        "If the message looks like RTC, audio/video, joining, rendering, or connectivity troubleshooting and there is no explicit non-Agora signal, prefer agora_technical.\n"
         "If the message concerns product-mode comparisons, recording choices, auth diagnostics, or benchmark questions anchored in Agora docs topics, choose agora_technical.\n"
         "If the message is only about company/public information, choose agora_non_technical.\n"
-        "If the message is clearly unrelated or general IT help, choose non_agora.\n"
+        "If the message is clearly unrelated or general IT help such as printers, Outlook, Excel, office wifi, or a computer blue screen, choose non_agora.\n"
         "Return JSON only with keys: scope_label, confidence, reason, matched_signals.\n"
         "confidence must be between 0 and 1.\n"
         "matched_signals must be a short list of helpful hint strings.\n\n"

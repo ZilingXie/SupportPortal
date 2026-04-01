@@ -63,6 +63,13 @@ class SupportRouterTests(unittest.TestCase):
         self.assertIn("auth benchmark", hints["context_matches"]["technical"])
         self.assertTrue(hints["flags"]["looks_like_question"])
 
+    def test_build_route_prompt_hints_treats_black_screen_as_technical_symptom(self) -> None:
+        hints = build_route_prompt_hints("I got a black screen issue after joining the call, what should I do?")
+
+        self.assertIn("black screen", hints["message_matches"]["technical"])
+        self.assertNotIn("black screen", hints["message_matches"]["system"])
+        self.assertTrue(hints["flags"]["looks_like_question"])
+
     def test_decide_support_route_uses_llm_classification_for_small_talk(self) -> None:
         payload = {
             "output_text": json.dumps(
@@ -164,7 +171,7 @@ class SupportRouterTests(unittest.TestCase):
         self.assertEqual(decision.execution_action, "rag")
         self.assertEqual(decision.reason, "few_shot_follow_up")
 
-    def test_decide_support_route_falls_back_to_non_agora_for_ambiguous_messages(self) -> None:
+    def test_decide_support_route_falls_back_to_agora_technical_for_ambiguous_messages(self) -> None:
         payload = {
             "output_text": json.dumps(
                 {
@@ -181,23 +188,25 @@ class SupportRouterTests(unittest.TestCase):
         ):
             decision = decide_support_route("what should I do next")
 
-        self.assertEqual(decision.scope_label, "non_agora")
-        self.assertEqual(decision.route_family, "fallback_or_refuse")
-        self.assertEqual(decision.execution_action, "refuse")
-        self.assertEqual(decision.route, "refuse")
+        self.assertEqual(decision.scope_label, "agora_technical")
+        self.assertEqual(decision.route_family, "agora_docs_rag")
+        self.assertEqual(decision.execution_action, "rag")
+        self.assertEqual(decision.route, "rag")
+        self.assertEqual(decision.reason, "conservative_agora_technical_fallback")
 
-    def test_decide_support_route_falls_back_to_non_agora_on_invalid_json(self) -> None:
+    def test_decide_support_route_falls_back_to_agora_technical_on_invalid_json(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
             "urllib.request.urlopen",
             return_value=_FakeResponse({"output_text": "not-json"}),
         ):
             decision = decide_support_route("Would Notifications help me build viewer analytics?")
 
-        self.assertEqual(decision.scope_label, "non_agora")
-        self.assertEqual(decision.route_family, "fallback_or_refuse")
-        self.assertEqual(decision.execution_action, "refuse")
+        self.assertEqual(decision.scope_label, "agora_technical")
+        self.assertEqual(decision.route_family, "agora_docs_rag")
+        self.assertEqual(decision.execution_action, "rag")
+        self.assertEqual(decision.reason, "conservative_agora_technical_fallback")
 
-    def test_decide_support_route_falls_back_to_non_agora_on_http_failure(self) -> None:
+    def test_decide_support_route_falls_back_to_agora_technical_on_http_failure(self) -> None:
         def _raise_http_error(*_args, **_kwargs):
             raise urllib.error.HTTPError(
                 url="https://api.openai.com/v1/responses",
@@ -213,17 +222,19 @@ class SupportRouterTests(unittest.TestCase):
         ):
             decision = decide_support_route("If compliance requires one file per participant, should I avoid composite?")
 
-        self.assertEqual(decision.scope_label, "non_agora")
-        self.assertEqual(decision.route_family, "fallback_or_refuse")
-        self.assertEqual(decision.execution_action, "refuse")
+        self.assertEqual(decision.scope_label, "agora_technical")
+        self.assertEqual(decision.route_family, "agora_docs_rag")
+        self.assertEqual(decision.execution_action, "rag")
+        self.assertEqual(decision.reason, "conservative_agora_technical_fallback")
 
     def test_decide_support_route_uses_conservative_fallback_when_router_unavailable(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=True):
             decision = decide_support_route("What is the real difference between COMMUNICATION and LIVE_BROADCASTING?")
 
-        self.assertEqual(decision.scope_label, "non_agora")
-        self.assertEqual(decision.route_family, "fallback_or_refuse")
-        self.assertEqual(decision.execution_action, "refuse")
+        self.assertEqual(decision.scope_label, "agora_technical")
+        self.assertEqual(decision.route_family, "agora_docs_rag")
+        self.assertEqual(decision.execution_action, "rag")
+        self.assertEqual(decision.reason, "conservative_agora_technical_fallback")
 
     def test_llm_route_decision_uses_responses_payload_with_configured_settings(self) -> None:
         captured_request: dict[str, object] = {}
