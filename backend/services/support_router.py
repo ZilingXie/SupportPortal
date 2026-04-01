@@ -10,6 +10,7 @@ import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from backend.services.prompts.web_search import build_web_search_system_prompt, build_web_search_user_prompt
 from backend.services.support_router_prompt import build_route_system_prompt, build_route_user_payload
 
 LOGGER = logging.getLogger(__name__)
@@ -606,24 +607,25 @@ def _openai_web_search(
     }
     if allowed_domains:
         tool["filters"] = {"allowed_domains": allowed_domains}
-    guidance = (
-        "You are Agora's support agent handling non-technical Agora questions. "
-        f"Answer in {'Chinese' if response_language == 'zh' else 'English'}. "
-        "Use web search and keep the answer concise and factual. "
-        "Prefer official Agora sources. "
+    system_prompt = build_web_search_system_prompt(
+        response_language=response_language,
+        official_only=bool(allowed_domains),
     )
-    if allowed_domains:
-        guidance += "If official sources do not contain the answer, reply exactly INSUFFICIENT."
-    else:
-        guidance += (
-            "When official Agora sources do not contain the answer, you may supplement with authoritative public sources. "
-        )
-    prompt = f"{guidance}\nQuestion: {question}"
+    user_prompt = build_web_search_user_prompt(question=question)
     payload = {
         "model": model,
         "tools": [tool],
         "include": ["web_search_call.action.sources"],
-        "input": prompt,
+        "input": [
+            {
+                "role": "system",
+                "content": [{"type": "input_text", "text": system_prompt}],
+            },
+            {
+                "role": "user",
+                "content": [{"type": "input_text", "text": user_prompt}],
+            },
+        ],
     }
     request = urllib.request.Request(
         "https://api.openai.com/v1/responses",

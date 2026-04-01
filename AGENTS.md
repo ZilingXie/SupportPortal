@@ -48,3 +48,8 @@
 1. Every RAG-related change must be appended to `/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/rag_change_log.md` before the task is considered complete.
 2. RAG-related changes include retrieval logic, chunking strategy, ingestion flow, embedding configuration, evaluation logic, vector tables, and any RAG data reset or backfill.
 3. Each entry must include the date, summary, reason, affected files or config, data impact, and verification evidence.
+
+## Prompt and Model Change Logging
+1. Every prompt-related or model-related change must be appended to `/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/prompt_change_log.md` before the task is considered complete.
+2. Prompt-related or model-related changes include system prompts, user prompt builders, few-shot examples, fallback instructions, refusal templates, model names, model providers, reasoning effort, temperature, tooling mode, domain filters, and any other configuration that can change model behavior.
+3. Each entry must include the date, area or subsystem, prompt or model version, summary, reason, affected files or config, expected behavior change, and verification evidence.
