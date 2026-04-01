@@ -12,6 +12,39 @@ For each new entry, record:
 
 ## 2026-03-31 - Formal source-family metadata and pre-rerank family diversification
 
+## 2026-04-01 - Routing bias shifted ambiguous troubleshooting toward Agora technical RAG
+
+- Summary: Changed support routing so ambiguous troubleshooting phrasing now defaults toward `agora_technical / rag` instead of conservative refusal, moved `small_talk` onto direct refusal, added troubleshooting symptom hints and few-shot coverage for `black screen` style issues, and aligned route-aware benchmark expectations with `small_talk -> refuse`.
+- Reason: Queries such as `i got black screen issue, what should i do?` were being routed to `non_agora / refuse` even though they should first attempt Agora technical retrieval and only escalate to engineer investigation if RAG cannot ground an answer.
+- Affected files or config:
+  - `backend/services/support_router.py`
+  - `backend/services/support_router_prompt.py`
+  - `backend/services/rag_benchmark.py`
+  - `backend/tests/test_support_router.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema migration or RAG corpus rebuild
+  - New routing default for low-confidence / router-error cases is `agora_technical / rag` with reason `conservative_agora_technical_fallback`
+  - Troubleshooting symptom phrases such as `black screen`, `no audio`, `join failed`, `disconnect`, and `network quality` now contribute technical routing hints instead of being left to generic fallback
+  - `small_talk` continues to keep its own `scope_label`, but the live execution action is now `refuse` rather than `controlled_response`
+  - Route-aware benchmark rows and scorecard expectations for `small_talk` now treat refusal as the correct execution action and refusal tooling profile
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/support_router.py backend/services/support_router_prompt.py backend/services/rag_benchmark.py backend/tests/test_support_router.py backend/tests/test_investigation_flow.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_rag_scorecard_repository.py`
+  - `scripts/workflow/link_worktree_env.sh /Users/xieziling/.config/superpowers/worktrees/SupportPortal/routing-agora-technical-bias`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - Successful live smoke before host-side Nginx instability:
+    - `curl -sS -X POST http://localhost:8080/api/tickets/query -H 'Content-Type: application/json' -d '{"customer_id":"C-SMOKE-BLACKSCREEN","message":"i got black screen issue, what should i do?"}'`
+    - Returned `answer_route="rag"`, `scope_label="agora_technical"`, `route_reason="technical_troubleshooting_symptom"`, `status="communicating"`, and the short ACK instead of a refusal
+  - Container-internal health verification after restart:
+    - `podman exec deployment_nginx_1 wget -qO- http://deployment_api_1:8000/health`
+    - Returned `status="ok"`, `ticket_storage="postgres"`, `knowledge_storage="postgres"`, and `rag_service="ok"`
+
 - Summary: Added canonical `source_family` metadata to normalized official and technical documents, propagated it into document and chunk metadata JSONB, and moved family-aware diversification forward so the external rerank window now prefers distinct families before the final top-k selection step.
 - Reason: Retrieval was still treating sibling platform variants as separate families because fallback keys were based on `source_path` stems, and same-family duplicates could still crowd the external rerank window before final-context diversification had a chance to help.
 - Affected files or config:

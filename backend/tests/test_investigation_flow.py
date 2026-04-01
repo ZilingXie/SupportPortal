@@ -254,6 +254,49 @@ class InvestigationFlowTests(unittest.TestCase):
         task = enqueue_mock.await_args_list[0].args[0]
         self.assertEqual(task["task_type"], "ticket_message_sentiment")
 
+    def test_black_screen_query_defaults_to_rag_and_investigates_when_rag_is_insufficient(self) -> None:
+        with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="Got it, let me check this for you.",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main.rag_service_client,
+            "query_answer_with_recovery",
+            return_value=(main.INSUFFICIENT_EVIDENCE_REPLY, 0.0, [], [], True),
+        ), patch.object(
+            main,
+            "generate_investigation_ai_turn",
+            return_value={
+                "state": "active",
+                "message": "Please confirm whether the black screen affects local preview or remote video only.",
+                "draft_customer_reply": None,
+            },
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-INV-110",
+                    "customer_id": "C-001",
+                    "message": "i got black screen issue, what should i do?",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "investigating")
+        self.assertEqual(payload["answer_route"], "rag")
+        self.assertEqual(payload["scope_label"], "agora_technical")
+        self.assertEqual(payload["route_reason"], "conservative_agora_technical_fallback")
+        self.assertEqual(payload["answer"], "Got it, let me check this for you.")
+
     def test_customer_message_sentiment_falls_back_to_background_tagging_when_queue_is_unavailable(self) -> None:
         resolution = SupportResolution(
             answer="Please confirm whether the token server allows renewal.",
