@@ -832,12 +832,18 @@ button {
 }
 
 .history-row {
+  --history-surface: rgba(255, 255, 255, 0.88);
+  --history-surface-hover: #fff;
+  --history-surface-active: var(--history-surface-hover);
+  --history-surface-ring: rgba(0, 176, 255, 0.16);
+  --history-surface-shadow: 0 14px 34px rgba(52, 61, 150, 0.08);
+  --history-surface-shadow-hover: 0 20px 40px rgba(52, 61, 150, 0.12);
   display: grid;
   gap: 14px;
   padding: 18px 20px;
   border-radius: 24px;
-  background: rgba(255, 255, 255, 0.88);
-  box-shadow: 0 14px 34px rgba(52, 61, 150, 0.08);
+  background: var(--history-surface);
+  box-shadow: var(--history-surface-shadow);
   cursor: pointer;
   transition:
     transform 0.18s ease,
@@ -847,15 +853,50 @@ button {
 
 .history-row:hover {
   transform: translateY(-1px);
-  background: #fff;
-  box-shadow: 0 20px 40px rgba(52, 61, 150, 0.12);
+  background: var(--history-surface-hover);
+  box-shadow: var(--history-surface-shadow-hover);
 }
 
 .history-row.is-active {
-  background: linear-gradient(180deg, rgba(202, 230, 255, 0.88) 0%, rgba(255, 255, 255, 0.92) 100%);
+  background: var(--history-surface-active);
   box-shadow:
-    0 20px 40px rgba(52, 61, 150, 0.12),
-    inset 0 0 0 1px rgba(0, 176, 255, 0.16);
+    var(--history-surface-shadow-hover),
+    inset 0 0 0 1px var(--history-surface-ring);
+}
+
+.status-surface-open {
+  --history-surface: linear-gradient(180deg, rgba(238, 248, 239, 0.98) 0%, rgba(225, 243, 229, 0.96) 100%);
+  --history-surface-hover: linear-gradient(180deg, rgba(243, 251, 244, 0.99) 0%, rgba(231, 246, 234, 0.98) 100%);
+  --history-surface-active: linear-gradient(180deg, rgba(234, 247, 236, 0.99) 0%, rgba(220, 240, 224, 0.97) 100%);
+  --history-surface-ring: rgba(47, 111, 68, 0.16);
+}
+
+.status-surface-communicating {
+  --history-surface: linear-gradient(180deg, rgba(240, 248, 255, 0.98) 0%, rgba(226, 239, 255, 0.95) 100%);
+  --history-surface-hover: linear-gradient(180deg, rgba(245, 250, 255, 0.99) 0%, rgba(233, 243, 255, 0.98) 100%);
+  --history-surface-active: linear-gradient(180deg, rgba(236, 246, 255, 0.99) 0%, rgba(223, 237, 255, 0.97) 100%);
+  --history-surface-ring: rgba(0, 100, 147, 0.16);
+}
+
+.status-surface-escalated {
+  --history-surface: linear-gradient(180deg, rgba(255, 241, 243, 0.98) 0%, rgba(255, 226, 231, 0.95) 100%);
+  --history-surface-hover: linear-gradient(180deg, rgba(255, 245, 246, 0.99) 0%, rgba(255, 233, 237, 0.98) 100%);
+  --history-surface-active: linear-gradient(180deg, rgba(255, 238, 241, 0.99) 0%, rgba(255, 223, 228, 0.97) 100%);
+  --history-surface-ring: rgba(186, 26, 26, 0.16);
+}
+
+.status-surface-investigating {
+  --history-surface: linear-gradient(180deg, rgba(255, 245, 236, 0.98) 0%, rgba(255, 232, 218, 0.95) 100%);
+  --history-surface-hover: linear-gradient(180deg, rgba(255, 248, 241, 0.99) 0%, rgba(255, 238, 226, 0.98) 100%);
+  --history-surface-active: linear-gradient(180deg, rgba(255, 243, 233, 0.99) 0%, rgba(255, 229, 214, 0.97) 100%);
+  --history-surface-ring: rgba(159, 93, 18, 0.16);
+}
+
+.status-surface-resolved {
+  --history-surface: linear-gradient(180deg, rgba(241, 244, 247, 0.98) 0%, rgba(231, 235, 240, 0.96) 100%);
+  --history-surface-hover: linear-gradient(180deg, rgba(245, 247, 250, 0.99) 0%, rgba(236, 239, 243, 0.98) 100%);
+  --history-surface-active: linear-gradient(180deg, rgba(239, 242, 246, 0.99) 0%, rgba(229, 233, 238, 0.97) 100%);
+  --history-surface-ring: rgba(110, 120, 130, 0.16);
 }
 
 .history-row-header,
@@ -1193,9 +1234,9 @@ button {
 }
 
 .context-chip.is-escalated {
-  color: var(--warning);
-  border-color: rgba(159, 93, 18, 0.18);
-  background: rgba(255, 245, 235, 0.9);
+  color: var(--danger);
+  border-color: rgba(186, 26, 26, 0.18);
+  background: rgba(255, 238, 241, 0.94);
 }
 
 .context-divider {
@@ -1799,28 +1840,28 @@ a.citation-pill:hover {
 }
 
 .status-open {
-  color: var(--secondary);
-  background: rgba(76, 86, 175, 0.12);
+  color: #2f6f44;
+  background: rgba(216, 242, 220, 0.96);
 }
 
 .status-communicating {
-  color: var(--warning);
-  background: rgba(159, 93, 18, 0.12);
+  color: var(--primary);
+  background: rgba(202, 230, 255, 0.9);
 }
 
 .status-investigating {
   color: var(--warning);
-  background: rgba(159, 93, 18, 0.18);
+  background: rgba(255, 232, 214, 0.94);
 }
 
 .status-escalated {
-  color: var(--warning);
-  background: rgba(255, 234, 205, 0.92);
+  color: var(--danger);
+  background: rgba(255, 223, 228, 0.92);
 }
 
 .status-resolved {
-  color: #005763;
-  background: rgba(0, 183, 204, 0.14);
+  color: var(--ink-muted);
+  background: rgba(228, 233, 239, 0.96);
 }
 
 @media (max-width: 1200px) {
