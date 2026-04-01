@@ -209,6 +209,8 @@ services:
     image: localhost/supportportal-app:latest
     env_file:
       - ../.env
+    volumes:
+      - huggingface_cache:/root/.cache/huggingface
     command:
       - python
       - -m
@@ -225,6 +227,9 @@ services:
       RAG_SERVICE_URL: ${RAG_SERVICE_URL:-http://rag_api:8020}
       RAG_SERVICE_TIMEOUT_SECONDS: ${RAG_SERVICE_TIMEOUT_SECONDS:-45.0}
       RAG_SERVICE_SHARED_TOKEN: ${RAG_SERVICE_SHARED_TOKEN:-supportportal-rag-internal}
+      SENTIMENT_PROVIDER: ${WORKER_SENTIMENT_PROVIDER:-legacy}
+      SENTIMENT_MODEL_ID: ${SENTIMENT_MODEL_ID:-j-hartmann/emotion-english-distilroberta-base}
+      SENTIMENT_MIN_CONFIDENCE: ${SENTIMENT_MIN_CONFIDENCE:-0.45}
     depends_on:
       redis:
         condition: service_healthy

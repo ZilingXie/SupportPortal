@@ -60,6 +60,21 @@ def _extract_response_text(response_payload: dict[str, Any]) -> str:
     return ""
 
 
+def _read_http_error_payload(error: urllib.error.HTTPError) -> str:
+    try:
+        body = error.read()
+    except Exception:
+        return ""
+    finally:
+        try:
+            error.close()
+        except Exception:
+            pass
+    if not body:
+        return ""
+    return body.decode("utf-8", errors="replace")
+
+
 def _call_responses_api(*, api_key: str, payload: dict[str, Any], timeout_seconds: float) -> dict[str, Any]:
     request = urllib.request.Request(
         "https://api.openai.com/v1/responses",
@@ -73,6 +88,23 @@ def _call_responses_api(*, api_key: str, payload: dict[str, Any], timeout_second
     try:
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             raw_payload = json.loads(response.read().decode("utf-8", errors="replace") or "{}")
+    except urllib.error.HTTPError as exc:
+        if "temperature" in payload:
+            error_payload = _read_http_error_payload(exc).lower()
+            if exc.code in {400, 422} and "temperature" in error_payload:
+                retry_payload = dict(payload)
+                retry_payload.pop("temperature", None)
+                return _call_responses_api(
+                    api_key=api_key,
+                    payload=retry_payload,
+                    timeout_seconds=timeout_seconds,
+                )
+        else:
+            try:
+                exc.close()
+            except Exception:
+                pass
+        raise RagSufficiencyJudgeError(f"sufficiency_judge_request_failed: {exc}") from exc
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
         raise RagSufficiencyJudgeError(f"sufficiency_judge_request_failed: {exc}") from exc
     return raw_payload if isinstance(raw_payload, dict) else {}
