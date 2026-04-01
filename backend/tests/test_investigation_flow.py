@@ -143,8 +143,12 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(ticket["messages"][-1]["role"], "assistant")
         assistant_messages = [message["content"] for message in ticket["messages"] if message["role"] == "assistant"]
         self.assertIn("收到，我先帮你看一下。", assistant_messages)
-        self.assertTrue(any("正在进一步调查中" in content for content in assistant_messages))
+        self.assertTrue(
+            any("我已经为这个问题创建了工程师工单" in content for content in assistant_messages)
+        )
         self.assertNotIn("engineer_ai", [message["role"] for message in ticket["messages"]])
+        event_types = [item["event_type"] for item in self.repository.list_ticket_events("TK-INV-100")]
+        self.assertIn("ticket_investigation_started", event_types)
 
     def test_customer_follow_up_during_investigation_keeps_same_thread_and_clears_confirmation(self) -> None:
         self._seed_ticket(
@@ -468,7 +472,9 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(ticket["active_investigation"]["trigger_reason"], "rag_post_check_insufficient")
         assistant_messages = [message["content"] for message in ticket["messages"] if message["role"] == "assistant"]
         self.assertFalse(any("Please upgrade to SDK 4.2.2" in content for content in assistant_messages))
-        self.assertTrue(any("We are investigating this further." in content for content in assistant_messages))
+        self.assertTrue(
+            any("I've opened an engineer ticket for this issue" in content for content in assistant_messages)
+        )
 
     def test_ticket_query_post_rag_check_error_starts_investigation(self) -> None:
         resolution = SupportResolution(
@@ -631,6 +637,9 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(ticket["messages"][-1]["role"], "assistant")
         self.assertIn("Please upgrade to SDK 4.2.2", ticket["messages"][-1]["content"])
         self.assertEqual(ticket["investigation_history"][0]["state"], "closed")
+        event_types = [item["event_type"] for item in self.repository.list_ticket_events("TK-INV-103")]
+        self.assertIn("ticket_investigation_closed", event_types)
+        self.assertIn("ticket_guidance_applied", event_types)
 
     def test_confirmation_revise_records_engineer_note_and_keeps_investigation_active(self) -> None:
         self._seed_ticket(
