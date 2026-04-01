@@ -124,8 +124,8 @@ class EngineerUiContractTests(unittest.TestCase):
 
         self.assertIn("Concierge AI", html)
         self.assertIn("Manrope", html)
-        self.assertIn("./styles.css?v=20260331-engineer-single-flow-1", html)
-        self.assertIn('./app.js?v=20260331-engineer-single-flow-1', html)
+        self.assertIn("./styles.css?v=20260401-engineer-status-surfaces-1", html)
+        self.assertIn('./app.js?v=20260401-engineer-status-surfaces-1', html)
         self.assertIn("function parseRoute()", app_source)
         self.assertIn('path.startsWith("/tickets/")', app_source)
         self.assertIn("function renderTicketPoolView()", app_source)
@@ -168,6 +168,16 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn(".ticket-row", css)
         self.assertIn(".ticket-pool-grid", css)
         self.assertIn(".pool-view-toggle", css)
+        self.assertIn(".status-open {\n  color: #2f6f44;", css)
+        self.assertIn(".status-communicating {\n  color: var(--primary);", css)
+        self.assertIn(".status-escalated {\n  color: var(--danger);", css)
+        self.assertIn(".status-investigating {\n  color: var(--warning);", css)
+        self.assertIn(".status-resolved {\n  color: var(--ink-muted);", css)
+        self.assertIn(".status-surface-open", css)
+        self.assertIn(".status-surface-communicating", css)
+        self.assertIn(".status-surface-escalated", css)
+        self.assertIn(".status-surface-investigating", css)
+        self.assertIn(".status-surface-resolved", css)
         self.assertIn(".ticket-workspace", css)
 
     def test_engineer_ticket_pool_defaults_to_list_rows_and_prioritizes_investigating(self) -> None:
@@ -176,7 +186,16 @@ class EngineerUiContractTests(unittest.TestCase):
                 """
                 tickets = [
                   {
-                    ticket_id: "TK-OPEN-URGENT",
+                    ticket_id: "TK-OPEN-LOW",
+                    subject: "open ticket",
+                    requester: "user-open",
+                    priority: "low",
+                    status: "open",
+                    created_at: "2026-03-24T07:00:00+00:00",
+                    updated_at: "2026-03-24T07:10:00+00:00",
+                  },
+                  {
+                    ticket_id: "TK-COMM-URGENT",
                     subject: "communicating urgent ticket",
                     requester: "user-1",
                     priority: "urgent",
@@ -205,6 +224,24 @@ class EngineerUiContractTests(unittest.TestCase):
                         },
                       ],
                     },
+                  },
+                  {
+                    ticket_id: "TK-ESCALATED-NORMAL",
+                    subject: "escalated ticket",
+                    requester: "user-3",
+                    priority: "normal",
+                    status: "escalated",
+                    created_at: "2026-03-24T08:40:00+00:00",
+                    updated_at: "2026-03-24T09:20:00+00:00",
+                  },
+                  {
+                    ticket_id: "TK-RESOLVED-NORMAL",
+                    subject: "resolved ticket",
+                    requester: "user-4",
+                    priority: "normal",
+                    status: "resolved",
+                    created_at: "2026-03-24T06:00:00+00:00",
+                    updated_at: "2026-03-24T06:20:00+00:00",
                   },
                 ];
 
@@ -239,6 +276,21 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (html.includes("ticket-pool-grid")) {{
                   throw new Error("List mode should not render the grid container.");
                 }}
+                if (!html.includes("status-surface-open")) {{
+                  throw new Error("Open list cards should use the open surface class.");
+                }}
+                if (!html.includes("status-surface-communicating")) {{
+                  throw new Error("Communicating list cards should use the communicating surface class.");
+                }}
+                if (!html.includes("status-surface-escalated")) {{
+                  throw new Error("Escalated list cards should use the escalated surface class.");
+                }}
+                if (!html.includes("status-surface-investigating")) {{
+                  throw new Error("Investigating list cards should use the investigating surface class.");
+                }}
+                if (!html.includes("status-surface-resolved")) {{
+                  throw new Error("Resolved list cards should use the resolved surface class.");
+                }}
                 if (!html.includes('data-ticket-row="true"')) {{
                   throw new Error("Ticket pool rows should be marked as directly clickable rows.");
                 }}
@@ -263,12 +315,15 @@ class EngineerUiContractTests(unittest.TestCase):
                 }}
 
                 const waitingIndex = html.indexOf("TK-INVESTIGATING-LOW");
-                const openIndex = html.indexOf("TK-OPEN-URGENT");
-                if (waitingIndex === -1 || openIndex === -1) {{
-                  throw new Error("Expected both sample tickets in rendered HTML.");
+                const escalatedIndex = html.indexOf("TK-ESCALATED-NORMAL");
+                const communicatingIndex = html.indexOf("TK-COMM-URGENT");
+                const openIndex = html.indexOf("TK-OPEN-LOW");
+                const resolvedIndex = html.indexOf("TK-RESOLVED-NORMAL");
+                if (waitingIndex === -1 || escalatedIndex === -1 || communicatingIndex === -1 || openIndex === -1 || resolvedIndex === -1) {{
+                  throw new Error("Expected all sample tickets in rendered HTML.");
                 }}
-                if (waitingIndex > openIndex) {{
-                  throw new Error("Investigating tickets should render ahead of normal open tickets.");
+                if (waitingIndex > escalatedIndex || escalatedIndex > communicatingIndex || communicatingIndex > openIndex) {{
+                  throw new Error("Investigating should render ahead of escalated, which should render ahead of communicating and open.");
                 }}
 
                 const waitingRowStart = html.indexOf('data-ticket-id="TK-INVESTIGATING-LOW"');
@@ -362,6 +417,12 @@ class EngineerUiContractTests(unittest.TestCase):
                 }}
                 if (html.includes("ticket-pool-list")) {{
                   throw new Error("Grid mode should not render the list container.");
+                }}
+                if (!html.includes("status-surface-investigating")) {{
+                  throw new Error("Investigating grid cards should use the investigating surface class.");
+                }}
+                if (!html.includes("status-surface-escalated")) {{
+                  throw new Error("Escalated grid cards should use the escalated surface class.");
                 }}
                 if (!html.includes("ticket-pool-card")) {{
                   throw new Error("Grid mode should render compact pool cards.");

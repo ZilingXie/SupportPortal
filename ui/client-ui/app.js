@@ -10,11 +10,23 @@ const DEMO_USERS = [{ id: "user-1", name: "Admin", email: "admin", password: "ad
 const ENGINEER_ASSISTANCE_WAIT_TEXT = "Estimate waiting time: 3 hours";
 
 const STATUS_CONFIG = {
-  open: { label: "Open", className: "status-open" },
-  communicating: { label: "Communicating", className: "status-communicating" },
-  investigating: { label: "Investigating", className: "status-investigating" },
-  escalated: { label: "Waiting for Engineer", className: "status-escalated" },
-  resolved: { label: "Resolved", className: "status-resolved" },
+  open: { label: "Open", className: "status-open", surfaceClass: "status-surface-open" },
+  communicating: {
+    label: "Communicating",
+    className: "status-communicating",
+    surfaceClass: "status-surface-communicating",
+  },
+  investigating: {
+    label: "Investigating",
+    className: "status-investigating",
+    surfaceClass: "status-surface-investigating",
+  },
+  escalated: {
+    label: "Waiting for Engineer",
+    className: "status-escalated",
+    surfaceClass: "status-surface-escalated",
+  },
+  resolved: { label: "Resolved", className: "status-resolved", surfaceClass: "status-surface-resolved" },
 };
 
 const STATUS_FILTER_OPTIONS = [
@@ -785,6 +797,11 @@ function statusBadge(status) {
   return `<span class="status-badge ${config.className}">${config.label}</span>`;
 }
 
+function historySurfaceClass(status) {
+  const config = STATUS_CONFIG[String(status || "").trim().toLowerCase()] || STATUS_CONFIG.open;
+  return config.surfaceClass;
+}
+
 function buildHistoryRowActions(ticket) {
   return `
     <div class="history-row-actions">
@@ -814,6 +831,8 @@ function renderHistoryRow(ticket, options = {}) {
   const classes = ["history-row"];
   if (compact) {
     classes.push("history-row-compact");
+  } else {
+    classes.push(historySurfaceClass(ticket.status));
   }
   if (active) {
     classes.push("is-active");
