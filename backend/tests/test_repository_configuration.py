@@ -145,6 +145,14 @@ class _ReusableConnection:
 
 
 class RepositoryConfigurationTests(unittest.TestCase):
+    def test_ticket_storage_contract_removes_priority_column_and_index(self) -> None:
+        sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
+        repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("priority TEXT", sql_source)
+        self.assertNotIn("idx_support_tickets_priority_updated", repo_source)
+        self.assertNotIn("def _normalize_priority", repo_source)
+
     def test_ticket_repository_requires_ticket_db_dsn(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(RuntimeError):
@@ -407,7 +415,6 @@ class RepositoryConfigurationTests(unittest.TestCase):
             "requester": "Requester",
             "subject": "Subject",
             "status": "communicating",
-            "priority": "normal",
             "last_engineer_action": None,
             "created_at": "2026-03-31T00:00:00+00:00",
             "updated_at": "2026-03-31T00:00:00+00:00",
