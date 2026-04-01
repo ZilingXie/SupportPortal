@@ -102,7 +102,6 @@ ACTIVE_TICKET_STATUSES = {
     ESCALATED_STATUS,
     INVESTIGATING_STATUS,
 }
-PRIORITY_RANK = {"urgent": 4, "high": 3, "normal": 2, "low": 1}
 LOGGER = logging.getLogger(__name__)
 _UNAVAILABLE_MODELS: set[str] = set()
 
@@ -281,12 +280,6 @@ def derive_subject(message: str) -> str:
     return normalized[:100]
 
 
-def priority_sort_value(priority: str | None) -> int:
-    if not priority:
-        return PRIORITY_RANK["normal"]
-    return PRIORITY_RANK.get(str(priority).lower(), PRIORITY_RANK["normal"])
-
-
 def latest_customer_message(ticket: dict[str, Any]) -> str:
     messages = ticket.get("messages", [])
     for message in reversed(messages):
@@ -299,7 +292,6 @@ def ensure_ticket_defaults(ticket: dict[str, Any]) -> None:
     created_at = ticket.get("created_at") or now_iso()
     ticket["created_at"] = created_at
     ticket.setdefault("updated_at", created_at)
-    ticket.setdefault("priority", "normal")
     ticket["status"] = normalize_ticket_status(ticket.get("status"))
     ticket.setdefault("messages", [])
     ticket.setdefault("subject", "General support request")
@@ -376,7 +368,7 @@ def build_ai_followup(ticket: dict[str, Any], solution: str) -> str:
         f"Ticket ID: {ticket.get('ticket_id')}\n"
         f"Subject: {ticket.get('subject')}\n"
         f"Status: {ticket.get('status')}\n"
-        f"Priority: {ticket.get('priority')}\n\n"
+        "\n"
         "Conversation context (latest first not guaranteed):\n"
         + "\n".join(context_lines)
         + "\n\nEngineer guidance:\n"
@@ -523,7 +515,6 @@ def build_engineer_followup_request(ticket: dict[str, Any], customer_message: st
         f"Ticket ID: {ticket.get('ticket_id')}\n"
         f"Subject: {ticket.get('subject')}\n"
         f"Status: {ticket.get('status')}\n"
-        f"Priority: {ticket.get('priority')}\n"
         "Recent messages:\n"
         + "\n".join(context_lines)
     )
@@ -556,7 +547,6 @@ def build_engineer_followup_request(ticket: dict[str, Any], customer_message: st
 def _summary_fallback(ticket: dict[str, Any]) -> tuple[str, str]:
     subject = str(ticket.get("subject", "")).strip() or "General support request"
     status = str(ticket.get("status", "open")).strip().lower()
-    priority = str(ticket.get("priority", "normal")).strip().lower()
     active_investigation = (
         ticket.get("active_investigation")
         if isinstance(ticket.get("active_investigation"), dict)
@@ -589,18 +579,18 @@ def _summary_fallback(ticket: dict[str, Any]) -> tuple[str, str]:
         if latest_customer and latest_assistant:
             break
 
-    summary_parts = [f"Ticket subject is '{subject}' with status {status} and priority {priority}."]
+    summary_parts = [f"Ticket subject is '{subject}' with status {status}."]
     if latest_customer:
         summary_parts.append(f"Latest customer request: {latest_customer[:260]}")
     if latest_assistant:
         summary_parts.append(f"Latest AI response: {latest_assistant[:260]}")
     if active_investigation is not None:
         summary_parts.append(
-            f"Active investigation state is {investigation_state or 'active'}."
+            f"Open engineer ticket state is {investigation_state or 'active'}."
         )
         if latest_internal_update:
             summary_parts.append(
-                f"Latest internal investigation update: {latest_internal_update[:260]}"
+                f"Latest engineer ticket update: {latest_internal_update[:260]}"
             )
     if not latest_customer and not latest_assistant and active_investigation is None:
         summary_parts.append("No conversation history is available yet.")
@@ -612,7 +602,7 @@ def _summary_fallback(ticket: dict[str, Any]) -> tuple[str, str]:
         )
     elif status == INVESTIGATING_STATUS:
         next_action = (
-            "Continue the internal investigation, gather the next missing detail, and request final confirmation when the customer reply is ready."
+            "Continue the engineer ticket, gather the next missing detail, and request final confirmation when the customer reply is ready."
         )
     elif status == ESCALATED_STATUS:
         next_action = (
@@ -740,7 +730,6 @@ def build_ticket_summary(ticket: dict[str, Any]) -> tuple[str, str, str]:
     ticket_id = str(ticket.get("ticket_id", "")).strip()
     subject = str(ticket.get("subject", "")).strip()
     status = str(ticket.get("status", "")).strip()
-    priority = str(ticket.get("priority", "")).strip()
     requester = str(ticket.get("requester") or ticket.get("customer_id") or "").strip()
     active_investigation = (
         ticket.get("active_investigation")
@@ -767,7 +756,6 @@ def build_ticket_summary(ticket: dict[str, Any]) -> tuple[str, str, str]:
         f"Subject: {subject}\n"
         f"Requester: {requester}\n"
         f"Status: {status}\n"
-        f"Priority: {priority}\n"
         f"Active investigation: {investigation_summary}\n"
         "Recent messages:\n"
         + "\n".join(lines)
@@ -1343,7 +1331,6 @@ async def create_or_update_ticket(
         "messages": [],
     }
     ensure_ticket_defaults(ticket)
-    priority = str(ticket.get("priority") or "normal").strip().lower() or "normal"
     initial_message_count = len(ticket.get("messages", []))
 
     ticket["customer_id"] = request.customer_id
@@ -1505,7 +1492,6 @@ async def create_or_update_ticket(
             assistant_message["citations"] = follow_up_citations
         ticket["messages"].append(assistant_message)
 
-    ticket["priority"] = priority
     ticket["updated_at"] = now_iso()
     new_messages = ticket.get("messages", [])[initial_message_count:]
     ticket_repository.save_ticket(ticket, new_messages=new_messages)
@@ -1526,7 +1512,6 @@ async def create_or_update_ticket(
     event = {
         "event": "ticket_created" if is_new_ticket else "ticket_updated",
         "ticket_id": ticket_id,
-        "priority": priority,
         "status": ticket["status"],
         "message": customer_message,
         "created_at": now_iso(),
@@ -1559,7 +1544,6 @@ async def create_or_update_ticket(
             "event": "ticket_ai_processing",
             "ticket_id": ticket_id,
             "status": ticket["status"],
-            "priority": priority,
             "message": "AI is processing this request asynchronously.",
             "created_at": now_iso(),
         }
@@ -1584,7 +1568,6 @@ async def create_or_update_ticket(
         attention_event = {
             "event": "engineer_attention_required",
             "ticket_id": ticket_id,
-            "priority": priority,
             "status": ticket["status"],
             "message": attention_message or "Engineer attention required",
             "created_at": now_iso(),
@@ -1610,13 +1593,11 @@ async def create_or_update_ticket(
             "provider": "deferred",
             "intent": initial_ack.intent,
         },
-        "priority": priority,
         "status": ticket["status"],
         "ai_replied": ai_replied,
         "needs_engineer_input": needs_engineer_input,
         "queued_for_ai": task_enqueued,
         "queued_message_created_at": timestamp if task_enqueued else None,
-        "eta_minutes": 5 if priority == "high" else 15,
         "answer_route": route_payload.get("answer_route"),
         "scope_label": route_payload.get("scope_label"),
         "route_reason": route_payload.get("route_reason"),
@@ -1640,7 +1621,6 @@ def list_tickets(
         filtered_tickets,
         key=lambda item: (
             1 if normalize_ticket_status(item.get("status")) == INVESTIGATING_STATUS else 0,
-            priority_sort_value(item.get("priority")),
             item.get("updated_at", item.get("created_at", "")),
         ),
         reverse=True,
@@ -1697,7 +1677,6 @@ async def request_engineer_assistance(ticket_id: str) -> dict[str, Any]:
         "event": "ticket_escalated",
         "ticket_id": ticket_id,
         "status": ticket["status"],
-        "priority": ticket.get("priority", "normal"),
         "message": "Customer requested engineer assistance.",
         "created_at": now_iso(),
     }
@@ -1959,7 +1938,7 @@ async def confirm_investigation_reply(
 
 @app.get("/api/dashboard/metrics")
 def dashboard_metrics() -> dict[str, Any]:
-    tickets = ticket_repository.list_tickets(include_messages=False)
+    tickets = ticket_repository.list_tickets(include_messages=True)
     recent_event_rows = ticket_repository.list_events(limit=240)
     recent_events = normalize_ticket_dashboard_events(recent_event_rows)
     return build_ticket_dashboard_metrics(tickets, recent_events)

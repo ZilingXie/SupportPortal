@@ -165,7 +165,7 @@ class ClientUiContractTests(unittest.TestCase):
                     },
                     {
                       role: "assistant",
-                      content: "We are investigating this further. Please wait while we continue checking.",
+                      content: "I've opened an engineer ticket for this issue and we're investigating further. I'll reply here as soon as the engineer review is confirmed.",
                       created_at: "2026-03-24T08:01:00+00:00",
                     },
                   ],

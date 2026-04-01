@@ -1333,7 +1333,6 @@ a {
   flex: 1 1 340px;
 }
 
-.priority-badge,
 .status-badge,
 .mode-pill,
 .request-record-status {
@@ -1346,26 +1345,6 @@ a {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-}
-
-.priority-urgent {
-  color: #7b1b1b;
-  background: rgba(255, 218, 214, 0.92);
-}
-
-.priority-high {
-  color: #7d3e10;
-  background: rgba(255, 234, 205, 0.92);
-}
-
-.priority-normal {
-  color: var(--primary);
-  background: rgba(202, 230, 255, 0.88);
-}
-
-.priority-low {
-  color: var(--ink-muted);
-  background: rgba(228, 233, 239, 0.92);
 }
 
 .status-open {

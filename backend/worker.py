@@ -527,7 +527,6 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
     event = {
         "event": "ticket_ai_response_ready",
         "ticket_id": ticket_id,
-        "priority": ticket.get("priority", "normal"),
         "status": ticket["status"],
         "message": answer[:200],
         "message_created_at": message_created_at,
@@ -578,7 +577,6 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         attention_event = {
             "event": "engineer_attention_required",
             "ticket_id": ticket_id,
-            "priority": ticket.get("priority", "normal"),
             "status": ticket["status"],
             "message": attention_message or "Engineer attention required",
             "message_created_at": message_created_at,

@@ -36,12 +36,6 @@ const routeState = {
   ticketId: null,
 };
 
-const PRIORITY_RANK = {
-  urgent: 4,
-  high: 3,
-  normal: 2,
-  low: 1,
-};
 const ENGINEER_POOL_STATUSES = ["investigating", "escalated", "communicating", "resolved"];
 const POOL_STATUS_RANK = {
   investigating: 4,
@@ -54,28 +48,13 @@ const DEFAULT_FETCH_TIMEOUT_MS = 25000;
 const TELL_AI_FETCH_TIMEOUT_MS = 70000;
 const TICKET_POOL_VIEW_STORAGE_KEY = "engineer_ticket_pool_view_mode";
 
-const FILTER_KEYS = ["priority"];
+const FILTER_KEYS = [];
 const FILTER_BLUR_DELAY_MS = 140;
-const filterValues = {
-  priority: "all",
-};
-const filterComboboxState = {
-  priority: { open: false, query: "", blurTimer: null },
-};
+const filterValues = {};
+const filterComboboxState = {};
 let ticketPoolViewMode = "list";
 let selectedPoolStatus = "investigating";
-const filterComboboxConfig = {
-  priority: {
-    label: "Priority",
-    searchable: true,
-    strictSelection: true,
-    disabled: false,
-    autoSubmit: false,
-    onValueChange: () => {
-      renderTickets();
-    },
-  },
-};
+const filterComboboxConfig = {};
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -219,7 +198,7 @@ function renderRailNav() {
         status === "investigating"
           ? "troubleshoot"
           : status === "escalated"
-          ? "priority_high"
+          ? "notification_important"
           : status === "communicating"
           ? "forum"
           : "task_alt";
@@ -398,20 +377,6 @@ function formatDateTime(value) {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function priorityLabel(value) {
-  const normalized = String(value || "normal").toLowerCase();
-  if (normalized === "urgent") {
-    return "Urgent";
-  }
-  if (normalized === "high") {
-    return "High";
-  }
-  if (normalized === "low") {
-    return "Low";
-  }
-  return "Normal";
 }
 
 function normalizeStatusValue(value) {
@@ -615,12 +580,12 @@ function latestInvestigationUpdate(ticket) {
 function investigationStateLabel(value) {
   const normalized = String(value || "active").toLowerCase();
   if (normalized === "awaiting_confirmation") {
-    return "Awaiting Confirmation";
+    return "Awaiting Engineer Approval";
   }
   if (normalized === "closed") {
     return "Closed";
   }
-  return "Active Investigation";
+  return "Open Engineer Ticket";
 }
 
 function engineerRequestStatusLabel(status) {
@@ -672,15 +637,6 @@ function filterComboboxOptions(options, query) {
 }
 
 function headerFilterOptions(key) {
-  if (key === "priority") {
-    return [
-      { value: "all", label: "All Priority" },
-      { value: "urgent", label: priorityLabel("urgent") },
-      { value: "high", label: priorityLabel("high") },
-      { value: "normal", label: priorityLabel("normal") },
-      { value: "low", label: priorityLabel("low") },
-    ];
-  }
   return [];
 }
 
@@ -997,13 +953,9 @@ function applyHeaderFilterValue(key, value) {
 
 function applyTicketFilters(items) {
   return items.filter((ticket) => {
-    const priority = String(ticket?.priority || "normal").toLowerCase();
     const status = normalizeStatusValue(ticket?.status || "open");
 
     if (!isEngineerVisibleStatus(status)) {
-      return false;
-    }
-    if (filterValues.priority !== "all" && priority !== filterValues.priority) {
       return false;
     }
     if (status !== selectedPoolStatus) {
@@ -1143,7 +1095,6 @@ function refreshSelectedSummaryPreview(ticketId) {
 
 function buildLocalSummaryFallback(ticket) {
   const status = statusLabel(normalizeStatusValue(ticket?.status || "open"));
-  const priority = priorityLabel(String(ticket?.priority || "normal"));
   const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
   const activeInvestigation = getActiveInvestigation(ticket);
 
@@ -1167,9 +1118,7 @@ function buildLocalSummaryFallback(ticket) {
     }
   }
 
-  const summaryLines = [
-    `Ticket is currently ${status} with ${priority} priority.`,
-  ];
+  const summaryLines = [`Ticket is currently ${status}.`];
   if (latestCustomer) {
     summaryLines.push(`Latest customer request: ${latestCustomer.slice(0, 220)}`);
   }
@@ -1178,17 +1127,17 @@ function buildLocalSummaryFallback(ticket) {
   }
   if (activeInvestigation) {
     summaryLines.push(
-      `Internal investigation is ${investigationStateLabel(activeInvestigation.state).toLowerCase()}.`
+      `Engineer ticket is ${investigationStateLabel(activeInvestigation.state).toLowerCase()}.`
     );
     const latestInternal = latestInvestigationUpdate(ticket);
     if (latestInternal) {
-      summaryLines.push(`Latest internal update: ${latestInternal.slice(0, 220)}`);
+      summaryLines.push(`Latest engineer ticket update: ${latestInternal.slice(0, 220)}`);
     }
   }
 
   const nextAction =
     activeInvestigation
-      ? "Continue the internal investigation, confirm the next missing detail, or approve the prepared customer reply."
+      ? "Continue the engineer ticket, confirm the next missing detail, or approve the prepared customer reply."
       : latestCustomer || latestAssistant
       ? "Review the latest messages and either continue communicating, start an investigation, or resolve the ticket."
       : "Collect initial issue details from the customer and define the first troubleshooting step.";
@@ -1331,17 +1280,12 @@ async function detectStorageMode() {
   }
 }
 
-function sortTicketsByPriority(items) {
+function sortTicketsByRecency(items) {
   return [...items].sort((a, b) => {
     const statusRankA = POOL_STATUS_RANK[normalizeStatusValue(a.status || "open")] || 0;
     const statusRankB = POOL_STATUS_RANK[normalizeStatusValue(b.status || "open")] || 0;
     if (statusRankA !== statusRankB) {
       return statusRankB - statusRankA;
-    }
-    const rankA = PRIORITY_RANK[String(a.priority || "normal").toLowerCase()] || PRIORITY_RANK.normal;
-    const rankB = PRIORITY_RANK[String(b.priority || "normal").toLowerCase()] || PRIORITY_RANK.normal;
-    if (rankA !== rankB) {
-      return rankB - rankA;
     }
     const updatedA = new Date(a.updated_at || a.created_at || 0).getTime();
     const updatedB = new Date(b.updated_at || b.created_at || 0).getTime();
@@ -1351,7 +1295,6 @@ function sortTicketsByPriority(items) {
 
 function describeTicketPoolTicket(ticket) {
   const ticketId = String(ticket.ticket_id || "-");
-  const priority = String(ticket.priority || "normal").toLowerCase();
   const status = normalizeStatusValue(ticket.status || "open");
   const subject = String(ticket.subject || "(No subject)");
   const requester = String(ticket.requester || ticket.customer_id || "Unknown");
@@ -1362,7 +1305,6 @@ function describeTicketPoolTicket(ticket) {
   const pendingPreview = previewSource.length > 180 ? `${previewSource.slice(0, 180)}...` : previewSource;
   return {
     ticketId,
-    priority,
     status,
     subject,
     requester,
@@ -1395,9 +1337,6 @@ function renderTicketPoolList(rows) {
                   </div>
                 </div>
                 <div class="ticket-row-badges">
-                  <span class="priority-badge priority-${escapeHtml(item.priority)}">${escapeHtml(
-                    priorityLabel(item.priority)
-                  )}</span>
                   <span class="status-badge ${statusClass(item.status)}">${escapeHtml(statusLabel(item.status))}</span>
                 </div>
               </div>
@@ -1445,9 +1384,6 @@ function renderTicketPoolGrid(rows) {
               <div class="ticket-pool-card-top">
                 <p class="ticket-row-kicker mono">${escapeHtml(item.ticketId)}</p>
                 <div class="ticket-pool-card-badges">
-                  <span class="priority-badge priority-${escapeHtml(item.priority)}">${escapeHtml(
-                    priorityLabel(item.priority)
-                  )}</span>
                   <span class="status-badge ${statusClass(item.status)}">${escapeHtml(statusLabel(item.status))}</span>
                 </div>
               </div>
@@ -1479,7 +1415,7 @@ function renderTicketPoolView() {
   const engineerVisibleTickets = tickets.filter((ticket) =>
     isEngineerVisibleStatus(ticket?.status || "open")
   );
-  const rows = sortTicketsByPriority(applyTicketFilters(engineerVisibleTickets));
+  const rows = sortTicketsByRecency(applyTicketFilters(engineerVisibleTickets));
   const viewMode = normalizeTicketPoolViewMode(ticketPoolViewMode);
   const communicatingCount = engineerVisibleTickets.filter(
     (ticket) => normalizeStatusValue(ticket.status) === "communicating"
@@ -1502,7 +1438,7 @@ function renderTicketPoolView() {
         <article class="metric-card">
           <span class="metric-label">Investigating</span>
           <strong>${investigatingCount}</strong>
-          <p>Tickets with an active internal investigation thread.</p>
+          <p>Tickets with an open engineer ticket awaiting AI and engineer handling.</p>
         </article>
         <article class="metric-card">
           <span class="metric-label">Escalated</span>
@@ -1705,7 +1641,7 @@ function renderConversationHtml(messages, options = {}) {
 
 function renderInvestigationHistoryHtml(historyItems) {
   if (!historyItems.length) {
-    return '<p class="request-record-empty">No prior investigation cycles yet.</p>';
+    return '<p class="request-record-empty">No prior engineer ticket cycles yet.</p>';
   }
 
   return `
@@ -1766,7 +1702,6 @@ function renderTicketDetailView() {
   const ticket = selectedTicket;
   const ticketId = String(ticket.ticket_id || selectedTicketId || "-");
   const status = normalizeStatusValue(ticket.status || "open");
-  const priority = String(ticket.priority || "normal").toLowerCase();
   const requester = String(ticket.requester || ticket.customer_id || "Unknown");
   const activeInvestigation = getActiveInvestigation(ticket);
   const displayInvestigation = getDisplayInvestigation(ticket);
@@ -1801,9 +1736,6 @@ function renderTicketDetailView() {
           <div class="workspace-header-toolbar-start">
             <button class="btn btn-ghost" type="button" data-detail-action="back-to-pool">Back to Pool</button>
             <div class="workspace-header-badges">
-              <span class="priority-badge priority-${escapeHtml(priority)}">${escapeHtml(
-                priorityLabel(priority)
-              )}</span>
               <span class="status-badge ${statusClass(status)}">${escapeHtml(statusLabel(status))}</span>
             </div>
           </div>
@@ -1833,8 +1765,8 @@ function renderTicketDetailView() {
         <section class="panel-card conversation-panel">
           <div class="panel-card-head">
             <div>
-              <p class="panel-card-kicker">Internal Investigation</p>
-              <h3 class="panel-card-title">Internal Investigation Thread</h3>
+              <p class="panel-card-kicker">Engineer Ticket</p>
+              <h3 class="panel-card-title">Engineer Ticket Thread</h3>
               ${
                 displayInvestigation
                   ? `<p class="mode-switch-hint">State: ${escapeHtml(
@@ -1852,7 +1784,7 @@ function renderTicketDetailView() {
                   draftCustomerReply,
                   controlsDisabled,
                 })
-              : '<div class="empty-state">No active internal investigation thread yet.</div>'
+              : '<div class="empty-state">No open engineer ticket yet.</div>'
           }
           ${
             showInvestigationComposer
@@ -2680,7 +2612,6 @@ function handleLocalLogout() {
   closeSocket();
   tickets = [];
   selectedPoolStatus = "investigating";
-  filterValues.priority = "all";
   closeAllHeaderFilterComboboxes({ render: false });
   resetDetailWorkspaceState();
   window.location.hash = "#/tickets";

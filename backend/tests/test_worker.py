@@ -98,7 +98,6 @@ def _build_ticket(
         "requester": "Customer",
         "subject": "Token question",
         "status": "communicating",
-        "priority": "normal",
         "created_at": "2026-03-22T00:00:00+00:00",
         "updated_at": "2026-03-22T00:00:00+00:00",
         "messages": [
@@ -355,6 +354,7 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(event_payload["answer_route"], "web_search")
         self.assertEqual(event_payload["scope_label"], "agora_non_technical")
         self.assertNotIn("engineer_mode", event_payload)
+        self.assertNotIn("priority", event_payload)
 
     def test_process_ticket_query_post_check_rejection_starts_investigation(self) -> None:
         initial_ticket = _build_ticket()
@@ -398,7 +398,7 @@ class WorkerResilienceTests(unittest.TestCase):
 
         investigation_result = {
             "created": True,
-            "public_reply": "We are investigating this further. Please wait while we continue checking.",
+            "public_reply": "I've opened an engineer ticket for this issue and we're investigating further. I'll reply here as soon as the engineer review is confirmed.",
             "active_investigation": {
                 "id": "INV-RETRY-1",
                 "state": "active",

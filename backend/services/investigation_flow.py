@@ -28,8 +28,8 @@ def normalize_ticket_status(value: Any) -> str:
 
 def default_public_investigation_reply(latest_customer_message: str) -> str:
     if _CJK_RE.search(str(latest_customer_message or "")):
-        return "正在进一步调查中，请耐心等待。"
-    return "We are investigating this further. Please wait while we continue checking."
+        return "我已经为这个问题创建了工程师工单，正在进一步调查。工程师确认后我会第一时间回复你。"
+    return "I've opened an engineer ticket for this issue and we're investigating further. I'll reply here as soon as the engineer review is confirmed."
 
 
 def build_internal_message(

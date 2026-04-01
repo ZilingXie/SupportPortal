@@ -11,7 +11,7 @@ const openTicketCountEl = document.getElementById("open-ticket-count");
 const resolvedTicketCountEl = document.getElementById("resolved-ticket-count");
 const communicatingTicketCountEl = document.getElementById("communicating-ticket-count");
 const escalatedTicketCountEl = document.getElementById("escalated-ticket-count");
-const urgentTicketCountEl = document.getElementById("urgent-ticket-count");
+const badSentimentTicketCountEl = document.getElementById("bad-sentiment-ticket-count");
 const waitingTicketChipEl = document.getElementById("waiting-ticket-chip");
 const communicatingTicketChipEl = document.getElementById("communicating-ticket-chip");
 const escalatedTicketChipEl = document.getElementById("escalated-ticket-chip");
@@ -21,7 +21,7 @@ const operatorSummaryTitleEl = document.getElementById("operator-summary-title")
 const operatorSummaryDetailEl = document.getElementById("operator-summary-detail");
 const eventVolumeBarsEl = document.getElementById("event-volume-bars");
 const statusBreakdownEl = document.getElementById("status-breakdown");
-const priorityBreakdownEl = document.getElementById("priority-breakdown");
+const sentimentBreakdownEl = document.getElementById("sentiment-breakdown");
 const flowBreakdownEl = document.getElementById("flow-breakdown");
 const eventStreamEl = document.getElementById("event-stream");
 
@@ -126,11 +126,11 @@ function isTicketEvent(payload) {
 }
 
 function eventTone(payload) {
-  const priority = normalizeString(payload?.priority).toLowerCase();
+  const sentimentLabel = normalizeString(payload?.sentiment_label).toLowerCase();
   const status = normalizeString(payload?.status).toLowerCase();
 
-  if (priority === "urgent" || priority === "high") {
-    return priority;
+  if (sentimentLabel === "bad") {
+    return "high";
   }
   if (status === "investigating" || status === "waiting_for_engineer" || status === "escalated") {
     return "waiting";
@@ -250,7 +250,7 @@ function renderEventItem(event) {
     normalizeString(event?.message) || normalizeString(event?.title) || "Ticket activity updated.";
   const ticketId = normalizeString(event?.ticket_id) || "-";
   const status = normalizeString(event?.status);
-  const priority = normalizeString(event?.priority);
+  const sentimentLabel = normalizeString(event?.sentiment_label);
   const createdAt = formatDateTime(event?.created_at);
   const tone = eventTone(event);
   const title = ticketId === "-" ? eventName : ticketId;
@@ -266,7 +266,7 @@ function renderEventItem(event) {
       <div class="event-meta">
         <span class="timestamp">${escapeHtml(ticketId)}</span>
         ${status ? `<span>Status ${escapeHtml(humanizeToken(status))}</span>` : ""}
-        ${priority ? `<span>Priority ${escapeHtml(humanizeToken(priority))}</span>` : ""}
+        ${sentimentLabel ? `<span>Sentiment ${escapeHtml(humanizeToken(sentimentLabel))}</span>` : ""}
       </div>
     </li>
   `;
@@ -324,7 +324,7 @@ async function loadMetrics() {
   setText(resolvedTicketCountEl, formatNumber(cards?.resolved_ticket_count));
   setText(communicatingTicketCountEl, formatNumber(cards?.communicating_ticket_count));
   setText(escalatedTicketCountEl, formatNumber(cards?.escalated_ticket_count));
-  setText(urgentTicketCountEl, formatNumber(cards?.urgent_ticket_count));
+  setText(badSentimentTicketCountEl, formatNumber(cards?.bad_sentiment_ticket_count));
   setText(
     waitingTicketChipEl,
     formatNumber(cards?.investigating_ticket_count),
@@ -351,7 +351,7 @@ async function loadMetrics() {
 
   renderEventVolumeBars(charts?.event_volume_12h);
   renderBreakdownList(statusBreakdownEl, charts?.status_breakdown);
-  renderBreakdownList(priorityBreakdownEl, charts?.priority_breakdown);
+  renderBreakdownList(sentimentBreakdownEl, charts?.sentiment_breakdown);
   renderBreakdownList(flowBreakdownEl, charts?.flow_breakdown);
 }
 

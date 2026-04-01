@@ -24,7 +24,6 @@ class TicketMessageSentimentTests(unittest.TestCase):
                 "requester": "Customer",
                 "subject": "Token renew question",
                 "status": "communicating",
-                "priority": "normal",
                 "last_engineer_action": None,
                 "created_at": "2026-03-31T09:00:00+00:00",
                 "updated_at": "2026-03-31T09:00:00+00:00",

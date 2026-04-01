@@ -10,6 +10,44 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-04-01 - Reframe investigating as a formal engineer ticket lifecycle
+
+- Summary: Kept the existing ticket-linked investigation storage model, but formally promoted each active investigation cycle into the engineer-side work item for `investigating` tickets. Public investigation replies now explicitly say an engineer ticket has been opened, engineer UI copy now presents the workspace as an engineer-ticket flow, and the approve path continues to send the prepared AI reply to the customer while closing the engineer ticket cycle back into `communicating`.
+- Reason: The post-RAG and post-investigation lifecycle needed to be clearer. Once client AI enters `investigating`, the product should behave like it opened a real engineer ticket that stays active until Engineer AI prepares a draft, the engineer approves it, and the ticketed engineer cycle closes.
+- Affected files or config:
+  - `backend/services/investigation_flow.py`
+  - `backend/main.py`
+  - `ui/engineer-ui/index.html`
+  - `ui/engineer-ui/app.js`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_engineer_ui_contract.py`
+  - `backend/tests/test_client_ui_contract.py`
+  - `backend/tests/test_worker.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema migration and no new ticket tables.
+  - `support_ticket_investigations` and `active_investigation` keep the same storage contract, but their product semantics are now the formal engineer ticket lifecycle for `investigating` work.
+  - Public customer-facing investigation acknowledgements now state that an engineer ticket has been opened and that the AI will reply again after engineer review is confirmed.
+  - Engineer approve still writes the final customer-facing reply as an `assistant` message and closes the linked investigation cycle back into `communicating`.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_investigation_flow.py backend/tests/test_engineer_ui_contract.py backend/tests/test_client_ui_contract.py backend/tests/test_worker.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/main.py backend/services/investigation_flow.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py backend/tests/test_engineer_ui_contract.py backend/tests/test_client_ui_contract.py`
+  - `node --check ui/engineer-ui/app.js`
+  - `scripts/workflow/link_worktree_env.sh /Users/xieziling/.config/superpowers/worktrees/SupportPortal/investigation-engineer-ticket-flow`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health`
+  - Runtime smoke used the live APIs to create ticket `T-D7D91C`, force `investigate`, send one engineer message, approve the resulting draft, and verify the lifecycle `communicating -> investigating -> awaiting_confirmation -> communicating` with `active_investigation` clearing after approval.
+  - Verification result:
+    - Focused investigation/engineer/client/worker regression suite passed: `50 passed`.
+    - Full backend suite passed: `345 passed, 10 warnings`.
+    - `py_compile` and `node --check ui/engineer-ui/app.js` both completed without errors.
+    - `podman-compose ... ps` showed `deployment_redis_1`, `deployment_rag_api_1`, `deployment_rag_worker_1`, `deployment_ws_gateway_1`, `deployment_api_1`, `deployment_worker_1`, and `deployment_nginx_1` all `Up`.
+    - `/health` returned `status=ok`, `ticket_storage=postgres`, `knowledge_storage=postgres`, `rag_service=ok`, `async_query_enabled=true`.
+    - Live engineer-ticket smoke confirmed the created investigation cycle exposed an `engineer_ai` opening message, moved to `awaiting_confirmation` after the engineer note, and closed into `communicating` after approval while appending the final `assistant` reply to the customer timeline.
+
 ## 2026-04-01 - Finalize client Agentic stage runner routing and refusal mapping
 
 - Summary: Finalized the client-side Agentic ticket execution seam so customer queries now classify into fixed skills (`refuse | web_search | rag`), route `small_talk` and `non_agora` to explicit Agora-scope refusal replies, and keep `rag` behind the post-RAG sufficiency gate before any customer-facing answer is allowed.

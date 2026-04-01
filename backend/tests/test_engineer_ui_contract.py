@@ -124,14 +124,14 @@ class EngineerUiContractTests(unittest.TestCase):
 
         self.assertIn("Concierge AI", html)
         self.assertIn("Manrope", html)
-        self.assertIn("./styles.css?v=20260401-engineer-status-tabs-1", html)
-        self.assertIn('./app.js?v=20260401-engineer-status-tabs-1', html)
+        self.assertIn("./styles.css?v=20260401-engineer-ticket-cleanup-1", html)
+        self.assertIn('./app.js?v=20260401-engineer-ticket-cleanup-1', html)
         self.assertIn("function parseRoute()", app_source)
         self.assertIn('path.startsWith("/tickets/")', app_source)
         self.assertIn("function renderTicketPoolView()", app_source)
         self.assertIn("function renderTicketDetailView()", app_source)
         self.assertIn("Next Action Needed", app_source)
-        self.assertIn("Investigation Command", html)
+        self.assertIn("Engineer Ticket Command", html)
         self.assertIn("Start Investigation", app_source)
         self.assertNotIn("Open Workspace", app_source)
         self.assertIn('window.addEventListener("hashchange"', app_source)
@@ -179,6 +179,9 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn(".status-surface-investigating", css)
         self.assertIn(".status-surface-resolved", css)
         self.assertIn(".ticket-workspace", css)
+        self.assertNotIn("priorityLabel(", app_source)
+        self.assertNotIn(".priority-badge", css)
+        self.assertNotIn('FILTER_KEYS = ["priority"]', app_source)
 
     def test_engineer_ticket_pool_defaults_to_investigating_tab_and_excludes_open(self) -> None:
         self.run_engineer_app_script(
@@ -189,7 +192,6 @@ class EngineerUiContractTests(unittest.TestCase):
                     ticket_id: "TK-OPEN-LOW",
                     subject: "open ticket",
                     requester: "user-open",
-                    priority: "low",
                     status: "open",
                     created_at: "2026-03-24T07:00:00+00:00",
                     updated_at: "2026-03-24T07:10:00+00:00",
@@ -198,16 +200,14 @@ class EngineerUiContractTests(unittest.TestCase):
                     ticket_id: "TK-COMM-URGENT",
                     subject: "communicating urgent ticket",
                     requester: "user-1",
-                    priority: "urgent",
                     status: "communicating",
                     created_at: "2026-03-24T09:00:00+00:00",
                     updated_at: "2026-03-24T10:00:00+00:00",
                   },
                   {
-                    ticket_id: "TK-INVESTIGATING-LOW",
-                    subject: "investigating ticket",
+                    ticket_id: "TK-INVESTIGATING-NEW",
+                    subject: "investigating newest ticket",
                     requester: "user-2",
-                    priority: "low",
                     status: "investigating",
                     created_at: "2026-03-24T08:00:00+00:00",
                     updated_at: "2026-03-24T08:30:00+00:00",
@@ -226,10 +226,17 @@ class EngineerUiContractTests(unittest.TestCase):
                     },
                   },
                   {
+                    ticket_id: "TK-INVESTIGATING-OLD",
+                    subject: "investigating older ticket",
+                    requester: "user-2b",
+                    status: "investigating",
+                    created_at: "2026-03-24T07:40:00+00:00",
+                    updated_at: "2026-03-24T08:10:00+00:00",
+                  },
+                  {
                     ticket_id: "TK-ESCALATED-NORMAL",
                     subject: "escalated ticket",
                     requester: "user-3",
-                    priority: "normal",
                     status: "escalated",
                     created_at: "2026-03-24T08:40:00+00:00",
                     updated_at: "2026-03-24T09:20:00+00:00",
@@ -238,7 +245,6 @@ class EngineerUiContractTests(unittest.TestCase):
                     ticket_id: "TK-RESOLVED-NORMAL",
                     subject: "resolved ticket",
                     requester: "user-4",
-                    priority: "normal",
                     status: "resolved",
                     created_at: "2026-03-24T06:00:00+00:00",
                     updated_at: "2026-03-24T06:20:00+00:00",
@@ -288,8 +294,8 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!controlsHtml.includes('data-pool-view-option="grid"')) {{
                   throw new Error("Filter row should expose the grid view option.");
                 }}
-                if (!controlsHtml.includes("All Priority")) {{
-                  throw new Error("Filter row should keep the priority combobox.");
+                if (controlsHtml.includes("All Priority")) {{
+                  throw new Error("Filter row should no longer render the priority combobox.");
                 }}
                 if (controlsHtml.includes("All Status")) {{
                   throw new Error("Engineer pool should no longer render the status combobox.");
@@ -357,8 +363,11 @@ class EngineerUiContractTests(unittest.TestCase):
                   throw new Error("Engineer pool should no longer render the total tickets metric.");
                 }}
 
-                if (!html.includes("TK-INVESTIGATING-LOW")) {{
+                if (!html.includes("TK-INVESTIGATING-NEW")) {{
                   throw new Error("Investigating tab should render investigating tickets.");
+                }}
+                if (!html.includes("TK-INVESTIGATING-OLD")) {{
+                  throw new Error("Investigating tab should keep rendering the rest of the investigating queue.");
                 }}
                 if (html.includes("TK-COMM-URGENT")) {{
                   throw new Error("Investigating tab should not render communicating tickets.");
@@ -373,13 +382,22 @@ class EngineerUiContractTests(unittest.TestCase):
                   throw new Error("Open tickets should not appear anywhere in the engineer pool.");
                 }}
 
-                const waitingRowStart = html.indexOf('data-ticket-id="TK-INVESTIGATING-LOW"');
+                const waitingRowStart = html.indexOf('data-ticket-id="TK-INVESTIGATING-NEW"');
                 const waitingRowEnd = html.indexOf("</article>", waitingRowStart);
                 const waitingRowMarkup = html.slice(waitingRowStart, waitingRowEnd);
                 const badgeIndex = waitingRowMarkup.indexOf("status-badge");
                 const secondLineIndex = waitingRowMarkup.indexOf("ticket-row-secondary");
                 if (badgeIndex === -1 || secondLineIndex === -1 || badgeIndex > secondLineIndex) {{
                   throw new Error("Status badges should stay in the first row alongside the title.");
+                }}
+                if (html.includes("priority-badge")) {{
+                  throw new Error("Ticket pool should not render any priority badge.");
+                }}
+                if (
+                  html.indexOf("TK-INVESTIGATING-NEW") >
+                  html.indexOf("TK-INVESTIGATING-OLD")
+                ) {{
+                  throw new Error("Investigating tab should sort tickets by latest update, not priority.");
                 }}
                 """
             )
@@ -391,7 +409,6 @@ class EngineerUiContractTests(unittest.TestCase):
                 """
                 tickets = [];
                 boardLoading = true;
-                filterValues.priority = "all";
 
                 const html = renderTicketPoolView();
                 if (!html.includes("pool-loading-state")) {{
@@ -426,7 +443,6 @@ class EngineerUiContractTests(unittest.TestCase):
                     ticket_id: "TK-GRID-001",
                     subject: "investigating grid ticket",
                     requester: "user-grid",
-                    priority: "high",
                     status: "investigating",
                     created_at: "2026-03-24T08:00:00+00:00",
                     updated_at: "2026-03-24T08:30:00+00:00",
@@ -448,7 +464,6 @@ class EngineerUiContractTests(unittest.TestCase):
                     ticket_id: "TK-GRID-002",
                     subject: "escalated fallback ticket",
                     requester: "user-grid-2",
-                    priority: "normal",
                     status: "escalated",
                     created_at: "2026-03-24T08:10:00+00:00",
                     updated_at: "2026-03-24T08:15:00+00:00",
@@ -470,7 +485,6 @@ class EngineerUiContractTests(unittest.TestCase):
                     ticket_id: "TK-GRID-003",
                     subject: "open client-only ticket",
                     requester: "user-grid-3",
-                    priority: "low",
                     status: "open",
                     created_at: "2026-03-24T08:10:00+00:00",
                     updated_at: "2026-03-24T08:15:00+00:00",
@@ -505,6 +519,9 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!html.includes("ticket-pool-card-preview")) {{
                   throw new Error("Grid cards should render an investigation preview block when text exists.");
                 }}
+                if (html.includes("priority-badge")) {{
+                  throw new Error("Grid cards should not render any priority badge.");
+                }}
                 if (!html.includes("TK-GRID-002")) {{
                   throw new Error("Escalated tab should render escalated tickets in grid mode.");
                 }}
@@ -530,7 +547,6 @@ class EngineerUiContractTests(unittest.TestCase):
                     ticket_id: "TK-EMPTY-COMM",
                     subject: "communicating ticket",
                     requester: "user-empty",
-                    priority: "normal",
                     status: "communicating",
                     created_at: "2026-03-24T09:00:00+00:00",
                     updated_at: "2026-03-24T10:00:00+00:00",
@@ -582,7 +598,6 @@ class EngineerUiContractTests(unittest.TestCase):
                   ticket_id: "TK-DETAIL-INV",
                   subject: "Android 14 token renew regression",
                   requester: "user-7",
-                  priority: "high",
                   status: "investigating",
                   created_at: "2026-03-24T08:00:00+00:00",
                   updated_at: "2026-03-24T09:10:00+00:00",
@@ -594,7 +609,7 @@ class EngineerUiContractTests(unittest.TestCase):
                     },
                     {
                       role: "assistant",
-                      content: "We are investigating this further. Please wait while we continue checking.",
+                      content: "I've opened an engineer ticket for this issue and we're investigating further. I'll reply here as soon as the engineer review is confirmed.",
                       created_at: "2026-03-24T08:01:00+00:00",
                     },
                   ],
@@ -662,8 +677,11 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!headerTopMarkup.includes("workspace-eyebrow")) {{
                   throw new Error("Toolbar row should keep the ticket id label.");
                 }}
-                if (!headerTopMarkup.includes("priority-badge") || !headerTopMarkup.includes("status-badge")) {{
-                  throw new Error("Toolbar row should carry the priority and status badges after the header compaction.");
+                if (!headerTopMarkup.includes("status-badge")) {{
+                  throw new Error("Toolbar row should carry the status badge after the header compaction.");
+                }}
+                if (headerTopMarkup.includes("priority-badge")) {{
+                  throw new Error("Toolbar row should no longer render a priority badge.");
                 }}
                 if (headerTopMarkup.includes("mode-pill")) {{
                   throw new Error("Toolbar row should not render the removed mode pill.");
@@ -671,8 +689,11 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (headerTopMarkup.includes("workspace-ticket-title")) {{
                   throw new Error("Ticket title should stay below the compact toolbar row.");
                 }}
-                if (!html.includes("Internal Investigation Thread")) {{
-                  throw new Error("Detail workspace should foreground the internal investigation thread.");
+                if (!html.includes("Engineer Ticket Thread")) {{
+                  throw new Error("Detail workspace should foreground the engineer ticket thread.");
+                }}
+                if (html.includes("Internal Investigation Thread")) {{
+                  throw new Error("Detail workspace should stop using the old internal investigation label.");
                 }}
                 if (!html.includes("Customer Timeline")) {{
                   throw new Error("Detail workspace should still render the customer timeline in the supporting column.");
@@ -716,10 +737,10 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (html.includes("Engineer Request Records")) {{
                   throw new Error("Detail workspace should use investigation history instead of legacy engineer request records.");
                 }}
-                const internalIndex = html.indexOf("Internal Investigation Thread");
+                const internalIndex = html.indexOf("Engineer Ticket Thread");
                 const customerIndex = html.indexOf("Customer Timeline");
                 if (internalIndex === -1 || customerIndex === -1 || internalIndex > customerIndex) {{
-                  throw new Error("Internal investigation thread should render ahead of the customer timeline.");
+                  throw new Error("Engineer ticket thread should render ahead of the customer timeline.");
                 }}
                 const decisionIndex = html.indexOf("I have enough information now. Please confirm this draft before I reply to the customer.");
                 const inlineActionsIndex = html.indexOf("detail-investigation-inline-actions");
@@ -742,7 +763,6 @@ class EngineerUiContractTests(unittest.TestCase):
                   ticket_id: "TK-DETAIL-CLOSED",
                   subject: "Android 14 token renew regression",
                   requester: "user-7",
-                  priority: "high",
                   status: "communicating",
                   created_at: "2026-03-24T08:00:00+00:00",
                   updated_at: "2026-03-24T09:10:00+00:00",
@@ -829,7 +849,6 @@ class EngineerUiContractTests(unittest.TestCase):
                   ticket_id: "TK-DETAIL-SENTIMENT",
                   subject: "Android 14 token renew regression",
                   requester: "user-7",
-                  priority: "normal",
                   status: "communicating",
                   created_at: "2026-03-24T08:00:00+00:00",
                   updated_at: "2026-03-24T09:10:00+00:00",
@@ -888,7 +907,6 @@ class EngineerUiContractTests(unittest.TestCase):
                   ticket_id: "TK-DETAIL-REV",
                   subject: "Android 14 token renew regression",
                   requester: "user-7",
-                  priority: "high",
                   status: "investigating",
                   created_at: "2026-03-24T08:00:00+00:00",
                   updated_at: "2026-03-24T09:10:00+00:00",
@@ -996,7 +1014,6 @@ class EngineerUiContractTests(unittest.TestCase):
                   ticket_id: "TK-DETAIL-APPROVE",
                   subject: "Android 14 token renew regression",
                   requester: "user-7",
-                  priority: "high",
                   status: "investigating",
                   created_at: "2026-03-24T08:00:00+00:00",
                   updated_at: "2026-03-24T09:10:00+00:00",
@@ -1119,7 +1136,6 @@ class EngineerUiContractTests(unittest.TestCase):
                   ticket_id: "TK-STATE-ACTION",
                   subject: "Ticket state action coverage",
                   requester: "user-state",
-                  priority: "high",
                   status: "communicating",
                   created_at: "2026-03-24T08:00:00+00:00",
                   updated_at: "2026-03-24T09:10:00+00:00",
@@ -1227,7 +1243,6 @@ class EngineerUiContractTests(unittest.TestCase):
                     ticket_id: "TK-INVESTIGATING-RETURN",
                     subject: "investigating fallback target",
                     requester: "user-inv",
-                    priority: "high",
                     status: "investigating",
                     created_at: "2026-03-24T08:00:00+00:00",
                     updated_at: "2026-03-24T08:30:00+00:00",
@@ -1243,7 +1258,6 @@ class EngineerUiContractTests(unittest.TestCase):
                         ticket_id: "TK-OPEN-DETAIL",
                         subject: "client-only open ticket",
                         requester: "user-open",
-                        priority: "normal",
                         status: "open",
                         created_at: "2026-03-24T08:00:00+00:00",
                         updated_at: "2026-03-24T08:30:00+00:00",

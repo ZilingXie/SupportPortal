@@ -31,8 +31,13 @@ class DashboardUiContractTests(unittest.TestCase):
             "Investigating",
             "Communicating",
             "Escalated",
+            "Sentiment Breakdown",
+            "Bad Sentiment",
         ]:
             self.assertIn(required_copy, source)
+
+        self.assertNotIn("Priority Breakdown", source)
+        self.assertNotIn(">Urgent<", source)
 
         self.assertIn('class="dashboard-rail"', source)
         self.assertIn('class="rail-footer"', source)
