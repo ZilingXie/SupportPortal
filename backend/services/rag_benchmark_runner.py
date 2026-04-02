@@ -18,6 +18,7 @@ from backend.services.embedding_provider import (
 from backend.services.llm_factory import LlmInvocationError, invoke_chat_text, invoke_responses_text
 from backend.services.llm_profiles import (
     BENCHMARK_JUDGE_SCENARIO,
+    QUERY_EXPANSION_SCENARIO,
     RAG_ANSWER_SCENARIO,
     parse_provider_model_reference,
     resolve_model_profile,
@@ -279,6 +280,7 @@ def _failure_stage_and_bucket(
 
 def _strategy_snapshot(judge_models: list[str]) -> dict[str, Any]:
     rag_answer_profile = resolve_model_profile(RAG_ANSWER_SCENARIO)
+    query_expansion_profile = resolve_model_profile(QUERY_EXPANSION_SCENARIO)
     return {
         "embedding_provider": embedding_provider_name(),
         "embedding_model": embedding_model_id(),
@@ -292,6 +294,12 @@ def _strategy_snapshot(judge_models: list[str]) -> dict[str, Any]:
         "query_profile": DEFAULT_QUERY_PROFILE,
         "glossary_version": GLOSSARY_VERSION,
         "self_query_version": SELF_QUERY_VERSION,
+        "query_expansion_enabled": (_clean_text(os.getenv("RAG_QUERY_EXPANSION_ENABLED")) or "").lower()
+        not in {"0", "false", "no", "off"},
+        "query_expansion_model": query_expansion_profile.model,
+        "query_expansion_reasoning_effort": query_expansion_profile.reasoning_effort,
+        "query_prf_enabled": (_clean_text(os.getenv("RAG_QUERY_PRF_ENABLED")) or "").lower()
+        not in {"0", "false", "no", "off"},
         "query_rewrite_enabled": (_clean_text(os.getenv("RAG_QUERY_REWRITE_ENABLED")) or "").lower()
         in {"1", "true", "yes", "on"},
         "query_decomposition_enabled": (_clean_text(os.getenv("RAG_QUERY_DECOMPOSITION_ENABLED")) or "").lower()

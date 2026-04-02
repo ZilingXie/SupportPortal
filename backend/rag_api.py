@@ -97,6 +97,17 @@ def _trace_query_understanding_meta(trace: Any) -> dict[str, Any]:
         "applied_soft_signals": dict(getattr(trace, "applied_soft_signals", {}) or {}),
         "rewritten_queries": list(getattr(trace, "rewritten_queries", []) or []),
         "decomposition_subqueries": list(getattr(trace, "decomposition_subqueries", []) or []),
+        "dictionary_hits": list(getattr(trace, "dictionary_hits", []) or []),
+        "rule_expansions": list(getattr(trace, "rule_expansions", []) or []),
+        "llm_expansions": list(getattr(trace, "llm_expansions", []) or []),
+        "prf_expansions": list(getattr(trace, "prf_expansions", []) or []),
+        "hard_filter_sources": dict(getattr(trace, "hard_filter_sources", {}) or {}),
+        "cache_hit": bool(getattr(trace, "cache_hit", False)),
+        "prf_used": bool(getattr(trace, "prf_used", False)),
+        "query_expansion_enabled": bool(getattr(trace, "query_expansion_enabled", False)),
+        "query_expansion_model": getattr(trace, "query_expansion_model", None),
+        "first_pass_candidate_count": int(getattr(trace, "first_pass_candidate_count", 0) or 0),
+        "second_pass_candidate_count": int(getattr(trace, "second_pass_candidate_count", 0) or 0),
     }
 
 class RagQueryRequest(BaseModel):

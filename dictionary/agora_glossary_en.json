@@ -1,0 +1,81 @@
+[
+  {
+    "canonical_term": "Channel",
+    "aliases": ["channel", "agora channel", "room"],
+    "definition_summary": "In Agora's platform, a channel groups users together under a unique channel name so users in the same channel can communicate. A channel is created when the first user joins and ends when the last user leaves.",
+    "related_terms": ["same channel", "channel lifecycle", "channel name"],
+    "expansion_terms": ["channel name", "same channel", "join channel"],
+    "metadata_hints": {
+      "soft_signals": {
+        "topic": ["channel lifecycle"],
+        "use_case": ["join_channel"],
+        "keywords": ["channel name"]
+      }
+    }
+  },
+  {
+    "canonical_term": "Cloud Recording",
+    "aliases": ["cloud recording", "recording service"],
+    "definition_summary": "Cloud Recording records Agora streams in the cloud for later playback or storage.",
+    "related_terms": ["recording troubleshooting", "recording callbacks"],
+    "expansion_terms": ["cloud recording troubleshooting", "recording callbacks"],
+    "metadata_hints": {
+      "soft_signals": {
+        "topic": ["recording"],
+        "keywords": ["cloud recording"]
+      }
+    }
+  },
+  {
+    "canonical_term": "Audience",
+    "aliases": ["audience", "viewer", "viewer role"],
+    "definition_summary": "Audience is the passive role in interactive live streaming and does not publish media until promoted.",
+    "related_terms": ["host role", "audience role"],
+    "expansion_terms": ["audience role", "host role"],
+    "metadata_hints": {
+      "soft_signals": {
+        "topic": ["role management"],
+        "keywords": ["audience role"]
+      }
+    }
+  },
+  {
+    "canonical_term": "Jitter",
+    "aliases": ["jitter", "network jitter"],
+    "definition_summary": "Jitter is the variation in packet delay that can cause unstable media playback.",
+    "related_terms": ["packet loss", "network quality"],
+    "expansion_terms": ["network jitter", "packet delay variation"],
+    "metadata_hints": {
+      "soft_signals": {
+        "issue_category": ["network_quality"],
+        "keywords": ["jitter"]
+      }
+    }
+  },
+  {
+    "canonical_term": "Packet loss",
+    "aliases": ["packet loss", "lost packets"],
+    "definition_summary": "Packet loss means network packets fail to arrive, which can degrade audio and video quality.",
+    "related_terms": ["jitter", "network quality"],
+    "expansion_terms": ["packet loss troubleshooting", "network quality"],
+    "metadata_hints": {
+      "soft_signals": {
+        "issue_category": ["network_quality"],
+        "keywords": ["packet loss"]
+      }
+    }
+  },
+  {
+    "canonical_term": "App ID",
+    "aliases": ["app id", "appid"],
+    "definition_summary": "App ID identifies an Agora project and is required when initializing the SDK.",
+    "related_terms": ["app certificate", "project credentials"],
+    "expansion_terms": ["sdk initialization", "project credentials"],
+    "metadata_hints": {
+      "soft_signals": {
+        "topic": ["authentication"],
+        "keywords": ["app id"]
+      }
+    }
+  }
+]

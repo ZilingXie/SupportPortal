@@ -336,6 +336,8 @@ class RagBenchmarkRunnerTests(unittest.TestCase):
             os.environ,
             {
                 "RAG_QUERY_UNDERSTANDING_ENABLED": "true",
+                "RAG_QUERY_EXPANSION_ENABLED": "true",
+                "RAG_QUERY_PRF_ENABLED": "true",
                 "RAG_QUERY_REWRITE_ENABLED": "true",
                 "RAG_QUERY_DECOMPOSITION_ENABLED": "true",
             },
@@ -344,8 +346,11 @@ class RagBenchmarkRunnerTests(unittest.TestCase):
             snapshot = _strategy_snapshot(["gpt-4o-mini"])
 
         self.assertTrue(snapshot["query_understanding_enabled"])
+        self.assertTrue(snapshot["query_expansion_enabled"])
+        self.assertTrue(snapshot["query_prf_enabled"])
         self.assertTrue(snapshot["query_rewrite_enabled"])
         self.assertTrue(snapshot["query_decomposition_enabled"])
+        self.assertEqual(snapshot["query_expansion_model"], "gpt-5.4-mini")
 
     def test_resolve_judge_models_requires_exactly_three_models(self) -> None:
         with self.assertRaises(ValueError):

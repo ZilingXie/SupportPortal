@@ -7,6 +7,7 @@ from unittest.mock import patch
 from backend.services.llm_profiles import (
     BENCHMARK_JUDGE_SCENARIO,
     ENGINEER_HELPER_SCENARIO,
+    QUERY_EXPANSION_SCENARIO,
     KNOWLEDGE_INGESTION_SCENARIO,
     RAG_ANSWER_SCENARIO,
     RAG_SUFFICIENCY_SCENARIO,
@@ -22,6 +23,7 @@ class LlmProfileTests(unittest.TestCase):
             web_search = resolve_model_profile(WEB_SEARCH_SCENARIO)
             rag_answer = resolve_model_profile(RAG_ANSWER_SCENARIO)
             sufficiency = resolve_model_profile(RAG_SUFFICIENCY_SCENARIO)
+            query_expansion = resolve_model_profile(QUERY_EXPANSION_SCENARIO)
             engineer = resolve_model_profile(ENGINEER_HELPER_SCENARIO)
             ingestion = resolve_model_profile(KNOWLEDGE_INGESTION_SCENARIO)
 
@@ -37,6 +39,11 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(sufficiency.provider, "openai")
         self.assertEqual(sufficiency.api_mode, "openai_responses")
         self.assertEqual(sufficiency.model, "gpt-5.4")
+
+        self.assertEqual(query_expansion.provider, "openai")
+        self.assertEqual(query_expansion.api_mode, "openai_responses")
+        self.assertEqual(query_expansion.model, "gpt-5.4-mini")
+        self.assertEqual(query_expansion.reasoning_effort, "low")
 
         self.assertEqual(engineer.provider, "openai")
         self.assertEqual(engineer.api_mode, "openai_responses")
