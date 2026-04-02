@@ -20,6 +20,7 @@ def build_rag_sufficiency_system_prompt() -> str:
             "Do not require platform/version/configuration details when the customer's question is a generic how-to or overview request and the answer stays at a safe high-level overview.",
             'Use decision="answer" when a cited, high-level overview safely addresses the core question even if exact SDK-specific APIs vary by platform.',
             'Use decision="investigate" when the evidence is partial, ambiguous, conflicting, missing critical version/platform/configuration details, or citations do not support the key conclusion.',
+            "Investigate when the answer depends on platform-specific details that the customer did not ask for or when the answer makes SDK-specific claims without enough support.",
             "When in doubt, choose investigate.",
             "",
             "## Output Requirements",

@@ -139,3 +139,38 @@ For each new entry, record:
   - `curl -sS http://localhost:8080/health`
   - `curl -sS -X POST http://localhost:8080/api/tickets/query -H 'Content-Type: application/json' -d '{"customer_id":"model-priority-web-smoke","message":"Who is Agora'\''s CEO?"}'`
   - `curl -sS -X POST http://localhost:8080/api/tickets/query -H 'Content-Type: application/json' -d '{"customer_id":"model-priority-rag-smoke","message":"How do I join a channel?"}'`
+
+## 2026-04-02
+
+- Area or subsystem: RAG query-understanding prompts, query-expansion model activation, and English dictionary-backed retrieval planning
+- Prompt or model version: `query-expansion-v2`
+- Summary: Upgraded the pre-RAG query-understanding stage from heuristic-only rewrites to a hybrid expansion pipeline that can consume structured glossary/symptom hits, call the dedicated query-expansion model for self-query/rewrite/decomposition, and cache those LLM planning results behind Redis-aware query-expansion cache keys.
+- Reason: The previous query-understanding stage was recall-limited because it relied mostly on hardcoded heuristics and markdown term matching. Activating the self-query/rewrite/decomposition prompts at runtime and grounding them with curated dictionary hits makes retrieval planning more expressive without expanding the customer-visible answer surface.
+- Affected files or config:
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `backend/services/llm_profiles.py`
+  - `backend/services/prompts/query_understanding.py`
+  - `backend/services/query_expansion_cache.py`
+  - `backend/services/query_understanding.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/services/rag_qa.py`
+  - `backend/rag_api.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_query_understanding.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_qa.py`
+  - `dictionary/agora_glossary_en.json`
+  - `dictionary/troubleshooting_lexicon_en.json`
+  - `docs/feature_list.md`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Expected behavior change:
+  - Query-understanding now has a dedicated `gpt-5.4-mini` scene for self-query/rewrite/decomposition planning.
+  - The runtime no longer relies only on markdown glossary parsing; it can load structured glossary and troubleshooting lexicon snapshots and inject only matched dictionary hits into the planning prompts.
+  - Query-expansion planning can be cached with Redis using normalized-query/profile/version/model keys so repeated support questions do not always pay the LLM planning cost.
+  - No customer-facing API shape or answer prompt contract changed in this entry.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_profiles.py backend/tests/test_query_understanding.py backend/tests/test_rag_qa.py backend/tests/test_rag_benchmark_runner.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`

@@ -191,6 +191,7 @@ class DashboardUiContractTests(unittest.TestCase):
             "routing": "Routing",
             "retrieval": "Retrieval",
             "generation": "Generation",
+            "performance": "Performance",
             "data-supply": "Data Supply",
             "diagnosis": "Diagnosis",
             "review": "Review Queue",
@@ -222,6 +223,7 @@ class DashboardUiContractTests(unittest.TestCase):
             "routing",
             "retrieval",
             "generation",
+            "performance",
             "data-supply",
             "diagnosis",
             "review",
@@ -309,6 +311,10 @@ class DashboardUiContractTests(unittest.TestCase):
             "retrieval_cases",
             "generation_cases",
             "buildCaseExplorerSection",
+            "Performance",
+            "context_relevance_score",
+            "answer_relevance_score",
+            "evidence_precision_at_5",
         ]:
             self.assertIn(marker, source)
 

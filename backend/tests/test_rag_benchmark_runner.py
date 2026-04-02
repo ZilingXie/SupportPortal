@@ -269,6 +269,38 @@ def _fake_judge_runner(
     }
 
 
+def _fake_refactored_judge_runner(
+    *,
+    judge_model: str,
+    case,
+    result,
+    retrieval_metrics,
+) -> dict[str, object]:
+    _ = case
+    _ = result
+    _ = retrieval_metrics
+    if judge_model == "openai:gpt-5.4":
+        raise RuntimeError("temporary timeout")
+    return {
+        "judge_model": judge_model,
+        "context_relevance_score": 0.88,
+        "answer_relevance_score": 0.91,
+        "cr_score": 0.88,
+        "ar_score": 0.91,
+        "faithfulness_score": 0.9,
+        "citation_correctness_score": 0.94,
+        "response_completeness_score": 0.86,
+        "response_relevance_score": 0.91,
+        "judge_confidence_score": 0.84,
+        "context_relevance_reason": "The answer stays inside the retrieved setup guide.",
+        "answer_relevance_reason": "The response directly answers the setup question.",
+        "supporting_evidence": ["chunk-1"],
+        "hallucination_flag": False,
+        "needs_human": False,
+        "failure_type": "grounded_answer",
+    }
+
+
 def _fake_message_resolver(
     message: str,
     *,
@@ -336,6 +368,8 @@ class RagBenchmarkRunnerTests(unittest.TestCase):
             os.environ,
             {
                 "RAG_QUERY_UNDERSTANDING_ENABLED": "true",
+                "RAG_QUERY_EXPANSION_ENABLED": "true",
+                "RAG_QUERY_PRF_ENABLED": "true",
                 "RAG_QUERY_REWRITE_ENABLED": "true",
                 "RAG_QUERY_DECOMPOSITION_ENABLED": "true",
             },
@@ -344,8 +378,11 @@ class RagBenchmarkRunnerTests(unittest.TestCase):
             snapshot = _strategy_snapshot(["gpt-4o-mini"])
 
         self.assertTrue(snapshot["query_understanding_enabled"])
+        self.assertTrue(snapshot["query_expansion_enabled"])
+        self.assertTrue(snapshot["query_prf_enabled"])
         self.assertTrue(snapshot["query_rewrite_enabled"])
         self.assertTrue(snapshot["query_decomposition_enabled"])
+        self.assertEqual(snapshot["query_expansion_model"], "gpt-5.4-mini")
 
     def test_resolve_judge_models_requires_exactly_three_models(self) -> None:
         with self.assertRaises(ValueError):
@@ -417,6 +454,64 @@ class RagBenchmarkRunnerTests(unittest.TestCase):
         self.assertTrue(any("error" in vote for vote in first_row["judge_votes"]))
         self.assertEqual(first_row["expected_document_ids"], ["official-doc-1"])
         self.assertEqual(first_row["expected_heading_paths"], ["Setup"])
+
+    def test_run_benchmark_emits_refactored_retrieval_generation_and_performance_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dataset_path = Path(tmpdir) / "dataset.jsonl"
+            dataset_path.write_text(
+                json.dumps(
+                    {
+                        "test_case_id": "case-refactor-1",
+                        "question": "How do I use it?",
+                        "query_type": "faq",
+                        "source_type": "official_markdown_upload",
+                        "expected_document_ids": [
+                            {"doc_id": "official-doc-1", "relevance_grade": "high"},
+                            {"doc_id": "official-doc-9", "relevance_grade": "low"},
+                        ],
+                        "expected_heading_paths": ["Setup"],
+                        "expected_evidence_refs": [
+                            {
+                                "chunk_id": "chunk-1",
+                                "doc_id": "official-doc-1",
+                                "heading": "Setup",
+                                "relevance_grade": "high",
+                                "evidence_role": "supports_answer",
+                            }
+                        ],
+                        "answer_key_points": ["Use the official guide."],
+                        "expected_handoff": False,
+                        "anchor_set_id": "manual-gold-core-1",
+                        "tags": ["faq"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            repository = _FakeRepository()
+
+            summary = run_benchmark(
+                dataset_path=dataset_path,
+                experiment_id="exp-refactor-1",
+                repository=repository,
+                query_runner=_fake_query_runner,
+                judge_runner=_fake_refactored_judge_runner,
+            )
+
+        first_row = repository.eval_results[0]["rows"][0]
+        self.assertIn("precision_at_5", first_row)
+        self.assertIn("evidence_precision_at_5", first_row)
+        self.assertIn("context_relevance_score", first_row)
+        self.assertIn("answer_relevance_score", first_row)
+        self.assertIn("judge_confidence_score", first_row)
+        self.assertIn("case_execution_latency_ms", first_row)
+        self.assertEqual(first_row["anchor_set_id"], "manual-gold-core-1")
+        self.assertEqual(first_row["context_relevance_score"], 0.88)
+        self.assertEqual(first_row["answer_relevance_score"], 0.91)
+        self.assertIn("benchmark_throughput_cases_per_sec", summary["metrics"])
+        self.assertIn("judge_error_rate", summary["metrics"])
+        self.assertIn("case_execution_error_rate", summary["metrics"])
+        self.assertIn("context_relevance_score", summary["metrics"])
+        self.assertIn("answer_relevance_score", summary["metrics"])
 
     def test_run_benchmark_persists_benchmark_session_id_on_eval_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
