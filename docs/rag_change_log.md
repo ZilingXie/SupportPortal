@@ -1385,3 +1385,37 @@ For each new entry, record:
   - `podman exec deployment_api_1 python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=10).read().decode())"`
   - `podman exec deployment_api_1 python -c "import json, urllib.request; payload=json.dumps({'customer_id':'prompt-smoke-web-4','message':'Who is Agora\\'s CEO?'}).encode(); req=urllib.request.Request('http://127.0.0.1:8000/api/tickets/query', data=payload, headers={'Content-Type':'application/json'}, method='POST'); print(urllib.request.urlopen(req, timeout=30).read().decode())"`
   - `podman exec deployment_api_1 python -c "import json, urllib.request; payload=json.dumps({'customer_id':'prompt-smoke-rag-4','message':'How do I join a channel?'}).encode(); req=urllib.request.Request('http://127.0.0.1:8000/api/tickets/query', data=payload, headers={'Content-Type':'application/json'}, method='POST'); print(urllib.request.urlopen(req, timeout=30).read().decode())"`
+
+## 2026-04-02 - Persist engineer handoff packet and engineer agent state on tickets
+
+- Summary: Upgraded the automatic `investigating` handoff path so client AI now persists a ticket-level `engineer_handoff_packet` and engineer AI maintains a ticket-level `engineer_agent_state`, while continuing to use the existing `active_investigation` thread for internal chat, draft reply, and confirmation state.
+- Reason: The engineer-side investigation flow needed durable context about what client AI already discovered from RAG, why the answer was still insufficient, and what the engineer AI is currently trying to achieve. Persisting both the structured handoff and the agent’s working state makes the current engineer workflow more coherent and prepares the ticket dashboard to display this investigation context later.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `backend/repositories/ticket_repository.py`
+  - `backend/services/engineer_agent.py`
+  - `backend/services/investigation_flow.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/sql/ticket_storage.sql`
+  - `backend/tests/test_repository_configuration.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_worker.py`
+  - `backend/tests/test_engineer_ui_contract.py`
+  - `ui/engineer-ui/app.js`
+  - `docs/ticket_db_design.md`
+  - `docs/ticket_db_architecture.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No vector tables, embeddings, chunking, or retrieval indices were changed.
+  - Automatic RAG-to-engineer escalation now persists the route summary, candidate answer, sources, citations, evidence summary, and unresolved reason into `support_tickets.engineer_handoff_packet`.
+  - Engineer AI now persists its latest issue understanding, knowledge summary, missing information, goal, and next request into `support_tickets.engineer_agent_state`.
+  - Existing databases are migrated additively with `ADD COLUMN IF NOT EXISTS`; no destructive reset is required for this change.
+  - Investigation events remain lightweight and carry only derived agent summary fields, not the full handoff packet.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/repositories/ticket_repository.py backend/services/investigation_flow.py backend/services/engineer_agent.py backend/main.py backend/worker.py backend/services/ticket_orchestrator.py`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_repository_configuration.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py backend/tests/test_engineer_ui_contract.py`
+  - `node --check ui/engineer-ui/app.js`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`

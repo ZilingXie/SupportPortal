@@ -754,6 +754,50 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_engineer_local_summary_fallback_prefers_agent_brief_when_available(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                const fallback = buildLocalSummaryFallback({
+                  status: "investigating",
+                  messages: [
+                    {
+                      role: "customer",
+                      content: "Android 14 token renewal still fails after the upgrade.",
+                      created_at: "2026-03-24T08:00:00+00:00",
+                    }
+                  ],
+                  engineer_agent_state: {
+                    phase: "gather_missing_inputs",
+                    issue_understanding: "Android 14 token renewal still fails after the customer upgraded the SDK.",
+                    knowledge_summary: "Client AI found generic token-authentication guidance but no Android 14-specific callback evidence.",
+                    why_not_solved: "The current evidence does not prove the exact SDK regression boundary.",
+                    goal: "Confirm the exact SDK version and whether Android 14 is the only affected platform.",
+                    known_facts: ["Customer already upgraded the SDK."],
+                    missing_information: ["Exact SDK version", "Cross-platform reproduction scope"],
+                    next_request_for_engineer: "Please confirm the exact SDK version and whether Android 14 is the only affected platform.",
+                    resolution_hypothesis: "The issue may be limited to SDK 4.2.1 on Android 14.",
+                    ready_to_reply: false,
+                    last_refreshed_at: "2026-03-24T09:10:00+00:00",
+                  },
+                });
+
+                if (!fallback.summary.includes("Current understanding: Android 14 token renewal still fails after the customer upgraded the SDK.")) {
+                  throw new Error("Local summary fallback should surface the agent issue understanding.");
+                }
+                if (!fallback.summary.includes("Goal: Confirm the exact SDK version and whether Android 14 is the only affected platform.")) {
+                  throw new Error("Local summary fallback should surface the current agent goal.");
+                }
+                if (!fallback.summary.includes("Why client AI could not solve it: The current evidence does not prove the exact SDK regression boundary.")) {
+                  throw new Error("Local summary fallback should explain why the client AI is blocked.");
+                }
+                if (fallback.nextAction !== "Please confirm the exact SDK version and whether Android 14 is the only affected platform.") {
+                  throw new Error("Local summary fallback should use the agent next request as the next action.");
+                }
+              """
+            )
+        )
+
     def test_engineer_detail_shows_closed_investigation_thread_without_composer(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(

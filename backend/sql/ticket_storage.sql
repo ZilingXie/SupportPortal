@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS support_tickets (
     subject TEXT NOT NULL,
     status TEXT NOT NULL,
     last_engineer_action JSONB,
+    engineer_handoff_packet JSONB,
+    engineer_agent_state JSONB,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );

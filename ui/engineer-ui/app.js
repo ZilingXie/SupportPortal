@@ -1049,11 +1049,15 @@ function summaryCacheKey(ticket) {
   const investigationUpdatedAt = String(
     ticket?.active_investigation?.updated_at || ticket?.active_investigation?.opened_at || ""
   );
+  const agentUpdatedAt = String(ticket?.engineer_agent_state?.last_refreshed_at || "");
+  const handoffUpdatedAt = String(ticket?.engineer_handoff_packet?.updated_at || "");
   return [
     String(ticket?.updated_at || ""),
     String(ticket?.status || ""),
     String(messageCount),
     investigationUpdatedAt,
+    agentUpdatedAt,
+    handoffUpdatedAt,
   ].join("|");
 }
 
@@ -1097,6 +1101,33 @@ function buildLocalSummaryFallback(ticket) {
   const status = statusLabel(normalizeStatusValue(ticket?.status || "open"));
   const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
   const activeInvestigation = getActiveInvestigation(ticket);
+  const agentState =
+    ticket?.engineer_agent_state && typeof ticket.engineer_agent_state === "object"
+      ? ticket.engineer_agent_state
+      : null;
+
+  if (agentState) {
+    const missingInformation = Array.isArray(agentState.missing_information)
+      ? agentState.missing_information
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+      : [];
+    const summaryLines = [
+      `Current understanding: ${String(agentState.issue_understanding || "Not available yet.").trim() || "Not available yet."}`,
+      `Current knowledge: ${String(agentState.knowledge_summary || "Not available yet.").trim() || "Not available yet."}`,
+      `Why client AI could not solve it: ${String(agentState.why_not_solved || "Not available yet.").trim() || "Not available yet."}`,
+      `Goal: ${String(agentState.goal || "Not available yet.").trim() || "Not available yet."}`,
+    ];
+    if (missingInformation.length) {
+      summaryLines.push(`Still missing: ${missingInformation.join("; ")}`);
+    }
+    return {
+      summary: summaryLines.join(" "),
+      nextAction:
+        String(agentState.next_request_for_engineer || "").trim() ||
+        "Continue the engineer ticket and collect the next missing detail.",
+    };
+  }
 
   let latestCustomer = "";
   let latestAssistant = "";
