@@ -98,12 +98,16 @@ button {
 .dashboard-rail {
   position: sticky;
   top: 0;
+  align-self: start;
+  height: 100vh;
+  max-height: 100vh;
+  overflow-y: auto;
   z-index: 30;
   display: flex;
   flex-direction: column;
   width: 100%;
   min-height: 100vh;
-  padding: 26px 14px 22px;
+  padding: 26px 14px 40px;
   background: linear-gradient(180deg, #1a237e 0%, #171b55 100%);
   box-shadow: 18px 0 44px rgba(23, 28, 33, 0.12);
 }
@@ -111,10 +115,16 @@ button {
 .rail-brand {
   display: flex;
   align-items: center;
-  gap: 14px;
+  justify-content: center;
+  gap: 0;
   min-width: 0;
   margin-bottom: 28px;
   overflow: hidden;
+}
+
+.dashboard-rail:hover .rail-brand {
+  justify-content: flex-start;
+  gap: 14px;
 }
 
 .rail-brand-icon {
@@ -133,8 +143,7 @@ button {
 .rail-brand-copy,
 .rail-nav-label,
 .rail-subnav-label,
-.rail-footer-copy,
-.user-meta,
+.rail-footer-label,
 .rail-nav-chevron {
   min-width: 0;
   opacity: 0;
@@ -149,8 +158,7 @@ button {
 .dashboard-rail:hover .rail-brand-copy,
 .dashboard-rail:hover .rail-nav-label,
 .dashboard-rail:hover .rail-subnav-label,
-.dashboard-rail:hover .rail-footer-copy,
-.dashboard-rail:hover .user-meta,
+.dashboard-rail:hover .rail-footer-label,
 .dashboard-rail:hover .rail-nav-chevron {
   opacity: 1;
   max-width: 180px;
@@ -159,7 +167,7 @@ button {
 .rail-brand-title,
 .rail-nav-label,
 .rail-subnav-label,
-.realtime-value {
+.rail-footer-label {
   display: inline-block;
   white-space: nowrap;
 }
@@ -300,7 +308,8 @@ button {
 }
 
 .rail-nav-label,
-.rail-subnav-label {
+.rail-subnav-label,
+.rail-footer-label {
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.16em;
@@ -320,158 +329,80 @@ button {
   justify-items: stretch;
 }
 
-.rail-status-card {
+.rail-footer-item {
   display: flex;
   align-items: center;
+  min-height: 52px;
   justify-content: center;
-  width: 52px;
-  height: 52px;
   gap: 0;
-  padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  width: 100%;
+  padding: 0 14px;
+  border: 0;
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.08);
+  background: transparent;
+  color: rgba(221, 229, 255, 0.74);
   transition:
     background-color 160ms ease,
-    border-color 160ms ease,
-    width 220ms ease,
+    color 160ms ease,
     padding-inline 220ms ease,
-    justify-content 220ms ease;
+    transform 160ms ease;
 }
 
-.dashboard-rail:hover .rail-status-card {
-  width: 100%;
+.dashboard-rail:hover .rail-footer-item {
   justify-content: flex-start;
-  gap: 12px;
-  padding-inline: 14px;
+  gap: 14px;
+  padding-inline: 16px;
 }
 
-.rail-status-icon {
-  width: 20px;
-  height: 20px;
+.rail-footer-item .material-symbols-outlined {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  flex-shrink: 0;
+}
+
+.rail-footer-status {
+  cursor: default;
+}
+
+.rail-footer-status.is-connecting,
+.rail-footer-status.is-disconnected {
+  color: rgba(141, 205, 255, 0.92);
+}
+
+.rail-footer-status.is-connected {
   color: #7fd1ff;
-  flex-shrink: 0;
 }
 
-.realtime-label,
-.realtime-value {
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+.rail-footer-status.is-error {
+  color: #ffd089;
 }
 
-.realtime-label {
-  color: rgba(141, 205, 255, 0.92);
+.rail-footer-button {
+  text-align: left;
 }
 
-.realtime-value {
-  color: rgba(255, 255, 255, 0.92);
-}
-
-.header-user-controls {
-  width: 100%;
-}
-
-.rail-user-controls {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-}
-
-.dashboard-rail:hover .rail-user-controls {
-  justify-content: space-between;
-}
-
-.user-profile-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 48px;
-  padding: 0 12px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.dashboard-rail .user-profile-chip {
-  justify-content: center;
-  width: 52px;
-  padding: 0;
-}
-
-.dashboard-rail:hover .user-profile-chip {
-  width: auto;
-  justify-content: flex-start;
-  padding: 0 12px;
-}
-
-.user-avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.18);
-  color: #ffffff;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-
-.user-meta {
-  display: grid;
-  gap: 2px;
-}
-
-.user-name,
-.user-role {
-  margin: 0;
-  white-space: nowrap;
-}
-
-.user-name {
+.rail-footer-button:hover:not(:disabled) {
   color: rgba(255, 255, 255, 0.96);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.user-role {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.user-role-admin {
-  color: rgba(141, 205, 255, 0.92);
-}
-
-.logout-icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 16px;
   background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.9);
 }
 
-.logout-icon-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.14);
-}
-
-.logout-icon-btn:disabled {
+.rail-footer-button:disabled {
   opacity: 0.6;
   cursor: wait;
 }
 
-.logout-icon {
-  width: 18px;
-  height: 18px;
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .dashboard-shell {
@@ -1345,57 +1276,41 @@ button {
   }
 }
 
-@media (max-width: 900px) {
-  .dashboard-app {
-    grid-template-columns: 1fr;
+@media (max-width: 900px) and (min-width: 721px) {
+  .dashboard-app,
+  .dashboard-app:has(.dashboard-rail:hover) {
+    grid-template-columns: var(--rail-width-collapsed) minmax(0, 1fr);
   }
 
-  .dashboard-rail {
-    position: static;
-    min-height: auto;
-    padding: 18px;
-    gap: 18px;
-  }
-
-  .rail-brand-copy,
-  .rail-nav-label,
-  .rail-subnav-label,
-  .rail-footer-copy,
-  .user-meta,
-  .rail-nav-chevron,
   .dashboard-rail:hover .rail-brand-copy,
   .dashboard-rail:hover .rail-nav-label,
   .dashboard-rail:hover .rail-subnav-label,
-  .dashboard-rail:hover .rail-footer-copy,
-  .dashboard-rail:hover .user-meta,
+  .dashboard-rail:hover .rail-footer-label,
   .dashboard-rail:hover .rail-nav-chevron {
-    opacity: 1;
-    max-width: 180px;
+    opacity: 0;
+    max-width: 0;
   }
 
-  .rail-nav-item,
-  .rail-subnav-item,
+  .dashboard-rail:hover .rail-brand {
+    justify-content: center;
+    gap: 0;
+  }
+
   .dashboard-rail:hover .rail-nav-item,
-  .dashboard-rail:hover .rail-subnav-item {
-    justify-content: flex-start;
-    padding-inline: 16px;
+  .dashboard-rail:hover .rail-subnav-item,
+  .dashboard-rail:hover .rail-footer-item,
+  .dashboard-rail:hover .rail-nav-group-toggle {
+    justify-content: center;
+    gap: 0;
+    padding-inline: 14px;
   }
 
-  .dashboard-rail .user-profile-chip,
-  .dashboard-rail:hover .user-profile-chip,
-  .dashboard-rail:hover .rail-status-card {
-    width: auto;
-    justify-content: flex-start;
-    padding-inline: 12px;
-  }
-
-  .rail-footer,
   .dashboard-rail:hover .rail-footer {
-    justify-items: stretch;
+    justify-items: center;
   }
 
   .dashboard-shell {
-    padding: 18px;
+    padding: 20px 18px;
   }
 
   .ops-header {
@@ -1405,6 +1320,60 @@ button {
 }
 
 @media (max-width: 720px) {
+  .dashboard-app {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-app:has(.dashboard-rail:hover) {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-rail {
+    position: static;
+    align-self: auto;
+    height: auto;
+    max-height: none;
+    min-height: auto;
+    overflow-y: visible;
+    padding: 18px;
+    gap: 18px;
+  }
+
+  .rail-brand-copy,
+  .rail-nav-label,
+  .rail-subnav-label,
+  .rail-footer-label,
+  .rail-nav-chevron,
+  .dashboard-rail:hover .rail-brand-copy,
+  .dashboard-rail:hover .rail-nav-label,
+  .dashboard-rail:hover .rail-subnav-label,
+  .dashboard-rail:hover .rail-footer-label,
+  .dashboard-rail:hover .rail-nav-chevron {
+    opacity: 1;
+    max-width: 180px;
+  }
+
+  .rail-brand,
+  .dashboard-rail:hover .rail-brand {
+    justify-content: flex-start;
+    gap: 14px;
+  }
+
+  .rail-nav-item,
+  .rail-subnav-item,
+  .rail-footer-item,
+  .dashboard-rail:hover .rail-nav-item,
+  .dashboard-rail:hover .rail-subnav-item,
+  .dashboard-rail:hover .rail-footer-item {
+    justify-content: flex-start;
+    padding-inline: 16px;
+  }
+
+  .rail-footer,
+  .dashboard-rail:hover .rail-footer {
+    justify-items: stretch;
+  }
+
   .kpi-grid,
   .mini-kpi-grid,
   .breakdown-grid,

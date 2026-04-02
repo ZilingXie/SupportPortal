@@ -196,7 +196,18 @@
 5. 选中 `Ticket Details` 的任一状态后，主区应切成该状态的 full-page ticket board，并复用现有 ticket 数据，不得改写 ticket ops 数据契约。
 6. dashboard 内允许打开只读 ticket detail overlay，用于查看上下文、调查摘要和近期工单进展；工单处理动作仍留在 `/engineer`。
 7. 必须存在前往 `/dashboard/rag/` 的明确入口，并以 rail 中的 `RAG Benchmark` 作为主导航入口。
-8. 页面重点是：
+8. dashboard rail footer 只允许保留两个入口：
+   - `Realtime`
+   - `Logout`
+9. `Realtime` 和 `Logout` 必须复用与主导航一致的 rail item icon slot、padding、collapsed/expanded 对齐和 reveal 规则；dashboard 中不得展示用户头像、用户名、角色。
+10. dashboard 收起态下，顶部 `Concierge AI` brand icon 也必须与 rail 导航 icon 共用同一条中心线；隐藏 brand 文案时不得留下额外 gap。
+11. dashboard rail 在桌面和平板必须锚定到 viewport 高度，不得因为主区内容变长而被拉高；滚动长页面时 rail 本身保持在视窗内，必要时仅 rail 内部滚动。
+12. `Realtime` 和 `Logout` 继续作为 rail footer，底部锚定但必须比当前更靠上；不得掉出首屏可视区。
+13. 响应式规则固定为：
+   - `>= 901px`：桌面竖向 rail，允许 hover 展开
+   - `721px - 900px`：固定竖向 rail，保持 collapsed icon-only 状态，不依赖 hover reveal
+   - `<= 720px`：回到顶部静态 rail，labels 全显
+14. 页面重点是：
    - queue health
    - categorized ticket visibility
    - operator summary

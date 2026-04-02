@@ -15,7 +15,6 @@ class DashboardUiContractTests(unittest.TestCase):
             'id="resolution-rate"',
             'id="sentiment-alerts"',
             'id="waiting-for-engineer"',
-            'id="header-user-controls"',
             'id="ws-status"',
             'id="event-volume-bars"',
             'id="dashboard-view-region"',
@@ -64,6 +63,11 @@ class DashboardUiContractTests(unittest.TestCase):
         self.assertIn('class="dashboard-rail"', source)
         self.assertIn('class="rail-footer"', source)
         self.assertIn('href="/dashboard/rag/"', source)
+        self.assertIn("Realtime", source)
+        self.assertIn("Logout", source)
+        self.assertNotIn('id="header-user-controls"', source)
+        self.assertNotIn("user-profile-chip", source)
+        self.assertNotIn("user-meta", source)
         self.assertNotIn('data-dashboard-tab="experiments"', source)
         self.assertNotIn('data-dashboard-tab="overview"', source)
         self.assertIn(".dashboard-rail", css)
@@ -119,6 +123,64 @@ class DashboardUiContractTests(unittest.TestCase):
         self.assertNotRegex(
             css,
             r"\.rail-nav-chevron\s*\{[^}]*margin-left:\s*auto;",
+        )
+
+    def test_root_dashboard_footer_uses_shared_rail_item_geometry_without_profile_chip(self) -> None:
+        source = Path("ui/dashboard-ui/index.html").read_text(encoding="utf-8")
+        css = Path("ui/dashboard-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn('data-rail-footer-status="realtime"', source)
+        self.assertIn('id="logout-btn"', source)
+        self.assertNotIn("rail-status-card", source)
+        self.assertNotIn("logout-icon-btn", source)
+        self.assertNotIn("user-avatar", source)
+        self.assertRegex(
+            css,
+            r"\.rail-footer-item\s*\{[^}]*min-height:\s*52px;[^}]*justify-content:\s*center;[^}]*padding:\s*0 14px;",
+        )
+        self.assertRegex(
+            css,
+            r"\.dashboard-rail:hover \.rail-footer-item\s*\{[^}]*justify-content:\s*flex-start;[^}]*gap:\s*14px;[^}]*padding-inline:\s*16px;",
+        )
+
+    def test_root_dashboard_collapsed_brand_icon_uses_same_centerline_as_rail_icons(self) -> None:
+        css = Path("ui/dashboard-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertRegex(
+            css,
+            r"\.rail-brand\s*\{[^}]*justify-content:\s*center;[^}]*gap:\s*0;",
+        )
+        self.assertRegex(
+            css,
+            r"\.dashboard-rail:hover \.rail-brand\s*\{[^}]*justify-content:\s*flex-start;[^}]*gap:\s*14px;",
+        )
+
+    def test_root_dashboard_rail_is_viewport_anchored_with_lifted_footer_inset(self) -> None:
+        css = Path("ui/dashboard-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertRegex(
+            css,
+            r"\.dashboard-rail\s*\{[^}]*position:\s*sticky;[^}]*top:\s*0;[^}]*align-self:\s*start;[^}]*height:\s*100vh;[^}]*max-height:\s*100vh;[^}]*overflow-y:\s*auto;[^}]*padding:\s*26px 14px 40px;",
+        )
+        self.assertRegex(
+            css,
+            r"\.rail-footer\s*\{[^}]*margin-top:\s*auto;",
+        )
+
+    def test_root_dashboard_tablet_keeps_fixed_collapsed_rail_until_mobile_breakpoint(self) -> None:
+        css = Path("ui/dashboard-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertRegex(
+            css,
+            r"@media \(max-width:\s*900px\) and \(min-width:\s*721px\)\s*\{[^}]*\.dashboard-app,\s*\.dashboard-app:has\(\.dashboard-rail:hover\)\s*\{[^}]*grid-template-columns:\s*var\(--rail-width-collapsed\)\s+minmax\(0,\s*1fr\);",
+        )
+        self.assertRegex(
+            css,
+            r"@media \(max-width:\s*900px\) and \(min-width:\s*721px\)\s*\{[\s\S]*?\.dashboard-rail:hover \.rail-nav-label,[\s\S]*?opacity:\s*0;[\s\S]*?max-width:\s*0;",
+        )
+        self.assertRegex(
+            css,
+            r"@media \(max-width:\s*720px\)\s*\{[^}]*\.dashboard-app\s*\{[^}]*grid-template-columns:\s*1fr;",
         )
 
     def test_rag_dashboard_nav_uses_scorecard_pages(self) -> None:
