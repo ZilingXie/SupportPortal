@@ -25,6 +25,7 @@ from backend.services.rag_benchmark import (
     summarize_eval_daily_metrics,
 )
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, RagAnswer, RagQueryResult, RagQueryTrace, run_rag_query
+from backend.services.query_understanding import DEFAULT_QUERY_PROFILE, GLOSSARY_VERSION, QUERY_UNDERSTANDING_VERSION, SELF_QUERY_VERSION
 from backend.services.support_router import (
     SupportResolution,
     SupportRouteDecision,
@@ -273,7 +274,15 @@ def _strategy_snapshot(judge_models: list[str]) -> dict[str, Any]:
         "rag_top_k": _clean_text(os.getenv("RAG_TOP_K")) or None,
         "chat_model": _clean_text(os.getenv("OPENAI_CHAT_MODEL")) or "gpt-4.1",
         "reranker_model": _clean_text(os.getenv("RAG_RERANK_MODEL")),
+        "query_understanding_enabled": (_clean_text(os.getenv("RAG_QUERY_UNDERSTANDING_ENABLED")) or "").lower()
+        not in {"0", "false", "no", "off"},
+        "query_understanding_version": QUERY_UNDERSTANDING_VERSION,
+        "query_profile": DEFAULT_QUERY_PROFILE,
+        "glossary_version": GLOSSARY_VERSION,
+        "self_query_version": SELF_QUERY_VERSION,
         "query_rewrite_enabled": (_clean_text(os.getenv("RAG_QUERY_REWRITE_ENABLED")) or "").lower()
+        in {"1", "true", "yes", "on"},
+        "query_decomposition_enabled": (_clean_text(os.getenv("RAG_QUERY_DECOMPOSITION_ENABLED")) or "").lower()
         in {"1", "true", "yes", "on"},
         "judge_models": judge_models,
     }
