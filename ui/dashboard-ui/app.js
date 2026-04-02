@@ -1,5 +1,6 @@
 const wsStatusEl = document.getElementById("ws-status");
-const headerUserControlsEl = document.getElementById("header-user-controls");
+const realtimeStatusItemEl = document.querySelector('[data-rail-footer-status="realtime"]');
+const logoutButtonEl = document.getElementById("logout-btn");
 const refreshButtonEl = document.getElementById("refresh-button");
 const opsHeaderBodyEl = document.getElementById("ops-header-body");
 const ticketOpsButtonEl = document.querySelector('[data-dashboard-nav="ticket-ops"]');
@@ -36,11 +37,6 @@ const eventVolumeBarsEl = document.getElementById("event-volume-bars");
 const statusBreakdownEl = document.getElementById("status-breakdown");
 const sentimentBreakdownEl = document.getElementById("sentiment-breakdown");
 const flowBreakdownEl = document.getElementById("flow-breakdown");
-
-const DASHBOARD_USER = {
-  username: "admin",
-  role: "ADMIN",
-};
 
 const DEFAULT_HEADER_BODY =
   "Real-time ticket throughput, escalation awareness, and operator workload in a calmer AI-managed control surface.";
@@ -159,11 +155,6 @@ function humanizeToken(value) {
   return normalized.replaceAll("_", " ").replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
-function userInitial(username) {
-  const normalized = normalizeString(username);
-  return normalized ? normalized[0].toUpperCase() : "A";
-}
-
 function setText(element, value) {
   if (element) {
     element.textContent = value;
@@ -180,7 +171,39 @@ function setRefreshLoading(isLoading) {
 }
 
 function setRealtimeStatus(text) {
-  setText(wsStatusEl, text);
+  const normalizedText = normalizeString(text) || "Realtime: connecting...";
+  setText(wsStatusEl, normalizedText);
+
+  if (!realtimeStatusItemEl) {
+    return;
+  }
+
+  const normalizedStatus = normalizedText.toLowerCase();
+  const statusTone = normalizedStatus.includes("error") || normalizedStatus.includes("failed")
+    ? "error"
+    : normalizedStatus.includes("disconnected")
+      ? "disconnected"
+      : normalizedStatus.includes("connected")
+        ? "connected"
+        : "connecting";
+
+  realtimeStatusItemEl.dataset.state = statusTone;
+  realtimeStatusItemEl.classList.toggle("is-connecting", statusTone === "connecting");
+  realtimeStatusItemEl.classList.toggle("is-connected", statusTone === "connected");
+  realtimeStatusItemEl.classList.toggle("is-disconnected", statusTone === "disconnected");
+  realtimeStatusItemEl.classList.toggle("is-error", statusTone === "error");
+  realtimeStatusItemEl.title = normalizedText;
+  realtimeStatusItemEl.setAttribute("aria-label", normalizedText);
+}
+
+function renderRailFooter() {
+  if (!logoutButtonEl) {
+    return;
+  }
+
+  logoutButtonEl.disabled = logoutLoading;
+  logoutButtonEl.title = logoutLoading ? "Logging out..." : "Logout";
+  logoutButtonEl.setAttribute("aria-label", logoutLoading ? "Logging out..." : "Logout");
 }
 
 function normalizeDashboardView(value) {
@@ -424,45 +447,6 @@ function buildDefinitionGrid(items) {
         .join("")}
     </div>
   `;
-}
-
-function renderHeaderUserControls() {
-  if (!headerUserControlsEl) {
-    return;
-  }
-
-  const role = normalizeString(DASHBOARD_USER.role || "ADMIN").toUpperCase();
-  const roleClass = `user-role-${escapeHtml(role.toLowerCase())}`;
-
-  headerUserControlsEl.innerHTML = `
-    <div class="user-profile-chip" aria-label="Current user">
-      <span class="user-avatar" aria-hidden="true">${escapeHtml(userInitial(DASHBOARD_USER.username))}</span>
-      <div class="user-meta">
-        <p class="user-name">${escapeHtml(DASHBOARD_USER.username)}</p>
-        <p class="user-role ${roleClass}">${escapeHtml(role)}</p>
-      </div>
-    </div>
-    <button
-      id="logout-btn"
-      class="logout-icon-btn"
-      type="button"
-      title="Logout"
-      aria-label="Logout"
-      ${logoutLoading ? "disabled" : ""}
-    >
-      <svg class="logout-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M14 8L18 12L14 16" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path>
-        <path d="M18 12H9" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path>
-        <path d="M10 4H7C5.9 4 5 4.9 5 6V18C5 19.1 5.9 20 7 20H10" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path>
-      </svg>
-    </button>
-  `;
-
-  document.getElementById("logout-btn")?.addEventListener("click", () => {
-    handleLogoutClick().catch((error) => {
-      setRealtimeStatus(`Logout failed: ${error.message}`);
-    });
-  });
 }
 
 function renderBreakdownList(element, items) {
@@ -1146,7 +1130,7 @@ async function handleLogoutClick() {
   }
 
   logoutLoading = true;
-  renderHeaderUserControls();
+  renderRailFooter();
   try {
     await fetchJson("/api/v1/auth/logout", { method: "POST" });
     stopDashboardSocket();
@@ -1154,7 +1138,7 @@ async function handleLogoutClick() {
     window.location.reload();
   } finally {
     logoutLoading = false;
-    renderHeaderUserControls();
+    renderRailFooter();
   }
 }
 
@@ -1268,13 +1252,18 @@ function handleDocumentKeydown(event) {
 }
 
 async function initializeDashboard() {
-  renderHeaderUserControls();
+  renderRailFooter();
   renderRailNav();
   renderDashboardView();
 
   refreshButtonEl?.addEventListener("click", () => {
     refreshDashboard().catch((error) => {
       setRealtimeStatus(`Refresh failed: ${error.message}`);
+    });
+  });
+  logoutButtonEl?.addEventListener("click", () => {
+    handleLogoutClick().catch((error) => {
+      setRealtimeStatus(`Logout failed: ${error.message}`);
     });
   });
   document.addEventListener("click", handleDocumentClick);
