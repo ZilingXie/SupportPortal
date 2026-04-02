@@ -6,7 +6,11 @@ import argparse
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:  # pragma: no cover - optional in lightweight test environments
+    def load_dotenv(*_args, **_kwargs) -> bool:
+        return False
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:

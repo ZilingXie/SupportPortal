@@ -93,6 +93,7 @@ PRIMARY_RAG_WORKBENCH_PAGES = (
     "routing",
     "retrieval",
     "generation",
+    "performance",
     "data-supply",
     "diagnosis",
     "review",
@@ -2024,7 +2025,7 @@ def dashboard_rag_page(
             "limit": limit,
             "cursor": cursor,
         }
-        if page in {"scorecard", "routing", "retrieval", "generation", "data-supply", "diagnosis", "review"}:
+        if page in {"scorecard", "routing", "retrieval", "generation", "performance", "data-supply", "diagnosis", "review"}:
             return {
                 "layout": page,
                 "range": range,

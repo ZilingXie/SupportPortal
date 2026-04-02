@@ -307,3 +307,66 @@ class RagBenchmarkSessionTests(unittest.TestCase):
         self.assertEqual([Path(str(call["dataset_path"])).stem for call in calls], ["alpha", "beta"])
         self.assertEqual(repository.session_writes[-1]["status"], "failed")
         self.assertEqual(repository.session_writes[-1]["error_message"], "beta failed")
+
+    def test_run_local_benchmark_session_computes_gate_status_from_child_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            changelog_path = Path(tmpdir) / "rag_change_log.md"
+            changelog_path.write_text(
+                "\n".join(
+                    [
+                        "# RAG Change Log",
+                        "",
+                        "## 2026-04-02 - Evaluation refactor",
+                        "",
+                        "- Summary: Add unified retrieval, generation, and performance metrics.",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            benchmark_specs = []
+            for name in ["alpha", "beta", "gamma"]:
+                path = Path(tmpdir) / f"{name}.json"
+                path.write_text("[]", encoding="utf-8")
+                benchmark_specs.append({"dataset_name": name, "label": name.title(), "path": path})
+            repository = _FakeSessionRepository()
+
+            def fake_run_benchmark(**kwargs):
+                dataset_path = Path(str(kwargs["dataset_path"]))
+                benchmark_version = dataset_path.stem
+                latency = 1800.0 if benchmark_version != "gamma" else 16000.0
+                return {
+                    "eval_run_id": f"EVAL-{benchmark_version.upper()}",
+                    "dataset_name": dataset_path.name,
+                    "benchmark_version": benchmark_version,
+                    "dataset_schema_version": "mixed_route_v2",
+                    "judge_models": ["gpt-5.4", "qwen", "deepseek"],
+                    "case_count": 1,
+                    "metrics": {
+                        "evidence_precision_at_5": 0.91,
+                        "evidence_recall_at_5": 0.9,
+                        "evidence_ndcg_at_5": 0.92,
+                        "context_relevance_score": 0.9,
+                        "answer_relevance_score": 0.89,
+                        "faithfulness_score": 0.93,
+                        "citation_correctness_score": 0.91,
+                        "response_completeness_score": 0.87,
+                        "benchmark_p95_total_latency_ms": latency,
+                        "benchmark_throughput_cases_per_sec": 0.4,
+                        "judge_error_rate": 0.0,
+                        "case_execution_error_rate": 0.0,
+                    },
+                }
+
+            summary = run_local_benchmark_session(
+                repository=repository,
+                session_name="session-gate",
+                benchmark_specs=benchmark_specs,
+                changelog_path=changelog_path,
+                run_benchmark_fn=fake_run_benchmark,
+            )
+
+        self.assertEqual(summary["gate_status"], "fail")
+        self.assertIn("performance", summary["gate_failure_dimensions"])
+        self.assertIn("session_gate", summary)
+        self.assertEqual(summary["session_gate"]["performance"]["status"], "fail")

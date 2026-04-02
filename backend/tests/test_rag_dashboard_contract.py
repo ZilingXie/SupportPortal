@@ -12,6 +12,7 @@ class RagDashboardContractTests(unittest.TestCase):
             'if normalized_page == "routing":': "_routing_workbench_page",
             'if normalized_page == "retrieval":': "_retrieval_workbench_page",
             'if normalized_page == "generation":': "_generation_workbench_page",
+            'if normalized_page == "performance":': "_performance_workbench_page",
             'if normalized_page == "data-supply":': "_data_supply_workbench_page",
             'if normalized_page == "diagnosis":': "_diagnosis_workbench_page",
             'if normalized_page == "review":': "_review_workbench_page",
@@ -77,6 +78,7 @@ class RagDashboardContractTests(unittest.TestCase):
                 "routing",
                 "retrieval",
                 "generation",
+                "performance",
                 "data-supply",
                 "diagnosis",
                 "review",
@@ -127,6 +129,9 @@ class RagDashboardContractTests(unittest.TestCase):
             "_benchmark_session_payload_for_eval_run",
             "improvement_summary",
             "improvement_entries",
+            "gate_status",
+            "gate_failure_dimensions",
+            "session_gate",
         ]:
             self.assertIn(marker, repository_source)
 
