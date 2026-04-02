@@ -1688,8 +1688,15 @@ class RagQaHybridTests(unittest.TestCase):
         captured_queries: list[str] = []
         captured_downpush: list[dict[str, str]] = []
 
-        def _capture_vector(query: str, config: dict[str, object], *, limit: int | None = None):
+        def _capture_vector(
+            query: str,
+            config: dict[str, object],
+            *,
+            limit: int | None = None,
+            index_role: str = "primary",
+        ):
             _ = limit
+            _ = index_role
             captured_queries.append(query)
             plan = config.get("_retrieval_plan")
             captured_downpush.append(downpush_hard_filters(plan) if isinstance(plan, RetrievalPlan) else {})
@@ -1768,7 +1775,8 @@ class RagQaHybridTests(unittest.TestCase):
                                             "gpt-5.4",
                                         ),
                                     ):
-                                        result = run_rag_query("How do I join a channel in Node.js?")
+                                        with patch.dict(os.environ, {"RAG_AGENT_ENABLED": "0"}, clear=False):
+                                            result = run_rag_query("How do I join a channel in Node.js?")
 
         self.assertGreaterEqual(len(captured_queries), 2)
         self.assertEqual(captured_queries[0], "How do I join a channel in Node.js?")

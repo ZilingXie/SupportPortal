@@ -66,6 +66,7 @@ class RagAgenticTests(unittest.TestCase):
             normalized_query="Why does iOS black screen happen after users join?",
             canonical_terms=["Black Screen"],
             glossary_hits=[{"canonical_term": "Black Screen", "matched_text": "black screen", "definition": "Remote video is black."}],
+            dictionary_hits=[{"canonical_term": "Black Screen", "matched_text": "black screen", "definition": "Remote video is black."}],
             retrieval_plan=RetrievalPlan(
                 semantic_query="ios black screen troubleshooting",
                 hard_filters={"doc_subtype": "troubleshooting_case"},
