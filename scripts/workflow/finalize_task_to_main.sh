@@ -112,6 +112,13 @@ if ! bash -lc "$verify_command"; then
   die "Verification command failed on $expected_branch: $verify_command"
 fi
 
+if ! git diff --quiet origin/main...HEAD -- "docs/feature_list.md"; then
+  info "Running automatic feature list verification."
+  if ! python3 "$SCRIPT_DIR/../verify_feature_list.py" "docs/feature_list.md"; then
+    die "Automatic feature list verification failed."
+  fi
+fi
+
 ahead_count="$(git rev-list --count origin/main..HEAD)"
 if (( ahead_count == 0 )); then
   die "Branch $expected_branch has no commits ahead of origin/main to finalize."

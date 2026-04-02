@@ -39,6 +39,58 @@ class WorkflowScriptTests(unittest.TestCase):
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(content, encoding="utf-8")
 
+    def _valid_feature_list(self) -> str:
+        return textwrap.dedent(
+            """\
+            # SupportPortal 主功能清单
+
+            本文件是 SupportPortal 的唯一主功能清单。
+
+            维护规则：
+            - 只记录主功能。
+
+            ## Client 端
+
+            ### 已完成
+            - 客户端已完成能力。
+
+            ### 未完成
+            - 客户端待补充。
+
+            ## Engineer 端
+
+            ### 已完成
+            - 工程师端已完成能力。
+
+            ### 未完成
+            - 工程师端待补充。
+
+            ## Ticket Dashboard
+
+            ### 已完成
+            - Ticket Dashboard 已完成能力。
+
+            ### 未完成
+            - Ticket Dashboard 待补充。
+
+            ## RAG Dashboard
+
+            ### 已完成
+            - RAG Dashboard 已完成能力。
+
+            ### 未完成
+            - RAG Dashboard 待补充。
+
+            ## RAG
+
+            ### 已完成
+            - RAG 已完成能力。
+
+            ### 未完成
+            - RAG 待补充。
+            """
+        )
+
     def _commit_all(self, repo: Path, message: str) -> None:
         _git(["add", "."], cwd=repo)
         _git(["commit", "-m", message], cwd=repo)
@@ -787,6 +839,59 @@ class WorkflowScriptTests(unittest.TestCase):
         calls = self._read_fake_gh_calls(state_dir)
         self.assertFalse(any(call[:2] == ["pr", "create"] for call in calls))
         self.assertTrue(any(call[:2] == ["pr", "merge"] for call in calls))
+
+    def test_finalize_task_to_main_auto_verifies_valid_feature_list_changes(self) -> None:
+        bare, _, repo = self._init_remote_repo_on_main()
+        self._write(repo, "docs/feature_list.md", self._valid_feature_list())
+        self._commit_all(repo, "Add feature list")
+        _git(["push", "origin", "main"], cwd=repo)
+
+        task_worktree = self._add_task_worktree(repo)
+        updated = self._valid_feature_list().replace(
+            "- 客户端待补充。\n",
+            "- 客户端待补充。\n- 对话支持流式输出。\n",
+        )
+        self._write(task_worktree, "docs/feature_list.md", updated)
+        fake_bin, state_dir = self._install_fake_gh(bare)
+
+        result = self._run_workflow(
+            "finalize_task_to_main.sh",
+            task_worktree,
+            "codex/example-task",
+            "--verify",
+            "git diff --check",
+            extra_env=self._fake_gh_env(fake_bin, state_dir, bare),
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("Running automatic feature list verification.", result.stdout)
+        self.assertIn(
+            "Feature list verification passed: docs/feature_list.md",
+            result.stdout,
+        )
+
+    def test_finalize_task_to_main_fails_on_invalid_feature_list_changes(self) -> None:
+        bare, _, repo = self._init_remote_repo_on_main()
+        self._write(repo, "docs/feature_list.md", self._valid_feature_list())
+        self._commit_all(repo, "Add feature list")
+        _git(["push", "origin", "main"], cwd=repo)
+
+        task_worktree = self._add_task_worktree(repo)
+        invalid = self._valid_feature_list().replace("### 未完成\n", "### 规划中\n", 1)
+        self._write(task_worktree, "docs/feature_list.md", invalid)
+        fake_bin, state_dir = self._install_fake_gh(bare)
+
+        result = self._run_workflow(
+            "finalize_task_to_main.sh",
+            task_worktree,
+            "codex/example-task",
+            "--verify",
+            "git diff --check",
+            extra_env=self._fake_gh_env(fake_bin, state_dir, bare),
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Automatic feature list verification failed.", result.stderr)
 
     def test_finalize_task_to_main_times_out_when_lock_is_held(self) -> None:
         bare, _, repo = self._init_remote_repo_on_main()
