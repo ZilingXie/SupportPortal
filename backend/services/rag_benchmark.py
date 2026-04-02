@@ -8,7 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-DEFAULT_JUDGE_MODELS = ["gpt-4.1", "gpt-4.1-mini", "gpt-4o-mini"]
+DEFAULT_JUDGE_MODELS = [
+    "openai:gpt-5.4",
+    "siliconflow:Qwen/Qwen3.5-397B-A17B",
+    "siliconflow:deepseek-ai/DeepSeek-V3.2",
+]
 LIVE_REVIEW_BASELINE_RATE = 0.05
 LOW_CONFIDENCE_THRESHOLD = 0.65
 BENCHMARK_QUALITY_THRESHOLD = 0.70

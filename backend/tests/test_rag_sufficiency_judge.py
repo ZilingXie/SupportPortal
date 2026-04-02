@@ -55,7 +55,7 @@ class RagSufficiencyJudgeTests(unittest.TestCase):
             os.environ,
             {
                 "OPENAI_API_KEY": "test-key",
-                "RAG_SUFFICIENCY_JUDGE_MODEL": "gpt-5.4-mini",
+                "RAG_SUFFICIENCY_JUDGE_MODEL": "gpt-5.4",
                 "RAG_SUFFICIENCY_JUDGE_REASONING_EFFORT": "low",
                 "RAG_SUFFICIENCY_JUDGE_TEMPERATURE": "0.0",
             },
@@ -88,7 +88,7 @@ class RagSufficiencyJudgeTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0]["temperature"], 0.0)
         self.assertNotIn("temperature", calls[1])
-        self.assertEqual(calls[1]["model"], "gpt-5.4-mini")
+        self.assertEqual(calls[1]["model"], "gpt-5.4")
         self.assertEqual(calls[1]["reasoning"]["effort"], "low")
         self.assertEqual(result.decision, "answer")
         self.assertEqual(result.reason, "supported_after_retry")

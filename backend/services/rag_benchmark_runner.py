@@ -15,6 +15,13 @@ from backend.services.embedding_provider import (
     embedding_model_id,
     embedding_provider_name,
 )
+from backend.services.llm_factory import LlmInvocationError, invoke_chat_text, invoke_responses_text
+from backend.services.llm_profiles import (
+    BENCHMARK_JUDGE_SCENARIO,
+    RAG_ANSWER_SCENARIO,
+    parse_provider_model_reference,
+    resolve_model_profile,
+)
 from backend.services.rag_benchmark import (
     DEFAULT_JUDGE_MODELS,
     BenchmarkCase,
@@ -193,11 +200,15 @@ def resolve_judge_models(raw_value: str | None = None) -> list[str]:
     value = raw_value if raw_value is not None else os.getenv("RAG_BENCHMARK_JUDGE_MODELS")
     if not _clean_text(value):
         return list(DEFAULT_JUDGE_MODELS)
-    models = [_clean_text(item) for item in str(value).split(",")]
-    models = [item for item in models if item]
-    if len(models) != 3:
+    raw_models = [_clean_text(item) for item in str(value).split(",")]
+    raw_models = [item for item in raw_models if item]
+    if len(raw_models) != 3:
         raise ValueError("RAG_BENCHMARK_JUDGE_MODELS must provide exactly 3 judge models")
-    return models
+    normalized_models: list[str] = []
+    for item in raw_models:
+        provider, model = parse_provider_model_reference(item, default_provider="openai")
+        normalized_models.append(f"{provider}:{model}")
+    return normalized_models
 
 
 def _vector_table_name() -> str:
@@ -267,12 +278,13 @@ def _failure_stage_and_bucket(
 
 
 def _strategy_snapshot(judge_models: list[str]) -> dict[str, Any]:
+    rag_answer_profile = resolve_model_profile(RAG_ANSWER_SCENARIO)
     return {
         "embedding_provider": embedding_provider_name(),
         "embedding_model": embedding_model_id(),
         "vector_table": _vector_table_name(),
         "rag_top_k": _clean_text(os.getenv("RAG_TOP_K")) or None,
-        "chat_model": _clean_text(os.getenv("OPENAI_CHAT_MODEL")) or "gpt-4.1",
+        "chat_model": rag_answer_profile.model,
         "reranker_model": _clean_text(os.getenv("RAG_RERANK_MODEL")),
         "query_understanding_enabled": (_clean_text(os.getenv("RAG_QUERY_UNDERSTANDING_ENABLED")) or "").lower()
         not in {"0", "false", "no", "off"},
@@ -597,23 +609,14 @@ def invoke_judge_vote(
     result: BenchmarkExecutionResult,
     retrieval_metrics: dict[str, Any],
 ) -> dict[str, Any]:
-    api_key = _clean_text(os.getenv("OPENAI_API_KEY"))
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is required for benchmark judges")
-
-    from langchain_openai import ChatOpenAI
-
+    provider, model = parse_provider_model_reference(judge_model, default_provider="openai")
+    profile = resolve_model_profile(BENCHMARK_JUDGE_SCENARIO, provider=provider, model=model)
+    if not profile.api_key:
+        raise RuntimeError(f"{provider} API key is required for benchmark judges")
     rag_result = result.rag_result
     answer_text = _clean_text(result.answer_text)
     retrieval_candidates = list(rag_result.trace.retrieval_candidates) if rag_result is not None else []
     selected_contexts = list(rag_result.trace.selected_contexts) if rag_result is not None else []
-    llm = ChatOpenAI(
-        model=judge_model,
-        temperature=0,
-        api_key=api_key,
-        request_timeout=float(os.getenv("RAG_BENCHMARK_JUDGE_TIMEOUT_SECONDS") or 30.0),
-        max_retries=1,
-    )
     system_prompt = """You are grading a support assistant benchmark answer.
 
 Return JSON only with this exact schema:
@@ -666,8 +669,22 @@ Scoring rules:
         },
         ensure_ascii=False,
     )
-    response = llm.invoke([("system", system_prompt), ("user", user_prompt)])
-    payload = _extract_json_payload(_response_to_text(response))
+    try:
+        if profile.api_mode == "openai_responses":
+            response = invoke_responses_text(
+                profile=profile,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            )
+        else:
+            response = invoke_chat_text(
+                profile=profile,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            )
+    except LlmInvocationError as exc:
+        raise RuntimeError(str(exc)) from exc
+    payload = _extract_json_payload(response.text)
     if payload is None:
         raise ValueError(f"Judge {judge_model} returned invalid JSON")
     payload["judge_model"] = judge_model
