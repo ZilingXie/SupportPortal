@@ -30,6 +30,7 @@ const ragPageContainers = {
   "routing": { root: document.getElementById("rag-routing-page") },
   "retrieval": { root: document.getElementById("rag-retrieval-page") },
   "generation": { root: document.getElementById("rag-generation-page") },
+  "performance": { root: document.getElementById("rag-performance-page") },
   "data-supply": { root: document.getElementById("rag-data-supply-page") },
   "diagnosis": { root: document.getElementById("rag-diagnosis-page") },
   "review": { root: document.getElementById("rag-review-page") },
@@ -40,6 +41,7 @@ const PAGE_LABELS = {
   routing: "Routing",
   retrieval: "Retrieval",
   generation: "Generation",
+  performance: "Performance",
   "data-supply": "Data Supply",
   diagnosis: "Diagnosis",
   review: "Review Queue",
@@ -115,8 +117,11 @@ function normalizeString(value) {
 
 function normalizeDashboardTab(value) {
   const normalized = normalizeString(value).toLowerCase();
-  if (normalized === "experiments" || normalized === "production-signals") {
+  if (normalized === "experiments") {
     return "scorecard";
+  }
+  if (normalized === "production-signals") {
+    return "performance";
   }
   if (normalized === "datasets" || normalized === "knowledge-supply") {
     return "data-supply";
@@ -188,6 +193,10 @@ function formatMetricValue(value, key = "") {
     if (
       normalizedKey.includes("rate") ||
       normalizedKey.includes("score") ||
+      normalizedKey.includes("precision") ||
+      normalizedKey.includes("recall") ||
+      normalizedKey.includes("ndcg") ||
+      normalizedKey.includes("mrr") ||
       normalizedKey.startsWith("hit@") ||
       normalizedKey.startsWith("hit_")
     ) {
@@ -529,6 +538,7 @@ function buildBenchmarkSessionPanel(benchmarkSession) {
   }
   const improvementEntries = Array.isArray(session.improvement_entries) ? session.improvement_entries : [];
   const runs = Array.isArray(session.runs) ? session.runs : [];
+  const gateFailures = Array.isArray(session.gate_failure_dimensions) ? session.gate_failure_dimensions : [];
   const improvementSummary = normalizeString(session.improvement_summary);
   const runRows = runs.map((run) => ({
     label: run.label || run.dataset_name || run.benchmark_version || run.eval_run_id,
@@ -551,6 +561,7 @@ function buildBenchmarkSessionPanel(benchmarkSession) {
       ${buildDefinitionGrid([
         { label: "Session Id", value: session.benchmark_session_id },
         { label: "Previous Session", value: session.previous_session_id || "(none)" },
+        { label: "Gate Status", value: session.gate_status || "-" },
         { label: "Started At", value: session.started_at ? formatDateTime(session.started_at) : "-" },
         { label: "Finished At", value: session.finished_at ? formatDateTime(session.finished_at) : "-" },
       ])}
@@ -578,6 +589,13 @@ function buildBenchmarkSessionPanel(benchmarkSession) {
                     )
                     .join("")
                 : `<span class="chip chip-neutral">No changelog entries linked</span>`
+            }
+          </div>
+          <div class="chip-row">
+            ${
+              gateFailures.length
+                ? gateFailures.map((item) => `<span class="chip chip-warning">${escapeHtml(humanizeLabel(item))}</span>`).join("")
+                : `<span class="chip chip-success">All gate dimensions passed</span>`
             }
           </div>
         </article>
@@ -732,7 +750,11 @@ function buildRetrievalCaseRow(row, { baselineEvalRunId = "" } = {}) {
   return buildCaseExplorerItem(
     row,
     [
-      { label: "Evidence Hit@5", value: row.evidence_hit_at_5, key: "evidence_hit_at_5" },
+      { label: "Precision@5", value: row.precision_at_5, key: "precision_at_5" },
+      { label: "Recall@5", value: row.recall_at_5, key: "recall_at_5" },
+      { label: "NDCG@5", value: row.ndcg_at_5, key: "ndcg_at_5" },
+      { label: "Evidence Precision@5", value: row.evidence_precision_at_5, key: "evidence_precision_at_5" },
+      { label: "Evidence Recall@5", value: row.evidence_recall_at_5, key: "evidence_recall_at_5" },
       { label: "Coverage", value: row.evidence_coverage, key: "coverage_rate" },
       { label: "Noise", value: row.noise_rate, key: "noise_rate" },
     ],
@@ -744,8 +766,11 @@ function buildGenerationCaseRow(row, { baselineEvalRunId = "" } = {}) {
   return buildCaseExplorerItem(
     row,
     [
-      { label: "Answer Accuracy", value: row.answer_accuracy_score, key: "answer_accuracy_score" },
+      { label: "Context Relevance", value: row.context_relevance_score, key: "context_relevance_score" },
+      { label: "Answer Relevance", value: row.answer_relevance_score, key: "answer_relevance_score" },
       { label: "Faithfulness", value: row.faithfulness_score, key: "faithfulness_score" },
+      { label: "Citation", value: row.citation_correctness_score, key: "citation_correctness_score" },
+      { label: "Completeness", value: row.response_completeness_score, key: "response_completeness_score" },
       { label: "Policy Followed", value: row.response_policy_followed, key: "response_policy_followed" },
     ],
     { baselineEvalRunId }
@@ -1416,6 +1441,8 @@ function buildCaseDetailEvidence(primary) {
 
 function buildCaseDetailQuality(primary) {
   const items = [
+    { label: "Context Relevance", value: primary?.context_relevance_score },
+    { label: "Answer Relevance", value: primary?.answer_relevance_score },
     { label: "Faithfulness", value: primary?.faithfulness_score },
     { label: "Groundedness", value: primary?.groundedness_score },
     { label: "Response Relevance", value: primary?.response_relevance_score },
@@ -1424,6 +1451,8 @@ function buildCaseDetailQuality(primary) {
     { label: "Answer Accuracy", value: primary?.answer_accuracy_score },
     { label: "Answer Logic", value: primary?.answer_logic_score },
     { label: "Document Relevance", value: primary?.document_relevance_score },
+    { label: "Judge Confidence", value: primary?.judge_confidence_score },
+    { label: "Judge Divergence", value: primary?.judge_divergence_score },
     { label: "Hallucination Flag", value: primary?.hallucination_flag },
   ].filter((item) => item.value !== undefined && item.value !== null && item.value !== "");
   return `
@@ -1654,6 +1683,9 @@ function renderScorecardPage(payload) {
   const root = ragPageContainers["scorecard"].root;
   const sections = payload.sections || {};
   const summary = sections.summary || {};
+  const retrievalSummary = sections.retrieval_summary || {};
+  const generationSummary = sections.generation_summary || {};
+  const performanceSummary = sections.performance_summary || {};
   const layerScorecard = sections.layer_scorecard?.rows || [];
   const categoryPassRate = sections.category_pass_rate?.rows || [];
   const caseResults = sections.case_results?.rows || [];
@@ -1670,6 +1702,35 @@ function renderScorecardPage(payload) {
       ${buildMetricCards(summary.cards || {})}
     </section>
     ${buildBenchmarkSessionPanel(payload.benchmark_session)}
+    <div class="three-column-grid">
+      <section class="panel-card">
+        <div class="panel-header">
+          <div>
+            <h3>${escapeHtml(retrievalSummary.title || "Retrieval")}</h3>
+            <p>Evidence-first ranking metrics for the current candidate run.</p>
+          </div>
+        </div>
+        ${buildMetricCards(retrievalSummary.cards || {})}
+      </section>
+      <section class="panel-card">
+        <div class="panel-header">
+          <div>
+            <h3>${escapeHtml(generationSummary.title || "Generation")}</h3>
+            <p>Rubric-scored answer quality after retrieval completes.</p>
+          </div>
+        </div>
+        ${buildMetricCards(generationSummary.cards || {})}
+      </section>
+      <section class="panel-card">
+        <div class="panel-header">
+          <div>
+            <h3>${escapeHtml(performanceSummary.title || "Performance")}</h3>
+            <p>Benchmark execution and online latency/reliability signals.</p>
+          </div>
+        </div>
+        ${buildMetricCards(performanceSummary.cards || {})}
+      </section>
+    </div>
     ${buildTableSection("Layer Scorecard", layerScorecard, {
       columns: ["layer", "metric", "candidate", "baseline", "delta"],
       emptyLabel: "No scorecard layers available yet.",
@@ -2224,8 +2285,8 @@ function renderKnowledgeSupplyPage(payload) {
   `;
 }
 
-function renderProductionSignalsPage(payload) {
-  const root = ragPageContainers["production-signals"].root;
+function renderPerformancePage(payload) {
+  const root = ragPageContainers["performance"].root;
   const sections = payload.sections || {};
   const summary = sections.summary || {};
   const groups = sections.segment_breakdown?.groups || [];
@@ -2234,12 +2295,13 @@ function renderProductionSignalsPage(payload) {
   root.innerHTML = `
     <section class="hero-card">
       <div class="hero-copy">
-        <p class="eyebrow">Live Proxy Signals</p>
-        <h2>${escapeHtml(summary.title || "Production Signals")}</h2>
-        <p>${escapeHtml(summary.subtitle || "Use online proxy metrics to spot regression, then jump into diagnosis.")}</p>
+        <p class="eyebrow">Latency, Throughput, Reliability</p>
+        <h2>${escapeHtml(summary.title || "Performance")}</h2>
+        <p>${escapeHtml(summary.subtitle || "Read benchmark execution health together with live proxy latency and reliability.")}</p>
       </div>
       ${buildMetricCards(summary.cards || {})}
     </section>
+    ${buildBenchmarkSessionPanel(payload.benchmark_session)}
     ${groups.map(buildGroupBlock).join("")}
     <div class="two-column-grid">
       ${buildSampleList("Recent Risky Cases", sampleList.risky_cases || [], "danger")}
@@ -2416,6 +2478,7 @@ const pageRenderers = {
   routing: { render: renderRoutingPage },
   retrieval: { render: renderRetrievalDashboardPage },
   generation: { render: renderGenerationDashboardPage },
+  performance: { render: renderPerformancePage },
   "data-supply": { render: renderDataSupplyPage },
   diagnosis: { render: renderDiagnosisPage },
   review: { render: renderReviewPage },

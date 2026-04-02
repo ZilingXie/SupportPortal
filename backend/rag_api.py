@@ -51,6 +51,7 @@ PRIMARY_RAG_WORKBENCH_PAGES = (
     "routing",
     "retrieval",
     "generation",
+    "performance",
     "data-supply",
     "diagnosis",
     "review",

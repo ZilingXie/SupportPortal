@@ -1482,3 +1482,39 @@ For each new entry, record:
   - `curl -sS http://localhost:8080/health`
   - `curl -sS -X POST http://localhost:8080/api/tickets/query -H 'Content-Type: application/json' -d '{"customer_id":"model-priority-web-smoke","message":"Who is Agora'\''s CEO?"}'`
   - `curl -sS -X POST http://localhost:8080/api/tickets/query -H 'Content-Type: application/json' -d '{"customer_id":"model-priority-rag-smoke","message":"How do I join a channel?"}'`
+
+## 2026-04-02 - Refactor RAG evaluation into unified retrieval, generation, and performance metrics
+
+- Summary: Reworked the offline and dashboard evaluation flow around standard IR retrieval metrics, rubric-based generation metrics, and first-class benchmark/live performance metrics; added graded relevance support, benchmark session gate evaluation, and a visible dashboard performance page.
+- Reason: The previous evaluation flow mixed operational cards and benchmark metrics, hid `precision/recall/NDCG` behind non-standard names, treated `NDCG` as binary relevance, and did not align offline benchmark results with live-query performance signals. This refactor standardizes the metric language and makes regression gates auditable.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/rag_api.py`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/services/rag_benchmark.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/services/rag_benchmark_session.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_rag_benchmark.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_benchmark_session.py`
+  - `backend/tests/test_rag_dashboard_contract.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `backend/tests/test_run_rag_benchmark_cli.py`
+  - `backend/tests/test_run_rag_benchmark_session_cli.py`
+  - `scripts/run_rag_benchmark.py`
+  - `scripts/run_rag_benchmark_session.py`
+  - `ui/dashboard-ui/rag/app.js`
+  - `ui/dashboard-ui/rag/index.html`
+  - `ui/dashboard-ui/rag/styles.css`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Existing benchmark case payloads remain backward compatible; binary relevance inputs still work and default to graded relevance fallbacks.
+  - Benchmark case parsing now accepts `expected_document_relevance`, evidence relevance grades, evidence roles, and `anchor_set_id`.
+  - `support_rag_eval_results` startup schema management now provisions additional retrieval, generation, and performance metric columns needed by the new dashboard and session gate flow.
+  - No vector reset, ingestion backfill, embedding change, or retrieval algorithm change was introduced by this refactor.
+- Verification:
+  - `python3 -m unittest backend.tests.test_rag_benchmark backend.tests.test_rag_benchmark_runner backend.tests.test_rag_benchmark_session backend.tests.test_rag_scorecard_repository backend.tests.test_rag_dashboard_contract backend.tests.test_dashboard_ui_contract backend.tests.test_run_rag_benchmark_cli backend.tests.test_run_rag_benchmark_session_cli`
+  - `python3 -m py_compile backend/main.py backend/rag_api.py backend/repositories/knowledge_repository.py backend/services/rag_benchmark.py backend/services/rag_benchmark_runner.py backend/services/rag_benchmark_session.py scripts/run_rag_benchmark.py scripts/run_rag_benchmark_session.py`
+  - `node --check ui/dashboard-ui/rag/app.js`
+  - `git diff --check`

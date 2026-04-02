@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -372,13 +373,43 @@ def _empty_retrieval_metrics() -> dict[str, Any]:
         "hit_at_1": None,
         "hit_at_3": None,
         "hit_at_5": None,
+        "precision_at_1": None,
+        "precision_at_3": None,
+        "precision_at_5": None,
+        "document_precision_at_1": None,
+        "document_precision_at_3": None,
+        "document_precision_at_5": None,
+        "evidence_precision_at_1": None,
+        "evidence_precision_at_3": None,
+        "evidence_precision_at_5": None,
+        "recall_at_1": None,
+        "recall_at_3": None,
         "recall_at_5": None,
+        "document_recall_at_1": None,
+        "document_recall_at_3": None,
+        "document_recall_at_5": None,
+        "evidence_recall_at_1": None,
+        "evidence_recall_at_3": None,
+        "evidence_recall_at_5": None,
         "mrr": None,
+        "document_mrr": None,
+        "evidence_mrr": None,
+        "ndcg_at_1": None,
+        "ndcg_at_3": None,
         "ndcg_at_5": None,
+        "document_ndcg_at_1": None,
+        "document_ndcg_at_3": None,
+        "document_ndcg_at_5": None,
+        "evidence_ndcg_at_1": None,
+        "evidence_ndcg_at_3": None,
+        "evidence_ndcg_at_5": None,
         "document_relevance_score": None,
         "evidence_hit_at_1": None,
         "evidence_hit_at_3": None,
         "evidence_hit_at_5": None,
+        "document_hit_at_5": None,
+        "evidence_coverage": None,
+        "noise_rate": None,
     }
 
 
@@ -533,8 +564,10 @@ def _build_trace_payload(
         "product": case.product,
         "language": case.language,
         "expected_document_ids": case.expected_document_ids,
+        "expected_document_relevance": case.expected_document_relevance,
         "expected_heading_paths": case.expected_heading_paths,
         "expected_evidence_refs": case.expected_evidence_refs,
+        "anchor_set_id": case.anchor_set_id,
         "expected_behavior": case.expected_behavior,
         "expected_route": case.expected_route,
         "actual_route": execution_result.actual_route,
@@ -621,12 +654,20 @@ def invoke_judge_vote(
 
 Return JSON only with this exact schema:
 {
-  "document_relevance_score": 0.0,
+  "context_relevance_score": 0.0,
+  "answer_relevance_score": 0.0,
+  "cr_score": 0.0,
+  "ar_score": 0.0,
   "faithfulness_score": 0.0,
-  "groundedness_score": 0.0,
-  "response_relevance_score": 0.0,
   "response_completeness_score": 0.0,
   "citation_correctness_score": 0.0,
+  "judge_confidence_score": 0.0,
+  "context_relevance_reason": "string",
+  "answer_relevance_reason": "string",
+  "faithfulness_reason": "string",
+  "citation_reason": "string",
+  "completeness_reason": "string",
+  "supporting_evidence": ["string"],
   "answer_accuracy_score": 0.0,
   "answer_logic_score": 0.0,
   "hallucination_flag": false,
@@ -637,6 +678,13 @@ Return JSON only with this exact schema:
 Scoring rules:
 - All numeric scores must be between 0.0 and 1.0.
 - Judge only from the provided question, expected answer, expected route, retrieved candidates, selected context, final answer, and citations.
+- context_relevance_score / cr_score: is the final answer grounded in the retrieved context?
+- answer_relevance_score / ar_score: does the final answer resolve the user question?
+- faithfulness_score: does the answer avoid unsupported claims and hallucinations?
+- response_completeness_score: does the answer cover the key required points?
+- citation_correctness_score: do the citations actually support the answer?
+- judge_confidence_score should be lower when the evidence is weak or the case is ambiguous.
+- Every *_reason field should be concise and specific. supporting_evidence should reference chunk ids or headings when possible.
 - When expected_route is not "rag", prioritize route correctness, answer relevance, answer accuracy, and answer logic.
 - Mark hallucination_flag true if the answer includes claims not supported by the selected context or provided citations.
 - failure_type should be one of: retrieval_miss, hallucination, incomplete_answer, bad_citation, handoff_needed, route_mismatch, web_search_failure, grounded_answer.
@@ -688,8 +736,24 @@ Scoring rules:
     if payload is None:
         raise ValueError(f"Judge {judge_model} returned invalid JSON")
     payload["judge_model"] = judge_model
+    if payload.get("cr_score") is None and payload.get("context_relevance_score") is not None:
+        payload["cr_score"] = payload.get("context_relevance_score")
+    if payload.get("ar_score") is None and payload.get("answer_relevance_score") is not None:
+        payload["ar_score"] = payload.get("answer_relevance_score")
+    if payload.get("context_relevance_score") is None and payload.get("cr_score") is not None:
+        payload["context_relevance_score"] = payload.get("cr_score")
+    if payload.get("answer_relevance_score") is None and payload.get("ar_score") is not None:
+        payload["answer_relevance_score"] = payload.get("ar_score")
+    if payload.get("response_relevance_score") is None and payload.get("answer_relevance_score") is not None:
+        payload["response_relevance_score"] = payload.get("answer_relevance_score")
+    if payload.get("groundedness_score") is None and payload.get("context_relevance_score") is not None:
+        payload["groundedness_score"] = payload.get("context_relevance_score")
+    if payload.get("document_relevance_score") is None:
+        payload["document_relevance_score"] = retrieval_metrics.get("precision_at_5")
     if not case.retrieval_metrics_enabled:
         payload["document_relevance_score"] = None
+        payload["context_relevance_score"] = None
+        payload["cr_score"] = None
         payload["faithfulness_score"] = None
         payload["groundedness_score"] = None
     if not case.citation_metrics_enabled:
@@ -767,12 +831,15 @@ def _build_eval_row(
     decision: SupportRouteDecision,
     execution_result: BenchmarkExecutionResult,
     judge_votes: list[dict[str, Any]],
+    case_execution_latency_ms: float | None = None,
+    case_execution_error: bool = False,
 ) -> dict[str, Any]:
     rag_result = execution_result.rag_result
     retrieval_metrics = (
         compute_retrieval_metrics(
             rag_result.trace.retrieval_candidates,
             expected_document_ids=case.expected_document_ids,
+            expected_document_relevance=case.expected_document_relevance,
             expected_heading_paths=case.expected_heading_paths,
             expected_evidence_refs=case.expected_evidence_refs,
             answer_key_points=case.answer_key_points,
@@ -846,16 +913,52 @@ def _build_eval_row(
         "hit_at_1": retrieval_metrics.get("hit_at_1"),
         "hit_at_3": retrieval_metrics.get("hit_at_3"),
         "hit_at_5": retrieval_metrics.get("hit_at_5"),
+        "precision_at_1": retrieval_metrics.get("precision_at_1"),
+        "precision_at_3": retrieval_metrics.get("precision_at_3"),
+        "precision_at_5": retrieval_metrics.get("precision_at_5"),
         "document_hit_at_5": retrieval_metrics.get("document_hit_at_5"),
+        "document_precision_at_1": retrieval_metrics.get("document_precision_at_1"),
+        "document_precision_at_3": retrieval_metrics.get("document_precision_at_3"),
+        "document_precision_at_5": retrieval_metrics.get("document_precision_at_5"),
+        "recall_at_1": retrieval_metrics.get("recall_at_1"),
+        "recall_at_3": retrieval_metrics.get("recall_at_3"),
         "recall_at_5": retrieval_metrics.get("recall_at_5"),
+        "document_recall_at_1": retrieval_metrics.get("document_recall_at_1"),
+        "document_recall_at_3": retrieval_metrics.get("document_recall_at_3"),
+        "document_recall_at_5": retrieval_metrics.get("document_recall_at_5"),
         "mrr": retrieval_metrics.get("mrr"),
+        "document_mrr": retrieval_metrics.get("document_mrr"),
+        "evidence_mrr": retrieval_metrics.get("evidence_mrr"),
+        "ndcg_at_1": retrieval_metrics.get("ndcg_at_1"),
+        "ndcg_at_3": retrieval_metrics.get("ndcg_at_3"),
         "ndcg_at_5": retrieval_metrics.get("ndcg_at_5"),
+        "document_ndcg_at_1": retrieval_metrics.get("document_ndcg_at_1"),
+        "document_ndcg_at_3": retrieval_metrics.get("document_ndcg_at_3"),
+        "document_ndcg_at_5": retrieval_metrics.get("document_ndcg_at_5"),
         "evidence_hit_at_1": retrieval_metrics.get("evidence_hit_at_1"),
         "evidence_hit_at_3": retrieval_metrics.get("evidence_hit_at_3"),
         "evidence_hit_at_5": retrieval_metrics.get("evidence_hit_at_5"),
+        "evidence_precision_at_1": retrieval_metrics.get("evidence_precision_at_1"),
+        "evidence_precision_at_3": retrieval_metrics.get("evidence_precision_at_3"),
+        "evidence_precision_at_5": retrieval_metrics.get("evidence_precision_at_5"),
+        "evidence_recall_at_1": retrieval_metrics.get("evidence_recall_at_1"),
+        "evidence_recall_at_3": retrieval_metrics.get("evidence_recall_at_3"),
+        "evidence_recall_at_5": retrieval_metrics.get("evidence_recall_at_5"),
+        "evidence_ndcg_at_1": retrieval_metrics.get("evidence_ndcg_at_1"),
+        "evidence_ndcg_at_3": retrieval_metrics.get("evidence_ndcg_at_3"),
+        "evidence_ndcg_at_5": retrieval_metrics.get("evidence_ndcg_at_5"),
         "evidence_coverage": retrieval_metrics.get("evidence_coverage"),
         "noise_rate": retrieval_metrics.get("noise_rate"),
-        "document_relevance_score": judge_aggregate.get("document_relevance_score", retrieval_metrics.get("document_relevance_score")),
+        "document_relevance_score": judge_aggregate.get(
+            "document_relevance_score",
+            retrieval_metrics.get("document_relevance_score"),
+        ),
+        "context_relevance_score": judge_aggregate.get("context_relevance_score"),
+        "answer_relevance_score": judge_aggregate.get("answer_relevance_score"),
+        "cr_score": judge_aggregate.get("cr_score"),
+        "ar_score": judge_aggregate.get("ar_score"),
+        "judge_confidence_score": judge_aggregate.get("judge_confidence_score"),
+        "judge_divergence_score": judge_aggregate.get("judge_divergence_score"),
         "faithfulness_score": judge_aggregate.get("faithfulness_score"),
         "groundedness_score": judge_aggregate.get("groundedness_score"),
         "response_relevance_score": judge_aggregate.get("response_relevance_score"),
@@ -888,13 +991,17 @@ def _build_eval_row(
         "answer_preview": _clean_text(execution_result.answer_text)[:280],
         "reference_answer": case.reference_answer,
         "expected_document_ids": case.expected_document_ids,
+        "expected_document_relevance": case.expected_document_relevance,
         "expected_heading_paths": case.expected_heading_paths,
         "expected_evidence_refs": case.expected_evidence_refs,
         "answer_key_points": case.answer_key_points,
+        "anchor_set_id": case.anchor_set_id,
         "trace_payload": trace_payload,
         "retrieval_latency_ms": rag_result.trace.retrieval_latency_ms if rag_result is not None else None,
         "generation_latency_ms": rag_result.trace.generation_latency_ms if rag_result is not None else None,
         "total_latency_ms": rag_result.trace.total_latency_ms if rag_result is not None else None,
+        "case_execution_latency_ms": round(float(case_execution_latency_ms), 2) if case_execution_latency_ms is not None else None,
+        "case_execution_error": bool(case_execution_error),
         "selected_doc_count": rag_result.trace.selected_doc_count if rag_result is not None else None,
         "top1_similarity_score": rag_result.trace.top1_similarity_score if rag_result is not None else None,
         "avg_selected_similarity_score": rag_result.trace.avg_selected_similarity_score if rag_result is not None else None,
@@ -990,6 +1097,7 @@ def run_benchmark(
     result_rows: list[dict[str, Any]] = []
     try:
         for case in cases:
+            case_started_at = time.perf_counter()
             if case.route_aware:
                 execution_result = _execute_case(
                     case=case,
@@ -1025,6 +1133,7 @@ def run_benchmark(
                 compute_retrieval_metrics(
                     execution_result.rag_result.trace.retrieval_candidates,
                     expected_document_ids=case.expected_document_ids,
+                    expected_document_relevance=case.expected_document_relevance,
                     expected_heading_paths=case.expected_heading_paths,
                     expected_evidence_refs=case.expected_evidence_refs,
                     answer_key_points=case.answer_key_points,
@@ -1059,6 +1168,8 @@ def run_benchmark(
                     decision=decision,
                     execution_result=execution_result,
                     judge_votes=judge_votes,
+                    case_execution_latency_ms=(time.perf_counter() - case_started_at) * 1000.0,
+                    case_execution_error=False,
                 )
             )
 

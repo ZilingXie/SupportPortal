@@ -255,6 +255,52 @@ class RagBenchmarkHelperTests(unittest.TestCase):
         self.assertEqual(cases[1].citation_metrics_enabled, True)
         self.assertEqual(cases[1].route_aware, True)
 
+    def test_parse_benchmark_cases_supports_graded_relevance_and_anchor_metadata(self) -> None:
+        cases = parse_benchmark_cases(
+            [
+                {
+                    "test_case_id": "case-graded-1",
+                    "question": "How can audience users publish?",
+                    "question_type": "fact",
+                    "category": "fact",
+                    "expected_route_family": "agora_docs_rag",
+                    "expected_execution_action": "rag",
+                    "expected_behavior": "answer_with_docs",
+                    "expected_document_ids": [
+                        {"doc_id": "official-doc-1", "relevance_grade": "high"},
+                        {"doc_id": "official-doc-2", "relevance_grade": "medium"},
+                    ],
+                    "expected_heading_paths": ["Roles"],
+                    "expected_evidence_refs": [
+                        {
+                            "chunk_id": "chunk-1",
+                            "doc_id": "official-doc-1",
+                            "heading": "Roles",
+                            "relevance_grade": "high",
+                            "evidence_role": "supports_answer",
+                        }
+                    ],
+                    "answer_key_points": [
+                        {
+                            "key_point_id": "kp-1",
+                            "text": "Audience cannot publish by default.",
+                            "supporting_evidence_refs": ["chunk-1"],
+                        }
+                    ],
+                    "anchor_set_id": "manual-gold-routing-1",
+                }
+            ],
+            source_label="inline payloads",
+        )
+
+        self.assertEqual(cases[0].expected_document_ids, ["official-doc-1", "official-doc-2"])
+        self.assertEqual(cases[0].expected_document_relevance[0]["doc_id"], "official-doc-1")
+        self.assertEqual(cases[0].expected_document_relevance[0]["relevance_grade"], "high")
+        self.assertEqual(cases[0].expected_document_relevance[1]["relevance_grade"], "medium")
+        self.assertEqual(cases[0].expected_evidence_refs[0]["relevance_grade"], "high")
+        self.assertEqual(cases[0].expected_evidence_refs[0]["evidence_role"], "supports_answer")
+        self.assertEqual(cases[0].anchor_set_id, "manual-gold-routing-1")
+
     def test_compute_retrieval_metrics_includes_evidence_hit_rates(self) -> None:
         metrics = compute_retrieval_metrics(
             [
@@ -303,6 +349,58 @@ class RagBenchmarkHelperTests(unittest.TestCase):
         self.assertEqual(metrics["hit_at_1"], 1.0)
         self.assertEqual(metrics["document_hit_at_5"], 1.0)
         self.assertEqual(metrics["evidence_hit_at_1"], 1.0)
+
+    def test_compute_retrieval_metrics_outputs_precision_recall_and_graded_ndcg(self) -> None:
+        metrics = compute_retrieval_metrics(
+            [
+                {
+                    "chunk_id": "chunk-medium",
+                    "doc_id": "official-doc-1",
+                    "title": "Roles",
+                },
+                {
+                    "chunk_id": "chunk-high",
+                    "doc_id": "official-doc-2",
+                    "title": "Publishing",
+                },
+                {
+                    "chunk_id": "chunk-noise",
+                    "doc_id": "official-doc-9",
+                    "title": "Noise",
+                },
+            ],
+            expected_document_ids=["official-doc-1", "official-doc-2"],
+            expected_document_relevance=[
+                {"doc_id": "official-doc-1", "relevance_grade": "medium"},
+                {"doc_id": "official-doc-2", "relevance_grade": "high"},
+            ],
+            expected_heading_paths=["Roles", "Publishing"],
+            expected_evidence_refs=[
+                {
+                    "chunk_id": "chunk-medium",
+                    "doc_id": "official-doc-1",
+                    "heading": "Roles",
+                    "relevance_grade": "medium",
+                },
+                {
+                    "chunk_id": "chunk-high",
+                    "doc_id": "official-doc-2",
+                    "heading": "Publishing",
+                    "relevance_grade": "high",
+                },
+            ],
+            top_ks=(1, 3, 5),
+        )
+
+        self.assertEqual(metrics["precision_at_1"], 1.0)
+        self.assertAlmostEqual(metrics["precision_at_3"], 0.6667, places=4)
+        self.assertEqual(metrics["recall_at_1"], 0.5)
+        self.assertEqual(metrics["recall_at_3"], 1.0)
+        self.assertAlmostEqual(metrics["ndcg_at_3"], 0.9134, places=4)
+        self.assertAlmostEqual(metrics["document_precision_at_3"], 0.6667, places=4)
+        self.assertAlmostEqual(metrics["evidence_precision_at_3"], 0.6667, places=4)
+        self.assertEqual(metrics["evidence_recall_at_1"], 0.5)
+        self.assertEqual(metrics["document_relevance_score"], metrics["precision_at_5"])
 
     def test_compute_retrieval_metrics_tracks_doc_hit_without_exact_heading_hit(self) -> None:
         metrics = compute_retrieval_metrics(
@@ -455,6 +553,107 @@ class RagBenchmarkHelperTests(unittest.TestCase):
 
         self.assertEqual(metrics["answer_accuracy_score"], 0.8)
         self.assertEqual(metrics["response_policy_followed_rate"], 0.5)
+
+    def test_aggregate_judge_votes_returns_rubric_scores_divergence_and_confidence(self) -> None:
+        result = aggregate_judge_votes(
+            [
+                {
+                    "judge_model": "gpt-5.4",
+                    "context_relevance_score": 0.7,
+                    "answer_relevance_score": 0.8,
+                    "faithfulness_score": 0.92,
+                    "citation_correctness_score": 0.9,
+                    "response_completeness_score": 0.82,
+                    "judge_confidence_score": 0.93,
+                    "context_relevance_reason": "The answer uses retrieved role docs.",
+                    "answer_relevance_reason": "The answer directly resolves the publishing question.",
+                    "supporting_evidence": ["chunk-1"],
+                    "hallucination_flag": False,
+                    "needs_human": False,
+                },
+                {
+                    "judge_model": "qwen",
+                    "context_relevance_score": 0.8,
+                    "answer_relevance_score": 0.82,
+                    "faithfulness_score": 0.9,
+                    "citation_correctness_score": 0.88,
+                    "response_completeness_score": 0.84,
+                    "judge_confidence_score": 0.9,
+                    "context_relevance_reason": "Most claims are grounded in the selected contexts.",
+                    "answer_relevance_reason": "The answer addresses the audience-role limitation.",
+                    "supporting_evidence": ["chunk-1", "chunk-2"],
+                    "hallucination_flag": False,
+                    "needs_human": False,
+                },
+                {
+                    "judge_model": "deepseek",
+                    "context_relevance_score": 0.95,
+                    "answer_relevance_score": 0.9,
+                    "faithfulness_score": 0.84,
+                    "citation_correctness_score": 0.8,
+                    "response_completeness_score": 0.86,
+                    "judge_confidence_score": 0.72,
+                    "context_relevance_reason": "One supporting chunk is weaker, but the answer is still grounded.",
+                    "answer_relevance_reason": "The answer is relevant, but the closeout is slightly generic.",
+                    "supporting_evidence": ["chunk-2"],
+                    "hallucination_flag": False,
+                    "needs_human": True,
+                },
+            ]
+        )
+
+        self.assertEqual(result["context_relevance_score"], 0.8)
+        self.assertEqual(result["answer_relevance_score"], 0.82)
+        self.assertEqual(result["cr_score"], 0.8)
+        self.assertEqual(result["ar_score"], 0.82)
+        self.assertGreater(result["judge_divergence_score"], 0.0)
+        self.assertLess(result["judge_confidence_score"], 1.0)
+        self.assertIn("context_relevance_reason", result["rubric_reasons"])
+        self.assertIn("chunk-1", result["supporting_evidence"])
+
+    def test_summarize_eval_daily_metrics_includes_throughput_and_error_rates(self) -> None:
+        metrics = summarize_eval_daily_metrics(
+            [
+                {
+                    "precision_at_5": 0.8,
+                    "evidence_precision_at_5": 0.6,
+                    "context_relevance_score": 0.9,
+                    "answer_relevance_score": 0.85,
+                    "faithfulness_score": 0.92,
+                    "citation_correctness_score": 0.88,
+                    "response_completeness_score": 0.8,
+                    "judge_votes": [
+                        {"judge_model": "a", "context_relevance_score": 0.9},
+                        {"judge_model": "b", "error": "timeout"},
+                    ],
+                    "case_execution_error": False,
+                    "total_latency_ms": 100.0,
+                },
+                {
+                    "precision_at_5": 0.4,
+                    "evidence_precision_at_5": 0.4,
+                    "context_relevance_score": 0.7,
+                    "answer_relevance_score": 0.75,
+                    "faithfulness_score": 0.8,
+                    "citation_correctness_score": 0.76,
+                    "response_completeness_score": 0.72,
+                    "judge_votes": [
+                        {"judge_model": "a", "context_relevance_score": 0.7},
+                        {"judge_model": "b", "context_relevance_score": 0.8},
+                    ],
+                    "case_execution_error": False,
+                    "total_latency_ms": 300.0,
+                },
+            ]
+        )
+
+        self.assertAlmostEqual(metrics["precision_at_5"], 0.6, places=4)
+        self.assertAlmostEqual(metrics["evidence_precision_at_5"], 0.5, places=4)
+        self.assertAlmostEqual(metrics["context_relevance_score"], 0.8, places=4)
+        self.assertAlmostEqual(metrics["answer_relevance_score"], 0.8, places=4)
+        self.assertAlmostEqual(metrics["judge_error_rate"], 0.25, places=4)
+        self.assertEqual(metrics["case_execution_error_rate"], 0.0)
+        self.assertAlmostEqual(metrics["benchmark_throughput_cases_per_sec"], 5.0, places=4)
 
     def test_aggregate_judge_votes_uses_median_and_majority_and_marks_disagreement(self) -> None:
         result = aggregate_judge_votes(

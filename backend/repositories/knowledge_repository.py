@@ -31,6 +31,7 @@ from backend.services.rag_benchmark import (
     build_benchmark_review_sample,
     build_live_review_sample,
 )
+from backend.services.rag_benchmark_session import build_session_gate
 from backend.services.knowledge_monitoring import (
     build_empty_knowledge_metrics,
     build_knowledge_metrics_payload,
@@ -64,6 +65,7 @@ _VALID_DASHBOARD_PAGES = {
     "routing",
     "retrieval",
     "generation",
+    "performance",
     "data-supply",
     "experiments",
     "datasets",
@@ -77,6 +79,7 @@ _WORKBENCH_DASHBOARD_PAGES = {
     "routing",
     "retrieval",
     "generation",
+    "performance",
     "data-supply",
     "diagnosis",
     "review",
@@ -188,6 +191,13 @@ def _rate_from_rows(rows: list[dict[str, Any]], field_name: str) -> float | None
         for row in rows
         if isinstance(row.get(field_name), bool)
     ]
+    if not values:
+        numeric_values = [
+            _safe_float(row.get(field_name))
+            for row in rows
+            if row.get(field_name) is not None and not isinstance(row.get(field_name), bool)
+        ]
+        values = [value for value in numeric_values if value is not None]
     return _safe_statistics_mean(values)
 
 
@@ -241,13 +251,14 @@ def _benchmark_session_payload_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
 
 def _experiment_quality_score(row: dict[str, Any]) -> float:
     return round(
-        (_safe_float(row.get("faithfulness_score_avg")) * 0.25)
-        + (_safe_float(row.get("groundedness_score_avg")) * 0.2)
+        (_safe_float(row.get("context_relevance_score_avg")) * 0.15)
+        + (_safe_float(row.get("answer_relevance_score_avg")) * 0.15)
+        + (_safe_float(row.get("faithfulness_score_avg")) * 0.25)
         + (_safe_float(row.get("citation_correctness_score_avg")) * 0.15)
-        + (_safe_float(row.get("answer_accuracy_score_avg")) * 0.2)
-        + (_safe_float(row.get("answer_logic_score_avg")) * 0.1)
-        + (_safe_float(row.get("evidence_hit_at_5")) * 0.05)
-        + (_safe_float(row.get("hit_at_5")) * 0.05),
+        + (_safe_float(row.get("response_completeness_score_avg")) * 0.1)
+        + (_safe_float(row.get("answer_accuracy_score_avg")) * 0.1)
+        + (_safe_float(row.get("evidence_precision_at_5")) * 0.05)
+        + (_safe_float(row.get("evidence_ndcg_at_5")) * 0.05),
         6,
     )
 
@@ -255,15 +266,53 @@ def _experiment_quality_score(row: dict[str, Any]) -> float:
 def _case_quality_score(row: dict[str, Any] | None) -> float:
     payload = row if isinstance(row, dict) else {}
     return round(
-        (_safe_float(payload.get("faithfulness_score")) * 0.25)
-        + (_safe_float(payload.get("groundedness_score")) * 0.2)
+        (_safe_float(payload.get("context_relevance_score")) * 0.15)
+        + (_safe_float(payload.get("answer_relevance_score")) * 0.15)
+        + (_safe_float(payload.get("faithfulness_score")) * 0.25)
         + (_safe_float(payload.get("citation_correctness_score")) * 0.15)
-        + (_safe_float(payload.get("answer_accuracy_score")) * 0.2)
-        + (_safe_float(payload.get("answer_logic_score")) * 0.1)
-        + (_safe_float(payload.get("evidence_hit_at_5")) * 0.05)
-        + (_safe_float(payload.get("hit_at_5")) * 0.05),
+        + (_safe_float(payload.get("response_completeness_score")) * 0.1)
+        + (_safe_float(payload.get("answer_accuracy_score")) * 0.1)
+        + (_safe_float(payload.get("evidence_precision_at_5")) * 0.05)
+        + (_safe_float(payload.get("evidence_ndcg_at_5")) * 0.05),
         6,
     )
+
+
+def _benchmark_throughput_from_case_rows(rows: list[dict[str, Any]]) -> float | None:
+    provided_rates = [
+        _safe_float(row.get("benchmark_throughput_cases_per_sec"))
+        for row in rows
+        if row.get("benchmark_throughput_cases_per_sec") is not None
+    ]
+    numeric_rates = [value for value in provided_rates if value is not None]
+    if numeric_rates:
+        return round(statistics.fmean(numeric_rates), 4)
+    latencies = [
+        _safe_float(row.get("case_execution_latency_ms"))
+        for row in rows
+        if row.get("case_execution_latency_ms") is not None
+    ]
+    if not latencies:
+        latencies = [
+            _safe_float(row.get("total_latency_ms"))
+            for row in rows
+            if row.get("total_latency_ms") is not None
+        ]
+    numeric = [value for value in latencies if value is not None]
+    if not numeric:
+        return None
+    total_seconds = sum(numeric) / 1000.0
+    if total_seconds <= 0:
+        return None
+    return round(len(rows) / total_seconds, 4)
+
+
+def _max_from_rows(rows: list[dict[str, Any]], field_name: str) -> float | None:
+    values = [_safe_float(row.get(field_name)) for row in rows if row.get(field_name) is not None]
+    numeric = [value for value in values if value is not None]
+    if not numeric:
+        return None
+    return round(max(numeric), 4)
 
 
 def _round_delta(candidate: Any, baseline: Any) -> float | None:
@@ -315,7 +364,7 @@ def _normalize_dashboard_page(page: Any) -> str:
     if normalized in {"datasets", "knowledge-supply"}:
         return "data-supply"
     if normalized == "production-signals":
-        return "scorecard"
+        return "performance"
     return normalized if normalized in _VALID_DASHBOARD_PAGES else "scorecard"
 
 
@@ -2270,23 +2319,57 @@ class PostgresKnowledgeRepository:
                             execution_action_correct DOUBLE PRECISION,
                             tooling_profile_correct DOUBLE PRECISION,
                             expected_document_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            expected_document_relevance JSONB NOT NULL DEFAULT '[]'::jsonb,
                             expected_heading_paths JSONB NOT NULL DEFAULT '[]'::jsonb,
                             expected_evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
                             answer_key_points JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            anchor_set_id TEXT,
                             trace_payload JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                             hit_at_1 DOUBLE PRECISION,
                             hit_at_3 DOUBLE PRECISION,
                             hit_at_5 DOUBLE PRECISION,
+                            precision_at_1 DOUBLE PRECISION,
+                            precision_at_3 DOUBLE PRECISION,
+                            precision_at_5 DOUBLE PRECISION,
                             document_hit_at_5 DOUBLE PRECISION,
+                            document_precision_at_1 DOUBLE PRECISION,
+                            document_precision_at_3 DOUBLE PRECISION,
+                            document_precision_at_5 DOUBLE PRECISION,
+                            recall_at_1 DOUBLE PRECISION,
+                            recall_at_3 DOUBLE PRECISION,
                             recall_at_5 DOUBLE PRECISION,
+                            document_recall_at_1 DOUBLE PRECISION,
+                            document_recall_at_3 DOUBLE PRECISION,
+                            document_recall_at_5 DOUBLE PRECISION,
+                            evidence_recall_at_1 DOUBLE PRECISION,
+                            evidence_recall_at_3 DOUBLE PRECISION,
+                            evidence_recall_at_5 DOUBLE PRECISION,
                             mrr DOUBLE PRECISION,
+                            document_mrr DOUBLE PRECISION,
+                            evidence_mrr DOUBLE PRECISION,
+                            ndcg_at_1 DOUBLE PRECISION,
+                            ndcg_at_3 DOUBLE PRECISION,
                             ndcg_at_5 DOUBLE PRECISION,
+                            document_ndcg_at_1 DOUBLE PRECISION,
+                            document_ndcg_at_3 DOUBLE PRECISION,
+                            document_ndcg_at_5 DOUBLE PRECISION,
                             evidence_hit_at_1 DOUBLE PRECISION,
                             evidence_hit_at_3 DOUBLE PRECISION,
                             evidence_hit_at_5 DOUBLE PRECISION,
+                            evidence_precision_at_1 DOUBLE PRECISION,
+                            evidence_precision_at_3 DOUBLE PRECISION,
+                            evidence_precision_at_5 DOUBLE PRECISION,
+                            evidence_ndcg_at_1 DOUBLE PRECISION,
+                            evidence_ndcg_at_3 DOUBLE PRECISION,
+                            evidence_ndcg_at_5 DOUBLE PRECISION,
                             evidence_coverage DOUBLE PRECISION,
                             noise_rate DOUBLE PRECISION,
                             document_relevance_score DOUBLE PRECISION,
+                            context_relevance_score DOUBLE PRECISION,
+                            answer_relevance_score DOUBLE PRECISION,
+                            judge_confidence_score DOUBLE PRECISION,
+                            judge_divergence_score DOUBLE PRECISION,
+                            judge_error_rate DOUBLE PRECISION,
                             faithfulness_score DOUBLE PRECISION,
                             groundedness_score DOUBLE PRECISION,
                             response_relevance_score DOUBLE PRECISION,
@@ -2312,6 +2395,8 @@ class PostgresKnowledgeRepository:
                             retrieval_latency_ms DOUBLE PRECISION,
                             generation_latency_ms DOUBLE PRECISION,
                             total_latency_ms DOUBLE PRECISION,
+                            case_execution_latency_ms DOUBLE PRECISION,
+                            case_execution_error BOOLEAN,
                             selected_doc_count INTEGER,
                             top1_similarity_score DOUBLE PRECISION,
                             avg_selected_similarity_score DOUBLE PRECISION,
@@ -2527,16 +2612,50 @@ class PostgresKnowledgeRepository:
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS execution_action_correct DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS tooling_profile_correct DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS expected_document_ids JSONB NOT NULL DEFAULT '[]'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS expected_document_relevance JSONB NOT NULL DEFAULT '[]'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS expected_heading_paths JSONB NOT NULL DEFAULT '[]'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS expected_evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS answer_key_points JSONB NOT NULL DEFAULT '[]'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS anchor_set_id TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS trace_payload JSONB NOT NULL DEFAULT '{{}}'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS precision_at_1 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS precision_at_3 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS precision_at_5 DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS document_hit_at_5 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS document_precision_at_1 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS document_precision_at_3 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS document_precision_at_5 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS recall_at_1 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS recall_at_3 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS document_recall_at_1 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS document_recall_at_3 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS document_recall_at_5 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS evidence_recall_at_1 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS evidence_recall_at_3 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS evidence_recall_at_5 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS document_mrr DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS evidence_mrr DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS ndcg_at_1 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS ndcg_at_3 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS document_ndcg_at_1 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS document_ndcg_at_3 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS document_ndcg_at_5 DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS evidence_hit_at_1 DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS evidence_hit_at_3 DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS evidence_hit_at_5 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS evidence_precision_at_1 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS evidence_precision_at_3 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS evidence_precision_at_5 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS evidence_ndcg_at_1 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS evidence_ndcg_at_3 DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS evidence_ndcg_at_5 DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS evidence_coverage DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS noise_rate DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS context_relevance_score DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS answer_relevance_score DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS judge_confidence_score DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS judge_divergence_score DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS judge_error_rate DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS judge_votes JSONB NOT NULL DEFAULT '[]'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS judge_disagreement_flag BOOLEAN NOT NULL DEFAULT FALSE",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS answer_correctness_eligible BOOLEAN",
@@ -2554,6 +2673,8 @@ class PostgresKnowledgeRepository:
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS retrieval_latency_ms DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS generation_latency_ms DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS total_latency_ms DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS case_execution_latency_ms DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS case_execution_error BOOLEAN",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS selected_doc_count INTEGER",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS top1_similarity_score DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS avg_selected_similarity_score DOUBLE PRECISION",
@@ -5527,23 +5648,57 @@ class PostgresKnowledgeRepository:
             "execution_action_correct",
             "tooling_profile_correct",
             "expected_document_ids",
+            "expected_document_relevance",
             "expected_heading_paths",
             "expected_evidence_refs",
             "answer_key_points",
+            "anchor_set_id",
             "trace_payload",
             "hit_at_1",
             "hit_at_3",
             "hit_at_5",
+            "precision_at_1",
+            "precision_at_3",
+            "precision_at_5",
             "document_hit_at_5",
+            "document_precision_at_1",
+            "document_precision_at_3",
+            "document_precision_at_5",
+            "recall_at_1",
+            "recall_at_3",
             "recall_at_5",
+            "document_recall_at_1",
+            "document_recall_at_3",
+            "document_recall_at_5",
+            "evidence_recall_at_1",
+            "evidence_recall_at_3",
+            "evidence_recall_at_5",
             "mrr",
+            "document_mrr",
+            "evidence_mrr",
+            "ndcg_at_1",
+            "ndcg_at_3",
             "ndcg_at_5",
+            "document_ndcg_at_1",
+            "document_ndcg_at_3",
+            "document_ndcg_at_5",
             "evidence_hit_at_1",
             "evidence_hit_at_3",
             "evidence_hit_at_5",
+            "evidence_precision_at_1",
+            "evidence_precision_at_3",
+            "evidence_precision_at_5",
+            "evidence_ndcg_at_1",
+            "evidence_ndcg_at_3",
+            "evidence_ndcg_at_5",
             "evidence_coverage",
             "noise_rate",
             "document_relevance_score",
+            "context_relevance_score",
+            "answer_relevance_score",
+            "judge_confidence_score",
+            "judge_divergence_score",
+            "judge_error_rate",
             "faithfulness_score",
             "groundedness_score",
             "response_relevance_score",
@@ -5569,6 +5724,8 @@ class PostgresKnowledgeRepository:
             "retrieval_latency_ms",
             "generation_latency_ms",
             "total_latency_ms",
+            "case_execution_latency_ms",
+            "case_execution_error",
             "selected_doc_count",
             "top1_similarity_score",
             "avg_selected_similarity_score",
@@ -5601,23 +5758,101 @@ class PostgresKnowledgeRepository:
                 _safe_float(row.get("execution_action_correct"), 0.0) if row.get("execution_action_correct") is not None else None,
                 _safe_float(row.get("tooling_profile_correct"), 0.0) if row.get("tooling_profile_correct") is not None else None,
                 Json(_json_list(row.get("expected_document_ids"))),
+                Json(_json_list(row.get("expected_document_relevance"))),
                 Json(_json_list(row.get("expected_heading_paths"))),
                 Json(_json_list(row.get("expected_evidence_refs"))),
                 Json(_json_list(row.get("answer_key_points"))),
+                _clean_text(row.get("anchor_set_id")),
                 Json(_json_dict(row.get("trace_payload"))),
                 _safe_float(row.get("hit_at_1"), 0.0) if row.get("hit_at_1") is not None else None,
                 _safe_float(row.get("hit_at_3"), 0.0) if row.get("hit_at_3") is not None else None,
                 _safe_float(row.get("hit_at_5"), 0.0) if row.get("hit_at_5") is not None else None,
+                _safe_float(row.get("precision_at_1"), 0.0) if row.get("precision_at_1") is not None else None,
+                _safe_float(row.get("precision_at_3"), 0.0) if row.get("precision_at_3") is not None else None,
+                _safe_float(row.get("precision_at_5"), 0.0) if row.get("precision_at_5") is not None else None,
                 _safe_float(row.get("document_hit_at_5"), 0.0) if row.get("document_hit_at_5") is not None else None,
+                _safe_float(row.get("document_precision_at_1"), 0.0)
+                if row.get("document_precision_at_1") is not None
+                else None,
+                _safe_float(row.get("document_precision_at_3"), 0.0)
+                if row.get("document_precision_at_3") is not None
+                else None,
+                _safe_float(row.get("document_precision_at_5"), 0.0)
+                if row.get("document_precision_at_5") is not None
+                else None,
+                _safe_float(row.get("recall_at_1"), 0.0) if row.get("recall_at_1") is not None else None,
+                _safe_float(row.get("recall_at_3"), 0.0) if row.get("recall_at_3") is not None else None,
                 _safe_float(row.get("recall_at_5"), 0.0) if row.get("recall_at_5") is not None else None,
+                _safe_float(row.get("document_recall_at_1"), 0.0)
+                if row.get("document_recall_at_1") is not None
+                else None,
+                _safe_float(row.get("document_recall_at_3"), 0.0)
+                if row.get("document_recall_at_3") is not None
+                else None,
+                _safe_float(row.get("document_recall_at_5"), 0.0)
+                if row.get("document_recall_at_5") is not None
+                else None,
+                _safe_float(row.get("evidence_recall_at_1"), 0.0)
+                if row.get("evidence_recall_at_1") is not None
+                else None,
+                _safe_float(row.get("evidence_recall_at_3"), 0.0)
+                if row.get("evidence_recall_at_3") is not None
+                else None,
+                _safe_float(row.get("evidence_recall_at_5"), 0.0)
+                if row.get("evidence_recall_at_5") is not None
+                else None,
                 _safe_float(row.get("mrr"), 0.0) if row.get("mrr") is not None else None,
+                _safe_float(row.get("document_mrr"), 0.0) if row.get("document_mrr") is not None else None,
+                _safe_float(row.get("evidence_mrr"), 0.0) if row.get("evidence_mrr") is not None else None,
+                _safe_float(row.get("ndcg_at_1"), 0.0) if row.get("ndcg_at_1") is not None else None,
+                _safe_float(row.get("ndcg_at_3"), 0.0) if row.get("ndcg_at_3") is not None else None,
                 _safe_float(row.get("ndcg_at_5"), 0.0) if row.get("ndcg_at_5") is not None else None,
+                _safe_float(row.get("document_ndcg_at_1"), 0.0)
+                if row.get("document_ndcg_at_1") is not None
+                else None,
+                _safe_float(row.get("document_ndcg_at_3"), 0.0)
+                if row.get("document_ndcg_at_3") is not None
+                else None,
+                _safe_float(row.get("document_ndcg_at_5"), 0.0)
+                if row.get("document_ndcg_at_5") is not None
+                else None,
                 _safe_float(row.get("evidence_hit_at_1"), 0.0) if row.get("evidence_hit_at_1") is not None else None,
                 _safe_float(row.get("evidence_hit_at_3"), 0.0) if row.get("evidence_hit_at_3") is not None else None,
                 _safe_float(row.get("evidence_hit_at_5"), 0.0) if row.get("evidence_hit_at_5") is not None else None,
+                _safe_float(row.get("evidence_precision_at_1"), 0.0)
+                if row.get("evidence_precision_at_1") is not None
+                else None,
+                _safe_float(row.get("evidence_precision_at_3"), 0.0)
+                if row.get("evidence_precision_at_3") is not None
+                else None,
+                _safe_float(row.get("evidence_precision_at_5"), 0.0)
+                if row.get("evidence_precision_at_5") is not None
+                else None,
+                _safe_float(row.get("evidence_ndcg_at_1"), 0.0)
+                if row.get("evidence_ndcg_at_1") is not None
+                else None,
+                _safe_float(row.get("evidence_ndcg_at_3"), 0.0)
+                if row.get("evidence_ndcg_at_3") is not None
+                else None,
+                _safe_float(row.get("evidence_ndcg_at_5"), 0.0)
+                if row.get("evidence_ndcg_at_5") is not None
+                else None,
                 _safe_float(row.get("evidence_coverage"), 0.0) if row.get("evidence_coverage") is not None else None,
                 _safe_float(row.get("noise_rate"), 0.0) if row.get("noise_rate") is not None else None,
                 _safe_float(row.get("document_relevance_score"), 0.0) if row.get("document_relevance_score") is not None else None,
+                _safe_float(row.get("context_relevance_score"), 0.0)
+                if row.get("context_relevance_score") is not None
+                else None,
+                _safe_float(row.get("answer_relevance_score"), 0.0)
+                if row.get("answer_relevance_score") is not None
+                else None,
+                _safe_float(row.get("judge_confidence_score"), 0.0)
+                if row.get("judge_confidence_score") is not None
+                else None,
+                _safe_float(row.get("judge_divergence_score"), 0.0)
+                if row.get("judge_divergence_score") is not None
+                else None,
+                _safe_float(row.get("judge_error_rate"), 0.0) if row.get("judge_error_rate") is not None else None,
                 _safe_float(row.get("faithfulness_score"), 0.0) if row.get("faithfulness_score") is not None else None,
                 _safe_float(row.get("groundedness_score"), 0.0) if row.get("groundedness_score") is not None else None,
                 _safe_float(row.get("response_relevance_score"), 0.0) if row.get("response_relevance_score") is not None else None,
@@ -5649,6 +5884,10 @@ class PostgresKnowledgeRepository:
                 _safe_float(row.get("retrieval_latency_ms"), 0.0) if row.get("retrieval_latency_ms") is not None else None,
                 _safe_float(row.get("generation_latency_ms"), 0.0) if row.get("generation_latency_ms") is not None else None,
                 _safe_float(row.get("total_latency_ms"), 0.0) if row.get("total_latency_ms") is not None else None,
+                _safe_float(row.get("case_execution_latency_ms"), 0.0)
+                if row.get("case_execution_latency_ms") is not None
+                else None,
+                row.get("case_execution_error") if isinstance(row.get("case_execution_error"), bool) else None,
                 _safe_positive_int(row.get("selected_doc_count"), 0) if row.get("selected_doc_count") is not None else None,
                 _safe_float(row.get("top1_similarity_score"), 0.0) if row.get("top1_similarity_score") is not None else None,
                 _safe_float(row.get("avg_selected_similarity_score"), 0.0)
@@ -5687,6 +5926,7 @@ class PostgresKnowledgeRepository:
                                 if column
                                 in {
                                     "expected_document_ids",
+                                    "expected_document_relevance",
                                     "expected_heading_paths",
                                     "expected_evidence_refs",
                                     "answer_key_points",
@@ -8771,6 +9011,7 @@ class PostgresKnowledgeRepository:
             sql.SQL(
                 """
                 SELECT
+                    COUNT(*),
                     percentile_cont(0.5) WITHIN GROUP (ORDER BY total_latency_ms),
                     percentile_cont(0.95) WITHIN GROUP (ORDER BY total_latency_ms),
                     percentile_cont(0.99) WITHIN GROUP (ORDER BY total_latency_ms),
@@ -8795,6 +9036,8 @@ class PostgresKnowledgeRepository:
             ),
             tuple([days, *query_filter_params]),
         )[0]
+        request_count = int(row[0] or 0)
+        minutes_in_range = max(1, days * 24 * 60)
         cost_by_model = self._query_rows(
             sql.SQL(
                 """
@@ -8852,21 +9095,23 @@ class PostgresKnowledgeRepository:
             tuple([days, *query_filter_params, filters["limit"]]),
         )
         cards = {
-            "p50_total_latency_ms": _coalesce_metric(row[0]),
-            "p95_total_latency_ms": _coalesce_metric(row[1]),
-            "p99_total_latency_ms": _coalesce_metric(row[2]),
-            "p50_retrieval_latency_ms": _coalesce_metric(row[3]),
-            "p95_retrieval_latency_ms": _coalesce_metric(row[4]),
-            "p50_rerank_latency_ms": _coalesce_metric(row[5]),
-            "p50_generation_latency_ms": _coalesce_metric(row[6]),
-            "error_rate": _coalesce_metric(row[7]),
-            "timeout_rate": _coalesce_metric(row[8]),
-            "avg_prompt_tokens": _coalesce_metric(row[9]),
-            "avg_completion_tokens": _coalesce_metric(row[10]),
-            "avg_embedding_tokens": _coalesce_metric(row[11]),
-            "avg_cost_per_query": _coalesce_metric(row[12]),
+            "request_count": request_count,
+            "requests_per_minute": round(request_count / minutes_in_range, 4) if request_count else 0.0,
+            "p50_total_latency_ms": _coalesce_metric(row[1]),
+            "p95_total_latency_ms": _coalesce_metric(row[2]),
+            "p99_total_latency_ms": _coalesce_metric(row[3]),
+            "p50_retrieval_latency_ms": _coalesce_metric(row[4]),
+            "p95_retrieval_latency_ms": _coalesce_metric(row[5]),
+            "p50_rerank_latency_ms": _coalesce_metric(row[6]),
+            "p50_generation_latency_ms": _coalesce_metric(row[7]),
+            "error_rate": _coalesce_metric(row[8]),
+            "timeout_rate": _coalesce_metric(row[9]),
+            "avg_prompt_tokens": _coalesce_metric(row[10]),
+            "avg_completion_tokens": _coalesce_metric(row[11]),
+            "avg_embedding_tokens": _coalesce_metric(row[12]),
+            "avg_cost_per_query": _coalesce_metric(row[13]),
             "avg_cost_per_doc_ingested": None,
-            "daily_total_cost": _coalesce_metric(row[13]),
+            "daily_total_cost": _coalesce_metric(row[14]),
             "cost_by_model": [{"label": str(item[0]), "value": _coalesce_metric(item[1])} for item in cost_by_model],
             "cost_by_source_type": [{"label": str(item[0]), "value": _coalesce_metric(item[1])} for item in cost_by_source],
         }
@@ -9349,16 +9594,28 @@ class PostgresKnowledgeRepository:
                     hit_at_1,
                     hit_at_3,
                     hit_at_5,
+                    precision_at_5,
                     document_hit_at_5,
+                    document_precision_at_5,
+                    document_recall_at_5,
                     recall_at_5,
                     mrr,
                     ndcg_at_5,
+                    document_ndcg_at_5,
                     evidence_hit_at_1,
                     evidence_hit_at_3,
                     evidence_hit_at_5,
+                    evidence_precision_at_5,
+                    evidence_recall_at_5,
+                    evidence_ndcg_at_5,
                     evidence_coverage,
                     noise_rate,
                     document_relevance_score,
+                    context_relevance_score,
+                    answer_relevance_score,
+                    judge_confidence_score,
+                    judge_divergence_score,
+                    judge_error_rate,
                     faithfulness_score,
                     groundedness_score,
                     response_relevance_score,
@@ -9384,6 +9641,8 @@ class PostgresKnowledgeRepository:
                     retrieval_latency_ms,
                     generation_latency_ms,
                     total_latency_ms,
+                    case_execution_latency_ms,
+                    case_execution_error,
                     selected_doc_count,
                     top1_similarity_score,
                     avg_selected_similarity_score,
@@ -9423,16 +9682,28 @@ class PostgresKnowledgeRepository:
                 hit_at_1,
                 hit_at_3,
                 hit_at_5,
+                precision_at_5,
                 document_hit_at_5,
+                document_precision_at_5,
+                document_recall_at_5,
                 recall_at_5,
                 mrr,
                 ndcg_at_5,
+                document_ndcg_at_5,
                 evidence_hit_at_1,
                 evidence_hit_at_3,
                 evidence_hit_at_5,
+                evidence_precision_at_5,
+                evidence_recall_at_5,
+                evidence_ndcg_at_5,
                 evidence_coverage,
                 noise_rate,
                 document_relevance_score,
+                context_relevance_score,
+                answer_relevance_score,
+                judge_confidence_score,
+                judge_divergence_score,
+                judge_error_rate,
                 faithfulness_score,
                 groundedness_score,
                 response_relevance_score,
@@ -9458,6 +9729,8 @@ class PostgresKnowledgeRepository:
                 retrieval_latency_ms,
                 generation_latency_ms,
                 total_latency_ms,
+                case_execution_latency_ms,
+                case_execution_error,
                 selected_doc_count,
                 top1_similarity_score,
                 avg_selected_similarity_score,
@@ -9490,16 +9763,28 @@ class PostgresKnowledgeRepository:
                 "hit_at_1": _coalesce_metric(hit_at_1),
                 "hit_at_3": _coalesce_metric(hit_at_3),
                 "hit_at_5": _coalesce_metric(hit_at_5),
+                "precision_at_5": _coalesce_metric(precision_at_5),
                 "document_hit_at_5": _coalesce_metric(document_hit_at_5),
+                "document_precision_at_5": _coalesce_metric(document_precision_at_5),
+                "document_recall_at_5": _coalesce_metric(document_recall_at_5),
                 "recall_at_5": _coalesce_metric(recall_at_5),
                 "mrr": _coalesce_metric(mrr),
                 "ndcg_at_5": _coalesce_metric(ndcg_at_5),
+                "document_ndcg_at_5": _coalesce_metric(document_ndcg_at_5),
                 "evidence_hit_at_1": _coalesce_metric(evidence_hit_at_1),
                 "evidence_hit_at_3": _coalesce_metric(evidence_hit_at_3),
                 "evidence_hit_at_5": _coalesce_metric(evidence_hit_at_5),
+                "evidence_precision_at_5": _coalesce_metric(evidence_precision_at_5),
+                "evidence_recall_at_5": _coalesce_metric(evidence_recall_at_5),
+                "evidence_ndcg_at_5": _coalesce_metric(evidence_ndcg_at_5),
                 "evidence_coverage": _coalesce_metric(evidence_coverage),
                 "noise_rate": _coalesce_metric(noise_rate),
                 "document_relevance_score": _coalesce_metric(document_relevance_score),
+                "context_relevance_score": _coalesce_metric(context_relevance_score),
+                "answer_relevance_score": _coalesce_metric(answer_relevance_score),
+                "judge_confidence_score": _coalesce_metric(judge_confidence_score),
+                "judge_divergence_score": _coalesce_metric(judge_divergence_score),
+                "judge_error_rate": _coalesce_metric(judge_error_rate),
                 "faithfulness_score": _coalesce_metric(faithfulness_score),
                 "groundedness_score": _coalesce_metric(groundedness_score),
                 "response_relevance_score": _coalesce_metric(response_relevance_score),
@@ -9525,6 +9810,8 @@ class PostgresKnowledgeRepository:
                 "retrieval_latency_ms": _coalesce_metric(retrieval_latency_ms),
                 "generation_latency_ms": _coalesce_metric(generation_latency_ms),
                 "total_latency_ms": _coalesce_metric(total_latency_ms),
+                "case_execution_latency_ms": _coalesce_metric(case_execution_latency_ms),
+                "case_execution_error": bool(case_execution_error) if case_execution_error is not None else None,
                 "selected_doc_count": selected_doc_count,
                 "top1_similarity_score": _coalesce_metric(top1_similarity_score),
                 "avg_selected_similarity_score": _coalesce_metric(avg_selected_similarity_score),
@@ -9577,23 +9864,37 @@ class PostgresKnowledgeRepository:
                     execution_action_correct,
                     tooling_profile_correct,
                     expected_document_ids,
+                    expected_document_relevance,
                     expected_heading_paths,
                     expected_evidence_refs,
                     answer_key_points,
+                    anchor_set_id,
                     trace_payload,
                     hit_at_1,
                     hit_at_3,
                     hit_at_5,
+                    precision_at_5,
                     document_hit_at_5,
+                    document_precision_at_5,
+                    document_recall_at_5,
                     recall_at_5,
                     mrr,
                     ndcg_at_5,
+                    document_ndcg_at_5,
                     evidence_hit_at_1,
                     evidence_hit_at_3,
                     evidence_hit_at_5,
+                    evidence_precision_at_5,
+                    evidence_recall_at_5,
+                    evidence_ndcg_at_5,
                     evidence_coverage,
                     noise_rate,
                     document_relevance_score,
+                    context_relevance_score,
+                    answer_relevance_score,
+                    judge_confidence_score,
+                    judge_divergence_score,
+                    judge_error_rate,
                     faithfulness_score,
                     groundedness_score,
                     response_relevance_score,
@@ -9619,6 +9920,8 @@ class PostgresKnowledgeRepository:
                     retrieval_latency_ms,
                     generation_latency_ms,
                     total_latency_ms,
+                    case_execution_latency_ms,
+                    case_execution_error,
                     selected_doc_count,
                     top1_similarity_score,
                     avg_selected_similarity_score,
@@ -9637,7 +9940,7 @@ class PostgresKnowledgeRepository:
         )
         grouped: dict[str, dict[str, dict[str, Any]]] = {}
         for row in rows:
-            trace_payload = _json_dict(row[26])
+            trace_payload = _json_dict(row[28])
             actual_answer_text = _clean_text(trace_payload.get("actual_answer_text")) or _clean_text(trace_payload.get("answer_text"))
             expected_answer_text = _clean_text(trace_payload.get("expected_answer_text"))
             route_correct = trace_payload.get("route_correct")
@@ -9670,9 +9973,11 @@ class PostgresKnowledgeRepository:
                 "execution_action_correct": _coalesce_metric(row[20]),
                 "tooling_profile_correct": _coalesce_metric(row[21]),
                 "expected_document_ids": _json_list(row[22]),
-                "expected_heading_paths": _json_list(row[23]),
-                "expected_evidence_refs": _json_list(row[24]),
-                "answer_key_points": _json_list(row[25]),
+                "expected_document_relevance": _json_list(row[23]),
+                "expected_heading_paths": _json_list(row[24]),
+                "expected_evidence_refs": _json_list(row[25]),
+                "answer_key_points": _json_list(row[26]),
+                "anchor_set_id": _clean_text(row[27]) or None,
                 "trace_payload": trace_payload,
                 "actual_answer_text": actual_answer_text,
                 "expected_answer_text": expected_answer_text,
@@ -9684,50 +9989,64 @@ class PostgresKnowledgeRepository:
                 "actual_scope_label": _clean_text(trace_payload.get("actual_scope_label")),
                 "route_correct": bool(route_correct) if route_correct is not None else None,
                 "search_used": bool(trace_payload.get("search_used")) if trace_payload.get("search_used") is not None else None,
-                "hit_at_1": _coalesce_metric(row[27]),
-                "hit_at_3": _coalesce_metric(row[28]),
-                "hit_at_5": _coalesce_metric(row[29]),
-                "document_hit_at_5": _coalesce_metric(row[30]),
-                "recall_at_5": _coalesce_metric(row[31]),
-                "mrr": _coalesce_metric(row[32]),
-                "ndcg_at_5": _coalesce_metric(row[33]),
-                "evidence_hit_at_1": _coalesce_metric(row[34]),
-                "evidence_hit_at_3": _coalesce_metric(row[35]),
-                "evidence_hit_at_5": _coalesce_metric(row[36]),
-                "evidence_coverage": _coalesce_metric(row[37]),
-                "noise_rate": _coalesce_metric(row[38]),
-                "document_relevance_score": _coalesce_metric(row[39]),
-                "faithfulness_score": _coalesce_metric(row[40]),
-                "groundedness_score": _coalesce_metric(row[41]),
-                "response_relevance_score": _coalesce_metric(row[42]),
-                "response_completeness_score": _coalesce_metric(row[43]),
-                "citation_correctness_score": _coalesce_metric(row[44]),
-                "answer_accuracy_score": _coalesce_metric(row[45]),
-                "answer_logic_score": _coalesce_metric(row[46]),
-                "hallucination_flag": bool(row[47]) if row[47] is not None else None,
-                "needs_human": bool(row[48]) if row[48] is not None else None,
-                "answer_correctness_eligible": bool(row[49]) if row[49] is not None else None,
-                "matched_expected_execution_action": bool(row[50]) if row[50] is not None else None,
-                "used_prohibited_agora_docs": bool(row[51]) if row[51] is not None else None,
-                "abstained_or_deflected_properly": bool(row[52]) if row[52] is not None else None,
-                "no_unsupported_claims": bool(row[53]) if row[53] is not None else None,
-                "response_policy_followed": bool(row[54]) if row[54] is not None else None,
-                "authoritative_source_used": bool(row[55]) if row[55] is not None else None,
-                "citation_present": bool(row[56]) if row[56] is not None else None,
-                "unsupported_claim_avoidance": bool(row[57]) if row[57] is not None else None,
-                "failure_type": row[58],
-                "failure_stage": row[59],
-                "failure_bucket": row[60],
-                "root_cause_label": row[61],
-                "retrieval_latency_ms": _coalesce_metric(row[62]),
-                "generation_latency_ms": _coalesce_metric(row[63]),
-                "total_latency_ms": _coalesce_metric(row[64]),
-                "selected_doc_count": row[65],
-                "top1_similarity_score": _coalesce_metric(row[66]),
-                "avg_selected_similarity_score": _coalesce_metric(row[67]),
-                "avg_cost_per_query": _coalesce_metric(row[68]),
-                "judge_votes": _json_list(row[69]),
-                "judge_disagreement_flag": bool(row[70]) if row[70] is not None else None,
+                "hit_at_1": _coalesce_metric(row[29]),
+                "hit_at_3": _coalesce_metric(row[30]),
+                "hit_at_5": _coalesce_metric(row[31]),
+                "precision_at_5": _coalesce_metric(row[32]),
+                "document_hit_at_5": _coalesce_metric(row[33]),
+                "document_precision_at_5": _coalesce_metric(row[34]),
+                "document_recall_at_5": _coalesce_metric(row[35]),
+                "recall_at_5": _coalesce_metric(row[36]),
+                "mrr": _coalesce_metric(row[37]),
+                "ndcg_at_5": _coalesce_metric(row[38]),
+                "document_ndcg_at_5": _coalesce_metric(row[39]),
+                "evidence_hit_at_1": _coalesce_metric(row[40]),
+                "evidence_hit_at_3": _coalesce_metric(row[41]),
+                "evidence_hit_at_5": _coalesce_metric(row[42]),
+                "evidence_precision_at_5": _coalesce_metric(row[43]),
+                "evidence_recall_at_5": _coalesce_metric(row[44]),
+                "evidence_ndcg_at_5": _coalesce_metric(row[45]),
+                "evidence_coverage": _coalesce_metric(row[46]),
+                "noise_rate": _coalesce_metric(row[47]),
+                "document_relevance_score": _coalesce_metric(row[48]),
+                "context_relevance_score": _coalesce_metric(row[49]),
+                "answer_relevance_score": _coalesce_metric(row[50]),
+                "judge_confidence_score": _coalesce_metric(row[51]),
+                "judge_divergence_score": _coalesce_metric(row[52]),
+                "judge_error_rate": _coalesce_metric(row[53]),
+                "faithfulness_score": _coalesce_metric(row[54]),
+                "groundedness_score": _coalesce_metric(row[55]),
+                "response_relevance_score": _coalesce_metric(row[56]),
+                "response_completeness_score": _coalesce_metric(row[57]),
+                "citation_correctness_score": _coalesce_metric(row[58]),
+                "answer_accuracy_score": _coalesce_metric(row[59]),
+                "answer_logic_score": _coalesce_metric(row[60]),
+                "hallucination_flag": bool(row[61]) if row[61] is not None else None,
+                "needs_human": bool(row[62]) if row[62] is not None else None,
+                "answer_correctness_eligible": bool(row[63]) if row[63] is not None else None,
+                "matched_expected_execution_action": bool(row[64]) if row[64] is not None else None,
+                "used_prohibited_agora_docs": bool(row[65]) if row[65] is not None else None,
+                "abstained_or_deflected_properly": bool(row[66]) if row[66] is not None else None,
+                "no_unsupported_claims": bool(row[67]) if row[67] is not None else None,
+                "response_policy_followed": bool(row[68]) if row[68] is not None else None,
+                "authoritative_source_used": bool(row[69]) if row[69] is not None else None,
+                "citation_present": bool(row[70]) if row[70] is not None else None,
+                "unsupported_claim_avoidance": bool(row[71]) if row[71] is not None else None,
+                "failure_type": row[72],
+                "failure_stage": row[73],
+                "failure_bucket": row[74],
+                "root_cause_label": row[75],
+                "retrieval_latency_ms": _coalesce_metric(row[76]),
+                "generation_latency_ms": _coalesce_metric(row[77]),
+                "total_latency_ms": _coalesce_metric(row[78]),
+                "case_execution_latency_ms": _coalesce_metric(row[79]),
+                "case_execution_error": bool(row[80]) if row[80] is not None else None,
+                "selected_doc_count": row[81],
+                "top1_similarity_score": _coalesce_metric(row[82]),
+                "avg_selected_similarity_score": _coalesce_metric(row[83]),
+                "avg_cost_per_query": _coalesce_metric(row[84]),
+                "judge_votes": _json_list(row[85]),
+                "judge_disagreement_flag": bool(row[86]) if row[86] is not None else None,
             }
             grouped.setdefault(str(row[0]), {})[str(row[1])] = payload
         return grouped
@@ -10294,8 +10613,10 @@ class PostgresKnowledgeRepository:
             "structured_retry_used": bool(trace_payload.get("structured_retry_used")),
             "extractive_fallback_used": bool(trace_payload.get("extractive_fallback_used")),
             "expected_document_ids": _json_list(row.get("expected_document_ids")),
+            "expected_document_relevance": _json_list(row.get("expected_document_relevance")),
             "expected_heading_paths": _json_list(row.get("expected_heading_paths")),
             "expected_evidence_refs": _json_list(row.get("expected_evidence_refs")),
+            "anchor_set_id": _clean_text(row.get("anchor_set_id")) or None,
             "expected_route_family": row.get("expected_route_family"),
             "actual_route_family": row.get("actual_route_family"),
             "expected_execution_action": row.get("expected_execution_action"),
@@ -10311,7 +10632,23 @@ class PostgresKnowledgeRepository:
             "evidence_hit_at_1": row.get("evidence_hit_at_1"),
             "evidence_hit_at_3": row.get("evidence_hit_at_3"),
             "evidence_hit_at_5": row.get("evidence_hit_at_5"),
+            "precision_at_5": row.get("precision_at_5"),
+            "recall_at_5": row.get("recall_at_5"),
+            "ndcg_at_5": row.get("ndcg_at_5"),
+            "document_precision_at_5": row.get("document_precision_at_5"),
+            "document_recall_at_5": row.get("document_recall_at_5"),
+            "document_ndcg_at_5": row.get("document_ndcg_at_5"),
+            "evidence_precision_at_5": row.get("evidence_precision_at_5"),
+            "evidence_recall_at_5": row.get("evidence_recall_at_5"),
+            "evidence_ndcg_at_5": row.get("evidence_ndcg_at_5"),
+            "evidence_coverage": row.get("evidence_coverage"),
+            "noise_rate": row.get("noise_rate"),
             "document_relevance_score": row.get("document_relevance_score"),
+            "context_relevance_score": row.get("context_relevance_score"),
+            "answer_relevance_score": row.get("answer_relevance_score"),
+            "judge_confidence_score": row.get("judge_confidence_score"),
+            "judge_divergence_score": row.get("judge_divergence_score"),
+            "judge_error_rate": row.get("judge_error_rate"),
             "faithfulness_score": row.get("faithfulness_score"),
             "groundedness_score": row.get("groundedness_score"),
             "response_relevance_score": row.get("response_relevance_score"),
@@ -10396,6 +10733,14 @@ class PostgresKnowledgeRepository:
             ),
             "faithfulness_score": _round_delta(primary.get("faithfulness_score"), baseline.get("faithfulness_score")),
             "groundedness_score": _round_delta(primary.get("groundedness_score"), baseline.get("groundedness_score")),
+            "context_relevance_score": _round_delta(
+                primary.get("context_relevance_score"),
+                baseline.get("context_relevance_score"),
+            ),
+            "answer_relevance_score": _round_delta(
+                primary.get("answer_relevance_score"),
+                baseline.get("answer_relevance_score"),
+            ),
             "citation_correctness_score": _round_delta(
                 primary.get("citation_correctness_score"),
                 baseline.get("citation_correctness_score"),
@@ -10469,7 +10814,17 @@ class PostgresKnowledgeRepository:
             and _clean_text(row.get("failure_stage")) != "routing"
             and any(
                 row.get(field_name) is not None
-                for field_name in ("document_hit_at_5", "evidence_hit_at_5", "evidence_coverage", "noise_rate")
+                for field_name in (
+                    "precision_at_5",
+                    "recall_at_5",
+                    "ndcg_at_5",
+                    "evidence_hit_at_5",
+                    "evidence_precision_at_5",
+                    "evidence_recall_at_5",
+                    "evidence_ndcg_at_5",
+                    "evidence_coverage",
+                    "noise_rate",
+                )
             )
         ]
 
@@ -10482,6 +10837,13 @@ class PostgresKnowledgeRepository:
                 "failure_stage": row.get("failure_stage"),
                 "failure_bucket": row.get("failure_bucket"),
                 "evidence_hit_at_5": row.get("evidence_hit_at_5"),
+                "hit_at_5": row.get("hit_at_5"),
+                "precision_at_5": row.get("precision_at_5"),
+                "recall_at_5": row.get("recall_at_5"),
+                "ndcg_at_5": row.get("ndcg_at_5"),
+                "evidence_precision_at_5": row.get("evidence_precision_at_5"),
+                "evidence_recall_at_5": row.get("evidence_recall_at_5"),
+                "evidence_ndcg_at_5": row.get("evidence_ndcg_at_5"),
                 "evidence_coverage": row.get("evidence_coverage"),
                 "noise_rate": row.get("noise_rate"),
             }
@@ -10501,7 +10863,14 @@ class PostgresKnowledgeRepository:
             if _clean_text(row.get("failure_stage")) != "routing"
             and any(
                 row.get(field_name) is not None
-                for field_name in ("answer_accuracy_score", "faithfulness_score", "response_policy_followed")
+                for field_name in (
+                    "context_relevance_score",
+                    "answer_relevance_score",
+                    "faithfulness_score",
+                    "citation_correctness_score",
+                    "response_completeness_score",
+                    "response_policy_followed",
+                )
             )
         ]
 
@@ -10513,8 +10882,11 @@ class PostgresKnowledgeRepository:
                 "category": row.get("category"),
                 "failure_stage": row.get("failure_stage"),
                 "failure_bucket": row.get("failure_bucket"),
-                "answer_accuracy_score": row.get("answer_accuracy_score"),
+                "context_relevance_score": row.get("context_relevance_score"),
+                "answer_relevance_score": row.get("answer_relevance_score"),
                 "faithfulness_score": row.get("faithfulness_score"),
+                "citation_correctness_score": row.get("citation_correctness_score"),
+                "response_completeness_score": row.get("response_completeness_score"),
                 "response_policy_followed": row.get("response_policy_followed"),
             }
 
@@ -10858,26 +11230,37 @@ class PostgresKnowledgeRepository:
             has_eval_data=bool(chunking_page.get("has_eval_data")),
         )
 
-    def _production_signals_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
+    def _performance_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
+        experiments, baseline, candidate, _baseline_cases, candidate_cases, wins, regressions = self._selected_benchmark_context(
+            days=days,
+            filters=filters,
+        )
+        selector_experiments = experiments or self._benchmark_selector_rows(days, filters)
+        _selector_baseline, selector_candidate = self._select_experiment_rows(selector_experiments, filters)
+        benchmark_selector = self._build_benchmark_selector(selector_experiments, candidate or selector_candidate)
+        benchmark_session = self._benchmark_session_payload_for_eval_run(
+            _clean_text((benchmark_selector or {}).get("current_eval_run_id"))
+        )
+        candidate_rows = list(candidate_cases.values())
         retrieval_page = self._retrieval_page(range_value, days, filters)
         generation_page = self._generation_page(range_value, days, filters)
         performance_page = self._performance_cost_page(range_value, days, filters)
         failures_page = self._failures_page(range_value, days, filters)
         sections = {
             "summary": {
-                "title": "Production Signals",
-                "subtitle": "Watch live proxy quality signals for regressions, then jump into risky cases.",
+                "title": "Performance",
+                "subtitle": "Read benchmark throughput and latency together with live traffic reliability.",
                 "cards": {
-                    "needs_human_rate": generation_page["cards"].get("needs_human_rate"),
-                    "no_answer_rate": generation_page["cards"].get("no_answer_rate"),
-                    "citation_missing_rate": generation_page["cards"].get("citation_missing_rate"),
-                    "extractive_fallback_rate": generation_page["cards"].get("extractive_fallback_rate"),
-                    "structured_retry_rate": generation_page["cards"].get("structured_retry_rate"),
-                    "low_confidence_rate": generation_page["cards"].get("low_confidence_rate"),
-                    "avg_citation_coverage_ratio": generation_page["cards"].get("avg_citation_coverage_ratio"),
+                    "benchmark_p95_total_latency_ms": _max_from_rows(candidate_rows, "benchmark_p95_total_latency_ms")
+                    or _max_from_rows(candidate_rows, "total_latency_ms"),
+                    "benchmark_throughput_cases_per_sec": _mean_from_rows(candidate_rows, "benchmark_throughput_cases_per_sec")
+                    or _benchmark_throughput_from_case_rows(candidate_rows),
+                    "judge_error_rate": _mean_from_rows(candidate_rows, "judge_error_rate"),
+                    "case_execution_error_rate": _rate_from_rows(candidate_rows, "case_execution_error"),
                     "p95_total_latency_ms": performance_page["cards"].get("p95_total_latency_ms"),
                     "p95_retrieval_latency_ms": performance_page["cards"].get("p95_retrieval_latency_ms"),
                     "p50_generation_latency_ms": performance_page["cards"].get("p50_generation_latency_ms"),
+                    "requests_per_minute": performance_page["cards"].get("requests_per_minute"),
                     "error_rate": performance_page["cards"].get("error_rate"),
                     "timeout_rate": performance_page["cards"].get("timeout_rate"),
                 },
@@ -10885,24 +11268,28 @@ class PostgresKnowledgeRepository:
             "segment_breakdown": {
                 "groups": [
                     {
-                        "title": "Retrieval Strategy",
-                        "cards": retrieval_page.get("cards", {}),
-                        "charts": retrieval_page.get("charts", {}),
+                        "title": "Benchmark Execution",
+                        "cards": {
+                            "benchmark_p95_total_latency_ms": _max_from_rows(candidate_rows, "benchmark_p95_total_latency_ms")
+                            or _max_from_rows(candidate_rows, "total_latency_ms"),
+                            "benchmark_throughput_cases_per_sec": _mean_from_rows(candidate_rows, "benchmark_throughput_cases_per_sec")
+                            or _benchmark_throughput_from_case_rows(candidate_rows),
+                            "judge_error_rate": _mean_from_rows(candidate_rows, "judge_error_rate"),
+                            "case_execution_error_rate": _rate_from_rows(candidate_rows, "case_execution_error"),
+                        },
+                        "charts": {},
                         "tables": {
-                            "retrieval_strategy_breakdown": retrieval_page.get("tables", {}).get(
-                                "retrieval_strategy_breakdown", []
-                            ),
-                            "query_type_analysis": retrieval_page.get("tables", {}).get("query_type_analysis", []),
+                            "benchmark_runs": benchmark_session.get("runs", []) if isinstance(benchmark_session, dict) else [],
                         },
                     },
                     {
-                        "title": "Generation Signals",
+                        "title": "Live Proxy Quality",
                         "cards": generation_page.get("cards", {}),
                         "charts": generation_page.get("charts", {}),
                         "tables": generation_page.get("tables", {}),
                     },
                     {
-                        "title": "Latency and Reliability",
+                        "title": "Latency And Reliability",
                         "cards": performance_page.get("cards", {}),
                         "charts": performance_page.get("charts", {}),
                         "tables": performance_page.get("tables", {}),
@@ -10915,11 +11302,13 @@ class PostgresKnowledgeRepository:
             },
         }
         return self._build_workbench_envelope(
-            layout="production-signals",
+            layout="performance",
             range_value=range_value,
             filters=filters,
             sections=sections,
             has_eval_data=bool(retrieval_page.get("has_eval_data") or generation_page.get("has_eval_data")),
+            benchmark_selector=benchmark_selector,
+            benchmark_session=benchmark_session,
         )
 
     def _review_workbench_page(self, range_value: str, days: int, filters: dict[str, Any]) -> dict[str, Any]:
@@ -11456,6 +11845,45 @@ class PostgresKnowledgeRepository:
             )
         )
         payload["runs"] = runs
+        try:
+            cases_by_run = self._benchmark_case_summary_rows([
+                _clean_text(item.get("eval_run_id")) for item in runs if _clean_text(item.get("eval_run_id"))
+            ])
+        except optional_query_errors + (StopIteration,):
+            cases_by_run = {}
+        gate_runs: list[dict[str, Any]] = []
+        for run in runs:
+            eval_run_id = _clean_text(run.get("eval_run_id"))
+            case_rows = list((cases_by_run.get(eval_run_id) or {}).values())
+            benchmark_p95_total_latency_ms = _max_from_rows(case_rows, "benchmark_p95_total_latency_ms")
+            if benchmark_p95_total_latency_ms is None:
+                benchmark_p95_total_latency_ms = _max_from_rows(case_rows, "total_latency_ms")
+            benchmark_throughput_cases_per_sec = _mean_from_rows(case_rows, "benchmark_throughput_cases_per_sec")
+            if benchmark_throughput_cases_per_sec is None:
+                benchmark_throughput_cases_per_sec = _benchmark_throughput_from_case_rows(case_rows)
+            case_execution_error_rate = _mean_from_rows(case_rows, "case_execution_error_rate")
+            if case_execution_error_rate is None:
+                case_execution_error_rate = _rate_from_rows(case_rows, "case_execution_error")
+            benchmark_metrics = {
+                "evidence_precision_at_5": _mean_from_rows(case_rows, "evidence_precision_at_5"),
+                "evidence_recall_at_5": _mean_from_rows(case_rows, "evidence_recall_at_5"),
+                "evidence_ndcg_at_5": _mean_from_rows(case_rows, "evidence_ndcg_at_5"),
+                "context_relevance_score": _mean_from_rows(case_rows, "context_relevance_score"),
+                "answer_relevance_score": _mean_from_rows(case_rows, "answer_relevance_score"),
+                "faithfulness_score": _mean_from_rows(case_rows, "faithfulness_score"),
+                "citation_correctness_score": _mean_from_rows(case_rows, "citation_correctness_score"),
+                "response_completeness_score": _mean_from_rows(case_rows, "response_completeness_score"),
+                "benchmark_p95_total_latency_ms": benchmark_p95_total_latency_ms,
+                "benchmark_throughput_cases_per_sec": benchmark_throughput_cases_per_sec,
+                "judge_error_rate": _mean_from_rows(case_rows, "judge_error_rate"),
+                "case_execution_error_rate": case_execution_error_rate,
+            }
+            run["metrics"] = benchmark_metrics
+            gate_runs.append({"eval_run_id": eval_run_id, "metrics": benchmark_metrics})
+        session_gate = build_session_gate(gate_runs)
+        payload["session_gate"] = session_gate
+        payload["gate_status"] = session_gate.get("overall_status")
+        payload["gate_failure_dimensions"] = list(session_gate.get("failure_dimensions") or [])
         return payload
 
     def _category_pass_rows(self, candidate_cases: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -11522,20 +11950,53 @@ class PostgresKnowledgeRepository:
         baseline_answer_accuracy_score = _mean_from_rows(baseline_rows, "answer_accuracy_score")
         response_policy_followed_rate = _rate_from_rows(candidate_rows, "response_policy_followed")
         baseline_response_policy_followed_rate = _rate_from_rows(baseline_rows, "response_policy_followed")
+        retrieval_summary_cards = {
+            "evidence_precision_at_5": _mean_from_rows(candidate_rows, "evidence_precision_at_5"),
+            "evidence_recall_at_5": _mean_from_rows(candidate_rows, "evidence_recall_at_5"),
+            "evidence_ndcg_at_5": _mean_from_rows(candidate_rows, "evidence_ndcg_at_5"),
+            "mrr": _mean_from_rows(candidate_rows, "mrr"),
+        }
+        generation_summary_cards = {
+            "context_relevance_score": _mean_from_rows(candidate_rows, "context_relevance_score"),
+            "answer_relevance_score": _mean_from_rows(candidate_rows, "answer_relevance_score"),
+            "faithfulness_score": _mean_from_rows(candidate_rows, "faithfulness_score"),
+            "citation_correctness_score": _mean_from_rows(candidate_rows, "citation_correctness_score"),
+            "response_completeness_score": _mean_from_rows(candidate_rows, "response_completeness_score"),
+        }
+        performance_summary_cards = {
+            "benchmark_p95_total_latency_ms": _max_from_rows(candidate_rows, "benchmark_p95_total_latency_ms")
+            or _max_from_rows(candidate_rows, "total_latency_ms"),
+            "benchmark_throughput_cases_per_sec": _mean_from_rows(candidate_rows, "benchmark_throughput_cases_per_sec")
+            or _benchmark_throughput_from_case_rows(candidate_rows),
+            "judge_error_rate": _mean_from_rows(candidate_rows, "judge_error_rate"),
+            "case_execution_error_rate": _rate_from_rows(candidate_rows, "case_execution_error"),
+        }
         sections = {
             "summary": {
                 "title": "Scorecard",
-                "subtitle": "Read routing, retrieval, generation, and business outcomes together before drilling into traces.",
+                "subtitle": "Read retrieval, generation, and performance outcomes together before drilling into traces.",
                 "baseline_experiment_id": (display_baseline or {}).get("experiment_id"),
                 "candidate_experiment_id": (display_candidate or {}).get("experiment_id"),
                 "benchmark_version": (display_baseline or {}).get("benchmark_version") or (display_candidate or {}).get("benchmark_version"),
                 "available_experiments": self._available_experiment_options(selector_experiments),
                 "cards": {
                     "route_family_accuracy": route_family_accuracy,
-                    "evidence_hit_at_5": evidence_hit_at_5,
-                    "answer_accuracy_score": answer_accuracy_score,
-                    "response_policy_followed_rate": response_policy_followed_rate,
+                    "evidence_precision_at_5": retrieval_summary_cards["evidence_precision_at_5"],
+                    "context_relevance_score": generation_summary_cards["context_relevance_score"],
+                    "benchmark_p95_total_latency_ms": performance_summary_cards["benchmark_p95_total_latency_ms"],
                 },
+            },
+            "retrieval_summary": {
+                "title": "Retrieval",
+                "cards": retrieval_summary_cards,
+            },
+            "generation_summary": {
+                "title": "Generation",
+                "cards": generation_summary_cards,
+            },
+            "performance_summary": {
+                "title": "Performance",
+                "cards": performance_summary_cards,
             },
             "layer_scorecard": {
                 "rows": [
@@ -11561,11 +12022,14 @@ class PostgresKnowledgeRepository:
                         "delta": _round_delta(answer_accuracy_score, baseline_answer_accuracy_score),
                     },
                     {
-                        "layer": "Business",
-                        "metric": "Policy Followed Rate",
+                        "layer": "Policy",
+                        "metric": "Response Policy Followed",
                         "candidate": response_policy_followed_rate,
                         "baseline": baseline_response_policy_followed_rate,
-                        "delta": _round_delta(response_policy_followed_rate, baseline_response_policy_followed_rate),
+                        "delta": _round_delta(
+                            response_policy_followed_rate,
+                            baseline_response_policy_followed_rate,
+                        ),
                     },
                 ]
             },
@@ -11654,12 +12118,20 @@ class PostgresKnowledgeRepository:
         sections = {
             "summary": {
                 "title": "Retrieval",
-                "subtitle": "Judge the evidence before blaming synthesis.",
+                "subtitle": "Use standard IR metrics first, then inspect evidence coverage and noise diagnostics.",
                 "baseline_eval_run_id": _clean_text((baseline or {}).get("eval_run_id")),
                 "candidate_eval_run_id": _clean_text((candidate or {}).get("eval_run_id")),
                 "cards": {
-                    "document_hit_at_5": _mean_from_rows(rag_rows, "document_hit_at_5"),
-                    "evidence_hit_at_5": _mean_from_rows(rag_rows, "evidence_hit_at_5"),
+                    "precision_at_5": _mean_from_rows(rag_rows, "precision_at_5"),
+                    "recall_at_5": _mean_from_rows(rag_rows, "recall_at_5"),
+                    "ndcg_at_5": _mean_from_rows(rag_rows, "ndcg_at_5"),
+                    "mrr": _mean_from_rows(rag_rows, "mrr"),
+                    "document_precision_at_5": _mean_from_rows(rag_rows, "document_precision_at_5"),
+                    "document_recall_at_5": _mean_from_rows(rag_rows, "document_recall_at_5"),
+                    "document_ndcg_at_5": _mean_from_rows(rag_rows, "document_ndcg_at_5"),
+                    "evidence_precision_at_5": _mean_from_rows(rag_rows, "evidence_precision_at_5"),
+                    "evidence_recall_at_5": _mean_from_rows(rag_rows, "evidence_recall_at_5"),
+                    "evidence_ndcg_at_5": _mean_from_rows(rag_rows, "evidence_ndcg_at_5"),
                     "evidence_coverage": _mean_from_rows(rag_rows, "evidence_coverage"),
                     "noise_rate": _mean_from_rows(rag_rows, "noise_rate"),
                 },
@@ -11692,13 +12164,15 @@ class PostgresKnowledgeRepository:
         sections = {
             "summary": {
                 "title": "Generation",
-                "subtitle": "Check correctness, relevance, faithfulness, and policy compliance after retrieval hits.",
+                "subtitle": "Track context relevance, answer relevance, faithfulness, citations, and completeness after retrieval hits.",
                 "baseline_eval_run_id": _clean_text((baseline or {}).get("eval_run_id")),
                 "candidate_eval_run_id": _clean_text((candidate or {}).get("eval_run_id")),
                 "cards": {
-                    "answer_correctness": _mean_from_rows(candidate_rows, "answer_accuracy_score"),
-                    "answer_relevancy": _mean_from_rows(candidate_rows, "response_relevance_score"),
-                    "faithfulness": _mean_from_rows(candidate_rows, "faithfulness_score"),
+                    "context_relevance_score": _mean_from_rows(candidate_rows, "context_relevance_score"),
+                    "answer_relevance_score": _mean_from_rows(candidate_rows, "answer_relevance_score"),
+                    "faithfulness_score": _mean_from_rows(candidate_rows, "faithfulness_score"),
+                    "citation_correctness_score": _mean_from_rows(candidate_rows, "citation_correctness_score"),
+                    "response_completeness_score": _mean_from_rows(candidate_rows, "response_completeness_score"),
                     "hallucination_rate": _rate_from_rows(candidate_rows, "hallucination_flag"),
                     "response_policy_followed_rate": _rate_from_rows(candidate_rows, "response_policy_followed"),
                 },
@@ -11775,6 +12249,8 @@ class PostgresKnowledgeRepository:
             return self._retrieval_workbench_page(normalized_range, days, normalized_filters)
         if normalized_page == "generation":
             return self._generation_workbench_page(normalized_range, days, normalized_filters)
+        if normalized_page == "performance":
+            return self._performance_workbench_page(normalized_range, days, normalized_filters)
         if normalized_page == "data-supply":
             return self._data_supply_workbench_page(normalized_range, days, normalized_filters)
         if normalized_page == "experiments":
@@ -11786,7 +12262,7 @@ class PostgresKnowledgeRepository:
         if normalized_page == "knowledge-supply":
             return self._data_supply_workbench_page(normalized_range, days, normalized_filters)
         if normalized_page == "production-signals":
-            return self._scorecard_workbench_page(normalized_range, days, normalized_filters)
+            return self._performance_workbench_page(normalized_range, days, normalized_filters)
         if normalized_page == "review":
             return self._review_workbench_page(normalized_range, days, normalized_filters)
         if normalized_page == "overview":

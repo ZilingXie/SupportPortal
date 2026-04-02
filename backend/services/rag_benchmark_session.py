@@ -17,6 +17,26 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_RAG_CHANGELOG_PATH = REPO_ROOT / "docs" / "rag_change_log.md"
 _CHANGELOG_SECTION_RE = re.compile(r"^##\s+(.+)$", flags=re.M)
 _CHANGELOG_SUMMARY_RE = re.compile(r"^- Summary:\s*(.+)$", flags=re.M)
+_SESSION_GATE_THRESHOLDS = {
+    "retrieval": {
+        "evidence_precision_at_5_min": 0.75,
+        "evidence_recall_at_5_min": 0.75,
+        "evidence_ndcg_at_5_min": 0.75,
+    },
+    "generation": {
+        "context_relevance_score_min": 0.8,
+        "answer_relevance_score_min": 0.8,
+        "faithfulness_score_min": 0.85,
+        "citation_correctness_score_min": 0.85,
+        "response_completeness_score_min": 0.8,
+    },
+    "performance": {
+        "benchmark_p95_total_latency_ms_max": 12000.0,
+        "benchmark_throughput_cases_per_sec_min": 0.1,
+        "judge_error_rate_max": 0.1,
+        "case_execution_error_rate_max": 0.05,
+    },
+}
 
 
 def _clean_text(value: Any) -> str:
@@ -33,6 +53,15 @@ def _default_session_name() -> str:
 
 def _default_session_id() -> str:
     return f"BSESS-{uuid4().hex[:12].upper()}"
+
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def parse_rag_change_log_entries(
@@ -114,6 +143,95 @@ def _session_run_specs(
 
 def _improvement_summary_lines(entries: list[dict[str, Any]]) -> str:
     return "\n".join(f"- {entry['title']}: {entry['summary']}" for entry in entries)
+
+
+def _aggregate_session_metric(
+    runs: list[dict[str, Any]],
+    metric_name: str,
+    *,
+    reducer: str = "mean",
+) -> float | None:
+    values = [
+        _safe_float((run.get("metrics") or {}).get(metric_name))
+        for run in runs
+        if isinstance(run.get("metrics"), dict)
+    ]
+    numeric_values = [value for value in values if value is not None]
+    if not numeric_values:
+        return None
+    if reducer == "max":
+        return round(max(numeric_values), 4)
+    if reducer == "min":
+        return round(min(numeric_values), 4)
+    return round(sum(numeric_values) / len(numeric_values), 4)
+
+
+def build_session_gate(runs: list[dict[str, Any]]) -> dict[str, Any]:
+    retrieval_metrics = {
+        "evidence_precision_at_5": _aggregate_session_metric(runs, "evidence_precision_at_5"),
+        "evidence_recall_at_5": _aggregate_session_metric(runs, "evidence_recall_at_5"),
+        "evidence_ndcg_at_5": _aggregate_session_metric(runs, "evidence_ndcg_at_5"),
+    }
+    generation_metrics = {
+        "context_relevance_score": _aggregate_session_metric(runs, "context_relevance_score"),
+        "answer_relevance_score": _aggregate_session_metric(runs, "answer_relevance_score"),
+        "faithfulness_score": _aggregate_session_metric(runs, "faithfulness_score"),
+        "citation_correctness_score": _aggregate_session_metric(runs, "citation_correctness_score"),
+        "response_completeness_score": _aggregate_session_metric(runs, "response_completeness_score"),
+    }
+    performance_metrics = {
+        "benchmark_p95_total_latency_ms": _aggregate_session_metric(
+            runs,
+            "benchmark_p95_total_latency_ms",
+            reducer="max",
+        ),
+        "benchmark_throughput_cases_per_sec": _aggregate_session_metric(
+            runs,
+            "benchmark_throughput_cases_per_sec",
+            reducer="min",
+        ),
+        "judge_error_rate": _aggregate_session_metric(runs, "judge_error_rate", reducer="max"),
+        "case_execution_error_rate": _aggregate_session_metric(runs, "case_execution_error_rate", reducer="max"),
+    }
+
+    retrieval_status = "pass"
+    generation_status = "pass"
+    performance_status = "pass"
+    failure_dimensions: list[str] = []
+
+    for metric_name, threshold in _SESSION_GATE_THRESHOLDS["retrieval"].items():
+        value = retrieval_metrics.get(metric_name.replace("_min", ""))
+        if value is None or value < threshold:
+            retrieval_status = "fail"
+    for metric_name, threshold in _SESSION_GATE_THRESHOLDS["generation"].items():
+        value = generation_metrics.get(metric_name.replace("_min", ""))
+        if value is None or value < threshold:
+            generation_status = "fail"
+    for metric_name, threshold in _SESSION_GATE_THRESHOLDS["performance"].items():
+        clean_name = metric_name.replace("_max", "").replace("_min", "")
+        value = performance_metrics.get(clean_name)
+        if value is None:
+            performance_status = "fail"
+            continue
+        if metric_name.endswith("_max") and value > threshold:
+            performance_status = "fail"
+        if metric_name.endswith("_min") and value < threshold:
+            performance_status = "fail"
+
+    if retrieval_status == "fail":
+        failure_dimensions.append("retrieval")
+    if generation_status == "fail":
+        failure_dimensions.append("generation")
+    if performance_status == "fail":
+        failure_dimensions.append("performance")
+
+    return {
+        "overall_status": "pass" if not failure_dimensions else "fail",
+        "failure_dimensions": failure_dimensions,
+        "retrieval": {"status": retrieval_status, "metrics": retrieval_metrics},
+        "generation": {"status": generation_status, "metrics": generation_metrics},
+        "performance": {"status": performance_status, "metrics": performance_metrics},
+    }
 
 
 def build_local_benchmark_session_record(
@@ -216,6 +334,7 @@ def run_local_benchmark_session(
                     "benchmark_version": run_summary.get("benchmark_version"),
                     "case_count": run_summary.get("case_count"),
                     "status": "completed",
+                    "metrics": dict(run_summary.get("metrics") or {}),
                 }
             )
     except Exception as exc:
@@ -235,6 +354,7 @@ def run_local_benchmark_session(
         "finished_at": _utc_now(),
     }
     repository.upsert_rag_benchmark_session(session=completed_record)
+    session_gate = build_session_gate(runs)
     return {
         "benchmark_session_id": completed_record.get("benchmark_session_id"),
         "session_name": completed_record.get("session_name"),
@@ -242,6 +362,9 @@ def run_local_benchmark_session(
         "improvement_summary": completed_record.get("improvement_summary"),
         "improvement_entries": list(completed_record.get("improvement_entries") or []),
         "runs": runs,
+        "session_gate": session_gate,
+        "gate_status": session_gate.get("overall_status"),
+        "gate_failure_dimensions": list(session_gate.get("failure_dimensions") or []),
         "started_at": completed_record.get("started_at"),
         "finished_at": completed_record.get("finished_at"),
     }

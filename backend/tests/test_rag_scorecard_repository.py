@@ -324,6 +324,84 @@ class RagScorecardRepositoryTests(unittest.TestCase):
         self.assertEqual(rows[3]["baseline"], 0.0)
         self.assertEqual(rows[3]["delta"], 1.0)
 
+    def test_scorecard_page_exposes_retrieval_generation_and_performance_sections(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        candidate_cases = {
+            "case-1": {
+                "category": "fact",
+                "route_family_correct": 1.0,
+                "evidence_precision_at_5": 0.9,
+                "evidence_recall_at_5": 0.8,
+                "evidence_ndcg_at_5": 0.88,
+                "mrr": 0.75,
+                "context_relevance_score": 0.92,
+                "answer_relevance_score": 0.87,
+                "faithfulness_score": 0.95,
+                "citation_correctness_score": 0.9,
+                "response_completeness_score": 0.86,
+                "benchmark_p95_total_latency_ms": 2200.0,
+                "benchmark_throughput_cases_per_sec": 0.42,
+                "case_execution_error_rate": 0.0,
+                "judge_error_rate": 0.0,
+            }
+        }
+        baseline_cases = {
+            "case-1": {
+                "category": "fact",
+                "route_family_correct": 1.0,
+                "evidence_precision_at_5": 0.7,
+                "evidence_recall_at_5": 0.6,
+                "evidence_ndcg_at_5": 0.72,
+                "mrr": 0.5,
+                "context_relevance_score": 0.8,
+                "answer_relevance_score": 0.75,
+                "faithfulness_score": 0.84,
+                "citation_correctness_score": 0.82,
+                "response_completeness_score": 0.78,
+                "benchmark_p95_total_latency_ms": 3100.0,
+                "benchmark_throughput_cases_per_sec": 0.31,
+                "case_execution_error_rate": 0.0,
+                "judge_error_rate": 0.05,
+            }
+        }
+        experiments = [
+            {
+                "experiment_id": "baseline",
+                "eval_run_id": "run-baseline",
+                "benchmark_version": "agora_rag_testset_100_standrad_en",
+            },
+            {
+                "experiment_id": "candidate",
+                "eval_run_id": "run-candidate",
+                "benchmark_version": "agora_rag_testset_100_standrad_en",
+            },
+        ]
+        baseline = experiments[0]
+        candidate = experiments[1]
+
+        with patch.object(repository, "_experiment_rows", return_value=experiments), patch.object(
+            repository,
+            "_select_scorecard_experiment_rows",
+            side_effect=[(baseline, candidate), (baseline, candidate)],
+        ), patch.object(
+            repository,
+            "_benchmark_case_summary_rows",
+            return_value={
+                "run-baseline": baseline_cases,
+                "run-candidate": candidate_cases,
+            },
+        ), patch.object(
+            repository,
+            "_sample_deltas_from_cases",
+            return_value=([], []),
+        ):
+            payload = repository._scorecard_workbench_page("7d", 7, {"limit": 20})
+
+        self.assertEqual(payload["sections"]["retrieval_summary"]["cards"]["evidence_precision_at_5"], 0.9)
+        self.assertEqual(payload["sections"]["generation_summary"]["cards"]["context_relevance_score"], 0.92)
+        self.assertEqual(payload["sections"]["performance_summary"]["cards"]["benchmark_p95_total_latency_ms"], 2200.0)
+        self.assertEqual(payload["sections"]["performance_summary"]["cards"]["benchmark_throughput_cases_per_sec"], 0.42)
+
     def test_scorecard_page_pins_benchmark_selector_to_baseline_and_defaults_candidate_to_alternate_run(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
 
@@ -492,6 +570,72 @@ class RagScorecardRepositoryTests(unittest.TestCase):
 
         self.assertEqual(payload["benchmark_session"]["benchmark_session_id"], "BSESS-1")
         session_mock.assert_called_once_with("run-canonical-latest")
+
+    def test_benchmark_session_payload_for_eval_run_includes_gate_status(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        started_at = datetime(2026, 4, 2, 1, 0, tzinfo=timezone.utc)
+        finished_at = datetime(2026, 4, 2, 1, 30, tzinfo=timezone.utc)
+        session_row = (
+            "BSESS-1",
+            "session-1",
+            "completed",
+            None,
+            [
+                {
+                    "dataset_name": "agora_rag_testset_100_standrad_en",
+                    "label": "Canonical",
+                    "benchmark_version": "agora_rag_testset_100_standrad_en",
+                }
+            ],
+            "- Metrics refactor: unified scorecard",
+            [{"entry_index": 5, "title": "Metrics refactor", "summary": "unified scorecard"}],
+            5,
+            "",
+            started_at,
+            finished_at,
+        )
+        run_rows = [
+            (
+                "EVAL-1",
+                "agora_rag_testset_100_standrad_en",
+                "offline_benchmark",
+                "session-1::agora_rag_testset_100_standrad_en",
+                "agora_rag_testset_100_standrad_en",
+                "mixed_route_v2",
+                "completed",
+                started_at,
+                finished_at,
+            )
+        ]
+
+        with patch.object(repository, "_query_rows", side_effect=[[session_row], run_rows]), patch.object(
+            repository,
+            "_benchmark_case_summary_rows",
+            return_value={
+                "EVAL-1": {
+                    "case-1": {
+                        "evidence_precision_at_5": 0.91,
+                        "evidence_recall_at_5": 0.9,
+                        "evidence_ndcg_at_5": 0.92,
+                        "context_relevance_score": 0.91,
+                        "answer_relevance_score": 0.9,
+                        "faithfulness_score": 0.94,
+                        "citation_correctness_score": 0.91,
+                        "response_completeness_score": 0.88,
+                        "benchmark_p95_total_latency_ms": 1800.0,
+                        "benchmark_throughput_cases_per_sec": 0.41,
+                        "judge_error_rate": 0.0,
+                        "case_execution_error_rate": 0.0,
+                    }
+                }
+            },
+        ):
+            payload = repository._benchmark_session_payload_for_eval_run("EVAL-1")
+
+        assert payload is not None
+        self.assertEqual(payload["gate_status"], "pass")
+        self.assertEqual(payload["gate_failure_dimensions"], [])
+        self.assertIn("session_gate", payload)
 
     def test_benchmark_session_payload_for_eval_run_orders_runs_by_catalog_snapshot(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
