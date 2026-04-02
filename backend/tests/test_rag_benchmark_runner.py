@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from backend.services.rag_benchmark_runner import resolve_judge_models, run_benchmark
+from backend.services.rag_benchmark_runner import _strategy_snapshot, resolve_judge_models, run_benchmark
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, RagAnswer, RagQueryResult, RagQueryTrace
 from backend.services.support_router import SupportResolution
 
@@ -331,6 +331,22 @@ def _grounded_abstain_message_resolver(
 
 
 class RagBenchmarkRunnerTests(unittest.TestCase):
+    def test_strategy_snapshot_includes_query_understanding_flags(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "RAG_QUERY_UNDERSTANDING_ENABLED": "true",
+                "RAG_QUERY_REWRITE_ENABLED": "true",
+                "RAG_QUERY_DECOMPOSITION_ENABLED": "true",
+            },
+            clear=False,
+        ):
+            snapshot = _strategy_snapshot(["gpt-4o-mini"])
+
+        self.assertTrue(snapshot["query_understanding_enabled"])
+        self.assertTrue(snapshot["query_rewrite_enabled"])
+        self.assertTrue(snapshot["query_decomposition_enabled"])
+
     def test_resolve_judge_models_requires_exactly_three_models(self) -> None:
         with self.assertRaises(ValueError):
             resolve_judge_models("gpt-4.1,gpt-4.1-mini")

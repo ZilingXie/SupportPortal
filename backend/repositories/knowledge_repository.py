@@ -92,7 +92,7 @@ _MODEL_PRICING = {
     "gpt-4o-mini": {"prompt_per_1k": 0.00015, "completion_per_1k": 0.0006},
 }
 _KNOWLEDGE_BOOTSTRAP_REPOSITORY = "knowledge_repository"
-_KNOWLEDGE_BOOTSTRAP_VERSION = "2026-03-23-fast-startup-v1"
+_KNOWLEDGE_BOOTSTRAP_VERSION = "2026-04-02-query-understanding-v1"
 
 _SOURCE_TYPE_TO_ENTRY_TYPE = {
     "official_markdown_upload": "official_document",
@@ -2118,6 +2118,7 @@ class PostgresKnowledgeRepository:
                             total_latency_ms DOUBLE PRECISION,
                             intent_latency_ms DOUBLE PRECISION,
                             rewrite_latency_ms DOUBLE PRECISION,
+                            query_understanding_meta JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                             vector_retrieval_latency_ms DOUBLE PRECISION,
                             bm25_retrieval_latency_ms DOUBLE PRECISION,
                             prompt_tokens INTEGER,
@@ -2155,6 +2156,7 @@ class PostgresKnowledgeRepository:
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS embedding_model TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS embedding_dimensions INTEGER",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS embedding_request_meta JSONB NOT NULL DEFAULT '[]'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS query_understanding_meta JSONB NOT NULL DEFAULT '{{}}'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS primary_source_type TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS primary_chunk_strategy TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS reranker_provider TEXT",
@@ -5053,30 +5055,25 @@ class PostgresKnowledgeRepository:
             for row in rows
         ]
 
-        insert_query = sql.SQL(
-            """
-            INSERT INTO {} ({columns})
+        quoted_table = '"{}"."{}"'.format(
+            str(self._vector_schema).replace('"', '""'),
+            str(self._vector_table_name).replace('"', '""'),
+        )
+        quoted_columns = ", ".join(f'"{str(column).replace(chr(34), chr(34) * 2)}"' for column in columns)
+        placeholders = ", ".join(
+            "%s::jsonb" if column == "metadata" else "%s::vector" if column == "embedding" else "%s"
+            for column in columns
+        )
+        updates = ", ".join(
+            f'"{str(column).replace(chr(34), chr(34) * 2)}" = EXCLUDED."{str(column).replace(chr(34), chr(34) * 2)}"'
+            for column in update_fields
+        )
+        insert_query = f"""
+            INSERT INTO {quoted_table} ({quoted_columns})
             VALUES ({placeholders})
             ON CONFLICT (id) DO UPDATE SET
                 {updates}
-            """
-        ).format(
-            self._vector_table(),
-            columns=sql.SQL(", ").join(sql.Identifier(column) for column in columns),
-            placeholders=sql.SQL(", ").join(
-                sql.SQL("%s::jsonb") if column == "metadata"
-                else sql.SQL("%s::vector") if column == "embedding"
-                else sql.SQL("%s")
-                for column in columns
-            ),
-            updates=sql.SQL(", ").join(
-                sql.SQL("{} = EXCLUDED.{}").format(
-                    sql.Identifier(column),
-                    sql.Identifier(column),
-                )
-                for column in update_fields
-            ),
-        )
+        """
 
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -5126,6 +5123,7 @@ class PostgresKnowledgeRepository:
             "total_latency_ms",
             "intent_latency_ms",
             "rewrite_latency_ms",
+            "query_understanding_meta",
             "vector_retrieval_latency_ms",
             "bm25_retrieval_latency_ms",
             "prompt_tokens",
@@ -5181,6 +5179,7 @@ class PostgresKnowledgeRepository:
             _safe_float(run.get("total_latency_ms"), 0.0) if run.get("total_latency_ms") is not None else None,
             _safe_float(run.get("intent_latency_ms"), 0.0) if run.get("intent_latency_ms") is not None else None,
             _safe_float(run.get("rewrite_latency_ms"), 0.0) if run.get("rewrite_latency_ms") is not None else None,
+            Json(run.get("query_understanding_meta") or {}),
             _safe_float(run.get("vector_retrieval_latency_ms"), 0.0) if run.get("vector_retrieval_latency_ms") is not None else None,
             _safe_float(run.get("bm25_retrieval_latency_ms"), 0.0) if run.get("bm25_retrieval_latency_ms") is not None else None,
             int(run.get("prompt_tokens") or 0) if run.get("prompt_tokens") is not None else None,
@@ -5232,7 +5231,14 @@ class PostgresKnowledgeRepository:
                         columns=sql.SQL(", ").join(sql.Identifier(column) for column in columns),
                         placeholders=sql.SQL(", ").join(
                             sql.SQL("%s::jsonb")
-                            if column in {"retrieved_chunk_ids", "selected_chunk_ids", "cited_chunk_ids", "embedding_request_meta"}
+                            if column
+                            in {
+                                "retrieved_chunk_ids",
+                                "selected_chunk_ids",
+                                "cited_chunk_ids",
+                                "embedding_request_meta",
+                                "query_understanding_meta",
+                            }
                             else sql.SQL("%s")
                             for column in columns
                         ),
@@ -10006,6 +10012,7 @@ class PostgresKnowledgeRepository:
                     retrieval_latency_ms,
                     generation_latency_ms,
                     total_latency_ms,
+                    query_understanding_meta,
                     confidence_score,
                     citation_count,
                     citation_coverage_ratio,
@@ -10055,7 +10062,7 @@ class PostgresKnowledgeRepository:
             (normalized_request_id,),
         )
         selected_chunk_ids = _json_list(row[12])
-        cited_chunk_ids = _json_list(row[19])
+        cited_chunk_ids = _json_list(row[20])
         chunk_ids = selected_chunk_ids + cited_chunk_ids + [str(item[0]) for item in candidate_rows if item[0]]
         chunk_details = self._chunk_details(chunk_ids)
         candidates = []
@@ -10109,34 +10116,35 @@ class PostgresKnowledgeRepository:
             "source_type": row[7],
             "chunk_strategy": row[8],
             "retrieval_strategy": row[6],
-            "created_at": _to_iso(row[31]),
+            "created_at": _to_iso(row[32]),
             "user_query": row[2],
             "rewritten_query": row[3],
             "intent": row[4],
-            "generation_mode": row[25],
-            "needs_human": bool(row[26]),
-            "handoff_reason": row[27],
-            "reranker_provider": row[29],
-            "reranker_model": row[30],
+            "generation_mode": row[26],
+            "needs_human": bool(row[27]),
+            "handoff_reason": row[28],
+            "reranker_provider": row[30],
+            "reranker_model": row[31],
             "vector_candidates_count": row[9],
             "bm25_candidates_count": row[10],
             "reranked_candidates_count": row[11],
-            "selected_doc_count": row[22],
-            "top1_similarity_score": _coalesce_metric(row[23]),
-            "avg_selected_similarity_score": _coalesce_metric(row[24]),
+            "selected_doc_count": row[23],
+            "top1_similarity_score": _coalesce_metric(row[24]),
+            "avg_selected_similarity_score": _coalesce_metric(row[25]),
             "retrieval_latency_ms": _coalesce_metric(row[13]),
             "generation_latency_ms": _coalesce_metric(row[14]),
             "total_latency_ms": _coalesce_metric(row[15]),
-            "answer": row[28],
-            "confidence_score": _coalesce_metric(row[16]),
-            "citation_count": int(row[17] or 0),
-            "citation_coverage_ratio": _coalesce_metric(row[18]),
+            "answer": row[29],
+            "query_understanding_meta": _json_dict(row[16]),
+            "confidence_score": _coalesce_metric(row[17]),
+            "citation_count": int(row[18] or 0),
+            "citation_coverage_ratio": _coalesce_metric(row[19]),
             "cited_chunk_ids": cited_chunk_ids,
             "answer_citations": answer_citations,
             "answer_sources": answer_sources,
-            "structured_retry_used": bool(row[20]),
-            "extractive_fallback_used": bool(row[21]),
-            "error_flag": bool(row[32]),
+            "structured_retry_used": bool(row[21]),
+            "extractive_fallback_used": bool(row[22]),
+            "error_flag": bool(row[33]),
             "candidates": candidates,
             "selected_contexts": selected_contexts,
         }
