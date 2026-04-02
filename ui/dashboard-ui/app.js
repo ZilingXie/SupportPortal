@@ -2,6 +2,7 @@ const wsStatusEl = document.getElementById("ws-status");
 const realtimeStatusItemEl = document.querySelector('[data-rail-footer-status="realtime"]');
 const logoutButtonEl = document.getElementById("logout-btn");
 const refreshButtonEl = document.getElementById("refresh-button");
+const opsHeaderEl = document.getElementById("ops-header");
 const opsHeaderBodyEl = document.getElementById("ops-header-body");
 const ticketOpsButtonEl = document.querySelector('[data-dashboard-nav="ticket-ops"]');
 const ticketDetailGroupEl = document.querySelector("[data-ticket-detail-group]");
@@ -69,6 +70,7 @@ const TICKET_VIEW_COPY = {
 };
 
 let currentDashboardView = "ticket-ops";
+let ticketBoardViewMode = "grid";
 let ticketDetailsExpanded = true;
 let socket = null;
 let heartbeatTimer = null;
@@ -209,6 +211,18 @@ function renderRailFooter() {
 function normalizeDashboardView(value) {
   const normalized = String(value || "").trim().toLowerCase();
   return TICKET_DETAIL_STATUSES.includes(normalized) ? normalized : "ticket-ops";
+}
+
+function normalizeTicketBoardViewMode(value) {
+  return String(value || "").toLowerCase() === "list" ? "list" : "grid";
+}
+
+function applyTicketBoardViewMode(value, { render = true } = {}) {
+  ticketBoardViewMode = normalizeTicketBoardViewMode(value);
+  if (render && TICKET_DETAIL_STATUSES.includes(currentDashboardView)) {
+    renderTicketBoard();
+  }
+  return ticketBoardViewMode;
 }
 
 function normalizeStatusValue(value) {
@@ -542,6 +556,9 @@ function renderDashboardView() {
   if (dashboardViewRegionEl) {
     dashboardViewRegionEl.dataset.activeView = currentDashboardView;
   }
+  if (opsHeaderEl) {
+    opsHeaderEl.hidden = !isTicketOpsView;
+  }
   if (opsHeaderBodyEl) {
     opsHeaderBodyEl.textContent = isTicketOpsView
       ? DEFAULT_HEADER_BODY
@@ -596,6 +613,56 @@ function describeTicketBoardTicket(ticket) {
   };
 }
 
+function ticketBoardViewToggleIcon(mode) {
+  if (mode === "grid") {
+    return `
+      <svg class="ticket-board-view-toggle-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+        <rect x="3" y="3" width="5" height="5" rx="1.3" stroke="currentColor" stroke-width="1.4"></rect>
+        <rect x="12" y="3" width="5" height="5" rx="1.3" stroke="currentColor" stroke-width="1.4"></rect>
+        <rect x="3" y="12" width="5" height="5" rx="1.3" stroke="currentColor" stroke-width="1.4"></rect>
+        <rect x="12" y="12" width="5" height="5" rx="1.3" stroke="currentColor" stroke-width="1.4"></rect>
+      </svg>
+    `;
+  }
+  return `
+    <svg class="ticket-board-view-toggle-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M4 5H16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
+      <path d="M4 10H16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
+      <path d="M4 15H16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
+    </svg>
+  `;
+}
+
+function buildTicketBoardViewToggleHtml() {
+  const viewMode = normalizeTicketBoardViewMode(ticketBoardViewMode);
+  return `
+    <div class="ticket-board-view-toggle" role="group" aria-label="Ticket board layout">
+      <button
+        type="button"
+        class="ticket-board-view-toggle-btn ${viewMode === "list" ? "is-active" : ""}"
+        data-ticket-board-view-option="list"
+        aria-label="List view"
+        title="List view"
+        aria-pressed="${viewMode === "list" ? "true" : "false"}"
+      >
+        ${ticketBoardViewToggleIcon("list")}
+        <span class="sr-only">List view</span>
+      </button>
+      <button
+        type="button"
+        class="ticket-board-view-toggle-btn ${viewMode === "grid" ? "is-active" : ""}"
+        data-ticket-board-view-option="grid"
+        aria-label="Grid view"
+        title="Grid view"
+        aria-pressed="${viewMode === "grid" ? "true" : "false"}"
+      >
+        ${ticketBoardViewToggleIcon("grid")}
+        <span class="sr-only">Grid view</span>
+      </button>
+    </div>
+  `;
+}
+
 function renderTicketBoardCard(ticket) {
   const item = describeTicketBoardTicket(ticket);
   return `
@@ -638,12 +705,73 @@ function renderTicketBoardCard(ticket) {
   `;
 }
 
+function renderTicketBoardGrid(boardRows) {
+  return `
+    <section class="ticket-board-grid" role="list">
+      ${boardRows.map(renderTicketBoardCard).join("")}
+    </section>
+  `;
+}
+
+function renderTicketBoardListRow(ticket) {
+  const item = describeTicketBoardTicket(ticket);
+  return `
+    <article
+      class="ticket-board-row ${item.surfaceClass}"
+      role="button"
+      tabindex="0"
+      data-ticket-card="true"
+      data-ticket-id="${escapeHtml(item.ticketId)}"
+      aria-label="Open ticket ${escapeHtml(item.ticketId)} detail"
+    >
+      <div class="ticket-board-row-main">
+        <div class="ticket-board-row-top">
+          <div class="ticket-board-row-headline">
+            <p class="ticket-card-kicker timestamp">${escapeHtml(item.ticketId)}</p>
+            <h3 class="ticket-board-row-title">${escapeHtml(item.subject)}</h3>
+          </div>
+          <div class="ticket-board-row-badges">
+            <span class="status-badge ${statusClass(item.status)}">${escapeHtml(statusLabel(item.status))}</span>
+            ${
+              item.sentiment
+                ? `<span class="message-sentiment-pill sentiment-${escapeHtml(item.sentiment)}">${escapeHtml(
+                    humanizeToken(item.sentiment)
+                  )}</span>`
+                : ""
+            }
+          </div>
+        </div>
+
+        <div class="ticket-board-row-meta">
+          <span><strong>Requester</strong> ${escapeHtml(item.requester)}</span>
+          <span><strong>Updated</strong> ${escapeHtml(item.updatedAt)}</span>
+          <span><strong>Created</strong> ${escapeHtml(item.createdAt)}</span>
+        </div>
+      </div>
+
+      <div class="ticket-board-row-preview">
+        <span class="ticket-board-card-preview-label">${escapeHtml(item.previewLabel)}</span>
+        <p>${escapeHtml(item.previewValue)}</p>
+      </div>
+    </article>
+  `;
+}
+
+function renderTicketBoardList(boardRows) {
+  return `
+    <section class="ticket-board-list" role="list">
+      ${boardRows.map(renderTicketBoardListRow).join("")}
+    </section>
+  `;
+}
+
 function renderTicketBoard() {
   if (!ticketBoardRegionEl || !TICKET_DETAIL_STATUSES.includes(currentDashboardView)) {
     return;
   }
 
   const boardStatus = currentDashboardView;
+  const viewMode = normalizeTicketBoardViewMode(ticketBoardViewMode);
   const boardRows = Array.isArray(ticketBoardStore[boardStatus]) ? ticketBoardStore[boardStatus] : [];
   const boardLoading = Boolean(ticketBoardLoadingByStatus[boardStatus]);
   const boardError = normalizeString(ticketBoardErrorByStatus[boardStatus]);
@@ -677,22 +805,25 @@ function renderTicketBoard() {
       </div>
     `;
   } else {
-    boardContent = `
-      <section class="ticket-board-grid" role="list">
-        ${boardRows.map(renderTicketBoardCard).join("")}
-      </section>
-    `;
+    boardContent = viewMode === "list" ? renderTicketBoardList(boardRows) : renderTicketBoardGrid(boardRows);
   }
 
   ticketBoardRegionEl.innerHTML = `
-    <section class="ticket-board" data-ticket-board-status="${escapeHtml(boardStatus)}">
+    <section
+      class="ticket-board"
+      data-ticket-board-status="${escapeHtml(boardStatus)}"
+      data-ticket-board-view-mode="${escapeHtml(viewMode)}"
+    >
       <div class="section-head ticket-board-head">
         <div>
           <p class="eyebrow">Ticket Details</p>
           <h2>${escapeHtml(viewCopy.title)}</h2>
           <p>${escapeHtml(viewCopy.detail)}</p>
         </div>
-        <span class="section-chip">${escapeHtml(statusLabel(boardStatus))} Board</span>
+        <div class="ticket-board-head-controls">
+          ${buildTicketBoardViewToggleHtml()}
+          <span class="section-chip">${escapeHtml(statusLabel(boardStatus))} Board</span>
+        </div>
       </div>
 
       <div class="ticket-board-summary">
@@ -1226,6 +1357,12 @@ function handleDocumentClick(event) {
   const statusButton = event.target.closest("[data-ticket-detail-status]");
   if (statusButton) {
     setDashboardView(String(statusButton.dataset.ticketDetailStatus || "investigating"));
+    return;
+  }
+
+  const boardViewButton = event.target.closest("[data-ticket-board-view-option]");
+  if (boardViewButton) {
+    applyTicketBoardViewMode(String(boardViewButton.dataset.ticketBoardViewOption || "grid"));
     return;
   }
 

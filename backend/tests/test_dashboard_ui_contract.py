@@ -84,18 +84,47 @@ class DashboardUiContractTests(unittest.TestCase):
         css = Path("ui/dashboard-ui/styles.css").read_text(encoding="utf-8")
 
         for marker in [
+            'const opsHeaderEl = document.getElementById("ops-header");',
             'let currentDashboardView = "ticket-ops";',
+            'let ticketBoardViewMode = "grid";',
             'const TICKET_DETAIL_STATUSES = ["investigating", "escalated", "communicating", "resolved"];',
             "renderRailNav",
             "/api/dashboard/metrics",
             "/api/engineer/tickets?",
             "/api/engineer/tickets/${encodeURIComponent(requestedTicketId)}",
+            'opsHeaderEl.hidden = !isTicketOpsView;',
+            "buildTicketBoardViewToggleHtml",
+            'viewMode === "list" ? renderTicketBoardList(boardRows) : renderTicketBoardGrid(boardRows)',
             'document.body.classList.add("modal-open");',
             'document.body.classList.remove("modal-open");',
         ]:
             self.assertIn(marker, source)
 
         self.assertIn("body.modal-open", css)
+
+    def test_root_dashboard_ticket_details_board_exposes_view_toggle_scaffold(self) -> None:
+        source = Path("ui/dashboard-ui/index.html").read_text(encoding="utf-8")
+        app_source = Path("ui/dashboard-ui/app.js").read_text(encoding="utf-8")
+        css = Path("ui/dashboard-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn('id="ops-header"', source)
+        self.assertIn("buildTicketBoardViewToggleHtml", app_source)
+        self.assertIn('data-ticket-board-view-option="grid"', app_source)
+        self.assertIn('data-ticket-board-view-option="list"', app_source)
+        self.assertIn("List view", app_source)
+        self.assertIn("Grid view", app_source)
+        self.assertIn(".ticket-board-view-toggle", css)
+        self.assertIn(".ticket-board-view-toggle-btn", css)
+        self.assertIn(".ticket-board-list", css)
+        self.assertIn(".ticket-board-row", css)
+
+    def test_root_dashboard_ops_header_hidden_state_overrides_layout_display(self) -> None:
+        css = Path("ui/dashboard-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertRegex(
+            css,
+            r"\.ops-header\[hidden\]\s*\{[^}]*display:\s*none(?:\s*!important)?;",
+        )
 
     def test_root_dashboard_collapsed_rail_uses_shared_icon_track_for_ticket_details_group(self) -> None:
         css = Path("ui/dashboard-ui/styles.css").read_text(encoding="utf-8")
