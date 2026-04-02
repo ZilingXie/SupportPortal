@@ -17,17 +17,6 @@ def build_bm25_index_payload(
     index_role: str,
 ) -> dict[str, Any]:
     normalized_role = str(index_role or "").strip().lower() or "primary"
-    if normalized_role != "primary":
-        return {
-            "docs": [],
-            "postings": [],
-            "terms": [],
-            "stats": {
-                "index_role": normalized_role,
-                "doc_count": 0,
-                "avg_doc_length": 0.0,
-            },
-        }
 
     docs: list[dict[str, Any]] = []
     postings: list[dict[str, Any]] = []

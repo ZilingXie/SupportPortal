@@ -14,6 +14,10 @@ from backend.services.prompts.query_understanding import (
     build_self_query_system_prompt,
     build_self_query_user_prompt,
 )
+from backend.services.prompts.rag_agent_planner import (
+    build_rag_agent_planner_system_prompt,
+    build_rag_agent_planner_user_prompt,
+)
 from backend.services.prompts.rag_sufficiency import (
     build_rag_sufficiency_system_prompt,
     build_rag_sufficiency_user_prompt,
@@ -161,6 +165,29 @@ class PromptModuleTests(unittest.TestCase):
         self.assertIn("Only decompose when the request is genuinely multi-part", decomposition_system)
         self.assertIn("## Required Output Schema", decomposition_user)
         self.assertIn("nodejs", decomposition_user)
+
+    def test_rag_agent_planner_prompt_is_sectioned_and_ticket_context_aware(self) -> None:
+        system_prompt = build_rag_agent_planner_system_prompt()
+        user_prompt = build_rag_agent_planner_user_prompt(
+            message="What does error 109 mean?",
+            ticket_context=[{"role": "customer", "content": "We only see this on iOS 4.6.0"}],
+            query_understanding_summary={
+                "query_profile": "en",
+                "semantic_query": "error 109 meaning",
+                "hard_filters": {"language": "ios"},
+                "rewritten_queries": ["error 109 meaning ios"],
+            },
+            top_k=5,
+            round_index=1,
+        )
+
+        self.assertIn("## Role", system_prompt)
+        self.assertIn("You plan retrieval only", system_prompt)
+        self.assertIn("## Output Requirements", system_prompt)
+        self.assertIn("## Latest User Question", user_prompt)
+        self.assertIn("## Ticket Context", user_prompt)
+        self.assertIn("## Query Understanding Prior", user_prompt)
+        self.assertIn("error 109 meaning ios", user_prompt)
 
 
 if __name__ == "__main__":

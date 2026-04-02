@@ -18,7 +18,17 @@ from backend.services.embedding_provider import (
     get_embedding_provider,
 )
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
-from backend.services.llm_profiles import ModelProfile, QUERY_EXPANSION_SCENARIO, RAG_ANSWER_SCENARIO, resolve_model_profile
+from backend.services.llm_profiles import (
+    ModelProfile,
+    QUERY_EXPANSION_SCENARIO,
+    RAG_AGENT_PLANNER_SCENARIO,
+    RAG_ANSWER_SCENARIO,
+    resolve_model_profile,
+)
+from backend.services.prompts.rag_agent_planner import (
+    build_rag_agent_planner_system_prompt,
+    build_rag_agent_planner_user_prompt,
+)
 from backend.services.prompts.rag_answer import build_rag_answer_system_prompt, build_rag_answer_user_prompt
 from backend.services.query_understanding import (
     QueryUnderstandingResult,
@@ -67,6 +77,7 @@ INSUFFICIENT_EVIDENCE_REPLY = (
 )
 
 SYSTEM_PROMPT = build_rag_answer_system_prompt(insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY)
+AGENT_PLAN_VERSION = "v1"
 
 
 @dataclass
@@ -75,6 +86,7 @@ class RetrievedChunk:
     text: str
     source_path: str
     similarity: float
+    index_role: str = "primary"
     doc_id: str | None = None
     h1: str | None = None
     h2: str | None = None
@@ -177,12 +189,65 @@ class RagQueryTrace:
     query_expansion_model: str | None = None
     first_pass_candidate_count: int = 0
     second_pass_candidate_count: int = 0
+    agent_enabled: bool = False
+    agent_plan_version: str | None = None
+    query_class: str | None = None
+    agent_iterations: list[dict[str, Any]] = field(default_factory=list)
+    agent_recovery_action: str | None = None
+    ticket_context_used: bool = False
+    primary_shadow_mix: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
 class RagQueryResult:
     answer: RagAnswer
     trace: RagQueryTrace
+
+
+@dataclass(frozen=True)
+class AgenticRetrievalPlan:
+    query_class: str
+    first_pass_tools: list[str]
+    query_variants: list[tuple[str, str]]
+    decomposition_targets: list[str]
+    evidence_goal: str
+    recovery_bias: str
+    ticket_context_used: bool = False
+    exact_terms: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class AgenticJudgeDecision:
+    decision: str
+    reason: str
+    confidence: float
+    recovery_action: str | None = None
+
+
+@dataclass(frozen=True)
+class AgenticIterationTrace:
+    round_index: int
+    tool_names: list[str]
+    query_variants: list[str]
+    selected_chunk_ids: list[str]
+    decision: str
+    recovery_action: str | None = None
+
+
+@dataclass(frozen=True)
+class AgenticRoundResult:
+    retrieved_chunks: list[RetrievedChunk]
+    reranked_chunks: list[RetrievedChunk]
+    final_chunks: list[RetrievedChunk]
+    rerank_info: dict[str, Any]
+    judge: AgenticJudgeDecision
+    iteration_trace: AgenticIterationTrace
+    vector_candidate_count: int = 0
+    bm25_candidate_count: int = 0
+    vector_latency_ms: float = 0.0
+    bm25_latency_ms: float = 0.0
+    keyword_latency_ms: float = 0.0
+    rerank_latency_ms: float = 0.0
 
 
 def _feature_flag_enabled(name: str, default: bool = True) -> bool:
@@ -287,6 +352,682 @@ def _build_query_variants(
         seen.add(key)
         deduped.append((kind, normalized))
     return deduped
+
+
+def _is_comparison_query(message: str) -> bool:
+    lowered = str(message or "").lower()
+    return any(marker in lowered for marker in [" compare ", " difference ", " vs ", " versus ", "区别", "对比"])
+
+
+def _extract_comparison_targets(message: str) -> list[str]:
+    methods = _mentioned_method_names(message)
+    if methods:
+        return methods[:2]
+    target_map: list[str] = []
+    for token in _extract_query_terms(message, max_terms=6):
+        if token not in target_map:
+            target_map.append(token)
+        if len(target_map) >= 2:
+            break
+    return target_map
+
+
+def _classify_agentic_query(
+    message: str,
+    understanding: QueryUnderstandingResult | None,
+) -> str:
+    lowered = str(message or "").lower()
+    if _is_comparison_query(message):
+        return "comparison"
+    if understanding is not None:
+        doc_subtype = str(understanding.retrieval_plan.hard_filters.get("doc_subtype") or "").strip().lower()
+        if doc_subtype == "troubleshooting_case":
+            return "troubleshooting_why"
+    if any(term in lowered for term in ["why", "root cause", "black screen", "no audio", "jitter", "delay", "failed", "failure", "问题", "故障", "排查"]):
+        return "troubleshooting_why"
+    if any(term in lowered for term in ["configure", "configuration", "setup", "enable", "disable", "deploy", "parameter", "参数", "配置"]):
+        return "configuration"
+    if _extract_query_terms(message, max_terms=6) or re.search(r"\b\d{3,5}\b", lowered):
+        return "lexical_exact"
+    return "configuration"
+
+
+def _tool_order_for_query_class(query_class: str) -> tuple[list[str], str, str]:
+    if query_class == "lexical_exact":
+        return (["p_bm25", "p_fts", "p_vec", "s_bm25", "s_fts", "s_vec"], "exact_match", "lexical")
+    if query_class == "troubleshooting_why":
+        return (["p_vec", "s_vec", "p_bm25", "s_bm25", "p_fts", "s_fts"], "causal_grounding", "semantic")
+    if query_class == "comparison":
+        return (["p_vec", "p_bm25", "s_vec", "p_fts"], "balanced_comparison", "compare")
+    return (["p_bm25", "p_vec", "p_fts", "s_bm25", "s_vec"], "configuration_support", "lexical")
+
+
+def _context_keyword_query(ticket_context: list[dict[str, str]] | None) -> str | None:
+    parts: list[str] = []
+    for item in list(ticket_context or [])[-6:]:
+        if not isinstance(item, dict):
+            continue
+        content = " ".join(str(item.get("content") or "").split()).strip()
+        if not content:
+            continue
+        for token in re.findall(r"[A-Za-z0-9_.-]{3,}", content):
+            lowered = token.lower()
+            if lowered in _QUERY_STOPWORDS or lowered in parts:
+                continue
+            parts.append(lowered)
+        if len(parts) >= 6:
+            break
+    if not parts:
+        return None
+    return " ".join(parts[:6])
+
+
+def _invoke_agentic_planner(
+    *,
+    message: str,
+    ticket_context: list[dict[str, str]] | None,
+    query_understanding: QueryUnderstandingResult | None,
+    top_k: int,
+    round_index: int,
+) -> dict[str, Any] | None:
+    profile = resolve_model_profile(RAG_AGENT_PLANNER_SCENARIO)
+    if not profile.api_key:
+        return None
+    summary = {
+        "query_profile": query_understanding.query_profile if query_understanding is not None else None,
+        "semantic_query": query_understanding.semantic_query if query_understanding is not None else None,
+        "hard_filters": dict(query_understanding.retrieval_plan.hard_filters) if query_understanding is not None else {},
+        "soft_signals": dict(query_understanding.retrieval_plan.soft_signals) if query_understanding is not None else {},
+        "rewritten_queries": list(query_understanding.rewritten_queries) if query_understanding is not None else [],
+        "decomposition_subqueries": list(query_understanding.decomposition_subqueries) if query_understanding is not None else [],
+    }
+    try:
+        response = invoke_responses_text(
+            profile=profile,
+            system_prompt=build_rag_agent_planner_system_prompt(),
+            user_prompt=build_rag_agent_planner_user_prompt(
+                message=message,
+                ticket_context=ticket_context,
+                query_understanding_summary=summary,
+                top_k=top_k,
+                round_index=round_index,
+            ),
+        )
+    except LlmInvocationError:
+        return None
+    try:
+        payload = json.loads(response.text or "{}")
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _build_agentic_retrieval_plan(
+    *,
+    message: str,
+    top_k: int,
+    query_understanding: QueryUnderstandingResult | None,
+    ticket_context: list[dict[str, str]] | None,
+) -> AgenticRetrievalPlan:
+    planner_payload = _invoke_agentic_planner(
+        message=message,
+        ticket_context=ticket_context,
+        query_understanding=query_understanding,
+        top_k=top_k,
+        round_index=1,
+    )
+    if isinstance(planner_payload, dict):
+        query_class = str(planner_payload.get("query_class") or "").strip().lower()
+        if query_class in {"lexical_exact", "configuration", "troubleshooting_why", "comparison"}:
+            first_pass_tools = [
+                str(item).strip()
+                for item in planner_payload.get("first_pass_tools") or []
+                if str(item).strip()
+            ]
+            query_variants = [
+                (str(item[0]).strip(), str(item[1]).strip())
+                for item in planner_payload.get("query_variants") or []
+                if isinstance(item, (list, tuple)) and len(item) >= 2 and str(item[1]).strip()
+            ]
+            if query_variants:
+                return AgenticRetrievalPlan(
+                    query_class=query_class,
+                    first_pass_tools=first_pass_tools or list(_tool_order_for_query_class(query_class)[0]),
+                    query_variants=query_variants,
+                    decomposition_targets=[
+                        str(item).strip()
+                        for item in planner_payload.get("decomposition_targets") or []
+                        if str(item).strip()
+                    ],
+                    evidence_goal=str(planner_payload.get("evidence_goal") or _tool_order_for_query_class(query_class)[1]).strip(),
+                    recovery_bias=str(planner_payload.get("recovery_bias") or _tool_order_for_query_class(query_class)[2]).strip(),
+                    ticket_context_used=bool(ticket_context),
+                    exact_terms=_extract_query_terms(message, max_terms=6),
+                )
+
+    query_class = _classify_agentic_query(message, query_understanding)
+    tool_order, evidence_goal, recovery_bias = _tool_order_for_query_class(query_class)
+    query_variants = [("original", " ".join(str(message or "").split()).strip())]
+    if query_understanding is not None:
+        semantic_query = " ".join(str(query_understanding.semantic_query or "").split()).strip()
+        if semantic_query and semantic_query.lower() != query_variants[0][1].lower():
+            query_variants.append(("semantic", semantic_query))
+        for rewritten in list(query_understanding.rewritten_queries)[:1]:
+            normalized = " ".join(str(rewritten or "").split()).strip()
+            if normalized and normalized.lower() not in {item[1].lower() for item in query_variants}:
+                query_variants.append(("rewrite", normalized))
+        if query_class == "comparison":
+            for subquery in list(query_understanding.decomposition_subqueries)[:2]:
+                normalized = " ".join(str(subquery or "").split()).strip()
+                if normalized and normalized.lower() not in {item[1].lower() for item in query_variants}:
+                    query_variants.append(("decomposition", normalized))
+    decomposition_targets = _extract_comparison_targets(message) if query_class == "comparison" else []
+    return AgenticRetrievalPlan(
+        query_class=query_class,
+        first_pass_tools=list(tool_order),
+        query_variants=[item for item in query_variants if item[1]],
+        decomposition_targets=decomposition_targets,
+        evidence_goal=evidence_goal,
+        recovery_bias=recovery_bias,
+        ticket_context_used=bool(ticket_context),
+        exact_terms=_extract_query_terms(message, max_terms=6),
+    )
+
+
+def _tool_shadow_limit(limit: int, shadow_ratio_cap: float) -> int:
+    if shadow_ratio_cap <= 0:
+        return 0
+    return max(1, int(max(1, limit) * float(shadow_ratio_cap)))
+
+
+def _merge_agentic_tool_results(
+    *,
+    tool_results: dict[str, list[RetrievedChunk]],
+    tool_weights: dict[str, float],
+    limit: int,
+    shadow_ratio_cap: float,
+) -> list[RetrievedChunk]:
+    safe_limit = max(1, int(limit or 1))
+    shadow_limit = _tool_shadow_limit(safe_limit, shadow_ratio_cap)
+    merged_scores: dict[str, float] = {}
+    merged_chunks: dict[str, RetrievedChunk] = {}
+    rrf_k = 60.0
+
+    for tool_name, chunks in tool_results.items():
+        weight = max(0.0, float(tool_weights.get(tool_name) or 0.0))
+        if weight <= 0:
+            continue
+        for rank, raw_chunk in enumerate(chunks, start=1):
+            chunk = _copy_chunk(raw_chunk)
+            if not chunk.index_role:
+                chunk.index_role = str(chunk.candidate_trace.get("index_role") or "primary").strip() or "primary"
+            chunk.candidate_trace.setdefault("tool_name", tool_name)
+            chunk.candidate_trace.setdefault("index_role", chunk.index_role)
+            dedupe_key = _chunk_dedupe_key(chunk)
+            merged_scores[dedupe_key] = merged_scores.get(dedupe_key, 0.0) + (weight / (rrf_k + rank))
+            existing = merged_chunks.get(dedupe_key)
+            if existing is None or float(chunk.similarity or 0.0) > float(existing.similarity or 0.0):
+                merged_chunks[dedupe_key] = chunk
+
+    ordered_keys = sorted(
+        merged_scores.keys(),
+        key=lambda key: (
+            merged_scores[key],
+            float(merged_chunks[key].similarity or 0.0),
+        ),
+        reverse=True,
+    )
+    selected: list[RetrievedChunk] = []
+    shadow_count = 0
+    for key in ordered_keys:
+        chunk = merged_chunks[key]
+        if str(chunk.index_role or "").strip().lower() == "shadow":
+            if shadow_count >= shadow_limit:
+                continue
+            shadow_count += 1
+        chunk.candidate_trace["fusion_score"] = round(float(merged_scores[key]), 6)
+        chunk.candidate_trace["index_role"] = chunk.index_role
+        selected.append(chunk)
+        if len(selected) >= safe_limit:
+            break
+    return selected
+
+
+def _exact_terms_in_chunks(exact_terms: list[str], chunks: list[RetrievedChunk]) -> bool:
+    if not exact_terms:
+        return True
+    haystack = " ".join(_chunk_search_text(chunk) for chunk in chunks[:3])
+    return all(term.lower() in haystack for term in exact_terms if term)
+
+
+def _comparison_targets_covered(targets: list[str], chunks: list[RetrievedChunk]) -> bool:
+    if not targets:
+        return True
+    covered: set[str] = set()
+    for chunk in chunks:
+        method_name = _chunk_method_name(chunk).lower()
+        search_text = _chunk_search_text(chunk)
+        for target in targets:
+            lowered = str(target or "").strip().lower()
+            if not lowered:
+                continue
+            if lowered == method_name.lower() or lowered in search_text:
+                covered.add(lowered)
+    expected = {str(target or "").strip().lower() for target in targets if str(target or "").strip()}
+    return expected.issubset(covered)
+
+
+def _same_family_only(chunks: list[RetrievedChunk]) -> bool:
+    families = {family for family in (_chunk_family_key(chunk) for chunk in chunks) if family}
+    return len(families) <= 1
+
+
+def _judge_agentic_round(
+    *,
+    message: str,
+    query_class: str,
+    round_index: int,
+    reranked_chunks: list[RetrievedChunk],
+    final_chunks: list[RetrievedChunk],
+    decomposition_targets: list[str],
+    exact_terms: list[str],
+    grounded_overlap: bool,
+) -> AgenticJudgeDecision:
+    top_chunk = reranked_chunks[0] if reranked_chunks else None
+    top_score = float(
+        (top_chunk.rerank_score if top_chunk and top_chunk.rerank_score is not None else top_chunk.similarity if top_chunk else 0.0)
+        or 0.0
+    )
+    primary_count = sum(1 for chunk in final_chunks if str(chunk.index_role or "").strip().lower() == "primary")
+    comparison_covered = _comparison_targets_covered(decomposition_targets, final_chunks)
+    exact_match_supported = _exact_terms_in_chunks(exact_terms, final_chunks)
+    all_shadow = bool(final_chunks) and all(str(chunk.index_role or "").strip().lower() == "shadow" for chunk in final_chunks)
+
+    if round_index <= 1:
+        if query_class == "comparison" and not comparison_covered:
+            return AgenticJudgeDecision("recover_once", "comparison_targets_missing", 0.74, "compare_recovery")
+        if primary_count == 0:
+            recovery = "lexical_recovery" if query_class in {"lexical_exact", "configuration"} else "semantic_recovery"
+            return AgenticJudgeDecision("recover_once", "missing_primary_support", 0.72, recovery)
+        if query_class == "lexical_exact" and (top_score < 0.32 or not exact_match_supported):
+            return AgenticJudgeDecision("recover_once", "low_top1_rerank_score", 0.74, "lexical_recovery")
+        if top_score < 0.32:
+            recovery = "compare_recovery" if query_class == "comparison" else "semantic_recovery"
+            return AgenticJudgeDecision("recover_once", "weak_first_pass_support", 0.7, recovery)
+        return AgenticJudgeDecision("answer_now", "sufficient_first_pass_support", 0.9, None)
+
+    if primary_count == 0:
+        reason = "weak_shadow_only_support" if all_shadow else "missing_primary_support"
+        return AgenticJudgeDecision("escalate", reason, 0.84, None)
+    if top_score < 0.25:
+        return AgenticJudgeDecision("escalate", "weak_top1_support", 0.82, None)
+    if query_class == "comparison" and not comparison_covered:
+        return AgenticJudgeDecision("escalate", "comparison_targets_missing", 0.84, None)
+    if _same_family_only(final_chunks) and not grounded_overlap:
+        return AgenticJudgeDecision("escalate", "single_family_ungrounded", 0.78, None)
+    return AgenticJudgeDecision("answer_now", "sufficient_second_pass_support", 0.92, None)
+
+
+def _tool_weights_for_query_class(query_class: str) -> dict[str, float]:
+    if query_class == "lexical_exact":
+        return {
+            "p_bm25": 1.00,
+            "p_fts": 0.90,
+            "p_vec": 0.55,
+            "s_bm25": 0.45,
+            "s_fts": 0.40,
+            "s_vec": 0.35,
+            "p_keyword": 0.35,
+            "s_keyword": 0.20,
+        }
+    if query_class == "configuration":
+        return {
+            "p_bm25": 1.00,
+            "p_vec": 0.75,
+            "p_fts": 0.55,
+            "s_bm25": 0.40,
+            "s_vec": 0.35,
+            "p_keyword": 0.25,
+            "s_keyword": 0.15,
+        }
+    if query_class == "troubleshooting_why":
+        return {
+            "p_vec": 1.00,
+            "s_vec": 0.80,
+            "p_bm25": 0.50,
+            "s_bm25": 0.30,
+            "p_fts": 0.25,
+            "s_fts": 0.15,
+            "p_keyword": 0.15,
+            "s_keyword": 0.10,
+        }
+    return {
+        "p_vec": 0.90,
+        "p_bm25": 0.80,
+        "s_vec": 0.60,
+        "p_fts": 0.30,
+        "p_keyword": 0.20,
+    }
+
+
+def _tool_index_role(tool_name: str) -> str:
+    return "shadow" if str(tool_name or "").strip().lower().startswith("s_") else "primary"
+
+
+def _tool_family(tool_name: str) -> str:
+    name = str(tool_name or "").strip().lower()
+    if name.endswith("_vec"):
+        return "vector"
+    if name.endswith("_bm25"):
+        return "bm25"
+    if name.endswith("_fts"):
+        return "fts"
+    return "keyword"
+
+
+def _dedupe_agentic_variants(variants: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    deduped: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for kind, query in variants:
+        normalized = " ".join(str(query or "").split()).strip()
+        if not normalized:
+            continue
+        key = normalized.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append((str(kind or "").strip() or "original", normalized))
+    return deduped
+
+
+def _agentic_round_tools(
+    plan: AgenticRetrievalPlan,
+    *,
+    round_index: int,
+    recovery_action: str | None,
+) -> list[str]:
+    if round_index <= 1:
+        return list(dict.fromkeys(plan.first_pass_tools))
+    if recovery_action == "lexical_recovery":
+        return ["p_bm25", "p_fts", "p_vec", "s_bm25"]
+    if recovery_action == "semantic_recovery":
+        return ["p_vec", "s_vec", "p_bm25", "s_bm25", "p_fts", "s_fts"]
+    if recovery_action == "compare_recovery":
+        return ["p_vec", "p_bm25", "s_vec", "p_fts"]
+    return list(dict.fromkeys(plan.first_pass_tools))
+
+
+def _agentic_round_variants(
+    *,
+    message: str,
+    plan: AgenticRetrievalPlan,
+    round_index: int,
+    recovery_action: str | None,
+    ticket_context: list[dict[str, str]] | None,
+) -> list[tuple[str, str]]:
+    variants = list(plan.query_variants)
+    if not variants:
+        variants = [("original", " ".join(str(message or "").split()).strip())]
+    existing = {query.lower() for _, query in variants}
+
+    if plan.query_class == "comparison":
+        for target in plan.decomposition_targets[:2]:
+            normalized = " ".join(str(target or "").split()).strip()
+            if normalized and normalized.lower() not in existing:
+                variants.append(("decomposition", normalized))
+                existing.add(normalized.lower())
+
+    if round_index > 1:
+        if recovery_action == "lexical_recovery":
+            exact_query = " ".join(plan.exact_terms).strip()
+            if exact_query and exact_query.lower() not in existing:
+                variants.append(("exact_token", exact_query))
+        elif recovery_action == "semantic_recovery":
+            context_query = _context_keyword_query(ticket_context)
+            if context_query and context_query.lower() not in existing:
+                variants.append(("context", context_query))
+        elif recovery_action == "compare_recovery":
+            context_query = _context_keyword_query(ticket_context)
+            if context_query and context_query.lower() not in existing:
+                variants.append(("context", context_query))
+    return _dedupe_agentic_variants(variants)
+
+
+def _score_from_candidate_trace(chunk: RetrievedChunk) -> float:
+    trace = chunk.candidate_trace if isinstance(chunk.candidate_trace, dict) else {}
+    for key in ["raw_score", "bm25_score", "fts_rank", "vector_similarity", "keyword_fallback_hits"]:
+        value = trace.get(key)
+        try:
+            if value is not None:
+                return float(value)
+        except (TypeError, ValueError):
+            continue
+    return float(chunk.similarity or 0.0)
+
+
+def _select_agentic_final_chunks(
+    chunks: list[RetrievedChunk],
+    *,
+    limit: int,
+    query: str,
+    shadow_cap: int,
+) -> list[RetrievedChunk]:
+    if not chunks:
+        return []
+    ordered = _reorder_chunks_for_rerank(chunks, limit=len(chunks), query=query) or list(chunks)
+    results: list[RetrievedChunk] = []
+    shadow_count = 0
+    for chunk in ordered:
+        if str(chunk.index_role or "").strip().lower() == "shadow":
+            if shadow_count >= max(0, int(shadow_cap)):
+                continue
+            shadow_count += 1
+        results.append(chunk)
+        if len(results) >= max(1, int(limit or 1)):
+            break
+    return results
+
+
+def _execute_agentic_round(
+    *,
+    message: str,
+    config: dict[str, Any],
+    plan: AgenticRetrievalPlan,
+    round_index: int,
+    retrieval_plan: RetrievalPlan,
+    query_understanding: QueryUnderstandingResult | None,
+    ticket_context: list[dict[str, str]] | None,
+    recovery_action: str | None = None,
+) -> AgenticRoundResult:
+    tool_names = _agentic_round_tools(plan, round_index=round_index, recovery_action=recovery_action)
+    query_variants = _agentic_round_variants(
+        message=message,
+        plan=plan,
+        round_index=round_index,
+        recovery_action=recovery_action,
+        ticket_context=ticket_context,
+    )
+    tool_weights = _tool_weights_for_query_class(plan.query_class)
+    tool_results: dict[str, list[RetrievedChunk]] = {}
+    vector_candidate_ids: set[str] = set()
+    bm25_candidate_ids: set[str] = set()
+    vector_latency_ms = 0.0
+    bm25_latency_ms = 0.0
+    keyword_latency_ms = 0.0
+
+    for tool_name in tool_names:
+        family = _tool_family(tool_name)
+        index_role = _tool_index_role(tool_name)
+        family_bucket_labels: set[str] = set()
+        for query_kind, query_text in query_variants:
+            current_tool_label = tool_name
+            started_at = time.perf_counter()
+            try:
+                if family == "vector":
+                    raw_chunks = _retrieve_chunks(
+                        query_text,
+                        config,
+                        limit=int(config.get("vector_candidate_k") or config.get("top_k") or 5),
+                        index_role=index_role,
+                    )
+                    vector_latency_ms += (time.perf_counter() - started_at) * 1000
+                elif family == "bm25":
+                    raw_chunks = _retrieve_bm25_chunks(
+                        query_text,
+                        config,
+                        limit=int(config.get("bm25_candidate_k") or config.get("top_k") or 5),
+                        index_role=index_role,
+                    )
+                    bm25_latency_ms += (time.perf_counter() - started_at) * 1000
+                elif family == "fts":
+                    raw_chunks = _retrieve_fts_chunks(
+                        query_text,
+                        config,
+                        limit=int(config.get("keyword_candidate_k") or config.get("top_k") or 5),
+                        index_role=index_role,
+                    )
+                    bm25_latency_ms += (time.perf_counter() - started_at) * 1000
+                else:
+                    raw_chunks = _retrieve_keyword_chunks(
+                        query_text,
+                        config,
+                        limit=int(config.get("keyword_candidate_k") or config.get("top_k") or 5),
+                        index_role=index_role,
+                    )
+                    keyword_latency_ms += (time.perf_counter() - started_at) * 1000
+            except Exception as exc:
+                if family not in {"bm25", "fts"}:
+                    logger.warning("RAG %s retrieval failed for %s query: %s", tool_name, query_kind, exc)
+                    continue
+                logger.warning("RAG %s retrieval failed for %s query, trying keyword fallback: %s", tool_name, query_kind, exc)
+                started_at = time.perf_counter()
+                try:
+                    raw_chunks = _retrieve_keyword_chunks(
+                        query_text,
+                        config,
+                        limit=int(config.get("keyword_candidate_k") or config.get("top_k") or 5),
+                        index_role=index_role,
+                    )
+                    keyword_latency_ms += (time.perf_counter() - started_at) * 1000
+                    current_tool_label = f"{'s' if index_role == 'shadow' else 'p'}_keyword"
+                except Exception as keyword_exc:
+                    logger.warning("RAG keyword retrieval failed for %s query: %s", query_kind, keyword_exc)
+                    continue
+
+            for chunk in raw_chunks:
+                chunk.index_role = index_role
+                chunk.retrieval_sources = list(dict.fromkeys([*chunk.retrieval_sources, current_tool_label]))
+                chunk.candidate_trace["tool_name"] = current_tool_label
+                chunk.candidate_trace["query_kind"] = query_kind
+                chunk.candidate_trace["query_round"] = round_index
+                chunk.candidate_trace["raw_score"] = _score_from_candidate_trace(chunk)
+                chunk.candidate_trace["index_role"] = index_role
+
+            merged_tool_chunks = _merge_variant_chunks(
+                tool_results.get(current_tool_label, []),
+                raw_chunks,
+                source_label=current_tool_label,
+                query_variant=query_text,
+                query_kind=query_kind,
+            )
+            tool_results[current_tool_label] = merged_tool_chunks
+            family_bucket_labels.add(current_tool_label)
+        target_set = vector_candidate_ids if family == "vector" else bm25_candidate_ids
+        for label in family_bucket_labels:
+            candidate_group = tool_results.get(label, [])
+            for chunk in candidate_group:
+                dedupe_key = _chunk_dedupe_key(chunk)
+                if dedupe_key:
+                    target_set.add(dedupe_key)
+
+    retrieved_chunks = _merge_agentic_tool_results(
+        tool_results=tool_results,
+        tool_weights=tool_weights,
+        limit=int(config.get("fusion_candidate_k") or config.get("top_k") or 5),
+        shadow_ratio_cap=float(config.get("agent_shadow_ratio_cap") or 0.4),
+    )
+    reranked_chunks = list(retrieved_chunks)
+    rerank_info: dict[str, Any] = {
+        "hints": {"language": None, "method_name": None, "intent_terms": []},
+        "applied_filter": False,
+        "filter_type": None,
+        "filtered_candidate_count": 0,
+        "post_rerank_count": 0,
+        "candidate_reasons": {},
+    }
+    rerank_latency_ms = 0.0
+    if reranked_chunks:
+        rerank_started_at = time.perf_counter()
+        reranked_chunks, rerank_info = _metadata_rerank(
+            query=message,
+            chunks=reranked_chunks,
+            top_k=int(config.get("fusion_candidate_k") or config.get("top_k") or 5),
+            retrieval_plan=retrieval_plan,
+            query_understanding=query_understanding,
+        )
+        rerank_latency_ms += (time.perf_counter() - rerank_started_at) * 1000
+        reranked_chunks = _reorder_chunks_for_rerank(
+            reranked_chunks or retrieved_chunks,
+            limit=int(config.get("rerank_top_n") or len(retrieved_chunks) or 1),
+            query=message,
+        ) or reranked_chunks or retrieved_chunks
+        rerank_started_at = time.perf_counter()
+        reranked_chunks = _rerank_chunks(
+            message,
+            reranked_chunks,
+            config,
+            limit=int(config.get("rerank_top_n") or len(reranked_chunks) or 1),
+        ) or reranked_chunks
+        rerank_latency_ms += (time.perf_counter() - rerank_started_at) * 1000
+
+    final_shadow_cap = int(config.get("agent_final_shadow_cap") or 1)
+    recovery_shadow_cap = int(config.get("agent_recovery_shadow_cap") or 2)
+    final_chunks = _select_agentic_final_chunks(
+        reranked_chunks,
+        limit=int(config.get("top_k") or 5),
+        query=message,
+        shadow_cap=final_shadow_cap,
+    )
+    if sum(1 for chunk in final_chunks if str(chunk.index_role or "").strip().lower() == "primary") == 0:
+        final_chunks = _select_agentic_final_chunks(
+            reranked_chunks,
+            limit=int(config.get("top_k") or 5),
+            query=message,
+            shadow_cap=recovery_shadow_cap,
+        )
+
+    grounded_overlap = _has_grounded_keyword_overlap(message, final_chunks)
+    judge = _judge_agentic_round(
+        message=message,
+        query_class=plan.query_class,
+        round_index=round_index,
+        reranked_chunks=reranked_chunks,
+        final_chunks=final_chunks,
+        decomposition_targets=plan.decomposition_targets,
+        exact_terms=plan.exact_terms,
+        grounded_overlap=grounded_overlap,
+    )
+    return AgenticRoundResult(
+        retrieved_chunks=retrieved_chunks,
+        reranked_chunks=reranked_chunks,
+        final_chunks=final_chunks,
+        rerank_info=rerank_info,
+        judge=judge,
+        iteration_trace=AgenticIterationTrace(
+            round_index=round_index,
+            tool_names=list(dict.fromkeys(tool_names)),
+            query_variants=[kind for kind, _ in query_variants],
+            selected_chunk_ids=[chunk.chunk_id for chunk in final_chunks if chunk.chunk_id],
+            decision=judge.decision,
+            recovery_action=judge.recovery_action,
+        ),
+        vector_candidate_count=len(vector_candidate_ids),
+        bm25_candidate_count=len(bm25_candidate_ids),
+        vector_latency_ms=round(vector_latency_ms, 2),
+        bm25_latency_ms=round(bm25_latency_ms, 2),
+        keyword_latency_ms=round(keyword_latency_ms, 2),
+        rerank_latency_ms=round(rerank_latency_ms, 2),
+    )
 
 
 def _normalize_metadata_filter_value(key: str, value: Any) -> str | None:
@@ -1079,7 +1820,13 @@ def _select_bm25_query_terms(
     return selected
 
 
-def _retrieve_chunks(message: str, config: dict[str, Any], *, limit: int | None = None) -> list[RetrievedChunk]:
+def _retrieve_chunks(
+    message: str,
+    config: dict[str, Any],
+    *,
+    limit: int | None = None,
+    index_role: str = "primary",
+) -> list[RetrievedChunk]:
     psycopg = _import_psycopg()
     sql = psycopg.sql
     retrieval_plan = _config_retrieval_plan(config)
@@ -1089,6 +1836,7 @@ def _retrieve_chunks(message: str, config: dict[str, Any], *, limit: int | None 
     provider = get_embedding_provider()
     query_embedding = provider.embed_query(message)
     vector_param = _vector_literal(query_embedding)
+    normalized_index_role = str(index_role or "").strip().lower() or "primary"
 
     query = sql.SQL(
         """
@@ -1106,7 +1854,7 @@ def _retrieve_chunks(message: str, config: dict[str, Any], *, limit: int | None 
             chunk_strategy,
             1 - (embedding <=> %s::vector) AS similarity
         FROM {}
-        WHERE index_role = 'primary'
+        WHERE index_role = %s
         {}
         ORDER BY embedding <=> %s::vector
         LIMIT %s
@@ -1115,7 +1863,7 @@ def _retrieve_chunks(message: str, config: dict[str, Any], *, limit: int | None 
 
     with psycopg.connect(config["dsn"]) as conn:
         with conn.cursor() as cur:
-            cur.execute(query, (vector_param, *filter_params, vector_param, int(limit or config["top_k"])))
+            cur.execute(query, (vector_param, normalized_index_role, *filter_params, vector_param, int(limit or config["top_k"])))
             rows = cur.fetchall()
 
     chunks: list[RetrievedChunk] = []
@@ -1134,14 +1882,25 @@ def _retrieve_chunks(message: str, config: dict[str, Any], *, limit: int | None 
                 source_type=(str(row[9]).strip() or None) if row[9] is not None else None,
                 chunk_strategy=(str(row[10]).strip() or None) if row[10] is not None else None,
                 similarity=float(row[11]) if row[11] is not None else 0.0,
+                index_role=normalized_index_role,
                 retrieval_sources=["vector"],
-                candidate_trace={"vector_similarity": float(row[11]) if row[11] is not None else 0.0},
+                candidate_trace={
+                    "vector_similarity": float(row[11]) if row[11] is not None else 0.0,
+                    "raw_score": float(row[11]) if row[11] is not None else 0.0,
+                    "index_role": normalized_index_role,
+                },
             )
         )
     return chunks
 
 
-def _retrieve_bm25_chunks(message: str, config: dict[str, Any], *, limit: int | None = None) -> list[RetrievedChunk]:
+def _retrieve_bm25_chunks(
+    message: str,
+    config: dict[str, Any],
+    *,
+    limit: int | None = None,
+    index_role: str = "primary",
+) -> list[RetrievedChunk]:
     terms = tokenize_bm25_query(message)
     if not terms:
         return []
@@ -1152,6 +1911,7 @@ def _retrieve_bm25_chunks(message: str, config: dict[str, Any], *, limit: int | 
     downpush_filters = downpush_hard_filters(retrieval_plan) if retrieval_plan is not None else {}
     filter_sql, filter_params = _metadata_filter_clauses(sql, downpush_filters, metadata_ref="v.metadata")
     app_schema = str(config.get("app_schema") or "supportportal").strip() or "supportportal"
+    normalized_index_role = str(index_role or "").strip().lower() or "primary"
     query = sql.SQL(
         """
         WITH query_terms AS (
@@ -1161,12 +1921,12 @@ def _retrieve_bm25_chunks(message: str, config: dict[str, Any], *, limit: int | 
             FROM unnest(%s::text[]) AS q(term)
             JOIN {} AS t
               ON t.term = q.term
-             AND t.index_role = 'primary'
+             AND t.index_role = %s
         ),
         stats AS (
             SELECT doc_count, avg_doc_length
             FROM {}
-            WHERE index_role = 'primary'
+            WHERE index_role = %s
         ),
         matched_postings AS MATERIALIZED (
             SELECT
@@ -1176,7 +1936,7 @@ def _retrieve_bm25_chunks(message: str, config: dict[str, Any], *, limit: int | 
             FROM query_terms AS q
             JOIN {} AS p
               ON p.term = q.term
-             AND p.index_role = 'primary'
+             AND p.index_role = %s
         ),
         matched_docs AS MATERIALIZED (
             SELECT
@@ -1187,7 +1947,7 @@ def _retrieve_bm25_chunks(message: str, config: dict[str, Any], *, limit: int | 
                 SELECT DISTINCT chunk_id FROM matched_postings
             ) AS matched
               ON matched.chunk_id = d.chunk_id
-            WHERE d.index_role = 'primary'
+            WHERE d.index_role = %s
         ),
         scored AS (
             SELECT
@@ -1247,7 +2007,7 @@ def _retrieve_bm25_chunks(message: str, config: dict[str, Any], *, limit: int | 
         FROM scored
         JOIN {} AS v
           ON v.id = scored.chunk_id
-        WHERE v.index_role = 'primary'
+        WHERE v.index_role = %s
           {}
         ORDER BY scored.bm25_score DESC, v.updated_at DESC
         LIMIT %s
@@ -1268,11 +2028,11 @@ def _retrieve_bm25_chunks(message: str, config: dict[str, Any], *, limit: int | 
                     """
                     SELECT term, doc_freq
                     FROM {}
-                    WHERE index_role = 'primary'
+                    WHERE index_role = %s
                       AND term = ANY(%s)
                     """
                 ).format(_app_table_identifier(sql, app_schema, "support_knowledge_bm25_terms")),
-                (terms,),
+                (normalized_index_role, terms),
             )
             term_doc_freqs = {
                 str(row[0]).strip().lower(): int(row[1] or 0)
@@ -1284,9 +2044,11 @@ def _retrieve_bm25_chunks(message: str, config: dict[str, Any], *, limit: int | 
                     """
                     SELECT doc_count
                     FROM {}
-                    WHERE index_role = 'primary'
+                    WHERE index_role = %s
                     """
                 ).format(_app_table_identifier(sql, app_schema, "support_knowledge_bm25_stats"))
+                ,
+                (normalized_index_role,),
             )
             stats_row = cur.fetchone() or (0,)
             selected_terms = _select_bm25_query_terms(
@@ -1302,6 +2064,11 @@ def _retrieve_bm25_chunks(message: str, config: dict[str, Any], *, limit: int | 
                 query,
                 (
                     selected_terms,
+                    normalized_index_role,
+                    normalized_index_role,
+                    normalized_index_role,
+                    normalized_index_role,
+                    normalized_index_role,
                     float(config["bm25_k1"]),
                     float(config["bm25_k1"]),
                     float(config["bm25_b"]),
@@ -1332,16 +2099,28 @@ def _retrieve_bm25_chunks(message: str, config: dict[str, Any], *, limit: int | 
                 source_type=(str(row[9]).strip() or None) if row[9] is not None else None,
                 chunk_strategy=(str(row[10]).strip() or None) if row[10] is not None else None,
                 similarity=max(0.0, min(1.0, normalized_score)),
+                index_role=normalized_index_role,
                 retrieval_sources=["bm25"],
-                candidate_trace={"bm25_score": raw_score},
+                candidate_trace={
+                    "bm25_score": raw_score,
+                    "raw_score": raw_score,
+                    "index_role": normalized_index_role,
+                },
             )
         )
     return chunks
 
 
-def _retrieve_fts_chunks(message: str, config: dict[str, Any], *, limit: int | None = None) -> list[RetrievedChunk]:
+def _retrieve_fts_chunks(
+    message: str,
+    config: dict[str, Any],
+    *,
+    limit: int | None = None,
+    index_role: str = "primary",
+) -> list[RetrievedChunk]:
     psycopg = _import_psycopg()
     sql = psycopg.sql
+    normalized_index_role = str(index_role or "").strip().lower() or "primary"
 
     query = sql.SQL(
         """
@@ -1371,7 +2150,7 @@ def _retrieve_fts_chunks(message: str, config: dict[str, Any], *, limit: int | N
                 plainto_tsquery('simple', %s)
             ) AS rank
         FROM {}
-        WHERE index_role = 'primary'
+        WHERE index_role = %s
           AND to_tsvector(
                 'simple',
                 coalesce(h1, '')
@@ -1389,7 +2168,7 @@ def _retrieve_fts_chunks(message: str, config: dict[str, Any], *, limit: int | N
 
     with psycopg.connect(config["dsn"]) as conn:
         with conn.cursor() as cur:
-            cur.execute(query, (message, message, int(limit or config["keyword_candidate_k"])))
+            cur.execute(query, (message, normalized_index_role, message, int(limit or config["keyword_candidate_k"])))
             rows = cur.fetchall()
 
     chunks: list[RetrievedChunk] = []
@@ -1409,6 +2188,13 @@ def _retrieve_fts_chunks(message: str, config: dict[str, Any], *, limit: int | N
                 source_type=(str(row[9]).strip() or None) if row[9] is not None else None,
                 chunk_strategy=(str(row[10]).strip() or None) if row[10] is not None else None,
                 similarity=max(0.0, min(1.0, rank)),
+                index_role=normalized_index_role,
+                retrieval_sources=["fts"],
+                candidate_trace={
+                    "fts_rank": rank,
+                    "raw_score": rank,
+                    "index_role": normalized_index_role,
+                },
             )
         )
     return chunks
@@ -1442,6 +2228,7 @@ def _retrieve_keyword_chunks(
     config: dict[str, Any],
     *,
     limit: int | None = None,
+    index_role: str = "primary",
 ) -> list[RetrievedChunk]:
     terms = _extract_query_terms(message)
     if not terms:
@@ -1454,6 +2241,7 @@ def _retrieve_keyword_chunks(
     filter_sql, filter_params = _metadata_filter_clauses(sql, downpush_filters, metadata_ref="metadata")
     patterns = [f"%{term}%" for term in terms]
     candidate_limit = max(int(config["top_k"]) * 25, 50)
+    normalized_index_role = str(index_role or "").strip().lower() or "primary"
 
     query = sql.SQL(
         """
@@ -1471,7 +2259,7 @@ def _retrieve_keyword_chunks(
             chunk_strategy
         FROM {}
         WHERE
-            index_role = 'primary'
+            index_role = %s
             AND (
             lower(content) LIKE ANY(%s)
             OR lower(coalesce(h1, '')) LIKE ANY(%s)
@@ -1485,7 +2273,10 @@ def _retrieve_keyword_chunks(
 
     with psycopg.connect(config["dsn"]) as conn:
         with conn.cursor() as cur:
-            cur.execute(query, (patterns, patterns, patterns, patterns, *filter_params, candidate_limit))
+            cur.execute(
+                query,
+                (normalized_index_role, patterns, patterns, patterns, patterns, *filter_params, candidate_limit),
+            )
             rows = cur.fetchall()
 
     scored_chunks: list[tuple[int, RetrievedChunk]] = []
@@ -1503,6 +2294,7 @@ def _retrieve_keyword_chunks(
             source_type=(str(row[9]).strip() or None) if row[9] is not None else None,
             chunk_strategy=(str(row[10]).strip() or None) if row[10] is not None else None,
             similarity=0.0,
+            index_role=normalized_index_role,
         )
         hits = _keyword_hit_count(_chunk_search_text(chunk), terms)
         if hits <= 0:
@@ -1511,6 +2303,8 @@ def _retrieve_keyword_chunks(
         chunk.retrieval_sources = ["keyword_fallback"]
         chunk.candidate_trace = {
             "keyword_fallback_hits": hits,
+            "raw_score": hits,
+            "index_role": normalized_index_role,
         }
         scored_chunks.append((hits, chunk))
 
@@ -2003,6 +2797,7 @@ def _selected_contexts(chunks: list[RetrievedChunk]) -> list[dict[str, Any]]:
                 "source_url": chunk.source_url,
                 "source_type": chunk.source_type,
                 "chunk_strategy": chunk.chunk_strategy,
+                "index_role": chunk.index_role,
                 "similarity": round(max(0.0, min(1.0, float(chunk.similarity))), 4),
                 "metadata": chunk.metadata if isinstance(chunk.metadata, dict) else {},
                 "rerank_score": chunk.rerank_score,
@@ -2038,6 +2833,7 @@ def _candidate_rows(
                 "metadata_reasons": rerank_reasons.get(chunk.chunk_id, []),
                 "title": _build_heading(chunk),
                 "source_url": chunk.source_url,
+                "index_role": chunk.index_role,
                 "used_in_final_answer": chunk.chunk_id in selected_chunk_ids,
                 "candidate_trace": candidate_trace,
             }
@@ -2156,7 +2952,7 @@ def _estimate_embedding_tokens(message: str) -> int:
         return max(1, len(raw.split()), (len(raw) + 3) // 4)
 
 
-def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | None:
+def _run_rag_query_legacy(message: str, top_k: int | None = None) -> RagQueryResult | None:
     config = _get_rag_config(top_k=top_k)
     resolved_table = _resolve_active_vector_table(config)
     if resolved_table:
@@ -2764,6 +3560,401 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
             extractive_fallback_used=extractive_fallback_used,
         ),
     )
+
+
+def _merge_retrieved_chunk_map(
+    chunk_map: dict[str, RetrievedChunk],
+    incoming: list[RetrievedChunk],
+) -> None:
+    for item in incoming:
+        chunk = _copy_chunk(item)
+        dedupe_key = _chunk_dedupe_key(chunk)
+        existing = chunk_map.get(dedupe_key)
+        if existing is None:
+            chunk_map[dedupe_key] = chunk
+            continue
+        merged_sources = list(dict.fromkeys([*existing.retrieval_sources, *chunk.retrieval_sources]))
+        if float(chunk.similarity or 0.0) > float(existing.similarity or 0.0):
+            chunk.retrieval_sources = merged_sources
+            chunk_map[dedupe_key] = chunk
+            continue
+        existing.retrieval_sources = merged_sources
+
+
+def _iteration_trace_payload(iteration: AgenticIterationTrace) -> dict[str, Any]:
+    return {
+        "round_index": int(iteration.round_index),
+        "tool_names": list(iteration.tool_names),
+        "query_variants": list(iteration.query_variants),
+        "selected_chunk_ids": list(iteration.selected_chunk_ids),
+        "decision": str(iteration.decision),
+        "recovery_action": iteration.recovery_action,
+    }
+
+
+def _run_rag_query_agentic(
+    message: str,
+    top_k: int | None = None,
+    *,
+    ticket_context: list[dict[str, str]] | None = None,
+    ticket_id: str | None = None,
+    customer_id: str | None = None,
+) -> RagQueryResult | None:
+    _ = ticket_id
+    _ = customer_id
+    config = _get_rag_config(top_k=top_k)
+    resolved_table = _resolve_active_vector_table(config)
+    if resolved_table:
+        config["table"] = resolved_table
+    if not config["dsn"] or not config["api_key"]:
+        return None
+
+    provider = get_embedding_provider()
+    embedding_dimensions = getattr(provider, "vector_dim", None)
+    query_type = _infer_query_type(message)
+    query_understanding_enabled = _feature_flag_enabled("RAG_QUERY_UNDERSTANDING_ENABLED", True)
+    query_rewrite_enabled = _feature_flag_enabled("RAG_QUERY_REWRITE_ENABLED", True)
+    query_decomposition_enabled = _feature_flag_enabled("RAG_QUERY_DECOMPOSITION_ENABLED", True)
+    query_understanding: QueryUnderstandingResult | None = None
+    effective_hard_filters: dict[str, str] = {}
+    effective_soft_signals: dict[str, list[str]] = {}
+    effective_rewrites: list[str] = []
+    effective_decomposition_subqueries: list[str] = []
+    effective_query_understanding: QueryUnderstandingResult | None = None
+    total_started_at = time.perf_counter()
+    vector_latency_ms = 0.0
+    bm25_latency_ms = 0.0
+    keyword_fallback_latency_ms = 0.0
+    rerank_latency_ms = 0.0
+    generation_latency_ms = 0.0
+    prompt_tokens = 0
+    completion_tokens = 0
+    model_name: str | None = None
+    structured_retry_used = False
+    generation_mode = "structured_answer"
+    extractive_fallback_used = False
+    retrieved_chunk_map: dict[str, RetrievedChunk] = {}
+    reranked_chunks: list[RetrievedChunk] = []
+    final_chunks: list[RetrievedChunk] = []
+    final_rerank_info: dict[str, Any] = {
+        "hints": {"language": None, "method_name": None, "intent_terms": []},
+        "applied_filter": False,
+        "filter_type": None,
+        "filtered_candidate_count": 0,
+        "post_rerank_count": 0,
+        "candidate_reasons": {},
+    }
+    final_judge: AgenticJudgeDecision | None = None
+    recovery_action: str | None = None
+    agent_iterations: list[dict[str, Any]] = []
+    total_vector_candidates = 0
+    total_bm25_candidates = 0
+
+    if query_understanding_enabled:
+        try:
+            query_understanding = understand_rag_query(message)
+        except Exception as exc:
+            logger.warning("RAG query understanding failed: %s", exc)
+    if query_understanding is not None:
+        effective_hard_filters = dict(query_understanding.retrieval_plan.hard_filters)
+        effective_soft_signals = dict(query_understanding.retrieval_plan.soft_signals)
+        effective_rewrites = list(query_understanding.rewritten_queries) if query_rewrite_enabled else []
+        effective_decomposition_subqueries = (
+            list(query_understanding.decomposition_subqueries) if query_decomposition_enabled else []
+        )
+        effective_plan = RetrievalPlan(
+            semantic_query=query_understanding.semantic_query or str(message or "").strip(),
+            hard_filters=dict(effective_hard_filters),
+            soft_signals=dict(effective_soft_signals),
+            rewritten_queries=list(effective_rewrites),
+            decomposition_subqueries=list(effective_decomposition_subqueries),
+            fallback_mode=query_understanding.fallback_mode,
+        )
+        effective_query_understanding = replace(
+            query_understanding,
+            rewritten_queries=list(effective_rewrites),
+            decomposition_subqueries=list(effective_decomposition_subqueries),
+            retrieval_plan=effective_plan,
+        )
+    else:
+        effective_plan = RetrievalPlan(semantic_query=str(message or "").strip())
+
+    plan = _build_agentic_retrieval_plan(
+        message=message,
+        top_k=int(config["top_k"]),
+        query_understanding=effective_query_understanding or query_understanding,
+        ticket_context=ticket_context,
+    )
+
+    for round_index in [1, 2]:
+        round_result = _execute_agentic_round(
+            message=message,
+            config=config,
+            plan=plan,
+            round_index=round_index,
+            retrieval_plan=effective_plan,
+            query_understanding=effective_query_understanding or query_understanding,
+            ticket_context=ticket_context,
+            recovery_action=recovery_action,
+        )
+        vector_latency_ms += round_result.vector_latency_ms
+        bm25_latency_ms += round_result.bm25_latency_ms
+        keyword_fallback_latency_ms += round_result.keyword_latency_ms
+        rerank_latency_ms += round_result.rerank_latency_ms
+        total_vector_candidates += round_result.vector_candidate_count
+        total_bm25_candidates += round_result.bm25_candidate_count
+        _merge_retrieved_chunk_map(retrieved_chunk_map, round_result.retrieved_chunks)
+        reranked_chunks = list(round_result.reranked_chunks)
+        final_chunks = list(round_result.final_chunks)
+        final_rerank_info = dict(round_result.rerank_info)
+        final_judge = round_result.judge
+        agent_iterations.append(_iteration_trace_payload(round_result.iteration_trace))
+        if round_result.judge.decision == "recover_once" and round_index == 1:
+            recovery_action = round_result.judge.recovery_action
+            continue
+        break
+
+    retrieved_chunks = list(retrieved_chunk_map.values())
+
+    def _trace_for(
+        answer: RagAnswer,
+        *,
+        needs_human: bool,
+        handoff_reason: str | None,
+        generation_mode: str,
+        extractive_fallback_used: bool,
+    ) -> RagQueryTrace:
+        query_meta = _query_understanding_meta(effective_query_understanding or query_understanding, final_rerank_info)
+        cited_chunk_ids = [str(item.get("chunk_id")) for item in answer.citations if isinstance(item, dict) and item.get("chunk_id")]
+        selected_chunk_ids = [chunk.chunk_id for chunk in final_chunks if chunk.chunk_id]
+        unique_selected_chunk_ids = {chunk_id for chunk_id in selected_chunk_ids if chunk_id}
+        top1_similarity_score = round(max(0.0, min(1.0, float(final_chunks[0].similarity))), 4) if final_chunks else None
+        avg_selected_similarity_score = (
+            round(sum(max(0.0, min(1.0, float(chunk.similarity))) for chunk in final_chunks) / len(final_chunks), 4)
+            if final_chunks
+            else None
+        )
+        citation_coverage_ratio = (
+            round(len(set(cited_chunk_ids)) / len(unique_selected_chunk_ids), 4)
+            if unique_selected_chunk_ids
+            else None
+        )
+        primary_shadow_mix = {
+            "primary": sum(1 for chunk in final_chunks if str(chunk.index_role or "").strip().lower() == "primary"),
+            "shadow": sum(1 for chunk in final_chunks if str(chunk.index_role or "").strip().lower() == "shadow"),
+        }
+        return RagQueryTrace(
+            query_type=query_type,
+            retrieval_strategy="agentic_multi_tool_v1",
+            vector_candidates_count=total_vector_candidates,
+            bm25_candidates_count=total_bm25_candidates,
+            reranked_candidates_count=int(final_rerank_info.get("post_rerank_count") or 0),
+            retrieved_chunk_ids=[chunk.chunk_id for chunk in retrieved_chunks if chunk.chunk_id],
+            selected_chunk_ids=selected_chunk_ids,
+            vector_retrieval_latency_ms=round(vector_latency_ms, 2),
+            bm25_retrieval_latency_ms=round(bm25_latency_ms + keyword_fallback_latency_ms, 2),
+            retrieval_latency_ms=round(vector_latency_ms + bm25_latency_ms + keyword_fallback_latency_ms, 2),
+            rerank_latency_ms=round(rerank_latency_ms, 2),
+            generation_latency_ms=round(generation_latency_ms, 2),
+            total_latency_ms=round((time.perf_counter() - total_started_at) * 1000, 2),
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            embedding_tokens=_estimate_embedding_tokens(message),
+            embedding_provider=config["embedding_provider"],
+            embedding_model=config["embedding_model"],
+            embedding_dimensions=embedding_dimensions,
+            embedding_request_meta=list(_drain_embedding_request_meta(provider)),
+            model_name=model_name,
+            answer_length=len(answer.answer.strip()) if answer.answer else 0,
+            citation_count=len(cited_chunk_ids),
+            cited_chunk_ids=cited_chunk_ids,
+            needs_human=needs_human,
+            handoff_reason=handoff_reason,
+            confidence_score=answer.confidence,
+            primary_source_type=_dominant_value(final_chunks, "source_type"),
+            primary_chunk_strategy=_dominant_value(final_chunks, "chunk_strategy"),
+            reranker_provider=str(config.get("rerank_provider") or "").strip() or None,
+            reranker_model=str(config.get("rerank_model") or "").strip() or None,
+            generation_mode=generation_mode,
+            structured_retry_used=structured_retry_used,
+            extractive_fallback_used=extractive_fallback_used,
+            selected_doc_count=len(_unique_doc_ids(final_chunks)),
+            top1_similarity_score=top1_similarity_score,
+            avg_selected_similarity_score=avg_selected_similarity_score,
+            citation_coverage_ratio=citation_coverage_ratio,
+            retrieval_candidates=_candidate_rows(
+                retrieved_chunks,
+                reranked_chunks,
+                selected_chunk_ids=unique_selected_chunk_ids,
+            ),
+            selected_contexts=_selected_contexts(final_chunks),
+            metadata_hints=final_rerank_info.get("hints") if isinstance(final_rerank_info.get("hints"), dict) else {},
+            metadata_filter_applied=bool(final_rerank_info.get("applied_filter")),
+            metadata_filter_type=(
+                (str(final_rerank_info.get("filter_type")).strip() or None)
+                if final_rerank_info.get("filter_type") is not None
+                else None
+            ),
+            intent_latency_ms=query_understanding.intent_latency_ms if query_understanding is not None else 0.0,
+            rewrite_latency_ms=query_understanding.rewrite_latency_ms if query_understanding is not None else 0.0,
+            query_understanding_enabled=(effective_query_understanding or query_understanding) is not None,
+            query_understanding_version=query_understanding.query_understanding_version if query_understanding is not None else None,
+            query_profile=query_meta["query_profile"] or None,
+            glossary_version=query_understanding.glossary_version if query_understanding is not None else None,
+            self_query_version=query_understanding.self_query_version if query_understanding is not None else None,
+            fallback_mode=query_meta["fallback_mode"] or None,
+            glossary_hit_terms=list(query_meta["glossary_hit_terms"]),
+            applied_hard_filters=dict(query_meta["applied_hard_filters"]),
+            applied_soft_signals=dict(query_meta["applied_soft_signals"]),
+            rewritten_queries=list(effective_rewrites),
+            decomposition_subqueries=list(effective_decomposition_subqueries),
+            agent_enabled=True,
+            agent_plan_version=AGENT_PLAN_VERSION,
+            query_class=plan.query_class,
+            agent_iterations=list(agent_iterations),
+            agent_recovery_action=recovery_action,
+            ticket_context_used=bool(ticket_context),
+            primary_shadow_mix=primary_shadow_mix,
+        )
+
+    if not final_chunks or final_judge is None or final_judge.decision == "escalate":
+        answer = RagAnswer(
+            answer=INSUFFICIENT_EVIDENCE_REPLY,
+            confidence=0.55,
+            sources=[],
+            citations=[],
+        )
+        handoff_reason = final_judge.reason if final_judge is not None else "insufficient_evidence"
+        return RagQueryResult(
+            answer=answer,
+            trace=_trace_for(
+                answer,
+                needs_human=True,
+                handoff_reason=handoff_reason,
+                generation_mode="insufficient_evidence",
+                extractive_fallback_used=False,
+            ),
+        )
+
+    allowed_chunk_ids = {chunk.chunk_id for chunk in final_chunks if chunk.chunk_id}
+    grounded_overlap = _has_grounded_keyword_overlap(message, final_chunks)
+    payload: dict[str, Any] | None = None
+    generation_started_at = time.perf_counter()
+    payload, prompt_tokens, completion_tokens, model_name = _invoke_llm_payload_with_trace(
+        message,
+        final_chunks,
+        config,
+        strict_retry=False,
+    )
+    retry_required = (
+        payload is None
+        or not _is_valid_response(payload, allowed_chunk_ids)
+        or (payload.get("insufficient_evidence") is True and grounded_overlap)
+    )
+    if retry_required:
+        structured_retry_used = True
+        retry_payload, retry_prompt_tokens, retry_completion_tokens, retry_model_name = _invoke_llm_payload_with_trace(
+            message,
+            final_chunks,
+            config,
+            strict_retry=True,
+        )
+        prompt_tokens += retry_prompt_tokens
+        completion_tokens += retry_completion_tokens
+        model_name = retry_model_name or model_name
+        payload = retry_payload
+    generation_latency_ms = (time.perf_counter() - generation_started_at) * 1000
+
+    if payload is not None and _is_valid_response(payload, allowed_chunk_ids):
+        if payload["insufficient_evidence"] is True:
+            if grounded_overlap:
+                generation_mode = "extractive_fallback"
+                extractive_fallback_used = True
+                answer = _build_extractive_rag_answer(final_chunks)
+                return RagQueryResult(
+                    answer=answer,
+                    trace=_trace_for(
+                        answer,
+                        needs_human=False,
+                        handoff_reason=None,
+                        generation_mode=generation_mode,
+                        extractive_fallback_used=extractive_fallback_used,
+                    ),
+                )
+            answer = RagAnswer(
+                answer=INSUFFICIENT_EVIDENCE_REPLY,
+                confidence=0.55,
+                sources=[],
+                citations=[],
+            )
+            return RagQueryResult(
+                answer=answer,
+                trace=_trace_for(
+                    answer,
+                    needs_human=True,
+                    handoff_reason="insufficient_evidence",
+                    generation_mode="insufficient_evidence",
+                    extractive_fallback_used=False,
+                ),
+            )
+        citations = [str(chunk_id) for chunk_id in payload["citations"]]
+        citation_records = _citation_records_from_ids(citations, final_chunks)
+        sources = [
+            record.get("source_url") or f"rag:{record['chunk_id']}"
+            for record in citation_records
+        ]
+        answer = RagAnswer(
+            answer=_build_answer_text(str(payload["answer"]), payload.get("key_steps", [])),
+            confidence=_confidence_from_chunks(final_chunks),
+            sources=sources,
+            citations=citation_records,
+        )
+        return RagQueryResult(
+            answer=answer,
+            trace=_trace_for(
+                answer,
+                needs_human=False,
+                handoff_reason=None,
+                generation_mode="structured_answer",
+                extractive_fallback_used=False,
+            ),
+        )
+
+    generation_mode = "extractive_fallback"
+    extractive_fallback_used = True
+    answer = _build_extractive_rag_answer(final_chunks)
+    return RagQueryResult(
+        answer=answer,
+        trace=_trace_for(
+            answer,
+            needs_human=False,
+            handoff_reason=None,
+            generation_mode=generation_mode,
+            extractive_fallback_used=extractive_fallback_used,
+        ),
+    )
+
+
+def run_rag_query(
+    message: str,
+    top_k: int | None = None,
+    ticket_context: list[dict[str, str]] | None = None,
+    ticket_id: str | None = None,
+    customer_id: str | None = None,
+) -> RagQueryResult | None:
+    if not _feature_flag_enabled("RAG_AGENT_ENABLED", True):
+        return _run_rag_query_legacy(message, top_k=top_k)
+    try:
+        return _run_rag_query_agentic(
+            message,
+            top_k=top_k,
+            ticket_context=ticket_context,
+            ticket_id=ticket_id,
+            customer_id=customer_id,
+        )
+    except Exception as exc:
+        logger.warning("Agentic RAG failed, falling back to legacy flow: %s", exc)
+        return _run_rag_query_legacy(message, top_k=top_k)
 
 
 def answer_with_rag(message: str, top_k: int | None = None) -> RagAnswer | None:

@@ -744,6 +744,7 @@ def _build_rag_answer_detail(
     *,
     ticket_id: str | None = None,
     customer_id: str | None = None,
+    ticket_context: list[dict[str, str]] | None = None,
 ) -> RagTicketAnswerDetail:
     request_id = f"rag-{uuid4().hex[:12]}"
     try:
@@ -752,6 +753,7 @@ def _build_rag_answer_detail(
             request_id=request_id,
             ticket_id=ticket_id,
             customer_id=customer_id,
+            ticket_context=ticket_context,
             insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
         )
     except RagServiceError as exc:
@@ -786,11 +788,13 @@ def _build_rag_answer(
     *,
     ticket_id: str | None = None,
     customer_id: str | None = None,
+    ticket_context: list[dict[str, str]] | None = None,
 ) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
     return _build_rag_answer_detail(
         message,
         ticket_id=ticket_id,
         customer_id=customer_id,
+        ticket_context=ticket_context,
     ).as_answer_tuple()
 
 
@@ -813,6 +817,7 @@ def resolve_support_message(
             message,
             ticket_id=ticket_id,
             customer_id=customer_id,
+            ticket_context=ticket_context,
         )
         return SupportResolution(
             answer=rag_answer.answer,
@@ -839,6 +844,7 @@ def resolve_support_message(
             query,
             ticket_id=ticket_id,
             customer_id=customer_id,
+            ticket_context=ticket_context,
         ),
         decision=active_decision,
     )
