@@ -1482,3 +1482,34 @@ For each new entry, record:
   - `curl -sS http://localhost:8080/health`
   - `curl -sS -X POST http://localhost:8080/api/tickets/query -H 'Content-Type: application/json' -d '{"customer_id":"model-priority-web-smoke","message":"Who is Agora'\''s CEO?"}'`
   - `curl -sS -X POST http://localhost:8080/api/tickets/query -H 'Content-Type: application/json' -d '{"customer_id":"model-priority-rag-smoke","message":"How do I join a channel?"}'`
+
+## 2026-04-02 - Hybrid query expansion and retrieval-plan downpush for technical RAG
+
+- Summary: Reworked the pre-RAG query-understanding stage into a hybrid query-expansion layer with structured glossary and troubleshooting lexicon snapshots, LLM self-query/rewrite/decomposition planning, conditional PRF second-pass expansion, Redis-backed query-expansion caching, and hard-filter provenance so only rule-backed filters are pushed into the first retrieval pass.
+- Reason: The earlier query-understanding stage mainly produced heuristic variants after the fact, which limited recall for ambiguous support questions and left high-confidence metadata filters to be applied mostly in rerank. This change improves first-pass candidate quality and keeps the existing answer and sufficiency safety gates unchanged.
+- Affected files or config:
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `backend/rag_api.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/services/query_expansion_cache.py`
+  - `backend/services/query_understanding.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_query_understanding.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_qa.py`
+  - `dictionary/agora_glossary_en.json`
+  - `dictionary/troubleshooting_lexicon_en.json`
+  - `docs/feature_list.md`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No vector reset, table migration, or chunk backfill.
+  - Runtime retrieval planning now consumes structured dictionary snapshots in addition to the existing markdown source file.
+  - Query-understanding metadata recorded in `support_rag_query_runs.query_understanding_meta` now includes dictionary hits, rule/LLM/PRF expansions, hard-filter provenance, PRF usage, cache-hit state, and first/second-pass candidate counts.
+  - Benchmark strategy snapshots now expose query-expansion enablement, model, and PRF flags so review data can distinguish retrieval-planning regressions.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_profiles.py backend/tests/test_query_understanding.py backend/tests/test_rag_qa.py backend/tests/test_rag_benchmark_runner.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor
 import json
 import logging
 import os
@@ -17,9 +18,15 @@ from backend.services.embedding_provider import (
     get_embedding_provider,
 )
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
-from backend.services.llm_profiles import ModelProfile, RAG_ANSWER_SCENARIO, resolve_model_profile
+from backend.services.llm_profiles import ModelProfile, QUERY_EXPANSION_SCENARIO, RAG_ANSWER_SCENARIO, resolve_model_profile
 from backend.services.prompts.rag_answer import build_rag_answer_system_prompt, build_rag_answer_user_prompt
-from backend.services.query_understanding import QueryUnderstandingResult, RetrievalPlan, understand_rag_query
+from backend.services.query_understanding import (
+    QueryUnderstandingResult,
+    RetrievalPlan,
+    build_prf_expansions,
+    downpush_hard_filters,
+    understand_rag_query,
+)
 from backend.services.rag_tokenizer import is_bm25_query_stopword, tokenize_bm25_query
 
 logger = logging.getLogger(__name__)
@@ -159,6 +166,17 @@ class RagQueryTrace:
     applied_soft_signals: dict[str, list[str]] = field(default_factory=dict)
     rewritten_queries: list[str] = field(default_factory=list)
     decomposition_subqueries: list[str] = field(default_factory=list)
+    dictionary_hits: list[dict[str, Any]] = field(default_factory=list)
+    rule_expansions: list[str] = field(default_factory=list)
+    llm_expansions: list[str] = field(default_factory=list)
+    prf_expansions: list[str] = field(default_factory=list)
+    hard_filter_sources: dict[str, str] = field(default_factory=dict)
+    cache_hit: bool = False
+    prf_used: bool = False
+    query_expansion_enabled: bool = False
+    query_expansion_model: str | None = None
+    first_pass_candidate_count: int = 0
+    second_pass_candidate_count: int = 0
 
 
 @dataclass
@@ -246,9 +264,13 @@ def _build_query_variants(
     semantic_query = understanding.semantic_query.strip()
     if semantic_query:
         variants.append(("semantic", semantic_query))
+    for query in understanding.retrieval_plan.rule_expansions:
+        variants.append(("rule", str(query).strip()))
     if rewrite_enabled:
-        for query in understanding.rewritten_queries:
+        for query in understanding.retrieval_plan.llm_expansions or understanding.rewritten_queries:
             variants.append(("rewrite", str(query).strip()))
+        for query in understanding.retrieval_plan.prf_expansions:
+            variants.append(("prf", str(query).strip()))
     if decomposition_enabled:
         for query in understanding.decomposition_subqueries:
             variants.append(("decomposition", str(query).strip()))
@@ -297,6 +319,13 @@ def _query_understanding_meta(
             "applied_hard_filters": dict(payload.get("applied_hard_filters") or {}),
             "applied_soft_signals": dict(payload.get("applied_soft_signals") or {}),
             "fallback_mode": str(payload.get("fallback_mode") or fallback_mode),
+            "dictionary_hits": list(payload.get("dictionary_hits") or []),
+            "rule_expansions": list(payload.get("rule_expansions") or []),
+            "llm_expansions": list(payload.get("llm_expansions") or []),
+            "prf_expansions": list(payload.get("prf_expansions") or []),
+            "hard_filter_sources": dict(payload.get("hard_filter_sources") or {}),
+            "cache_hit": bool(payload.get("cache_hit")),
+            "prf_used": bool(payload.get("prf_used")),
         }
     if understanding is None:
         return {
@@ -305,6 +334,13 @@ def _query_understanding_meta(
             "applied_hard_filters": {},
             "applied_soft_signals": {},
             "fallback_mode": "disabled",
+            "dictionary_hits": [],
+            "rule_expansions": [],
+            "llm_expansions": [],
+            "prf_expansions": [],
+            "hard_filter_sources": {},
+            "cache_hit": False,
+            "prf_used": False,
         }
     return {
         "query_profile": understanding.query_profile,
@@ -312,6 +348,13 @@ def _query_understanding_meta(
         "applied_hard_filters": dict(understanding.retrieval_plan.hard_filters),
         "applied_soft_signals": dict(understanding.retrieval_plan.soft_signals),
         "fallback_mode": understanding.fallback_mode,
+        "dictionary_hits": list(understanding.dictionary_hits),
+        "rule_expansions": list(understanding.retrieval_plan.rule_expansions),
+        "llm_expansions": list(understanding.retrieval_plan.llm_expansions),
+        "prf_expansions": list(understanding.retrieval_plan.prf_expansions),
+        "hard_filter_sources": dict(understanding.retrieval_plan.hard_filter_sources),
+        "cache_hit": bool(understanding.cache_hit),
+        "prf_used": bool(understanding.retrieval_plan.prf_used),
     }
 
 
@@ -333,6 +376,28 @@ def _import_psycopg() -> Any:
 
 def _vector_literal(values: list[float]) -> str:
     return "[" + ",".join(f"{float(v):.10f}" for v in values) + "]"
+
+
+def _config_retrieval_plan(config: dict[str, Any]) -> RetrievalPlan | None:
+    plan = config.get("_retrieval_plan")
+    return plan if isinstance(plan, RetrievalPlan) else None
+
+
+def _metadata_filter_clauses(psycopg_sql: Any, filters: dict[str, str], *, metadata_ref: str) -> tuple[Any, list[Any]]:
+    sql = psycopg_sql
+    clauses: list[Any] = []
+    params: list[Any] = []
+    for key, value in filters.items():
+        clauses.append(
+            sql.SQL("LOWER(COALESCE({} ->> {}, '')) = %s").format(
+                sql.SQL(metadata_ref),
+                sql.Literal(key),
+            )
+        )
+        params.append(str(value or "").strip().lower())
+    if not clauses:
+        return sql.SQL(""), []
+    return sql.SQL(" AND ") + sql.SQL(" AND ").join(clauses), params
 
 
 def _split_table_name(raw_value: str, default_schema: str = "supportportal") -> tuple[str, str]:
@@ -777,6 +842,13 @@ def _metadata_rerank(
             "applied_hard_filters": applied_hard_filters,
             "applied_soft_signals": plan_soft_signals,
             "fallback_mode": query_understanding.fallback_mode if query_understanding is not None else "disabled",
+            "dictionary_hits": list(query_understanding.dictionary_hits) if query_understanding is not None else [],
+            "rule_expansions": list(retrieval_plan.rule_expansions) if retrieval_plan is not None else [],
+            "llm_expansions": list(retrieval_plan.llm_expansions) if retrieval_plan is not None else [],
+            "prf_expansions": list(retrieval_plan.prf_expansions) if retrieval_plan is not None else [],
+            "hard_filter_sources": dict(retrieval_plan.hard_filter_sources) if retrieval_plan is not None else {},
+            "cache_hit": bool(retrieval_plan.cache_hit) if retrieval_plan is not None else False,
+            "prf_used": bool(retrieval_plan.prf_used) if retrieval_plan is not None else False,
         },
     }
 
@@ -1010,6 +1082,9 @@ def _select_bm25_query_terms(
 def _retrieve_chunks(message: str, config: dict[str, Any], *, limit: int | None = None) -> list[RetrievedChunk]:
     psycopg = _import_psycopg()
     sql = psycopg.sql
+    retrieval_plan = _config_retrieval_plan(config)
+    downpush_filters = downpush_hard_filters(retrieval_plan) if retrieval_plan is not None else {}
+    filter_sql, filter_params = _metadata_filter_clauses(sql, downpush_filters, metadata_ref="metadata")
 
     provider = get_embedding_provider()
     query_embedding = provider.embed_query(message)
@@ -1032,14 +1107,15 @@ def _retrieve_chunks(message: str, config: dict[str, Any], *, limit: int | None 
             1 - (embedding <=> %s::vector) AS similarity
         FROM {}
         WHERE index_role = 'primary'
+        {}
         ORDER BY embedding <=> %s::vector
         LIMIT %s
         """
-    ).format(_table_identifier(sql, config["table"]))
+    ).format(_table_identifier(sql, config["table"]), filter_sql)
 
     with psycopg.connect(config["dsn"]) as conn:
         with conn.cursor() as cur:
-            cur.execute(query, (vector_param, vector_param, int(limit or config["top_k"])))
+            cur.execute(query, (vector_param, *filter_params, vector_param, int(limit or config["top_k"])))
             rows = cur.fetchall()
 
     chunks: list[RetrievedChunk] = []
@@ -1072,6 +1148,9 @@ def _retrieve_bm25_chunks(message: str, config: dict[str, Any], *, limit: int | 
 
     psycopg = _import_psycopg()
     sql = psycopg.sql
+    retrieval_plan = _config_retrieval_plan(config)
+    downpush_filters = downpush_hard_filters(retrieval_plan) if retrieval_plan is not None else {}
+    filter_sql, filter_params = _metadata_filter_clauses(sql, downpush_filters, metadata_ref="v.metadata")
     app_schema = str(config.get("app_schema") or "supportportal").strip() or "supportportal"
     query = sql.SQL(
         """
@@ -1169,6 +1248,7 @@ def _retrieve_bm25_chunks(message: str, config: dict[str, Any], *, limit: int | 
         JOIN {} AS v
           ON v.id = scored.chunk_id
         WHERE v.index_role = 'primary'
+          {}
         ORDER BY scored.bm25_score DESC, v.updated_at DESC
         LIMIT %s
         """
@@ -1178,6 +1258,7 @@ def _retrieve_bm25_chunks(message: str, config: dict[str, Any], *, limit: int | 
         _app_table_identifier(sql, app_schema, "support_knowledge_bm25_postings"),
         _app_table_identifier(sql, app_schema, "support_knowledge_bm25_docs"),
         _table_identifier(sql, config["table"]),
+        filter_sql,
     )
 
     with psycopg.connect(config["dsn"]) as conn:
@@ -1225,6 +1306,7 @@ def _retrieve_bm25_chunks(message: str, config: dict[str, Any], *, limit: int | 
                     float(config["bm25_k1"]),
                     float(config["bm25_b"]),
                     float(config["bm25_b"]),
+                    *filter_params,
                     int(limit or config["bm25_candidate_k"]),
                 ),
             )
@@ -1367,6 +1449,9 @@ def _retrieve_keyword_chunks(
 
     psycopg = _import_psycopg()
     sql = psycopg.sql
+    retrieval_plan = _config_retrieval_plan(config)
+    downpush_filters = downpush_hard_filters(retrieval_plan) if retrieval_plan is not None else {}
+    filter_sql, filter_params = _metadata_filter_clauses(sql, downpush_filters, metadata_ref="metadata")
     patterns = [f"%{term}%" for term in terms]
     candidate_limit = max(int(config["top_k"]) * 25, 50)
 
@@ -1393,13 +1478,14 @@ def _retrieve_keyword_chunks(
             OR lower(coalesce(h2, '')) LIKE ANY(%s)
             OR lower(coalesce(h3, '')) LIKE ANY(%s)
             )
+            {}
         LIMIT %s
         """
-    ).format(_table_identifier(sql, config["table"]))
+    ).format(_table_identifier(sql, config["table"]), filter_sql)
 
     with psycopg.connect(config["dsn"]) as conn:
         with conn.cursor() as cur:
-            cur.execute(query, (patterns, patterns, patterns, patterns, candidate_limit))
+            cur.execute(query, (patterns, patterns, patterns, patterns, *filter_params, candidate_limit))
             rows = cur.fetchall()
 
     scored_chunks: list[tuple[int, RetrievedChunk]] = []
@@ -2079,6 +2165,7 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
         return None
 
     provider = get_embedding_provider()
+    original_query = str(message or "").strip()
     vector_chunks: list[RetrievedChunk] = []
     bm25_chunks: list[RetrievedChunk] = []
     keyword_fallback_chunks: list[RetrievedChunk] = []
@@ -2089,12 +2176,19 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
     query_understanding_enabled = _feature_flag_enabled("RAG_QUERY_UNDERSTANDING_ENABLED", True)
     query_rewrite_enabled = _feature_flag_enabled("RAG_QUERY_REWRITE_ENABLED", True)
     query_decomposition_enabled = _feature_flag_enabled("RAG_QUERY_DECOMPOSITION_ENABLED", True)
+    query_expansion_enabled = _feature_flag_enabled("RAG_QUERY_EXPANSION_ENABLED", True)
+    query_prf_enabled = _feature_flag_enabled("RAG_QUERY_PRF_ENABLED", True)
     query_understanding: QueryUnderstandingResult | None = None
     effective_hard_filters: dict[str, str] = {}
     effective_soft_signals: dict[str, list[str]] = {}
+    effective_rule_expansions: list[str] = []
+    effective_llm_expansions: list[str] = []
+    effective_prf_expansions: list[str] = []
     effective_rewrites: list[str] = []
     effective_decomposition_subqueries: list[str] = []
     query_variants: list[tuple[str, str]] = [("original", str(message or "").strip())]
+    first_pass_candidate_count = 0
+    second_pass_candidate_count = 0
     total_started_at = time.perf_counter()
     vector_latency_ms = 0.0
     bm25_latency_ms = 0.0
@@ -2117,25 +2211,151 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
         "post_rerank_count": 0,
         "candidate_reasons": {},
     }
+    query_understanding_executor: ThreadPoolExecutor | None = None
+    query_understanding_future: Future[QueryUnderstandingResult] | None = None
     if query_understanding_enabled:
+        query_understanding_executor = ThreadPoolExecutor(max_workers=1)
+        query_understanding_future = query_understanding_executor.submit(understand_rag_query, message)
+    effective_plan = RetrievalPlan(semantic_query=original_query)
+
+    def _retrieval_config_for(plan: RetrievalPlan) -> dict[str, Any]:
+        variant_config = dict(config)
+        variant_config["_retrieval_plan"] = plan
+        return variant_config
+
+    def _collect_variants(variants: list[tuple[str, str]], plan: RetrievalPlan, *, keyword_limit: int) -> None:
+        nonlocal bm25_chunks
+        nonlocal bm25_latency_ms
+        nonlocal embedding_request_meta
+        nonlocal keyword_fallback_chunks
+        nonlocal keyword_fallback_latency_ms
+        nonlocal vector_chunks
+        nonlocal vector_latency_ms
+        variant_config = _retrieval_config_for(plan)
+        for query_kind, variant_query in variants:
+            try:
+                vector_started_at = time.perf_counter()
+                variant_vector_chunks = _retrieve_chunks(
+                    variant_query,
+                    variant_config,
+                    limit=int(config["vector_candidate_k"]),
+                )
+                vector_latency_ms = round(vector_latency_ms + ((time.perf_counter() - vector_started_at) * 1000), 2)
+                vector_chunks = _merge_variant_chunks(
+                    vector_chunks,
+                    variant_vector_chunks,
+                    source_label="vector",
+                    query_variant=variant_query,
+                    query_kind=query_kind,
+                )
+            except Exception as exc:
+                logger.warning("RAG retrieval failed for %s query: %s", query_kind, exc)
+            finally:
+                embedding_request_meta.extend(_drain_embedding_request_meta(provider))
+
+            try:
+                bm25_started_at = time.perf_counter()
+                variant_bm25_chunks = _retrieve_bm25_chunks(
+                    variant_query,
+                    variant_config,
+                    limit=int(config["bm25_candidate_k"]),
+                )
+                bm25_latency_ms = round(bm25_latency_ms + ((time.perf_counter() - bm25_started_at) * 1000), 2)
+                bm25_chunks = _merge_variant_chunks(
+                    bm25_chunks,
+                    variant_bm25_chunks,
+                    source_label="bm25",
+                    query_variant=variant_query,
+                    query_kind=query_kind,
+                )
+            except Exception as exc:
+                logger.warning("RAG BM25 retrieval failed for %s query: %s", query_kind, exc)
+                try:
+                    keyword_started_at = time.perf_counter()
+                    variant_keyword_chunks = _retrieve_keyword_chunks(
+                        variant_query,
+                        variant_config,
+                        limit=keyword_limit,
+                    )
+                    keyword_fallback_latency_ms = round(
+                        keyword_fallback_latency_ms + ((time.perf_counter() - keyword_started_at) * 1000),
+                        2,
+                    )
+                    keyword_fallback_chunks = _merge_variant_chunks(
+                        keyword_fallback_chunks,
+                        variant_keyword_chunks,
+                        source_label="keyword_fallback",
+                        query_variant=variant_query,
+                        query_kind=query_kind,
+                    )
+                except Exception as keyword_exc:
+                    logger.warning("RAG keyword retrieval failed for %s query: %s", query_kind, keyword_exc)
+
+    def _merge_candidate_sets() -> list[RetrievedChunk]:
+        if vector_chunks and not bm25_chunks and keyword_fallback_chunks:
+            return _merge_chunks(
+                vector_chunks,
+                keyword_fallback_chunks,
+                limit=int(config["fusion_candidate_k"]),
+            )
+        if vector_chunks or bm25_chunks:
+            merged_chunks = _rrf_merge(
+                vector_chunks,
+                bm25_chunks,
+                limit=int(config["fusion_candidate_k"]),
+            )
+            if not merged_chunks:
+                merged_chunks = _merge_chunks(
+                    vector_chunks,
+                    bm25_chunks,
+                    limit=int(config["fusion_candidate_k"]),
+                )
+            return merged_chunks
+        if keyword_fallback_chunks:
+            return _merge_chunks(
+                vector_chunks,
+                keyword_fallback_chunks,
+                limit=int(config["fusion_candidate_k"]),
+            )
+        return []
+
+    _collect_variants([("original", original_query)], effective_plan, keyword_limit=int(config["bm25_candidate_k"]))
+
+    if query_understanding_future is not None:
         try:
-            query_understanding = understand_rag_query(message)
+            query_understanding = query_understanding_future.result()
         except Exception as exc:
             logger.warning("RAG query understanding failed: %s", exc)
+        finally:
+            if query_understanding_executor is not None:
+                query_understanding_executor.shutdown(wait=True)
     if query_understanding is not None:
         effective_hard_filters = dict(query_understanding.retrieval_plan.hard_filters)
         effective_soft_signals = dict(query_understanding.retrieval_plan.soft_signals)
-        effective_rewrites = list(query_understanding.rewritten_queries) if query_rewrite_enabled else []
+        effective_rule_expansions = list(query_understanding.retrieval_plan.rule_expansions) if query_expansion_enabled else []
+        effective_llm_expansions = (
+            list(query_understanding.retrieval_plan.llm_expansions or query_understanding.rewritten_queries)
+            if query_rewrite_enabled
+            else []
+        )
+        effective_rewrites = list(effective_llm_expansions)
         effective_decomposition_subqueries = (
             list(query_understanding.decomposition_subqueries) if query_decomposition_enabled else []
         )
         effective_plan = RetrievalPlan(
-            semantic_query=query_understanding.semantic_query or str(message or "").strip(),
+            semantic_query=query_understanding.semantic_query or original_query,
             hard_filters=dict(effective_hard_filters),
             soft_signals=dict(effective_soft_signals),
             rewritten_queries=list(effective_rewrites),
             decomposition_subqueries=list(effective_decomposition_subqueries),
             fallback_mode=query_understanding.fallback_mode,
+            rule_expansions=list(effective_rule_expansions),
+            llm_expansions=list(effective_llm_expansions),
+            prf_expansions=[],
+            hard_filter_sources=dict(query_understanding.retrieval_plan.hard_filter_sources),
+            soft_signal_sources=dict(query_understanding.retrieval_plan.soft_signal_sources),
+            cache_hit=bool(query_understanding.cache_hit),
+            prf_used=False,
         )
         query_variants = _build_query_variants(
             message,
@@ -2148,75 +2368,18 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
             rewrite_enabled=query_rewrite_enabled,
             decomposition_enabled=query_decomposition_enabled,
         )
-    else:
-        effective_plan = RetrievalPlan(semantic_query=str(message or "").strip())
-
-    for query_kind, variant_query in query_variants:
-        try:
-            vector_started_at = time.perf_counter()
-            variant_vector_chunks = _retrieve_chunks(
-                variant_query,
-                config,
-                limit=int(config["vector_candidate_k"]),
-            )
-            vector_latency_ms = round(vector_latency_ms + ((time.perf_counter() - vector_started_at) * 1000), 2)
-            vector_chunks = _merge_variant_chunks(
-                vector_chunks,
-                variant_vector_chunks,
-                source_label="vector",
-                query_variant=variant_query,
-                query_kind=query_kind,
-            )
-        except Exception as exc:
-            logger.warning("RAG retrieval failed for %s query: %s", query_kind, exc)
-        finally:
-            embedding_request_meta.extend(_drain_embedding_request_meta(provider))
-
-        try:
-            bm25_started_at = time.perf_counter()
-            variant_bm25_chunks = _retrieve_bm25_chunks(
-                variant_query,
-                config,
-                limit=int(config["bm25_candidate_k"]),
-            )
-            bm25_latency_ms = round(bm25_latency_ms + ((time.perf_counter() - bm25_started_at) * 1000), 2)
-            bm25_chunks = _merge_variant_chunks(
-                bm25_chunks,
-                variant_bm25_chunks,
-                source_label="bm25",
-                query_variant=variant_query,
-                query_kind=query_kind,
-            )
-        except Exception as exc:
-            logger.warning("RAG BM25 retrieval failed for %s query: %s", query_kind, exc)
-            try:
-                keyword_started_at = time.perf_counter()
-                variant_keyword_chunks = _retrieve_keyword_chunks(
-                    variant_query,
-                    config,
-                    limit=int(config["bm25_candidate_k"]),
-                )
-                keyword_fallback_latency_ms = round(
-                    keyword_fallback_latency_ms + ((time.perf_counter() - keyword_started_at) * 1000),
-                    2,
-                )
-                keyword_fallback_chunks = _merge_variant_chunks(
-                    keyword_fallback_chunks,
-                    variant_keyword_chunks,
-                    source_label="keyword_fallback",
-                    query_variant=variant_query,
-                    query_kind=query_kind,
-                )
-            except Exception as keyword_exc:
-                logger.warning("RAG keyword retrieval failed for %s query: %s", query_kind, keyword_exc)
+        supplemental_variants = [(kind, query) for kind, query in query_variants if kind != "original"]
+        if supplemental_variants:
+            _collect_variants(supplemental_variants, effective_plan, keyword_limit=int(config["bm25_candidate_k"]))
 
     if not vector_chunks and not bm25_chunks:
+        keyword_only_config = _retrieval_config_for(effective_plan)
         for query_kind, variant_query in query_variants:
             try:
                 keyword_started_at = time.perf_counter()
                 variant_keyword_chunks = _retrieve_keyword_chunks(
                     variant_query,
-                    config,
+                    keyword_only_config,
                     limit=int(config["bm25_candidate_k"]),
                 )
                 keyword_fallback_latency_ms = round(
@@ -2240,36 +2403,44 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
             return "keyword_fallback"
         return "hybrid_rrf_bm25"
 
-    if vector_chunks and not bm25_chunks and keyword_fallback_chunks:
-        chunks = _merge_chunks(
-            vector_chunks,
-            keyword_fallback_chunks,
-            limit=int(config["fusion_candidate_k"]),
+    chunks = _merge_candidate_sets()
+    first_pass_candidate_count = len(chunks)
+
+    weak_first_pass = (not chunks) or (not _has_grounded_keyword_overlap(message, chunks)) or (
+        len(chunks) < min(2, int(config["top_k"]))
+    )
+    if query_prf_enabled and query_understanding is not None and weak_first_pass:
+        prf_expansion_terms = build_prf_expansions(
+            message,
+            chunks,
+            canonical_terms=query_understanding.canonical_terms,
+            existing_expansions=[*effective_rule_expansions, *effective_llm_expansions],
         )
-    elif vector_chunks or bm25_chunks:
-        chunks = _rrf_merge(
-            vector_chunks,
-            bm25_chunks,
-            limit=int(config["fusion_candidate_k"]),
-        )
-        if not chunks:
-            chunks = _merge_chunks(
-                vector_chunks,
-                bm25_chunks,
-                limit=int(config["fusion_candidate_k"]),
+        if prf_expansion_terms:
+            effective_prf_expansions = list(prf_expansion_terms)
+            effective_plan = replace(
+                effective_plan,
+                prf_expansions=list(effective_prf_expansions),
+                prf_used=True,
             )
-    elif keyword_fallback_chunks:
-        chunks = _merge_chunks(
-            vector_chunks,
-            keyword_fallback_chunks,
-            limit=int(config["fusion_candidate_k"]),
-        )
+            _collect_variants(
+                [("prf", query) for query in effective_prf_expansions],
+                effective_plan,
+                keyword_limit=int(config["bm25_candidate_k"]),
+            )
+            chunks = _merge_candidate_sets()
+    second_pass_candidate_count = len(chunks)
 
     if not chunks:
+        keyword_only_config = _retrieval_config_for(effective_plan)
         for query_kind, variant_query in query_variants:
             try:
                 keyword_started_at = time.perf_counter()
-                variant_keyword_chunks = _retrieve_keyword_chunks(variant_query, config, limit=int(config["top_k"]))
+                variant_keyword_chunks = _retrieve_keyword_chunks(
+                    variant_query,
+                    keyword_only_config,
+                    limit=int(config["top_k"]),
+                )
                 keyword_fallback_latency_ms = round(
                     keyword_fallback_latency_ms + ((time.perf_counter() - keyword_started_at) * 1000),
                     2,
@@ -2345,6 +2516,17 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
                 glossary_hit_terms=list(query_meta["glossary_hit_terms"]),
                 applied_hard_filters=dict(query_meta["applied_hard_filters"]),
                 applied_soft_signals=dict(query_meta["applied_soft_signals"]),
+                dictionary_hits=list(query_meta["dictionary_hits"]),
+                rule_expansions=list(query_meta["rule_expansions"]),
+                llm_expansions=list(query_meta["llm_expansions"]),
+                prf_expansions=list(query_meta["prf_expansions"]),
+                hard_filter_sources=dict(query_meta["hard_filter_sources"]),
+                cache_hit=bool(query_meta["cache_hit"]),
+                prf_used=bool(query_meta["prf_used"]),
+                query_expansion_enabled=query_expansion_enabled,
+                query_expansion_model=resolve_model_profile(QUERY_EXPANSION_SCENARIO).model if query_expansion_enabled else None,
+                first_pass_candidate_count=first_pass_candidate_count,
+                second_pass_candidate_count=second_pass_candidate_count,
                 rewritten_queries=list(effective_rewrites),
                 decomposition_subqueries=list(effective_decomposition_subqueries),
             )
@@ -2492,6 +2674,17 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
             glossary_hit_terms=list(query_meta["glossary_hit_terms"]),
             applied_hard_filters=dict(query_meta["applied_hard_filters"]),
             applied_soft_signals=dict(query_meta["applied_soft_signals"]),
+            dictionary_hits=list(query_meta["dictionary_hits"]),
+            rule_expansions=list(query_meta["rule_expansions"]),
+            llm_expansions=list(query_meta["llm_expansions"]),
+            prf_expansions=list(query_meta["prf_expansions"]),
+            hard_filter_sources=dict(query_meta["hard_filter_sources"]),
+            cache_hit=bool(query_meta["cache_hit"]),
+            prf_used=bool(query_meta["prf_used"]),
+            query_expansion_enabled=query_expansion_enabled,
+            query_expansion_model=resolve_model_profile(QUERY_EXPANSION_SCENARIO).model if query_expansion_enabled else None,
+            first_pass_candidate_count=first_pass_candidate_count,
+            second_pass_candidate_count=second_pass_candidate_count,
             rewritten_queries=list(effective_rewrites),
             decomposition_subqueries=list(effective_decomposition_subqueries),
         )
