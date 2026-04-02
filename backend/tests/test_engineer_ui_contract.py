@@ -956,8 +956,11 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!reviseHtml.includes("Tell Engineer AI what to revise before replying to the customer")) {{
                   throw new Error("Revise mode should update the composer placeholder.");
                 }}
-                if (!reviseHtml.includes(">Send Revision Note<")) {{
-                  throw new Error("Revise mode should relabel the composer submit action.");
+                if (!reviseHtml.includes('aria-label="Send Revision Note"')) {{
+                  throw new Error("Revise mode should preserve the submit action label for the icon button.");
+                }}
+                if (!reviseHtml.includes(">arrow_upward<")) {{
+                  throw new Error("Revise mode should use the icon-based submit button.");
                 }}
 
                 let capturedUrl = null;
