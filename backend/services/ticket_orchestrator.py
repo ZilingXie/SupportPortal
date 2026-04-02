@@ -69,6 +69,7 @@ class TicketExecutionResult:
     confidence: float
     sources: list[str]
     citations: list[dict[str, str]]
+    evidence_summary: dict[str, Any] | None
     needs_investigating: bool
     next_status: str
     answer_route: str
@@ -94,6 +95,41 @@ class TicketExecutionResult:
             "search_used": bool(self.search_used),
             "matched_signals": list(self.matched_signals),
         }
+
+
+def build_execution_route_payload(execution: Any) -> dict[str, Any]:
+    route_payload = getattr(execution, "route_payload", None)
+    if callable(route_payload):
+        candidate = route_payload()
+        if isinstance(candidate, dict):
+            return dict(candidate)
+
+    payload: dict[str, Any] = {}
+    for field_name in (
+        "answer_route",
+        "scope_label",
+        "route_family",
+        "execution_action",
+        "tooling_profile",
+        "route_reason",
+    ):
+        value = getattr(execution, field_name, None)
+        normalized = str(value or "").strip()
+        if normalized:
+            payload[field_name] = normalized
+    route_confidence = getattr(execution, "route_confidence", None)
+    if route_confidence is not None:
+        try:
+            payload["route_confidence"] = round(float(route_confidence), 4)
+        except (TypeError, ValueError):
+            pass
+    search_used = getattr(execution, "search_used", None)
+    if search_used is not None:
+        payload["search_used"] = bool(search_used)
+    matched_signals = getattr(execution, "matched_signals", None)
+    if isinstance(matched_signals, list):
+        payload["matched_signals"] = list(matched_signals)
+    return payload
 
 
 def analyze_ticket_message(
@@ -297,6 +333,7 @@ def orchestrate_ticket_execution(
         confidence=skill_result.confidence,
         sources=list(skill_result.sources),
         citations=[dict(item) for item in skill_result.citations],
+        evidence_summary=dict(skill_result.evidence_summary or {}) or None,
         needs_investigating=needs_investigating,
         next_status=normalize_ticket_status(next_status),
         answer_route=skill_result.answer_route,

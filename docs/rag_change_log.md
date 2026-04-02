@@ -1437,6 +1437,40 @@ For each new entry, record:
   - `podman exec deployment_api_1 python -c "import json, urllib.request; payload=json.dumps({'customer_id':'prompt-smoke-web-4','message':'Who is Agora\\'s CEO?'}).encode(); req=urllib.request.Request('http://127.0.0.1:8000/api/tickets/query', data=payload, headers={'Content-Type':'application/json'}, method='POST'); print(urllib.request.urlopen(req, timeout=30).read().decode())"`
   - `podman exec deployment_api_1 python -c "import json, urllib.request; payload=json.dumps({'customer_id':'prompt-smoke-rag-4','message':'How do I join a channel?'}).encode(); req=urllib.request.Request('http://127.0.0.1:8000/api/tickets/query', data=payload, headers={'Content-Type':'application/json'}, method='POST'); print(urllib.request.urlopen(req, timeout=30).read().decode())"`
 
+## 2026-04-02 - Persist engineer handoff packet and engineer agent state on tickets
+
+- Summary: Upgraded the automatic `investigating` handoff path so client AI now persists a ticket-level `engineer_handoff_packet` and engineer AI maintains a ticket-level `engineer_agent_state`, while continuing to use the existing `active_investigation` thread for internal chat, draft reply, and confirmation state.
+- Reason: The engineer-side investigation flow needed durable context about what client AI already discovered from RAG, why the answer was still insufficient, and what the engineer AI is currently trying to achieve. Persisting both the structured handoff and the agent’s working state makes the current engineer workflow more coherent and prepares the ticket dashboard to display this investigation context later.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `backend/repositories/ticket_repository.py`
+  - `backend/services/engineer_agent.py`
+  - `backend/services/investigation_flow.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/sql/ticket_storage.sql`
+  - `backend/tests/test_repository_configuration.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_worker.py`
+  - `backend/tests/test_engineer_ui_contract.py`
+  - `ui/engineer-ui/app.js`
+  - `docs/ticket_db_design.md`
+  - `docs/ticket_db_architecture.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No vector tables, embeddings, chunking, or retrieval indices were changed.
+  - Automatic RAG-to-engineer escalation now persists the route summary, candidate answer, sources, citations, evidence summary, and unresolved reason into `support_tickets.engineer_handoff_packet`.
+  - Engineer AI now persists its latest issue understanding, knowledge summary, missing information, goal, and next request into `support_tickets.engineer_agent_state`.
+  - Existing databases are migrated additively with `ADD COLUMN IF NOT EXISTS`; no destructive reset is required for this change.
+  - Investigation events remain lightweight and carry only derived agent summary fields, not the full handoff packet.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/repositories/ticket_repository.py backend/services/investigation_flow.py backend/services/engineer_agent.py backend/main.py backend/worker.py backend/services/ticket_orchestrator.py`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_repository_configuration.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py backend/tests/test_engineer_ui_contract.py`
+  - `node --check ui/engineer-ui/app.js`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+
 ## 2026-04-02 - Centralize model selection for RAG answer and sufficiency with shared LLM profiles
 
 - Summary: Added shared scene-aware LLM profile/factory helpers, migrated the RAG answer path to OpenAI Responses with `gpt-5.4` and `reasoning=high`, upgraded the post-RAG sufficiency judge to `gpt-5.4`, and aligned benchmark/evaluation defaults to provider-qualified judge models.
@@ -1513,3 +1547,39 @@ For each new entry, record:
 - Verification:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_profiles.py backend/tests/test_query_understanding.py backend/tests/test_rag_qa.py backend/tests/test_rag_benchmark_runner.py -q`
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
+
+## 2026-04-02 - Refactor RAG evaluation into unified retrieval, generation, and performance metrics
+
+- Summary: Reworked the offline and dashboard evaluation flow around standard IR retrieval metrics, rubric-based generation metrics, and first-class benchmark/live performance metrics; added graded relevance support, benchmark session gate evaluation, and a visible dashboard performance page.
+- Reason: The previous evaluation flow mixed operational cards and benchmark metrics, hid `precision/recall/NDCG` behind non-standard names, treated `NDCG` as binary relevance, and did not align offline benchmark results with live-query performance signals. This refactor standardizes the metric language and makes regression gates auditable.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/rag_api.py`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/services/rag_benchmark.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/services/rag_benchmark_session.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_rag_benchmark.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_benchmark_session.py`
+  - `backend/tests/test_rag_dashboard_contract.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `backend/tests/test_run_rag_benchmark_cli.py`
+  - `backend/tests/test_run_rag_benchmark_session_cli.py`
+  - `scripts/run_rag_benchmark.py`
+  - `scripts/run_rag_benchmark_session.py`
+  - `ui/dashboard-ui/rag/app.js`
+  - `ui/dashboard-ui/rag/index.html`
+  - `ui/dashboard-ui/rag/styles.css`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Existing benchmark case payloads remain backward compatible; binary relevance inputs still work and default to graded relevance fallbacks.
+  - Benchmark case parsing now accepts `expected_document_relevance`, evidence relevance grades, evidence roles, and `anchor_set_id`.
+  - `support_rag_eval_results` startup schema management now provisions additional retrieval, generation, and performance metric columns needed by the new dashboard and session gate flow.
+  - No vector reset, ingestion backfill, embedding change, or retrieval algorithm change was introduced by this refactor.
+- Verification:
+  - `python3 -m unittest backend.tests.test_rag_benchmark backend.tests.test_rag_benchmark_runner backend.tests.test_rag_benchmark_session backend.tests.test_rag_scorecard_repository backend.tests.test_rag_dashboard_contract backend.tests.test_dashboard_ui_contract backend.tests.test_run_rag_benchmark_cli backend.tests.test_run_rag_benchmark_session_cli`
+  - `python3 -m py_compile backend/main.py backend/rag_api.py backend/repositories/knowledge_repository.py backend/services/rag_benchmark.py backend/services/rag_benchmark_runner.py backend/services/rag_benchmark_session.py scripts/run_rag_benchmark.py scripts/run_rag_benchmark_session.py`
+  - `node --check ui/dashboard-ui/rag/app.js`
+  - `git diff --check`

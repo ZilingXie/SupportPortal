@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import statistics
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -16,9 +17,32 @@ DEFAULT_JUDGE_MODELS = [
 LIVE_REVIEW_BASELINE_RATE = 0.05
 LOW_CONFIDENCE_THRESHOLD = 0.65
 BENCHMARK_QUALITY_THRESHOLD = 0.70
+_RELEVANCE_GRADE_SCORES = {
+    "irrelevant": 0,
+    "low": 1,
+    "medium": 2,
+    "high": 3,
+}
+_VALID_EVIDENCE_ROLES = {
+    "supports_answer",
+    "supports_denial",
+    "background",
+    "noise",
+}
+_RUBRIC_REASON_FIELDS = [
+    "context_relevance_reason",
+    "answer_relevance_reason",
+    "faithfulness_reason",
+    "citation_reason",
+    "completeness_reason",
+]
 
 NUMERIC_JUDGE_FIELDS = [
     "document_relevance_score",
+    "context_relevance_score",
+    "answer_relevance_score",
+    "cr_score",
+    "ar_score",
     "faithfulness_score",
     "groundedness_score",
     "response_relevance_score",
@@ -26,6 +50,7 @@ NUMERIC_JUDGE_FIELDS = [
     "citation_correctness_score",
     "answer_accuracy_score",
     "answer_logic_score",
+    "judge_confidence_score",
 ]
 BOOLEAN_JUDGE_FIELDS = [
     "hallucination_flag",
@@ -33,6 +58,8 @@ BOOLEAN_JUDGE_FIELDS = [
 ]
 CORE_QUALITY_FIELDS = [
     "document_relevance_score",
+    "context_relevance_score",
+    "answer_relevance_score",
     "faithfulness_score",
     "groundedness_score",
     "response_relevance_score",
@@ -62,6 +89,7 @@ class BenchmarkCase:
     language: str | None
     reference_answer: str | None
     expected_document_ids: list[str]
+    expected_document_relevance: list[dict[str, str]]
     expected_heading_paths: list[str]
     expected_evidence_refs: list[dict[str, str]]
     expected_handoff: bool
@@ -70,6 +98,7 @@ class BenchmarkCase:
     retrieval_metrics_enabled: bool
     citation_metrics_enabled: bool
     route_aware: bool
+    anchor_set_id: str | None
     tags: list[str]
 
 
@@ -102,6 +131,60 @@ def _normalize_heading_path(value: Any) -> str:
     return _clean_text(value)
 
 
+def _normalize_relevance_grade(value: Any, *, default_grade: str = "high") -> str:
+    normalized = _clean_text(value).lower()
+    if normalized in _RELEVANCE_GRADE_SCORES:
+        return normalized
+    return default_grade
+
+
+def _default_relevance_grade_for_evidence_role(evidence_role: str) -> str:
+    if evidence_role == "background":
+        return "low"
+    if evidence_role == "noise":
+        return "irrelevant"
+    return "high"
+
+
+def _normalize_evidence_role(value: Any, *, evidence_polarity: str) -> str:
+    normalized = _clean_text(value).lower()
+    if normalized in _VALID_EVIDENCE_ROLES:
+        return normalized
+    if evidence_polarity == "supports_denial":
+        return "supports_denial"
+    return "supports_answer"
+
+
+def _normalize_expected_document_relevance(
+    value: Any,
+) -> tuple[list[str], list[dict[str, str]]]:
+    if value is None:
+        return [], []
+    raw_items = [value] if isinstance(value, (str, dict)) else value
+    if not isinstance(raw_items, list):
+        return [], []
+
+    document_ids: list[str] = []
+    document_relevance: list[dict[str, str]] = []
+    for raw_item in raw_items:
+        if isinstance(raw_item, dict):
+            doc_id = _clean_text(raw_item.get("doc_id") or raw_item.get("document_id") or raw_item.get("id"))
+            relevance_grade = _normalize_relevance_grade(raw_item.get("relevance_grade"))
+        else:
+            doc_id = _clean_text(raw_item)
+            relevance_grade = "high"
+        if not doc_id:
+            continue
+        document_ids.append(doc_id)
+        document_relevance.append(
+            {
+                "doc_id": doc_id,
+                "relevance_grade": relevance_grade,
+            }
+        )
+    return document_ids, document_relevance
+
+
 def _normalize_evidence_refs(value: Any) -> list[dict[str, str]]:
     if not isinstance(value, list):
         return []
@@ -109,11 +192,18 @@ def _normalize_evidence_refs(value: Any) -> list[dict[str, str]]:
     for raw_item in value:
         if not isinstance(raw_item, dict):
             continue
+        evidence_polarity = _clean_text(raw_item.get("evidence_polarity")) or "supports"
+        evidence_role = _normalize_evidence_role(raw_item.get("evidence_role"), evidence_polarity=evidence_polarity)
         item = {
             "chunk_id": _clean_text(raw_item.get("chunk_id")),
             "doc_id": _clean_text(raw_item.get("doc_id")),
             "heading": _normalize_heading_path(raw_item.get("heading")),
-            "evidence_polarity": _clean_text(raw_item.get("evidence_polarity")) or "supports",
+            "evidence_polarity": evidence_polarity,
+            "relevance_grade": _normalize_relevance_grade(
+                raw_item.get("relevance_grade"),
+                default_grade=_default_relevance_grade_for_evidence_role(evidence_role),
+            ),
+            "evidence_role": evidence_role,
         }
         if any(item.values()):
             items.append({key: value for key, value in item.items() if value})
@@ -281,12 +371,15 @@ def _parse_benchmark_case(payload: dict[str, Any], *, line_number: int) -> Bench
     product = _clean_text(payload.get("product"))
     language = _clean_text(payload.get("language"))
     reference_answer = _clean_text(payload.get("reference_answer"))
-    expected_document_ids = _normalize_string_list(payload.get("expected_document_ids"))
+    expected_document_ids, expected_document_relevance = _normalize_expected_document_relevance(
+        payload.get("expected_document_ids")
+    )
     expected_heading_paths = [_normalize_heading_path(item) for item in _normalize_string_list(payload.get("expected_heading_paths"))]
     expected_evidence_refs = _normalize_evidence_refs(payload.get("expected_evidence_refs"))
     answer_key_points = _normalize_answer_key_points(payload.get("answer_key_points"))
     expected_route = _normalize_expected_route(payload.get("expected_route"))
     expected_scope_label = _normalize_expected_scope_label(payload.get("expected_scope_label"))
+    anchor_set_id = _clean_text(payload.get("anchor_set_id")) or None
     retrieval_metrics_enabled = (
         _normalize_bool(payload.get("retrieval_metrics_enabled"), field_name="retrieval_metrics_enabled")
         if payload.get("retrieval_metrics_enabled") is not None
@@ -446,6 +539,7 @@ def _parse_benchmark_case(payload: dict[str, Any], *, line_number: int) -> Bench
         language=language,
         reference_answer=reference_answer,
         expected_document_ids=expected_document_ids,
+        expected_document_relevance=expected_document_relevance,
         expected_heading_paths=[item for item in expected_heading_paths if item],
         expected_evidence_refs=expected_evidence_refs,
         answer_key_points=answer_key_points,
@@ -455,6 +549,7 @@ def _parse_benchmark_case(payload: dict[str, Any], *, line_number: int) -> Bench
         retrieval_metrics_enabled=retrieval_metrics_enabled,
         citation_metrics_enabled=citation_metrics_enabled,
         route_aware=route_aware,
+        anchor_set_id=anchor_set_id,
         tags=tags,
     )
 
@@ -557,6 +652,17 @@ def build_benchmark_review_sample(
     if bool(result_row.get("judge_disagreement_flag")):
         reasons.append("judge_disagreement")
         risk_score += 0.45
+    judge_divergence = _safe_float(result_row.get("judge_divergence_score")) or 0.0
+    if judge_divergence >= 0.2:
+        reasons.append("high_judge_divergence")
+        risk_score += 0.2
+    anchor_set_id = _clean_text(result_row.get("anchor_set_id"))
+    if anchor_set_id:
+        reasons.append("anchor_calibration_sample")
+        risk_score += 0.15
+    if _clean_text(result_row.get("failure_type")) not in {"", "grounded_answer"}:
+        reasons.append("critical_regression")
+        risk_score += 0.2
 
     low_quality_fields: list[str] = []
     for field_name in CORE_QUALITY_FIELDS:
@@ -598,7 +704,9 @@ def build_benchmark_review_sample(
             "expected_document_ids": _normalize_string_list(result_row.get("expected_document_ids")),
             "expected_heading_paths": _normalize_string_list(result_row.get("expected_heading_paths")),
             "expected_evidence_refs": _normalize_evidence_refs(result_row.get("expected_evidence_refs")),
+            "anchor_set_id": anchor_set_id,
             "judge_disagreement_flag": bool(result_row.get("judge_disagreement_flag")),
+            "judge_divergence_score": _safe_float(result_row.get("judge_divergence_score")),
             "route_correct_flag": result_row.get("route_correct_flag") if isinstance(result_row.get("route_correct_flag"), bool) else None,
             "trace_payload": result_row.get("trace_payload") if isinstance(result_row.get("trace_payload"), dict) else {},
             "scores": {
@@ -613,14 +721,21 @@ def compute_retrieval_metrics(
     candidate_rows: list[dict[str, Any]],
     *,
     expected_document_ids: list[str],
+    expected_document_relevance: list[dict[str, Any]] | None = None,
     expected_heading_paths: list[str] | None = None,
     expected_evidence_refs: list[dict[str, str]] | None = None,
     answer_key_points: list[dict[str, Any]] | None = None,
     top_ks: tuple[int, ...] = (1, 3, 5),
 ) -> dict[str, Any]:
     expected_docs = {_clean_text(item) for item in expected_document_ids if _clean_text(item)}
-    evidence_refs = expected_evidence_refs or []
-    expected_headings = {_normalize_heading_path(item) for item in (expected_heading_paths or []) if _normalize_heading_path(item)}
+    document_grade_map = _expected_document_grade_map(
+        expected_document_ids=expected_document_ids,
+        expected_document_relevance=expected_document_relevance,
+    )
+    evidence_refs = _normalize_evidence_refs(expected_evidence_refs or [])
+    expected_headings = {
+        _normalize_heading_path(item) for item in (expected_heading_paths or []) if _normalize_heading_path(item)
+    }
     expected_headings.update(
         _normalize_heading_path(ref.get("heading"))
         for ref in evidence_refs
@@ -629,48 +744,103 @@ def compute_retrieval_metrics(
     key_points = answer_key_points or []
     ordered_candidates = candidate_rows or []
 
-    relevance_scores: list[int] = []
+    exact_relevance_scores: list[int] = []
+    document_relevance_scores: list[int] = []
+    evidence_relevance_scores: list[int] = []
     document_match_scores: list[int] = []
-    matched_docs: set[str] = set()
+    matched_exact_docs_by_k: dict[int, set[str]] = {int(top_k): set() for top_k in top_ks}
+    matched_docs_by_k: dict[int, set[str]] = {int(top_k): set() for top_k in top_ks}
+    matched_evidence_ids_by_k: dict[int, set[str]] = {int(top_k): set() for top_k in top_ks}
     reciprocal_rank = 0.0
+    document_reciprocal_rank = 0.0
+    evidence_reciprocal_rank = 0.0
     for index, candidate in enumerate(ordered_candidates, start=1):
         doc_id = _clean_text(candidate.get("doc_id"))
         heading = _normalize_heading_path(candidate.get("title"))
-        doc_match = doc_id in expected_docs if expected_docs else False
+        doc_grade = int(document_grade_map.get(doc_id, 0))
+        doc_match = doc_grade > 0 if expected_docs else False
         heading_match = heading in expected_headings if expected_headings else True
         document_match_scores.append(1 if doc_match else 0)
-        relevant = 1 if doc_match and heading_match else 0
-        relevance_scores.append(relevant)
-        if relevant and not reciprocal_rank:
+        exact_grade = doc_grade if doc_match and heading_match else 0
+        evidence_match_ids = _matched_evidence_ref_ids([candidate], evidence_refs)
+        evidence_grade = _candidate_evidence_grade(candidate, evidence_refs)
+        exact_relevance_scores.append(exact_grade)
+        document_relevance_scores.append(doc_grade)
+        evidence_relevance_scores.append(evidence_grade)
+        if exact_grade > 0 and not reciprocal_rank:
             reciprocal_rank = 1.0 / index
-        if relevant and doc_id:
-            matched_docs.add(doc_id)
+        if doc_grade > 0 and not document_reciprocal_rank:
+            document_reciprocal_rank = 1.0 / index
+        if evidence_grade > 0 and not evidence_reciprocal_rank:
+            evidence_reciprocal_rank = 1.0 / index
+        for top_k in top_ks:
+            if index > int(top_k):
+                continue
+            if exact_grade > 0 and doc_id:
+                matched_exact_docs_by_k[int(top_k)].add(doc_id)
+            if doc_grade > 0 and doc_id:
+                matched_docs_by_k[int(top_k)].add(doc_id)
+            if evidence_match_ids:
+                matched_evidence_ids_by_k[int(top_k)].update(evidence_match_ids)
 
     metrics: dict[str, Any] = {}
     max_top_k = max(top_ks) if top_ks else 5
-    matched_evidence_ids = _matched_evidence_ref_ids(ordered_candidates[:max_top_k], evidence_refs)
     for top_k in top_ks:
-        sliced = relevance_scores[:top_k]
-        metrics[f"hit_at_{top_k}"] = 1.0 if any(sliced) else 0.0
-        metrics[f"evidence_hit_at_{top_k}"] = 1.0 if _matched_evidence_ref_ids(ordered_candidates[:top_k], evidence_refs) else 0.0
-    expected_doc_count = max(1, len(expected_docs))
-    matched_docs_at_5 = {
-        _clean_text(candidate.get("doc_id"))
-        for candidate, doc_match in zip(ordered_candidates[:5], document_match_scores[:5], strict=False)
-        if doc_match and _clean_text(candidate.get("doc_id"))
-    }
-    metrics["recall_at_5"] = round(len(matched_docs_at_5) / expected_doc_count, 4)
+        top_k_value = int(top_k)
+        exact_slice = exact_relevance_scores[:top_k_value]
+        document_slice = document_relevance_scores[:top_k_value]
+        evidence_slice = evidence_relevance_scores[:top_k_value]
+        metrics[f"hit_at_{top_k_value}"] = 1.0 if any(score > 0 for score in exact_slice) else 0.0
+        metrics[f"precision_at_{top_k_value}"] = round(_precision_at_k(exact_slice, top_k_value), 4)
+        metrics[f"recall_at_{top_k_value}"] = round(
+            _recall_at_k(matched_exact_docs_by_k[top_k_value], expected_docs),
+            4,
+        )
+        metrics[f"ndcg_at_{top_k_value}"] = round(_ndcg_at_k(exact_slice, top_k_value), 4)
+        metrics[f"document_precision_at_{top_k_value}"] = round(_precision_at_k(document_slice, top_k_value), 4)
+        metrics[f"document_recall_at_{top_k_value}"] = round(
+            _recall_at_k(matched_docs_by_k[top_k_value], expected_docs),
+            4,
+        )
+        metrics[f"document_ndcg_at_{top_k_value}"] = round(_ndcg_at_k(document_slice, top_k_value), 4)
+        metrics[f"evidence_precision_at_{top_k_value}"] = round(_precision_at_k(evidence_slice, top_k_value), 4)
+        metrics[f"evidence_recall_at_{top_k_value}"] = round(
+            _recall_at_k(matched_evidence_ids_by_k[top_k_value], {_normalized_ref_id(ref) for ref in evidence_refs}),
+            4,
+        )
+        metrics[f"evidence_ndcg_at_{top_k_value}"] = round(_ndcg_at_k(evidence_slice, top_k_value), 4)
+        metrics[f"evidence_hit_at_{top_k_value}"] = 1.0 if matched_evidence_ids_by_k[top_k_value] else 0.0
+    matched_evidence_ids = matched_evidence_ids_by_k.get(max_top_k, set())
+    metrics["recall_at_5"] = metrics.get("recall_at_5")
     metrics["mrr"] = round(reciprocal_rank, 4)
-    metrics["ndcg_at_5"] = round(_ndcg_at_k(relevance_scores, 5), 4)
-    metrics["document_relevance_score"] = round(
-        sum(relevance_scores[:5]) / max(1, min(5, len(ordered_candidates[:5]))),
-        4,
-    )
+    metrics["document_mrr"] = round(document_reciprocal_rank, 4)
+    metrics["evidence_mrr"] = round(evidence_reciprocal_rank, 4)
+    metrics["document_relevance_score"] = metrics.get("precision_at_5")
     metrics["document_hit_at_5"] = 1.0 if any(document_match_scores[:5]) else 0.0
-    metrics["evidence_hit_at_5"] = 1.0 if matched_evidence_ids else 0.0
+    metrics["evidence_hit_at_5"] = metrics.get("evidence_hit_at_5")
     metrics["evidence_coverage"] = round(_evidence_coverage(key_points, matched_evidence_ids), 4)
     metrics["noise_rate"] = round(_noise_rate(ordered_candidates[:max_top_k], matched_evidence_ids, key_points), 4)
     return metrics
+
+
+def _expected_document_grade_map(
+    *,
+    expected_document_ids: list[str],
+    expected_document_relevance: list[dict[str, Any]] | None = None,
+) -> dict[str, int]:
+    grades = {
+        _clean_text(doc_id): _RELEVANCE_GRADE_SCORES["high"]
+        for doc_id in expected_document_ids
+        if _clean_text(doc_id)
+    }
+    for item in expected_document_relevance or []:
+        if not isinstance(item, dict):
+            continue
+        doc_id = _clean_text(item.get("doc_id"))
+        if not doc_id:
+            continue
+        grades[doc_id] = _RELEVANCE_GRADE_SCORES[_normalize_relevance_grade(item.get("relevance_grade"))]
+    return grades
 
 
 def _normalized_ref_id(ref: dict[str, Any]) -> str:
@@ -705,6 +875,15 @@ def _candidate_matches_ref(candidate: dict[str, Any], ref: dict[str, str]) -> bo
     return False
 
 
+def _candidate_evidence_grade(candidate: dict[str, Any], evidence_refs: list[dict[str, str]]) -> int:
+    matched_grades = [
+        _RELEVANCE_GRADE_SCORES[_normalize_relevance_grade(ref.get("relevance_grade"))]
+        for ref in evidence_refs
+        if _candidate_matches_ref(candidate, ref)
+    ]
+    return max(matched_grades, default=0)
+
+
 def _matched_evidence_ref_ids(candidate_rows: list[dict[str, Any]], evidence_refs: list[dict[str, str]]) -> set[str]:
     if not candidate_rows or not evidence_refs:
         return set()
@@ -726,6 +905,19 @@ def _matched_evidence_ref_ids(candidate_rows: list[dict[str, Any]], evidence_ref
                 if normalized_ref_id:
                     matched.add(normalized_ref_id)
     return matched
+
+
+def _precision_at_k(relevance_scores: list[int], top_k: int) -> float:
+    sliced = relevance_scores[: max(1, int(top_k))]
+    if not sliced:
+        return 0.0
+    return sum(1 for score in sliced if score > 0) / len(sliced)
+
+
+def _recall_at_k(matched_ids: set[str], expected_ids: set[str]) -> float:
+    if not expected_ids:
+        return 0.0
+    return len({item for item in matched_ids if item}) / len(expected_ids)
 
 
 def _evidence_coverage(key_points: list[dict[str, Any]], matched_evidence_ids: set[str]) -> float:
@@ -772,18 +964,23 @@ def _noise_rate(
 
 def aggregate_judge_votes(votes: list[dict[str, Any]]) -> dict[str, Any]:
     clean_votes = [vote for vote in votes if isinstance(vote, dict)]
+    error_votes = sum(1 for vote in clean_votes if _clean_text(vote.get("error")))
     aggregated: dict[str, Any] = {
         "judge_votes": clean_votes,
         "judge_disagreement_flag": False,
         "judge_vote_count": len(clean_votes),
+        "judge_error_rate": round(error_votes / max(1, len(clean_votes)), 4) if clean_votes else None,
     }
 
+    numeric_spreads: list[float] = []
     for field_name in NUMERIC_JUDGE_FIELDS:
         values = [_safe_float(vote.get(field_name)) for vote in clean_votes]
         numeric_values = [value for value in values if value is not None]
         if numeric_values:
             aggregated[field_name] = round(float(statistics.median(numeric_values)), 4)
-            if max(numeric_values) - min(numeric_values) > 0.25:
+            spread = max(numeric_values) - min(numeric_values)
+            numeric_spreads.append(spread)
+            if spread > 0.25:
                 aggregated["judge_disagreement_flag"] = True
         else:
             aggregated[field_name] = None
@@ -798,6 +995,51 @@ def aggregate_judge_votes(votes: list[dict[str, Any]]) -> dict[str, Any]:
         else:
             aggregated[field_name] = None
 
+    if aggregated.get("context_relevance_score") is None and aggregated.get("cr_score") is not None:
+        aggregated["context_relevance_score"] = aggregated.get("cr_score")
+    if aggregated.get("answer_relevance_score") is None and aggregated.get("ar_score") is not None:
+        aggregated["answer_relevance_score"] = aggregated.get("ar_score")
+    if aggregated.get("context_relevance_score") is None and aggregated.get("groundedness_score") is not None:
+        aggregated["context_relevance_score"] = aggregated.get("groundedness_score")
+    if aggregated.get("answer_relevance_score") is None and aggregated.get("response_relevance_score") is not None:
+        aggregated["answer_relevance_score"] = aggregated.get("response_relevance_score")
+    if aggregated.get("cr_score") is None and aggregated.get("context_relevance_score") is not None:
+        aggregated["cr_score"] = aggregated.get("context_relevance_score")
+    if aggregated.get("ar_score") is None and aggregated.get("answer_relevance_score") is not None:
+        aggregated["ar_score"] = aggregated.get("answer_relevance_score")
+    if aggregated.get("response_relevance_score") is None and aggregated.get("answer_relevance_score") is not None:
+        aggregated["response_relevance_score"] = aggregated.get("answer_relevance_score")
+    if aggregated.get("groundedness_score") is None and aggregated.get("context_relevance_score") is not None:
+        aggregated["groundedness_score"] = aggregated.get("context_relevance_score")
+
+    rubric_reasons: dict[str, str] = {}
+    for field_name in _RUBRIC_REASON_FIELDS:
+        reasons = [_clean_text(vote.get(field_name)) for vote in clean_votes if _clean_text(vote.get(field_name))]
+        if reasons:
+            rubric_reasons[field_name] = Counter(reasons).most_common(1)[0][0]
+    aggregated["rubric_reasons"] = rubric_reasons
+    supporting_evidence = sorted(
+        {
+            _clean_text(item)
+            for vote in clean_votes
+            for item in (vote.get("supporting_evidence") or [])
+            if _clean_text(item)
+        }
+    )
+    aggregated["supporting_evidence"] = supporting_evidence
+    divergence_score = sum(numeric_spreads) / len(numeric_spreads) if numeric_spreads else 0.0
+    aggregated["judge_divergence_score"] = round(divergence_score, 4)
+    provided_confidence = aggregated.get("judge_confidence_score")
+    if provided_confidence is None:
+        provided_confidence = 1.0
+    adjusted_confidence = max(
+        0.0,
+        min(
+            float(provided_confidence),
+            1.0 - (divergence_score * 0.5) - ((aggregated.get("judge_error_rate") or 0.0) * 0.5),
+        ),
+    )
+    aggregated["judge_confidence_score"] = round(adjusted_confidence, 4)
     return aggregated
 
 
@@ -816,15 +1058,46 @@ def summarize_eval_daily_metrics(result_rows: list[dict[str, Any]]) -> dict[str,
         "hit_at_3",
         "hit_at_5",
         "document_hit_at_5",
+        "precision_at_1",
+        "precision_at_3",
+        "precision_at_5",
+        "document_precision_at_1",
+        "document_precision_at_3",
+        "document_precision_at_5",
         "evidence_hit_at_1",
         "evidence_hit_at_3",
         "evidence_hit_at_5",
+        "evidence_precision_at_1",
+        "evidence_precision_at_3",
+        "evidence_precision_at_5",
         "evidence_coverage",
         "noise_rate",
+        "recall_at_1",
+        "recall_at_3",
         "recall_at_5",
+        "document_recall_at_1",
+        "document_recall_at_3",
+        "document_recall_at_5",
+        "evidence_recall_at_1",
+        "evidence_recall_at_3",
+        "evidence_recall_at_5",
         "mrr",
+        "document_mrr",
+        "evidence_mrr",
+        "ndcg_at_1",
+        "ndcg_at_3",
         "ndcg_at_5",
+        "document_ndcg_at_1",
+        "document_ndcg_at_3",
+        "document_ndcg_at_5",
+        "evidence_ndcg_at_1",
+        "evidence_ndcg_at_3",
+        "evidence_ndcg_at_5",
         "document_relevance_score",
+        "context_relevance_score",
+        "answer_relevance_score",
+        "judge_confidence_score",
+        "judge_divergence_score",
         "faithfulness_score",
         "groundedness_score",
         "response_relevance_score",
@@ -835,6 +1108,7 @@ def summarize_eval_daily_metrics(result_rows: list[dict[str, Any]]) -> dict[str,
         "retrieval_latency_ms",
         "generation_latency_ms",
         "total_latency_ms",
+        "case_execution_latency_ms",
     ]:
         source_rows = correctness_rows if field_name == "answer_accuracy_score" else result_rows
         values = [_safe_float(row.get(field_name)) for row in source_rows]
@@ -871,6 +1145,46 @@ def summarize_eval_daily_metrics(result_rows: list[dict[str, Any]]) -> dict[str,
         round(sum(response_policy_values) / len(response_policy_values), 4) if response_policy_values else None
     )
     metrics["route_accuracy"] = round(sum(route_correct_values) / len(route_correct_values), 4) if route_correct_values else None
+    total_judge_votes = 0
+    total_judge_errors = 0
+    for row in result_rows:
+        judge_votes = row.get("judge_votes")
+        if not isinstance(judge_votes, list):
+            continue
+        for vote in judge_votes:
+            if not isinstance(vote, dict):
+                continue
+            total_judge_votes += 1
+            if _clean_text(vote.get("error")):
+                total_judge_errors += 1
+    metrics["judge_error_rate"] = (
+        round(total_judge_errors / total_judge_votes, 4) if total_judge_votes else None
+    )
+    case_execution_values = [
+        1.0 if row.get("case_execution_error") else 0.0
+        for row in result_rows
+        if isinstance(row.get("case_execution_error"), bool)
+    ]
+    metrics["case_execution_error_rate"] = (
+        round(sum(case_execution_values) / len(case_execution_values), 4)
+        if case_execution_values
+        else 0.0 if result_rows else None
+    )
+    throughput_latencies_ms = [
+        _safe_float(row.get("case_execution_latency_ms"))
+        for row in result_rows
+        if row.get("case_execution_latency_ms") is not None
+    ]
+    if not throughput_latencies_ms:
+        throughput_latencies_ms = [
+            _safe_float(row.get("total_latency_ms"))
+            for row in result_rows
+            if row.get("total_latency_ms") is not None
+        ]
+    total_latency_seconds = sum(float(value) for value in throughput_latencies_ms if value is not None) / 1000.0
+    metrics["benchmark_throughput_cases_per_sec"] = (
+        round(len(result_rows) / total_latency_seconds, 4) if total_latency_seconds > 0 else None
+    )
     return metrics
 def _ndcg_at_k(relevance_scores: list[int], k: int) -> float:
     sliced = relevance_scores[: max(1, int(k))]

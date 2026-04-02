@@ -754,6 +754,50 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_engineer_local_summary_fallback_prefers_agent_brief_when_available(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                const fallback = buildLocalSummaryFallback({
+                  status: "investigating",
+                  messages: [
+                    {
+                      role: "customer",
+                      content: "Android 14 token renewal still fails after the upgrade.",
+                      created_at: "2026-03-24T08:00:00+00:00",
+                    }
+                  ],
+                  engineer_agent_state: {
+                    phase: "gather_missing_inputs",
+                    issue_understanding: "Android 14 token renewal still fails after the customer upgraded the SDK.",
+                    knowledge_summary: "Client AI found generic token-authentication guidance but no Android 14-specific callback evidence.",
+                    why_not_solved: "The current evidence does not prove the exact SDK regression boundary.",
+                    goal: "Confirm the exact SDK version and whether Android 14 is the only affected platform.",
+                    known_facts: ["Customer already upgraded the SDK."],
+                    missing_information: ["Exact SDK version", "Cross-platform reproduction scope"],
+                    next_request_for_engineer: "Please confirm the exact SDK version and whether Android 14 is the only affected platform.",
+                    resolution_hypothesis: "The issue may be limited to SDK 4.2.1 on Android 14.",
+                    ready_to_reply: false,
+                    last_refreshed_at: "2026-03-24T09:10:00+00:00",
+                  },
+                });
+
+                if (!fallback.summary.includes("Current understanding: Android 14 token renewal still fails after the customer upgraded the SDK.")) {
+                  throw new Error("Local summary fallback should surface the agent issue understanding.");
+                }
+                if (!fallback.summary.includes("Goal: Confirm the exact SDK version and whether Android 14 is the only affected platform.")) {
+                  throw new Error("Local summary fallback should surface the current agent goal.");
+                }
+                if (!fallback.summary.includes("Why client AI could not solve it: The current evidence does not prove the exact SDK regression boundary.")) {
+                  throw new Error("Local summary fallback should explain why the client AI is blocked.");
+                }
+                if (fallback.nextAction !== "Please confirm the exact SDK version and whether Android 14 is the only affected platform.") {
+                  throw new Error("Local summary fallback should use the agent next request as the next action.");
+                }
+              """
+            )
+        )
+
     def test_engineer_detail_shows_closed_investigation_thread_without_composer(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
@@ -835,6 +879,72 @@ class EngineerUiContractTests(unittest.TestCase):
                 }}
                 if (html.includes("Approve Reply") || html.includes("Ask AI to Revise")) {{
                   throw new Error("Closed investigations should not keep rendering confirmation actions.");
+                }}
+              """
+            )
+        )
+
+    def test_engineer_detail_renders_references_for_engineer_ai_handoff_messages(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                selectedTicketId = "TK-DETAIL-RAG-HANDOFF";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-RAG-HANDOFF",
+                  subject: "Android 14 token renew regression",
+                  requester: "user-7",
+                  status: "investigating",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [
+                    {
+                      role: "customer",
+                      content: "Token renew callback does not fire on Android 14.",
+                      created_at: "2026-03-24T08:00:00+00:00",
+                    },
+                  ],
+                  active_investigation: {
+                    id: "INV-DETAIL-RAG-HANDOFF",
+                    state: "active",
+                    trigger_reason: "rag_post_check_insufficient",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "",
+                    final_confirmation_requested_at: null,
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T08:02:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-RAG-HANDOFF-m1",
+                        role: "engineer_ai",
+                        content: "Engineer Request:\\nIssue: Customer reports token renew callback failing on Android 14. AI attempted this docs-backed guidance: Please upgrade to SDK 4.2.2 and retry token renewal.\\nAction Needed: Review the tentative docs-backed guidance and provide a customer-safe fix.",
+                        created_at: "2026-03-24T08:02:00+00:00",
+                        citations: [
+                          {
+                            chunk_id: "chunk-1",
+                            source_path: "official/token-authentication.md",
+                            heading: "Token authentication",
+                            source_url: "https://docs.agora.io/en/video-calling/token-authentication",
+                          },
+                        ],
+                        sources: ["https://docs.agora.io/en/video-calling/token-authentication"],
+                      },
+                    ],
+                  },
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+                selectedTicketSummary = "Engineer should review the tentative docs-backed guidance.";
+                selectedTicketNextAction = "Validate the SDK/platform constraints and confirm the customer-safe reply.";
+
+                const html = renderTicketDetailView();
+                if (!html.includes("References")) {{
+                  throw new Error("Engineer handoff messages should render the references section.");
+                }}
+                if (!html.includes("Token authentication")) {{
+                  throw new Error("Engineer handoff messages should render citation headings.");
+                }}
+                if (!html.includes('href="https://docs.agora.io/en/video-calling/token-authentication"')) {{
+                  throw new Error("Engineer handoff messages should render clickable citation links.");
                 }}
               """
             )
