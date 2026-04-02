@@ -10,6 +10,57 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-04-02 - Query-understanding layer before client RAG retrieval
+
+- Summary: Added an English-only query-understanding layer ahead of the client AI `rag` skill, including glossary normalization, schema-based self-query planning, retrieval-oriented rewrite/enhancement, limited multi-part decomposition, richer trace metadata, and live telemetry persistence for query-understanding outputs.
+- Reason: The client AI flow already had strong routing and post-RAG sufficiency gating, but retrieval still relied too heavily on raw customer wording. This change improves retrieval planning before candidate search so the system can normalize Agora terminology, infer stable metadata filters, expand retrieval queries safely, and decompose complex technical questions without changing the external ticket API.
+- Affected files or config:
+  - `backend/Dockerfile`
+  - `backend/rag_api.py`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/services/prompts/__init__.py`
+  - `backend/services/prompts/query_understanding.py`
+  - `backend/services/query_understanding.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/services/rag_evidence_summary.py`
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_query_understanding.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_rag_evidence_summary.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `backend/tests/test_rag_reset.py`
+  - `backend/tests/test_knowledge_repository_bm25.py`
+  - `dictionary/video-calling_glossary (1).md`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - `support_rag_query_runs` now stores a `query_understanding_meta` JSONB payload for live-query telemetry.
+  - Knowledge repository bootstrap version advanced to `2026-04-02-query-understanding-v1`, so existing databases pick up the new RAG telemetry column during initialization.
+  - The container image now includes `/app/dictionary`, allowing runtime query-understanding to load the repo-tracked glossary snapshot instead of failing on missing files.
+  - Internal RAG evidence summaries can now include a `query_understanding` section, while `/api/tickets/query` remains externally stable.
+  - Query-understanding is English-only in V1 and defaults to the `en` profile, but the registry and result contract keep explicit hooks for future locale/product-specific profiles.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_query_understanding.py backend/tests/test_prompt_modules.py backend/tests/test_rag_qa.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_rag_evidence_summary.py backend/tests/test_rag_service_client.py backend/tests/test_rag_scorecard_repository.py backend/tests/test_rag_reset.py backend/tests/test_knowledge_repository_bm25.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/rag_api.py backend/repositories/knowledge_repository.py backend/services/prompts/__init__.py backend/services/prompts/query_understanding.py backend/services/query_understanding.py backend/services/rag_benchmark_runner.py backend/services/rag_evidence_summary.py backend/services/rag_qa.py backend/tests/test_prompt_modules.py backend/tests/test_query_understanding.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_rag_qa.py`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
+  - `ln -sfn /Users/xieziling/Desktop/personal_proj/SupportPortal/.env /Users/xieziling/.config/superpowers/worktrees/SupportPortal/client-ai-query-understanding-v1/.env`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health`
+  - `podman exec deployment_rag_api_1 python -c "import json; from backend.services.query_understanding import understand_rag_query; result = understand_rag_query('Compare BuildTokenWithUid vs BuildTokenWithUidAndPrivilege for Node.js, and how do wildcard tokens fit in.'); print(json.dumps({'query_profile': result.query_profile, 'canonical_terms': result.canonical_terms, 'hard_filters': result.retrieval_plan.hard_filters, 'soft_signals': result.retrieval_plan.soft_signals, 'rewritten_queries': result.rewritten_queries, 'decomposition_subqueries': result.decomposition_subqueries, 'fallback_mode': result.fallback_mode}, ensure_ascii=False))"`
+  - `podman exec deployment_rag_api_1 python -c "import os, psycopg; dsn=os.environ['PGVECTOR_DSN']; schema=os.environ.get('PGVECTOR_SCHEMA','supportportal');\nwith psycopg.connect(dsn) as conn:\n  with conn.cursor() as cur:\n    cur.execute(\"SELECT column_name FROM information_schema.columns WHERE table_schema=%s AND table_name='support_rag_query_runs' AND column_name='query_understanding_meta'\", (schema,));\n    row=cur.fetchone();\nprint('present' if row else 'missing')"`
+  - Verification result:
+    - Focused query-understanding/RAG regression suite passed: `106 passed`.
+    - Full backend suite passed: `375 passed, 10 warnings`.
+    - `py_compile` completed without errors for all touched Python files.
+    - First rebuilt image exposed the intended runtime failures clearly: missing `/app/dictionary` and a missing `query_understanding_meta` column on the live database. The follow-up fixes were applied, the image was rebuilt again, and host `/health` then returned `status=ok`, `ticket_storage=postgres`, `knowledge_storage=postgres`, `rag_service=ok`.
+    - Runtime query-understanding smoke inside `deployment_rag_api_1` confirmed glossary-backed normalization, `language=nodejs` hard filtering, soft retrieval signals, one rewrite variant, and capped decomposition subqueries.
+    - Direct schema smoke inside `deployment_rag_api_1` confirmed `support_rag_query_runs.query_understanding_meta` is now present.
+
 ## 2026-04-01 - Reframe investigating as a formal engineer ticket lifecycle
 
 - Summary: Kept the existing ticket-linked investigation storage model, but formally promoted each active investigation cycle into the engineer-side work item for `investigating` tickets. Public investigation replies now explicitly say an engineer ticket has been opened, engineer UI copy now presents the workspace as an engineer-ticket flow, and the approve path continues to send the prepared AI reply to the customer while closing the engineer ticket cycle back into `communicating`.

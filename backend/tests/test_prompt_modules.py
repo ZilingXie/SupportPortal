@@ -6,6 +6,14 @@ from backend.services.prompts.rag_answer import (
     build_rag_answer_system_prompt,
     build_rag_answer_user_prompt,
 )
+from backend.services.prompts.query_understanding import (
+    build_query_decomposition_system_prompt,
+    build_query_decomposition_user_prompt,
+    build_query_rewrite_system_prompt,
+    build_query_rewrite_user_prompt,
+    build_self_query_system_prompt,
+    build_self_query_user_prompt,
+)
 from backend.services.prompts.rag_sufficiency import (
     build_rag_sufficiency_system_prompt,
     build_rag_sufficiency_user_prompt,
@@ -110,6 +118,49 @@ class PromptModuleTests(unittest.TestCase):
         self.assertIn("## Candidate Answer", user_prompt)
         self.assertIn("## Evidence Summary", user_prompt)
         self.assertIn("## Required Output Schema", user_prompt)
+
+    def test_query_understanding_prompts_are_sectioned_and_grounded(self) -> None:
+        self_query_system = build_self_query_system_prompt()
+        self_query_user = build_self_query_user_prompt(
+            query="Compare BuildTokenWithUid vs BuildTokenWithUidAndPrivilege for Node.js.",
+            glossary_hits=[
+                {
+                    "canonical_term": "App certificate",
+                    "matched_text": "app certificate",
+                    "definition": "An app certificate is a randomly generated string provided by Agora.",
+                }
+            ],
+        )
+        rewrite_system = build_query_rewrite_system_prompt()
+        rewrite_user = build_query_rewrite_user_prompt(
+            query="How do I handle token expiry?",
+            canonical_terms=["App certificate"],
+            glossary_hits=[{"canonical_term": "App certificate"}],
+            retrieval_plan_summary={"semantic_query": "token expiry troubleshooting"},
+        )
+        decomposition_system = build_query_decomposition_system_prompt()
+        decomposition_user = build_query_decomposition_user_prompt(
+            query="Compare BuildTokenWithUid vs BuildTokenWithUidAndPrivilege for Node.js.",
+            retrieval_plan_summary={"hard_filters": {"language": "nodejs"}},
+        )
+
+        self.assertIn("## Role", self_query_system)
+        self.assertIn("Return JSON only", self_query_system)
+        self.assertIn("## Field Definitions", self_query_system)
+        self.assertIn("## Few-shot Examples", self_query_system)
+        self.assertIn("## Glossary Hits", self_query_user)
+        self.assertIn("BuildTokenWithUidAndPrivilege", self_query_user)
+
+        self.assertIn("## Role", rewrite_system)
+        self.assertIn("Do not change the user intent", rewrite_system)
+        self.assertIn("## Fallback Policy", rewrite_system)
+        self.assertIn("## Canonical Terms", rewrite_user)
+        self.assertIn("App certificate", rewrite_user)
+
+        self.assertIn("## Role", decomposition_system)
+        self.assertIn("Only decompose when the request is genuinely multi-part", decomposition_system)
+        self.assertIn("## Required Output Schema", decomposition_user)
+        self.assertIn("nodejs", decomposition_user)
 
 
 if __name__ == "__main__":

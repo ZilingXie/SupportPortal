@@ -19,6 +19,7 @@ from backend.services.rag_qa import (
     _split_table_name,
     run_rag_query,
 )
+from backend.services.query_understanding import QueryUnderstandingResult, RetrievalPlan
 
 
 class RagQaHybridTests(unittest.TestCase):
@@ -1438,6 +1439,132 @@ class RagQaHybridTests(unittest.TestCase):
             {"supportportal.docagent_chunks_ag_docs_test_1024"},
         )
         self.assertTrue(result.trace.needs_human)
+
+    def test_run_rag_query_records_query_understanding_metadata_in_trace(self) -> None:
+        vector_chunk = RetrievedChunk(
+            chunk_id="chunk-1",
+            text="Cloud Recording troubleshooting",
+            source_path="official/cloud-recording.md",
+            similarity=0.96,
+            metadata={"product": "video-calling", "chunk_type": "troubleshooting_procedure"},
+        )
+
+        understanding = QueryUnderstandingResult(
+            query_profile="en",
+            query_understanding_version="v1",
+            glossary_version="video-calling_glossary_en_v1",
+            self_query_version="v1",
+            normalized_query="How do I troubleshoot Cloud Recording jitter?",
+            canonical_terms=["Cloud Recording", "Jitter"],
+            glossary_hits=[
+                {
+                    "canonical_term": "Cloud Recording",
+                    "matched_text": "Cloud Recording",
+                    "definition": "Cloud Recording is a component provided by Agora.",
+                },
+                {
+                    "canonical_term": "Jitter",
+                    "matched_text": "jitter",
+                    "definition": "Jitter is the variation in delay of data packets.",
+                },
+            ],
+            retrieval_plan=RetrievalPlan(
+                semantic_query="cloud recording jitter troubleshooting",
+                hard_filters={"product": "video-calling"},
+                soft_signals={"keywords": ["jitter"], "chunk_type": ["troubleshooting_procedure"]},
+                rewritten_queries=["cloud recording jitter troubleshooting"],
+                decomposition_subqueries=[],
+                fallback_mode="none",
+            ),
+            rewritten_queries=["cloud recording jitter troubleshooting"],
+            decomposition_subqueries=[],
+            fallback_mode="none",
+            intent_latency_ms=4.5,
+            rewrite_latency_ms=3.2,
+        )
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 2,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-4.1",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+            }
+            with patch("backend.services.rag_qa.get_embedding_provider", return_value=self._FakeProvider()):
+                with patch("backend.services.rag_qa.understand_rag_query", return_value=understanding):
+                    with patch("backend.services.rag_qa._retrieve_chunks", return_value=[vector_chunk]):
+                        with patch("backend.services.rag_qa._retrieve_bm25_chunks", return_value=[]):
+                            with patch(
+                                "backend.services.rag_qa._metadata_rerank",
+                                return_value=(
+                                    [vector_chunk],
+                                    {
+                                        "post_rerank_count": 1,
+                                        "hints": {},
+                                        "applied_filter": True,
+                                        "filter_type": "product",
+                                        "query_understanding": {
+                                            "query_profile": "en",
+                                            "glossary_hit_terms": ["Cloud Recording", "Jitter"],
+                                            "applied_hard_filters": {"product": "video-calling"},
+                                            "applied_soft_signals": {
+                                                "keywords": ["jitter"],
+                                                "chunk_type": ["troubleshooting_procedure"],
+                                            },
+                                            "fallback_mode": "none",
+                                        },
+                                    },
+                                ),
+                            ):
+                                with patch("backend.services.rag_qa._rerank_chunks", return_value=[vector_chunk]):
+                                    with patch(
+                                        "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                                        return_value=(
+                                            {
+                                                "answer": "Use Cloud Recording diagnostics.",
+                                                "key_steps": [],
+                                                "citations": ["chunk-1"],
+                                                "insufficient_evidence": False,
+                                            },
+                                            10,
+                                            5,
+                                            "gpt-4.1",
+                                        ),
+                                    ):
+                                        result = run_rag_query("How do I troubleshoot Cloud Recording jitter?")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertTrue(result.trace.query_understanding_enabled)
+        self.assertEqual(result.trace.query_profile, "en")
+        self.assertEqual(result.trace.query_understanding_version, "v1")
+        self.assertEqual(result.trace.glossary_version, "video-calling_glossary_en_v1")
+        self.assertEqual(result.trace.glossary_hit_terms, ["Cloud Recording", "Jitter"])
+        self.assertEqual(result.trace.applied_hard_filters, {"product": "video-calling"})
+        self.assertEqual(
+            result.trace.applied_soft_signals["chunk_type"],
+            ["troubleshooting_procedure"],
+        )
+        self.assertEqual(result.trace.rewritten_queries, ["cloud recording jitter troubleshooting"])
+        self.assertEqual(result.trace.rewrite_latency_ms, 3.2)
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ def build_rag_evidence_summary(
     quality_signals: dict[str, Any] | None,
     selected_contexts: list[dict[str, Any]] | None,
     cited_chunk_ids: set[str] | None = None,
+    query_understanding: dict[str, Any] | None = None,
     max_contexts: int = 3,
     max_excerpt_chars: int = 280,
 ) -> dict[str, Any]:
@@ -64,7 +65,22 @@ def build_rag_evidence_summary(
             }
         )
 
-    return {
+    payload = {
         "quality_signals": normalized_quality,
         "selected_contexts": normalized_contexts,
     }
+    if isinstance(query_understanding, dict) and query_understanding:
+        payload["query_understanding"] = {
+            "query_understanding_enabled": bool(query_understanding.get("query_understanding_enabled")),
+            "query_understanding_version": query_understanding.get("query_understanding_version"),
+            "query_profile": query_understanding.get("query_profile"),
+            "glossary_version": query_understanding.get("glossary_version"),
+            "self_query_version": query_understanding.get("self_query_version"),
+            "fallback_mode": query_understanding.get("fallback_mode"),
+            "glossary_hit_terms": list(query_understanding.get("glossary_hit_terms") or []),
+            "applied_hard_filters": dict(query_understanding.get("applied_hard_filters") or {}),
+            "applied_soft_signals": dict(query_understanding.get("applied_soft_signals") or {}),
+            "rewritten_queries": list(query_understanding.get("rewritten_queries") or []),
+            "decomposition_subqueries": list(query_understanding.get("decomposition_subqueries") or []),
+        }
+    return payload
