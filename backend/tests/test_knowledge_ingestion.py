@@ -586,12 +586,12 @@ class KnowledgeIngestionParsingTests(unittest.TestCase):
             },
             clear=True,
         ):
-            with patch("backend.services.knowledge_ingestion._import_langchain") as import_langchain:
+            with patch("backend.services.knowledge_ingestion.invoke_chat_text") as invoke_chat_text:
                 metadata, meta_info = _enrich_metadata_with_llm(document)
 
         self.assertEqual(meta_info["metadata_source"], "rule")
         self.assertEqual(metadata["metadata_source"], "rule")
-        import_langchain.assert_not_called()
+        invoke_chat_text.assert_not_called()
 
 
 if __name__ == "__main__":

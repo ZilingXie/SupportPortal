@@ -1436,3 +1436,49 @@ For each new entry, record:
   - `podman exec deployment_api_1 python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=10).read().decode())"`
   - `podman exec deployment_api_1 python -c "import json, urllib.request; payload=json.dumps({'customer_id':'prompt-smoke-web-4','message':'Who is Agora\\'s CEO?'}).encode(); req=urllib.request.Request('http://127.0.0.1:8000/api/tickets/query', data=payload, headers={'Content-Type':'application/json'}, method='POST'); print(urllib.request.urlopen(req, timeout=30).read().decode())"`
   - `podman exec deployment_api_1 python -c "import json, urllib.request; payload=json.dumps({'customer_id':'prompt-smoke-rag-4','message':'How do I join a channel?'}).encode(); req=urllib.request.Request('http://127.0.0.1:8000/api/tickets/query', data=payload, headers={'Content-Type':'application/json'}, method='POST'); print(urllib.request.urlopen(req, timeout=30).read().decode())"`
+
+## 2026-04-02 - Centralize model selection for RAG answer and sufficiency with shared LLM profiles
+
+- Summary: Added shared scene-aware LLM profile/factory helpers, migrated the RAG answer path to OpenAI Responses with `gpt-5.4` and `reasoning=high`, upgraded the post-RAG sufficiency judge to `gpt-5.4`, and aligned benchmark/evaluation defaults to provider-qualified judge models.
+- Reason: RAG model selection had become fragmented across multiple services, which made prompt/model changes hard to audit and kept the RAG answer and sufficiency layers on older defaults. Centralizing the model profile logic brings the answering, judging, and evaluation surfaces into one configurable contract.
+- Affected files or config:
+  - `.env.example`
+  - `backend/main.py`
+  - `backend/rag_api.py`
+  - `backend/services/emotion_reply.py`
+  - `backend/services/knowledge_ingestion.py`
+  - `backend/services/llm_factory.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/services/rag_benchmark.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/rag_sufficiency_judge.py`
+  - `backend/services/support_router.py`
+  - `backend/tests/test_emotion_reply.py`
+  - `backend/tests/test_knowledge_ingestion.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_next_prototype_model_contract.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_sufficiency_judge.py`
+  - `deployment/docker-compose.single-host.yml`
+  - `ui/client-ui/next-prototype/app/api/chat/route.ts`
+  - `ui/client-ui/next-prototype/app/api/generate-title/route.ts`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No vector reset, chunking change, ingestion schema change, or table migration.
+  - Runtime model selection for the RAG answer stage now defaults to `gpt-5.4` with `reasoning=high`.
+  - Runtime model selection for the post-RAG sufficiency stage now defaults to `gpt-5.4`.
+  - Benchmark judge configuration now accepts provider-qualified model IDs and defaults to a mixed OpenAI/SiliconFlow panel.
+  - Knowledge metadata enrichment now defaults to `gpt-5.4-mini`, but embeddings and reranking remain unchanged.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_profiles.py backend/tests/test_rag_sufficiency_judge.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_emotion_reply.py backend/tests/test_next_prototype_model_contract.py backend/tests/test_support_router.py backend/tests/test_rag_qa.py backend/tests/test_knowledge_ingestion.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/main.py backend/rag_api.py backend/services/llm_profiles.py backend/services/llm_factory.py backend/services/support_router.py backend/services/rag_sufficiency_judge.py backend/services/rag_qa.py backend/services/knowledge_ingestion.py backend/services/rag_benchmark.py backend/services/rag_benchmark_runner.py backend/services/emotion_reply.py backend/tests/test_llm_profiles.py backend/tests/test_rag_sufficiency_judge.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_emotion_reply.py backend/tests/test_next_prototype_model_contract.py backend/tests/test_knowledge_ingestion.py backend/tests/test_rag_qa.py`
+  - `scripts/workflow/link_worktree_env.sh /Users/xieziling/.config/superpowers/worktrees/SupportPortal/client-ai-model-priority`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health`
+  - `curl -sS -X POST http://localhost:8080/api/tickets/query -H 'Content-Type: application/json' -d '{"customer_id":"model-priority-web-smoke","message":"Who is Agora'\''s CEO?"}'`
+  - `curl -sS -X POST http://localhost:8080/api/tickets/query -H 'Content-Type: application/json' -d '{"customer_id":"model-priority-rag-smoke","message":"How do I join a channel?"}'`

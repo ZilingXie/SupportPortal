@@ -26,6 +26,8 @@ from backend.services.embedding_provider import (
     shadow_chunk_enabled,
     shadow_chunk_strategy_name,
 )
+from backend.services.llm_factory import LlmInvocationError, invoke_chat_text
+from backend.services.llm_profiles import KNOWLEDGE_INGESTION_SCENARIO, resolve_model_profile
 
 LOGGER = logging.getLogger(__name__)
 
@@ -179,21 +181,17 @@ def _safe_float_env(name: str, default: float) -> float:
 
 
 def _openai_config() -> dict[str, Any]:
+    profile = resolve_model_profile(KNOWLEDGE_INGESTION_SCENARIO)
     return {
-        "api_key": (os.getenv("OPENAI_API_KEY") or "").strip(),
-        "chat_model": (os.getenv("OPENAI_CHAT_MODEL") or "gpt-4.1").strip(),
+        "api_key": profile.api_key,
+        "chat_model": profile.model,
+        "api_mode": profile.api_mode,
         "embedding_model": (
             os.getenv("OPENAI_EMBEDDING_MODEL") or "text-embedding-3-large"
         ).strip(),
-        "request_timeout_seconds": _safe_float_env("OPENAI_REQUEST_TIMEOUT_SECONDS", 20.0),
-        "max_retries": _safe_int_env("OPENAI_MAX_RETRIES", 1),
+        "request_timeout_seconds": profile.timeout_seconds,
+        "max_retries": profile.max_retries,
     }
-
-
-def _import_langchain() -> tuple[Any, Any]:
-    from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-
-    return ChatOpenAI, OpenAIEmbeddings
 
 
 def _response_to_text(response: Any) -> str:
@@ -1612,14 +1610,7 @@ def _enrich_metadata_with_llm(
         base_metadata.update(fallback_meta)
         return base_metadata, fallback_meta
 
-    ChatOpenAI, _ = _import_langchain()
-    llm = ChatOpenAI(
-        model=config["chat_model"],
-        temperature=0,
-        api_key=api_key,
-        request_timeout=config["request_timeout_seconds"],
-        max_retries=int(config["max_retries"]),
-    )
+    profile = resolve_model_profile(KNOWLEDGE_INGESTION_SCENARIO)
     if document.knowledge_type == "official":
         system_prompt = (
             "You generate supplemental metadata for official support documentation. "
@@ -1635,18 +1626,17 @@ def _enrich_metadata_with_llm(
         )
         payload = _technical_metadata_payload(document)
     try:
-        response = llm.invoke(
-            [
-                ("system", system_prompt),
-                ("user", json.dumps(payload, ensure_ascii=False)),
-            ]
+        response = invoke_chat_text(
+            profile=profile,
+            system_prompt=system_prompt,
+            user_prompt=json.dumps(payload, ensure_ascii=False),
         )
-    except Exception as exc:
+    except LlmInvocationError as exc:
         LOGGER.warning("Knowledge metadata enrichment failed for %s: %s", document.document_id, exc)
         base_metadata.update(fallback_meta)
         return base_metadata, fallback_meta
 
-    parsed = _extract_json_payload(_response_to_text(response))
+    parsed = _extract_json_payload(response.text)
     if parsed is None:
         LOGGER.warning("Knowledge metadata enrichment returned invalid JSON for %s", document.document_id)
         base_metadata.update(fallback_meta)

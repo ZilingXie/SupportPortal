@@ -16,12 +16,13 @@ from backend.services.embedding_provider import (
     embedding_provider_name,
     get_embedding_provider,
 )
+from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
+from backend.services.llm_profiles import ModelProfile, RAG_ANSWER_SCENARIO, resolve_model_profile
 from backend.services.prompts.rag_answer import build_rag_answer_system_prompt, build_rag_answer_user_prompt
 from backend.services.query_understanding import QueryUnderstandingResult, RetrievalPlan, understand_rag_query
 from backend.services.rag_tokenizer import is_bm25_query_stopword, tokenize_bm25_query
 
 logger = logging.getLogger(__name__)
-_UNAVAILABLE_MODELS: set[str] = set()
 _QUERY_STOPWORDS = {
     "a",
     "an",
@@ -322,12 +323,6 @@ def _drain_embedding_request_meta(provider: Any) -> list[dict[str, Any]]:
     if not isinstance(raw_items, list):
         return []
     return [item for item in raw_items if isinstance(item, dict)]
-
-
-def _import_langchain() -> Any:
-    from langchain_openai import ChatOpenAI
-
-    return ChatOpenAI
 
 
 def _import_psycopg() -> Any:
@@ -788,7 +783,7 @@ def _metadata_rerank(
 
 def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
     dsn = (os.getenv("PGVECTOR_DSN") or "").strip()
-    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    answer_profile = resolve_model_profile(RAG_ANSWER_SCENARIO)
     final_top_k = max(1, int(top_k)) if top_k is not None else _safe_int_env("RAG_TOP_K", 6)
     vector_candidate_k = _safe_int_env("RAG_VECTOR_CANDIDATE_K", max(40, final_top_k * 10))
     bm25_candidate_k = _safe_int_env("RAG_BM25_CANDIDATE_K", max(40, final_top_k * 10))
@@ -799,7 +794,6 @@ def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
     table_name = raw_table if "." in raw_table else f"{schema}.{raw_table}"
     return {
         "dsn": dsn,
-        "api_key": api_key,
         "app_schema": schema,
         "table": table_name,
         "top_k": final_top_k,
@@ -812,7 +806,10 @@ def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
         "bm25_b": _safe_float_env("RAG_BM25_B", 0.75),
         "bm25_max_query_terms": _safe_int_env("RAG_BM25_MAX_QUERY_TERMS", 6),
         "bm25_max_term_doc_freq_ratio": _safe_float_env("RAG_BM25_MAX_TERM_DOC_FREQ_RATIO", 0.08),
-        "chat_model": (os.getenv("OPENAI_CHAT_MODEL") or "gpt-4.1").strip(),
+        "api_key": answer_profile.api_key,
+        "chat_model": answer_profile.model,
+        "reasoning_effort": answer_profile.reasoning_effort,
+        "fallback_models": list(answer_profile.fallback_models),
         "embedding_provider": embedding_provider_name(),
         "embedding_model": embedding_model_id(),
         "rerank_provider": (os.getenv("RAG_RERANK_PROVIDER") or "siliconflow").strip() or "siliconflow",
@@ -831,8 +828,8 @@ def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
         ),
         "rerank_timeout_seconds": _safe_float_env("RAG_RERANK_TIMEOUT_SECONDS", 10.0),
         "rerank_max_retries": _safe_int_env("RAG_RERANK_MAX_RETRIES", 1),
-        "request_timeout_seconds": _safe_float_env("RAG_REQUEST_TIMEOUT_SECONDS", 20.0),
-        "max_retries": _safe_int_env("RAG_OPENAI_MAX_RETRIES", 1),
+        "request_timeout_seconds": answer_profile.timeout_seconds,
+        "max_retries": answer_profile.max_retries,
     }
 
 
@@ -1677,38 +1674,29 @@ def _invoke_llm_payload(
     config: dict[str, Any],
     strict_retry: bool = False,
 ) -> dict[str, Any] | None:
-    ChatOpenAI = _import_langchain()
     context_block = _format_context(chunks)
     prompt = _build_answer_prompt_for_mode(message, context_block, repair_mode=strict_retry)
-
-    model_candidates: list[str] = []
-    for candidate in [config["chat_model"], "gpt-4.1", "gpt-4o-mini"]:
-        if candidate in _UNAVAILABLE_MODELS:
-            continue
-        if candidate not in model_candidates:
-            model_candidates.append(candidate)
-
-    for model_name in model_candidates:
-        try:
-            llm = ChatOpenAI(
-                model=model_name,
-                temperature=0,
-                api_key=config["api_key"],
-                request_timeout=config["request_timeout_seconds"],
-                max_retries=int(config["max_retries"]),
-            )
-            response = llm.invoke([("system", SYSTEM_PROMPT), ("user", prompt)])
-            payload = _extract_json_payload(_response_to_text(response))
-            if payload is not None:
-                return payload
-        except Exception as exc:
-            lower = str(exc).lower()
-            if "model_not_found" in lower or "does not exist" in lower:
-                _UNAVAILABLE_MODELS.add(model_name)
-                logger.warning("RAG model unavailable (%s), trying fallback model", model_name)
-                continue
-            raise
-    return None
+    profile = ModelProfile(
+        scenario=RAG_ANSWER_SCENARIO,
+        provider="openai",
+        model=str(config.get("chat_model") or "").strip() or resolve_model_profile(RAG_ANSWER_SCENARIO).model,
+        api_mode="openai_responses",
+        api_key=str(config.get("api_key") or "").strip(),
+        reasoning_effort=str(config.get("reasoning_effort") or "").strip() or "high",
+        temperature=0.0,
+        timeout_seconds=float(config.get("request_timeout_seconds") or 20.0),
+        max_retries=int(config.get("max_retries") or 1),
+        fallback_models=tuple(config.get("fallback_models") or ("gpt-4.1", "gpt-4o-mini")),
+    )
+    try:
+        response = invoke_responses_text(
+            profile=profile,
+            system_prompt=SYSTEM_PROMPT,
+            user_prompt=prompt,
+        )
+    except LlmInvocationError:
+        return None
+    return _extract_json_payload(response.text)
 
 
 def _invoke_llm_payload_with_trace(
@@ -1717,38 +1705,31 @@ def _invoke_llm_payload_with_trace(
     config: dict[str, Any],
     strict_retry: bool = False,
 ) -> tuple[dict[str, Any] | None, int, int, str | None]:
-    ChatOpenAI = _import_langchain()
     context_block = _format_context(chunks)
     prompt = _build_answer_prompt_for_mode(message, context_block, repair_mode=strict_retry)
-
-    model_candidates: list[str] = []
-    for candidate in [config["chat_model"], "gpt-4.1", "gpt-4o-mini"]:
-        if candidate in _UNAVAILABLE_MODELS:
-            continue
-        if candidate not in model_candidates:
-            model_candidates.append(candidate)
-
-    for model_name in model_candidates:
-        try:
-            llm = ChatOpenAI(
-                model=model_name,
-                temperature=0,
-                api_key=config["api_key"],
-                request_timeout=config["request_timeout_seconds"],
-                max_retries=int(config["max_retries"]),
-            )
-            response = llm.invoke([("system", SYSTEM_PROMPT), ("user", prompt)])
-            payload = _extract_json_payload(_response_to_text(response))
-            prompt_tokens, completion_tokens = _usage_tokens_from_response(response)
-            if payload is not None:
-                return payload, prompt_tokens, completion_tokens, model_name
-        except Exception as exc:
-            lower = str(exc).lower()
-            if "model_not_found" in lower or "does not exist" in lower:
-                _UNAVAILABLE_MODELS.add(model_name)
-                logger.warning("RAG model unavailable (%s), trying fallback model", model_name)
-                continue
-            raise
+    profile = ModelProfile(
+        scenario=RAG_ANSWER_SCENARIO,
+        provider="openai",
+        model=str(config.get("chat_model") or "").strip() or resolve_model_profile(RAG_ANSWER_SCENARIO).model,
+        api_mode="openai_responses",
+        api_key=str(config.get("api_key") or "").strip(),
+        reasoning_effort=str(config.get("reasoning_effort") or "").strip() or "high",
+        temperature=0.0,
+        timeout_seconds=float(config.get("request_timeout_seconds") or 20.0),
+        max_retries=int(config.get("max_retries") or 1),
+        fallback_models=tuple(config.get("fallback_models") or ("gpt-4.1", "gpt-4o-mini")),
+    )
+    try:
+        response = invoke_responses_text(
+            profile=profile,
+            system_prompt=SYSTEM_PROMPT,
+            user_prompt=prompt,
+        )
+    except LlmInvocationError:
+        return None, 0, 0, None
+    payload = _extract_json_payload(response.text)
+    if payload is not None:
+        return payload, response.prompt_tokens, response.completion_tokens, response.model_name
     return None, 0, 0, None
 
 
@@ -1758,17 +1739,6 @@ def _confidence_from_chunks(chunks: list[RetrievedChunk]) -> float:
     best_similarity = max(0.0, min(1.0, chunks[0].similarity))
     confidence = 0.72 + (0.2 * best_similarity) + (0.02 * min(len(chunks), 5))
     return round(min(0.95, confidence), 2)
-
-
-def _usage_tokens_from_response(response: Any) -> tuple[int, int]:
-    usage = getattr(response, "usage_metadata", None)
-    if isinstance(usage, dict):
-        return int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0)
-    response_metadata = getattr(response, "response_metadata", None)
-    if isinstance(response_metadata, dict):
-        token_usage = response_metadata.get("token_usage") if isinstance(response_metadata.get("token_usage"), dict) else {}
-        return int(token_usage.get("prompt_tokens") or 0), int(token_usage.get("completion_tokens") or 0)
-    return 0, 0
 
 
 def _infer_query_type(message: str) -> str:
