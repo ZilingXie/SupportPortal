@@ -37,6 +37,7 @@ from backend.services.embedding_provider import (
     embedding_model_id,
 )
 from backend.services.emotion_reply import build_initial_ack
+from backend.services.engineer_agent import build_engineer_agent_brief
 from backend.services.investigation_flow import (
     COMMUNICATING_STATUS,
     ESCALATED_STATUS,
@@ -54,6 +55,7 @@ from backend.services.investigation_flow import (
 from backend.services.ticket_orchestrator import (
     TicketExecutionResult,
     analyze_ticket_message,
+    build_execution_route_payload,
     orchestrate_ticket_execution,
     resolve_next_ticket_status,
 )
@@ -545,6 +547,10 @@ def build_engineer_followup_request(ticket: dict[str, Any], customer_message: st
 
 
 def _summary_fallback(ticket: dict[str, Any]) -> tuple[str, str]:
+    agent_summary, agent_next_action = build_engineer_agent_brief(ticket)
+    if normalize_ticket_status(ticket.get("status")) == INVESTIGATING_STATUS and agent_summary and agent_next_action:
+        return agent_summary, agent_next_action
+
     subject = str(ticket.get("subject", "")).strip() or "General support request"
     status = str(ticket.get("status", "open")).strip().lower()
     active_investigation = (
@@ -706,6 +712,10 @@ def _llm_response_to_text(response: Any) -> str:
 
 
 def build_ticket_summary(ticket: dict[str, Any]) -> tuple[str, str, str]:
+    agent_summary, agent_next_action = build_engineer_agent_brief(ticket)
+    if normalize_ticket_status(ticket.get("status")) == INVESTIGATING_STATUS and agent_summary and agent_next_action:
+        return agent_summary, agent_next_action, "engineer_agent_state"
+
     fallback_summary, fallback_next_action = _summary_fallback(ticket)
     api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
     if not api_key:
@@ -1081,7 +1091,7 @@ def _build_investigation_event(
     messages = investigation.get("messages")
     if isinstance(messages, list) and messages:
         latest_message = str(messages[-1].get("content") or "").strip()
-    return {
+    payload = {
         "event": event_name,
         "ticket_id": str(ticket.get("ticket_id") or ""),
         "investigation_id": str(investigation.get("id") or ""),
@@ -1090,6 +1100,16 @@ def _build_investigation_event(
         "message": latest_message[:200],
         "created_at": now_iso(),
     }
+    agent_state = ticket.get("engineer_agent_state")
+    if isinstance(agent_state, dict):
+        payload["agent_phase"] = str(agent_state.get("phase") or "").strip()
+        payload["agent_ready_to_reply"] = bool(agent_state.get("ready_to_reply"))
+        payload["agent_goal"] = str(agent_state.get("goal") or "").strip()
+        payload["agent_next_request_for_engineer"] = str(
+            agent_state.get("next_request_for_engineer") or ""
+        ).strip()
+        payload["agent_updated_at"] = str(agent_state.get("last_refreshed_at") or "").strip()
+    return payload
 
 
 async def _record_and_dispatch_investigation_event(
@@ -1449,7 +1469,8 @@ async def create_or_update_ticket(
                 resolution_builder=resolve_support_message,
             )
         if execution is not None:
-            route_payload.update(execution.route_payload())
+            execution_route_payload = build_execution_route_payload(execution)
+            route_payload.update(execution_route_payload)
             follow_up_answer = execution.answer
             follow_up_sources = list(execution.sources)
             follow_up_citations = [dict(item) for item in execution.citations]
@@ -1460,6 +1481,13 @@ async def create_or_update_ticket(
                     trigger_source="support_query",
                     now_value=now_iso(),
                     ai_turn_builder=generate_investigation_ai_turn,
+                    execution_context={
+                        **execution_route_payload,
+                        "answer": execution.answer,
+                        "sources": list(execution.sources),
+                        "citations": [dict(item) for item in execution.citations],
+                        "evidence_summary": dict(execution.evidence_summary or {}) or {},
+                    },
                 )
                 follow_up_answer = str(investigation_result.get("public_reply") or "").strip()
                 follow_up_sources = []

@@ -5,6 +5,14 @@ import re
 from typing import Any, Callable
 from uuid import uuid4
 
+from backend.services.engineer_agent import (
+    build_engineer_handoff_packet,
+    default_customer_reply as default_engineer_customer_reply,
+    default_engineer_agent_turn,
+    ensure_engineer_agent_ticket_defaults,
+    normalize_engineer_agent_state,
+)
+
 OPEN_STATUS = "open"
 COMMUNICATING_STATUS = "communicating"
 ESCALATED_STATUS = "escalated"
@@ -63,54 +71,22 @@ def default_investigation_prompt(
     engineer_message: str | None = None,
     revision_note: str | None = None,
 ) -> dict[str, Any]:
-    customer_text = latest_customer_message(ticket)
-    subject = str(ticket.get("subject") or "this issue").strip()
-
-    if revision_note:
-        draft = default_customer_reply(ticket, revision_note)
-        return {
-            "state": INVESTIGATION_STATE_AWAITING_CONFIRMATION,
-            "message": "I revised the customer reply based on your note. Please confirm whether this version is ready to send.",
-            "draft_customer_reply": draft,
-        }
-
-    if engineer_message:
-        draft = default_customer_reply(ticket, engineer_message)
-        return {
-            "state": INVESTIGATION_STATE_AWAITING_CONFIRMATION,
-            "message": "I have enough information now. Please confirm this draft before I reply to the customer.",
-            "draft_customer_reply": draft,
-        }
-
-    if _CJK_RE.search(customer_text):
-        request = f"请先确认该问题的复现场景、SDK 版本，以及是否只影响当前平台。客户原始问题：{customer_text or subject}"
-    else:
-        request = (
-            "Please confirm the reproduction scope, SDK version, and whether the issue is limited to a specific platform. "
-            f"Customer issue: {customer_text or subject}"
-        )
-    return {
-        "state": INVESTIGATION_STATE_ACTIVE,
-        "message": request,
-        "draft_customer_reply": "",
-    }
+    return default_engineer_agent_turn(
+        ticket,
+        investigation,
+        engineer_message=engineer_message,
+        revision_note=revision_note,
+    )
 
 
 def default_customer_reply(ticket: dict[str, Any], engineer_context: str) -> str:
-    customer_text = latest_customer_message(ticket)
-    guidance = " ".join(str(engineer_context or "").split()).strip()
-    if _CJK_RE.search(customer_text):
-        if guidance:
-            return f"我们已经进一步调查了这个问题。请先按照以下信息处理：{guidance}"
-        return "我们已经进一步调查了这个问题，请根据最新建议重试并告知结果。"
-    if guidance:
-        return f"We investigated this further. Please try the following: {guidance}"
-    return "We investigated this further. Please try the latest guidance and let us know the result."
+    return default_engineer_customer_reply(ticket, engineer_context)
 
 
 def ensure_ticket_investigation_defaults(ticket: dict[str, Any]) -> None:
     ticket["status"] = normalize_ticket_status(ticket.get("status"))
     ticket.setdefault("active_investigation", None)
+    ensure_engineer_agent_ticket_defaults(ticket)
     history = ticket.get("investigation_history")
     if not isinstance(history, list):
         ticket["investigation_history"] = []
@@ -127,6 +103,57 @@ def ensure_ticket_investigation_defaults(ticket: dict[str, Any]) -> None:
 def surface_legacy_pending_question(ticket: dict[str, Any]) -> None:
     ensure_ticket_investigation_defaults(ticket)
     return None
+
+
+def _build_handoff_route_summary(execution_context: dict[str, Any] | None = None) -> dict[str, Any]:
+    execution = execution_context if isinstance(execution_context, dict) else {}
+    return {
+        "answer_route": str(execution.get("answer_route") or "").strip(),
+        "scope_label": str(execution.get("scope_label") or "").strip(),
+        "route_family": str(execution.get("route_family") or "").strip(),
+        "execution_action": str(execution.get("execution_action") or "").strip(),
+        "tooling_profile": str(execution.get("tooling_profile") or "").strip(),
+        "route_reason": str(execution.get("route_reason") or "").strip(),
+        "route_confidence": execution.get("route_confidence"),
+        "search_used": bool(execution.get("search_used")),
+        "matched_signals": list(execution.get("matched_signals") or []),
+    }
+
+
+def _build_handoff_rag_result(execution_context: dict[str, Any] | None = None) -> dict[str, Any]:
+    execution = execution_context if isinstance(execution_context, dict) else {}
+    return {
+        "candidate_answer": str(execution.get("answer") or "").strip(),
+        "sources": list(execution.get("sources") or []),
+        "citations": [dict(item) for item in list(execution.get("citations") or []) if isinstance(item, dict)],
+        "evidence_summary": (
+            dict(execution.get("evidence_summary"))
+            if isinstance(execution.get("evidence_summary"), dict)
+            else {}
+        ),
+    }
+
+
+def _update_ticket_level_agent_state(
+    ticket: dict[str, Any],
+    ai_turn: dict[str, Any],
+    *,
+    now_value: str,
+) -> None:
+    handoff_packet = (
+        ticket.get("engineer_handoff_packet")
+        if isinstance(ticket.get("engineer_handoff_packet"), dict)
+        else None
+    )
+    next_state = str(ai_turn.get("state") or INVESTIGATION_STATE_ACTIVE).strip().lower()
+    ready_to_reply = next_state == INVESTIGATION_STATE_AWAITING_CONFIRMATION
+    ticket["engineer_agent_state"] = normalize_engineer_agent_state(
+        ai_turn.get("engineer_agent_state") if isinstance(ai_turn.get("engineer_agent_state"), dict) else None,
+        ticket=ticket,
+        handoff_packet=handoff_packet,
+        now_value=now_value,
+        ready_to_reply=ready_to_reply,
+    )
 
 
 def _apply_ai_turn_to_active_investigation(
@@ -174,9 +201,18 @@ def start_or_refresh_investigation(
     trigger_source: str,
     now_value: str,
     ai_turn_builder: Callable[..., dict[str, Any]] = default_investigation_prompt,
+    execution_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ensure_ticket_investigation_defaults(ticket)
     surface_legacy_pending_question(ticket)
+    ticket["engineer_handoff_packet"] = build_engineer_handoff_packet(
+        ticket,
+        source=trigger_source,
+        trigger_reason=trigger_reason,
+        now_value=now_value,
+        route_summary=_build_handoff_route_summary(execution_context),
+        rag_result=_build_handoff_rag_result(execution_context),
+    )
 
     existing_active = ticket.get("active_investigation")
     created = False
@@ -205,6 +241,7 @@ def start_or_refresh_investigation(
         active_investigation["updated_at"] = now_value
 
     ai_turn = ai_turn_builder(ticket, active_investigation)
+    _update_ticket_level_agent_state(ticket, ai_turn, now_value=now_value)
     new_internal_messages.extend(
         _apply_ai_turn_to_active_investigation(active_investigation, ai_turn, now_value)
     )
@@ -243,6 +280,7 @@ def append_engineer_investigation_message(
     new_internal_messages.append(engineer_entry)
 
     ai_turn = ai_turn_builder(ticket, active_investigation, engineer_message=engineer_message)
+    _update_ticket_level_agent_state(ticket, ai_turn, now_value=now_value)
     new_internal_messages.extend(
         _apply_ai_turn_to_active_investigation(active_investigation, ai_turn, now_value)
     )
@@ -316,6 +354,7 @@ def apply_investigation_confirmation(
     active_investigation.setdefault("messages", []).append(revision_message)
     new_internal_messages.append(revision_message)
     ai_turn = ai_turn_builder(ticket, active_investigation, revision_note=note)
+    _update_ticket_level_agent_state(ticket, ai_turn, now_value=now_value)
     new_internal_messages.extend(
         _apply_ai_turn_to_active_investigation(active_investigation, ai_turn, now_value)
     )

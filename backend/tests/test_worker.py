@@ -394,6 +394,13 @@ class WorkerResilienceTests(unittest.TestCase):
             needs_investigating=True,
             next_status="investigating",
             investigation_reason="rag_post_check_insufficient",
+            evidence_summary={
+                "quality_signals": {
+                    "generation_mode": "structured_answer",
+                    "selected_doc_count": 1,
+                },
+                "selected_contexts": [],
+            },
         )
 
         investigation_result = {
@@ -419,6 +426,39 @@ class WorkerResilienceTests(unittest.TestCase):
         def _start_or_refresh(ticket, **_kwargs):
             ticket["status"] = "investigating"
             ticket["active_investigation"] = copy.deepcopy(investigation_result["active_investigation"])
+            ticket["engineer_handoff_packet"] = {
+                "source": "worker_async_rag",
+                "conversation_summary": "Customer reports token renew callback never fires.",
+                "latest_customer_message": "token renew callback never fires",
+                "latest_client_ai_reply": "I've opened an engineer ticket for this issue and we're investigating further. I'll reply here as soon as the engineer review is confirmed.",
+                "route_summary": {
+                    "answer_route": "rag",
+                    "route_reason": "grounded_answer",
+                },
+                "rag_result": {
+                    "candidate_answer": execution.answer,
+                    "sources": list(execution.sources),
+                    "citations": [dict(item) for item in execution.citations],
+                    "evidence_summary": dict(execution.evidence_summary),
+                },
+                "unresolved_reason": "rag_post_check_insufficient",
+                "customer_language_hint": "en",
+                "created_at": "2026-03-22T00:01:05+00:00",
+                "updated_at": "2026-03-22T00:01:05+00:00",
+            }
+            ticket["engineer_agent_state"] = {
+                "phase": "gather_missing_inputs",
+                "issue_understanding": "Token renew callback still fails after the upgrade attempt.",
+                "knowledge_summary": "Client AI found generic token-authentication guidance but not enough Android 14-specific evidence.",
+                "why_not_solved": "The current grounded answer is not enough to prove the Android-specific fix.",
+                "goal": "Confirm Android 14 scope and exact SDK version before replying.",
+                "known_facts": ["Candidate answer recommends SDK 4.2.2."],
+                "missing_information": ["Exact SDK version", "Whether Android 14 is the only affected platform"],
+                "next_request_for_engineer": "Please confirm Android 14 scope and exact SDK version.",
+                "resolution_hypothesis": "The issue may be isolated to SDK 4.2.1 on Android 14.",
+                "ready_to_reply": False,
+                "last_refreshed_at": "2026-03-22T00:01:05+00:00",
+            }
             return copy.deepcopy(investigation_result)
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
@@ -447,10 +487,22 @@ class WorkerResilienceTests(unittest.TestCase):
         saved_ticket = repository.save_ticket.call_args.args[0]
         self.assertEqual(saved_ticket["status"], "investigating")
         self.assertEqual(saved_ticket["messages"][-1]["content"], investigation_result["public_reply"])
+        self.assertEqual(
+            saved_ticket["engineer_handoff_packet"]["rag_result"]["candidate_answer"],
+            "Please upgrade to SDK 4.2.2 and retry token renewal.",
+        )
+        self.assertEqual(saved_ticket["engineer_agent_state"]["phase"], "gather_missing_inputs")
         self.assertEqual(repository.save_investigation.call_count, 1)
         first_event = repository.record_event.call_args_list[0].args[2]
         self.assertEqual(first_event["status"], "investigating")
         self.assertEqual(first_event["execution_action"], "rag")
+        investigation_event = repository.record_event.call_args_list[1].args[2]
+        self.assertEqual(investigation_event["agent_phase"], "gather_missing_inputs")
+        self.assertFalse(investigation_event["agent_ready_to_reply"])
+        self.assertEqual(
+            investigation_event["agent_next_request_for_engineer"],
+            "Please confirm Android 14 scope and exact SDK version.",
+        )
 
     def test_process_ticket_message_sentiment_persists_label_and_records_event(self) -> None:
         repository = Mock()

@@ -153,6 +153,15 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertNotIn("idx_support_tickets_priority_updated", repo_source)
         self.assertNotIn("def _normalize_priority", repo_source)
 
+    def test_ticket_storage_contract_includes_engineer_agent_ticket_fields(self) -> None:
+        sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
+        repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+
+        self.assertIn("engineer_handoff_packet JSONB", sql_source)
+        self.assertIn("engineer_agent_state JSONB", sql_source)
+        self.assertIn("engineer_handoff_packet", repo_source)
+        self.assertIn("engineer_agent_state", repo_source)
+
     def test_ticket_repository_requires_ticket_db_dsn(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(RuntimeError):

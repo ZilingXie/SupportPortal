@@ -29,7 +29,11 @@ _RETRYABLE_STORAGE_ERROR_SNIPPETS = (
 _ResultT = TypeVar("_ResultT")
 _VALID_MESSAGE_SENTIMENTS = {"good", "bad", "neutral"}
 _TICKET_SCHEMA_VERSION_KEY = "ticket_flow_schema_version"
-_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v2"
+_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v3"
+_COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
+    "2026-single-ai-managed-v2",
+    "2026-single-ai-managed-v3",
+}
 
 
 def _utc_now() -> str:
@@ -181,6 +185,8 @@ class InMemoryTicketRepository:
         item["active_investigation"] = copy.deepcopy(active) if active is not None else None
         item["investigation_history"] = copy.deepcopy(history)
         item["status"] = _normalize_status(item.get("status"))
+        item.setdefault("engineer_handoff_packet", None)
+        item.setdefault("engineer_agent_state", None)
         return item
 
     def list_tickets(self, include_messages: bool = True) -> list[dict[str, Any]]:
@@ -477,7 +483,7 @@ class PostgresTicketRepository:
                 )
                 version_row = cur.fetchone()
                 existing_version = str(version_row[0]).strip() if version_row else ""
-                if existing_version != _TICKET_SCHEMA_VERSION:
+                if existing_version and existing_version not in _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS:
                     for table_name in (
                         "support_ticket_investigation_messages",
                         "support_ticket_investigations",
@@ -499,10 +505,22 @@ class PostgresTicketRepository:
                             subject TEXT NOT NULL,
                             status TEXT NOT NULL,
                             last_engineer_action JSONB,
+                            engineer_handoff_packet JSONB,
+                            engineer_agent_state JSONB,
                             created_at TIMESTAMPTZ NOT NULL,
                             updated_at TIMESTAMPTZ NOT NULL
                         )
                         """
+                    ).format(self._table("support_tickets"))
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS engineer_handoff_packet JSONB"
+                    ).format(self._table("support_tickets"))
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS engineer_agent_state JSONB"
                     ).format(self._table("support_tickets"))
                 )
                 cur.execute(
@@ -774,8 +792,10 @@ class PostgresTicketRepository:
             "subject": str(row[3]),
             "status": _normalize_status(row[4]),
             "last_engineer_action": row[5],
-            "created_at": _to_iso(row[6]),
-            "updated_at": _to_iso(row[7]),
+            "engineer_handoff_packet": row[6] if isinstance(row[6], dict) else None,
+            "engineer_agent_state": row[7] if isinstance(row[7], dict) else None,
+            "created_at": _to_iso(row[8]),
+            "updated_at": _to_iso(row[9]),
             "messages": messages,
             "active_investigation": active_investigation,
             "investigation_history": history,
@@ -794,6 +814,8 @@ class PostgresTicketRepository:
                             subject,
                             status,
                             last_engineer_action,
+                            engineer_handoff_packet,
+                            engineer_agent_state,
                             created_at,
                             updated_at
                         FROM {}
@@ -834,6 +856,8 @@ class PostgresTicketRepository:
                             subject,
                             status,
                             last_engineer_action,
+                            engineer_handoff_packet,
+                            engineer_agent_state,
                             created_at,
                             updated_at
                         FROM {}
@@ -877,6 +901,16 @@ class PostgresTicketRepository:
         subject = str(ticket.get("subject") or "General support request")
         status = _normalize_status(ticket.get("status"))
         last_action = ticket.get("last_engineer_action")
+        engineer_handoff_packet = (
+            ticket.get("engineer_handoff_packet")
+            if isinstance(ticket.get("engineer_handoff_packet"), dict)
+            else None
+        )
+        engineer_agent_state = (
+            ticket.get("engineer_agent_state")
+            if isinstance(ticket.get("engineer_agent_state"), dict)
+            else None
+        )
 
         def _operation(conn: psycopg.Connection[Any]) -> None:
             with conn.transaction():
@@ -891,16 +925,20 @@ class PostgresTicketRepository:
                                 subject,
                                 status,
                                 last_engineer_action,
+                                engineer_handoff_packet,
+                                engineer_agent_state,
                                 created_at,
                                 updated_at
                             )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             ON CONFLICT (ticket_id) DO UPDATE SET
                                 customer_id = EXCLUDED.customer_id,
                                 requester = EXCLUDED.requester,
                                 subject = EXCLUDED.subject,
                                 status = EXCLUDED.status,
                                 last_engineer_action = EXCLUDED.last_engineer_action,
+                                engineer_handoff_packet = EXCLUDED.engineer_handoff_packet,
+                                engineer_agent_state = EXCLUDED.engineer_agent_state,
                                 updated_at = EXCLUDED.updated_at
                             """
                         ).format(self._table("support_tickets")),
@@ -911,6 +949,8 @@ class PostgresTicketRepository:
                             subject,
                             status,
                             Json(last_action) if isinstance(last_action, dict) else None,
+                            Json(engineer_handoff_packet) if engineer_handoff_packet else None,
+                            Json(engineer_agent_state) if engineer_agent_state else None,
                             created_at,
                             updated_at,
                         ),

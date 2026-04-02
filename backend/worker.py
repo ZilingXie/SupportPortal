@@ -27,6 +27,7 @@ from backend.services.investigation_flow import (
 )
 from backend.services.ticket_orchestrator import (
     TicketExecutionResult,
+    build_execution_route_payload,
     orchestrate_ticket_execution,
     resolve_next_ticket_status,
 )
@@ -130,6 +131,19 @@ def _build_worker_investigation_event(
         "investigation_state": state or "active",
         "message": latest_message[:200],
         "created_at": now_iso(),
+        **(
+            {
+                "agent_phase": str(ticket["engineer_agent_state"].get("phase") or "").strip(),
+                "agent_ready_to_reply": bool(ticket["engineer_agent_state"].get("ready_to_reply")),
+                "agent_goal": str(ticket["engineer_agent_state"].get("goal") or "").strip(),
+                "agent_next_request_for_engineer": str(
+                    ticket["engineer_agent_state"].get("next_request_for_engineer") or ""
+                ).strip(),
+                "agent_updated_at": str(ticket["engineer_agent_state"].get("last_refreshed_at") or "").strip(),
+            }
+            if isinstance(ticket.get("engineer_agent_state"), dict)
+            else {}
+        ),
     }
 
 
@@ -474,12 +488,20 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
     else:
         initial_message_count = len(ticket.get("messages", []))
         if execution.needs_investigating:
+            execution_route_payload = build_execution_route_payload(execution)
             investigation_result = start_or_refresh_investigation(
                 ticket,
                 trigger_reason=str(execution.investigation_reason or "rag_insufficient_evidence"),
                 trigger_source="worker_async_rag",
                 now_value=now_iso(),
                 ai_turn_builder=generate_investigation_ai_turn,
+                execution_context={
+                    **execution_route_payload,
+                    "answer": execution.answer,
+                    "sources": list(execution.sources),
+                    "citations": [dict(item) for item in execution.citations],
+                    "evidence_summary": dict(execution.evidence_summary or {}) or {},
+                },
             )
             answer = str(investigation_result.get("public_reply") or "").strip()
             sources = []
