@@ -183,11 +183,22 @@
    - `Today Ticket Volume`
    - `Resolution Rate`
    - `Sentiment Alerts`
-2. 必有实时事件流，且按时间倒序显示。
-3. 必须存在前往 `/dashboard/rag/` 的明确入口，但该入口不能盖过 ticket ops 本身。
-4. 页面重点是：
+2. 左侧导航顺序固定为：
+   - `Ticket Ops`
+   - `RAG Benchmark`
+   - `Ticket Details`
+3. `Ticket Details` 必须是默认展开的分组，而不是独立 overview tab；其二级状态顺序固定为：
+   - `investigating`
+   - `escalated`
+   - `communicating`
+   - `resolved`
+4. `Ticket Ops` 保留 overview / KPI / queue health / throughput / summary surfaces；工单列表不再使用单独的 live stream section 展示。
+5. 选中 `Ticket Details` 的任一状态后，主区应切成该状态的 full-page ticket board，并复用现有 ticket 数据，不得改写 ticket ops 数据契约。
+6. dashboard 内允许打开只读 ticket detail overlay，用于查看上下文、调查摘要和近期工单进展；工单处理动作仍留在 `/engineer`。
+7. 必须存在前往 `/dashboard/rag/` 的明确入口，并以 rail 中的 `RAG Benchmark` 作为主导航入口。
+8. 页面重点是：
    - queue health
-   - live ticket signal
+   - categorized ticket visibility
    - operator summary
    - escalation awareness
 
