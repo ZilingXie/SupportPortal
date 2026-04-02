@@ -1521,19 +1521,23 @@ function renderInvestigationComposerHtml({ draft, controlsDisabled, reviseMode }
 
   return `
     <div class="detail-investigation-composer">
-      <textarea
-        id="detail-investigation-input"
-        class="detail-textarea"
-        placeholder="${escapeHtml(placeholder)}"
-        ${controlsDisabled ? "disabled" : ""}
-      >${escapeHtml(draft)}</textarea>
-      <div class="detail-investigation-composer-actions">
+      <div class="detail-investigation-composer-inner">
+        <textarea
+          id="detail-investigation-input"
+          class="detail-textarea"
+          placeholder="${escapeHtml(placeholder)}"
+          ${controlsDisabled ? "disabled" : ""}
+        >${escapeHtml(draft)}</textarea>
         <button
           type="button"
-          class="btn btn-primary"
+          class="composer-icon-button send-btn"
           data-detail-action="send-tell-ai"
+          aria-label="${escapeHtml(submitLabel)}"
+          title="${escapeHtml(submitLabel)}"
           ${controlsDisabled ? "disabled" : ""}
-        >${escapeHtml(submitLabel)}</button>
+        >
+          <span class="material-symbols-outlined" aria-hidden="true">arrow_upward</span>
+        </button>
       </div>
     </div>
   `;
