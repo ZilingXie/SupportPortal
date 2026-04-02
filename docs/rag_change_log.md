@@ -10,6 +10,57 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-04-02 - Query-understanding layer before client RAG retrieval
+
+- Summary: Added an English-only query-understanding layer ahead of the client AI `rag` skill, including glossary normalization, schema-based self-query planning, retrieval-oriented rewrite/enhancement, limited multi-part decomposition, richer trace metadata, and live telemetry persistence for query-understanding outputs.
+- Reason: The client AI flow already had strong routing and post-RAG sufficiency gating, but retrieval still relied too heavily on raw customer wording. This change improves retrieval planning before candidate search so the system can normalize Agora terminology, infer stable metadata filters, expand retrieval queries safely, and decompose complex technical questions without changing the external ticket API.
+- Affected files or config:
+  - `backend/Dockerfile`
+  - `backend/rag_api.py`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/services/prompts/__init__.py`
+  - `backend/services/prompts/query_understanding.py`
+  - `backend/services/query_understanding.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/services/rag_evidence_summary.py`
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_query_understanding.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_rag_evidence_summary.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `backend/tests/test_rag_reset.py`
+  - `backend/tests/test_knowledge_repository_bm25.py`
+  - `dictionary/video-calling_glossary (1).md`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - `support_rag_query_runs` now stores a `query_understanding_meta` JSONB payload for live-query telemetry.
+  - Knowledge repository bootstrap version advanced to `2026-04-02-query-understanding-v1`, so existing databases pick up the new RAG telemetry column during initialization.
+  - The container image now includes `/app/dictionary`, allowing runtime query-understanding to load the repo-tracked glossary snapshot instead of failing on missing files.
+  - Internal RAG evidence summaries can now include a `query_understanding` section, while `/api/tickets/query` remains externally stable.
+  - Query-understanding is English-only in V1 and defaults to the `en` profile, but the registry and result contract keep explicit hooks for future locale/product-specific profiles.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_query_understanding.py backend/tests/test_prompt_modules.py backend/tests/test_rag_qa.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_rag_evidence_summary.py backend/tests/test_rag_service_client.py backend/tests/test_rag_scorecard_repository.py backend/tests/test_rag_reset.py backend/tests/test_knowledge_repository_bm25.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/rag_api.py backend/repositories/knowledge_repository.py backend/services/prompts/__init__.py backend/services/prompts/query_understanding.py backend/services/query_understanding.py backend/services/rag_benchmark_runner.py backend/services/rag_evidence_summary.py backend/services/rag_qa.py backend/tests/test_prompt_modules.py backend/tests/test_query_understanding.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_rag_qa.py`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
+  - `ln -sfn /Users/xieziling/Desktop/personal_proj/SupportPortal/.env /Users/xieziling/.config/superpowers/worktrees/SupportPortal/client-ai-query-understanding-v1/.env`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health`
+  - `podman exec deployment_rag_api_1 python -c "import json; from backend.services.query_understanding import understand_rag_query; result = understand_rag_query('Compare BuildTokenWithUid vs BuildTokenWithUidAndPrivilege for Node.js, and how do wildcard tokens fit in.'); print(json.dumps({'query_profile': result.query_profile, 'canonical_terms': result.canonical_terms, 'hard_filters': result.retrieval_plan.hard_filters, 'soft_signals': result.retrieval_plan.soft_signals, 'rewritten_queries': result.rewritten_queries, 'decomposition_subqueries': result.decomposition_subqueries, 'fallback_mode': result.fallback_mode}, ensure_ascii=False))"`
+  - `podman exec deployment_rag_api_1 python -c "import os, psycopg; dsn=os.environ['PGVECTOR_DSN']; schema=os.environ.get('PGVECTOR_SCHEMA','supportportal');\nwith psycopg.connect(dsn) as conn:\n  with conn.cursor() as cur:\n    cur.execute(\"SELECT column_name FROM information_schema.columns WHERE table_schema=%s AND table_name='support_rag_query_runs' AND column_name='query_understanding_meta'\", (schema,));\n    row=cur.fetchone();\nprint('present' if row else 'missing')"`
+  - Verification result:
+    - Focused query-understanding/RAG regression suite passed: `106 passed`.
+    - Full backend suite passed: `375 passed, 10 warnings`.
+    - `py_compile` completed without errors for all touched Python files.
+    - First rebuilt image exposed the intended runtime failures clearly: missing `/app/dictionary` and a missing `query_understanding_meta` column on the live database. The follow-up fixes were applied, the image was rebuilt again, and host `/health` then returned `status=ok`, `ticket_storage=postgres`, `knowledge_storage=postgres`, `rag_service=ok`.
+    - Runtime query-understanding smoke inside `deployment_rag_api_1` confirmed glossary-backed normalization, `language=nodejs` hard filtering, soft retrieval signals, one rewrite variant, and capped decomposition subqueries.
+    - Direct schema smoke inside `deployment_rag_api_1` confirmed `support_rag_query_runs.query_understanding_meta` is now present.
+
 ## 2026-04-01 - Reframe investigating as a formal engineer ticket lifecycle
 
 - Summary: Kept the existing ticket-linked investigation storage model, but formally promoted each active investigation cycle into the engineer-side work item for `investigating` tickets. Public investigation replies now explicitly say an engineer ticket has been opened, engineer UI copy now presents the workspace as an engineer-ticket flow, and the approve path continues to send the prepared AI reply to the customer while closing the engineer ticket cycle back into `communicating`.
@@ -1419,3 +1470,80 @@ For each new entry, record:
   - `podman-compose -f deployment/docker-compose.single-host.yml down`
   - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
   - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+
+## 2026-04-02 - Centralize model selection for RAG answer and sufficiency with shared LLM profiles
+
+- Summary: Added shared scene-aware LLM profile/factory helpers, migrated the RAG answer path to OpenAI Responses with `gpt-5.4` and `reasoning=high`, upgraded the post-RAG sufficiency judge to `gpt-5.4`, and aligned benchmark/evaluation defaults to provider-qualified judge models.
+- Reason: RAG model selection had become fragmented across multiple services, which made prompt/model changes hard to audit and kept the RAG answer and sufficiency layers on older defaults. Centralizing the model profile logic brings the answering, judging, and evaluation surfaces into one configurable contract.
+- Affected files or config:
+  - `.env.example`
+  - `backend/main.py`
+  - `backend/rag_api.py`
+  - `backend/services/emotion_reply.py`
+  - `backend/services/knowledge_ingestion.py`
+  - `backend/services/llm_factory.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/services/rag_benchmark.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/rag_sufficiency_judge.py`
+  - `backend/services/support_router.py`
+  - `backend/tests/test_emotion_reply.py`
+  - `backend/tests/test_knowledge_ingestion.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_next_prototype_model_contract.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_sufficiency_judge.py`
+  - `deployment/docker-compose.single-host.yml`
+  - `ui/client-ui/next-prototype/app/api/chat/route.ts`
+  - `ui/client-ui/next-prototype/app/api/generate-title/route.ts`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No vector reset, chunking change, ingestion schema change, or table migration.
+  - Runtime model selection for the RAG answer stage now defaults to `gpt-5.4` with `reasoning=high`.
+  - Runtime model selection for the post-RAG sufficiency stage now defaults to `gpt-5.4`.
+  - Benchmark judge configuration now accepts provider-qualified model IDs and defaults to a mixed OpenAI/SiliconFlow panel.
+  - Knowledge metadata enrichment now defaults to `gpt-5.4-mini`, but embeddings and reranking remain unchanged.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_profiles.py backend/tests/test_rag_sufficiency_judge.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_emotion_reply.py backend/tests/test_next_prototype_model_contract.py backend/tests/test_support_router.py backend/tests/test_rag_qa.py backend/tests/test_knowledge_ingestion.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/main.py backend/rag_api.py backend/services/llm_profiles.py backend/services/llm_factory.py backend/services/support_router.py backend/services/rag_sufficiency_judge.py backend/services/rag_qa.py backend/services/knowledge_ingestion.py backend/services/rag_benchmark.py backend/services/rag_benchmark_runner.py backend/services/emotion_reply.py backend/tests/test_llm_profiles.py backend/tests/test_rag_sufficiency_judge.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_emotion_reply.py backend/tests/test_next_prototype_model_contract.py backend/tests/test_knowledge_ingestion.py backend/tests/test_rag_qa.py`
+  - `scripts/workflow/link_worktree_env.sh /Users/xieziling/.config/superpowers/worktrees/SupportPortal/client-ai-model-priority`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health`
+  - `curl -sS -X POST http://localhost:8080/api/tickets/query -H 'Content-Type: application/json' -d '{"customer_id":"model-priority-web-smoke","message":"Who is Agora'\''s CEO?"}'`
+  - `curl -sS -X POST http://localhost:8080/api/tickets/query -H 'Content-Type: application/json' -d '{"customer_id":"model-priority-rag-smoke","message":"How do I join a channel?"}'`
+
+## 2026-04-02 - Hybrid query expansion and retrieval-plan downpush for technical RAG
+
+- Summary: Reworked the pre-RAG query-understanding stage into a hybrid query-expansion layer with structured glossary and troubleshooting lexicon snapshots, LLM self-query/rewrite/decomposition planning, conditional PRF second-pass expansion, Redis-backed query-expansion caching, and hard-filter provenance so only rule-backed filters are pushed into the first retrieval pass.
+- Reason: The earlier query-understanding stage mainly produced heuristic variants after the fact, which limited recall for ambiguous support questions and left high-confidence metadata filters to be applied mostly in rerank. This change improves first-pass candidate quality and keeps the existing answer and sufficiency safety gates unchanged.
+- Affected files or config:
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `backend/rag_api.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/services/query_expansion_cache.py`
+  - `backend/services/query_understanding.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_query_understanding.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_qa.py`
+  - `dictionary/agora_glossary_en.json`
+  - `dictionary/troubleshooting_lexicon_en.json`
+  - `docs/feature_list.md`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No vector reset, table migration, or chunk backfill.
+  - Runtime retrieval planning now consumes structured dictionary snapshots in addition to the existing markdown source file.
+  - Query-understanding metadata recorded in `support_rag_query_runs.query_understanding_meta` now includes dictionary hits, rule/LLM/PRF expansions, hard-filter provenance, PRF usage, cache-hit state, and first/second-pass candidate counts.
+  - Benchmark strategy snapshots now expose query-expansion enablement, model, and PRF flags so review data can distinguish retrieval-planning regressions.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_profiles.py backend/tests/test_query_understanding.py backend/tests/test_rag_qa.py backend/tests/test_rag_benchmark_runner.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`

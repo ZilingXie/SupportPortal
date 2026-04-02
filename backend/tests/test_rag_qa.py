@@ -19,6 +19,7 @@ from backend.services.rag_qa import (
     _split_table_name,
     run_rag_query,
 )
+from backend.services.query_understanding import QueryUnderstandingResult, RetrievalPlan, downpush_hard_filters
 
 
 class RagQaHybridTests(unittest.TestCase):
@@ -1438,6 +1439,308 @@ class RagQaHybridTests(unittest.TestCase):
             {"supportportal.docagent_chunks_ag_docs_test_1024"},
         )
         self.assertTrue(result.trace.needs_human)
+
+    def test_run_rag_query_records_query_understanding_metadata_in_trace(self) -> None:
+        vector_chunk = RetrievedChunk(
+            chunk_id="chunk-1",
+            text="Cloud Recording troubleshooting",
+            source_path="official/cloud-recording.md",
+            similarity=0.96,
+            metadata={"product": "video-calling", "chunk_type": "troubleshooting_procedure"},
+        )
+
+        understanding = QueryUnderstandingResult(
+            query_profile="en",
+            query_understanding_version="v1",
+            glossary_version="video-calling_glossary_en_v1",
+            self_query_version="v1",
+            normalized_query="How do I troubleshoot Cloud Recording jitter?",
+            canonical_terms=["Cloud Recording", "Jitter"],
+            glossary_hits=[
+                {
+                    "canonical_term": "Cloud Recording",
+                    "matched_text": "Cloud Recording",
+                    "definition": "Cloud Recording is a component provided by Agora.",
+                },
+                {
+                    "canonical_term": "Jitter",
+                    "matched_text": "jitter",
+                    "definition": "Jitter is the variation in delay of data packets.",
+                },
+            ],
+            dictionary_hits=[
+                {
+                    "source": "glossary",
+                    "canonical_term": "Cloud Recording",
+                    "matched_text": "Cloud Recording",
+                    "definition": "Cloud Recording is a component provided by Agora.",
+                },
+                {
+                    "source": "glossary",
+                    "canonical_term": "Jitter",
+                    "matched_text": "jitter",
+                    "definition": "Jitter is the variation in delay of data packets.",
+                },
+            ],
+            retrieval_plan=RetrievalPlan(
+                semantic_query="cloud recording jitter troubleshooting",
+                hard_filters={"product": "video-calling"},
+                soft_signals={"keywords": ["jitter"], "chunk_type": ["troubleshooting_procedure"]},
+                rewritten_queries=["cloud recording jitter troubleshooting"],
+                decomposition_subqueries=[],
+                fallback_mode="none",
+            ),
+            rewritten_queries=["cloud recording jitter troubleshooting"],
+            decomposition_subqueries=[],
+            fallback_mode="none",
+            intent_latency_ms=4.5,
+            rewrite_latency_ms=3.2,
+        )
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 2,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-4.1",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+            }
+            with patch("backend.services.rag_qa.get_embedding_provider", return_value=self._FakeProvider()):
+                with patch("backend.services.rag_qa.understand_rag_query", return_value=understanding):
+                    with patch("backend.services.rag_qa._retrieve_chunks", return_value=[vector_chunk]):
+                        with patch("backend.services.rag_qa._retrieve_bm25_chunks", return_value=[]):
+                            with patch(
+                                "backend.services.rag_qa._metadata_rerank",
+                                return_value=(
+                                    [vector_chunk],
+                                    {
+                                        "post_rerank_count": 1,
+                                        "hints": {},
+                                        "applied_filter": True,
+                                        "filter_type": "product",
+                                        "query_understanding": {
+                                            "query_profile": "en",
+                                            "glossary_hit_terms": ["Cloud Recording", "Jitter"],
+                                            "applied_hard_filters": {"product": "video-calling"},
+                                            "applied_soft_signals": {
+                                                "keywords": ["jitter"],
+                                                "chunk_type": ["troubleshooting_procedure"],
+                                            },
+                                            "fallback_mode": "none",
+                                        },
+                                    },
+                                ),
+                            ):
+                                with patch("backend.services.rag_qa._rerank_chunks", return_value=[vector_chunk]):
+                                    with patch(
+                                        "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                                        return_value=(
+                                            {
+                                                "answer": "Use Cloud Recording diagnostics.",
+                                                "key_steps": [],
+                                                "citations": ["chunk-1"],
+                                                "insufficient_evidence": False,
+                                            },
+                                            10,
+                                            5,
+                                            "gpt-4.1",
+                                        ),
+                                    ):
+                                        result = run_rag_query("How do I troubleshoot Cloud Recording jitter?")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertTrue(result.trace.query_understanding_enabled)
+        self.assertEqual(result.trace.query_profile, "en")
+        self.assertEqual(result.trace.query_understanding_version, "v1")
+        self.assertEqual(result.trace.glossary_version, "video-calling_glossary_en_v1")
+        self.assertEqual(result.trace.glossary_hit_terms, ["Cloud Recording", "Jitter"])
+        self.assertEqual(result.trace.applied_hard_filters, {"product": "video-calling"})
+        self.assertEqual(
+            result.trace.applied_soft_signals["chunk_type"],
+            ["troubleshooting_procedure"],
+        )
+        self.assertEqual(result.trace.rewritten_queries, ["cloud recording jitter troubleshooting"])
+        self.assertEqual(result.trace.rewrite_latency_ms, 3.2)
+
+    def test_run_rag_query_uses_prf_expansion_and_only_downpushes_rule_backed_filters(self) -> None:
+        seed_chunk = RetrievedChunk(
+            chunk_id="chunk-seed",
+            text="Use the RTC engine to connect users.",
+            source_path="official/channel.md",
+            h1="Join flow",
+            h2=None,
+            similarity=0.92,
+            metadata={
+                "language": "nodejs",
+                "keywords": ["channel name"],
+                "topic": ["channel lifecycle"],
+            },
+        )
+        prf_chunk = RetrievedChunk(
+            chunk_id="chunk-prf",
+            text="Users who join the same channel name can communicate with each other.",
+            source_path="official/channel.md",
+            h1="Channel",
+            h2="Join by channel name",
+            similarity=0.95,
+            metadata={
+                "language": "nodejs",
+                "keywords": ["channel name"],
+                "topic": ["channel lifecycle"],
+            },
+        )
+        understanding = QueryUnderstandingResult(
+            query_profile="en",
+            query_understanding_version="v2",
+            glossary_version="agora_glossary_en_v2",
+            self_query_version="v2",
+            normalized_query="How do I join a channel in Node.js?",
+            canonical_terms=["Channel"],
+            glossary_hits=[
+                {
+                    "source": "glossary",
+                    "canonical_term": "Channel",
+                    "matched_text": "channel",
+                    "definition": "A channel groups users under the same channel name.",
+                }
+            ],
+            dictionary_hits=[
+                {
+                    "source": "glossary",
+                    "canonical_term": "Channel",
+                    "matched_text": "channel",
+                    "definition": "A channel groups users under the same channel name.",
+                }
+            ],
+            retrieval_plan=RetrievalPlan(
+                semantic_query="How do I join a channel in Node.js?",
+                hard_filters={"language": "nodejs", "product": "video-calling"},
+                soft_signals={"topic": ["channel lifecycle"]},
+                rewritten_queries=[],
+                decomposition_subqueries=[],
+                fallback_mode="none",
+                rule_expansions=[],
+                llm_expansions=[],
+                prf_expansions=[],
+                hard_filter_sources={"language": "rule+llm", "product": "llm_only"},
+                soft_signal_sources={"topic": ["rule"]},
+            ),
+            rewritten_queries=[],
+            decomposition_subqueries=[],
+            fallback_mode="none",
+        )
+        captured_queries: list[str] = []
+        captured_downpush: list[dict[str, str]] = []
+
+        def _capture_vector(query: str, config: dict[str, object], *, limit: int | None = None):
+            _ = limit
+            captured_queries.append(query)
+            plan = config.get("_retrieval_plan")
+            captured_downpush.append(downpush_hard_filters(plan) if isinstance(plan, RetrievalPlan) else {})
+            if query == "channel name":
+                return [prf_chunk]
+            return [seed_chunk]
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 2,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-5.4",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+                "app_schema": "supportportal",
+            }
+            with patch("backend.services.rag_qa.get_embedding_provider", return_value=self._FakeProvider()):
+                with patch("backend.services.rag_qa.understand_rag_query", return_value=understanding):
+                    with patch("backend.services.rag_qa._retrieve_chunks", side_effect=_capture_vector):
+                        with patch("backend.services.rag_qa._retrieve_bm25_chunks", return_value=[]):
+                            with patch(
+                                "backend.services.rag_qa._metadata_rerank",
+                                return_value=(
+                                    [prf_chunk],
+                                    {
+                                        "post_rerank_count": 1,
+                                        "hints": {},
+                                        "applied_filter": True,
+                                        "filter_type": "language",
+                                        "query_understanding": {
+                                            "query_profile": "en",
+                                            "glossary_hit_terms": ["Channel"],
+                                            "applied_hard_filters": {"language": "nodejs", "product": "video-calling"},
+                                            "applied_soft_signals": {"topic": ["channel lifecycle"]},
+                                            "fallback_mode": "none",
+                                            "dictionary_hits": understanding.dictionary_hits,
+                                            "rule_expansions": [],
+                                            "llm_expansions": [],
+                                            "prf_expansions": ["channel name"],
+                                            "hard_filter_sources": {"language": "rule+llm", "product": "llm_only"},
+                                            "cache_hit": False,
+                                            "prf_used": True,
+                                        },
+                                    },
+                                ),
+                            ):
+                                with patch("backend.services.rag_qa._rerank_chunks", return_value=[prf_chunk]):
+                                    with patch(
+                                        "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                                        return_value=(
+                                            {
+                                                "answer": "Join the same channel by using the same channel name.",
+                                                "key_steps": [],
+                                                "citations": ["chunk-prf"],
+                                                "insufficient_evidence": False,
+                                            },
+                                            10,
+                                            5,
+                                            "gpt-5.4",
+                                        ),
+                                    ):
+                                        result = run_rag_query("How do I join a channel in Node.js?")
+
+        self.assertGreaterEqual(len(captured_queries), 2)
+        self.assertEqual(captured_queries[0], "How do I join a channel in Node.js?")
+        self.assertEqual(captured_downpush[0], {})
+        self.assertIn("channel name", captured_queries)
+        self.assertIn({"language": "nodejs"}, captured_downpush)
+        self.assertTrue(result.trace.prf_used)
+        self.assertEqual(result.trace.prf_expansions, ["channel name"])
+        self.assertEqual(result.trace.hard_filter_sources["language"], "rule+llm")
+        self.assertTrue(all("product" not in downpush for downpush in captured_downpush))
 
 
 if __name__ == "__main__":

@@ -64,6 +64,8 @@ from backend.services.dashboard_ticket_ops import (
     build_ticket_dashboard_metrics,
     normalize_ticket_dashboard_events,
 )
+from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
+from backend.services.llm_profiles import ENGINEER_HELPER_SCENARIO, resolve_model_profile
 from backend.services.event_bus import AsyncRedisEventBus
 from backend.services.knowledge_monitoring import build_empty_knowledge_metrics
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
@@ -106,7 +108,6 @@ ACTIVE_TICKET_STATUSES = {
     INVESTIGATING_STATUS,
 }
 LOGGER = logging.getLogger(__name__)
-_UNAVAILABLE_MODELS: set[str] = set()
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -139,8 +140,6 @@ def _safe_float_env(name: str, default: float) -> float:
 
 
 ASYNC_QUERY_ENABLED = _env_flag("ASYNC_QUERY_ENABLED", default=False)
-OPENAI_REQUEST_TIMEOUT_SECONDS = _safe_float_env("OPENAI_REQUEST_TIMEOUT_SECONDS", 20.0)
-OPENAI_MAX_RETRIES = _safe_int_env("OPENAI_MAX_RETRIES", 1)
 KNOWLEDGE_OFFICIAL_MAX_BYTES = _safe_int_env("KNOWLEDGE_OFFICIAL_MAX_BYTES", 5 * 1024 * 1024)
 KNOWLEDGE_ARTICLE_MAX_CHARS = _safe_int_env("KNOWLEDGE_ARTICLE_MAX_CHARS", 120000)
 
@@ -324,13 +323,8 @@ def _managed_followup_fallback(solution: str) -> str:
 
 def build_ai_followup(ticket: dict[str, Any], solution: str) -> str:
     fallback = _managed_followup_fallback(solution)
-    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
-    if not api_key:
-        return fallback
-
-    try:
-        from langchain_openai import ChatOpenAI
-    except Exception:
+    profile = resolve_model_profile(ENGINEER_HELPER_SCENARIO)
+    if not profile.api_key:
         return fallback
 
     messages = ticket.get("messages", [])
@@ -378,45 +372,17 @@ def build_ai_followup(ticket: dict[str, Any], solution: str) -> str:
         + solution.strip()
     )
 
-    model_candidates: list[str] = []
-    configured_model = (os.getenv("OPENAI_CHAT_MODEL") or "gpt-4.1").strip()
-    for candidate in [configured_model, "gpt-4.1", "gpt-4o-mini"]:
-        if candidate in _UNAVAILABLE_MODELS:
-            continue
-        if candidate and candidate not in model_candidates:
-            model_candidates.append(candidate)
-
-    for model_name in model_candidates:
-        try:
-            llm = ChatOpenAI(
-                model=model_name,
-                temperature=0,
-                api_key=api_key,
-                request_timeout=OPENAI_REQUEST_TIMEOUT_SECONDS,
-                max_retries=OPENAI_MAX_RETRIES,
-            )
-            response = llm.invoke(
-                [
-                    (
-                        "system",
-                        "You produce concise customer-facing IT support follow-up replies.",
-                    ),
-                    ("user", prompt),
-                ]
-            )
-            answer = _llm_response_to_text(response)
-            if answer:
-                return answer
-        except Exception as exc:
-            lower = str(exc).lower()
-            if "model_not_found" in lower or "does not exist" in lower:
-                _UNAVAILABLE_MODELS.add(model_name)
-                LOGGER.warning(
-                    "Managed follow-up model unavailable (%s), trying fallback model",
-                    model_name,
-                )
-                continue
-            continue
+    try:
+        response = invoke_responses_text(
+            profile=profile,
+            system_prompt="You produce concise customer-facing IT support follow-up replies.",
+            user_prompt=prompt,
+        )
+        answer = response.text.strip()
+        if answer:
+            return answer
+    except LlmInvocationError:
+        pass
 
     return fallback
 
@@ -483,13 +449,8 @@ def _normalize_engineer_request_text(text: str, ticket: dict[str, Any], customer
 
 def build_engineer_followup_request(ticket: dict[str, Any], customer_message: str) -> str:
     fallback = _engineer_request_fallback(ticket, customer_message)
-    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
-    if not api_key:
-        return fallback
-
-    try:
-        from langchain_openai import ChatOpenAI
-    except Exception:
+    profile = resolve_model_profile(ENGINEER_HELPER_SCENARIO)
+    if not profile.api_key:
         return fallback
 
     messages = ticket.get("messages", [])
@@ -522,28 +483,17 @@ def build_engineer_followup_request(ticket: dict[str, Any], customer_message: st
         + "\n".join(context_lines)
     )
 
-    model_candidates: list[str] = []
-    configured_model = (os.getenv("OPENAI_CHAT_MODEL") or "gpt-4.1").strip()
-    for candidate in [configured_model, "gpt-4.1", "gpt-4o-mini"]:
-        if candidate and candidate not in model_candidates:
-            model_candidates.append(candidate)
-
-    for model_name in model_candidates:
-        try:
-            llm = ChatOpenAI(model=model_name, temperature=0, api_key=api_key)
-            response = llm.invoke(
-                [
-                    ("system", "You generate concise support escalation requests for engineers."),
-                    ("user", prompt),
-                ]
-            )
-            normalized = _normalize_engineer_request_text(
-                _llm_response_to_text(response), ticket, customer_message
-            )
-            if normalized:
-                return normalized
-        except Exception:
-            continue
+    try:
+        response = invoke_responses_text(
+            profile=profile,
+            system_prompt="You generate concise support escalation requests for engineers.",
+            user_prompt=prompt,
+        )
+        normalized = _normalize_engineer_request_text(response.text, ticket, customer_message)
+        if normalized:
+            return normalized
+    except LlmInvocationError:
+        pass
     return fallback
 
 
@@ -718,13 +668,8 @@ def build_ticket_summary(ticket: dict[str, Any]) -> tuple[str, str, str]:
         return agent_summary, agent_next_action, "engineer_agent_state"
 
     fallback_summary, fallback_next_action = _summary_fallback(ticket)
-    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
-    if not api_key:
-        return fallback_summary, fallback_next_action, "fallback"
-
-    try:
-        from langchain_openai import ChatOpenAI
-    except Exception:
+    profile = resolve_model_profile(ENGINEER_HELPER_SCENARIO)
+    if not profile.api_key:
         return fallback_summary, fallback_next_action, "fallback"
 
     messages = ticket.get("messages", [])
@@ -772,33 +717,23 @@ def build_ticket_summary(ticket: dict[str, Any]) -> tuple[str, str, str]:
         + "\n".join(lines)
     )
 
-    model_candidates: list[str] = []
-    configured_model = (os.getenv("OPENAI_CHAT_MODEL") or "gpt-4.1").strip()
-    for candidate in [configured_model, "gpt-4.1", "gpt-4o-mini"]:
-        if candidate and candidate not in model_candidates:
-            model_candidates.append(candidate)
-
-    for model_name in model_candidates:
-        try:
-            llm = ChatOpenAI(model=model_name, temperature=0, api_key=api_key)
-            response = llm.invoke(
-                [
-                    (
-                        "system",
-                        "You summarize support tickets for engineers and output strict JSON with summary and next_action_needed.",
-                    ),
-                    ("user", prompt),
-                ]
-            )
-            raw_output = _llm_response_to_text(response)
-            parsed = _extract_json_dict(raw_output)
-            summary, next_action = _normalize_summary_fields(
-                parsed, fallback_summary, fallback_next_action
-            )
-            if summary and next_action:
-                return summary, next_action, model_name
-        except Exception:
-            continue
+    try:
+        response = invoke_responses_text(
+            profile=profile,
+            system_prompt=(
+                "You summarize support tickets for engineers and output strict JSON "
+                "with summary and next_action_needed."
+            ),
+            user_prompt=prompt,
+        )
+        parsed = _extract_json_dict(response.text)
+        summary, next_action = _normalize_summary_fields(
+            parsed, fallback_summary, fallback_next_action
+        )
+        if summary and next_action:
+            return summary, next_action, response.model_name
+    except LlmInvocationError:
+        pass
 
     return fallback_summary, fallback_next_action, "fallback"
 

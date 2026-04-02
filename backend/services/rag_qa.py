@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor
 import json
 import logging
 import os
@@ -7,7 +8,7 @@ import re
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from backend.services.embedding_provider import (
@@ -16,11 +17,19 @@ from backend.services.embedding_provider import (
     embedding_provider_name,
     get_embedding_provider,
 )
+from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
+from backend.services.llm_profiles import ModelProfile, QUERY_EXPANSION_SCENARIO, RAG_ANSWER_SCENARIO, resolve_model_profile
 from backend.services.prompts.rag_answer import build_rag_answer_system_prompt, build_rag_answer_user_prompt
+from backend.services.query_understanding import (
+    QueryUnderstandingResult,
+    RetrievalPlan,
+    build_prf_expansions,
+    downpush_hard_filters,
+    understand_rag_query,
+)
 from backend.services.rag_tokenizer import is_bm25_query_stopword, tokenize_bm25_query
 
 logger = logging.getLogger(__name__)
-_UNAVAILABLE_MODELS: set[str] = set()
 _QUERY_STOPWORDS = {
     "a",
     "an",
@@ -144,12 +153,209 @@ class RagQueryTrace:
     error_flag: bool = False
     timeout_flag: bool = False
     error_type: str | None = None
+    intent_latency_ms: float = 0.0
+    rewrite_latency_ms: float = 0.0
+    query_understanding_enabled: bool = False
+    query_understanding_version: str | None = None
+    query_profile: str | None = None
+    glossary_version: str | None = None
+    self_query_version: str | None = None
+    fallback_mode: str | None = None
+    glossary_hit_terms: list[str] = field(default_factory=list)
+    applied_hard_filters: dict[str, str] = field(default_factory=dict)
+    applied_soft_signals: dict[str, list[str]] = field(default_factory=dict)
+    rewritten_queries: list[str] = field(default_factory=list)
+    decomposition_subqueries: list[str] = field(default_factory=list)
+    dictionary_hits: list[dict[str, Any]] = field(default_factory=list)
+    rule_expansions: list[str] = field(default_factory=list)
+    llm_expansions: list[str] = field(default_factory=list)
+    prf_expansions: list[str] = field(default_factory=list)
+    hard_filter_sources: dict[str, str] = field(default_factory=dict)
+    cache_hit: bool = False
+    prf_used: bool = False
+    query_expansion_enabled: bool = False
+    query_expansion_model: str | None = None
+    first_pass_candidate_count: int = 0
+    second_pass_candidate_count: int = 0
 
 
 @dataclass
 class RagQueryResult:
     answer: RagAnswer
     trace: RagQueryTrace
+
+
+def _feature_flag_enabled(name: str, default: bool = True) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _copy_chunk(chunk: RetrievedChunk) -> RetrievedChunk:
+    return replace(
+        chunk,
+        metadata=dict(chunk.metadata),
+        rerank_reasons=list(chunk.rerank_reasons),
+        retrieval_sources=list(chunk.retrieval_sources),
+        candidate_trace=dict(chunk.candidate_trace),
+    )
+
+
+def _chunk_dedupe_key(chunk: RetrievedChunk) -> str:
+    return chunk.chunk_id or f"{chunk.source_path}:{chunk.text[:120]}"
+
+
+def _merge_variant_chunks(
+    existing: list[RetrievedChunk],
+    incoming: list[RetrievedChunk],
+    *,
+    source_label: str,
+    query_variant: str,
+    query_kind: str,
+) -> list[RetrievedChunk]:
+    merged: dict[str, RetrievedChunk] = {_chunk_dedupe_key(chunk): _copy_chunk(chunk) for chunk in existing}
+    for item in incoming:
+        chunk = _copy_chunk(item)
+        dedupe_key = _chunk_dedupe_key(chunk)
+        query_trace = {"kind": query_kind, "query": query_variant}
+        chunk.retrieval_sources = list(dict.fromkeys([*chunk.retrieval_sources, source_label]))
+        variant_traces = chunk.candidate_trace.get("query_variants")
+        if not isinstance(variant_traces, list):
+            variant_traces = []
+        if query_trace not in variant_traces:
+            variant_traces.append(query_trace)
+        chunk.candidate_trace["query_variants"] = variant_traces
+        existing_chunk = merged.get(dedupe_key)
+        if existing_chunk is None:
+            merged[dedupe_key] = chunk
+            continue
+        incoming_similarity = float(chunk.similarity or 0.0)
+        existing_similarity = float(existing_chunk.similarity or 0.0)
+        existing_chunk.similarity = max(existing_similarity, incoming_similarity)
+        existing_chunk.retrieval_sources = list(dict.fromkeys([*existing_chunk.retrieval_sources, *chunk.retrieval_sources]))
+        existing_variants = existing_chunk.candidate_trace.get("query_variants")
+        if not isinstance(existing_variants, list):
+            existing_variants = []
+        for variant in variant_traces:
+            if variant not in existing_variants:
+                existing_variants.append(variant)
+        existing_chunk.candidate_trace["query_variants"] = existing_variants
+        if incoming_similarity > existing_similarity:
+            existing_chunk.candidate_trace.update(chunk.candidate_trace)
+    return list(merged.values())
+
+
+def _build_query_variants(
+    message: str,
+    understanding: QueryUnderstandingResult | None,
+    *,
+    rewrite_enabled: bool,
+    decomposition_enabled: bool,
+) -> list[tuple[str, str]]:
+    variants: list[tuple[str, str]] = [("original", str(message or "").strip())]
+    if understanding is None:
+        return [(kind, query) for kind, query in variants if query]
+
+    semantic_query = understanding.semantic_query.strip()
+    if semantic_query:
+        variants.append(("semantic", semantic_query))
+    for query in understanding.retrieval_plan.rule_expansions:
+        variants.append(("rule", str(query).strip()))
+    if rewrite_enabled:
+        for query in understanding.retrieval_plan.llm_expansions or understanding.rewritten_queries:
+            variants.append(("rewrite", str(query).strip()))
+        for query in understanding.retrieval_plan.prf_expansions:
+            variants.append(("prf", str(query).strip()))
+    if decomposition_enabled:
+        for query in understanding.decomposition_subqueries:
+            variants.append(("decomposition", str(query).strip()))
+
+    deduped: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for kind, query in variants:
+        normalized = " ".join(query.split()).strip()
+        if not normalized:
+            continue
+        key = normalized.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append((kind, normalized))
+    return deduped
+
+
+def _normalize_metadata_filter_value(key: str, value: Any) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    lowered = raw.lower()
+    if key == "language":
+        return _normalize_language_hint(raw)
+    if key == "protocol":
+        return lowered.replace("_", "-")
+    if key == "doc_subtype":
+        return lowered.replace("-", "_")
+    if key in {"product", "source_family"}:
+        return lowered.replace(" ", "-")
+    return raw
+
+
+def _query_understanding_meta(
+    understanding: QueryUnderstandingResult | None,
+    rerank_info: dict[str, Any],
+) -> dict[str, Any]:
+    payload = rerank_info.get("query_understanding") if isinstance(rerank_info.get("query_understanding"), dict) else {}
+    if payload:
+        fallback_profile = understanding.query_profile if understanding is not None else ""
+        fallback_mode = understanding.fallback_mode if understanding is not None else ""
+        return {
+            "query_profile": str(payload.get("query_profile") or fallback_profile),
+            "glossary_hit_terms": list(payload.get("glossary_hit_terms") or []),
+            "applied_hard_filters": dict(payload.get("applied_hard_filters") or {}),
+            "applied_soft_signals": dict(payload.get("applied_soft_signals") or {}),
+            "fallback_mode": str(payload.get("fallback_mode") or fallback_mode),
+            "dictionary_hits": list(payload.get("dictionary_hits") or []),
+            "rule_expansions": list(payload.get("rule_expansions") or []),
+            "llm_expansions": list(payload.get("llm_expansions") or []),
+            "prf_expansions": list(payload.get("prf_expansions") or []),
+            "hard_filter_sources": dict(payload.get("hard_filter_sources") or {}),
+            "cache_hit": bool(payload.get("cache_hit")),
+            "prf_used": bool(payload.get("prf_used")),
+        }
+    if understanding is None:
+        return {
+            "query_profile": "",
+            "glossary_hit_terms": [],
+            "applied_hard_filters": {},
+            "applied_soft_signals": {},
+            "fallback_mode": "disabled",
+            "dictionary_hits": [],
+            "rule_expansions": [],
+            "llm_expansions": [],
+            "prf_expansions": [],
+            "hard_filter_sources": {},
+            "cache_hit": False,
+            "prf_used": False,
+        }
+    return {
+        "query_profile": understanding.query_profile,
+        "glossary_hit_terms": list(understanding.canonical_terms),
+        "applied_hard_filters": dict(understanding.retrieval_plan.hard_filters),
+        "applied_soft_signals": dict(understanding.retrieval_plan.soft_signals),
+        "fallback_mode": understanding.fallback_mode,
+        "dictionary_hits": list(understanding.dictionary_hits),
+        "rule_expansions": list(understanding.retrieval_plan.rule_expansions),
+        "llm_expansions": list(understanding.retrieval_plan.llm_expansions),
+        "prf_expansions": list(understanding.retrieval_plan.prf_expansions),
+        "hard_filter_sources": dict(understanding.retrieval_plan.hard_filter_sources),
+        "cache_hit": bool(understanding.cache_hit),
+        "prf_used": bool(understanding.retrieval_plan.prf_used),
+    }
 
 
 def _drain_embedding_request_meta(provider: Any) -> list[dict[str, Any]]:
@@ -162,12 +368,6 @@ def _drain_embedding_request_meta(provider: Any) -> list[dict[str, Any]]:
     return [item for item in raw_items if isinstance(item, dict)]
 
 
-def _import_langchain() -> Any:
-    from langchain_openai import ChatOpenAI
-
-    return ChatOpenAI
-
-
 def _import_psycopg() -> Any:
     import psycopg
 
@@ -176,6 +376,28 @@ def _import_psycopg() -> Any:
 
 def _vector_literal(values: list[float]) -> str:
     return "[" + ",".join(f"{float(v):.10f}" for v in values) + "]"
+
+
+def _config_retrieval_plan(config: dict[str, Any]) -> RetrievalPlan | None:
+    plan = config.get("_retrieval_plan")
+    return plan if isinstance(plan, RetrievalPlan) else None
+
+
+def _metadata_filter_clauses(psycopg_sql: Any, filters: dict[str, str], *, metadata_ref: str) -> tuple[Any, list[Any]]:
+    sql = psycopg_sql
+    clauses: list[Any] = []
+    params: list[Any] = []
+    for key, value in filters.items():
+        clauses.append(
+            sql.SQL("LOWER(COALESCE({} ->> {}, '')) = %s").format(
+                sql.SQL(metadata_ref),
+                sql.Literal(key),
+            )
+        )
+        params.append(str(value or "").strip().lower())
+    if not clauses:
+        return sql.SQL(""), []
+    return sql.SQL(" AND ") + sql.SQL(" AND ").join(clauses), params
 
 
 def _split_table_name(raw_value: str, default_schema: str = "supportportal") -> tuple[str, str]:
@@ -380,38 +602,52 @@ def _metadata_rerank(
     chunks: list[RetrievedChunk],
     top_k: int,
     hints: MetadataHints | None = None,
+    retrieval_plan: RetrievalPlan | None = None,
+    query_understanding: QueryUnderstandingResult | None = None,
 ) -> tuple[list[RetrievedChunk], dict[str, Any]]:
     resolved_hints = hints or _extract_metadata_hints(query)
     mentioned_methods = _mentioned_method_names(query)
     comparison_mode = _is_method_comparison_query(query, mentioned_methods)
     generic_token_generation_query = _is_generic_token_generation_query(query, resolved_hints)
+    plan_hard_filters = dict(retrieval_plan.hard_filters) if retrieval_plan is not None else {}
+    plan_soft_signals = dict(retrieval_plan.soft_signals) if retrieval_plan is not None else {}
     filtered_chunks = list(chunks)
     filter_type: str | None = None
-    normalized_language = _normalize_language_hint(resolved_hints.language)
-    method_filter_name = None if comparison_mode else resolved_hints.method_name
+    normalized_language = _normalize_language_hint(plan_hard_filters.get("language") or resolved_hints.language)
+    method_filter_name = None if comparison_mode else str(
+        plan_hard_filters.get("method_name") or resolved_hints.method_name or ""
+    ).strip() or None
     technical_intent_chunk_types = _technical_intent_chunk_types(resolved_hints.intent_terms)
-    if normalized_language or method_filter_name:
-        filtered_chunks = [
-            chunk
-            for chunk in chunks
-            if (
-                normalized_language is None
-                or _normalize_language_hint(chunk.metadata.get("language")) == normalized_language
-            )
-            and (
-                method_filter_name is None
-                or str(chunk.metadata.get("method_name") or "").strip() == method_filter_name
-            )
-        ]
-        if normalized_language and method_filter_name:
-            filter_type = "language+method"
-        elif normalized_language:
-            filter_type = "language"
-        elif method_filter_name:
-            filter_type = "method"
-        if len(filtered_chunks) < min(max(1, int(top_k)), 2):
-            filtered_chunks = list(chunks)
-            filter_type = None
+    applied_hard_filters: dict[str, str] = {}
+    if normalized_language:
+        applied_hard_filters["language"] = normalized_language
+    if method_filter_name:
+        applied_hard_filters["method_name"] = method_filter_name
+    for key, value in plan_hard_filters.items():
+        if key in {"language", "method_name"}:
+            continue
+        normalized_value = _normalize_metadata_filter_value(key, value)
+        if normalized_value:
+            applied_hard_filters[key] = normalized_value
+
+    if applied_hard_filters:
+        hard_filtered = []
+        for chunk in chunks:
+            metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+            matches = True
+            for key, expected in applied_hard_filters.items():
+                actual = _normalize_metadata_filter_value(key, metadata.get(key))
+                if actual != expected:
+                    matches = False
+                    break
+            if matches:
+                hard_filtered.append(chunk)
+        if len(hard_filtered) >= min(max(1, int(top_k)), 2):
+            filtered_chunks = hard_filtered
+            filter_labels = ["method" if key == "method_name" else key for key in sorted(applied_hard_filters.keys())]
+            filter_type = "+".join(filter_labels)
+        else:
+            applied_hard_filters = {}
     if filter_type is None and technical_intent_chunk_types:
         technical_filtered = [
             chunk
@@ -439,6 +675,7 @@ def _metadata_rerank(
         keywords = [item.lower() for item in _chunk_metadata_list(metadata.get("keywords"))]
         external_service = str(metadata.get("external_service") or "").strip().lower()
         protocol = str(metadata.get("protocol") or "").strip().lower()
+        product = _normalize_metadata_filter_value("product", metadata.get("product")) or ""
         technical_terms = {item.lower() for item in resolved_hints.technical_terms}
         text_lower = chunk.text.lower()
 
@@ -523,6 +760,50 @@ def _metadata_rerank(
                 boost += 0.6
                 reasons.append(f"protocol:{str(metadata.get('protocol') or '').upper()}")
 
+        for soft_signal in _chunk_metadata_list(plan_soft_signals.get("chunk_type")):
+            normalized_signal = soft_signal.strip().lower()
+            if normalized_signal and chunk_type == normalized_signal:
+                boost += 1.1
+                reasons.append(f"plan_chunk_type:{normalized_signal}")
+        for soft_signal in _chunk_metadata_list(plan_soft_signals.get("section_path")):
+            normalized_signal = soft_signal.strip().lower()
+            if normalized_signal and normalized_signal in section_path:
+                boost += 0.7
+                reasons.append(f"plan_section_path:{normalized_signal}")
+        for soft_signal in _chunk_metadata_list(plan_soft_signals.get("topic")):
+            normalized_signal = soft_signal.strip().lower()
+            if normalized_signal and normalized_signal in topics:
+                boost += 0.7
+                reasons.append(f"plan_topic:{normalized_signal}")
+        for soft_signal in _chunk_metadata_list(plan_soft_signals.get("use_case")):
+            normalized_signal = soft_signal.strip().lower()
+            if normalized_signal and use_case == normalized_signal:
+                boost += 0.8
+                reasons.append(f"plan_use_case:{normalized_signal}")
+        for soft_signal in _chunk_metadata_list(plan_soft_signals.get("issue_category")):
+            normalized_signal = soft_signal.strip().lower()
+            if normalized_signal and issue_category == normalized_signal:
+                boost += 0.8
+                reasons.append(f"plan_issue_category:{normalized_signal}")
+        for soft_signal in _chunk_metadata_list(plan_soft_signals.get("symptoms")):
+            normalized_signal = soft_signal.strip().lower()
+            if normalized_signal and normalized_signal in symptoms:
+                boost += 1.0
+                reasons.append(f"plan_symptom:{normalized_signal}")
+        for soft_signal in _chunk_metadata_list(plan_soft_signals.get("keywords")):
+            normalized_signal = soft_signal.strip().lower()
+            if normalized_signal and (normalized_signal in keywords or normalized_signal in text_lower):
+                boost += 0.6
+                reasons.append(f"plan_keyword:{normalized_signal}")
+        for soft_signal in _chunk_metadata_list(plan_soft_signals.get("external_service")):
+            normalized_signal = soft_signal.strip().lower()
+            if normalized_signal and external_service == normalized_signal:
+                boost += 0.6
+                reasons.append(f"plan_external_service:{normalized_signal}")
+        if applied_hard_filters.get("product") and product == applied_hard_filters["product"]:
+            boost += 0.5
+            reasons.append(f"plan_product:{applied_hard_filters['product']}")
+
         chunk.rerank_score = round(float(chunk.similarity) + boost, 4)
         chunk.rerank_reasons = reasons
         candidate_reasons[chunk.chunk_id] = list(reasons)
@@ -555,12 +836,26 @@ def _metadata_rerank(
         "filtered_candidate_count": len(filtered_chunks),
         "post_rerank_count": len(ordered),
         "candidate_reasons": candidate_reasons,
+        "query_understanding": {
+            "query_profile": query_understanding.query_profile if query_understanding is not None else "",
+            "glossary_hit_terms": list(query_understanding.canonical_terms) if query_understanding is not None else [],
+            "applied_hard_filters": applied_hard_filters,
+            "applied_soft_signals": plan_soft_signals,
+            "fallback_mode": query_understanding.fallback_mode if query_understanding is not None else "disabled",
+            "dictionary_hits": list(query_understanding.dictionary_hits) if query_understanding is not None else [],
+            "rule_expansions": list(retrieval_plan.rule_expansions) if retrieval_plan is not None else [],
+            "llm_expansions": list(retrieval_plan.llm_expansions) if retrieval_plan is not None else [],
+            "prf_expansions": list(retrieval_plan.prf_expansions) if retrieval_plan is not None else [],
+            "hard_filter_sources": dict(retrieval_plan.hard_filter_sources) if retrieval_plan is not None else {},
+            "cache_hit": bool(retrieval_plan.cache_hit) if retrieval_plan is not None else False,
+            "prf_used": bool(retrieval_plan.prf_used) if retrieval_plan is not None else False,
+        },
     }
 
 
 def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
     dsn = (os.getenv("PGVECTOR_DSN") or "").strip()
-    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    answer_profile = resolve_model_profile(RAG_ANSWER_SCENARIO)
     final_top_k = max(1, int(top_k)) if top_k is not None else _safe_int_env("RAG_TOP_K", 6)
     vector_candidate_k = _safe_int_env("RAG_VECTOR_CANDIDATE_K", max(40, final_top_k * 10))
     bm25_candidate_k = _safe_int_env("RAG_BM25_CANDIDATE_K", max(40, final_top_k * 10))
@@ -571,7 +866,6 @@ def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
     table_name = raw_table if "." in raw_table else f"{schema}.{raw_table}"
     return {
         "dsn": dsn,
-        "api_key": api_key,
         "app_schema": schema,
         "table": table_name,
         "top_k": final_top_k,
@@ -584,7 +878,10 @@ def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
         "bm25_b": _safe_float_env("RAG_BM25_B", 0.75),
         "bm25_max_query_terms": _safe_int_env("RAG_BM25_MAX_QUERY_TERMS", 6),
         "bm25_max_term_doc_freq_ratio": _safe_float_env("RAG_BM25_MAX_TERM_DOC_FREQ_RATIO", 0.08),
-        "chat_model": (os.getenv("OPENAI_CHAT_MODEL") or "gpt-4.1").strip(),
+        "api_key": answer_profile.api_key,
+        "chat_model": answer_profile.model,
+        "reasoning_effort": answer_profile.reasoning_effort,
+        "fallback_models": list(answer_profile.fallback_models),
         "embedding_provider": embedding_provider_name(),
         "embedding_model": embedding_model_id(),
         "rerank_provider": (os.getenv("RAG_RERANK_PROVIDER") or "siliconflow").strip() or "siliconflow",
@@ -603,8 +900,8 @@ def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
         ),
         "rerank_timeout_seconds": _safe_float_env("RAG_RERANK_TIMEOUT_SECONDS", 10.0),
         "rerank_max_retries": _safe_int_env("RAG_RERANK_MAX_RETRIES", 1),
-        "request_timeout_seconds": _safe_float_env("RAG_REQUEST_TIMEOUT_SECONDS", 20.0),
-        "max_retries": _safe_int_env("RAG_OPENAI_MAX_RETRIES", 1),
+        "request_timeout_seconds": answer_profile.timeout_seconds,
+        "max_retries": answer_profile.max_retries,
     }
 
 
@@ -785,6 +1082,9 @@ def _select_bm25_query_terms(
 def _retrieve_chunks(message: str, config: dict[str, Any], *, limit: int | None = None) -> list[RetrievedChunk]:
     psycopg = _import_psycopg()
     sql = psycopg.sql
+    retrieval_plan = _config_retrieval_plan(config)
+    downpush_filters = downpush_hard_filters(retrieval_plan) if retrieval_plan is not None else {}
+    filter_sql, filter_params = _metadata_filter_clauses(sql, downpush_filters, metadata_ref="metadata")
 
     provider = get_embedding_provider()
     query_embedding = provider.embed_query(message)
@@ -807,14 +1107,15 @@ def _retrieve_chunks(message: str, config: dict[str, Any], *, limit: int | None 
             1 - (embedding <=> %s::vector) AS similarity
         FROM {}
         WHERE index_role = 'primary'
+        {}
         ORDER BY embedding <=> %s::vector
         LIMIT %s
         """
-    ).format(_table_identifier(sql, config["table"]))
+    ).format(_table_identifier(sql, config["table"]), filter_sql)
 
     with psycopg.connect(config["dsn"]) as conn:
         with conn.cursor() as cur:
-            cur.execute(query, (vector_param, vector_param, int(limit or config["top_k"])))
+            cur.execute(query, (vector_param, *filter_params, vector_param, int(limit or config["top_k"])))
             rows = cur.fetchall()
 
     chunks: list[RetrievedChunk] = []
@@ -847,6 +1148,9 @@ def _retrieve_bm25_chunks(message: str, config: dict[str, Any], *, limit: int | 
 
     psycopg = _import_psycopg()
     sql = psycopg.sql
+    retrieval_plan = _config_retrieval_plan(config)
+    downpush_filters = downpush_hard_filters(retrieval_plan) if retrieval_plan is not None else {}
+    filter_sql, filter_params = _metadata_filter_clauses(sql, downpush_filters, metadata_ref="v.metadata")
     app_schema = str(config.get("app_schema") or "supportportal").strip() or "supportportal"
     query = sql.SQL(
         """
@@ -944,6 +1248,7 @@ def _retrieve_bm25_chunks(message: str, config: dict[str, Any], *, limit: int | 
         JOIN {} AS v
           ON v.id = scored.chunk_id
         WHERE v.index_role = 'primary'
+          {}
         ORDER BY scored.bm25_score DESC, v.updated_at DESC
         LIMIT %s
         """
@@ -953,6 +1258,7 @@ def _retrieve_bm25_chunks(message: str, config: dict[str, Any], *, limit: int | 
         _app_table_identifier(sql, app_schema, "support_knowledge_bm25_postings"),
         _app_table_identifier(sql, app_schema, "support_knowledge_bm25_docs"),
         _table_identifier(sql, config["table"]),
+        filter_sql,
     )
 
     with psycopg.connect(config["dsn"]) as conn:
@@ -1000,6 +1306,7 @@ def _retrieve_bm25_chunks(message: str, config: dict[str, Any], *, limit: int | 
                     float(config["bm25_k1"]),
                     float(config["bm25_b"]),
                     float(config["bm25_b"]),
+                    *filter_params,
                     int(limit or config["bm25_candidate_k"]),
                 ),
             )
@@ -1142,6 +1449,9 @@ def _retrieve_keyword_chunks(
 
     psycopg = _import_psycopg()
     sql = psycopg.sql
+    retrieval_plan = _config_retrieval_plan(config)
+    downpush_filters = downpush_hard_filters(retrieval_plan) if retrieval_plan is not None else {}
+    filter_sql, filter_params = _metadata_filter_clauses(sql, downpush_filters, metadata_ref="metadata")
     patterns = [f"%{term}%" for term in terms]
     candidate_limit = max(int(config["top_k"]) * 25, 50)
 
@@ -1168,13 +1478,14 @@ def _retrieve_keyword_chunks(
             OR lower(coalesce(h2, '')) LIKE ANY(%s)
             OR lower(coalesce(h3, '')) LIKE ANY(%s)
             )
+            {}
         LIMIT %s
         """
-    ).format(_table_identifier(sql, config["table"]))
+    ).format(_table_identifier(sql, config["table"]), filter_sql)
 
     with psycopg.connect(config["dsn"]) as conn:
         with conn.cursor() as cur:
-            cur.execute(query, (patterns, patterns, patterns, patterns, candidate_limit))
+            cur.execute(query, (patterns, patterns, patterns, patterns, *filter_params, candidate_limit))
             rows = cur.fetchall()
 
     scored_chunks: list[tuple[int, RetrievedChunk]] = []
@@ -1449,38 +1760,29 @@ def _invoke_llm_payload(
     config: dict[str, Any],
     strict_retry: bool = False,
 ) -> dict[str, Any] | None:
-    ChatOpenAI = _import_langchain()
     context_block = _format_context(chunks)
     prompt = _build_answer_prompt_for_mode(message, context_block, repair_mode=strict_retry)
-
-    model_candidates: list[str] = []
-    for candidate in [config["chat_model"], "gpt-4.1", "gpt-4o-mini"]:
-        if candidate in _UNAVAILABLE_MODELS:
-            continue
-        if candidate not in model_candidates:
-            model_candidates.append(candidate)
-
-    for model_name in model_candidates:
-        try:
-            llm = ChatOpenAI(
-                model=model_name,
-                temperature=0,
-                api_key=config["api_key"],
-                request_timeout=config["request_timeout_seconds"],
-                max_retries=int(config["max_retries"]),
-            )
-            response = llm.invoke([("system", SYSTEM_PROMPT), ("user", prompt)])
-            payload = _extract_json_payload(_response_to_text(response))
-            if payload is not None:
-                return payload
-        except Exception as exc:
-            lower = str(exc).lower()
-            if "model_not_found" in lower or "does not exist" in lower:
-                _UNAVAILABLE_MODELS.add(model_name)
-                logger.warning("RAG model unavailable (%s), trying fallback model", model_name)
-                continue
-            raise
-    return None
+    profile = ModelProfile(
+        scenario=RAG_ANSWER_SCENARIO,
+        provider="openai",
+        model=str(config.get("chat_model") or "").strip() or resolve_model_profile(RAG_ANSWER_SCENARIO).model,
+        api_mode="openai_responses",
+        api_key=str(config.get("api_key") or "").strip(),
+        reasoning_effort=str(config.get("reasoning_effort") or "").strip() or "high",
+        temperature=0.0,
+        timeout_seconds=float(config.get("request_timeout_seconds") or 20.0),
+        max_retries=int(config.get("max_retries") or 1),
+        fallback_models=tuple(config.get("fallback_models") or ("gpt-4.1", "gpt-4o-mini")),
+    )
+    try:
+        response = invoke_responses_text(
+            profile=profile,
+            system_prompt=SYSTEM_PROMPT,
+            user_prompt=prompt,
+        )
+    except LlmInvocationError:
+        return None
+    return _extract_json_payload(response.text)
 
 
 def _invoke_llm_payload_with_trace(
@@ -1489,38 +1791,31 @@ def _invoke_llm_payload_with_trace(
     config: dict[str, Any],
     strict_retry: bool = False,
 ) -> tuple[dict[str, Any] | None, int, int, str | None]:
-    ChatOpenAI = _import_langchain()
     context_block = _format_context(chunks)
     prompt = _build_answer_prompt_for_mode(message, context_block, repair_mode=strict_retry)
-
-    model_candidates: list[str] = []
-    for candidate in [config["chat_model"], "gpt-4.1", "gpt-4o-mini"]:
-        if candidate in _UNAVAILABLE_MODELS:
-            continue
-        if candidate not in model_candidates:
-            model_candidates.append(candidate)
-
-    for model_name in model_candidates:
-        try:
-            llm = ChatOpenAI(
-                model=model_name,
-                temperature=0,
-                api_key=config["api_key"],
-                request_timeout=config["request_timeout_seconds"],
-                max_retries=int(config["max_retries"]),
-            )
-            response = llm.invoke([("system", SYSTEM_PROMPT), ("user", prompt)])
-            payload = _extract_json_payload(_response_to_text(response))
-            prompt_tokens, completion_tokens = _usage_tokens_from_response(response)
-            if payload is not None:
-                return payload, prompt_tokens, completion_tokens, model_name
-        except Exception as exc:
-            lower = str(exc).lower()
-            if "model_not_found" in lower or "does not exist" in lower:
-                _UNAVAILABLE_MODELS.add(model_name)
-                logger.warning("RAG model unavailable (%s), trying fallback model", model_name)
-                continue
-            raise
+    profile = ModelProfile(
+        scenario=RAG_ANSWER_SCENARIO,
+        provider="openai",
+        model=str(config.get("chat_model") or "").strip() or resolve_model_profile(RAG_ANSWER_SCENARIO).model,
+        api_mode="openai_responses",
+        api_key=str(config.get("api_key") or "").strip(),
+        reasoning_effort=str(config.get("reasoning_effort") or "").strip() or "high",
+        temperature=0.0,
+        timeout_seconds=float(config.get("request_timeout_seconds") or 20.0),
+        max_retries=int(config.get("max_retries") or 1),
+        fallback_models=tuple(config.get("fallback_models") or ("gpt-4.1", "gpt-4o-mini")),
+    )
+    try:
+        response = invoke_responses_text(
+            profile=profile,
+            system_prompt=SYSTEM_PROMPT,
+            user_prompt=prompt,
+        )
+    except LlmInvocationError:
+        return None, 0, 0, None
+    payload = _extract_json_payload(response.text)
+    if payload is not None:
+        return payload, response.prompt_tokens, response.completion_tokens, response.model_name
     return None, 0, 0, None
 
 
@@ -1530,17 +1825,6 @@ def _confidence_from_chunks(chunks: list[RetrievedChunk]) -> float:
     best_similarity = max(0.0, min(1.0, chunks[0].similarity))
     confidence = 0.72 + (0.2 * best_similarity) + (0.02 * min(len(chunks), 5))
     return round(min(0.95, confidence), 2)
-
-
-def _usage_tokens_from_response(response: Any) -> tuple[int, int]:
-    usage = getattr(response, "usage_metadata", None)
-    if isinstance(usage, dict):
-        return int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0)
-    response_metadata = getattr(response, "response_metadata", None)
-    if isinstance(response_metadata, dict):
-        token_usage = response_metadata.get("token_usage") if isinstance(response_metadata.get("token_usage"), dict) else {}
-        return int(token_usage.get("prompt_tokens") or 0), int(token_usage.get("completion_tokens") or 0)
-    return 0, 0
 
 
 def _infer_query_type(message: str) -> str:
@@ -1881,6 +2165,7 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
         return None
 
     provider = get_embedding_provider()
+    original_query = str(message or "").strip()
     vector_chunks: list[RetrievedChunk] = []
     bm25_chunks: list[RetrievedChunk] = []
     keyword_fallback_chunks: list[RetrievedChunk] = []
@@ -1888,6 +2173,22 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
     embedding_request_meta: list[dict[str, Any]] = []
     embedding_dimensions = getattr(provider, "vector_dim", None)
     query_type = _infer_query_type(message)
+    query_understanding_enabled = _feature_flag_enabled("RAG_QUERY_UNDERSTANDING_ENABLED", True)
+    query_rewrite_enabled = _feature_flag_enabled("RAG_QUERY_REWRITE_ENABLED", True)
+    query_decomposition_enabled = _feature_flag_enabled("RAG_QUERY_DECOMPOSITION_ENABLED", True)
+    query_expansion_enabled = _feature_flag_enabled("RAG_QUERY_EXPANSION_ENABLED", True)
+    query_prf_enabled = _feature_flag_enabled("RAG_QUERY_PRF_ENABLED", True)
+    query_understanding: QueryUnderstandingResult | None = None
+    effective_hard_filters: dict[str, str] = {}
+    effective_soft_signals: dict[str, list[str]] = {}
+    effective_rule_expansions: list[str] = []
+    effective_llm_expansions: list[str] = []
+    effective_prf_expansions: list[str] = []
+    effective_rewrites: list[str] = []
+    effective_decomposition_subqueries: list[str] = []
+    query_variants: list[tuple[str, str]] = [("original", str(message or "").strip())]
+    first_pass_candidate_count = 0
+    second_pass_candidate_count = 0
     total_started_at = time.perf_counter()
     vector_latency_ms = 0.0
     bm25_latency_ms = 0.0
@@ -1910,54 +2211,190 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
         "post_rerank_count": 0,
         "candidate_reasons": {},
     }
+    query_understanding_executor: ThreadPoolExecutor | None = None
+    query_understanding_future: Future[QueryUnderstandingResult] | None = None
+    if query_understanding_enabled:
+        query_understanding_executor = ThreadPoolExecutor(max_workers=1)
+        query_understanding_future = query_understanding_executor.submit(understand_rag_query, message)
+    effective_plan = RetrievalPlan(semantic_query=original_query)
 
-    try:
-        vector_started_at = time.perf_counter()
-        vector_chunks = _retrieve_chunks(
-            message,
-            config,
-            limit=int(config["vector_candidate_k"]),
-        )
-        vector_latency_ms = round((time.perf_counter() - vector_started_at) * 1000, 2)
-    except Exception as exc:
-        logger.warning("RAG retrieval failed: %s", exc)
-    finally:
-        embedding_request_meta.extend(_drain_embedding_request_meta(provider))
+    def _retrieval_config_for(plan: RetrievalPlan) -> dict[str, Any]:
+        variant_config = dict(config)
+        variant_config["_retrieval_plan"] = plan
+        return variant_config
 
-    try:
-        bm25_started_at = time.perf_counter()
-        bm25_chunks = _retrieve_bm25_chunks(
-            message,
-            config,
-            limit=int(config["bm25_candidate_k"]),
-        )
-        bm25_latency_ms = round((time.perf_counter() - bm25_started_at) * 1000, 2)
-    except Exception as exc:
-        logger.warning("RAG BM25 retrieval failed: %s", exc)
-        try:
-            keyword_started_at = time.perf_counter()
-            keyword_fallback_chunks = _retrieve_keyword_chunks(
-                message,
-                config,
-                limit=int(config["bm25_candidate_k"]),
+    def _collect_variants(variants: list[tuple[str, str]], plan: RetrievalPlan, *, keyword_limit: int) -> None:
+        nonlocal bm25_chunks
+        nonlocal bm25_latency_ms
+        nonlocal embedding_request_meta
+        nonlocal keyword_fallback_chunks
+        nonlocal keyword_fallback_latency_ms
+        nonlocal vector_chunks
+        nonlocal vector_latency_ms
+        variant_config = _retrieval_config_for(plan)
+        for query_kind, variant_query in variants:
+            try:
+                vector_started_at = time.perf_counter()
+                variant_vector_chunks = _retrieve_chunks(
+                    variant_query,
+                    variant_config,
+                    limit=int(config["vector_candidate_k"]),
+                )
+                vector_latency_ms = round(vector_latency_ms + ((time.perf_counter() - vector_started_at) * 1000), 2)
+                vector_chunks = _merge_variant_chunks(
+                    vector_chunks,
+                    variant_vector_chunks,
+                    source_label="vector",
+                    query_variant=variant_query,
+                    query_kind=query_kind,
+                )
+            except Exception as exc:
+                logger.warning("RAG retrieval failed for %s query: %s", query_kind, exc)
+            finally:
+                embedding_request_meta.extend(_drain_embedding_request_meta(provider))
+
+            try:
+                bm25_started_at = time.perf_counter()
+                variant_bm25_chunks = _retrieve_bm25_chunks(
+                    variant_query,
+                    variant_config,
+                    limit=int(config["bm25_candidate_k"]),
+                )
+                bm25_latency_ms = round(bm25_latency_ms + ((time.perf_counter() - bm25_started_at) * 1000), 2)
+                bm25_chunks = _merge_variant_chunks(
+                    bm25_chunks,
+                    variant_bm25_chunks,
+                    source_label="bm25",
+                    query_variant=variant_query,
+                    query_kind=query_kind,
+                )
+            except Exception as exc:
+                logger.warning("RAG BM25 retrieval failed for %s query: %s", query_kind, exc)
+                try:
+                    keyword_started_at = time.perf_counter()
+                    variant_keyword_chunks = _retrieve_keyword_chunks(
+                        variant_query,
+                        variant_config,
+                        limit=keyword_limit,
+                    )
+                    keyword_fallback_latency_ms = round(
+                        keyword_fallback_latency_ms + ((time.perf_counter() - keyword_started_at) * 1000),
+                        2,
+                    )
+                    keyword_fallback_chunks = _merge_variant_chunks(
+                        keyword_fallback_chunks,
+                        variant_keyword_chunks,
+                        source_label="keyword_fallback",
+                        query_variant=variant_query,
+                        query_kind=query_kind,
+                    )
+                except Exception as keyword_exc:
+                    logger.warning("RAG keyword retrieval failed for %s query: %s", query_kind, keyword_exc)
+
+    def _merge_candidate_sets() -> list[RetrievedChunk]:
+        if vector_chunks and not bm25_chunks and keyword_fallback_chunks:
+            return _merge_chunks(
+                vector_chunks,
+                keyword_fallback_chunks,
+                limit=int(config["fusion_candidate_k"]),
             )
-            keyword_fallback_latency_ms = round((time.perf_counter() - keyword_started_at) * 1000, 2)
-        except Exception as keyword_exc:
-            logger.warning("RAG keyword retrieval failed: %s", keyword_exc)
-            keyword_fallback_chunks = []
+        if vector_chunks or bm25_chunks:
+            merged_chunks = _rrf_merge(
+                vector_chunks,
+                bm25_chunks,
+                limit=int(config["fusion_candidate_k"]),
+            )
+            if not merged_chunks:
+                merged_chunks = _merge_chunks(
+                    vector_chunks,
+                    bm25_chunks,
+                    limit=int(config["fusion_candidate_k"]),
+                )
+            return merged_chunks
+        if keyword_fallback_chunks:
+            return _merge_chunks(
+                vector_chunks,
+                keyword_fallback_chunks,
+                limit=int(config["fusion_candidate_k"]),
+            )
+        return []
+
+    _collect_variants([("original", original_query)], effective_plan, keyword_limit=int(config["bm25_candidate_k"]))
+
+    if query_understanding_future is not None:
+        try:
+            query_understanding = query_understanding_future.result()
+        except Exception as exc:
+            logger.warning("RAG query understanding failed: %s", exc)
+        finally:
+            if query_understanding_executor is not None:
+                query_understanding_executor.shutdown(wait=True)
+    if query_understanding is not None:
+        effective_hard_filters = dict(query_understanding.retrieval_plan.hard_filters)
+        effective_soft_signals = dict(query_understanding.retrieval_plan.soft_signals)
+        effective_rule_expansions = list(query_understanding.retrieval_plan.rule_expansions) if query_expansion_enabled else []
+        effective_llm_expansions = (
+            list(query_understanding.retrieval_plan.llm_expansions or query_understanding.rewritten_queries)
+            if query_rewrite_enabled
+            else []
+        )
+        effective_rewrites = list(effective_llm_expansions)
+        effective_decomposition_subqueries = (
+            list(query_understanding.decomposition_subqueries) if query_decomposition_enabled else []
+        )
+        effective_plan = RetrievalPlan(
+            semantic_query=query_understanding.semantic_query or original_query,
+            hard_filters=dict(effective_hard_filters),
+            soft_signals=dict(effective_soft_signals),
+            rewritten_queries=list(effective_rewrites),
+            decomposition_subqueries=list(effective_decomposition_subqueries),
+            fallback_mode=query_understanding.fallback_mode,
+            rule_expansions=list(effective_rule_expansions),
+            llm_expansions=list(effective_llm_expansions),
+            prf_expansions=[],
+            hard_filter_sources=dict(query_understanding.retrieval_plan.hard_filter_sources),
+            soft_signal_sources=dict(query_understanding.retrieval_plan.soft_signal_sources),
+            cache_hit=bool(query_understanding.cache_hit),
+            prf_used=False,
+        )
+        query_variants = _build_query_variants(
+            message,
+            replace(
+                query_understanding,
+                rewritten_queries=list(effective_rewrites),
+                decomposition_subqueries=list(effective_decomposition_subqueries),
+                retrieval_plan=effective_plan,
+            ),
+            rewrite_enabled=query_rewrite_enabled,
+            decomposition_enabled=query_decomposition_enabled,
+        )
+        supplemental_variants = [(kind, query) for kind, query in query_variants if kind != "original"]
+        if supplemental_variants:
+            _collect_variants(supplemental_variants, effective_plan, keyword_limit=int(config["bm25_candidate_k"]))
 
     if not vector_chunks and not bm25_chunks:
-        try:
-            keyword_started_at = time.perf_counter()
-            keyword_fallback_chunks = _retrieve_keyword_chunks(
-                message,
-                config,
-                limit=int(config["bm25_candidate_k"]),
-            )
-            keyword_fallback_latency_ms = round((time.perf_counter() - keyword_started_at) * 1000, 2)
-        except Exception as exc:
-            logger.warning("RAG keyword retrieval failed: %s", exc)
-            keyword_fallback_chunks = []
+        keyword_only_config = _retrieval_config_for(effective_plan)
+        for query_kind, variant_query in query_variants:
+            try:
+                keyword_started_at = time.perf_counter()
+                variant_keyword_chunks = _retrieve_keyword_chunks(
+                    variant_query,
+                    keyword_only_config,
+                    limit=int(config["bm25_candidate_k"]),
+                )
+                keyword_fallback_latency_ms = round(
+                    keyword_fallback_latency_ms + ((time.perf_counter() - keyword_started_at) * 1000),
+                    2,
+                )
+                keyword_fallback_chunks = _merge_variant_chunks(
+                    keyword_fallback_chunks,
+                    variant_keyword_chunks,
+                    source_label="keyword_fallback",
+                    query_variant=variant_query,
+                    query_kind=query_kind,
+                )
+            except Exception as exc:
+                logger.warning("RAG keyword retrieval failed for %s query: %s", query_kind, exc)
 
     def _retrieval_strategy_for(*, keyword_fallback_used: bool) -> str:
         if keyword_fallback_used and vector_chunks:
@@ -1966,41 +2403,60 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
             return "keyword_fallback"
         return "hybrid_rrf_bm25"
 
-    if vector_chunks and not bm25_chunks and keyword_fallback_chunks:
-        chunks = _merge_chunks(
-            vector_chunks,
-            keyword_fallback_chunks,
-            limit=int(config["fusion_candidate_k"]),
+    chunks = _merge_candidate_sets()
+    first_pass_candidate_count = len(chunks)
+
+    weak_first_pass = (not chunks) or (not _has_grounded_keyword_overlap(message, chunks)) or (
+        len(chunks) < min(2, int(config["top_k"]))
+    )
+    if query_prf_enabled and query_understanding is not None and weak_first_pass:
+        prf_expansion_terms = build_prf_expansions(
+            message,
+            chunks,
+            canonical_terms=query_understanding.canonical_terms,
+            existing_expansions=[*effective_rule_expansions, *effective_llm_expansions],
         )
-    elif vector_chunks or bm25_chunks:
-        chunks = _rrf_merge(
-            vector_chunks,
-            bm25_chunks,
-            limit=int(config["fusion_candidate_k"]),
-        )
-        if not chunks:
-            chunks = _merge_chunks(
-                vector_chunks,
-                bm25_chunks,
-                limit=int(config["fusion_candidate_k"]),
+        if prf_expansion_terms:
+            effective_prf_expansions = list(prf_expansion_terms)
+            effective_plan = replace(
+                effective_plan,
+                prf_expansions=list(effective_prf_expansions),
+                prf_used=True,
             )
-    elif keyword_fallback_chunks:
-        chunks = _merge_chunks(
-            vector_chunks,
-            keyword_fallback_chunks,
-            limit=int(config["fusion_candidate_k"]),
-        )
+            _collect_variants(
+                [("prf", query) for query in effective_prf_expansions],
+                effective_plan,
+                keyword_limit=int(config["bm25_candidate_k"]),
+            )
+            chunks = _merge_candidate_sets()
+    second_pass_candidate_count = len(chunks)
 
     if not chunks:
-        try:
-            keyword_started_at = time.perf_counter()
-            keyword_fallback_chunks = _retrieve_keyword_chunks(message, config, limit=int(config["top_k"]))
-            keyword_fallback_latency_ms = round((time.perf_counter() - keyword_started_at) * 1000, 2)
-            chunks = list(keyword_fallback_chunks)
-        except Exception as exc:
-            logger.warning("RAG keyword retrieval failed: %s", exc)
-            chunks = []
+        keyword_only_config = _retrieval_config_for(effective_plan)
+        for query_kind, variant_query in query_variants:
+            try:
+                keyword_started_at = time.perf_counter()
+                variant_keyword_chunks = _retrieve_keyword_chunks(
+                    variant_query,
+                    keyword_only_config,
+                    limit=int(config["top_k"]),
+                )
+                keyword_fallback_latency_ms = round(
+                    keyword_fallback_latency_ms + ((time.perf_counter() - keyword_started_at) * 1000),
+                    2,
+                )
+                keyword_fallback_chunks = _merge_variant_chunks(
+                    keyword_fallback_chunks,
+                    variant_keyword_chunks,
+                    source_label="keyword_fallback",
+                    query_variant=variant_query,
+                    query_kind=query_kind,
+                )
+                chunks = list(keyword_fallback_chunks)
+            except Exception as exc:
+                logger.warning("RAG keyword retrieval failed for %s query: %s", query_kind, exc)
         if not chunks:
+            query_meta = _query_understanding_meta(query_understanding, rerank_info)
             answer = RagAnswer(
                 answer=INSUFFICIENT_EVIDENCE_REPLY,
                 confidence=0.55,
@@ -2049,6 +2505,30 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
                 metadata_hints=rerank_info.get("hints") if isinstance(rerank_info.get("hints"), dict) else {},
                 metadata_filter_applied=bool(rerank_info.get("applied_filter")),
                 metadata_filter_type=(str(rerank_info.get("filter_type")).strip() or None) if rerank_info.get("filter_type") is not None else None,
+                intent_latency_ms=query_understanding.intent_latency_ms if query_understanding is not None else 0.0,
+                rewrite_latency_ms=query_understanding.rewrite_latency_ms if query_understanding is not None else 0.0,
+                query_understanding_enabled=query_understanding is not None,
+                query_understanding_version=query_understanding.query_understanding_version if query_understanding is not None else None,
+                query_profile=query_meta["query_profile"] or None,
+                glossary_version=query_understanding.glossary_version if query_understanding is not None else None,
+                self_query_version=query_understanding.self_query_version if query_understanding is not None else None,
+                fallback_mode=query_meta["fallback_mode"] or None,
+                glossary_hit_terms=list(query_meta["glossary_hit_terms"]),
+                applied_hard_filters=dict(query_meta["applied_hard_filters"]),
+                applied_soft_signals=dict(query_meta["applied_soft_signals"]),
+                dictionary_hits=list(query_meta["dictionary_hits"]),
+                rule_expansions=list(query_meta["rule_expansions"]),
+                llm_expansions=list(query_meta["llm_expansions"]),
+                prf_expansions=list(query_meta["prf_expansions"]),
+                hard_filter_sources=dict(query_meta["hard_filter_sources"]),
+                cache_hit=bool(query_meta["cache_hit"]),
+                prf_used=bool(query_meta["prf_used"]),
+                query_expansion_enabled=query_expansion_enabled,
+                query_expansion_model=resolve_model_profile(QUERY_EXPANSION_SCENARIO).model if query_expansion_enabled else None,
+                first_pass_candidate_count=first_pass_candidate_count,
+                second_pass_candidate_count=second_pass_candidate_count,
+                rewritten_queries=list(effective_rewrites),
+                decomposition_subqueries=list(effective_decomposition_subqueries),
             )
             return RagQueryResult(answer=answer, trace=trace)
 
@@ -2059,6 +2539,8 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
             query=message,
             chunks=chunks,
             top_k=int(config["fusion_candidate_k"]),
+            retrieval_plan=effective_plan,
+            query_understanding=query_understanding,
         )
         rerank_latency_ms = round((time.perf_counter() - rerank_started_at) * 1000, 2)
         chunks = reranked_chunks or chunks
@@ -2118,6 +2600,7 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
         generation_mode: str,
         extractive_fallback_used: bool,
     ) -> RagQueryTrace:
+        query_meta = _query_understanding_meta(query_understanding, rerank_info)
         cited_chunk_ids = [str(item.get("chunk_id")) for item in answer.citations if isinstance(item, dict) and item.get("chunk_id")]
         selected_chunk_ids = [chunk.chunk_id for chunk in final_chunks if chunk.chunk_id]
         unique_selected_chunk_ids = {chunk_id for chunk_id in selected_chunk_ids if chunk_id}
@@ -2180,6 +2663,30 @@ def run_rag_query(message: str, top_k: int | None = None) -> RagQueryResult | No
             metadata_hints=rerank_info.get("hints") if isinstance(rerank_info.get("hints"), dict) else {},
             metadata_filter_applied=bool(rerank_info.get("applied_filter")),
             metadata_filter_type=(str(rerank_info.get("filter_type")).strip() or None) if rerank_info.get("filter_type") is not None else None,
+            intent_latency_ms=query_understanding.intent_latency_ms if query_understanding is not None else 0.0,
+            rewrite_latency_ms=query_understanding.rewrite_latency_ms if query_understanding is not None else 0.0,
+            query_understanding_enabled=query_understanding is not None,
+            query_understanding_version=query_understanding.query_understanding_version if query_understanding is not None else None,
+            query_profile=query_meta["query_profile"] or None,
+            glossary_version=query_understanding.glossary_version if query_understanding is not None else None,
+            self_query_version=query_understanding.self_query_version if query_understanding is not None else None,
+            fallback_mode=query_meta["fallback_mode"] or None,
+            glossary_hit_terms=list(query_meta["glossary_hit_terms"]),
+            applied_hard_filters=dict(query_meta["applied_hard_filters"]),
+            applied_soft_signals=dict(query_meta["applied_soft_signals"]),
+            dictionary_hits=list(query_meta["dictionary_hits"]),
+            rule_expansions=list(query_meta["rule_expansions"]),
+            llm_expansions=list(query_meta["llm_expansions"]),
+            prf_expansions=list(query_meta["prf_expansions"]),
+            hard_filter_sources=dict(query_meta["hard_filter_sources"]),
+            cache_hit=bool(query_meta["cache_hit"]),
+            prf_used=bool(query_meta["prf_used"]),
+            query_expansion_enabled=query_expansion_enabled,
+            query_expansion_model=resolve_model_profile(QUERY_EXPANSION_SCENARIO).model if query_expansion_enabled else None,
+            first_pass_candidate_count=first_pass_candidate_count,
+            second_pass_candidate_count=second_pass_candidate_count,
+            rewritten_queries=list(effective_rewrites),
+            decomposition_subqueries=list(effective_decomposition_subqueries),
         )
 
     if payload is not None and _is_valid_response(payload, allowed_chunk_ids):

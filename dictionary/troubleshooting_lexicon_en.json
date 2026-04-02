@@ -1,0 +1,92 @@
+[
+  {
+    "canonical_term": "Black screen",
+    "aliases": ["black screen", "blank screen", "black video", "remote video is black"],
+    "definition_summary": "Black screen usually means the remote video is not rendering or no frames are arriving.",
+    "related_terms": ["video rendering", "remote video"],
+    "expansion_terms": ["remote video black", "video rendering issue", "remote video blank"],
+    "metadata_hints": {
+      "hard_filters": {
+        "doc_subtype": "troubleshooting_case"
+      },
+      "soft_signals": {
+        "chunk_type": ["troubleshooting_procedure"],
+        "symptoms": ["black screen"],
+        "keywords": ["remote video black"],
+        "issue_category": ["video_rendering"]
+      }
+    }
+  },
+  {
+    "canonical_term": "No audio",
+    "aliases": ["no audio", "cannot hear", "can't hear", "no sound"],
+    "definition_summary": "No audio usually means the remote or local audio path is muted, blocked, or not subscribed.",
+    "related_terms": ["audio subscription", "mute state"],
+    "expansion_terms": ["cannot hear remote user", "audio subscription issue", "muted audio troubleshooting"],
+    "metadata_hints": {
+      "hard_filters": {
+        "doc_subtype": "troubleshooting_case"
+      },
+      "soft_signals": {
+        "chunk_type": ["troubleshooting_procedure"],
+        "symptoms": ["no audio"],
+        "keywords": ["cannot hear"],
+        "issue_category": ["audio_playback"]
+      }
+    }
+  },
+  {
+    "canonical_term": "Join failed",
+    "aliases": ["join failed", "cannot join", "can't join", "failed to join channel"],
+    "definition_summary": "Join failed means the client could not enter the channel because of token, connection, or parameter issues.",
+    "related_terms": ["channel join", "token error"],
+    "expansion_terms": ["channel join failed", "join channel troubleshooting", "token join issue"],
+    "metadata_hints": {
+      "hard_filters": {
+        "doc_subtype": "troubleshooting_case"
+      },
+      "soft_signals": {
+        "chunk_type": ["troubleshooting_procedure"],
+        "symptoms": ["join failed"],
+        "use_case": ["join_channel"],
+        "keywords": ["join channel"]
+      }
+    }
+  },
+  {
+    "canonical_term": "Freeze",
+    "aliases": ["freeze", "frozen video", "video freeze", "stuck frame"],
+    "definition_summary": "Freeze means video frames stop updating because of rendering, subscription, or network problems.",
+    "related_terms": ["video stall", "rendering issue"],
+    "expansion_terms": ["video freeze troubleshooting", "frozen video"],
+    "metadata_hints": {
+      "hard_filters": {
+        "doc_subtype": "troubleshooting_case"
+      },
+      "soft_signals": {
+        "chunk_type": ["troubleshooting_procedure"],
+        "symptoms": ["freeze"],
+        "keywords": ["frozen video"],
+        "issue_category": ["video_freeze"]
+      }
+    }
+  },
+  {
+    "canonical_term": "Lag",
+    "aliases": ["lag", "latency", "delay", "network lag"],
+    "definition_summary": "Lag describes delayed media delivery caused by network instability or congestion.",
+    "related_terms": ["network quality", "jitter"],
+    "expansion_terms": ["network lag troubleshooting", "media delay", "high latency"],
+    "metadata_hints": {
+      "hard_filters": {
+        "doc_subtype": "troubleshooting_case"
+      },
+      "soft_signals": {
+        "chunk_type": ["troubleshooting_procedure"],
+        "symptoms": ["lag"],
+        "issue_category": ["network_quality"],
+        "keywords": ["latency"]
+      }
+    }
+  }
+]

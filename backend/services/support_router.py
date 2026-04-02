@@ -4,23 +4,19 @@ import json
 import logging
 import os
 import re
-import urllib.error
-import urllib.request
 import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
+from backend.services.llm_profiles import INTENT_ROUTER_SCENARIO, WEB_SEARCH_SCENARIO, resolve_model_profile
 from backend.services.prompts.web_search import build_web_search_system_prompt, build_web_search_user_prompt
 from backend.services.support_router_prompt import build_route_system_prompt, build_route_user_payload
 
 LOGGER = logging.getLogger(__name__)
 
-DEFAULT_INTENT_ROUTER_MODEL = "gpt-5.4-mini"
 DEFAULT_INTENT_ROUTER_TIMEOUT_SECONDS = 8.0
 DEFAULT_INTENT_ROUTER_CONFIDENCE_THRESHOLD = 0.7
-DEFAULT_INTENT_ROUTER_REASONING_EFFORT = "low"
-DEFAULT_INTENT_ROUTER_TEMPERATURE = 0.3
-DEFAULT_OPENAI_WEB_SEARCH_MODEL = "gpt-5"
 DEFAULT_OPENAI_WEB_SEARCH_TIMEOUT_SECONDS = 30.0
 OFFICIAL_AGORA_DOMAINS = [
     "agora.io",
@@ -261,119 +257,6 @@ def citations_use_authoritative_source(citations: list[dict[str, str]] | None = 
     return False
 
 
-def _extract_response_text(response_payload: dict[str, Any]) -> str:
-    output_text = _normalize_text(response_payload.get("output_text"))
-    if output_text:
-        return output_text
-    output_items = response_payload.get("output") if isinstance(response_payload.get("output"), list) else []
-    for item in output_items:
-        if not isinstance(item, dict) or item.get("type") != "message":
-            continue
-        for content_item in item.get("content") or []:
-            if not isinstance(content_item, dict):
-                continue
-            text = _normalize_text(content_item.get("text"))
-            if text:
-                return text
-    return ""
-
-
-def _router_response_payload(
-    *,
-    system_prompt: str,
-    user_prompt: str,
-    model: str,
-    reasoning_effort: str,
-    temperature: float | None,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "model": model,
-        "reasoning": {"effort": reasoning_effort},
-        "input": [
-            {
-                "role": "system",
-                "content": [{"type": "input_text", "text": system_prompt}],
-            },
-            {
-                "role": "user",
-                "content": [{"type": "input_text", "text": user_prompt}],
-            },
-        ],
-    }
-    if temperature is not None:
-        payload["temperature"] = temperature
-    return payload
-
-
-def _read_http_error_payload(error: urllib.error.HTTPError) -> str:
-    try:
-        body = error.read()
-    except Exception:
-        return ""
-    finally:
-        try:
-            error.close()
-        except Exception:
-            pass
-    if not body:
-        return ""
-    return body.decode("utf-8", errors="replace")
-
-
-def _call_route_responses_api(
-    *,
-    api_key: str,
-    model: str,
-    timeout_seconds: float,
-    reasoning_effort: str,
-    temperature: float | None,
-    system_prompt: str,
-    user_prompt: str,
-) -> dict[str, Any] | None:
-    payload = _router_response_payload(
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-        model=model,
-        reasoning_effort=reasoning_effort,
-        temperature=temperature,
-    )
-    request = urllib.request.Request(
-        "https://api.openai.com/v1/responses",
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-            return json.loads(response.read().decode("utf-8", errors="replace") or "{}")
-    except urllib.error.HTTPError as exc:
-        if temperature is not None:
-            error_payload = _read_http_error_payload(exc).lower()
-            if exc.code in {400, 422} and "temperature" in error_payload:
-                return _call_route_responses_api(
-                    api_key=api_key,
-                    model=model,
-                    timeout_seconds=timeout_seconds,
-                    reasoning_effort=reasoning_effort,
-                    temperature=None,
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                )
-        else:
-            try:
-                exc.close()
-            except Exception:
-                pass
-        LOGGER.warning("Intent router responses call failed: %s", exc)
-        return None
-    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-        LOGGER.warning("Intent router responses call failed: %s", exc)
-        return None
-
-
 def _llm_route_decision(
     message: str,
     *,
@@ -381,16 +264,9 @@ def _llm_route_decision(
     ticket_context: list[dict[str, str]] | None,
     response_language: str,
 ) -> SupportRouteDecision | None:
-    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
-    if not api_key:
+    profile = resolve_model_profile(INTENT_ROUTER_SCENARIO)
+    if not profile.api_key:
         return None
-    model = (os.getenv("INTENT_ROUTER_MODEL") or DEFAULT_INTENT_ROUTER_MODEL).strip()
-    reasoning_effort = (os.getenv("INTENT_ROUTER_REASONING_EFFORT") or DEFAULT_INTENT_ROUTER_REASONING_EFFORT).strip() or DEFAULT_INTENT_ROUTER_REASONING_EFFORT
-    temperature = _safe_nonnegative_float_env("INTENT_ROUTER_TEMPERATURE", DEFAULT_INTENT_ROUTER_TEMPERATURE)
-    timeout_seconds = _safe_float_env(
-        "INTENT_ROUTER_TIMEOUT_SECONDS",
-        DEFAULT_INTENT_ROUTER_TIMEOUT_SECONDS,
-    )
     system_prompt = build_route_system_prompt()
     user_prompt = build_route_user_payload(
         message,
@@ -398,19 +274,17 @@ def _llm_route_decision(
         ticket_context=ticket_context,
         response_language=response_language,
     )
-    response_payload = _call_route_responses_api(
-        api_key=api_key,
-        model=model,
-        timeout_seconds=timeout_seconds,
-        reasoning_effort=reasoning_effort,
-        temperature=temperature,
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-    )
-    if response_payload is None:
+    try:
+        response = invoke_responses_text(
+            profile=profile,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
+    except LlmInvocationError as exc:
+        LOGGER.warning("Intent router responses call failed: %s", exc)
         return None
     try:
-        payload = json.loads(_extract_response_text(response_payload))
+        payload = json.loads(response.text)
     except json.JSONDecodeError:
         LOGGER.warning("Intent router response did not return valid JSON")
         return None
@@ -593,14 +467,9 @@ def _openai_web_search(
     response_language: str,
     allowed_domains: list[str] | None,
 ) -> WebSearchAnswer | None:
-    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
-    if not api_key:
+    profile = resolve_model_profile(WEB_SEARCH_SCENARIO)
+    if not profile.api_key:
         return None
-    model = (os.getenv("OPENAI_WEB_SEARCH_MODEL") or DEFAULT_OPENAI_WEB_SEARCH_MODEL).strip()
-    timeout_seconds = _safe_float_env(
-        "OPENAI_WEB_SEARCH_TIMEOUT_SECONDS",
-        DEFAULT_OPENAI_WEB_SEARCH_TIMEOUT_SECONDS,
-    )
     tool: dict[str, Any] = {
         "type": "web_search",
         "external_web_access": True,
@@ -612,37 +481,21 @@ def _openai_web_search(
         official_only=bool(allowed_domains),
     )
     user_prompt = build_web_search_user_prompt(question=question)
-    payload = {
-        "model": model,
+    extra_payload = {
         "tools": [tool],
         "include": ["web_search_call.action.sources"],
-        "input": [
-            {
-                "role": "system",
-                "content": [{"type": "input_text", "text": system_prompt}],
-            },
-            {
-                "role": "user",
-                "content": [{"type": "input_text", "text": user_prompt}],
-            },
-        ],
     }
-    request = urllib.request.Request(
-        "https://api.openai.com/v1/responses",
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-    )
     try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-            raw_payload = json.loads(response.read().decode("utf-8", errors="replace") or "{}")
-    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        response = invoke_responses_text(
+            profile=profile,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            extra_payload=extra_payload,
+        )
+    except LlmInvocationError as exc:
         LOGGER.warning("Agora public info web search failed: %s", exc)
         return None
-    text, citations, sources = _extract_web_search_payload(raw_payload if isinstance(raw_payload, dict) else {})
+    text, citations, sources = _extract_web_search_payload(response.raw_payload or {})
     if not text:
         return None
     return WebSearchAnswer(

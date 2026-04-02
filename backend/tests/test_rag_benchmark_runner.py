@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from backend.services.rag_benchmark_runner import resolve_judge_models, run_benchmark
+from backend.services.rag_benchmark_runner import _strategy_snapshot, resolve_judge_models, run_benchmark
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, RagAnswer, RagQueryResult, RagQueryTrace
 from backend.services.support_router import SupportResolution
 
@@ -251,7 +251,7 @@ def _fake_judge_runner(
     _ = case
     _ = result
     _ = retrieval_metrics
-    if judge_model == "gpt-4.1-mini":
+    if judge_model == "openai:gpt-5.4":
         raise RuntimeError("temporary timeout")
     return {
         "judge_model": judge_model,
@@ -331,9 +331,53 @@ def _grounded_abstain_message_resolver(
 
 
 class RagBenchmarkRunnerTests(unittest.TestCase):
+    def test_strategy_snapshot_includes_query_understanding_flags(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "RAG_QUERY_UNDERSTANDING_ENABLED": "true",
+                "RAG_QUERY_EXPANSION_ENABLED": "true",
+                "RAG_QUERY_PRF_ENABLED": "true",
+                "RAG_QUERY_REWRITE_ENABLED": "true",
+                "RAG_QUERY_DECOMPOSITION_ENABLED": "true",
+            },
+            clear=False,
+        ):
+            snapshot = _strategy_snapshot(["gpt-4o-mini"])
+
+        self.assertTrue(snapshot["query_understanding_enabled"])
+        self.assertTrue(snapshot["query_expansion_enabled"])
+        self.assertTrue(snapshot["query_prf_enabled"])
+        self.assertTrue(snapshot["query_rewrite_enabled"])
+        self.assertTrue(snapshot["query_decomposition_enabled"])
+        self.assertEqual(snapshot["query_expansion_model"], "gpt-5.4-mini")
+
     def test_resolve_judge_models_requires_exactly_three_models(self) -> None:
         with self.assertRaises(ValueError):
             resolve_judge_models("gpt-4.1,gpt-4.1-mini")
+
+    def test_resolve_judge_models_defaults_to_provider_qualified_models(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            judge_models = resolve_judge_models()
+
+        self.assertEqual(
+            judge_models,
+            [
+                "openai:gpt-5.4",
+                "siliconflow:Qwen/Qwen3.5-397B-A17B",
+                "siliconflow:deepseek-ai/DeepSeek-V3.2",
+            ],
+        )
+
+    def test_resolve_judge_models_accepts_legacy_openai_only_values(self) -> None:
+        self.assertEqual(
+            resolve_judge_models("gpt-5.4,gpt-5.4-mini,gpt-4o-mini"),
+            [
+                "openai:gpt-5.4",
+                "openai:gpt-5.4-mini",
+                "openai:gpt-4o-mini",
+            ],
+        )
 
     def test_run_benchmark_writes_eval_run_results_and_daily_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -670,10 +714,10 @@ class RagBenchmarkRunnerTests(unittest.TestCase):
                     judge_runner=_counting_judge_runner,
                 )
 
-        self.assertEqual(judge_calls, ["gpt-4o-mini"])
+        self.assertEqual(judge_calls, ["openai:gpt-4o-mini"])
         first_row = repository.eval_results[0]["rows"][0]
         self.assertEqual(len(first_row["judge_votes"]), 3)
-        self.assertTrue(all(vote["judge_model"] == "gpt-4o-mini" for vote in first_row["judge_votes"]))
+        self.assertTrue(all(vote["judge_model"] == "openai:gpt-4o-mini" for vote in first_row["judge_votes"]))
 
 
 if __name__ == "__main__":

@@ -60,6 +60,7 @@ _CHAT_MODEL_PRICING = {
     "gpt-4.1-mini": {"prompt_per_1k": 0.0004, "completion_per_1k": 0.0016},
     "gpt-4o-mini": {"prompt_per_1k": 0.00015, "completion_per_1k": 0.0006},
 }
+RAG_PROMPT_VERSION = "rag-v2-query-understanding"
 
 
 def _build_quality_signals(
@@ -80,6 +81,33 @@ def _build_quality_signals(
         "avg_selected_similarity_score": avg_selected_similarity_score,
         "handoff_reason": handoff_reason,
         "needs_human": needs_human,
+    }
+
+
+def _trace_query_understanding_meta(trace: Any) -> dict[str, Any]:
+    return {
+        "query_understanding_enabled": bool(getattr(trace, "query_understanding_enabled", False)),
+        "query_understanding_version": getattr(trace, "query_understanding_version", None),
+        "query_profile": getattr(trace, "query_profile", None),
+        "glossary_version": getattr(trace, "glossary_version", None),
+        "self_query_version": getattr(trace, "self_query_version", None),
+        "fallback_mode": getattr(trace, "fallback_mode", None),
+        "glossary_hit_terms": list(getattr(trace, "glossary_hit_terms", []) or []),
+        "applied_hard_filters": dict(getattr(trace, "applied_hard_filters", {}) or {}),
+        "applied_soft_signals": dict(getattr(trace, "applied_soft_signals", {}) or {}),
+        "rewritten_queries": list(getattr(trace, "rewritten_queries", []) or []),
+        "decomposition_subqueries": list(getattr(trace, "decomposition_subqueries", []) or []),
+        "dictionary_hits": list(getattr(trace, "dictionary_hits", []) or []),
+        "rule_expansions": list(getattr(trace, "rule_expansions", []) or []),
+        "llm_expansions": list(getattr(trace, "llm_expansions", []) or []),
+        "prf_expansions": list(getattr(trace, "prf_expansions", []) or []),
+        "hard_filter_sources": dict(getattr(trace, "hard_filter_sources", {}) or {}),
+        "cache_hit": bool(getattr(trace, "cache_hit", False)),
+        "prf_used": bool(getattr(trace, "prf_used", False)),
+        "query_expansion_enabled": bool(getattr(trace, "query_expansion_enabled", False)),
+        "query_expansion_model": getattr(trace, "query_expansion_model", None),
+        "first_pass_candidate_count": int(getattr(trace, "first_pass_candidate_count", 0) or 0),
+        "second_pass_candidate_count": int(getattr(trace, "second_pass_candidate_count", 0) or 0),
     }
 
 class RagQueryRequest(BaseModel):
@@ -493,7 +521,8 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
                     "citation_count": 0,
                     "cited_chunk_ids": [],
                     "model_name": None,
-                    "prompt_version": "rag-v1",
+                    "query_understanding_meta": {},
+                    "prompt_version": RAG_PROMPT_VERSION,
                     "created_at": now_iso(),
                 },
                 candidates=[],
@@ -510,6 +539,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             ),
             selected_contexts=[],
             cited_chunk_ids=set(),
+            query_understanding={},
         )
         return {
             "decision": "escalate",
@@ -519,6 +549,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             "citations": [],
             "reason": "rag_query_failed",
             "evidence_summary": evidence_summary,
+            "query_understanding": {},
         }
 
     if result is None:
@@ -575,7 +606,8 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
                     "citation_count": 0,
                     "cited_chunk_ids": [],
                     "model_name": None,
-                    "prompt_version": "rag-v1",
+                    "query_understanding_meta": {},
+                    "prompt_version": RAG_PROMPT_VERSION,
                     "created_at": now_iso(),
                 },
                 candidates=[],
@@ -592,6 +624,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             ),
             selected_contexts=[],
             cited_chunk_ids=set(),
+            query_understanding={},
         )
         return {
             "decision": "escalate",
@@ -601,11 +634,13 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             "citations": [],
             "reason": "rag_unavailable",
             "evidence_summary": evidence_summary,
+            "query_understanding": {},
         }
 
     rag_answer = result.answer
     trace = result.trace
     candidates = trace.retrieval_candidates or []
+    query_understanding_meta = _trace_query_understanding_meta(trace)
     evidence_summary = build_rag_evidence_summary(
         quality_signals=_build_quality_signals(
             generation_mode=trace.generation_mode,
@@ -618,6 +653,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
         ),
         selected_contexts=trace.selected_contexts,
         cited_chunk_ids=set(trace.cited_chunk_ids or []),
+        query_understanding=query_understanding_meta,
     )
     knowledge_repository.record_rag_query_run(
         run={
@@ -628,6 +664,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             "query_type": trace.query_type,
             "retrieval_strategy": trace.retrieval_strategy,
             "top_k": request.top_k or 6,
+            "rewritten_query": (trace.rewritten_queries[0] if trace.rewritten_queries else None),
             "vector_candidates_count": trace.vector_candidates_count,
             "bm25_candidates_count": trace.bm25_candidates_count,
             "reranked_candidates_count": trace.reranked_candidates_count,
@@ -637,8 +674,8 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             "rerank_latency_ms": trace.rerank_latency_ms,
             "generation_latency_ms": trace.generation_latency_ms,
             "total_latency_ms": trace.total_latency_ms,
-            "intent_latency_ms": 0.0,
-            "rewrite_latency_ms": 0.0,
+            "intent_latency_ms": trace.intent_latency_ms,
+            "rewrite_latency_ms": trace.rewrite_latency_ms,
             "vector_retrieval_latency_ms": trace.vector_retrieval_latency_ms,
             "bm25_retrieval_latency_ms": trace.bm25_retrieval_latency_ms,
             "prompt_tokens": trace.prompt_tokens,
@@ -676,7 +713,8 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             "citation_count": trace.citation_count,
             "cited_chunk_ids": trace.cited_chunk_ids,
             "model_name": trace.model_name,
-            "prompt_version": "rag-v1",
+            "query_understanding_meta": query_understanding_meta,
+            "prompt_version": RAG_PROMPT_VERSION,
             "created_at": now_iso(),
         },
         candidates=candidates,
@@ -691,6 +729,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             "citations": [],
             "reason": "insufficient_evidence",
             "evidence_summary": evidence_summary,
+            "query_understanding": query_understanding_meta,
         }
 
     return {
@@ -701,6 +740,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
         "citations": rag_answer.citations,
         "reason": "grounded_answer",
         "evidence_summary": evidence_summary,
+        "query_understanding": query_understanding_meta,
     }
 
 
