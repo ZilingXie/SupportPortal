@@ -23,11 +23,22 @@ from backend.services.llm_profiles import (
     QUERY_EXPANSION_SCENARIO,
     RAG_AGENT_PLANNER_SCENARIO,
     RAG_ANSWER_SCENARIO,
+    RAG_CONTEXT_COMPRESSION_SCENARIO,
     resolve_model_profile,
 )
 from backend.services.prompts.rag_agent_planner import (
     build_rag_agent_planner_system_prompt,
     build_rag_agent_planner_user_prompt,
+)
+from backend.services.prompts.rag_context_compression import (
+    build_rag_context_compression_system_prompt,
+    build_rag_context_compression_user_prompt,
+)
+from backend.services.rag_context_budget import (
+    PackedEvidence,
+    build_packed_evidence,
+    estimate_text_tokens,
+    model_context_window,
 )
 from backend.services.prompts.rag_answer import build_rag_answer_system_prompt, build_rag_answer_user_prompt
 from backend.services.query_understanding import (
@@ -196,6 +207,18 @@ class RagQueryTrace:
     agent_recovery_action: str | None = None
     ticket_context_used: bool = False
     primary_shadow_mix: dict[str, int] = field(default_factory=dict)
+    context_budget_enabled: bool = False
+    context_window: int = 0
+    reserved_output_tokens: int = 0
+    buffer_tokens: int = 0
+    raw_context_token_estimate: int = 0
+    packed_context_token_estimate: int = 0
+    compression_triggered: bool = False
+    compression_trigger_reason: str | None = None
+    compression_mode: str | None = None
+    compression_model: str | None = None
+    extractive_segment_count: int = 0
+    packed_evidence_count: int = 0
 
 
 @dataclass
@@ -1597,6 +1620,7 @@ def _metadata_rerank(
 def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
     dsn = (os.getenv("PGVECTOR_DSN") or "").strip()
     answer_profile = resolve_model_profile(RAG_ANSWER_SCENARIO)
+    compression_profile = resolve_model_profile(RAG_CONTEXT_COMPRESSION_SCENARIO)
     final_top_k = max(1, int(top_k)) if top_k is not None else _safe_int_env("RAG_TOP_K", 6)
     vector_candidate_k = _safe_int_env("RAG_VECTOR_CANDIDATE_K", max(40, final_top_k * 10))
     bm25_candidate_k = _safe_int_env("RAG_BM25_CANDIDATE_K", max(40, final_top_k * 10))
@@ -1605,6 +1629,7 @@ def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
     schema = (os.getenv("PGVECTOR_SCHEMA") or "supportportal").strip() or "supportportal"
     raw_table = (os.getenv("PGVECTOR_TABLE") or DEFAULT_PGVECTOR_TABLE).strip() or DEFAULT_PGVECTOR_TABLE
     table_name = raw_table if "." in raw_table else f"{schema}.{raw_table}"
+    context_window = _safe_int_env("RAG_CONTEXT_WINDOW_TOKENS", model_context_window(answer_profile.model))
     return {
         "dsn": dsn,
         "app_schema": schema,
@@ -1623,6 +1648,13 @@ def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
         "chat_model": answer_profile.model,
         "reasoning_effort": answer_profile.reasoning_effort,
         "fallback_models": list(answer_profile.fallback_models),
+        "context_budget_enabled": _feature_flag_enabled("RAG_CONTEXT_BUDGET_ENABLED", True),
+        "context_window": context_window,
+        "reserved_output_tokens": _safe_int_env("RAG_CONTEXT_OUTPUT_RESERVE_TOKENS", 1200),
+        "buffer_tokens": _safe_int_env("RAG_CONTEXT_BUFFER_TOKENS", 1200),
+        "context_compression_enabled": _feature_flag_enabled("RAG_CONTEXT_COMPRESSION_ENABLED", True),
+        "context_compression_model": compression_profile.model,
+        "context_compression_reasoning_effort": compression_profile.reasoning_effort,
         "embedding_provider": embedding_provider_name(),
         "embedding_model": embedding_model_id(),
         "rerank_provider": (os.getenv("RAG_RERANK_PROVIDER") or "siliconflow").strip() or "siliconflow",
@@ -2406,6 +2438,10 @@ def _format_context(chunks: list[RetrievedChunk]) -> str:
     return "\n\n---\n\n".join(blocks)
 
 
+def _chunk_map_by_id(chunks: list[RetrievedChunk]) -> dict[str, RetrievedChunk]:
+    return {chunk.chunk_id: chunk for chunk in chunks if chunk.chunk_id}
+
+
 def _build_answer_prompt(question: str, context_block: str) -> str:
     return _build_answer_prompt_for_mode(question, context_block, repair_mode=False)
 
@@ -2553,8 +2589,10 @@ def _invoke_llm_payload(
     chunks: list[RetrievedChunk],
     config: dict[str, Any],
     strict_retry: bool = False,
+    *,
+    packed_evidence: PackedEvidence | None = None,
 ) -> dict[str, Any] | None:
-    context_block = _format_context(chunks)
+    context_block = packed_evidence.prompt_context if packed_evidence is not None else _format_context(chunks)
     prompt = _build_answer_prompt_for_mode(message, context_block, repair_mode=strict_retry)
     profile = ModelProfile(
         scenario=RAG_ANSWER_SCENARIO,
@@ -2584,8 +2622,10 @@ def _invoke_llm_payload_with_trace(
     chunks: list[RetrievedChunk],
     config: dict[str, Any],
     strict_retry: bool = False,
+    *,
+    packed_evidence: PackedEvidence | None = None,
 ) -> tuple[dict[str, Any] | None, int, int, str | None]:
-    context_block = _format_context(chunks)
+    context_block = packed_evidence.prompt_context if packed_evidence is not None else _format_context(chunks)
     prompt = _build_answer_prompt_for_mode(message, context_block, repair_mode=strict_retry)
     profile = ModelProfile(
         scenario=RAG_ANSWER_SCENARIO,
@@ -2997,6 +3037,7 @@ def _run_rag_query_legacy(message: str, top_k: int | None = None) -> RagQueryRes
     structured_retry_used = False
     generation_mode = "structured_answer"
     extractive_fallback_used = False
+    packed_evidence: PackedEvidence | None = None
     retrieved_chunks: list[RetrievedChunk] = []
     reranked_chunks: list[RetrievedChunk] = []
     rerank_info: dict[str, Any] = {
@@ -3325,6 +3366,18 @@ def _run_rag_query_legacy(message: str, top_k: int | None = None) -> RagQueryRes
                 second_pass_candidate_count=second_pass_candidate_count,
                 rewritten_queries=list(effective_rewrites),
                 decomposition_subqueries=list(effective_decomposition_subqueries),
+                context_budget_enabled=bool(config.get("context_budget_enabled")),
+                context_window=int(config.get("context_window") or 0),
+                reserved_output_tokens=int(config.get("reserved_output_tokens") or 0),
+                buffer_tokens=int(config.get("buffer_tokens") or 0),
+                raw_context_token_estimate=0,
+                packed_context_token_estimate=0,
+                compression_triggered=False,
+                compression_trigger_reason=None,
+                compression_mode="raw",
+                compression_model=None,
+                extractive_segment_count=0,
+                packed_evidence_count=0,
             )
             return RagQueryResult(answer=answer, trace=trace)
 
@@ -3356,6 +3409,40 @@ def _run_rag_query_legacy(message: str, top_k: int | None = None) -> RagQueryRes
         chunks = externally_reranked or chunks
 
     final_chunks = _select_diverse_chunks(chunks, limit=int(config["top_k"]), query=message) or chunks[: int(config["top_k"])] or chunks
+    if chunks and bool(config.get("context_budget_enabled")):
+        compression_defaults = resolve_model_profile(RAG_CONTEXT_COMPRESSION_SCENARIO)
+        compression_profile = ModelProfile(
+            scenario=RAG_CONTEXT_COMPRESSION_SCENARIO,
+            provider="openai",
+            model=str(config.get("context_compression_model") or "").strip() or compression_defaults.model,
+            api_mode="openai_responses",
+            api_key=str(config.get("api_key") or "").strip() or compression_defaults.api_key,
+            reasoning_effort=str(config.get("context_compression_reasoning_effort") or "").strip()
+            or compression_defaults.reasoning_effort,
+            temperature=0.0,
+            timeout_seconds=compression_defaults.timeout_seconds,
+            max_retries=compression_defaults.max_retries,
+            fallback_models=tuple(compression_defaults.fallback_models),
+        )
+        packing_limit = min(len(chunks), max(int(config.get("top_k") or 1), int(config.get("rerank_top_n") or len(chunks))))
+        packing_candidates = list(chunks[:packing_limit]) or list(chunks)
+        packed_evidence = build_packed_evidence(
+            question=message,
+            chunks=packing_candidates,
+            system_prompt_text=SYSTEM_PROMPT,
+            user_prompt_text=_build_answer_prompt_for_mode(message, "", repair_mode=False),
+            tool_schema_text="",
+            context_window=int(config.get("context_window") or model_context_window(str(config.get("chat_model") or ""))),
+            reserved_output_tokens=int(config.get("reserved_output_tokens") or 0),
+            buffer_tokens=int(config.get("buffer_tokens") or 0),
+            compression_enabled=bool(config.get("context_compression_enabled")),
+            compression_profile=compression_profile,
+            top_k=int(config.get("top_k") or 1),
+        )
+        packed_chunk_map = _chunk_map_by_id(packing_candidates)
+        packed_chunks = [packed_chunk_map[chunk_id] for chunk_id in packed_evidence.chunk_ids if chunk_id in packed_chunk_map]
+        if packed_chunks:
+            final_chunks = packed_chunks
     allowed_chunk_ids = {chunk.chunk_id for chunk in final_chunks}
     grounded_overlap = _has_grounded_keyword_overlap(message, final_chunks)
     payload: dict[str, Any] | None = None
@@ -3366,6 +3453,7 @@ def _run_rag_query_legacy(message: str, top_k: int | None = None) -> RagQueryRes
             final_chunks,
             config,
             strict_retry=False,
+            packed_evidence=packed_evidence,
         )
         retry_required = (
             payload is None
@@ -3379,6 +3467,7 @@ def _run_rag_query_legacy(message: str, top_k: int | None = None) -> RagQueryRes
                 final_chunks,
                 config,
                 strict_retry=True,
+                packed_evidence=packed_evidence,
             )
             prompt_tokens += retry_prompt_tokens
             completion_tokens += retry_completion_tokens
@@ -3455,7 +3544,11 @@ def _run_rag_query_legacy(message: str, top_k: int | None = None) -> RagQueryRes
                 reranked_chunks or chunks,
                 selected_chunk_ids=unique_selected_chunk_ids,
             ),
-            selected_contexts=_selected_contexts(final_chunks),
+            selected_contexts=(
+                list(packed_evidence.selected_contexts)
+                if packed_evidence is not None and packed_evidence.selected_contexts
+                else _selected_contexts(final_chunks)
+            ),
             metadata_hints=rerank_info.get("hints") if isinstance(rerank_info.get("hints"), dict) else {},
             metadata_filter_applied=bool(rerank_info.get("applied_filter")),
             metadata_filter_type=(str(rerank_info.get("filter_type")).strip() or None) if rerank_info.get("filter_type") is not None else None,
@@ -3483,6 +3576,26 @@ def _run_rag_query_legacy(message: str, top_k: int | None = None) -> RagQueryRes
             second_pass_candidate_count=second_pass_candidate_count,
             rewritten_queries=list(effective_rewrites),
             decomposition_subqueries=list(effective_decomposition_subqueries),
+            context_budget_enabled=bool(config.get("context_budget_enabled")),
+            context_window=int(config.get("context_window") or 0),
+            reserved_output_tokens=int(config.get("reserved_output_tokens") or 0),
+            buffer_tokens=int(config.get("buffer_tokens") or 0),
+            raw_context_token_estimate=(
+                int(packed_evidence.raw_context_token_estimate)
+                if packed_evidence is not None
+                else estimate_text_tokens(_format_context(final_chunks))
+            ),
+            packed_context_token_estimate=(
+                int(packed_evidence.packed_context_token_estimate)
+                if packed_evidence is not None
+                else estimate_text_tokens(_format_context(final_chunks))
+            ),
+            compression_triggered=bool(packed_evidence.compression_triggered) if packed_evidence is not None else False,
+            compression_trigger_reason=packed_evidence.compression_trigger_reason if packed_evidence is not None else None,
+            compression_mode=packed_evidence.compression_mode if packed_evidence is not None else "raw",
+            compression_model=packed_evidence.compression_model if packed_evidence is not None else None,
+            extractive_segment_count=int(packed_evidence.extractive_segment_count) if packed_evidence is not None else 0,
+            packed_evidence_count=int(packed_evidence.packed_evidence_count) if packed_evidence is not None else len(final_chunks),
         )
 
     if payload is not None and _is_valid_response(payload, allowed_chunk_ids):

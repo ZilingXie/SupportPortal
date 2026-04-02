@@ -61,7 +61,7 @@ _CHAT_MODEL_PRICING = {
     "gpt-4.1-mini": {"prompt_per_1k": 0.0004, "completion_per_1k": 0.0016},
     "gpt-4o-mini": {"prompt_per_1k": 0.00015, "completion_per_1k": 0.0006},
 }
-RAG_PROMPT_VERSION = "rag-v2-query-understanding"
+RAG_PROMPT_VERSION = "rag-v3-context-budget-compression"
 
 
 def _build_quality_signals(
@@ -73,6 +73,18 @@ def _build_quality_signals(
     avg_selected_similarity_score: float | None,
     handoff_reason: str | None,
     needs_human: bool | None,
+    context_budget_enabled: bool | None = None,
+    context_window: int | None = None,
+    reserved_output_tokens: int | None = None,
+    buffer_tokens: int | None = None,
+    raw_context_token_estimate: int | None = None,
+    packed_context_token_estimate: int | None = None,
+    compression_triggered: bool | None = None,
+    compression_trigger_reason: str | None = None,
+    compression_mode: str | None = None,
+    compression_model: str | None = None,
+    extractive_segment_count: int | None = None,
+    packed_evidence_count: int | None = None,
 ) -> dict[str, Any]:
     return {
         "generation_mode": generation_mode,
@@ -82,6 +94,18 @@ def _build_quality_signals(
         "avg_selected_similarity_score": avg_selected_similarity_score,
         "handoff_reason": handoff_reason,
         "needs_human": needs_human,
+        "context_budget_enabled": context_budget_enabled,
+        "context_window": context_window,
+        "reserved_output_tokens": reserved_output_tokens,
+        "buffer_tokens": buffer_tokens,
+        "raw_context_token_estimate": raw_context_token_estimate,
+        "packed_context_token_estimate": packed_context_token_estimate,
+        "compression_triggered": compression_triggered,
+        "compression_trigger_reason": compression_trigger_reason,
+        "compression_mode": compression_mode,
+        "compression_model": compression_model,
+        "extractive_segment_count": extractive_segment_count,
+        "packed_evidence_count": packed_evidence_count,
     }
 
 
@@ -116,6 +140,18 @@ def _trace_query_understanding_meta(trace: Any) -> dict[str, Any]:
         "agent_recovery_action": getattr(trace, "agent_recovery_action", None),
         "ticket_context_used": bool(getattr(trace, "ticket_context_used", False)),
         "primary_shadow_mix": dict(getattr(trace, "primary_shadow_mix", {}) or {}),
+        "context_budget_enabled": bool(getattr(trace, "context_budget_enabled", False)),
+        "context_window": int(getattr(trace, "context_window", 0) or 0),
+        "reserved_output_tokens": int(getattr(trace, "reserved_output_tokens", 0) or 0),
+        "buffer_tokens": int(getattr(trace, "buffer_tokens", 0) or 0),
+        "raw_context_token_estimate": int(getattr(trace, "raw_context_token_estimate", 0) or 0),
+        "packed_context_token_estimate": int(getattr(trace, "packed_context_token_estimate", 0) or 0),
+        "compression_triggered": bool(getattr(trace, "compression_triggered", False)),
+        "compression_trigger_reason": getattr(trace, "compression_trigger_reason", None),
+        "compression_mode": getattr(trace, "compression_mode", None),
+        "compression_model": getattr(trace, "compression_model", None),
+        "extractive_segment_count": int(getattr(trace, "extractive_segment_count", 0) or 0),
+        "packed_evidence_count": int(getattr(trace, "packed_evidence_count", 0) or 0),
     }
 
 class RagQueryRequest(BaseModel):
@@ -636,6 +672,18 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
                 avg_selected_similarity_score=None,
                 handoff_reason="rag_unavailable",
                 needs_human=True,
+                context_budget_enabled=False,
+                context_window=None,
+                reserved_output_tokens=None,
+                buffer_tokens=None,
+                raw_context_token_estimate=None,
+                packed_context_token_estimate=None,
+                compression_triggered=False,
+                compression_trigger_reason=None,
+                compression_mode=None,
+                compression_model=None,
+                extractive_segment_count=None,
+                packed_evidence_count=None,
             ),
             selected_contexts=[],
             cited_chunk_ids=set(),
@@ -665,6 +713,18 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             avg_selected_similarity_score=trace.avg_selected_similarity_score,
             handoff_reason=trace.handoff_reason,
             needs_human=trace.needs_human,
+            context_budget_enabled=trace.context_budget_enabled,
+            context_window=trace.context_window,
+            reserved_output_tokens=trace.reserved_output_tokens,
+            buffer_tokens=trace.buffer_tokens,
+            raw_context_token_estimate=trace.raw_context_token_estimate,
+            packed_context_token_estimate=trace.packed_context_token_estimate,
+            compression_triggered=trace.compression_triggered,
+            compression_trigger_reason=trace.compression_trigger_reason,
+            compression_mode=trace.compression_mode,
+            compression_model=trace.compression_model,
+            extractive_segment_count=trace.extractive_segment_count,
+            packed_evidence_count=trace.packed_evidence_count,
         ),
         selected_contexts=trace.selected_contexts,
         cited_chunk_ids=set(trace.cited_chunk_ids or []),

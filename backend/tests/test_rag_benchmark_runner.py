@@ -372,6 +372,11 @@ class RagBenchmarkRunnerTests(unittest.TestCase):
                 "RAG_QUERY_PRF_ENABLED": "true",
                 "RAG_QUERY_REWRITE_ENABLED": "true",
                 "RAG_QUERY_DECOMPOSITION_ENABLED": "true",
+                "RAG_CONTEXT_BUDGET_ENABLED": "true",
+                "RAG_CONTEXT_OUTPUT_RESERVE_TOKENS": "900",
+                "RAG_CONTEXT_BUFFER_TOKENS": "700",
+                "RAG_CONTEXT_COMPRESSION_ENABLED": "true",
+                "RAG_CONTEXT_COMPRESSION_MODEL": "gpt-5.4-mini",
             },
             clear=False,
         ):
@@ -382,6 +387,11 @@ class RagBenchmarkRunnerTests(unittest.TestCase):
         self.assertTrue(snapshot["query_prf_enabled"])
         self.assertTrue(snapshot["query_rewrite_enabled"])
         self.assertTrue(snapshot["query_decomposition_enabled"])
+        self.assertTrue(snapshot["context_budget_enabled"])
+        self.assertEqual(snapshot["context_output_reserve_tokens"], "900")
+        self.assertEqual(snapshot["context_buffer_tokens"], "700")
+        self.assertTrue(snapshot["context_compression_enabled"])
+        self.assertEqual(snapshot["context_compression_model"], "gpt-5.4-mini")
         self.assertEqual(snapshot["query_expansion_model"], "gpt-5.4-mini")
 
     def test_resolve_judge_models_requires_exactly_three_models(self) -> None:

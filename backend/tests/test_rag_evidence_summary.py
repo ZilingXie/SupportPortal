@@ -17,6 +17,18 @@ class RagEvidenceSummaryTests(unittest.TestCase):
                 "avg_selected_similarity_score": 0.88,
                 "handoff_reason": None,
                 "needs_human": False,
+                "context_budget_enabled": True,
+                "context_window": 400000,
+                "reserved_output_tokens": 1200,
+                "buffer_tokens": 1200,
+                "raw_context_token_estimate": 1800,
+                "packed_context_token_estimate": 420,
+                "compression_triggered": True,
+                "compression_trigger_reason": "token_budget",
+                "compression_mode": "compressive",
+                "compression_model": "gpt-5.4-mini",
+                "extractive_segment_count": 3,
+                "packed_evidence_count": 2,
             },
             selected_contexts=[
                 {
@@ -35,6 +47,8 @@ class RagEvidenceSummaryTests(unittest.TestCase):
         )
 
         self.assertEqual(summary["quality_signals"]["selected_doc_count"], 4)
+        self.assertTrue(summary["quality_signals"]["context_budget_enabled"])
+        self.assertEqual(summary["quality_signals"]["compression_mode"], "compressive")
         self.assertEqual(len(summary["selected_contexts"]), 3)
         self.assertTrue(summary["selected_contexts"][0]["text_excerpt"].endswith("..."))
         self.assertLessEqual(len(summary["selected_contexts"][0]["text_excerpt"]), 123)

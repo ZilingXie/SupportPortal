@@ -305,6 +305,13 @@ def _strategy_snapshot(judge_models: list[str]) -> dict[str, Any]:
         in {"1", "true", "yes", "on"},
         "query_decomposition_enabled": (_clean_text(os.getenv("RAG_QUERY_DECOMPOSITION_ENABLED")) or "").lower()
         in {"1", "true", "yes", "on"},
+        "context_budget_enabled": (_clean_text(os.getenv("RAG_CONTEXT_BUDGET_ENABLED")) or "").lower()
+        not in {"0", "false", "no", "off"},
+        "context_output_reserve_tokens": _clean_text(os.getenv("RAG_CONTEXT_OUTPUT_RESERVE_TOKENS")) or "1200",
+        "context_buffer_tokens": _clean_text(os.getenv("RAG_CONTEXT_BUFFER_TOKENS")) or "1200",
+        "context_compression_enabled": (_clean_text(os.getenv("RAG_CONTEXT_COMPRESSION_ENABLED")) or "").lower()
+        not in {"0", "false", "no", "off"},
+        "context_compression_model": _clean_text(os.getenv("RAG_CONTEXT_COMPRESSION_MODEL")) or "gpt-5.4-mini",
         "judge_models": judge_models,
     }
 

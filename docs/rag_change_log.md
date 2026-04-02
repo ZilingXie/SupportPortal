@@ -1617,3 +1617,40 @@ For each new entry, record:
   - `python3 -m py_compile backend/main.py backend/rag_api.py backend/repositories/knowledge_repository.py backend/services/rag_benchmark.py backend/services/rag_benchmark_runner.py backend/services/rag_benchmark_session.py scripts/run_rag_benchmark.py scripts/run_rag_benchmark_session.py`
   - `node --check ui/dashboard-ui/rag/app.js`
   - `git diff --check`
+
+## 2026-04-02 - Add context budgeting and conditional evidence compression to RAG
+
+- Summary: Added a formal context-budget layer ahead of answer generation so RAG now estimates prompt budget, extracts query-focused evidence spans, conditionally compresses oversized candidate sets, and passes one shared packed-evidence bundle to both the answer model and the post-RAG sufficiency judge.
+- Reason: Query Expansion V2 improved recall, but fixed top-k context packing still risked overflowing the model window, diluting attention with redundant chunks, and forcing the answer/judge stages to reason over different evidence payloads. This change makes context packing budget-aware and keeps both downstream stages aligned on the same compressed evidence.
+- Affected files or config:
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `backend/rag_api.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/services/prompts/__init__.py`
+  - `backend/services/prompts/rag_context_compression.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/services/rag_context_budget.py`
+  - `backend/services/rag_evidence_summary.py`
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_context_budget.py`
+  - `backend/tests/test_rag_evidence_summary.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/feature_list.md`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No vector reset, ingestion backfill, or schema migration was introduced.
+  - Live RAG traces and persisted `query_understanding_meta` now record context-window, output reserve, buffer, raw-context estimate, packed-context estimate, compression trigger reason, compression mode/model, and extractive/packed evidence counts.
+  - The answer stage and sufficiency judge now both consume the same packed evidence payload while preserving original chunk ids and citation targets for traceability.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_context_budget.py backend/tests/test_rag_qa.py backend/tests/test_rag_evidence_summary.py backend/tests/test_prompt_modules.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_llm_profiles.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/rag_api.py backend/services/llm_profiles.py backend/services/prompts/rag_context_compression.py backend/services/rag_context_budget.py backend/services/rag_evidence_summary.py backend/services/rag_benchmark_runner.py backend/services/rag_qa.py backend/tests/test_rag_context_budget.py backend/tests/test_rag_evidence_summary.py backend/tests/test_prompt_modules.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_rag_qa.py backend/tests/test_llm_profiles.py`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health`

@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from backend.services.llm_factory import LlmTextResult
 from backend.services.rag_qa import (
     INSUFFICIENT_EVIDENCE_REPLY,
     RetrievedChunk,
@@ -701,10 +702,12 @@ class RagQaHybridTests(unittest.TestCase):
             config: dict[str, object],
             *,
             strict_retry: bool = False,
+            packed_evidence=None,
         ) -> tuple[dict[str, object], int, int, str]:
             _ = message
             _ = config
             _ = strict_retry
+            _ = packed_evidence
             captured_final_chunk_ids.append([chunk.chunk_id for chunk in chunks])
             return (
                 {
@@ -915,10 +918,12 @@ class RagQaHybridTests(unittest.TestCase):
             config: dict[str, object],
             *,
             strict_retry: bool = False,
+            packed_evidence=None,
         ) -> tuple[dict[str, object], int, int, str]:
             _ = message
             _ = config
             _ = strict_retry
+            _ = packed_evidence
             captured_final_chunk_ids.append([chunk.chunk_id for chunk in chunks])
             return (
                 {
@@ -1787,6 +1792,112 @@ class RagQaHybridTests(unittest.TestCase):
         self.assertEqual(result.trace.prf_expansions, ["channel name"])
         self.assertEqual(result.trace.hard_filter_sources["language"], "rule+llm")
         self.assertTrue(all("product" not in downpush for downpush in captured_downpush))
+
+    def test_run_rag_query_uses_shared_packed_evidence_for_answer_and_trace(self) -> None:
+        long_chunk = RetrievedChunk(
+            chunk_id="chunk-1",
+            text=(
+                "Use joinChannel with the same channel name to enter the same communication session. "
+                "The first user creates the channel and the last user leaving closes it. "
+            )
+            * 10,
+            source_path="official/channel.md",
+            similarity=0.97,
+            h1="Channel",
+            h2="Join a channel",
+            metadata={"product": "video-calling"},
+        )
+        captured_prompts: list[str] = []
+
+        def _capture_answer_call(*, profile, system_prompt: str, user_prompt: str, extra_payload=None):
+            _ = profile
+            _ = system_prompt
+            _ = extra_payload
+            captured_prompts.append(user_prompt)
+            return LlmTextResult(
+                text=(
+                    '{"answer":"Use joinChannel with the same channel name.",'
+                    '"key_steps":[],"citations":["chunk-1"],"insufficient_evidence":false}'
+                ),
+                model_name="gpt-5.4",
+                prompt_tokens=10,
+                completion_tokens=5,
+            )
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 1,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-5.4",
+                "reasoning_effort": "high",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+                "context_window": 900,
+                "context_budget_enabled": True,
+                "reserved_output_tokens": 120,
+                "buffer_tokens": 80,
+                "context_compression_enabled": True,
+            }
+            with patch("backend.services.rag_qa.get_embedding_provider", return_value=self._FakeProvider()):
+                with patch("backend.services.rag_qa._retrieve_chunks", return_value=[long_chunk]):
+                    with patch("backend.services.rag_qa._retrieve_bm25_chunks", return_value=[]):
+                        with patch(
+                            "backend.services.rag_qa._metadata_rerank",
+                            return_value=(
+                                [long_chunk],
+                                {"post_rerank_count": 1, "hints": {}, "applied_filter": False, "filter_type": None},
+                            ),
+                        ):
+                            with patch("backend.services.rag_qa._rerank_chunks", return_value=[long_chunk]):
+                                with patch(
+                                    "backend.services.rag_context_budget.invoke_responses_text",
+                                    return_value=LlmTextResult(
+                                        text=(
+                                            '{"evidence":[{"chunk_id":"chunk-1",'
+                                            '"packed_text":"Use joinChannel with the same channel name to join the same channel."}]}'
+                                        ),
+                                        model_name="gpt-5.4-mini",
+                                    ),
+                                ):
+                                    with patch(
+                                        "backend.services.rag_qa.invoke_responses_text",
+                                        side_effect=_capture_answer_call,
+                                    ):
+                                        result = run_rag_query("How do I join a channel?")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertTrue(result.trace.compression_triggered)
+        self.assertEqual(result.trace.compression_mode, "compressive")
+        self.assertIn(
+            "Use joinChannel with the same channel name to join the same channel.",
+            captured_prompts[0],
+        )
+        self.assertEqual(
+            result.trace.selected_contexts[0]["text"],
+            "Use joinChannel with the same channel name to join the same channel.",
+        )
+        self.assertGreater(
+            result.trace.raw_context_token_estimate,
+            result.trace.packed_context_token_estimate,
+        )
 
 
 if __name__ == "__main__":

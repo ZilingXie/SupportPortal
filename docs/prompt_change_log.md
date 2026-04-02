@@ -205,3 +205,34 @@ For each new entry, record:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_qa.py -q`
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_support_router.py backend/tests/test_ticket_orchestrator.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py -q`
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/main.py backend/rag_api.py backend/repositories/knowledge_repository.py backend/services/bm25_index.py backend/services/llm_profiles.py backend/services/prompts/__init__.py backend/services/prompts/rag_agent_planner.py backend/services/rag_qa.py backend/services/rag_service_client.py backend/tests/test_prompt_modules.py backend/tests/test_llm_profiles.py backend/tests/test_rag_agentic.py backend/tests/test_rag_qa.py backend/tests/test_rag_service_client.py backend/tests/test_knowledge_repository_bm25.py`
+
+- Area or subsystem: RAG context compression prompt and compression-model activation
+- Prompt or model version: `rag-context-compression-v1`
+- Summary: Added a dedicated evidence-compression prompt module and enabled a new `rag_context_compression` model scene so oversized or redundant reranked candidates can be packed into a tighter evidence bundle before answer generation and sufficiency judging.
+- Reason: After Query Expansion V2, retrieval recall improved enough that prompt budget and context dilution became the next bottleneck. A formal compression prompt with a dedicated small-model scene keeps packed evidence concise, query-focused, and citation-preserving without changing the customer-facing answer contract.
+- Affected files or config:
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `backend/services/llm_profiles.py`
+  - `backend/services/prompts/__init__.py`
+  - `backend/services/prompts/rag_context_compression.py`
+  - `backend/services/rag_context_budget.py`
+  - `backend/services/rag_evidence_summary.py`
+  - `backend/services/rag_qa.py`
+  - `backend/rag_api.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_rag_context_budget.py`
+  - `backend/tests/test_rag_evidence_summary.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/feature_list.md`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Expected behavior change:
+  - RAG can now estimate context budget before answer generation and only trigger compression when the raw evidence set is too large, too repetitive, or otherwise low-density.
+  - The compression prompt returns a JSON evidence pack that preserves supporting chunk ids, condensed evidence text, and query-focused facts.
+  - The same packed evidence is reused by both the answer model and the post-RAG sufficiency judge, reducing answer/judge drift.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_context_budget.py backend/tests/test_rag_qa.py backend/tests/test_rag_evidence_summary.py backend/tests/test_prompt_modules.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_llm_profiles.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/rag_api.py backend/services/llm_profiles.py backend/services/prompts/rag_context_compression.py backend/services/rag_context_budget.py backend/services/rag_evidence_summary.py backend/services/rag_benchmark_runner.py backend/services/rag_qa.py backend/tests/test_rag_context_budget.py backend/tests/test_rag_evidence_summary.py backend/tests/test_prompt_modules.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_rag_qa.py backend/tests/test_llm_profiles.py`
