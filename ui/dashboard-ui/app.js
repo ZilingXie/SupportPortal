@@ -1,6 +1,19 @@
 const wsStatusEl = document.getElementById("ws-status");
 const headerUserControlsEl = document.getElementById("header-user-controls");
 const refreshButtonEl = document.getElementById("refresh-button");
+const opsHeaderBodyEl = document.getElementById("ops-header-body");
+const ticketOpsButtonEl = document.querySelector('[data-dashboard-nav="ticket-ops"]');
+const ticketDetailGroupEl = document.querySelector("[data-ticket-detail-group]");
+const ticketDetailGroupToggleEl = document.querySelector("[data-ticket-detail-group-toggle]");
+const ticketDetailSubnavEl = document.getElementById("ticket-detail-subnav");
+const ticketDetailStatusButtons = Array.from(document.querySelectorAll("[data-ticket-detail-status]"));
+const dashboardViewRegionEl = document.getElementById("dashboard-view-region");
+const ticketOpsOverviewEl = document.getElementById("ticket-ops-overview");
+const ticketBoardRegionEl = document.getElementById("ticket-board-region");
+const ticketDetailModalEl = document.getElementById("ticket-detail-modal");
+const ticketDetailDialogEl = document.getElementById("ticket-detail-dialog");
+const ticketDetailTitleEl = document.getElementById("ticket-detail-title");
+const ticketDetailBodyEl = document.getElementById("ticket-detail-body");
 const ticketVolumeEl = document.getElementById("ticket-volume");
 const resolutionRateEl = document.getElementById("resolution-rate");
 const sentimentAlertsEl = document.getElementById("sentiment-alerts");
@@ -23,20 +36,60 @@ const eventVolumeBarsEl = document.getElementById("event-volume-bars");
 const statusBreakdownEl = document.getElementById("status-breakdown");
 const sentimentBreakdownEl = document.getElementById("sentiment-breakdown");
 const flowBreakdownEl = document.getElementById("flow-breakdown");
-const eventStreamEl = document.getElementById("event-stream");
 
 const DASHBOARD_USER = {
   username: "admin",
   role: "ADMIN",
 };
 
-const EVENT_STREAM_LIMIT = 16;
+const DEFAULT_HEADER_BODY =
+  "Real-time ticket throughput, escalation awareness, and operator workload in a calmer AI-managed control surface.";
+const TICKET_DETAIL_STATUSES = ["investigating", "escalated", "communicating", "resolved"];
+const TICKET_VIEW_COPY = {
+  investigating: {
+    title: "Investigating Tickets",
+    detail:
+      "Tickets with an active engineer ticket. Use this board to review the current investigation context before switching into the engineer workspace.",
+    summary: "Engineer-facing tickets that still need review or approval before the customer sees the final answer.",
+  },
+  escalated: {
+    title: "Escalated Tickets",
+    detail:
+      "Tickets where the customer explicitly asked for engineer assistance and the support flow needs closer coordination.",
+    summary: "Customer-visible escalations that may need triage, expectation-setting, or a deeper investigation handoff.",
+  },
+  communicating: {
+    title: "Communicating Tickets",
+    detail:
+      "Tickets still moving through the normal AI-managed conversation flow, with the latest customer context visible in one place.",
+    summary: "Active tickets where the AI is still communicating and the queue needs visibility rather than direct intervention.",
+  },
+  resolved: {
+    title: "Resolved Tickets",
+    detail:
+      "Closed tickets shown in the same rail taxonomy so operators can confirm the final state and recent customer context.",
+    summary: "Recently closed tickets for fast spot-checking, audit, and sentiment follow-through.",
+  },
+};
 
+let currentDashboardView = "ticket-ops";
+let ticketDetailsExpanded = true;
 let socket = null;
 let heartbeatTimer = null;
 let reconnectTimer = null;
 let logoutLoading = false;
 let refreshLoading = false;
+let selectedTicketId = "";
+let selectedTicketDetail = null;
+let ticketDetailLoading = false;
+let ticketDetailError = "";
+let lastTicketDetailFocusEl = null;
+
+const ticketBoardStore = Object.fromEntries(TICKET_DETAIL_STATUSES.map((status) => [status, []]));
+const ticketBoardLoadingByStatus = Object.fromEntries(
+  TICKET_DETAIL_STATUSES.map((status) => [status, false])
+);
+const ticketBoardErrorByStatus = Object.fromEntries(TICKET_DETAIL_STATUSES.map((status) => [status, ""]));
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -59,7 +112,7 @@ async function fetchJson(url, options = undefined) {
         reason = payload.detail.message;
       }
     } catch {
-      // Keep fallback error reason.
+      // Keep the fallback message.
     }
     throw new Error(reason);
   }
@@ -78,11 +131,20 @@ function formatDecimal(value, maximumFractionDigits = 1) {
 }
 
 function formatDateTime(value) {
-  const date = value ? new Date(value) : null;
-  if (!date || Number.isNaN(date.getTime())) {
+  if (!value) {
     return "-";
   }
-  return date.toLocaleString();
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+  return date.toLocaleString(undefined, {
+    hour12: false,
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function normalizeString(value) {
@@ -114,28 +176,254 @@ function setRefreshLoading(isLoading) {
     return;
   }
   refreshButtonEl.disabled = isLoading;
-  refreshButtonEl.textContent = isLoading ? "Refreshing..." : "Refresh Feed";
+  refreshButtonEl.textContent = isLoading ? "Refreshing..." : "Refresh Dashboard";
 }
 
 function setRealtimeStatus(text) {
   setText(wsStatusEl, text);
 }
 
-function isTicketEvent(payload) {
-  return !normalizeString(payload?.ingestion_id) && !normalizeString(payload?.event).toLowerCase().startsWith("knowledge_ingestion_");
+function normalizeDashboardView(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return TICKET_DETAIL_STATUSES.includes(normalized) ? normalized : "ticket-ops";
 }
 
-function eventTone(payload) {
-  const sentimentLabel = normalizeString(payload?.sentiment_label).toLowerCase();
-  const status = normalizeString(payload?.status).toLowerCase();
+function normalizeStatusValue(value) {
+  const normalized = String(value || "open").toLowerCase();
+  if (normalized === "waiting_for_engineer") {
+    return "investigating";
+  }
+  if (normalized === "escalated") {
+    return "escalated";
+  }
+  if (normalized === "communicating") {
+    return "communicating";
+  }
+  if (normalized === "resolved") {
+    return "resolved";
+  }
+  return normalized === "investigating" ? "investigating" : "open";
+}
 
-  if (sentimentLabel === "bad") {
-    return "high";
+function statusLabel(value) {
+  const normalized = normalizeStatusValue(value);
+  if (normalized === "communicating") {
+    return "Communicating";
   }
-  if (status === "investigating" || status === "waiting_for_engineer" || status === "escalated") {
-    return "waiting";
+  if (normalized === "escalated") {
+    return "Escalated";
   }
-  return "default";
+  if (normalized === "investigating") {
+    return "Investigating";
+  }
+  if (normalized === "resolved") {
+    return "Resolved";
+  }
+  return "Open";
+}
+
+function statusClass(value) {
+  const normalized = normalizeStatusValue(value);
+  if (normalized === "resolved") {
+    return "status-resolved";
+  }
+  if (normalized === "investigating") {
+    return "status-investigating";
+  }
+  if (normalized === "escalated") {
+    return "status-escalated";
+  }
+  if (normalized === "communicating") {
+    return "status-communicating";
+  }
+  return "status-open";
+}
+
+function statusSurfaceClass(value) {
+  const normalized = normalizeStatusValue(value);
+  if (normalized === "resolved") {
+    return "status-surface-resolved";
+  }
+  if (normalized === "investigating") {
+    return "status-surface-investigating";
+  }
+  if (normalized === "escalated") {
+    return "status-surface-escalated";
+  }
+  if (normalized === "communicating") {
+    return "status-surface-communicating";
+  }
+  return "status-surface-open";
+}
+
+function normalizeSentimentLabel(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "bad" || normalized === "neutral" || normalized === "good") {
+    return normalized;
+  }
+  return "";
+}
+
+function roleLabel(role) {
+  const normalized = String(role || "").toLowerCase();
+  if (normalized === "customer") {
+    return "Customer";
+  }
+  if (normalized === "assistant") {
+    return "AI";
+  }
+  if (normalized === "engineer_ai") {
+    return "Engineer AI";
+  }
+  if (normalized === "engineer") {
+    return "Engineer";
+  }
+  return "System";
+}
+
+function getActiveInvestigation(ticket) {
+  if (!ticket || typeof ticket !== "object") {
+    return null;
+  }
+  return ticket.active_investigation && typeof ticket.active_investigation === "object"
+    ? ticket.active_investigation
+    : null;
+}
+
+function getLatestClosedInvestigation(ticket) {
+  if (!ticket || typeof ticket !== "object") {
+    return null;
+  }
+  const history = Array.isArray(ticket.investigation_history) ? ticket.investigation_history : [];
+  return history.find((item) => item && typeof item === "object") || null;
+}
+
+function getDisplayInvestigation(ticket) {
+  return getActiveInvestigation(ticket) || getLatestClosedInvestigation(ticket);
+}
+
+function latestInvestigationUpdate(ticket) {
+  const activeInvestigation = getActiveInvestigation(ticket);
+  if (activeInvestigation) {
+    const messages = Array.isArray(activeInvestigation.messages) ? activeInvestigation.messages : [];
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const content = String(messages[index]?.content || "").trim();
+      if (content) {
+        return content;
+      }
+    }
+  }
+  const latestClosedInvestigation = getLatestClosedInvestigation(ticket);
+  if (latestClosedInvestigation) {
+    const messages = Array.isArray(latestClosedInvestigation.messages)
+      ? latestClosedInvestigation.messages
+      : [];
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const content = String(messages[index]?.content || "").trim();
+      if (content) {
+        return content;
+      }
+    }
+  }
+  return "";
+}
+
+function investigationStateLabel(value) {
+  const normalized = String(value || "active").toLowerCase();
+  if (normalized === "awaiting_confirmation") {
+    return "Awaiting Engineer Approval";
+  }
+  if (normalized === "closed") {
+    return "Closed";
+  }
+  return "Open Engineer Ticket";
+}
+
+function latestTicketMessage(ticket, roles) {
+  const roleSet = Array.isArray(roles) ? roles.map((value) => String(value || "").toLowerCase()) : [];
+  const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const item = messages[index];
+    const content = normalizeString(item?.content);
+    if (!content) {
+      continue;
+    }
+    const role = String(item?.role || "").toLowerCase();
+    if (!roleSet.length || roleSet.includes(role)) {
+      return item;
+    }
+  }
+  return null;
+}
+
+function truncateText(value, maxLength = 220) {
+  const normalized = normalizeString(value);
+  if (!normalized) {
+    return "";
+  }
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
+}
+
+function ticketRequester(ticket) {
+  return String(ticket?.requester || ticket?.customer_id || "Unknown");
+}
+
+function ticketSubject(ticket) {
+  return String(ticket?.subject || "(No subject)");
+}
+
+function buildLocalSummaryFallback(ticket) {
+  const status = statusLabel(normalizeStatusValue(ticket?.status || "open"));
+  const latestCustomer = latestTicketMessage(ticket, ["customer"]);
+  const latestAssistant = latestTicketMessage(ticket, ["assistant"]);
+  const activeInvestigation = getActiveInvestigation(ticket);
+  const latestInternal = latestInvestigationUpdate(ticket);
+  const summaryLines = [`Ticket is currently ${status}.`];
+
+  if (latestCustomer?.content) {
+    summaryLines.push(`Latest customer request: ${truncateText(latestCustomer.content, 220)}`);
+  }
+  if (latestAssistant?.content) {
+    summaryLines.push(`Latest AI response: ${truncateText(latestAssistant.content, 220)}`);
+  }
+  if (activeInvestigation) {
+    summaryLines.push(
+      `Engineer ticket is ${investigationStateLabel(activeInvestigation.state).toLowerCase()}.`
+    );
+  }
+  if (latestInternal) {
+    summaryLines.push(`Latest engineer ticket update: ${truncateText(latestInternal, 220)}`);
+  }
+
+  return {
+    summary: summaryLines.join(" "),
+    nextAction: activeInvestigation
+      ? "Use the engineer workspace if the investigation needs another update, approval, or workflow transition."
+      : "Continue monitoring in dashboard or switch to the engineer workspace if the ticket now needs intervention.",
+  };
+}
+
+function buildDefinitionGrid(items) {
+  const safeItems = (Array.isArray(items) ? items : []).filter(
+    (item) => normalizeString(item?.value) && normalizeString(item?.value) !== "-"
+  );
+  if (!safeItems.length) {
+    return '<div class="detail-empty-state compact">No structured fields available yet.</div>';
+  }
+  return `
+    <div class="definition-grid">
+      ${safeItems
+        .map(
+          (item) => `
+            <div class="definition-item">
+              <span class="definition-label">${escapeHtml(item.label || "-")}</span>
+              <span class="definition-value">${escapeHtml(item.value || "-")}</span>
+            </div>
+          `
+        )
+        .join("")}
+    </div>
+  `;
 }
 
 function renderHeaderUserControls() {
@@ -234,7 +522,7 @@ function renderEventVolumeBars(points) {
           <div class="throughput-bar-track" aria-hidden="true">
             <span
               class="throughput-bar-fill"
-              style="height: ${height}%; ${value > 0 ? `min-height: 14px;` : ""}"
+              style="height: ${height}%; ${value > 0 ? "min-height: 14px;" : ""}"
             ></span>
           </div>
           <span class="throughput-bar-label timestamp">${escapeHtml(label)}</span>
@@ -244,60 +532,437 @@ function renderEventVolumeBars(points) {
     .join("");
 }
 
-function renderEventItem(event) {
-  const eventName = humanizeToken(event?.event || "ticket_updated");
-  const eventMessage =
-    normalizeString(event?.message) || normalizeString(event?.title) || "Ticket activity updated.";
-  const ticketId = normalizeString(event?.ticket_id) || "-";
-  const status = normalizeString(event?.status);
-  const sentimentLabel = normalizeString(event?.sentiment_label);
-  const createdAt = formatDateTime(event?.created_at);
-  const tone = eventTone(event);
-  const title = ticketId === "-" ? eventName : ticketId;
+function renderRailNav() {
+  const statusViewActive = TICKET_DETAIL_STATUSES.includes(currentDashboardView);
 
+  ticketOpsButtonEl?.classList.toggle("is-active", currentDashboardView === "ticket-ops");
+  ticketOpsButtonEl?.setAttribute("aria-pressed", currentDashboardView === "ticket-ops" ? "true" : "false");
+
+  ticketDetailGroupEl?.classList.toggle("is-active", statusViewActive);
+  ticketDetailGroupEl?.classList.toggle("is-expanded", ticketDetailsExpanded);
+  ticketDetailGroupToggleEl?.classList.toggle("is-active", statusViewActive);
+  ticketDetailGroupToggleEl?.setAttribute("aria-expanded", ticketDetailsExpanded ? "true" : "false");
+  ticketDetailSubnavEl.hidden = !ticketDetailsExpanded;
+
+  ticketDetailStatusButtons.forEach((button) => {
+    const status = normalizeStatusValue(button.dataset.ticketDetailStatus || "");
+    const isActive = currentDashboardView === status;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+  });
+}
+
+function renderDashboardView() {
+  const isTicketOpsView = currentDashboardView === "ticket-ops";
+
+  if (dashboardViewRegionEl) {
+    dashboardViewRegionEl.dataset.activeView = currentDashboardView;
+  }
+  if (opsHeaderBodyEl) {
+    opsHeaderBodyEl.textContent = isTicketOpsView
+      ? DEFAULT_HEADER_BODY
+      : TICKET_VIEW_COPY[currentDashboardView]?.detail || DEFAULT_HEADER_BODY;
+  }
+  if (ticketOpsOverviewEl) {
+    ticketOpsOverviewEl.hidden = !isTicketOpsView;
+    ticketOpsOverviewEl.classList.toggle("is-active", isTicketOpsView);
+  }
+  if (ticketBoardRegionEl) {
+    ticketBoardRegionEl.hidden = isTicketOpsView;
+  }
+
+  if (!isTicketOpsView) {
+    renderTicketBoard();
+  }
+}
+
+function describeTicketBoardTicket(ticket) {
+  const ticketId = String(ticket?.ticket_id || "-");
+  const status = normalizeStatusValue(ticket?.status || currentDashboardView);
+  const requester = ticketRequester(ticket);
+  const latestCustomer = latestTicketMessage(ticket, ["customer"]);
+  const latestAssistant = latestTicketMessage(ticket, ["assistant"]);
+  const investigationPreview = latestInvestigationUpdate(ticket);
+  const latestSentiment = normalizeSentimentLabel(latestCustomer?.sentiment_label);
+
+  let previewLabel = "Latest Update";
+  let previewValue = "No recent ticket update recorded yet.";
+  if (investigationPreview) {
+    previewLabel = "Engineer Ticket";
+    previewValue = truncateText(investigationPreview, 220);
+  } else if (latestCustomer?.content) {
+    previewLabel = "Latest Customer Message";
+    previewValue = truncateText(latestCustomer.content, 220);
+  } else if (latestAssistant?.content) {
+    previewLabel = "Latest AI Reply";
+    previewValue = truncateText(latestAssistant.content, 220);
+  }
+
+  return {
+    ticketId,
+    subject: ticketSubject(ticket),
+    requester,
+    status,
+    updatedAt: formatDateTime(ticket?.updated_at),
+    createdAt: formatDateTime(ticket?.created_at),
+    previewLabel,
+    previewValue,
+    sentiment: latestSentiment,
+    surfaceClass: statusSurfaceClass(status),
+  };
+}
+
+function renderTicketBoardCard(ticket) {
+  const item = describeTicketBoardTicket(ticket);
   return `
-    <li class="event-item">
-      <div class="event-topline">
-        <span class="event-chip event-chip-${escapeHtml(tone)}">${escapeHtml(eventName)}</span>
-        <span class="event-time timestamp">${escapeHtml(createdAt)}</span>
+    <article
+      class="ticket-board-card ${item.surfaceClass}"
+      role="button"
+      tabindex="0"
+      data-ticket-card="true"
+      data-ticket-id="${escapeHtml(item.ticketId)}"
+      aria-label="Open ticket ${escapeHtml(item.ticketId)} detail"
+    >
+      <div class="ticket-board-card-top">
+        <div class="ticket-board-card-headline">
+          <p class="ticket-card-kicker timestamp">${escapeHtml(item.ticketId)}</p>
+          <h3 class="ticket-board-card-title">${escapeHtml(item.subject)}</h3>
+        </div>
+        <div class="ticket-board-card-badges">
+          <span class="status-badge ${statusClass(item.status)}">${escapeHtml(statusLabel(item.status))}</span>
+          ${
+            item.sentiment
+              ? `<span class="message-sentiment-pill sentiment-${escapeHtml(item.sentiment)}">${escapeHtml(
+                  humanizeToken(item.sentiment)
+                )}</span>`
+              : ""
+          }
+        </div>
       </div>
-      <h3 class="event-title">${escapeHtml(title)}</h3>
-      <p class="event-copy">${escapeHtml(eventMessage)}</p>
-      <div class="event-meta">
-        <span class="timestamp">${escapeHtml(ticketId)}</span>
-        ${status ? `<span>Status ${escapeHtml(humanizeToken(status))}</span>` : ""}
-        ${sentimentLabel ? `<span>Sentiment ${escapeHtml(humanizeToken(sentimentLabel))}</span>` : ""}
+
+      <div class="ticket-board-card-meta">
+        <span><strong>Requester</strong> ${escapeHtml(item.requester)}</span>
+        <span><strong>Updated</strong> ${escapeHtml(item.updatedAt)}</span>
+        <span><strong>Created</strong> ${escapeHtml(item.createdAt)}</span>
       </div>
-    </li>
+
+      <div class="ticket-board-card-preview">
+        <span class="ticket-board-card-preview-label">${escapeHtml(item.previewLabel)}</span>
+        <p>${escapeHtml(item.previewValue)}</p>
+      </div>
+    </article>
   `;
 }
 
-function renderEventStream(events) {
-  if (!eventStreamEl) {
+function renderTicketBoard() {
+  if (!ticketBoardRegionEl || !TICKET_DETAIL_STATUSES.includes(currentDashboardView)) {
     return;
   }
 
-  const items = (Array.isArray(events) ? events : []).filter(isTicketEvent);
-  if (!items.length) {
-    eventStreamEl.innerHTML = '<li class="event-empty">No ticket events yet. New dashboard traffic will appear here.</li>';
-    return;
+  const boardStatus = currentDashboardView;
+  const boardRows = Array.isArray(ticketBoardStore[boardStatus]) ? ticketBoardStore[boardStatus] : [];
+  const boardLoading = Boolean(ticketBoardLoadingByStatus[boardStatus]);
+  const boardError = normalizeString(ticketBoardErrorByStatus[boardStatus]);
+  const viewCopy = TICKET_VIEW_COPY[boardStatus] || {
+    title: `${statusLabel(boardStatus)} Tickets`,
+    detail: "Ticket board",
+    summary: "Ticket board",
+  };
+
+  let boardContent = "";
+  if (boardLoading && !boardRows.length) {
+    boardContent = `
+      <div class="ticket-board-empty" role="status" aria-live="polite" aria-busy="true">
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <strong>Loading ${escapeHtml(statusLabel(boardStatus).toLowerCase())} tickets.</strong>
+        <p>${escapeHtml(viewCopy.detail)}</p>
+      </div>
+    `;
+  } else if (boardError && !boardRows.length) {
+    boardContent = `
+      <div class="ticket-board-empty">
+        <strong>Unable to load ${escapeHtml(statusLabel(boardStatus).toLowerCase())} tickets.</strong>
+        <p>${escapeHtml(boardError)}</p>
+      </div>
+    `;
+  } else if (!boardRows.length) {
+    boardContent = `
+      <div class="ticket-board-empty">
+        <strong>No ${escapeHtml(statusLabel(boardStatus).toLowerCase())} tickets right now.</strong>
+        <p>${escapeHtml(viewCopy.summary)}</p>
+      </div>
+    `;
+  } else {
+    boardContent = `
+      <section class="ticket-board-grid" role="list">
+        ${boardRows.map(renderTicketBoardCard).join("")}
+      </section>
+    `;
   }
 
-  eventStreamEl.innerHTML = items.map(renderEventItem).join("");
+  ticketBoardRegionEl.innerHTML = `
+    <section class="ticket-board" data-ticket-board-status="${escapeHtml(boardStatus)}">
+      <div class="section-head ticket-board-head">
+        <div>
+          <p class="eyebrow">Ticket Details</p>
+          <h2>${escapeHtml(viewCopy.title)}</h2>
+          <p>${escapeHtml(viewCopy.detail)}</p>
+        </div>
+        <span class="section-chip">${escapeHtml(statusLabel(boardStatus))} Board</span>
+      </div>
+
+      <div class="ticket-board-summary">
+        <strong class="ticket-board-count">${escapeHtml(formatNumber(boardRows.length))}</strong>
+        <p>${escapeHtml(viewCopy.summary)}</p>
+      </div>
+
+      ${boardError && boardRows.length ? `<p class="detail-note">${escapeHtml(boardError)}</p>` : ""}
+      ${boardContent}
+    </section>
+  `;
 }
 
-function prependEvent(event) {
-  if (!eventStreamEl || !isTicketEvent(event)) {
+function buildTicketDetailMessageCard(message) {
+  const role = String(message?.role || "system").toLowerCase();
+  const sentimentLabel = normalizeSentimentLabel(message?.sentiment_label);
+  return `
+    <article class="ticket-detail-message ${role === "customer" ? "is-customer" : ""}">
+      <header class="ticket-detail-message-header">
+        <span class="ticket-detail-message-role">${escapeHtml(roleLabel(role))}</span>
+        <div class="ticket-detail-message-meta">
+          ${
+            sentimentLabel
+              ? `<span class="message-sentiment-pill sentiment-${escapeHtml(sentimentLabel)}">${escapeHtml(
+                  humanizeToken(sentimentLabel)
+                )}</span>`
+              : ""
+          }
+          <span class="ticket-detail-message-time">${escapeHtml(formatDateTime(message?.created_at))}</span>
+        </div>
+      </header>
+      <div class="ticket-detail-message-content">${escapeHtml(normalizeString(message?.content) || "-")}</div>
+    </article>
+  `;
+}
+
+function renderTicketDetail() {
+  if (!ticketDetailBodyEl) {
     return;
   }
 
-  if (eventStreamEl.firstElementChild?.classList.contains("event-empty")) {
-    eventStreamEl.innerHTML = "";
+  if (ticketDetailLoading) {
+    ticketDetailBodyEl.innerHTML = `
+      <div class="ticket-board-empty" role="status" aria-live="polite" aria-busy="true">
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <strong>Loading ticket detail.</strong>
+        <p>Pulling the latest support and investigation context.</p>
+      </div>
+    `;
+    return;
   }
 
-  eventStreamEl.insertAdjacentHTML("afterbegin", renderEventItem(event));
-  while (eventStreamEl.children.length > EVENT_STREAM_LIMIT) {
-    eventStreamEl.removeChild(eventStreamEl.lastElementChild);
+  if (ticketDetailError) {
+    ticketDetailBodyEl.innerHTML = `
+      <div class="ticket-board-empty">
+        <strong>Unable to load this ticket.</strong>
+        <p>${escapeHtml(ticketDetailError)}</p>
+      </div>
+    `;
+    return;
+  }
+
+  if (!selectedTicketDetail) {
+    ticketDetailBodyEl.innerHTML = `
+      <div class="ticket-board-empty">
+        <strong>Select a ticket to inspect its context.</strong>
+        <p>The dashboard overlay stays read-only so actions still happen in the engineer workspace.</p>
+      </div>
+    `;
+    return;
+  }
+
+  const ticket = selectedTicketDetail;
+  const ticketId = String(ticket.ticket_id || selectedTicketId || "-");
+  const status = normalizeStatusValue(ticket.status || "open");
+  const displayInvestigation = getDisplayInvestigation(ticket);
+  const latestCustomer = latestTicketMessage(ticket, ["customer"]);
+  const latestAssistant = latestTicketMessage(ticket, ["assistant"]);
+  const fallbackSummary = buildLocalSummaryFallback(ticket);
+  const latestInternal = latestInvestigationUpdate(ticket);
+  const detailMessages = Array.isArray(ticket.messages) ? ticket.messages.slice(-4) : [];
+  const requester = ticketRequester(ticket);
+
+  ticketDetailTitleEl.textContent = `${ticketId} detail`;
+  ticketDetailBodyEl.innerHTML = `
+    <div class="detail-panel-stack">
+      <section class="panel-card detail-panel">
+        <div class="panel-header">
+          <div>
+            <h3>${escapeHtml(ticketSubject(ticket))}</h3>
+            <p>Read-only ticket context from the dashboard. Switch to the engineer workspace if you need to change the workflow.</p>
+          </div>
+          <span class="status-badge ${statusClass(status)}">${escapeHtml(statusLabel(status))}</span>
+        </div>
+        ${buildDefinitionGrid([
+          { label: "Ticket Id", value: ticketId },
+          { label: "Requester", value: requester },
+          { label: "Created", value: formatDateTime(ticket.created_at) },
+          { label: "Updated", value: formatDateTime(ticket.updated_at) },
+          {
+            label: "Engineer Ticket",
+            value: displayInvestigation ? investigationStateLabel(displayInvestigation.state) : "None",
+          },
+        ])}
+        <p class="detail-summary-copy">${escapeHtml(fallbackSummary.summary)}</p>
+        <p class="detail-note">${escapeHtml(fallbackSummary.nextAction)}</p>
+      </section>
+
+      <section class="panel-card detail-panel">
+        <div class="panel-header">
+          <div>
+            <h3>Latest Customer Message</h3>
+            <p>The newest customer-visible request in this ticket.</p>
+          </div>
+        </div>
+        ${
+          latestCustomer?.content
+            ? `
+              ${buildDefinitionGrid([
+                { label: "Sentiment", value: humanizeToken(normalizeSentimentLabel(latestCustomer.sentiment_label) || "unclassified") },
+                { label: "Created", value: formatDateTime(latestCustomer.created_at) },
+              ])}
+              <p class="detail-summary-copy">${escapeHtml(normalizeString(latestCustomer.content))}</p>
+            `
+            : '<div class="detail-empty-state">No customer message is available yet.</div>'
+        }
+      </section>
+
+      <section class="panel-card detail-panel">
+        <div class="panel-header">
+          <div>
+            <h3>Engineer Ticket Snapshot</h3>
+            <p>Latest internal investigation state, trigger details, and summary notes.</p>
+          </div>
+        </div>
+        ${
+          displayInvestigation
+            ? `
+              ${buildDefinitionGrid([
+                { label: "State", value: investigationStateLabel(displayInvestigation.state) },
+                { label: "Trigger Reason", value: normalizeString(displayInvestigation.trigger_reason) || "-" },
+                { label: "Trigger Source", value: normalizeString(displayInvestigation.trigger_source) || "-" },
+                { label: "Opened", value: formatDateTime(displayInvestigation.opened_at) },
+                {
+                  label: "Updated",
+                  value: formatDateTime(
+                    displayInvestigation.updated_at
+                      || displayInvestigation.closed_at
+                      || displayInvestigation.opened_at
+                  ),
+                },
+              ])}
+              ${
+                latestInternal
+                  ? `<p class="detail-summary-copy">${escapeHtml(latestInternal)}</p>`
+                  : '<div class="detail-empty-state compact">No engineer-ticket update has been recorded yet.</div>'
+              }
+              ${
+                normalizeString(displayInvestigation.draft_customer_reply)
+                  ? `<p class="detail-note">Draft customer reply: ${escapeHtml(
+                      truncateText(displayInvestigation.draft_customer_reply, 320)
+                    )}</p>`
+                  : ""
+              }
+            `
+            : '<div class="detail-empty-state">No engineer ticket has been opened for this case.</div>'
+        }
+      </section>
+
+      <section class="panel-card detail-panel">
+        <div class="panel-header">
+          <div>
+            <h3>Conversation Snapshot</h3>
+            <p>Recent customer-visible messages from the support timeline.</p>
+          </div>
+        </div>
+        ${
+          detailMessages.length
+            ? `<div class="ticket-detail-message-list">${detailMessages
+                .map(buildTicketDetailMessageCard)
+                .join("")}</div>`
+            : '<div class="detail-empty-state">No customer-visible conversation is available yet.</div>'
+        }
+        ${
+          latestAssistant?.content
+            ? `<p class="detail-note">Latest AI reply: ${escapeHtml(truncateText(latestAssistant.content, 280))}</p>`
+            : ""
+        }
+      </section>
+    </div>
+  `;
+}
+
+function openTicketDetailModalShell(ticketId) {
+  lastTicketDetailFocusEl =
+    document.activeElement instanceof HTMLElement ? document.activeElement : lastTicketDetailFocusEl;
+  ticketDetailTitleEl.textContent = ticketId ? `${ticketId} detail` : "Ticket detail";
+  ticketDetailModalEl.hidden = false;
+  ticketDetailModalEl.setAttribute("aria-hidden", "false");
+  document.body.classList.add("modal-open");
+  window.setTimeout(() => {
+    ticketDetailDialogEl?.focus();
+  }, 0);
+}
+
+function closeTicketDetailModal({ restoreFocus = true } = {}) {
+  if (!ticketDetailModalEl || ticketDetailModalEl.hidden) {
+    return;
+  }
+
+  ticketDetailModalEl.hidden = true;
+  ticketDetailModalEl.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("modal-open");
+  ticketDetailBodyEl.innerHTML = "";
+  selectedTicketId = "";
+  selectedTicketDetail = null;
+  ticketDetailLoading = false;
+  ticketDetailError = "";
+  if (restoreFocus && lastTicketDetailFocusEl) {
+    lastTicketDetailFocusEl.focus();
+  }
+}
+
+function focusableElementsWithin(container) {
+  if (!container) {
+    return [];
+  }
+  return Array.from(
+    container.querySelectorAll(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )
+  ).filter((element) => element instanceof HTMLElement && !element.hidden);
+}
+
+function trapTicketDetailFocus(event) {
+  if (ticketDetailModalEl.hidden || event.key !== "Tab") {
+    return;
+  }
+
+  const focusable = focusableElementsWithin(ticketDetailDialogEl);
+  if (!focusable.length) {
+    event.preventDefault();
+    ticketDetailDialogEl?.focus();
+    return;
+  }
+
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
   }
 }
 
@@ -310,43 +975,35 @@ async function loadMetrics() {
   setText(ticketVolumeEl, formatNumber(payload?.today_ticket_count));
   setText(resolutionRateEl, `${formatDecimal(payload?.resolution_rate)}%`);
   setText(sentimentAlertsEl, formatNumber(payload?.sentiment_alert_count));
-  setText(
-    waitingForEngineerEl,
-    formatNumber(cards?.investigating_ticket_count),
-  );
-
+  setText(waitingForEngineerEl, formatNumber(cards?.investigating_ticket_count));
   setText(queueHealthTitleEl, normalizeString(summaries?.queue_health_label) || "Monitoring live queue balance.");
   setText(
     queueHealthDetailEl,
-    normalizeString(summaries?.queue_health_detail) || "Loading the newest queue health summary and throughput pattern.",
+    normalizeString(summaries?.queue_health_detail) || "Loading the newest queue health summary and throughput pattern."
   );
   setText(openTicketCountEl, formatNumber(cards?.open_ticket_count));
   setText(resolvedTicketCountEl, formatNumber(cards?.resolved_ticket_count));
   setText(communicatingTicketCountEl, formatNumber(cards?.communicating_ticket_count));
   setText(escalatedTicketCountEl, formatNumber(cards?.escalated_ticket_count));
   setText(badSentimentTicketCountEl, formatNumber(cards?.bad_sentiment_ticket_count));
-  setText(
-    waitingTicketChipEl,
-    formatNumber(cards?.investigating_ticket_count),
-  );
+  setText(waitingTicketChipEl, formatNumber(cards?.investigating_ticket_count));
   setText(communicatingTicketChipEl, formatNumber(cards?.communicating_ticket_count));
   setText(escalatedTicketChipEl, formatNumber(cards?.escalated_ticket_count));
   setText(
     escalationWatchTitleEl,
-    normalizeString(summaries?.escalation_summary_title) || "Watching live queue pressure.",
+    normalizeString(summaries?.escalation_summary_title) || "Watching live queue pressure."
   );
   setText(
     escalationWatchDetailEl,
-    normalizeString(summaries?.escalation_summary_detail) || "Loading the latest escalation signal.",
+    normalizeString(summaries?.escalation_summary_detail) || "Loading the latest escalation signal."
   );
   setText(
     operatorSummaryTitleEl,
-    normalizeString(summaries?.operator_summary_title) || "Reading operator workload.",
+    normalizeString(summaries?.operator_summary_title) || "Reading operator workload."
   );
   setText(
     operatorSummaryDetailEl,
-    normalizeString(summaries?.operator_summary_detail)
-      || "Loading communicating and escalated balance.",
+    normalizeString(summaries?.operator_summary_detail) || "Loading communicating and escalated balance."
   );
 
   renderEventVolumeBars(charts?.event_volume_12h);
@@ -355,9 +1012,69 @@ async function loadMetrics() {
   renderBreakdownList(flowBreakdownEl, charts?.flow_breakdown);
 }
 
-async function loadRecentEvents() {
-  const payload = await fetchJson(`/api/dashboard/events?limit=${EVENT_STREAM_LIMIT}`);
-  renderEventStream(payload?.events || []);
+async function loadTicketBoard(status = currentDashboardView) {
+  const requestedStatus = normalizeStatusValue(status);
+  if (!TICKET_DETAIL_STATUSES.includes(requestedStatus)) {
+    return;
+  }
+
+  ticketBoardLoadingByStatus[requestedStatus] = true;
+  ticketBoardErrorByStatus[requestedStatus] = "";
+  if (currentDashboardView === requestedStatus) {
+    renderTicketBoard();
+  }
+
+  try {
+    const params = new URLSearchParams({ status: requestedStatus });
+    const payload = await fetchJson(`/api/engineer/tickets?${params.toString()}`);
+    ticketBoardStore[requestedStatus] = Array.isArray(payload?.tickets) ? payload.tickets : [];
+  } catch (error) {
+    ticketBoardErrorByStatus[requestedStatus] = `Failed to load tickets: ${error.message}`;
+  } finally {
+    ticketBoardLoadingByStatus[requestedStatus] = false;
+    if (currentDashboardView === requestedStatus) {
+      renderTicketBoard();
+    }
+  }
+}
+
+async function loadTicketDetail(ticketId, { silent = false } = {}) {
+  const requestedTicketId = normalizeString(ticketId);
+  if (!requestedTicketId) {
+    return;
+  }
+
+  if (!silent) {
+    ticketDetailLoading = true;
+    ticketDetailError = "";
+    renderTicketDetail();
+  }
+
+  try {
+    const payload = await fetchJson(`/api/engineer/tickets/${encodeURIComponent(requestedTicketId)}`);
+    if (selectedTicketId !== requestedTicketId) {
+      return;
+    }
+    selectedTicketDetail = payload?.ticket && typeof payload.ticket === "object" ? payload.ticket : null;
+    ticketDetailError = "";
+  } catch (error) {
+    if (selectedTicketId !== requestedTicketId) {
+      return;
+    }
+    ticketDetailError = `Failed to load ticket detail: ${error.message}`;
+  } finally {
+    if (selectedTicketId === requestedTicketId) {
+      ticketDetailLoading = false;
+      renderTicketDetail();
+    }
+  }
+}
+
+function isTicketEvent(payload) {
+  return (
+    !normalizeString(payload?.ingestion_id)
+    && !normalizeString(payload?.event).toLowerCase().startsWith("knowledge_ingestion_")
+  );
 }
 
 function stopDashboardSocket() {
@@ -409,9 +1126,8 @@ function setupWebSocket() {
       return;
     }
 
-    prependEvent(payload);
     try {
-      await loadMetrics();
+      await refreshDashboard({ showLoading: false });
     } catch (error) {
       setRealtimeStatus(`Realtime refresh failed: ${error.message}`);
     }
@@ -442,26 +1158,128 @@ async function handleLogoutClick() {
   }
 }
 
-async function refreshDashboard() {
+function setDashboardView(view) {
+  const normalizedView = normalizeDashboardView(view);
+  if (normalizedView === currentDashboardView && normalizedView === "ticket-ops") {
+    renderRailNav();
+    renderDashboardView();
+    return;
+  }
+
+  currentDashboardView = normalizedView;
+  if (TICKET_DETAIL_STATUSES.includes(normalizedView)) {
+    ticketDetailsExpanded = true;
+  }
+  closeTicketDetailModal({ restoreFocus: false });
+  renderRailNav();
+  renderDashboardView();
+
+  if (TICKET_DETAIL_STATUSES.includes(normalizedView)) {
+    void loadTicketBoard(normalizedView);
+  }
+}
+
+function openTicketDetail(ticketId, triggerElement = null) {
+  const requestedTicketId = normalizeString(ticketId);
+  if (!requestedTicketId) {
+    return;
+  }
+
+  lastTicketDetailFocusEl = triggerElement instanceof HTMLElement ? triggerElement : null;
+  selectedTicketId = requestedTicketId;
+  selectedTicketDetail = null;
+  ticketDetailError = "";
+  ticketDetailLoading = true;
+  openTicketDetailModalShell(requestedTicketId);
+  renderTicketDetail();
+  void loadTicketDetail(requestedTicketId);
+}
+
+async function refreshDashboard({ showLoading = true } = {}) {
   if (refreshLoading) {
     return;
   }
 
-  setRefreshLoading(true);
+  if (showLoading) {
+    setRefreshLoading(true);
+  } else {
+    refreshLoading = true;
+  }
+
   try {
-    await Promise.all([loadMetrics(), loadRecentEvents()]);
+    await loadMetrics();
+    if (TICKET_DETAIL_STATUSES.includes(currentDashboardView)) {
+      await loadTicketBoard(currentDashboardView);
+    }
+    if (selectedTicketId && !ticketDetailModalEl.hidden) {
+      await loadTicketDetail(selectedTicketId, { silent: true });
+    }
   } finally {
     setRefreshLoading(false);
   }
 }
 
+function handleDocumentClick(event) {
+  const ticketDetailCloseTarget = event.target.closest("[data-close-ticket-detail]");
+  if (ticketDetailCloseTarget) {
+    closeTicketDetailModal();
+    return;
+  }
+
+  const ticketOpsButton = event.target.closest('[data-dashboard-nav="ticket-ops"]');
+  if (ticketOpsButton) {
+    setDashboardView("ticket-ops");
+    return;
+  }
+
+  const groupToggleButton = event.target.closest("[data-ticket-detail-group-toggle]");
+  if (groupToggleButton) {
+    ticketDetailsExpanded = !ticketDetailsExpanded;
+    renderRailNav();
+    return;
+  }
+
+  const statusButton = event.target.closest("[data-ticket-detail-status]");
+  if (statusButton) {
+    setDashboardView(String(statusButton.dataset.ticketDetailStatus || "investigating"));
+    return;
+  }
+
+  const ticketCard = event.target.closest("[data-ticket-card]");
+  if (ticketCard) {
+    openTicketDetail(ticketCard.dataset.ticketId, ticketCard);
+  }
+}
+
+function handleDocumentKeydown(event) {
+  if (event.key === "Escape" && !ticketDetailModalEl.hidden) {
+    closeTicketDetailModal();
+    return;
+  }
+
+  const ticketCard = event.target.closest?.("[data-ticket-card]");
+  if (
+    ticketCard
+    && (event.key === "Enter" || event.key === " ")
+  ) {
+    event.preventDefault();
+    openTicketDetail(ticketCard.dataset.ticketId, ticketCard);
+  }
+}
+
 async function initializeDashboard() {
   renderHeaderUserControls();
+  renderRailNav();
+  renderDashboardView();
+
   refreshButtonEl?.addEventListener("click", () => {
     refreshDashboard().catch((error) => {
       setRealtimeStatus(`Refresh failed: ${error.message}`);
     });
   });
+  document.addEventListener("click", handleDocumentClick);
+  document.addEventListener("keydown", handleDocumentKeydown);
+  ticketDetailDialogEl?.addEventListener("keydown", trapTicketDetailFocus);
 
   try {
     await refreshDashboard();

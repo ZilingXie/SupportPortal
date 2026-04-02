@@ -15,10 +15,14 @@ class DashboardUiContractTests(unittest.TestCase):
             'id="resolution-rate"',
             'id="sentiment-alerts"',
             'id="waiting-for-engineer"',
-            'id="event-stream"',
             'id="header-user-controls"',
             'id="ws-status"',
             'id="event-volume-bars"',
+            'id="dashboard-view-region"',
+            'id="ticket-board-region"',
+            'id="ticket-detail-modal"',
+            'id="ticket-detail-dialog"',
+            'id="ticket-detail-body"',
         ]:
             self.assertIn(required_id, source)
 
@@ -27,17 +31,35 @@ class DashboardUiContractTests(unittest.TestCase):
             "Queue Health &amp; Throughput",
             "Escalation Watch",
             "Operator Summary",
-            "Live Ticket Feed",
+            "Ticket Ops",
+            "RAG Benchmark",
+            "Ticket Details",
             "Investigating",
             "Communicating",
             "Escalated",
+            "Resolved",
             "Sentiment Breakdown",
             "Bad Sentiment",
         ]:
             self.assertIn(required_copy, source)
 
+        self.assertRegex(
+            source,
+            re.compile(r"Ticket Ops.*RAG Benchmark.*Ticket Details", re.DOTALL),
+        )
+        self.assertRegex(
+            source,
+            re.compile(r"Investigating.*Escalated.*Communicating.*Resolved", re.DOTALL),
+        )
+        self.assertIn('data-ticket-detail-group-toggle', source)
+        self.assertIn('aria-expanded="true"', source)
         self.assertNotIn("Priority Breakdown", source)
         self.assertNotIn(">Urgent<", source)
+        self.assertNotIn("Live Ticket Feed", source)
+        self.assertNotIn("Live Stream", source)
+        self.assertNotIn("RAG Workbench", source)
+        self.assertNotIn("Open RAG Workbench", source)
+        self.assertNotIn('id="event-stream"', source)
 
         self.assertIn('class="dashboard-rail"', source)
         self.assertIn('class="rail-footer"', source)
@@ -45,9 +67,59 @@ class DashboardUiContractTests(unittest.TestCase):
         self.assertNotIn('data-dashboard-tab="experiments"', source)
         self.assertNotIn('data-dashboard-tab="overview"', source)
         self.assertIn(".dashboard-rail", css)
+        self.assertIn(".rail-nav-group", css)
+        self.assertIn(".rail-subnav", css)
         self.assertIn(".rail-footer", css)
         self.assertIn(".queue-health-card", css)
-        self.assertIn(".feed-card", css)
+        self.assertIn(".ticket-board", css)
+        self.assertIn(".ticket-detail-modal", css)
+        self.assertNotIn(".feed-card", css)
+
+    def test_root_dashboard_app_defaults_to_ticket_ops_and_uses_engineer_ticket_endpoints(self) -> None:
+        source = Path("ui/dashboard-ui/app.js").read_text(encoding="utf-8")
+        css = Path("ui/dashboard-ui/styles.css").read_text(encoding="utf-8")
+
+        for marker in [
+            'let currentDashboardView = "ticket-ops";',
+            'const TICKET_DETAIL_STATUSES = ["investigating", "escalated", "communicating", "resolved"];',
+            "renderRailNav",
+            "/api/dashboard/metrics",
+            "/api/engineer/tickets?",
+            "/api/engineer/tickets/${encodeURIComponent(requestedTicketId)}",
+            'document.body.classList.add("modal-open");',
+            'document.body.classList.remove("modal-open");',
+        ]:
+            self.assertIn(marker, source)
+
+        self.assertIn("body.modal-open", css)
+
+    def test_root_dashboard_collapsed_rail_uses_shared_icon_track_for_ticket_details_group(self) -> None:
+        css = Path("ui/dashboard-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertRegex(
+            css,
+            r"\.rail-nav-item,\s*\.rail-subnav-item\s*\{[^}]*justify-content:\s*center;[^}]*gap:\s*0;[^}]*padding:\s*0 14px;",
+        )
+        self.assertRegex(
+            css,
+            r"\.rail-subnav-item\s*\{[^}]*min-height:\s*52px;[^}]*padding-inline:\s*14px;[^}]*border-radius:\s*18px;",
+        )
+        self.assertRegex(
+            css,
+            r"\.dashboard-rail:hover \.rail-subnav-item\s*\{[^}]*justify-content:\s*flex-start;[^}]*gap:\s*14px;[^}]*min-height:\s*42px;",
+        )
+        self.assertRegex(
+            css,
+            r"\.rail-nav-group-toggle\s*\{[^}]*position:\s*relative;",
+        )
+        self.assertRegex(
+            css,
+            r"\.rail-nav-chevron\s*\{[^}]*position:\s*absolute;[^}]*(?:right|inset-inline-end):\s*16px;",
+        )
+        self.assertNotRegex(
+            css,
+            r"\.rail-nav-chevron\s*\{[^}]*margin-left:\s*auto;",
+        )
 
     def test_rag_dashboard_nav_uses_scorecard_pages(self) -> None:
         source = Path("ui/dashboard-ui/rag/index.html").read_text(encoding="utf-8")
