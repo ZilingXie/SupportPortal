@@ -80,7 +80,10 @@ let clientSocket = null;
 let clientReconnectTimer = null;
 let clientHeartbeatTimer = null;
 let pendingStatusPollTimer = null;
-let lastChatScrollKey = "";
+let pendingChatScrollMode = "";
+let pendingChatScrollTicketId = "";
+let scheduledChatScrollPlan = null;
+let scheduledChatScrollJobId = 0;
 
 function escapeHtml(value) {
   return String(value)
@@ -224,7 +227,7 @@ function login(email, password) {
 function logout() {
   clearPendingRequestState();
   closeClientRealtimeConnection();
-  lastChatScrollKey = "";
+  resetChatScrollState();
   localStorage.removeItem(AUTH_KEY);
   state.user = null;
 }
@@ -1501,18 +1504,52 @@ function getActiveChatTicket() {
   return ticket;
 }
 
-function buildChatScrollKey(ticket) {
-  const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
-  const latestMessage = messages.length > 0 ? messages[messages.length - 1] : null;
-  return [
-    String(ticket?.id || ""),
-    messages.length,
-    String(latestMessage?.id || ""),
-    String(latestMessage?.role || ""),
-    String(latestMessage?.createdAt || ""),
-    String(latestMessage?.content || ""),
-    Array.isArray(latestMessage?.citations) ? latestMessage.citations.length : 0,
-  ].join("|");
+function clearRequestedChatScroll() {
+  pendingChatScrollMode = "";
+  pendingChatScrollTicketId = "";
+}
+
+function resetChatScrollState() {
+  clearRequestedChatScroll();
+  scheduledChatScrollPlan = null;
+  scheduledChatScrollJobId += 1;
+}
+
+function requestChatScrollToBottom(ticketId) {
+  const normalizedId = String(ticketId || "").trim();
+  if (!normalizedId) {
+    return;
+  }
+  pendingChatScrollMode = "bottom";
+  pendingChatScrollTicketId = normalizedId;
+}
+
+function captureChatScrollSnapshot() {
+  const ticket = getActiveChatTicket();
+  const ticketId = String(ticket?.id || "").trim();
+  if (!ticketId) {
+    return null;
+  }
+  const chatMain = appRoot.querySelector(".chat-main");
+  if (scheduledChatScrollPlan?.ticketId === ticketId) {
+    if (scheduledChatScrollPlan.type === "bottom") {
+      return {
+        ticketId,
+        scrollTop: chatMain && typeof chatMain.scrollHeight === "number" ? chatMain.scrollHeight : null,
+      };
+    }
+    return {
+      ticketId,
+      scrollTop:
+        typeof scheduledChatScrollPlan.scrollTop === "number"
+          ? scheduledChatScrollPlan.scrollTop
+          : null,
+    };
+  }
+  return {
+    ticketId,
+    scrollTop: chatMain && typeof chatMain.scrollTop === "number" ? chatMain.scrollTop : null,
+  };
 }
 
 function runOnNextFrame(callback) {
@@ -1523,25 +1560,57 @@ function runOnNextFrame(callback) {
   setTimeout(callback, 0);
 }
 
-function syncChatScrollToBottom() {
+function syncChatScrollPosition(previousSnapshot = null) {
   const ticket = getActiveChatTicket();
   if (!ticket) {
-    lastChatScrollKey = "";
+    resetChatScrollState();
     return;
   }
 
-  const nextScrollKey = buildChatScrollKey(ticket);
-  if (nextScrollKey === lastChatScrollKey) {
+  const ticketId = String(ticket.id || "").trim();
+  const shouldScrollToBottom =
+    pendingChatScrollMode === "bottom" && pendingChatScrollTicketId === ticketId;
+  const shouldRestoreScroll =
+    !shouldScrollToBottom &&
+    previousSnapshot?.ticketId === ticketId &&
+    typeof previousSnapshot?.scrollTop === "number";
+
+  if (!shouldScrollToBottom && !shouldRestoreScroll) {
+    scheduledChatScrollPlan = null;
+    scheduledChatScrollJobId += 1;
     return;
   }
-  lastChatScrollKey = nextScrollKey;
+
+  const nextPlan = shouldScrollToBottom
+    ? { ticketId, type: "bottom" }
+    : { ticketId, type: "restore", scrollTop: previousSnapshot?.scrollTop ?? 0 };
+  if (shouldScrollToBottom) {
+    clearRequestedChatScroll();
+  }
+  scheduledChatScrollPlan = nextPlan;
+  scheduledChatScrollJobId += 1;
+  const jobId = scheduledChatScrollJobId;
 
   runOnNextFrame(() => {
-    const chatMain = appRoot.querySelector(".chat-main");
-    if (!chatMain || typeof chatMain.scrollHeight !== "number") {
+    if (jobId !== scheduledChatScrollJobId) {
       return;
     }
-    chatMain.scrollTop = chatMain.scrollHeight;
+    const chatMain = appRoot.querySelector(".chat-main");
+    if (!chatMain) {
+      return;
+    }
+
+    if (nextPlan.type === "bottom") {
+      if (typeof chatMain.scrollHeight !== "number") {
+        return;
+      }
+      chatMain.scrollTop = chatMain.scrollHeight;
+      scheduledChatScrollPlan = null;
+      return;
+    }
+
+    chatMain.scrollTop = nextPlan.scrollTop;
+    scheduledChatScrollPlan = null;
   });
 }
 
@@ -1689,6 +1758,7 @@ async function handleSendMessage(text, options = {}) {
   state.pendingUserMessageId = userMessageId;
   state.pendingAbortController = new AbortController();
   stopPendingStatusPolling();
+  requestChatScrollToBottom(ticketId);
   render();
 
   try {
@@ -2080,16 +2150,30 @@ function bindStatusFilter() {
 }
 
 function render() {
+  const previousView = state.view;
+  const previousTicketId = String(state.activeTicketId || "").trim();
+  const previousChatScroll = captureChatScrollSnapshot();
+
   parseRoute();
   if (!state.user) {
     clearPendingRequestState();
     closeClientRealtimeConnection();
+    resetChatScrollState();
     renderLogin();
     return;
   }
+
+  const nextTicketId =
+    state.view === "chat-ticket" ? String(state.activeTicketId || "").trim() : "";
+  if (!nextTicketId) {
+    resetChatScrollState();
+  } else if (previousView !== "chat-ticket" || previousTicketId !== nextTicketId) {
+    requestChatScrollToBottom(nextTicketId);
+  }
+
   setupClientRealtimeConnection();
   renderAuthed();
-  syncChatScrollToBottom();
+  syncChatScrollPosition(previousChatScroll);
 }
 
 window.addEventListener("hashchange", render);

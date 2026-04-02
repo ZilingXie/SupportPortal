@@ -759,7 +759,7 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
-    def test_client_chat_auto_scrolls_only_when_transcript_changes(self) -> None:
+    def test_client_chat_preserves_scroll_during_same_ticket_rerenders(self) -> None:
         self.run_client_app_script(
             textwrap.dedent(
                 """
@@ -789,30 +789,230 @@ class ClientUiContractTests(unittest.TestCase):
                   },
                 ]);
 
-                state.view = "chat-ticket";
-                state.activeTicketId = ticket.id;
-
-                const chatMain = {
-                  scrollTop: 0,
-                  scrollHeight: 180,
+                const shellRegions = {
+                  '[data-authed-region="sidebar-nav"]': { innerHTML: "" },
+                  '[data-authed-region="sidebar-content"]': { innerHTML: "" },
+                  '[data-authed-region="sidebar-footer"]': { innerHTML: "" },
+                  '[data-authed-region="topbar"]': { innerHTML: "" },
+                  '[data-authed-region="context"]': { innerHTML: "" },
                 };
-                appRoot.querySelector = (selector) => (selector === ".chat-main" ? chatMain : null);
+                let currentChatMain = null;
+                const renderHeights = [];
+                const mainRegion = {};
+                Object.defineProperty(mainRegion, "innerHTML", {
+                  get() {
+                    return this._html || "";
+                  },
+                  set(value) {
+                    this._html = value;
+                    currentChatMain = {
+                      scrollTop: 0,
+                      scrollHeight: renderHeights.shift() ?? 0,
+                    };
+                  },
+                });
+                shellRegions['[data-authed-region="main"]'] = mainRegion;
 
-                syncChatScrollToBottom();
+                const shell = {
+                  querySelector(selector) {
+                    return shellRegions[selector] || null;
+                  },
+                };
+                const fakeForm = {
+                  addEventListener() {},
+                  requestSubmit() {},
+                };
+                const fakeInput = {
+                  addEventListener() {},
+                  value: "",
+                };
+
+                document.getElementById = (id) => {
+                  if (id === "app") {
+                    return appRoot;
+                  }
+                  if (id === "chat-input-form") {
+                    return fakeForm;
+                  }
+                  if (id === "chat-input") {
+                    return fakeInput;
+                  }
+                  return null;
+                };
+                appRoot.querySelectorAll = () => [];
+                appRoot.querySelector = (selector) => {
+                  if (selector === ".app-shell") {
+                    return shell;
+                  }
+                  if (selector === ".chat-main") {
+                    return currentChatMain;
+                  }
+                  return null;
+                };
+
+                window.location.hash = `#/chat/${ticket.id}`;
+
+                renderHeights.push(180);
+                render();
                 flushFrames();
-                if (chatMain.scrollTop !== 180) {
-                  throw new Error(`Expected initial chat render to scroll to bottom, got ${chatMain.scrollTop}.`);
+                if (currentChatMain.scrollTop !== 180) {
+                  throw new Error(`Expected opening a ticket to scroll to bottom, got ${currentChatMain.scrollTop}.`);
                 }
 
-                chatMain.scrollTop = 0;
+                currentChatMain.scrollTop = 72;
                 updateTicketStatus(ticket.id, "communicating");
-                syncChatScrollToBottom();
+                renderHeights.push(180);
+                render();
                 flushFrames();
-                if (chatMain.scrollTop !== 0) {
-                  throw new Error("Chat should not force-scroll when the transcript is unchanged.");
+                if (currentChatMain.scrollTop !== 72) {
+                  throw new Error(
+                    `Expected same-ticket rerender to preserve scrollTop 72, got ${currentChatMain.scrollTop}.`
+                  );
                 }
 
-                chatMain.scrollHeight = 420;
+                state.isSending = true;
+                state.pendingTicketId = ticket.id;
+                currentChatMain.scrollTop = 41;
+                renderHeights.push(220);
+                render();
+                flushFrames();
+                if (!mainRegion.innerHTML.includes("thinking-line")) {
+                  throw new Error("Expected waiting UI to render the thinking line.");
+                }
+                if (!mainRegion.innerHTML.includes("composer-note")) {
+                  throw new Error("Expected waiting UI to render the composer note.");
+                }
+                if (currentChatMain.scrollTop !== 41) {
+                  throw new Error(
+                    `Expected waiting-state rerender to preserve scrollTop 41, got ${currentChatMain.scrollTop}.`
+                  );
+                }
+
+                state.isSending = false;
+                state.pendingTicketId = null;
+                currentChatMain.scrollTop = 38;
+                saveTicketMessages(ticket.id, [
+                  ...getTicketById(ticket.id).messages,
+                  {
+                    id: "msg-2",
+                    role: "assistant",
+                    content: "Here is the final answer",
+                    createdAt: "2026-03-31T15:25:00.000Z",
+                  },
+                ]);
+                renderHeights.push(420);
+                render();
+                flushFrames();
+                if (currentChatMain.scrollTop !== 38) {
+                  throw new Error(
+                    `Expected assistant reply rerender to preserve scrollTop 38, got ${currentChatMain.scrollTop}.`
+                  );
+                }
+              """
+            )
+        )
+
+    def test_client_chat_scrolls_to_latest_when_requested(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                const queuedFrames = [];
+                globalThis.requestAnimationFrame = (callback) => {
+                  queuedFrames.push(callback);
+                  return queuedFrames.length;
+                };
+
+                const flushFrames = () => {
+                  while (queuedFrames.length > 0) {
+                    const callback = queuedFrames.shift();
+                    callback();
+                  }
+                };
+
+                state.user = { id: "user-1", name: "Admin", email: "admin@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const ticket = createTicket(state.user.id);
+                saveTicketMessages(ticket.id, [
+                  {
+                    id: "msg-1",
+                    role: "assistant",
+                    content: "Initial reply",
+                    createdAt: "2026-03-31T15:24:00.000Z",
+                  },
+                ]);
+
+                const shellRegions = {
+                  '[data-authed-region="sidebar-nav"]': { innerHTML: "" },
+                  '[data-authed-region="sidebar-content"]': { innerHTML: "" },
+                  '[data-authed-region="sidebar-footer"]': { innerHTML: "" },
+                  '[data-authed-region="topbar"]': { innerHTML: "" },
+                  '[data-authed-region="context"]': { innerHTML: "" },
+                };
+                let currentChatMain = null;
+                const renderHeights = [];
+                const mainRegion = {};
+                Object.defineProperty(mainRegion, "innerHTML", {
+                  get() {
+                    return this._html || "";
+                  },
+                  set(value) {
+                    this._html = value;
+                    currentChatMain = {
+                      scrollTop: 0,
+                      scrollHeight: renderHeights.shift() ?? 0,
+                    };
+                  },
+                });
+                shellRegions['[data-authed-region="main"]'] = mainRegion;
+
+                const shell = {
+                  querySelector(selector) {
+                    return shellRegions[selector] || null;
+                  },
+                };
+                const fakeForm = {
+                  addEventListener() {},
+                  requestSubmit() {},
+                };
+                const fakeInput = {
+                  addEventListener() {},
+                  value: "",
+                };
+
+                document.getElementById = (id) => {
+                  if (id === "app") {
+                    return appRoot;
+                  }
+                  if (id === "chat-input-form") {
+                    return fakeForm;
+                  }
+                  if (id === "chat-input") {
+                    return fakeInput;
+                  }
+                  return null;
+                };
+                appRoot.querySelectorAll = () => [];
+                appRoot.querySelector = (selector) => {
+                  if (selector === ".app-shell") {
+                    return shell;
+                  }
+                  if (selector === ".chat-main") {
+                    return currentChatMain;
+                  }
+                  return null;
+                };
+
+                window.location.hash = `#/chat/${ticket.id}`;
+
+                renderHeights.push(180);
+                render();
+                flushFrames();
+                if (currentChatMain.scrollTop !== 180) {
+                  throw new Error(`Expected opening a ticket to scroll to bottom, got ${currentChatMain.scrollTop}.`);
+                }
+
+                currentChatMain.scrollTop = 64;
                 saveTicketMessages(ticket.id, [
                   ...getTicketById(ticket.id).messages,
                   {
@@ -822,10 +1022,148 @@ class ClientUiContractTests(unittest.TestCase):
                     createdAt: "2026-03-31T15:25:00.000Z",
                   },
                 ]);
-                syncChatScrollToBottom();
+                requestChatScrollToBottom(ticket.id);
+                renderHeights.push(420);
+                render();
                 flushFrames();
-                if (chatMain.scrollTop !== 420) {
-                  throw new Error(`Expected new transcript entries to scroll to bottom, got ${chatMain.scrollTop}.`);
+                if (currentChatMain.scrollTop !== 420) {
+                  throw new Error(`Expected requested scroll-to-latest to land at 420, got ${currentChatMain.scrollTop}.`);
+                }
+              """
+            )
+        )
+
+    def test_client_chat_preserves_send_scroll_when_reply_rerenders_before_next_frame(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                const queuedFrames = [];
+                globalThis.requestAnimationFrame = (callback) => {
+                  queuedFrames.push(callback);
+                  return queuedFrames.length;
+                };
+
+                const flushFrames = () => {
+                  while (queuedFrames.length > 0) {
+                    const callback = queuedFrames.shift();
+                    callback();
+                  }
+                };
+
+                state.user = { id: "user-1", name: "Admin", email: "admin@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const ticket = createTicket(state.user.id);
+                saveTicketMessages(ticket.id, [
+                  {
+                    id: "msg-1",
+                    role: "assistant",
+                    content: "Initial reply",
+                    createdAt: "2026-03-31T15:24:00.000Z",
+                  },
+                ]);
+
+                const shellRegions = {
+                  '[data-authed-region="sidebar-nav"]': { innerHTML: "" },
+                  '[data-authed-region="sidebar-content"]': { innerHTML: "" },
+                  '[data-authed-region="sidebar-footer"]': { innerHTML: "" },
+                  '[data-authed-region="topbar"]': { innerHTML: "" },
+                  '[data-authed-region="context"]': { innerHTML: "" },
+                };
+                let currentChatMain = null;
+                const renderHeights = [];
+                const mainRegion = {};
+                Object.defineProperty(mainRegion, "innerHTML", {
+                  get() {
+                    return this._html || "";
+                  },
+                  set(value) {
+                    this._html = value;
+                    currentChatMain = {
+                      scrollTop: 0,
+                      scrollHeight: renderHeights.shift() ?? 0,
+                    };
+                  },
+                });
+                shellRegions['[data-authed-region="main"]'] = mainRegion;
+
+                const shell = {
+                  querySelector(selector) {
+                    return shellRegions[selector] || null;
+                  },
+                };
+                const fakeForm = {
+                  addEventListener() {},
+                  requestSubmit() {},
+                };
+                const fakeInput = {
+                  addEventListener() {},
+                  value: "",
+                };
+
+                document.getElementById = (id) => {
+                  if (id === "app") {
+                    return appRoot;
+                  }
+                  if (id === "chat-input-form") {
+                    return fakeForm;
+                  }
+                  if (id === "chat-input") {
+                    return fakeInput;
+                  }
+                  return null;
+                };
+                appRoot.querySelectorAll = () => [];
+                appRoot.querySelector = (selector) => {
+                  if (selector === ".app-shell") {
+                    return shell;
+                  }
+                  if (selector === ".chat-main") {
+                    return currentChatMain;
+                  }
+                  return null;
+                };
+
+                window.location.hash = `#/chat/${ticket.id}`;
+
+                renderHeights.push(180);
+                render();
+                flushFrames();
+                if (currentChatMain.scrollTop !== 180) {
+                  throw new Error(`Expected opening a ticket to scroll to bottom, got ${currentChatMain.scrollTop}.`);
+                }
+
+                currentChatMain.scrollTop = 64;
+                saveTicketMessages(ticket.id, [
+                  ...getTicketById(ticket.id).messages,
+                  {
+                    id: "msg-2",
+                    role: "user",
+                    content: "Follow-up question",
+                    createdAt: "2026-03-31T15:25:00.000Z",
+                  },
+                ]);
+                requestChatScrollToBottom(ticket.id);
+                renderHeights.push(240);
+                render();
+
+                saveTicketMessages(ticket.id, [
+                  ...getTicketById(ticket.id).messages,
+                  {
+                    id: "msg-3",
+                    role: "assistant",
+                    content: "Answer arrived quickly",
+                    createdAt: "2026-03-31T15:25:01.000Z",
+                  },
+                ]);
+                renderHeights.push(420);
+                render();
+
+                flushFrames();
+                if (currentChatMain.scrollTop !== 240) {
+                  throw new Error(
+                    `Expected fast reply rerender to preserve the send-time bottom scroll at 240, got ${currentChatMain.scrollTop}.`
+                  );
                 }
               """
             )
