@@ -166,17 +166,38 @@
 2. `AI Managing` 这类状态切换，必须清晰标明当前模式。
 3. 过滤器区要稳定、可扫描，不可做成嘈杂的工具栏。
 
+### 5.7 Ticket Identity
+1. SupportPortal 现在存在两种一等身份：
+   - `client ticket`：客户侧工单，ID 形如 `TK-040`
+   - `engineer case`：工程师侧 case，ID 形如 `TK-040-1`
+2. `client ticket` 和 `engineer case` 必须分开呈现，禁止在 engineer UI 中继续把 client ticket 当作 engineer 工单本身。
+3. engineer case title 是创建时冻结的 unresolved-issue snapshot，例如 `black screen issue`：
+   - 优先来源于客户最新问题描述、handoff 摘要和 engineer AI 初始理解
+   - 不得默认复用 parent client ticket subject
+   - 本轮实现中不支持人工编辑和自动改名
+4. engineer case header 的信息层级固定为：
+   - 主身份：`engineer_case_id`
+   - 主标题：`engineer case title`
+   - 次级引用：`Client Ticket <ticket_id> · <subject>`
+5. client UI 只显示 client ticket 自己的 ID 和标题，不得显示 engineer case suffix、engineer case title、或任何 engineer-only linkage 字段。
+
 ## 6. Surface Guidance
 
 ### 6.1 Client UI
 1. 更强调温和、清晰、可提问。
 2. AI 回复区可以带 citation、建议动作、状态进度。
 3. 高情绪提示要克制，不制造额外焦虑。
+4. client ticket 的标题和 ID 是客户可见的唯一工单身份；即使后台已创建 linked engineer case，client 页面也不得暴露 engineer case 编号或 engineer-only metadata。
 
 ### 6.2 Engineer UI
 1. 更强调控制感、优先级、证据链。
 2. 工单池与工单详情都应保留“编辑感 + AI 辅助感”。
 3. 人工接管和 AI 管理状态必须一眼可见。
+4. engineer pool 和 detail 必须以 `engineer case` 为主身份，而不是 parent client ticket：
+   - pool card primary kicker 使用 `engineer_case_id`
+   - primary title 使用 `engineer case title`
+   - `Client Ticket <ticket_id> · <subject>` 作为次级引用信息
+5. engineer detail 的 `Customer Timeline` 必须继续展示 parent client ticket 的公开对话，但 header 不能因此回退成 client ticket title。
 
 ### 6.3 Ticket Dashboard (`/dashboard`)
 1. 固定 KPI 名称：

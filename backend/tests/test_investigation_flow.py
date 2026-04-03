@@ -61,6 +61,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self,
         *,
         ticket_id: str = "TK-INV-001",
+        subject: str = "Token renew callback missing",
         status: str = "open",
         messages: list[dict[str, object]] | None = None,
         active_investigation: dict[str, object] | None = None,
@@ -72,7 +73,7 @@ class InvestigationFlowTests(unittest.TestCase):
             "ticket_id": ticket_id,
             "customer_id": "C-001",
             "requester": "Customer",
-            "subject": "Token renew callback missing",
+            "subject": subject,
             "status": status,
             "last_engineer_action": None,
             "created_at": "2026-03-29T09:00:00+00:00",
@@ -92,6 +93,86 @@ class InvestigationFlowTests(unittest.TestCase):
         }
         self.repository.save_ticket(ticket, new_messages=ticket["messages"])
         return ticket
+
+    def test_ticket_query_escalation_creates_linked_engineer_case_with_snapshot_title(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-040",
+            subject="how to join channel",
+            status="communicating",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "how to join channel",
+                    "created_at": "2026-03-29T09:00:00+00:00",
+                }
+            ],
+        )
+
+        with patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="收到，我先帮你看一下。",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main,
+            "resolve_support_message",
+            return_value=_resolution(needs_engineer_guidance=True),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-040",
+                    "customer_id": "C-001",
+                    "message": "i got black screen issue",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        detail = self.client.get("/api/engineer/tickets/TK-040-1")
+        self.assertEqual(detail.status_code, 200, detail.text)
+        payload = detail.json()["ticket"]
+        self.assertEqual(payload["engineer_case_id"], "TK-040-1")
+        self.assertEqual(payload["client_ticket_ref"]["ticket_id"], "TK-040")
+        self.assertEqual(payload["client_ticket_ref"]["subject"], "how to join channel")
+        self.assertEqual(payload["title"], "black screen issue")
+        self.assertEqual(payload["status"], "investigating")
+
+    def test_client_ticket_list_keeps_client_ticket_identity_after_engineer_case_is_created(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-040",
+            subject="how to join channel",
+            status="investigating",
+            active_investigation={
+                "id": "INV-040",
+                "state": "active",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "support_query",
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:01:00+00:00",
+                "messages": [
+                    {
+                        "id": "INV-040-m1",
+                        "role": "engineer_ai",
+                        "content": "Please confirm whether the black screen issue reproduces on all devices.",
+                        "created_at": "2026-03-29T09:01:00+00:00",
+                    }
+                ],
+            },
+        )
+
+        response = self.client.get("/api/tickets?customer_id=C-001&status=all")
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["customer_id"], "C-001")
+        self.assertEqual(len(payload["tickets"]), 1)
+        ticket = payload["tickets"][0]
+        self.assertEqual(ticket["ticket_id"], "TK-040")
+        self.assertEqual(ticket["subject"], "how to join channel")
+        self.assertEqual(ticket["active_engineer_case_id"], "TK-040-1")
+        self.assertEqual(ticket["engineer_case_count"], 1)
 
     def test_repository_normalizes_legacy_waiting_for_engineer_status_to_investigating(self) -> None:
         ticket = self._seed_ticket(status="waiting_for_engineer")
@@ -127,7 +208,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(payload["status"], "investigating")
         self.assertEqual(payload["answer"], "收到，我先帮你看一下。")
 
-        detail = self.client.get("/api/engineer/tickets/TK-INV-100")
+        detail = self.client.get("/api/engineer/tickets/TK-INV-100-1")
         self.assertEqual(detail.status_code, 200, detail.text)
         ticket = detail.json()["ticket"]
         self.assertEqual(ticket["status"], "investigating")
@@ -255,7 +336,7 @@ class InvestigationFlowTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200, response.text)
-        detail = self.client.get("/api/engineer/tickets/TK-INV-HANDOFF-100")
+        detail = self.client.get("/api/engineer/tickets/TK-INV-HANDOFF-100-1")
         self.assertEqual(detail.status_code, 200, detail.text)
         ticket = detail.json()["ticket"]
         handoff = ticket["engineer_handoff_packet"]
@@ -388,9 +469,9 @@ class InvestigationFlowTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200, response.text)
-        detail = self.client.get("/api/engineer/tickets/TK-INV-101")
+        detail = self.client.get("/api/engineer/tickets/TK-INV-101-1")
         ticket = detail.json()["ticket"]
-        self.assertEqual(ticket["active_investigation"]["id"], "INV-101")
+        self.assertEqual(ticket["active_investigation"]["id"], "TK-INV-101-1")
         self.assertEqual(ticket["active_investigation"]["state"], "active")
         self.assertIsNone(ticket["active_investigation"]["final_confirmation_requested_at"])
         self.assertEqual(ticket["active_investigation"]["draft_customer_reply"], "")
@@ -660,7 +741,7 @@ class InvestigationFlowTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["status"], "investigating")
-        detail = self.client.get("/api/engineer/tickets/TK-INV-POSTCHECK-100")
+        detail = self.client.get("/api/engineer/tickets/TK-INV-POSTCHECK-100-1")
         ticket = detail.json()["ticket"]
         self.assertEqual(ticket["status"], "investigating")
         self.assertEqual(ticket["active_investigation"]["trigger_reason"], "rag_post_check_insufficient")
@@ -748,7 +829,7 @@ class InvestigationFlowTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["status"], "investigating")
-        detail = self.client.get("/api/engineer/tickets/TK-INV-POSTCHECK-ERR-100")
+        detail = self.client.get("/api/engineer/tickets/TK-INV-POSTCHECK-ERR-100-1")
         ticket = detail.json()["ticket"]
         self.assertEqual(ticket["active_investigation"]["trigger_reason"], "rag_post_check_error")
         opening_message = ticket["active_investigation"]["messages"][0]
@@ -794,7 +875,7 @@ class InvestigationFlowTests(unittest.TestCase):
             },
         ), patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
-                "/api/engineer/tickets/TK-INV-102/investigation/messages",
+                "/api/engineer/tickets/TK-INV-102-1/investigation/messages",
                 json={
                     "engineer_id": "eng",
                     "message": "Reproduces on Android 14 with SDK 4.2.1. Token renew succeeds after manual refresh.",
@@ -856,7 +937,7 @@ class InvestigationFlowTests(unittest.TestCase):
             },
         ), patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
-                "/api/engineer/tickets/TK-INV-EVENT-102/investigation/messages",
+                "/api/engineer/tickets/TK-INV-EVENT-102-1/investigation/messages",
                 json={
                     "engineer_id": "eng",
                     "message": "Reproduces on Android 14 with SDK 4.2.1 only.",
@@ -937,7 +1018,7 @@ class InvestigationFlowTests(unittest.TestCase):
 
         with patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
-                "/api/engineer/tickets/TK-INV-103/investigation/confirmation",
+                "/api/engineer/tickets/TK-INV-103-1/investigation/confirmation",
                 json={
                     "engineer_id": "eng",
                     "decision": "approve",
@@ -949,7 +1030,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(payload["status"], "communicating")
         self.assertIsNone(payload["active_investigation"])
 
-        detail = self.client.get("/api/engineer/tickets/TK-INV-103")
+        detail = self.client.get("/api/engineer/tickets/TK-INV-103-1")
         ticket = detail.json()["ticket"]
         self.assertEqual(ticket["status"], "communicating")
         self.assertIsNone(ticket["active_investigation"])
@@ -999,7 +1080,7 @@ class InvestigationFlowTests(unittest.TestCase):
             },
         ), patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
-                "/api/engineer/tickets/TK-INV-104/investigation/confirmation",
+                "/api/engineer/tickets/TK-INV-104-1/investigation/confirmation",
                 json={
                     "engineer_id": "eng",
                     "decision": "revise",
@@ -1056,7 +1137,7 @@ class InvestigationFlowTests(unittest.TestCase):
             },
         )
 
-        response = self.client.get("/api/engineer/tickets/TK-INV-SUMMARY-100/summary")
+        response = self.client.get("/api/engineer/tickets/TK-INV-SUMMARY-100-1/summary")
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertIn("Current understanding: Android 14 token renewal still fails", payload["summary"])
@@ -1067,7 +1148,18 @@ class InvestigationFlowTests(unittest.TestCase):
         )
 
     def test_request_engineer_assistance_marks_ticket_escalated(self) -> None:
-        self._seed_ticket(ticket_id="TK-INV-105", status="communicating")
+        self._seed_ticket(
+            ticket_id="TK-INV-105",
+            subject="how to join channel",
+            status="communicating",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "i got black screen issue",
+                    "created_at": "2026-03-29T09:00:00+00:00",
+                }
+            ],
+        )
 
         with patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
@@ -1080,9 +1172,11 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(payload["status"], "escalated")
         self.assertNotIn("engineer_mode", payload)
 
-        detail = self.client.get("/api/engineer/tickets/TK-INV-105")
+        detail = self.client.get("/api/engineer/tickets/TK-INV-105-1")
         self.assertEqual(detail.status_code, 200, detail.text)
         self.assertEqual(detail.json()["ticket"]["status"], "escalated")
+        self.assertEqual(detail.json()["ticket"]["engineer_case_id"], "TK-INV-105-1")
+        self.assertEqual(detail.json()["ticket"]["title"], "black screen issue")
 
     def test_investigate_action_reuses_latest_rag_turn_when_escalated_ticket_enters_investigation(self) -> None:
         self._seed_ticket(
@@ -1129,7 +1223,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(payload["status"], "investigating")
         self.assertNotIn("engineer_mode", payload)
 
-        detail = self.client.get("/api/engineer/tickets/TK-INV-106")
+        detail = self.client.get("/api/engineer/tickets/TK-INV-106-1")
         ticket = detail.json()["ticket"]
         self.assertEqual(ticket["status"], "investigating")
         self.assertIsNotNone(ticket["active_investigation"])
@@ -1157,7 +1251,7 @@ class InvestigationFlowTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200, response.text)
-        detail = self.client.get("/api/engineer/tickets/TK-INV-106B")
+        detail = self.client.get("/api/engineer/tickets/TK-INV-106B-1")
         ticket = detail.json()["ticket"]
         opening_message = ticket["active_investigation"]["messages"][0]
         self.assertIn(

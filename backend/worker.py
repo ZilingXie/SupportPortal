@@ -17,6 +17,12 @@ from backend.main import (
     resolve_support_message,
     ticket_repository,
 )
+from backend.services.engineer_cases import (
+    build_new_engineer_case,
+    apply_case_context_to_engineer_case,
+    build_engineer_case_context,
+    derive_engineer_case_title,
+)
 from backend.services.event_bus import SyncRedisEventBus
 from backend.services.investigation_flow import (
     COMMUNICATING_STATUS,
@@ -104,13 +110,103 @@ def _publish(bus: SyncRedisEventBus, channels: list[str], payload: dict[str, Any
     bus.publish(bus_payload)
 
 
+def _active_engineer_case_payload(ticket: dict[str, Any]) -> dict[str, Any] | None:
+    ticket_id = str(ticket.get("ticket_id") or "").strip()
+    if not ticket_id:
+        return None
+    return ticket_repository.get_active_engineer_case(ticket_id, include_client_messages=True)
+
+
+def _active_investigation_from_case_payload(engineer_case: dict[str, Any]) -> dict[str, Any] | None:
+    active = engineer_case.get("active_investigation")
+    if isinstance(active, dict):
+        return active
+    history = engineer_case.get("investigation_history")
+    if isinstance(history, list) and history and isinstance(history[0], dict):
+        return history[0]
+    return None
+
+
+def _engineer_case_payload_to_record(engineer_case: dict[str, Any]) -> dict[str, Any]:
+    investigation = _active_investigation_from_case_payload(engineer_case) or {}
+    return {
+        "engineer_case_id": str(engineer_case.get("engineer_case_id") or engineer_case.get("ticket_id") or "").strip(),
+        "client_ticket_id": str(
+            engineer_case.get("client_ticket_id")
+            or ((engineer_case.get("client_ticket_ref") or {}).get("ticket_id"))
+            or ""
+        ).strip(),
+        "case_sequence": engineer_case.get("case_sequence"),
+        "title": str(engineer_case.get("title") or engineer_case.get("subject") or "Engineer case").strip(),
+        "status": normalize_ticket_status(engineer_case.get("status")),
+        "trigger_source": str(investigation.get("trigger_source") or engineer_case.get("trigger_source") or "").strip(),
+        "trigger_reason": str(investigation.get("trigger_reason") or engineer_case.get("trigger_reason") or "").strip(),
+        "draft_customer_reply": str(investigation.get("draft_customer_reply") or "").strip(),
+        "final_confirmation_requested_at": investigation.get("final_confirmation_requested_at"),
+        "engineer_handoff_packet": (
+            engineer_case.get("engineer_handoff_packet")
+            if isinstance(engineer_case.get("engineer_handoff_packet"), dict)
+            else None
+        ),
+        "engineer_agent_state": (
+            engineer_case.get("engineer_agent_state")
+            if isinstance(engineer_case.get("engineer_agent_state"), dict)
+            else None
+        ),
+        "opened_at": investigation.get("opened_at") or engineer_case.get("opened_at") or engineer_case.get("created_at"),
+        "updated_at": investigation.get("updated_at") or engineer_case.get("updated_at"),
+        "closed_at": investigation.get("closed_at") or engineer_case.get("closed_at"),
+        "investigation_state": str(investigation.get("state") or ("closed" if engineer_case.get("closed_at") else "active")).strip().lower(),
+        "messages": investigation.get("messages") if isinstance(investigation.get("messages"), list) else [],
+    }
+
+
+def _prepare_engineer_case_for_ticket(
+    ticket: dict[str, Any],
+    *,
+    case_status: str,
+    trigger_source: str,
+    trigger_reason: str,
+    now_value: str,
+) -> tuple[dict[str, Any], bool]:
+    active_case = _active_engineer_case_payload(ticket)
+    if isinstance(active_case, dict):
+        return _engineer_case_payload_to_record(active_case), False
+    case_sequence = int(ticket.get("engineer_case_count") or 0) + 1
+    engineer_case_id = f"{str(ticket.get('ticket_id') or '').strip()}-{case_sequence}"
+    return (
+        build_new_engineer_case(
+            ticket,
+            engineer_case_id=engineer_case_id,
+            case_sequence=case_sequence,
+            title=derive_engineer_case_title(ticket),
+            status=case_status,
+            trigger_source=trigger_source,
+            trigger_reason=trigger_reason,
+            now_value=now_value,
+        ),
+        True,
+    )
+
+
 def _build_worker_investigation_event(
     ticket: dict[str, Any],
-    investigation: dict[str, Any],
+    engineer_case: dict[str, Any],
     *,
     created: bool = False,
 ) -> dict[str, Any]:
-    state = str(investigation.get("state") or "").strip().lower()
+    engineer_case_id = str(engineer_case.get("engineer_case_id") or engineer_case.get("ticket_id") or "").strip()
+    state = str(
+        engineer_case.get("investigation_state")
+        or (
+            (
+                engineer_case.get("active_investigation")
+                if isinstance(engineer_case.get("active_investigation"), dict)
+                else {}
+            ).get("state")
+        )
+        or "active"
+    ).strip().lower()
     if state == "awaiting_confirmation":
         event_name = "ticket_investigation_confirmation_requested"
     elif created:
@@ -121,28 +217,35 @@ def _build_worker_investigation_event(
         event_name = "ticket_investigation_updated"
 
     latest_message = ""
-    messages = investigation.get("messages")
+    active_payload = _active_investigation_from_case_payload(engineer_case)
+    messages = (
+        active_payload.get("messages")
+        if isinstance(active_payload, dict) and isinstance(active_payload.get("messages"), list)
+        else engineer_case.get("messages")
+    )
     if isinstance(messages, list) and messages:
         latest_message = str(messages[-1].get("content") or "").strip()
     return {
         "event": event_name,
-        "ticket_id": str(ticket.get("ticket_id") or ""),
-        "investigation_id": str(investigation.get("id") or ""),
-        "status": normalize_ticket_status(ticket.get("status")),
+        "ticket_id": engineer_case_id or str(ticket.get("ticket_id") or ""),
+        "client_ticket_id": str(ticket.get("ticket_id") or ""),
+        "engineer_case_id": engineer_case_id or None,
+        "investigation_id": engineer_case_id or None,
+        "status": normalize_ticket_status(engineer_case.get("status") or ticket.get("status")),
         "investigation_state": state or "active",
         "message": latest_message[:200],
         "created_at": now_iso(),
         **(
             {
-                "agent_phase": str(ticket["engineer_agent_state"].get("phase") or "").strip(),
-                "agent_ready_to_reply": bool(ticket["engineer_agent_state"].get("ready_to_reply")),
-                "agent_goal": str(ticket["engineer_agent_state"].get("goal") or "").strip(),
+                "agent_phase": str(engineer_case["engineer_agent_state"].get("phase") or "").strip(),
+                "agent_ready_to_reply": bool(engineer_case["engineer_agent_state"].get("ready_to_reply")),
+                "agent_goal": str(engineer_case["engineer_agent_state"].get("goal") or "").strip(),
                 "agent_next_request_for_engineer": str(
-                    ticket["engineer_agent_state"].get("next_request_for_engineer") or ""
+                    engineer_case["engineer_agent_state"].get("next_request_for_engineer") or ""
                 ).strip(),
-                "agent_updated_at": str(ticket["engineer_agent_state"].get("last_refreshed_at") or "").strip(),
+                "agent_updated_at": str(engineer_case["engineer_agent_state"].get("last_refreshed_at") or "").strip(),
             }
-            if isinstance(ticket.get("engineer_agent_state"), dict)
+            if isinstance(engineer_case.get("engineer_agent_state"), dict)
             else {}
         ),
     }
@@ -473,6 +576,8 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
     existing_response = _find_existing_worker_response(ticket, customer_message, message_created_at)
     needs_engineer_input = False
     investigation_result: dict[str, Any] | None = None
+    engineer_case: dict[str, Any] | None = None
+    engineer_case_created = False
     if existing_response is not None:
         LOGGER.info(
             "Worker detected an existing final assistant response for ticket %s and skipped duplicate save",
@@ -485,12 +590,23 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
             if isinstance(existing_response.get("citations"), list)
             else citations
         )
-        needs_engineer_input = normalize_ticket_status(ticket.get("status")) == INVESTIGATING_STATUS
+        needs_engineer_input = (
+            normalize_ticket_status(ticket.get("status")) == INVESTIGATING_STATUS
+            or _active_engineer_case_payload(ticket) is not None
+        )
     else:
         initial_message_count = len(ticket.get("messages", []))
         if execution.needs_investigating:
-            opening_context = build_investigation_opening_context(
+            engineer_case, engineer_case_created = _prepare_engineer_case_for_ticket(
                 ticket,
+                case_status=INVESTIGATING_STATUS,
+                trigger_source="worker_async_rag",
+                trigger_reason=str(execution.investigation_reason or "rag_insufficient_evidence"),
+                now_value=now_iso(),
+            )
+            case_context = build_engineer_case_context(ticket, engineer_case)
+            opening_context = build_investigation_opening_context(
+                case_context,
                 trigger_reason=str(execution.investigation_reason or "rag_insufficient_evidence"),
                 rag_answer=execution.answer,
                 sources=list(execution.sources),
@@ -498,10 +614,11 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
             )
             execution_route_payload = build_execution_route_payload(execution)
             investigation_result = start_or_refresh_investigation(
-                ticket,
+                case_context,
                 trigger_reason=str(execution.investigation_reason or "rag_insufficient_evidence"),
                 trigger_source="worker_async_rag",
                 now_value=now_iso(),
+                next_status=INVESTIGATING_STATUS,
                 opening_context=opening_context,
                 ai_turn_builder=generate_investigation_ai_turn,
                 execution_context={
@@ -512,10 +629,19 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
                     "evidence_summary": dict(execution.evidence_summary or {}) or {},
                 },
             )
+            engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
+            if engineer_case_created:
+                engineer_case["title"] = derive_engineer_case_title(
+                    ticket,
+                    handoff_packet=case_context.get("engineer_handoff_packet"),
+                    engineer_agent_state=case_context.get("engineer_agent_state"),
+                )
             answer = str(investigation_result.get("public_reply") or "").strip()
             sources = []
             citations = []
             needs_engineer_input = True
+            ticket["status"] = INVESTIGATING_STATUS
+            ticket["active_engineer_case_id"] = str(engineer_case.get("engineer_case_id") or "").strip() or None
         else:
             ticket["status"] = resolve_next_ticket_status(ticket.get("status"), execution.next_status)
 
@@ -545,13 +671,20 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
             "save_ticket",
             lambda: ticket_repository.save_ticket(ticket, new_messages=new_messages),
         )
-        if investigation_result is not None:
+        if engineer_case is not None:
+            ticket["engineer_case_count"] = max(
+                int(ticket.get("engineer_case_count") or 0),
+                int(engineer_case.get("case_sequence") or 0),
+            )
             _call_ticket_repository(
-                "save_investigation",
-                lambda: ticket_repository.save_investigation(
-                    ticket_id=ticket_id,
-                    investigation=investigation_result["active_investigation"],
-                    new_messages=investigation_result.get("new_internal_messages") or [],
+                "save_ticket",
+                lambda: ticket_repository.save_ticket(ticket, new_messages=[]),
+            )
+            _call_ticket_repository(
+                "save_engineer_case",
+                lambda: ticket_repository.save_engineer_case(
+                    engineer_case=engineer_case,
+                    new_messages=investigation_result.get("new_internal_messages") if investigation_result else [],
                 ),
             )
 
@@ -581,8 +714,8 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
     if investigation_result is not None:
         investigation_event = _build_worker_investigation_event(
             ticket,
-            investigation_result["active_investigation"],
-            created=bool(investigation_result.get("created")),
+            engineer_case or {},
+            created=bool(engineer_case_created or investigation_result.get("created")),
         )
         _call_ticket_repository(
             "record_event",
@@ -592,22 +725,28 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
                 investigation_event,
             ),
         )
+        if investigation_event.get("engineer_case_id"):
+            _call_ticket_repository(
+                "record_engineer_case_event",
+                lambda: ticket_repository.record_engineer_case_event(
+                    investigation_event["engineer_case_id"],
+                    investigation_event["event"],
+                    investigation_event,
+                ),
+            )
         _publish(bus, ["engineer", "dashboard"], investigation_event)
 
     if needs_engineer_input:
         attention_message = ""
-        active_investigation = (
-            ticket.get("active_investigation")
-            if isinstance(ticket.get("active_investigation"), dict)
-            else None
-        )
-        if active_investigation is not None:
-            internal_messages = active_investigation.get("messages")
+        if isinstance(engineer_case, dict):
+            internal_messages = engineer_case.get("messages")
             if isinstance(internal_messages, list) and internal_messages:
                 attention_message = str(internal_messages[-1].get("content") or "").strip()
         attention_event = {
             "event": "engineer_attention_required",
-            "ticket_id": ticket_id,
+            "ticket_id": str(engineer_case.get("engineer_case_id") or ticket_id) if isinstance(engineer_case, dict) else ticket_id,
+            "client_ticket_id": ticket_id,
+            "engineer_case_id": str(engineer_case.get("engineer_case_id") or "") if isinstance(engineer_case, dict) else None,
             "status": ticket["status"],
             "message": attention_message or "Engineer attention required",
             "message_created_at": message_created_at,
@@ -617,6 +756,15 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
             "record_event",
             lambda: ticket_repository.record_event(ticket_id, attention_event["event"], attention_event),
         )
+        if attention_event.get("engineer_case_id"):
+            _call_ticket_repository(
+                "record_engineer_case_event",
+                lambda: ticket_repository.record_engineer_case_event(
+                    attention_event["engineer_case_id"],
+                    attention_event["event"],
+                    attention_event,
+                ),
+            )
         _publish(bus, ["engineer", "dashboard"], attention_event)
         _publish(bus, ["client"], build_client_sync_event(ticket, attention_event["event"]))
 

@@ -114,8 +114,8 @@ class ClientUiContractTests(unittest.TestCase):
 
         self.assertIn("Concierge AI", html)
         self.assertIn("Manrope", html)
-        self.assertIn("./styles.css?v=20260401-client-status-surfaces-1", html)
-        self.assertIn('./app.js?v=20260401-client-status-surfaces-1', html)
+        self.assertIn("./styles.css?v=20260402-client-ticket-split-1", html)
+        self.assertIn('./app.js?v=20260402-client-ticket-split-1', html)
         self.assertIn("AI-SOLVING", app_source)
         self.assertIn("Session History", app_source)
         self.assertIn('navigate("/chat");', app_source)
@@ -197,6 +197,66 @@ class ClientUiContractTests(unittest.TestCase):
                 }
                 if (mapBackendStatusToClientStatus({ status: "waiting_for_engineer" }) !== "investigating") {
                   throw new Error("Legacy waiting_for_engineer status should normalize to investigating on the client.");
+                }
+              """
+            )
+        )
+
+    def test_client_sync_uses_client_ticket_endpoint_and_hides_engineer_case_identity(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin" };
+                let capturedUrl = null;
+                fetch = async (url) => {
+                  capturedUrl = url;
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      tickets: [
+                        {
+                          ticket_id: "TK-040",
+                          customer_id: "user-1",
+                          subject: "how to join channel",
+                          status: "investigating",
+                          active_engineer_case_id: "TK-040-1",
+                          engineer_case_count: 1,
+                          created_at: "2026-04-02T08:00:00+00:00",
+                          updated_at: "2026-04-02T08:10:00+00:00",
+                          messages: [
+                            {
+                              role: "customer",
+                              content: "i got black screen issue",
+                              created_at: "2026-04-02T08:00:00+00:00",
+                            },
+                            {
+                              role: "assistant",
+                              content: "I've opened an engineer ticket for this issue and we're investigating further. I'll reply here as soon as the engineer review is confirmed.",
+                              created_at: "2026-04-02T08:01:00+00:00",
+                            },
+                          ],
+                        },
+                      ],
+                    }),
+                  };
+                };
+
+                await syncTicketsFromBackend({ silent: true });
+                if (capturedUrl !== "/api/tickets?customer_id=user-1&status=all") {
+                  throw new Error(`Client sync should use the client ticket endpoint, got ${capturedUrl}.`);
+                }
+
+                state.view = "tickets";
+                state.statusFilter = "all";
+                const html = renderTicketsPage();
+                if (!html.includes("TK-040")) {
+                  throw new Error("Client session history should keep the client ticket id.");
+                }
+                if (html.includes("TK-040-1")) {
+                  throw new Error("Client session history must not render linked engineer case ids.");
+                }
+                if (html.includes("Client Ticket")) {
+                  throw new Error("Client UI should not expose engineer-side parent ticket metadata.");
                 }
               """
             )

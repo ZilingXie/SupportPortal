@@ -387,6 +387,7 @@ def start_or_refresh_investigation(
     trigger_reason: str,
     trigger_source: str,
     now_value: str,
+    next_status: str | None = None,
     opening_context: dict[str, Any] | None = None,
     ai_turn_builder: Callable[..., dict[str, Any]] = default_investigation_prompt,
     execution_context: dict[str, Any] | None = None,
@@ -437,7 +438,7 @@ def start_or_refresh_investigation(
     new_internal_messages.extend(
         _apply_ai_turn_to_active_investigation(active_investigation, ai_turn, now_value)
     )
-    ticket["status"] = INVESTIGATING_STATUS
+    ticket["status"] = normalize_ticket_status(next_status or ticket.get("status") or INVESTIGATING_STATUS)
     ticket["active_investigation"] = active_investigation
     return {
         "active_investigation": active_investigation,

@@ -162,6 +162,19 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("engineer_handoff_packet", repo_source)
         self.assertIn("engineer_agent_state", repo_source)
 
+    def test_ticket_storage_contract_includes_engineer_case_tables_and_client_linkage(self) -> None:
+        sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
+        repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+
+        self.assertIn("active_engineer_case_id TEXT", sql_source)
+        self.assertIn("engineer_case_count INTEGER", sql_source)
+        self.assertIn("CREATE TABLE IF NOT EXISTS support_engineer_cases", sql_source)
+        self.assertIn("CREATE TABLE IF NOT EXISTS support_engineer_case_messages", sql_source)
+        self.assertIn("CREATE TABLE IF NOT EXISTS support_engineer_case_events", sql_source)
+        self.assertIn("def get_engineer_case", repo_source)
+        self.assertIn("def list_engineer_cases", repo_source)
+        self.assertIn("def save_engineer_case", repo_source)
+
     def test_ticket_repository_requires_ticket_db_dsn(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(RuntimeError):
@@ -333,20 +346,21 @@ class RepositoryConfigurationTests(unittest.TestCase):
         )
         second_connection = _ReusableConnection(
             _ReusableCursor(
-                fetchone_results=[
-                    (
-                        "T-1",
-                        "C-1",
-                        "Requester",
-                        "Subject",
-                        "open",
-                        "normal",
-                        "managed",
-                        None,
-                        None,
-                        "2026-03-31T00:00:00+00:00",
-                        "2026-03-31T00:00:00+00:00",
-                    )
+                fetchall_results=[
+                    [
+                        (
+                            "T-1",
+                            "C-1",
+                            "Requester",
+                            "Subject",
+                            "open",
+                            None,
+                            None,
+                            0,
+                            "2026-03-31T00:00:00+00:00",
+                            "2026-03-31T00:00:00+00:00",
+                        )
+                    ]
                 ]
             )
         )
@@ -383,10 +397,9 @@ class RepositoryConfigurationTests(unittest.TestCase):
                             "Requester",
                             "Subject",
                             "open",
-                            "normal",
-                            "managed",
                             None,
                             None,
+                            0,
                             "2026-03-31T00:00:00+00:00",
                             "2026-03-31T00:00:00+00:00",
                         )

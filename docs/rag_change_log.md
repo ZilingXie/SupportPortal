@@ -1618,6 +1618,54 @@ For each new entry, record:
   - `node --check ui/dashboard-ui/rag/app.js`
   - `git diff --check`
 
+## 2026-04-02 - Split engineer investigations into first-class engineer cases linked to client tickets
+
+- Summary: Refactored the escalation path so customer-facing tickets remain canonical `client tickets` while engineer-facing work is persisted as first-class `engineer cases` with IDs like `TK-040-1`, case-level `engineer_handoff_packet` / `engineer_agent_state`, and dedicated internal message/event tables.
+- Reason: The previous shared-ticket model blurred customer and engineer identities, reused the parent ticket subject in engineer flows, and made it difficult to present clean engineer work items or future dashboard views over the escalation lifecycle.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `backend/repositories/ticket_repository.py`
+  - `backend/services/engineer_cases.py`
+  - `backend/services/investigation_flow.py`
+  - `backend/sql/ticket_storage.sql`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_repository_configuration.py`
+  - `backend/tests/test_worker.py`
+  - `backend/tests/test_engineer_ui_contract.py`
+  - `backend/tests/test_client_ui_contract.py`
+  - `ui/engineer-ui/app.js`
+  - `ui/engineer-ui/index.html`
+  - `ui/client-ui/app.js`
+  - `ui/client-ui/index.html`
+  - `design.md`
+  - `docs/ticket_db_design.md`
+  - `docs/ticket_db_architecture.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Added additive ticket linkage fields on `support_tickets`: `active_engineer_case_id`, `engineer_case_count`.
+  - Added new tables: `support_engineer_cases`, `support_engineer_case_messages`, `support_engineer_case_events`.
+  - Engineer-only `handoff` and `agent state` now persist on engineer cases instead of client tickets.
+  - Startup backfill migrates legacy `active_investigation` / `investigation_history` into suffixed engineer cases without a destructive ticket reset.
+  - No vector reset, embedding change, chunking change, or knowledge backfill was introduced.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_investigation_flow.py backend/tests/test_repository_configuration.py backend/tests/test_worker.py`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_investigation_flow.py backend/tests/test_engineer_ui_contract.py backend/tests/test_client_ui_contract.py backend/tests/test_repository_configuration.py backend/tests/test_worker.py backend/tests/test_dashboard_ui_contract.py backend/tests/test_dashboard_metrics_contract.py`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/main.py backend/worker.py backend/repositories/ticket_repository.py backend/services/engineer_cases.py backend/services/investigation_flow.py`
+  - `node --check ui/engineer-ui/app.js`
+  - `node --check ui/client-ui/app.js`
+  - `node --check ui/dashboard-ui/app.js`
+  - `git diff --check`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health`
+  - Runtime smoke verified:
+    - `GET /api/tickets?customer_id=split-smoke-user&status=all` returned parent client ticket `TK-SPLIT-SMOKE-040`
+    - `GET /api/engineer/tickets/TK-SPLIT-SMOKE-040-1` returned linked engineer case `TK-SPLIT-SMOKE-040-1`
+    - engineer case title resolved to `black screen issue`
+
 ## 2026-04-02 - Add context budgeting and conditional evidence compression to RAG
 
 - Summary: Added a formal context-budget layer ahead of answer generation so RAG now estimates prompt budget, extracts query-focused evidence spans, conditionally compresses oversized candidate sets, and passes one shared packed-evidence bundle to both the answer model and the post-RAG sufficiency judge.
