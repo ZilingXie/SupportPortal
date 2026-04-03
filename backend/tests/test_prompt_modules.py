@@ -6,6 +6,10 @@ from backend.services.prompts.rag_answer import (
     build_rag_answer_system_prompt,
     build_rag_answer_user_prompt,
 )
+from backend.services.prompts.rag_context_compression import (
+    build_rag_context_compression_system_prompt,
+    build_rag_context_compression_user_prompt,
+)
 from backend.services.prompts.query_understanding import (
     build_query_decomposition_system_prompt,
     build_query_decomposition_user_prompt,
@@ -188,6 +192,29 @@ class PromptModuleTests(unittest.TestCase):
         self.assertIn("## Ticket Context", user_prompt)
         self.assertIn("## Query Understanding Prior", user_prompt)
         self.assertIn("error 109 meaning ios", user_prompt)
+
+    def test_rag_context_compression_prompt_is_sectioned_and_json_only(self) -> None:
+        system_prompt = build_rag_context_compression_system_prompt()
+        user_prompt = build_rag_context_compression_user_prompt(
+            question="How do I join a channel?",
+            evidence_segments=[
+                {
+                    "chunk_id": "chunk-1",
+                    "source_path": "official/channel.md",
+                    "heading": "Channel > Join a channel",
+                    "snippet": "Use joinChannel with the same channel name to enter the same communication session.",
+                }
+            ],
+            available_context_tokens=320,
+        )
+
+        self.assertIn("## Role", system_prompt)
+        self.assertIn("Return strict JSON only", system_prompt)
+        self.assertIn("## Few-shot Examples", system_prompt)
+        self.assertIn("## User Question", user_prompt)
+        self.assertIn("## Compression Budget", user_prompt)
+        self.assertIn("chunk-1", user_prompt)
+        self.assertIn("## Required Output Schema", user_prompt)
 
 
 if __name__ == "__main__":

@@ -38,6 +38,18 @@ def build_rag_evidence_summary(
         "avg_selected_similarity_score": None,
         "handoff_reason": None,
         "needs_human": None,
+        "context_budget_enabled": None,
+        "context_window": None,
+        "reserved_output_tokens": None,
+        "buffer_tokens": None,
+        "raw_context_token_estimate": None,
+        "packed_context_token_estimate": None,
+        "compression_triggered": None,
+        "compression_trigger_reason": None,
+        "compression_mode": None,
+        "compression_model": None,
+        "extractive_segment_count": None,
+        "packed_evidence_count": None,
     }
     if isinstance(quality_signals, dict):
         for key in normalized_quality:

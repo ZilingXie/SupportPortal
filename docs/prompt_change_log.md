@@ -205,3 +205,60 @@ For each new entry, record:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_qa.py -q`
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_support_router.py backend/tests/test_ticket_orchestrator.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py -q`
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/main.py backend/rag_api.py backend/repositories/knowledge_repository.py backend/services/bm25_index.py backend/services/llm_profiles.py backend/services/prompts/__init__.py backend/services/prompts/rag_agent_planner.py backend/services/rag_qa.py backend/services/rag_service_client.py backend/tests/test_prompt_modules.py backend/tests/test_llm_profiles.py backend/tests/test_rag_agentic.py backend/tests/test_rag_qa.py backend/tests/test_rag_service_client.py backend/tests/test_knowledge_repository_bm25.py`
+
+- Area or subsystem: RAG context compression prompt and compression-model activation
+- Prompt or model version: `rag-context-compression-v1`
+- Summary: Added a dedicated evidence-compression prompt module and enabled a new `rag_context_compression` model scene so oversized or redundant reranked candidates can be packed into a tighter evidence bundle before answer generation and sufficiency judging.
+- Reason: After Query Expansion V2, retrieval recall improved enough that prompt budget and context dilution became the next bottleneck. A formal compression prompt with a dedicated small-model scene keeps packed evidence concise, query-focused, and citation-preserving without changing the customer-facing answer contract.
+- Affected files or config:
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `backend/services/llm_profiles.py`
+  - `backend/services/prompts/__init__.py`
+  - `backend/services/prompts/rag_context_compression.py`
+  - `backend/services/rag_context_budget.py`
+  - `backend/services/rag_evidence_summary.py`
+  - `backend/services/rag_qa.py`
+  - `backend/rag_api.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_rag_context_budget.py`
+  - `backend/tests/test_rag_evidence_summary.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/feature_list.md`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Expected behavior change:
+  - RAG can now estimate context budget before answer generation and only trigger compression when the raw evidence set is too large, too repetitive, or otherwise low-density.
+  - The compression prompt returns a JSON evidence pack that preserves supporting chunk ids, condensed evidence text, and query-focused facts.
+  - The same packed evidence is reused by both the answer model and the post-RAG sufficiency judge, reducing answer/judge drift.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_context_budget.py backend/tests/test_rag_qa.py backend/tests/test_rag_evidence_summary.py backend/tests/test_prompt_modules.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_llm_profiles.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/rag_api.py backend/services/llm_profiles.py backend/services/prompts/rag_context_compression.py backend/services/rag_context_budget.py backend/services/rag_evidence_summary.py backend/services/rag_benchmark_runner.py backend/services/rag_qa.py backend/tests/test_rag_context_budget.py backend/tests/test_rag_evidence_summary.py backend/tests/test_prompt_modules.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_rag_qa.py backend/tests/test_llm_profiles.py`
+
+- Area or subsystem: Benchmark diagnostics, run strategy snapshots, and RAG dashboard visualization payloads
+- Prompt or model version: `benchmark-diagnostic-visibility-v1`
+- Summary: Expanded benchmark run profiles and case traces so dashboard views can expose answer/judge model selections, query-understanding toggles, expansion settings, rerank windows, judge disagreement, and candidate-funnel diagnostics for every benchmark run and case detail.
+- Reason: Prompt and model changes are only auditable if each benchmark run records the actual active scene/model configuration and surfaces it in the review UI. The previous payloads carried too little prompt/model context to explain regressions or compare runs confidently.
+- Affected files or config:
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_dashboard_contract.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `ui/dashboard-ui/rag/app.js`
+  - `ui/dashboard-ui/rag/styles.css`
+  - `docs/feature_list.md`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Expected behavior change:
+  - Benchmark runs now expose a richer strategy snapshot that includes answer model, judge models, query-understanding switches, retrieval windows, rerank windows, and future context-budget markers.
+  - Case detail payloads now surface query-understanding hits, filter provenance, candidate-funnel counts, and judge disagreement without changing any client-facing ticket API.
+  - The RAG dashboard can now visualize benchmark run history, run comparison, and run-level diagnostic distributions from the same benchmark session payload.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_benchmark.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_rag_scorecard_repository.py backend/tests/test_rag_benchmark_session.py backend/tests/test_run_rag_benchmark_session_cli.py backend/tests/test_dashboard_ui_contract.py backend/tests/test_rag_dashboard_contract.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_benchmark_runner.py backend/repositories/knowledge_repository.py`
+  - `node --check ui/dashboard-ui/rag/app.js`

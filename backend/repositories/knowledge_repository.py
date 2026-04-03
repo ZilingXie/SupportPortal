@@ -490,6 +490,73 @@ def _clean_text(value: Any) -> str | None:
     return normalized or None
 
 
+def _distribution_rows(values: list[Any]) -> list[dict[str, Any]]:
+    counts = Counter(_clean_text(value) for value in values if _clean_text(value))
+    total = sum(counts.values())
+    if not counts:
+        return []
+    ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return [
+        {
+            "label": label,
+            "count": count,
+            "share": round(count / max(1, total), 4),
+        }
+        for label, count in ordered
+    ]
+
+
+def _distribution_from_case_rows(case_rows: list[dict[str, Any]], field_name: str) -> list[dict[str, Any]]:
+    return _distribution_rows([row.get(field_name) for row in case_rows])
+
+
+def _benchmark_run_diagnostics(case_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "failure_stage_distribution": _distribution_from_case_rows(case_rows, "failure_stage"),
+        "root_cause_distribution": _distribution_from_case_rows(case_rows, "root_cause_label"),
+        "category_distribution": _distribution_from_case_rows(case_rows, "category"),
+        "query_type_distribution": _distribution_from_case_rows(case_rows, "query_type"),
+        "source_type_distribution": _distribution_from_case_rows(case_rows, "source_type"),
+    }
+
+
+def _benchmark_run_comparison(runs: list[dict[str, Any]]) -> dict[str, Any] | None:
+    current = next((run for run in runs if run.get("is_current")), None)
+    baseline = next((run for run in runs if not run.get("is_current")), None)
+    if current is None or baseline is None:
+        return None
+    metric_keys = [
+        ("Evidence Precision@5", "evidence_precision_at_5"),
+        ("Context Relevance", "context_relevance_score"),
+        ("Faithfulness", "faithfulness_score"),
+        ("Response Completeness", "response_completeness_score"),
+        ("Benchmark P95 Latency", "benchmark_p95_total_latency_ms"),
+        ("Judge Error Rate", "judge_error_rate"),
+    ]
+    current_metrics = current.get("metrics") if isinstance(current.get("metrics"), dict) else {}
+    baseline_metrics = baseline.get("metrics") if isinstance(baseline.get("metrics"), dict) else {}
+    rows: list[dict[str, Any]] = []
+    for label, metric_key in metric_keys:
+        current_value = current_metrics.get(metric_key)
+        baseline_value = baseline_metrics.get(metric_key)
+        rows.append(
+            {
+                "label": label,
+                "metric": metric_key,
+                "current": current_value,
+                "baseline": baseline_value,
+                "delta": _round_delta(current_value, baseline_value),
+            }
+        )
+    return {
+        "current_eval_run_id": current.get("eval_run_id"),
+        "current_label": current.get("label") or current.get("dataset_name") or current.get("eval_run_id"),
+        "baseline_eval_run_id": baseline.get("eval_run_id"),
+        "baseline_label": baseline.get("label") or baseline.get("dataset_name") or baseline.get("eval_run_id"),
+        "rows": rows,
+    }
+
+
 def _vector_type_dimension(value: Any) -> int | None:
     raw = str(value or "").strip().lower()
     match = re.search(r"vector\((\d+)\)", raw)
@@ -10515,6 +10582,7 @@ class PostgresKnowledgeRepository:
         run_meta: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         trace_payload = _json_dict(row.get("trace_payload"))
+        strategy_snapshot = dict((run_meta or {}).get("strategy_snapshot") or {})
         retrieval_candidates = _json_list(trace_payload.get("retrieval_candidates"))
         selected_context_rows = _json_list(trace_payload.get("selected_contexts"))
         chunk_ids = [
@@ -10553,6 +10621,36 @@ class PostgresKnowledgeRepository:
                     "candidate_trace": _json_dict(item.get("candidate_trace")),
                 }
             )
+        query_understanding = _json_dict(trace_payload.get("query_understanding"))
+        if not query_understanding:
+            query_understanding = {
+                "dictionary_hits": _json_list(trace_payload.get("dictionary_hits")),
+                "rule_expansions": _json_list(trace_payload.get("rule_expansions")),
+                "llm_expansions": _json_list(trace_payload.get("llm_expansions")),
+                "prf_expansions": _json_list(trace_payload.get("prf_expansions")),
+                "hard_filter_sources": _json_dict(trace_payload.get("hard_filter_sources")),
+                "applied_hard_filters": _json_dict(trace_payload.get("applied_hard_filters")),
+                "applied_soft_signals": _json_dict(trace_payload.get("applied_soft_signals")),
+            }
+        candidate_funnel = _json_dict(trace_payload.get("candidate_funnel"))
+        if not candidate_funnel:
+            candidate_funnel = {
+                "first_pass_candidate_count": trace_payload.get("first_pass_candidate_count"),
+                "second_pass_candidate_count": trace_payload.get("second_pass_candidate_count"),
+                "vector_candidates_count": trace_payload.get("vector_candidates_count"),
+                "bm25_candidates_count": trace_payload.get("bm25_candidates_count"),
+                "reranked_candidates_count": trace_payload.get("reranked_candidates_count"),
+                "selected_context_count": len(selected_contexts),
+            }
+        judge_votes = _json_list(row.get("judge_votes")) or _json_list(trace_payload.get("judge_votes"))
+        judge_summary = {
+            "judge_models": list((run_meta or {}).get("judge_models") or []),
+            "judge_vote_count": len(judge_votes),
+            "judge_error_rate": row.get("judge_error_rate"),
+            "judge_disagreement_flag": bool(row.get("judge_disagreement_flag"))
+            if row.get("judge_disagreement_flag") is not None
+            else bool(trace_payload.get("judge_disagreement_flag")),
+        }
         payload = {
             "sample_source": "benchmark",
             "eval_run_id": row.get("eval_run_id"),
@@ -10662,7 +10760,11 @@ class PostgresKnowledgeRepository:
             "authoritative_source_used": row.get("authoritative_source_used"),
             "citation_present": row.get("citation_present"),
             "unsupported_claim_avoidance": row.get("unsupported_claim_avoidance"),
-            "judge_votes": _json_list(row.get("judge_votes")),
+            "judge_votes": judge_votes,
+            "query_understanding": query_understanding,
+            "candidate_funnel": candidate_funnel,
+            "judge_summary": judge_summary,
+            "strategy_snapshot": strategy_snapshot,
         }
         if not payload["answer_citations"] and payload["cited_chunk_ids"]:
             derived_citations: list[dict[str, Any]] = []
@@ -11873,11 +11975,14 @@ class PostgresKnowledgeRepository:
                 "case_execution_error_rate": case_execution_error_rate,
             }
             run["metrics"] = benchmark_metrics
+            run["diagnostics"] = _benchmark_run_diagnostics(case_rows)
             gate_runs.append({"eval_run_id": eval_run_id, "metrics": benchmark_metrics})
         session_gate = build_session_gate(gate_runs)
         payload["session_gate"] = session_gate
         payload["gate_status"] = session_gate.get("overall_status")
         payload["gate_failure_dimensions"] = list(session_gate.get("failure_dimensions") or [])
+        payload["run_history"] = [dict(item) for item in runs]
+        payload["run_comparison"] = _benchmark_run_comparison(runs)
         return payload
 
     def _category_pass_rows(self, candidate_cases: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:

@@ -524,6 +524,36 @@ code {
   margin-bottom: 18px;
 }
 
+.benchmark-run-history,
+.benchmark-run-comparison {
+  display: grid;
+  gap: 16px;
+}
+
+.benchmark-run-history-list {
+  display: grid;
+  gap: 18px;
+}
+
+.benchmark-run-card {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid var(--line);
+}
+
+.benchmark-distribution-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.benchmark-distribution-card {
+  min-width: 0;
+}
+
 .sample-item,
 .context-card,
 .review-item {
@@ -823,6 +853,24 @@ code {
   min-width: 0;
 }
 
+.case-detail-diagnostic-grid,
+.case-detail-funnel-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.case-detail-code-block {
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  background: rgba(23, 33, 33, 0.92);
+  color: #fef7e8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .detail-subsection-header {
   display: flex;
   justify-content: space-between;
@@ -987,7 +1035,10 @@ code {
   .review-form-grid,
   .hero-actions,
   .two-column-grid,
-  .three-column-grid {
+  .three-column-grid,
+  .benchmark-distribution-grid,
+  .case-detail-diagnostic-grid,
+  .case-detail-funnel-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1021,7 +1072,10 @@ code {
   .review-form-grid,
   .hero-actions,
   .two-column-grid,
-  .three-column-grid {
+  .three-column-grid,
+  .benchmark-distribution-grid,
+  .case-detail-diagnostic-grid,
+  .case-detail-funnel-grid {
     grid-template-columns: 1fr;
   }
 

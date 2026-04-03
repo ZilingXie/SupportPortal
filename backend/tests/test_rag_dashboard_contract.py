@@ -160,6 +160,21 @@ class RagDashboardContractTests(unittest.TestCase):
         ]:
             self.assertIn(marker, source)
 
+    def test_dashboard_repository_exposes_run_centric_benchmark_diagnostics(self) -> None:
+        source = Path("backend/repositories/knowledge_repository.py").read_text(encoding="utf-8")
+        for marker in [
+            "failure_stage_distribution",
+            "root_cause_distribution",
+            "category_distribution",
+            "query_type_distribution",
+            "source_type_distribution",
+            "query_understanding",
+            "candidate_funnel",
+            "judge_summary",
+            "strategy_snapshot",
+        ]:
+            self.assertIn(marker, source)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1617,3 +1617,78 @@ For each new entry, record:
   - `python3 -m py_compile backend/main.py backend/rag_api.py backend/repositories/knowledge_repository.py backend/services/rag_benchmark.py backend/services/rag_benchmark_runner.py backend/services/rag_benchmark_session.py scripts/run_rag_benchmark.py scripts/run_rag_benchmark_session.py`
   - `node --check ui/dashboard-ui/rag/app.js`
   - `git diff --check`
+
+## 2026-04-02 - Add context budgeting and conditional evidence compression to RAG
+
+- Summary: Added a formal context-budget layer ahead of answer generation so RAG now estimates prompt budget, extracts query-focused evidence spans, conditionally compresses oversized candidate sets, and passes one shared packed-evidence bundle to both the answer model and the post-RAG sufficiency judge.
+- Reason: Query Expansion V2 improved recall, but fixed top-k context packing still risked overflowing the model window, diluting attention with redundant chunks, and forcing the answer/judge stages to reason over different evidence payloads. This change makes context packing budget-aware and keeps both downstream stages aligned on the same compressed evidence.
+- Affected files or config:
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `backend/rag_api.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/services/prompts/__init__.py`
+  - `backend/services/prompts/rag_context_compression.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/services/rag_context_budget.py`
+  - `backend/services/rag_evidence_summary.py`
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_context_budget.py`
+  - `backend/tests/test_rag_evidence_summary.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/feature_list.md`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No vector reset, ingestion backfill, or schema migration was introduced.
+  - Live RAG traces and persisted `query_understanding_meta` now record context-window, output reserve, buffer, raw-context estimate, packed-context estimate, compression trigger reason, compression mode/model, and extractive/packed evidence counts.
+  - The answer stage and sufficiency judge now both consume the same packed evidence payload while preserving original chunk ids and citation targets for traceability.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_context_budget.py backend/tests/test_rag_qa.py backend/tests/test_rag_evidence_summary.py backend/tests/test_prompt_modules.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_llm_profiles.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/rag_api.py backend/services/llm_profiles.py backend/services/prompts/rag_context_compression.py backend/services/rag_context_budget.py backend/services/rag_evidence_summary.py backend/services/rag_benchmark_runner.py backend/services/rag_qa.py backend/tests/test_rag_context_budget.py backend/tests/test_rag_evidence_summary.py backend/tests/test_prompt_modules.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_rag_qa.py backend/tests/test_llm_profiles.py`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health`
+
+## 2026-04-03 - Add diagnostic-first benchmark attribution and run-centric RAG dashboard views
+
+- Summary: Expanded the offline benchmark and dashboard pipeline from score-only reporting to diagnostic-first attribution, including finer failure-stage taxonomy, richer run strategy snapshots, case-level query-understanding and candidate-funnel traces, and run-centric dashboard views for benchmark history, session comparisons, diagnostic distributions, and deeper case drill-downs.
+- Reason: The prior benchmark workbench could show outcomes, but it still took too much manual interpretation to answer whether a regression came from query understanding, retrieval, rerank, context selection, generation, or judge instability. The dashboard also lacked a first-class “every benchmark run is visible and comparable” workflow.
+- Affected files or config:
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_rag_benchmark.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_benchmark_session.py`
+  - `backend/tests/test_rag_dashboard_contract.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `backend/tests/test_run_rag_benchmark_session_cli.py`
+  - `ui/dashboard-ui/rag/app.js`
+  - `ui/dashboard-ui/rag/styles.css`
+  - `docs/feature_list.md`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No vector reset, ingestion backfill, embedding change, or retrieval algorithm change.
+  - Benchmark case traces now persist additional diagnostic metadata such as query-understanding signals, hard-filter provenance, candidate funnel counts, judge disagreement summaries, and richer run strategy snapshots.
+  - Benchmark session payloads now include run-level diagnostic distributions and run-to-baseline comparison summaries for dashboard visualization.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_benchmark.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_rag_scorecard_repository.py backend/tests/test_rag_benchmark_session.py backend/tests/test_run_rag_benchmark_session_cli.py backend/tests/test_dashboard_ui_contract.py backend/tests/test_rag_dashboard_contract.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_benchmark_runner.py backend/tests/test_rag_scorecard_repository.py backend/tests/test_dashboard_ui_contract.py backend/tests/test_rag_dashboard_contract.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_benchmark_runner.py backend/repositories/knowledge_repository.py`
+  - `node --check ui/dashboard-ui/rag/app.js`
+  - `git diff --check`
+  - `scripts/workflow/link_worktree_env.sh /Users/xieziling/.config/superpowers/worktrees/SupportPortal/rag-benchmark-diagnostic-dashboard`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health`
+  - `curl -sS 'http://localhost:8080/api/dashboard/rag/scorecard?range=30d'`
+  - `python scripts/run_rag_benchmark_session.py --session-name "Diagnostic Dashboard Baseline"` was started as `BSESS-C3A50AADB12E`, produced live diagnostic execution signals including `RAG structured answer invalid, using extractive fallback.` and `Query rewrite failed: query_expansion_request_failed: The read operation timed out`, then was manually aborted and marked `failed` because the full 3-dataset session exceeded the synchronous verification window for this implementation turn.

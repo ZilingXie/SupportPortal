@@ -444,6 +444,56 @@ class DashboardUiContractTests(unittest.TestCase):
         ]:
             self.assertIn(marker, js_source)
 
+    def test_benchmark_session_panel_exposes_run_history_comparison_and_distributions(self) -> None:
+        js_source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
+        css_source = Path("ui/dashboard-ui/rag/styles.css").read_text(encoding="utf-8")
+
+        for marker in [
+            "Run History",
+            "Run Comparison",
+            "Failure Stage Distribution",
+            "Root Cause Distribution",
+            "Category Slice",
+            "Query Type Slice",
+            "Source Type Slice",
+            "buildRunDistributionTable",
+            "buildBenchmarkRunHistory",
+            "buildBenchmarkRunComparison",
+        ]:
+            self.assertIn(marker, js_source)
+
+        for marker in [
+            ".benchmark-run-history",
+            ".benchmark-run-comparison",
+            ".benchmark-distribution-grid",
+            ".benchmark-run-card",
+        ]:
+            self.assertIn(marker, css_source)
+
+    def test_case_detail_surface_exposes_query_understanding_and_candidate_funnel(self) -> None:
+        js_source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
+        css_source = Path("ui/dashboard-ui/rag/styles.css").read_text(encoding="utf-8")
+
+        for marker in [
+            "Query Understanding",
+            "Filter Provenance",
+            "Candidate Funnel",
+            "Judge Disagreement",
+            "Strategy Snapshot",
+            "dictionary_hits",
+            "hard_filter_sources",
+            "candidate_funnel",
+            "judge_summary",
+        ]:
+            self.assertIn(marker, js_source)
+
+        for marker in [
+            ".case-detail-diagnostic-grid",
+            ".case-detail-funnel-grid",
+            ".case-detail-code-block",
+        ]:
+            self.assertIn(marker, css_source)
+
 
 if __name__ == "__main__":
     unittest.main()

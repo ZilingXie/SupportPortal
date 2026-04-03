@@ -7,9 +7,10 @@ from unittest.mock import patch
 from backend.services.llm_profiles import (
     BENCHMARK_JUDGE_SCENARIO,
     ENGINEER_HELPER_SCENARIO,
-    QUERY_EXPANSION_SCENARIO,
     KNOWLEDGE_INGESTION_SCENARIO,
     RAG_AGENT_PLANNER_SCENARIO,
+    QUERY_EXPANSION_SCENARIO,
+    RAG_CONTEXT_COMPRESSION_SCENARIO,
     RAG_ANSWER_SCENARIO,
     RAG_SUFFICIENCY_SCENARIO,
     WEB_SEARCH_SCENARIO,
@@ -26,6 +27,7 @@ class LlmProfileTests(unittest.TestCase):
             sufficiency = resolve_model_profile(RAG_SUFFICIENCY_SCENARIO)
             query_expansion = resolve_model_profile(QUERY_EXPANSION_SCENARIO)
             planner = resolve_model_profile(RAG_AGENT_PLANNER_SCENARIO)
+            compression = resolve_model_profile(RAG_CONTEXT_COMPRESSION_SCENARIO)
             engineer = resolve_model_profile(ENGINEER_HELPER_SCENARIO)
             ingestion = resolve_model_profile(KNOWLEDGE_INGESTION_SCENARIO)
 
@@ -51,6 +53,11 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(planner.api_mode, "openai_responses")
         self.assertEqual(planner.model, "gpt-5.4-mini")
         self.assertEqual(planner.reasoning_effort, "low")
+
+        self.assertEqual(compression.provider, "openai")
+        self.assertEqual(compression.api_mode, "openai_responses")
+        self.assertEqual(compression.model, "gpt-5.4-mini")
+        self.assertEqual(compression.reasoning_effort, "low")
 
         self.assertEqual(engineer.provider, "openai")
         self.assertEqual(engineer.api_mode, "openai_responses")
