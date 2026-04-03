@@ -4,29 +4,6 @@ from collections import OrderedDict
 from typing import Any
 
 
-_DEFAULT_PRICING: dict[tuple[str, str], dict[str, float]] = {
-    ("openai", "gpt-5.4"): {
-        "input_per_1k": 0.002,
-        "output_per_1k": 0.008,
-    },
-    ("openai", "gpt-5.4-mini"): {
-        "input_per_1k": 0.0004,
-        "output_per_1k": 0.0016,
-    },
-    ("siliconflow", "Qwen/Qwen3.5-397B-A17B"): {
-        "input_per_1k": 0.0006,
-        "output_per_1k": 0.0006,
-    },
-    ("siliconflow", "deepseek-ai/DeepSeek-V3.2"): {
-        "input_per_1k": 0.0008,
-        "output_per_1k": 0.0008,
-    },
-    ("siliconflow", "BAAI/bge-m3"): {
-        "embedding_per_1k": 0.0001,
-    },
-}
-
-
 def _clean_text(value: Any) -> str:
     return " ".join(str(value or "").split()).strip()
 
@@ -43,12 +20,6 @@ def _safe_float(value: Any) -> float:
         return float(value or 0.0)
     except (TypeError, ValueError):
         return 0.0
-
-
-def _pricing_for(provider: str, model: str) -> dict[str, float] | None:
-    key = (_clean_text(provider).lower(), _clean_text(model))
-    pricing = _DEFAULT_PRICING.get(key)
-    return dict(pricing) if pricing is not None else None
 
 
 def build_usage_ledger_entry(
@@ -74,44 +45,6 @@ def build_usage_ledger_entry(
     input_token_count = _safe_int(input_tokens if input_tokens is not None else prompt_token_count)
     output_token_count = _safe_int(output_tokens if output_tokens is not None else completion_token_count)
     embedding_token_count = _safe_int(embedding_tokens)
-    pricing = _pricing_for(normalized_provider, normalized_model)
-
-    known_cost: float | None = 0.0
-    unknown_cost = False
-    if pricing is None:
-        if any(
-            [
-                input_token_count,
-                output_token_count,
-                prompt_token_count,
-                completion_token_count,
-                embedding_token_count,
-            ]
-        ):
-            known_cost = None
-            unknown_cost = True
-    else:
-        if input_token_count or prompt_token_count:
-            rate = pricing.get("input_per_1k")
-            if rate is None:
-                known_cost = None
-                unknown_cost = True
-            elif known_cost is not None:
-                known_cost += (prompt_token_count / 1000.0) * _safe_float(rate)
-        if output_token_count or completion_token_count:
-            rate = pricing.get("output_per_1k")
-            if rate is None:
-                known_cost = None
-                unknown_cost = True
-            elif known_cost is not None:
-                known_cost += (completion_token_count / 1000.0) * _safe_float(rate)
-        if embedding_token_count:
-            rate = pricing.get("embedding_per_1k")
-            if rate is None:
-                known_cost = None
-                unknown_cost = True
-            elif known_cost is not None:
-                known_cost += (embedding_token_count / 1000.0) * _safe_float(rate)
     return {
         "provider": normalized_provider,
         "model": normalized_model,
@@ -125,8 +58,6 @@ def build_usage_ledger_entry(
         "tool_tokens": _safe_int(tool_tokens),
         "embedding_tokens": embedding_token_count,
         "unknown_usage_fields": list(unknown_usage_fields or []),
-        "known_cost": None if known_cost is None else round(known_cost, 6),
-        "unknown_cost": bool(unknown_cost),
     }
 
 
@@ -140,8 +71,6 @@ def aggregate_usage_ledger(entries: list[dict[str, Any]] | tuple[dict[str, Any],
         "total_reasoning_tokens": 0,
         "total_tool_tokens": 0,
         "total_embedding_tokens": 0,
-        "known_cost_total": 0.0,
-        "unknown_cost_present": False,
     }
     grouped: OrderedDict[tuple[str, str], dict[str, Any]] = OrderedDict()
     ledger = [dict(item) for item in entries or [] if isinstance(item, dict)]
@@ -154,10 +83,6 @@ def aggregate_usage_ledger(entries: list[dict[str, Any]] | tuple[dict[str, Any],
         totals["total_reasoning_tokens"] += _safe_int(entry.get("reasoning_tokens"))
         totals["total_tool_tokens"] += _safe_int(entry.get("tool_tokens"))
         totals["total_embedding_tokens"] += _safe_int(entry.get("embedding_tokens"))
-        if entry.get("unknown_cost"):
-            totals["unknown_cost_present"] = True
-        if entry.get("known_cost") is not None:
-            totals["known_cost_total"] += _safe_float(entry.get("known_cost"))
         provider = _clean_text(entry.get("provider")).lower()
         model = _clean_text(entry.get("model"))
         group = grouped.setdefault(
@@ -168,17 +93,11 @@ def aggregate_usage_ledger(entries: list[dict[str, Any]] | tuple[dict[str, Any],
                 "input_tokens": 0,
                 "output_tokens": 0,
                 "embedding_tokens": 0,
-                "known_cost": 0.0,
-                "unknown_cost": False,
             },
         )
         group["input_tokens"] += _safe_int(entry.get("input_tokens"))
         group["output_tokens"] += _safe_int(entry.get("output_tokens"))
         group["embedding_tokens"] += _safe_int(entry.get("embedding_tokens"))
-        if entry.get("known_cost") is not None:
-            group["known_cost"] += _safe_float(entry.get("known_cost"))
-        if entry.get("unknown_cost"):
-            group["unknown_cost"] = True
     return {
         "entries": ledger,
         "total_input_tokens": totals["total_input_tokens"],
@@ -189,16 +108,7 @@ def aggregate_usage_ledger(entries: list[dict[str, Any]] | tuple[dict[str, Any],
         "total_reasoning_tokens": totals["total_reasoning_tokens"],
         "total_tool_tokens": totals["total_tool_tokens"],
         "total_embedding_tokens": totals["total_embedding_tokens"],
-        "known_cost_total": round(float(totals["known_cost_total"]), 6),
-        "unknown_cost_present": bool(totals["unknown_cost_present"]),
-        "cost_by_model": [
-            {
-                **item,
-                "known_cost": round(_safe_float(item.get("known_cost")), 6),
-                "unknown_cost": bool(item.get("unknown_cost")),
-            }
-            for item in grouped.values()
-        ],
+        "token_by_model": [dict(item) for item in grouped.values()],
     }
 
 

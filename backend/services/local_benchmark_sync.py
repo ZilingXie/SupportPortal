@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -31,6 +32,14 @@ LOCAL_BENCHMARK_SPECS: tuple[dict[str, Any], ...] = (
 
 def _clean_text(value: Any) -> str:
     return " ".join(str(value or "").split()).strip()
+
+
+def benchmark_content_version(dataset_path: str | Path) -> str:
+    path = Path(dataset_path).expanduser().resolve()
+    if not path.exists() or not path.is_file():
+        return path.stem
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+    return f"sha256:{digest}"
 
 
 def _difficulty_for_case(case: BenchmarkCase) -> str:
@@ -140,17 +149,18 @@ def sync_local_benchmark_specs(
     for spec in specs:
         benchmark_path = Path(spec["path"]).expanduser().resolve()
         dataset_name = _clean_text(spec.get("dataset_name")) or benchmark_path.stem
+        benchmark_version = _clean_text(spec.get("benchmark_version")) or benchmark_content_version(benchmark_path)
         cases = load_benchmark_cases(benchmark_path)
         items = [benchmark_case_to_dataset_item(case, dataset_path=benchmark_path) for case in cases]
         sync_result = repository.upsert_imported_benchmark_dataset(
             dataset_name=dataset_name,
-            benchmark_version=benchmark_path.stem,
+            benchmark_version=benchmark_version,
             question_language="en",
             items=items,
         )
         result_payload = dict(sync_result)
         result_payload["dataset_name"] = dataset_name
-        result_payload["benchmark_version"] = benchmark_path.stem
+        result_payload["benchmark_version"] = benchmark_version
         result_payload["source_path"] = str(benchmark_path)
         result_payload["label"] = _clean_text(spec.get("label")) or dataset_name
         result_payload["case_count"] = len(cases)

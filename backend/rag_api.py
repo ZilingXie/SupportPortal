@@ -22,7 +22,6 @@ from backend.repositories.knowledge_repository import (
 )
 from backend.services.embedding_provider import (
     DEFAULT_PGVECTOR_TABLE,
-    embedding_external_cost_per_1k,
     embedding_model_id,
     embedding_provider_name,
 )
@@ -586,7 +585,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
                     "prompt_tokens": 0,
                     "completion_tokens": 0,
                     "embedding_tokens": 0,
-                    "avg_cost_per_query": usage_summary["known_cost_total"],
+                    "avg_cost_per_query": None,
                     "confidence_score": 0.0,
                     "embedding_provider": _knowledge_embedding_provider(),
                     "embedding_model": _knowledge_embedding_model(),
@@ -676,7 +675,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
                     "prompt_tokens": 0,
                     "completion_tokens": 0,
                     "embedding_tokens": 0,
-                    "avg_cost_per_query": usage_summary["known_cost_total"],
+                    "avg_cost_per_query": None,
                     "confidence_score": 0.0,
                     "embedding_provider": _knowledge_embedding_provider(),
                     "embedding_model": _knowledge_embedding_model(),
@@ -808,7 +807,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             "prompt_tokens": trace.prompt_tokens,
             "completion_tokens": trace.completion_tokens,
             "embedding_tokens": trace.embedding_tokens,
-            "avg_cost_per_query": usage_summary["known_cost_total"],
+            "avg_cost_per_query": None,
             "confidence_score": trace.confidence_score,
             "embedding_provider": trace.embedding_provider,
             "embedding_model": trace.embedding_model,

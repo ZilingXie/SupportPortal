@@ -274,6 +274,7 @@ class AgenticRoundResult:
     bm25_latency_ms: float = 0.0
     keyword_latency_ms: float = 0.0
     rerank_latency_ms: float = 0.0
+    used_seed_tools: list[str] = field(default_factory=list)
 
 
 def _feature_flag_enabled(name: str, default: bool = True) -> bool:
@@ -864,6 +865,7 @@ def _execute_agentic_round(
     query_understanding: QueryUnderstandingResult | None,
     ticket_context: list[dict[str, str]] | None,
     recovery_action: str | None = None,
+    seed_tool_results: dict[str, list[RetrievedChunk]] | None = None,
 ) -> AgenticRoundResult:
     tool_names = _agentic_round_tools(plan, round_index=round_index, recovery_action=recovery_action)
     query_variants = _agentic_round_variants(
@@ -882,6 +884,7 @@ def _execute_agentic_round(
     keyword_latency_ms = 0.0
     variant_config = dict(config)
     variant_config["_retrieval_plan"] = retrieval_plan
+    used_seed_tools: list[str] = []
 
     for tool_name in tool_names:
         family = _tool_family(tool_name)
@@ -889,58 +892,65 @@ def _execute_agentic_round(
         family_bucket_labels: set[str] = set()
         for query_kind, query_text in query_variants:
             current_tool_label = tool_name
-            started_at = time.perf_counter()
-            try:
-                if family == "vector":
-                    raw_chunks = _retrieve_chunks(
-                        query_text,
-                        variant_config,
-                        limit=int(config.get("vector_candidate_k") or config.get("top_k") or 5),
-                        index_role=index_role,
-                    )
-                    vector_latency_ms += (time.perf_counter() - started_at) * 1000
-                elif family == "bm25":
-                    raw_chunks = _retrieve_bm25_chunks(
-                        query_text,
-                        variant_config,
-                        limit=int(config.get("bm25_candidate_k") or config.get("top_k") or 5),
-                        index_role=index_role,
-                    )
-                    bm25_latency_ms += (time.perf_counter() - started_at) * 1000
-                elif family == "fts":
-                    raw_chunks = _retrieve_fts_chunks(
-                        query_text,
-                        variant_config,
-                        limit=int(config.get("keyword_candidate_k") or config.get("top_k") or 5),
-                        index_role=index_role,
-                    )
-                    bm25_latency_ms += (time.perf_counter() - started_at) * 1000
-                else:
-                    raw_chunks = _retrieve_keyword_chunks(
-                        query_text,
-                        variant_config,
-                        limit=int(config.get("keyword_candidate_k") or config.get("top_k") or 5),
-                        index_role=index_role,
-                    )
-                    keyword_latency_ms += (time.perf_counter() - started_at) * 1000
-            except Exception as exc:
-                if family not in {"bm25", "fts"}:
-                    logger.warning("RAG %s retrieval failed for %s query: %s", tool_name, query_kind, exc)
-                    continue
-                logger.warning("RAG %s retrieval failed for %s query, trying keyword fallback: %s", tool_name, query_kind, exc)
+            seeded_chunks = None
+            if round_index == 1 and query_kind == "original":
+                seeded_chunks = list((seed_tool_results or {}).get(tool_name) or [])
+            if seeded_chunks:
+                raw_chunks = [_copy_chunk(chunk) for chunk in seeded_chunks]
+                used_seed_tools.append(tool_name)
+            else:
                 started_at = time.perf_counter()
                 try:
-                    raw_chunks = _retrieve_keyword_chunks(
-                        query_text,
-                        variant_config,
-                        limit=int(config.get("keyword_candidate_k") or config.get("top_k") or 5),
-                        index_role=index_role,
-                    )
-                    keyword_latency_ms += (time.perf_counter() - started_at) * 1000
-                    current_tool_label = f"{'s' if index_role == 'shadow' else 'p'}_keyword"
-                except Exception as keyword_exc:
-                    logger.warning("RAG keyword retrieval failed for %s query: %s", query_kind, keyword_exc)
-                    continue
+                    if family == "vector":
+                        raw_chunks = _retrieve_chunks(
+                            query_text,
+                            variant_config,
+                            limit=int(config.get("vector_candidate_k") or config.get("top_k") or 5),
+                            index_role=index_role,
+                        )
+                        vector_latency_ms += (time.perf_counter() - started_at) * 1000
+                    elif family == "bm25":
+                        raw_chunks = _retrieve_bm25_chunks(
+                            query_text,
+                            variant_config,
+                            limit=int(config.get("bm25_candidate_k") or config.get("top_k") or 5),
+                            index_role=index_role,
+                        )
+                        bm25_latency_ms += (time.perf_counter() - started_at) * 1000
+                    elif family == "fts":
+                        raw_chunks = _retrieve_fts_chunks(
+                            query_text,
+                            variant_config,
+                            limit=int(config.get("keyword_candidate_k") or config.get("top_k") or 5),
+                            index_role=index_role,
+                        )
+                        bm25_latency_ms += (time.perf_counter() - started_at) * 1000
+                    else:
+                        raw_chunks = _retrieve_keyword_chunks(
+                            query_text,
+                            variant_config,
+                            limit=int(config.get("keyword_candidate_k") or config.get("top_k") or 5),
+                            index_role=index_role,
+                        )
+                        keyword_latency_ms += (time.perf_counter() - started_at) * 1000
+                except Exception as exc:
+                    if family not in {"bm25", "fts"}:
+                        logger.warning("RAG %s retrieval failed for %s query: %s", tool_name, query_kind, exc)
+                        continue
+                    logger.warning("RAG %s retrieval failed for %s query, trying keyword fallback: %s", tool_name, query_kind, exc)
+                    started_at = time.perf_counter()
+                    try:
+                        raw_chunks = _retrieve_keyword_chunks(
+                            query_text,
+                            variant_config,
+                            limit=int(config.get("keyword_candidate_k") or config.get("top_k") or 5),
+                            index_role=index_role,
+                        )
+                        keyword_latency_ms += (time.perf_counter() - started_at) * 1000
+                        current_tool_label = f"{'s' if index_role == 'shadow' else 'p'}_keyword"
+                    except Exception as keyword_exc:
+                        logger.warning("RAG keyword retrieval failed for %s query: %s", query_kind, keyword_exc)
+                        continue
 
             for chunk in raw_chunks:
                 chunk.index_role = index_role
@@ -1055,6 +1065,7 @@ def _execute_agentic_round(
         bm25_latency_ms=round(bm25_latency_ms, 2),
         keyword_latency_ms=round(keyword_latency_ms, 2),
         rerank_latency_ms=round(rerank_latency_ms, 2),
+        used_seed_tools=list(dict.fromkeys(used_seed_tools)),
     )
 
 
@@ -2612,7 +2623,7 @@ def _invoke_llm_payload(
         temperature=0.0,
         timeout_seconds=float(config.get("request_timeout_seconds") or 20.0),
         max_retries=int(config.get("max_retries") or 1),
-        fallback_models=tuple(config.get("fallback_models") or ("gpt-4.1", "gpt-4o-mini")),
+        fallback_models=tuple(config.get("fallback_models") or ("gpt-5.4-mini",)),
     )
     try:
         response = invoke_responses_text(
@@ -2645,7 +2656,7 @@ def _invoke_llm_payload_with_trace(
         temperature=0.0,
         timeout_seconds=float(config.get("request_timeout_seconds") or 20.0),
         max_retries=int(config.get("max_retries") or 1),
-        fallback_models=tuple(config.get("fallback_models") or ("gpt-4.1", "gpt-4o-mini")),
+        fallback_models=tuple(config.get("fallback_models") or ("gpt-5.4-mini",)),
     )
     try:
         response = invoke_responses_text(
@@ -3790,12 +3801,62 @@ def _run_rag_query_agentic(
     agent_iterations: list[dict[str, Any]] = []
     total_vector_candidates = 0
     total_bm25_candidates = 0
+    query_understanding_executor: ThreadPoolExecutor | None = None
+    query_understanding_future: Future[QueryUnderstandingResult] | None = None
+    warm_original_vector_future: Future[tuple[list[RetrievedChunk], float]] | None = None
+    warm_original_bm25_future: Future[tuple[list[RetrievedChunk], float]] | None = None
+    warm_original_vector_chunks: list[RetrievedChunk] = []
+    warm_original_bm25_chunks: list[RetrievedChunk] = []
+    warm_original_vector_latency_ms = 0.0
+    warm_original_bm25_latency_ms = 0.0
+
+    def _timed_retrieve(
+        retrieval_fn: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> tuple[list[RetrievedChunk], float]:
+        started_at = time.perf_counter()
+        chunks = retrieval_fn(*args, **kwargs)
+        return list(chunks or []), round((time.perf_counter() - started_at) * 1000, 2)
 
     if query_understanding_enabled:
+        query_understanding_executor = ThreadPoolExecutor(max_workers=3)
+        warm_retrieval_config = dict(config)
+        warm_retrieval_config["_retrieval_plan"] = RetrievalPlan(semantic_query=str(message or "").strip())
+        query_understanding_future = query_understanding_executor.submit(understand_rag_query, message)
+        warm_original_vector_future = query_understanding_executor.submit(
+            _timed_retrieve,
+            _retrieve_chunks,
+            message,
+            warm_retrieval_config,
+            limit=int(config.get("vector_candidate_k") or config.get("top_k") or 5),
+            index_role="primary",
+        )
+        warm_original_bm25_future = query_understanding_executor.submit(
+            _timed_retrieve,
+            _retrieve_bm25_chunks,
+            message,
+            warm_retrieval_config,
+            limit=int(config.get("bm25_candidate_k") or config.get("top_k") or 5),
+            index_role="primary",
+        )
+    if query_understanding_future is not None:
         try:
-            query_understanding = understand_rag_query(message)
+            query_understanding = query_understanding_future.result()
         except Exception as exc:
             logger.warning("RAG query understanding failed: %s", exc)
+        if warm_original_vector_future is not None:
+            try:
+                warm_original_vector_chunks, warm_original_vector_latency_ms = warm_original_vector_future.result()
+            except Exception as exc:
+                logger.warning("Agentic warm vector retrieval failed: %s", exc)
+        if warm_original_bm25_future is not None:
+            try:
+                warm_original_bm25_chunks, warm_original_bm25_latency_ms = warm_original_bm25_future.result()
+            except Exception as exc:
+                logger.warning("Agentic warm BM25 retrieval failed: %s", exc)
+        if query_understanding_executor is not None:
+            query_understanding_executor.shutdown(wait=True)
     if query_understanding is not None:
         effective_hard_filters = dict(query_understanding.retrieval_plan.hard_filters)
         effective_soft_signals = dict(query_understanding.retrieval_plan.soft_signals)
@@ -3839,6 +3900,14 @@ def _run_rag_query_agentic(
         query_understanding=effective_query_understanding or query_understanding,
         ticket_context=ticket_context,
     )
+    warm_seed_tool_results = {
+        tool_name: chunks
+        for tool_name, chunks in {
+            "p_vec": warm_original_vector_chunks,
+            "p_bm25": warm_original_bm25_chunks,
+        }.items()
+        if chunks
+    }
 
     for round_index in [1, 2]:
         round_result = _execute_agentic_round(
@@ -3850,7 +3919,12 @@ def _run_rag_query_agentic(
             query_understanding=effective_query_understanding or query_understanding,
             ticket_context=ticket_context,
             recovery_action=recovery_action,
+            seed_tool_results=warm_seed_tool_results if round_index == 1 else None,
         )
+        if round_index == 1 and "p_vec" in round_result.used_seed_tools:
+            vector_latency_ms += warm_original_vector_latency_ms
+        if round_index == 1 and "p_bm25" in round_result.used_seed_tools:
+            bm25_latency_ms += warm_original_bm25_latency_ms
         vector_latency_ms += round_result.vector_latency_ms
         bm25_latency_ms += round_result.bm25_latency_ms
         keyword_fallback_latency_ms += round_result.keyword_latency_ms

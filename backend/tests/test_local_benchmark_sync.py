@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import unittest
@@ -91,6 +92,7 @@ class LocalBenchmarkSyncTests(unittest.TestCase):
                 encoding="utf-8",
             )
             repository = _FakeRepository()
+            expected_version = f"sha256:{hashlib.sha256(dataset_path.read_bytes()).hexdigest()[:12]}"
 
             results = sync_local_benchmark_specs(
                 repository,
@@ -106,7 +108,7 @@ class LocalBenchmarkSyncTests(unittest.TestCase):
         self.assertEqual(len(repository.calls), 1)
         call = repository.calls[0]
         self.assertEqual(call["dataset_name"], "local_route_aware_benchmark")
-        self.assertEqual(call["benchmark_version"], "local_benchmark")
+        self.assertEqual(call["benchmark_version"], expected_version)
         item = call["items"][0]
         self.assertEqual(item["dataset_item_id"], "case-1")
         self.assertEqual(item["query_type"], "trap")
@@ -122,4 +124,3 @@ class LocalBenchmarkSyncTests(unittest.TestCase):
         self.assertEqual(item["metadata"]["route_aware"], True)
         self.assertEqual(item["metadata"]["retrieval_metrics_enabled"], True)
         self.assertEqual(item["metadata"]["citation_metrics_enabled"], True)
-

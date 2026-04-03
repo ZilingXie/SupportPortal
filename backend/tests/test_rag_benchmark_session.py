@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -267,6 +268,10 @@ class RagBenchmarkSessionTests(unittest.TestCase):
                 benchmark_specs.append({"dataset_name": name, "label": name.title(), "path": path})
             repository = _FakeSessionRepository()
             calls: list[dict[str, object]] = []
+            expected_versions = [
+                f"sha256:{hashlib.sha256((Path(tmpdir) / f'{name}.json').read_bytes()).hexdigest()[:12]}"
+                for name in ["alpha", "beta", "gamma"]
+            ]
 
             def fake_run_benchmark(**kwargs):
                 calls.append(dict(kwargs))
@@ -296,7 +301,7 @@ class RagBenchmarkSessionTests(unittest.TestCase):
         self.assertTrue(all(call["benchmark_session_id"] == summary["benchmark_session_id"] for call in calls))
         self.assertEqual(
             [str(call["experiment_id"]) for call in calls],
-            ["session-a::alpha", "session-a::beta", "session-a::gamma"],
+            [f"session-a::{version}" for version in expected_versions],
         )
         self.assertEqual(repository.session_writes[0]["status"], "queued")
         self.assertEqual(repository.session_writes[-1]["status"], "completed")

@@ -1797,3 +1797,42 @@ For each new entry, record:
   - `curl -sS -X POST http://localhost:8080/api/tickets/query -H 'Content-Type: application/json' --data '{"ticket_id":"TK-TOK-001","customer_id":"C-TOK-001","message":"How do I join a channel in Agora?"}'`
   - `curl -sS -X POST http://localhost:8080/api/tickets/TK-TOK-001/request-engineer-assistance -H 'Content-Type: application/json'`
   - `curl -sS http://localhost:8080/api/engineer/tickets/TK-TOK-001-1`
+
+## 2026-04-03 - Benchmark Prep Truth Alignment
+
+- Summary:
+  - Aligned benchmark/session truth with dataset-name keyed session gates, content-hash benchmark versions, token-only Overview summaries, and run-level execution-mode/fallback diagnostics.
+  - Made agentic RAG start original-query retrieval in parallel with query-understanding so benchmark latency is no longer biased by a synchronous understanding phase.
+- Reason:
+  - The next benchmark session needed trustworthy dataset-level gate visibility, content-stable comparisons, fairer agentic-vs-legacy timing, and token-only reporting without lingering cost noise.
+- Affected files/config:
+  - `backend/services/local_benchmark_sync.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/services/rag_benchmark_session.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/token_usage.py`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/rag_api.py`
+  - `backend/main.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_local_benchmark_sync.py`
+  - `backend/tests/test_rag_benchmark_session.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `backend/tests/test_token_usage.py`
+  - `ui/dashboard-ui/app.js`
+  - `ui/dashboard-ui/rag/app.js`
+  - `docs/feature_list.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Newly synced local benchmark datasets now carry content-hash `benchmark_version` values when the source file exists, preventing stale same-filename comparisons.
+  - Benchmark/token summaries now aggregate token-only ledgers and `token_by_model` breakdowns; cost fields are no longer used by new benchmark and ticket dashboard flows.
+  - No vector reset, embedding change, ingestion backfill, or retrieval algorithm replacement was introduced in this turn.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_local_benchmark_sync.py backend/tests/test_rag_benchmark_session.py backend/tests/test_rag_scorecard_repository.py backend/tests/test_dashboard_ui_contract.py backend/tests/test_rag_qa.py backend/tests/test_token_usage.py backend/tests/test_investigation_flow.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/local_benchmark_sync.py backend/services/rag_benchmark_session.py backend/services/rag_benchmark_runner.py backend/services/rag_qa.py backend/services/token_usage.py backend/repositories/knowledge_repository.py backend/rag_api.py backend/main.py`
+  - `node --check ui/dashboard-ui/rag/app.js`
+  - `node --check ui/dashboard-ui/app.js`
+  - `git diff --check`

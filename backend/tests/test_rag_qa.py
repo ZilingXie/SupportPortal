@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -1945,6 +1946,94 @@ class RagQaHybridTests(unittest.TestCase):
             result.trace.raw_context_token_estimate,
             result.trace.packed_context_token_estimate,
         )
+
+    def test_run_rag_query_agentic_starts_original_retrieval_before_query_understanding_finishes(self) -> None:
+        vector_chunk = RetrievedChunk(
+            chunk_id="vector-1",
+            text="Vector chunk",
+            source_path="official/vector.md",
+            similarity=0.91,
+        )
+        understanding = QueryUnderstandingResult(
+            query_profile="en",
+            query_understanding_version="query-understanding-v1",
+            glossary_version="glossary-v1",
+            self_query_version="self-query-v1",
+            normalized_query="How do I join a channel?",
+            canonical_terms=[],
+            glossary_hits=[],
+            dictionary_hits=[],
+            rewritten_queries=[],
+            decomposition_subqueries=[],
+            retrieval_plan=RetrievalPlan(semantic_query="How do I join a channel?"),
+            fallback_mode="none",
+        )
+        retrieval_started = threading.Event()
+        understanding_observed_parallel_retrieval: list[bool] = []
+
+        def fake_understand(_: str):
+            understanding_observed_parallel_retrieval.append(retrieval_started.wait(timeout=0.2))
+            return understanding
+
+        def fake_retrieve_chunks(*args, **kwargs):
+            _ = args
+            _ = kwargs
+            retrieval_started.set()
+            return [vector_chunk]
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 2,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-5.4",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+            }
+            with patch("backend.services.rag_qa.get_embedding_provider", return_value=self._FakeProvider()):
+                with patch("backend.services.rag_qa.understand_rag_query", side_effect=fake_understand):
+                    with patch("backend.services.rag_qa._retrieve_chunks", side_effect=fake_retrieve_chunks):
+                        with patch("backend.services.rag_qa._retrieve_bm25_chunks", return_value=[]):
+                            with patch("backend.services.rag_qa._retrieve_fts_chunks", return_value=[]):
+                                with patch(
+                                    "backend.services.rag_qa._metadata_rerank",
+                                    return_value=([vector_chunk], {"post_rerank_count": 1, "hints": {}, "applied_filter": False, "filter_type": None}),
+                                ):
+                                    with patch("backend.services.rag_qa._rerank_chunks", return_value=[vector_chunk]):
+                                        with patch(
+                                            "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                                            return_value=(
+                                                {
+                                                    "answer": "Use joinChannel.",
+                                                    "key_steps": [],
+                                                    "citations": ["vector-1"],
+                                                    "insufficient_evidence": False,
+                                                },
+                                                10,
+                                                5,
+                                                "gpt-5.4",
+                                            ),
+                                        ):
+                                            with patch.dict(os.environ, {"RAG_AGENT_ENABLED": "1"}, clear=False):
+                                                run_rag_query("How do I join a channel?")
+
+        self.assertEqual(understanding_observed_parallel_retrieval, [True])
 
 
 if __name__ == "__main__":

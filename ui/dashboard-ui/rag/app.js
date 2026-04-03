@@ -288,26 +288,24 @@ function buildUsageSummaryPanel(title, usageSummary, options = {}) {
     total_embedding_tokens: summary.total_embedding_tokens,
     avg_input_tokens_per_case: summary.avg_input_tokens_per_case,
     avg_output_tokens_per_case: summary.avg_output_tokens_per_case,
-    known_cost_total: summary.known_cost_total,
-    unknown_cost_present: summary.unknown_cost_present,
   };
-  const costRows = Array.isArray(summary.cost_by_model) ? summary.cost_by_model : [];
+  const tokenRows = Array.isArray(summary.token_by_model) ? summary.token_by_model : [];
   return `
     <section class="panel-card">
       <div class="panel-header">
         <div>
           <h3>${escapeHtml(title)}</h3>
-          <p>${escapeHtml(options.subtitle || "Provider-aware token and cost summary.")}</p>
+          <p>${escapeHtml(options.subtitle || "Provider/model token summary.")}</p>
         </div>
       </div>
       ${buildMetricCards(cards)}
       ${
-        costRows.length
-          ? buildTable(costRows, {
-              columns: ["provider", "model", "input_tokens", "output_tokens", "embedding_tokens", "known_cost", "unknown_cost"],
-              emptyLabel: "No cost_by_model rows available for this scope.",
+        tokenRows.length
+          ? buildTable(tokenRows, {
+              columns: ["provider", "model", "input_tokens", "output_tokens", "embedding_tokens"],
+              emptyLabel: "No token_by_model rows available for this scope.",
             })
-          : '<div class="empty-state">No cost_by_model rows available for this scope.</div>'
+          : '<div class="empty-state">No token_by_model rows available for this scope.</div>'
       }
     </section>
   `;
@@ -624,7 +622,7 @@ function buildBenchmarkRunHistory(benchmarkSession) {
                   { label: "Faithfulness", value: run.metrics?.faithfulness_score },
                   { label: "Judge Error Rate", value: run.metrics?.judge_error_rate },
                   { label: "Total Input Tokens", value: usageSummary.total_input_tokens },
-                  { label: "Known Cost Total", value: usageSummary.known_cost_total },
+                  { label: "Total Output Tokens", value: usageSummary.total_output_tokens },
                 ])}
                 <div class="benchmark-distribution-grid">
                   ${buildRunDistributionTable("Failure Stage Distribution", diagnostics.failure_stage_distribution, {
@@ -632,6 +630,12 @@ function buildBenchmarkRunHistory(benchmarkSession) {
                   })}
                   ${buildRunDistributionTable("Root Cause Distribution", diagnostics.root_cause_distribution, {
                     subtitle: "Which root causes appeared most often in this run.",
+                  })}
+                  ${buildRunDistributionTable("Execution Mode Slice", diagnostics.execution_mode_distribution, {
+                    subtitle: "How often this run completed in agentic vs legacy mode.",
+                  })}
+                  ${buildRunDistributionTable("Agent Fallback Slice", diagnostics.agent_fallback_distribution, {
+                    subtitle: "How often this run required fallback into legacy mode.",
                   })}
                   ${buildRunDistributionTable("Category Slice", diagnostics.category_distribution, {
                     subtitle: "Distribution by benchmark category.",
@@ -1738,7 +1742,7 @@ function buildCaseDetailUsage(primary) {
   if (!Object.keys(usageSummary).length) {
     return "";
   }
-  return buildUsageSummaryPanel("Token & Cost Summary", usageSummary, {
+  return buildUsageSummaryPanel("Token Summary", usageSummary, {
     subtitle: "Case-level token ledger summary captured for this benchmark sample.",
   });
 }
@@ -1973,8 +1977,8 @@ function renderScorecardPage(payload) {
       ${buildMetricCards(summary.cards || {})}
     </section>
     ${buildBenchmarkSessionPanel(payload.benchmark_session)}
-    ${buildUsageSummaryPanel(overviewUsageSummary.title || "Token & Cost Summary", overviewUsageSummary.cards || {}, {
-      subtitle: "Overview token and cost summary for the current candidate benchmark run.",
+    ${buildUsageSummaryPanel(overviewUsageSummary.title || "Token Summary", overviewUsageSummary.cards || {}, {
+      subtitle: "Overview token summary for the current candidate benchmark run.",
     })}
     <div class="three-column-grid">
       <section class="panel-card">

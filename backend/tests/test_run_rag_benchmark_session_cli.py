@@ -59,6 +59,10 @@ class RunRagBenchmarkSessionCliTests(unittest.TestCase):
         output = stdout.getvalue()
         self.assertIn("Benchmark session: BSESS-1", output)
         self.assertIn("Previous session: BSESS-0", output)
+        self.assertIn(
+            "Session protocol: Canonical + Mixed + Real User (content-hash benchmark versions)",
+            output,
+        )
         self.assertIn("Improvements since previous benchmark session:", output)
         self.assertIn("Eval run: EVAL-1", output)
         self.assertIn("Dataset: agora_rag_testset_100_standrad_en", output)

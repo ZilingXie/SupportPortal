@@ -238,23 +238,20 @@ def _merge_usage_summaries(rows: list[dict[str, Any]]) -> dict[str, Any]:
     total_input_tokens = 0
     total_output_tokens = 0
     total_embedding_tokens = 0
-    total_known_cost = 0.0
-    unknown_cost_present = False
-    cost_by_model: dict[tuple[str, str], dict[str, Any]] = {}
+    token_by_model: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows:
         summary = _json_dict(row.get("usage_summary"))
         total_input_tokens += int(summary.get("total_input_tokens") or 0)
         total_output_tokens += int(summary.get("total_output_tokens") or 0)
         total_embedding_tokens += int(summary.get("total_embedding_tokens") or 0)
-        total_known_cost += _safe_float(summary.get("known_cost_total"), 0.0)
-        unknown_cost_present = unknown_cost_present or bool(summary.get("unknown_cost_present"))
-        for item in _json_list(summary.get("cost_by_model")):
+        token_breakdown = _json_list(summary.get("token_by_model")) or _json_list(summary.get("cost_by_model"))
+        for item in token_breakdown:
             if not isinstance(item, dict):
                 continue
             provider = _clean_text(item.get("provider")).lower()
             model = _clean_text(item.get("model"))
             key = (provider, model)
-            bucket = cost_by_model.setdefault(
+            bucket = token_by_model.setdefault(
                 key,
                 {
                     "provider": provider,
@@ -262,15 +259,11 @@ def _merge_usage_summaries(rows: list[dict[str, Any]]) -> dict[str, Any]:
                     "input_tokens": 0,
                     "output_tokens": 0,
                     "embedding_tokens": 0,
-                    "known_cost": 0.0,
-                    "unknown_cost": False,
                 },
             )
             bucket["input_tokens"] += int(item.get("input_tokens") or 0)
             bucket["output_tokens"] += int(item.get("output_tokens") or 0)
             bucket["embedding_tokens"] += int(item.get("embedding_tokens") or 0)
-            bucket["known_cost"] += _safe_float(item.get("known_cost"), 0.0)
-            bucket["unknown_cost"] = bucket["unknown_cost"] or bool(item.get("unknown_cost"))
     case_count = max(1, len(rows))
     return {
         "total_input_tokens": total_input_tokens,
@@ -278,16 +271,7 @@ def _merge_usage_summaries(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "total_embedding_tokens": total_embedding_tokens,
         "avg_input_tokens_per_case": round(total_input_tokens / case_count, 2),
         "avg_output_tokens_per_case": round(total_output_tokens / case_count, 2),
-        "known_cost_total": round(total_known_cost, 6),
-        "unknown_cost_present": unknown_cost_present,
-        "cost_by_model": [
-            {
-                **item,
-                "known_cost": round(_safe_float(item.get("known_cost"), 0.0), 6),
-                "unknown_cost": bool(item.get("unknown_cost")),
-            }
-            for item in cost_by_model.values()
-        ],
+        "token_by_model": [dict(item) for item in token_by_model.values()],
     }
 
 
@@ -572,6 +556,13 @@ def _benchmark_run_diagnostics(case_rows: list[dict[str, Any]]) -> dict[str, Any
     return {
         "failure_stage_distribution": _distribution_from_case_rows(case_rows, "failure_stage"),
         "root_cause_distribution": _distribution_from_case_rows(case_rows, "root_cause_label"),
+        "execution_mode_distribution": _distribution_from_case_rows(case_rows, "execution_mode"),
+        "agent_fallback_distribution": _distribution_rows(
+            [
+                "true" if bool(row.get("agent_fallback_used")) else "false"
+                for row in case_rows
+            ]
+        ),
         "category_distribution": _distribution_from_case_rows(case_rows, "category"),
         "query_type_distribution": _distribution_from_case_rows(case_rows, "query_type"),
         "source_type_distribution": _distribution_from_case_rows(case_rows, "source_type"),
@@ -620,7 +611,6 @@ def _benchmark_run_comparison(runs: list[dict[str, Any]]) -> dict[str, Any] | No
     for label, metric_key in [
         ("Total Input Tokens", "total_input_tokens"),
         ("Total Output Tokens", "total_output_tokens"),
-        ("Known Cost Total", "known_cost_total"),
     ]:
         current_value = current_usage.get(metric_key)
         baseline_value = baseline_usage.get(metric_key)
@@ -1664,9 +1654,7 @@ class DisabledKnowledgeRepository:
             "total_reasoning_tokens": 0,
             "total_tool_tokens": 0,
             "total_embedding_tokens": 0,
-            "known_cost_total": 0.0,
-            "unknown_cost_present": False,
-            "cost_by_model": [],
+            "token_by_model": [],
         }
 
     def load_dataset_benchmark_cases(
@@ -12215,7 +12203,13 @@ class PostgresKnowledgeRepository:
             run["metrics"] = benchmark_metrics
             run["usage_summary"] = benchmark_usage_summary
             run["diagnostics"] = _benchmark_run_diagnostics(case_rows)
-            gate_runs.append({"eval_run_id": eval_run_id, "metrics": benchmark_metrics})
+            gate_runs.append(
+                {
+                    "eval_run_id": eval_run_id,
+                    "dataset_name": run.get("dataset_name"),
+                    "metrics": benchmark_metrics,
+                }
+            )
         session_gate = build_session_gate(gate_runs)
         payload["session_gate"] = session_gate
         payload["gate_status"] = session_gate.get("overall_status")
@@ -12338,7 +12332,7 @@ class PostgresKnowledgeRepository:
                 },
             },
             "overview_usage_summary": {
-                "title": "Token & Cost Summary",
+                "title": "Token Summary",
                 "cards": overview_usage_summary,
             },
             "retrieval_summary": {

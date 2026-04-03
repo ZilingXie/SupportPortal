@@ -432,20 +432,27 @@ class DashboardUiContractTests(unittest.TestCase):
 
         self.assertIn('option value="external_benchmark"', html_source)
 
-    def test_rag_overview_surfaces_token_and_cost_summary(self) -> None:
+    def test_rag_overview_surfaces_token_only_summary(self) -> None:
         js_source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
 
         for marker in [
             "Overview",
-            "Token & Cost Summary",
+            "Token Summary",
             "total_input_tokens",
             "total_output_tokens",
             "total_embedding_tokens",
+            "token_by_model",
+        ]:
+            self.assertIn(marker, js_source)
+
+        for marker in [
+            "Provider-aware token and cost summary.",
+            "Known Cost Total",
             "known_cost_total",
             "unknown_cost_present",
             "cost_by_model",
         ]:
-            self.assertIn(marker, js_source)
+            self.assertNotIn(marker, js_source)
 
     def test_benchmark_session_panel_is_rendered_for_benchmark_pages(self) -> None:
         js_source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
@@ -468,6 +475,8 @@ class DashboardUiContractTests(unittest.TestCase):
             "Run Comparison",
             "Failure Stage Distribution",
             "Root Cause Distribution",
+            "Execution Mode Slice",
+            "Agent Fallback Slice",
             "Category Slice",
             "Query Type Slice",
             "Source Type Slice",
@@ -495,6 +504,9 @@ class DashboardUiContractTests(unittest.TestCase):
             "Candidate Funnel",
             "Judge Disagreement",
             "Strategy Snapshot",
+            "Execution Mode",
+            "Agent Fallback Used",
+            "Agent Fallback Reason",
             "dictionary_hits",
             "hard_filter_sources",
             "candidate_funnel",
@@ -518,9 +530,7 @@ class DashboardUiContractTests(unittest.TestCase):
             "total_input_tokens",
             "total_output_tokens",
             "total_embedding_tokens",
-            "known_cost_total",
-            "unknown_cost_present",
-            "cost_by_model",
+            "token_by_model",
         ]:
             self.assertIn(marker, js_source)
 

@@ -10,7 +10,7 @@ from backend.services.token_usage import (
 
 
 class TokenUsageTests(unittest.TestCase):
-    def test_openai_gpt_5_4_usage_entry_calculates_known_cost(self) -> None:
+    def test_openai_gpt_5_4_usage_entry_records_token_fields(self) -> None:
         entry = build_usage_ledger_entry(
             provider="openai",
             model="gpt-5.4",
@@ -25,10 +25,10 @@ class TokenUsageTests(unittest.TestCase):
         self.assertEqual(entry["model"], "gpt-5.4")
         self.assertEqual(entry["input_tokens"], 1200)
         self.assertEqual(entry["output_tokens"], 300)
-        self.assertGreater(float(entry["known_cost"] or 0.0), 0.0)
-        self.assertFalse(entry["unknown_cost"])
+        self.assertEqual(entry["prompt_tokens"], 1200)
+        self.assertEqual(entry["completion_tokens"], 300)
 
-    def test_siliconflow_usage_entry_uses_provider_qualified_pricing(self) -> None:
+    def test_siliconflow_usage_entry_preserves_provider_model_breakout(self) -> None:
         entry = build_usage_ledger_entry(
             provider="siliconflow",
             model="deepseek-ai/DeepSeek-V3.2",
@@ -39,22 +39,22 @@ class TokenUsageTests(unittest.TestCase):
 
         self.assertEqual(entry["provider"], "siliconflow")
         self.assertEqual(entry["model"], "deepseek-ai/DeepSeek-V3.2")
-        self.assertGreater(float(entry["known_cost"] or 0.0), 0.0)
-        self.assertFalse(entry["unknown_cost"])
+        self.assertEqual(entry["input_tokens"], 1000)
+        self.assertEqual(entry["output_tokens"], 500)
 
-    def test_unknown_pricing_marks_usage_as_unknown_instead_of_zero(self) -> None:
+    def test_unknown_usage_fields_are_preserved(self) -> None:
         entry = build_usage_ledger_entry(
             provider="siliconflow",
             model="unknown/model",
             stage="benchmark_judge",
             input_tokens=1000,
             output_tokens=500,
+            unknown_usage_fields=["cached_input_tokens"],
         )
 
-        self.assertIsNone(entry["known_cost"])
-        self.assertTrue(entry["unknown_cost"])
+        self.assertEqual(entry["unknown_usage_fields"], ["cached_input_tokens"])
 
-    def test_aggregate_usage_ledger_rolls_up_totals_and_provider_breakdown(self) -> None:
+    def test_aggregate_usage_ledger_rolls_up_totals_and_token_breakdown(self) -> None:
         summary = aggregate_usage_ledger(
             [
                 build_usage_ledger_entry(
@@ -80,8 +80,9 @@ class TokenUsageTests(unittest.TestCase):
 
         self.assertEqual(summary["total_input_tokens"], 1400)
         self.assertEqual(summary["total_output_tokens"], 350)
-        self.assertFalse(summary["unknown_cost_present"])
-        self.assertEqual(len(summary["cost_by_model"]), 2)
+        self.assertEqual(summary["total_prompt_tokens"], 1400)
+        self.assertEqual(summary["total_completion_tokens"], 350)
+        self.assertEqual(len(summary["token_by_model"]), 2)
 
     def test_resolve_ticket_family_identity_prefers_client_ticket_reference(self) -> None:
         summary = resolve_ticket_family_identity(
