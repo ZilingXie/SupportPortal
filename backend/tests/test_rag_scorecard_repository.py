@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 
-def _load_repository_class():
+def _load_repository_module():
     if "psycopg" not in sys.modules:
         psycopg_stub = types.ModuleType("psycopg")
         psycopg_stub.sql = types.SimpleNamespace(
@@ -33,10 +33,11 @@ def _load_repository_class():
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.PostgresKnowledgeRepository
+    return module
 
 
-PostgresKnowledgeRepository = _load_repository_class()
+knowledge_repository_module = _load_repository_module()
+PostgresKnowledgeRepository = knowledge_repository_module.PostgresKnowledgeRepository
 
 
 class RagScorecardRepositoryTests(unittest.TestCase):
@@ -255,6 +256,29 @@ class RagScorecardRepositoryTests(unittest.TestCase):
 
         self.assertEqual(baseline["experiment_id"], "canonical-latest")
         self.assertEqual(candidate["experiment_id"], "mixed-older")
+
+    def test_benchmark_run_comparison_returns_none_when_no_dataset_aligned_baseline_exists(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        session_row = {
+            "runs": [
+                {
+                    "eval_run_id": "run-canonical-current",
+                    "dataset_name": "Canonical",
+                    "benchmark_version": "canonical-v2",
+                    "is_current": True,
+                },
+                {
+                    "eval_run_id": "run-real-user-old",
+                    "dataset_name": "Real User",
+                    "benchmark_version": "real-user-v1",
+                    "is_current": False,
+                },
+            ]
+        }
+
+        comparison = knowledge_repository_module._benchmark_run_comparison(session_row["runs"])
+
+        self.assertIsNone(comparison)
 
     def test_scorecard_page_populates_baseline_and_delta_for_layers(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
@@ -570,6 +594,59 @@ class RagScorecardRepositoryTests(unittest.TestCase):
 
         self.assertEqual(payload["benchmark_session"]["benchmark_session_id"], "BSESS-1")
         session_mock.assert_called_once_with("run-canonical-latest")
+
+    def test_scorecard_page_exposes_overview_usage_summary(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        baseline = {
+            "experiment_id": "baseline",
+            "eval_run_id": "run-baseline",
+            "benchmark_version": "agora_rag_testset_100_standrad_en",
+        }
+        candidate = {
+            "experiment_id": "candidate",
+            "eval_run_id": "run-candidate",
+            "benchmark_version": "agora_rag_testset_100_standrad_en",
+        }
+
+        with patch.object(repository, "_experiment_rows", return_value=[baseline, candidate]), patch.object(
+            repository,
+            "_select_scorecard_experiment_rows",
+            side_effect=[(baseline, candidate), (baseline, candidate)],
+        ), patch.object(
+            repository,
+            "_benchmark_case_summary_rows",
+            return_value={
+                "run-baseline": {},
+                "run-candidate": {
+                    "case-1": {
+                        "avg_cost_per_query": 0.12,
+                        "usage_summary": {
+                            "total_input_tokens": 1200,
+                            "total_output_tokens": 300,
+                            "total_embedding_tokens": 100,
+                            "known_cost_total": 0.12,
+                            "unknown_cost_present": False,
+                            "cost_by_model": [
+                                {"provider": "openai", "model": "gpt-5.4", "known_cost": 0.1},
+                                {"provider": "openai", "model": "gpt-5.4-mini", "known_cost": 0.02},
+                            ],
+                        },
+                    }
+                },
+            },
+        ), patch.object(
+            repository,
+            "_sample_deltas_from_cases",
+            return_value=([], []),
+        ):
+            payload = repository._scorecard_workbench_page("7d", 7, {"limit": 20})
+
+        summary = payload["sections"]["overview_usage_summary"]["cards"]
+        self.assertEqual(summary["total_input_tokens"], 1200)
+        self.assertEqual(summary["total_output_tokens"], 300)
+        self.assertEqual(summary["total_embedding_tokens"], 100)
+        self.assertEqual(summary["known_cost_total"], 0.12)
+        self.assertFalse(summary["unknown_cost_present"])
 
     def test_benchmark_session_payload_for_eval_run_includes_gate_status(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")

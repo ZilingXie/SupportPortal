@@ -215,6 +215,13 @@ class RagQueryTrace:
     compression_model: str | None = None
     extractive_segment_count: int = 0
     packed_evidence_count: int = 0
+    packed_context_text: str | None = None
+    packed_chunk_ids: list[str] = field(default_factory=list)
+    query_expansion_usage_ledger: list[dict[str, Any]] = field(default_factory=list)
+    context_compression_usage_ledger: list[dict[str, Any]] = field(default_factory=list)
+    execution_mode: str = "legacy"
+    agent_fallback_used: bool = False
+    agent_fallback_reason: str | None = None
 
 
 @dataclass
@@ -3379,6 +3386,13 @@ def _run_rag_query_legacy(message: str, top_k: int | None = None) -> RagQueryRes
                 compression_model=None,
                 extractive_segment_count=0,
                 packed_evidence_count=0,
+                packed_context_text=None,
+                packed_chunk_ids=[],
+                query_expansion_usage_ledger=list(query_understanding.llm_usage_ledger) if query_understanding is not None else [],
+                context_compression_usage_ledger=[],
+                execution_mode="legacy",
+                agent_fallback_used=False,
+                agent_fallback_reason=None,
             )
             return RagQueryResult(answer=answer, trace=trace)
 
@@ -3597,6 +3611,13 @@ def _run_rag_query_legacy(message: str, top_k: int | None = None) -> RagQueryRes
             compression_model=packed_evidence.compression_model if packed_evidence is not None else None,
             extractive_segment_count=int(packed_evidence.extractive_segment_count) if packed_evidence is not None else 0,
             packed_evidence_count=int(packed_evidence.packed_evidence_count) if packed_evidence is not None else len(final_chunks),
+            packed_context_text=packed_evidence.prompt_context if packed_evidence is not None else _format_context(final_chunks),
+            packed_chunk_ids=list(packed_evidence.chunk_ids) if packed_evidence is not None else list(selected_chunk_ids),
+            query_expansion_usage_ledger=list(query_understanding.llm_usage_ledger) if query_understanding is not None else [],
+            context_compression_usage_ledger=list(packed_evidence.compression_usage_ledger) if packed_evidence is not None else [],
+            execution_mode="legacy",
+            agent_fallback_used=False,
+            agent_fallback_reason=None,
         )
 
     if payload is not None and _is_valid_response(payload, allowed_chunk_ids):
@@ -3987,6 +4008,13 @@ def _run_rag_query_agentic(
             compression_model=packed_evidence.compression_model if packed_evidence is not None else None,
             extractive_segment_count=int(packed_evidence.extractive_segment_count) if packed_evidence is not None else 0,
             packed_evidence_count=int(packed_evidence.packed_evidence_count) if packed_evidence is not None else len(final_chunks),
+            packed_context_text=packed_evidence.prompt_context if packed_evidence is not None else _format_context(final_chunks),
+            packed_chunk_ids=list(packed_evidence.chunk_ids) if packed_evidence is not None else list(selected_chunk_ids),
+            query_expansion_usage_ledger=list(query_understanding.llm_usage_ledger) if query_understanding is not None else [],
+            context_compression_usage_ledger=list(packed_evidence.compression_usage_ledger) if packed_evidence is not None else [],
+            execution_mode="agentic",
+            agent_fallback_used=False,
+            agent_fallback_reason=None,
         )
 
     if not final_chunks or final_judge is None or final_judge.decision == "escalate":
@@ -4156,18 +4184,35 @@ def run_rag_query(
     customer_id: str | None = None,
 ) -> RagQueryResult | None:
     if not _feature_flag_enabled("RAG_AGENT_ENABLED", True):
-        return _run_rag_query_legacy(message, top_k=top_k)
+        result = _run_rag_query_legacy(message, top_k=top_k)
+        if result is None:
+            return None
+        result.trace.execution_mode = "legacy"
+        result.trace.agent_fallback_used = False
+        result.trace.agent_fallback_reason = None
+        return result
     try:
-        return _run_rag_query_agentic(
+        result = _run_rag_query_agentic(
             message,
             top_k=top_k,
             ticket_context=ticket_context,
             ticket_id=ticket_id,
             customer_id=customer_id,
         )
+        if result is not None:
+            result.trace.execution_mode = "agentic"
+            result.trace.agent_fallback_used = False
+            result.trace.agent_fallback_reason = None
+        return result
     except Exception as exc:
         logger.warning("Agentic RAG failed, falling back to legacy flow: %s", exc)
-        return _run_rag_query_legacy(message, top_k=top_k)
+        result = _run_rag_query_legacy(message, top_k=top_k)
+        if result is None:
+            return None
+        result.trace.execution_mode = "legacy"
+        result.trace.agent_fallback_used = True
+        result.trace.agent_fallback_reason = exc.__class__.__name__ or "agentic_fallback"
+        return result
 
 
 def answer_with_rag(message: str, top_k: int | None = None) -> RagAnswer | None:

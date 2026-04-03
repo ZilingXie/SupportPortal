@@ -216,7 +216,7 @@ class DashboardUiContractTests(unittest.TestCase):
         source = Path("ui/dashboard-ui/rag/index.html").read_text(encoding="utf-8")
 
         expected_tabs = {
-            "scorecard": "Scorecard",
+            "scorecard": "Overview",
             "routing": "Routing",
             "retrieval": "Retrieval",
             "generation": "Generation",
@@ -432,6 +432,21 @@ class DashboardUiContractTests(unittest.TestCase):
 
         self.assertIn('option value="external_benchmark"', html_source)
 
+    def test_rag_overview_surfaces_token_and_cost_summary(self) -> None:
+        js_source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
+
+        for marker in [
+            "Overview",
+            "Token & Cost Summary",
+            "total_input_tokens",
+            "total_output_tokens",
+            "total_embedding_tokens",
+            "known_cost_total",
+            "unknown_cost_present",
+            "cost_by_model",
+        ]:
+            self.assertIn(marker, js_source)
+
     def test_benchmark_session_panel_is_rendered_for_benchmark_pages(self) -> None:
         js_source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
 
@@ -493,6 +508,21 @@ class DashboardUiContractTests(unittest.TestCase):
             ".case-detail-code-block",
         ]:
             self.assertIn(marker, css_source)
+
+    def test_ticket_detail_modal_exposes_token_usage_panel(self) -> None:
+        js_source = Path("ui/dashboard-ui/app.js").read_text(encoding="utf-8")
+
+        for marker in [
+            "Token Usage",
+            "canonical_ticket_id",
+            "total_input_tokens",
+            "total_output_tokens",
+            "total_embedding_tokens",
+            "known_cost_total",
+            "unknown_cost_present",
+            "cost_by_model",
+        ]:
+            self.assertIn(marker, js_source)
 
 
 if __name__ == "__main__":

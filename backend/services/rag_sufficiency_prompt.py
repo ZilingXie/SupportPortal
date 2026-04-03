@@ -21,6 +21,7 @@ def build_rag_sufficiency_user_payload(
     rag_answer: str,
     sources: list[str] | None,
     citations: list[dict[str, str]] | None,
+    packed_evidence: dict[str, Any] | None = None,
     evidence_summary: dict[str, Any] | None,
 ) -> str:
     return build_rag_sufficiency_user_prompt_v2(
@@ -31,5 +32,6 @@ def build_rag_sufficiency_user_payload(
         rag_answer=rag_answer,
         sources=sources,
         citations=citations,
+        packed_evidence=packed_evidence,
         evidence_summary=evidence_summary,
     )

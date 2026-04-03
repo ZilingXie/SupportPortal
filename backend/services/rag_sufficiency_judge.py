@@ -35,6 +35,7 @@ def judge_rag_answer_sufficiency(
     rag_answer: str,
     sources: list[str] | None,
     citations: list[dict[str, str]] | None,
+    packed_evidence: dict[str, Any] | None,
     evidence_summary: dict[str, Any] | None,
 ) -> RagSufficiencyJudgeResult:
     profile = resolve_model_profile(RAG_SUFFICIENCY_SCENARIO)
@@ -52,6 +53,7 @@ def judge_rag_answer_sufficiency(
                 rag_answer=rag_answer,
                 sources=sources,
                 citations=citations,
+                packed_evidence=packed_evidence,
                 evidence_summary=evidence_summary,
             ),
         )

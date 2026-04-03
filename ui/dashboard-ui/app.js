@@ -463,6 +463,29 @@ function buildDefinitionGrid(items) {
   `;
 }
 
+function buildTokenUsagePanel(tokenUsage) {
+  const usage = tokenUsage && typeof tokenUsage === "object" ? tokenUsage : {};
+  if (!Object.keys(usage).length) {
+    return '<div class="detail-empty-state">No token usage is available for this ticket family yet.</div>';
+  }
+  return `
+    ${buildDefinitionGrid([
+      { label: "canonical_ticket_id", value: normalizeString(usage.canonical_ticket_id) || "-" },
+      { label: "related_ticket_ids", value: Array.isArray(usage.related_ticket_ids) ? usage.related_ticket_ids.join(", ") : "-" },
+      { label: "total_input_tokens", value: formatNumber(usage.total_input_tokens) },
+      { label: "total_output_tokens", value: formatNumber(usage.total_output_tokens) },
+      { label: "total_embedding_tokens", value: formatNumber(usage.total_embedding_tokens) },
+      { label: "known_cost_total", value: formatDecimal(usage.known_cost_total, 4) },
+      { label: "unknown_cost_present", value: String(Boolean(usage.unknown_cost_present)) },
+    ])}
+    ${
+      Array.isArray(usage.cost_by_model) && usage.cost_by_model.length
+        ? `<p class="detail-note">cost_by_model: ${escapeHtml(JSON.stringify(usage.cost_by_model))}</p>`
+        : `<p class="detail-note">cost_by_model: []</p>`
+    }
+  `;
+}
+
 function renderBreakdownList(element, items) {
   if (!element) {
     return;
@@ -991,6 +1014,16 @@ function renderTicketDetail() {
             `
             : '<div class="detail-empty-state">No engineer ticket has been opened for this case.</div>'
         }
+      </section>
+
+      <section class="panel-card detail-panel">
+        <div class="panel-header">
+          <div>
+            <h3>Token Usage</h3>
+            <p>Canonical ticket-family token summary for this client ticket and any related engineer case ids.</p>
+          </div>
+        </div>
+        ${buildTokenUsagePanel(ticket.token_usage)}
       </section>
 
       <section class="panel-card detail-panel">

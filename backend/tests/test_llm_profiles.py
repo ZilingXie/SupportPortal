@@ -110,6 +110,26 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(profile.api_key, "sf-key")
         self.assertEqual(profile.base_url, "https://api.siliconflow.cn/v1")
 
+    def test_gpt_profiles_only_use_gpt_5_4_family_models(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            profiles = [
+                resolve_model_profile(WEB_SEARCH_SCENARIO),
+                resolve_model_profile(RAG_ANSWER_SCENARIO),
+                resolve_model_profile(RAG_SUFFICIENCY_SCENARIO),
+                resolve_model_profile(QUERY_EXPANSION_SCENARIO),
+                resolve_model_profile(RAG_AGENT_PLANNER_SCENARIO),
+                resolve_model_profile(RAG_CONTEXT_COMPRESSION_SCENARIO),
+                resolve_model_profile(ENGINEER_HELPER_SCENARIO),
+                resolve_model_profile(KNOWLEDGE_INGESTION_SCENARIO),
+            ]
+
+        allowed_models = {"gpt-5.4", "gpt-5.4-mini"}
+        for profile in profiles:
+            self.assertTrue(
+                set(profile.candidate_models()).issubset(allowed_models),
+                msg=f"{profile.scenario} resolved unexpected candidates: {profile.candidate_models()}",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

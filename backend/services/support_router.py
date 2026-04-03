@@ -98,6 +98,7 @@ class SupportResolution:
     execution_action: str | None = None
     tooling_profile: str | None = None
     evidence_summary: dict[str, Any] | None = None
+    packed_evidence: dict[str, Any] | None = None
 
     def as_answer_tuple(self) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
         return (

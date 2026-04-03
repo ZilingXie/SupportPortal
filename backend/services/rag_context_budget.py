@@ -16,6 +16,7 @@ from backend.services.prompts.rag_context_compression import (
     build_rag_context_compression_system_prompt,
     build_rag_context_compression_user_prompt,
 )
+from backend.services.token_usage import build_usage_ledger_entry
 
 if TYPE_CHECKING:
     from backend.services.rag_qa import RetrievedChunk
@@ -98,6 +99,7 @@ class PackedEvidence:
     compression_model: str | None
     extractive_segment_count: int
     packed_evidence_count: int
+    compression_usage_ledger: list[dict[str, Any]] = field(default_factory=list)
 
 
 def estimate_text_tokens(text: Any) -> int:
@@ -356,9 +358,9 @@ def _compress_entries_with_llm(
     entries: list[dict[str, Any]],
     available_context_tokens: int,
     compression_profile: ModelProfile,
-) -> tuple[list[dict[str, Any]] | None, str | None]:
+) -> tuple[list[dict[str, Any]] | None, str | None, dict[str, Any] | None]:
     if not entries or not compression_profile.api_key:
-        return None, None
+        return None, None, None
     try:
         response = invoke_responses_text(
             profile=compression_profile,
@@ -370,11 +372,20 @@ def _compress_entries_with_llm(
             ),
         )
     except LlmInvocationError:
-        return None, None
+        return None, None, None
+    usage_entry = build_usage_ledger_entry(
+        provider=compression_profile.provider,
+        model=compression_profile.model,
+        stage="context_compression",
+        prompt_tokens=response.prompt_tokens,
+        completion_tokens=response.completion_tokens,
+        input_tokens=response.prompt_tokens,
+        output_tokens=response.completion_tokens,
+    )
     try:
         parsed = json.loads(str(response.text or "").strip())
     except json.JSONDecodeError:
-        return None, response.model_name
+        return None, response.model_name, usage_entry
     items = parsed.get("evidence") if isinstance(parsed, dict) and isinstance(parsed.get("evidence"), list) else []
     entry_map = {str(entry.get("chunk_id") or "").strip(): entry for entry in entries}
     compressed_entries: list[dict[str, Any]] = []
@@ -392,8 +403,8 @@ def _compress_entries_with_llm(
         compressed_entry["packing_mode"] = "compressive"
         compressed_entries.append(compressed_entry)
     if not compressed_entries:
-        return None, response.model_name
-    return compressed_entries, response.model_name
+        return None, response.model_name, usage_entry
+    return compressed_entries, response.model_name, usage_entry
 
 
 def build_packed_evidence(
@@ -445,6 +456,7 @@ def build_packed_evidence(
             compression_model=None,
             extractive_segment_count=0,
             packed_evidence_count=0,
+            compression_usage_ledger=[],
         )
 
     if trigger_reason is None or not compression_enabled:
@@ -463,6 +475,7 @@ def build_packed_evidence(
             compression_model=None,
             extractive_segment_count=0,
             packed_evidence_count=len(selected_entries),
+            compression_usage_ledger=[],
         )
 
     extractive_entries: list[dict[str, Any]] = []
@@ -477,14 +490,17 @@ def build_packed_evidence(
     compression_model: str | None = None
     compression_mode = "extractive"
     packed_entries = _fit_entries_to_budget(extractive_entries, budget.available_context_tokens)
+    compression_usage_ledger: list[dict[str, Any]] = []
     if compression_enabled:
         profile = compression_profile or resolve_model_profile(RAG_CONTEXT_COMPRESSION_SCENARIO)
-        compressed_entries, compression_model = _compress_entries_with_llm(
+        compressed_entries, compression_model, usage_entry = _compress_entries_with_llm(
             question=question,
             entries=extractive_entries,
             available_context_tokens=budget.available_context_tokens,
             compression_profile=profile,
         )
+        if usage_entry:
+            compression_usage_ledger.append(usage_entry)
         if compressed_entries:
             packed_entries = _fit_entries_to_budget(compressed_entries, budget.available_context_tokens)
             compression_mode = "compressive"
@@ -508,4 +524,5 @@ def build_packed_evidence(
         compression_model=compression_model if compression_mode == "compressive" else None,
         extractive_segment_count=len(extractive_entries),
         packed_evidence_count=len(packed_entries),
+        compression_usage_ledger=compression_usage_ledger,
     )

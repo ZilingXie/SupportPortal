@@ -32,10 +32,16 @@ from backend.services.rag_benchmark import (
     build_live_review_sample,
 )
 from backend.services.rag_benchmark_session import build_session_gate
+from backend.services.llm_profiles import parse_provider_model_reference
 from backend.services.knowledge_monitoring import (
     build_empty_knowledge_metrics,
     build_knowledge_metrics_payload,
     calculate_duration_seconds,
+)
+from backend.services.token_usage import (
+    aggregate_usage_ledger,
+    build_usage_ledger_entry,
+    resolve_ticket_family_identity,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -88,11 +94,6 @@ _VALID_DASHBOARD_RANGES = {"7d": 7, "30d": 30}
 _CHUNK_STRATEGIES = {
     "official": "markdown_header_v1",
     "technical": "markdown_header_v1",
-}
-_MODEL_PRICING = {
-    "gpt-4.1": {"prompt_per_1k": 0.002, "completion_per_1k": 0.008},
-    "gpt-4.1-mini": {"prompt_per_1k": 0.0004, "completion_per_1k": 0.0016},
-    "gpt-4o-mini": {"prompt_per_1k": 0.00015, "completion_per_1k": 0.0006},
 }
 _KNOWLEDGE_BOOTSTRAP_REPOSITORY = "knowledge_repository"
 _KNOWLEDGE_BOOTSTRAP_VERSION = "2026-04-02-query-understanding-v1"
@@ -231,6 +232,63 @@ def _json_list(value: Any) -> list[Any]:
 
 def _json_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _merge_usage_summaries(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    total_input_tokens = 0
+    total_output_tokens = 0
+    total_embedding_tokens = 0
+    total_known_cost = 0.0
+    unknown_cost_present = False
+    cost_by_model: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        summary = _json_dict(row.get("usage_summary"))
+        total_input_tokens += int(summary.get("total_input_tokens") or 0)
+        total_output_tokens += int(summary.get("total_output_tokens") or 0)
+        total_embedding_tokens += int(summary.get("total_embedding_tokens") or 0)
+        total_known_cost += _safe_float(summary.get("known_cost_total"), 0.0)
+        unknown_cost_present = unknown_cost_present or bool(summary.get("unknown_cost_present"))
+        for item in _json_list(summary.get("cost_by_model")):
+            if not isinstance(item, dict):
+                continue
+            provider = _clean_text(item.get("provider")).lower()
+            model = _clean_text(item.get("model"))
+            key = (provider, model)
+            bucket = cost_by_model.setdefault(
+                key,
+                {
+                    "provider": provider,
+                    "model": model,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "embedding_tokens": 0,
+                    "known_cost": 0.0,
+                    "unknown_cost": False,
+                },
+            )
+            bucket["input_tokens"] += int(item.get("input_tokens") or 0)
+            bucket["output_tokens"] += int(item.get("output_tokens") or 0)
+            bucket["embedding_tokens"] += int(item.get("embedding_tokens") or 0)
+            bucket["known_cost"] += _safe_float(item.get("known_cost"), 0.0)
+            bucket["unknown_cost"] = bucket["unknown_cost"] or bool(item.get("unknown_cost"))
+    case_count = max(1, len(rows))
+    return {
+        "total_input_tokens": total_input_tokens,
+        "total_output_tokens": total_output_tokens,
+        "total_embedding_tokens": total_embedding_tokens,
+        "avg_input_tokens_per_case": round(total_input_tokens / case_count, 2),
+        "avg_output_tokens_per_case": round(total_output_tokens / case_count, 2),
+        "known_cost_total": round(total_known_cost, 6),
+        "unknown_cost_present": unknown_cost_present,
+        "cost_by_model": [
+            {
+                **item,
+                "known_cost": round(_safe_float(item.get("known_cost"), 0.0), 6),
+                "unknown_cost": bool(item.get("unknown_cost")),
+            }
+            for item in cost_by_model.values()
+        ],
+    }
 
 
 def _benchmark_session_payload_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
@@ -522,7 +580,16 @@ def _benchmark_run_diagnostics(case_rows: list[dict[str, Any]]) -> dict[str, Any
 
 def _benchmark_run_comparison(runs: list[dict[str, Any]]) -> dict[str, Any] | None:
     current = next((run for run in runs if run.get("is_current")), None)
-    baseline = next((run for run in runs if not run.get("is_current")), None)
+    baseline = next(
+        (
+            run
+            for run in runs
+            if not run.get("is_current")
+            and _clean_text(run.get("dataset_name")) == _clean_text((current or {}).get("dataset_name"))
+            and _clean_text(run.get("benchmark_version")) == _clean_text((current or {}).get("benchmark_version"))
+        ),
+        None,
+    )
     if current is None or baseline is None:
         return None
     metric_keys = [
@@ -535,10 +602,28 @@ def _benchmark_run_comparison(runs: list[dict[str, Any]]) -> dict[str, Any] | No
     ]
     current_metrics = current.get("metrics") if isinstance(current.get("metrics"), dict) else {}
     baseline_metrics = baseline.get("metrics") if isinstance(baseline.get("metrics"), dict) else {}
+    current_usage = current.get("usage_summary") if isinstance(current.get("usage_summary"), dict) else {}
+    baseline_usage = baseline.get("usage_summary") if isinstance(baseline.get("usage_summary"), dict) else {}
     rows: list[dict[str, Any]] = []
     for label, metric_key in metric_keys:
         current_value = current_metrics.get(metric_key)
         baseline_value = baseline_metrics.get(metric_key)
+        rows.append(
+            {
+                "label": label,
+                "metric": metric_key,
+                "current": current_value,
+                "baseline": baseline_value,
+                "delta": _round_delta(current_value, baseline_value),
+            }
+        )
+    for label, metric_key in [
+        ("Total Input Tokens", "total_input_tokens"),
+        ("Total Output Tokens", "total_output_tokens"),
+        ("Known Cost Total", "known_cost_total"),
+    ]:
+        current_value = current_usage.get(metric_key)
+        baseline_value = baseline_usage.get(metric_key)
         rows.append(
             {
                 "label": label,
@@ -553,6 +638,8 @@ def _benchmark_run_comparison(runs: list[dict[str, Any]]) -> dict[str, Any] | No
         "current_label": current.get("label") or current.get("dataset_name") or current.get("eval_run_id"),
         "baseline_eval_run_id": baseline.get("eval_run_id"),
         "baseline_label": baseline.get("label") or baseline.get("dataset_name") or baseline.get("eval_run_id"),
+        "dataset_name": current.get("dataset_name"),
+        "benchmark_version": current.get("benchmark_version"),
         "rows": rows,
     }
 
@@ -981,6 +1068,14 @@ class KnowledgeRepository(Protocol):
         ...
 
     def get_dataset_snapshot(self, dataset_id: str) -> dict[str, Any] | None:
+        ...
+
+    def rag_ticket_family_token_summary(
+        self,
+        *,
+        ticket_id: str,
+        client_ticket_id: str | None = None,
+    ) -> dict[str, Any]:
         ...
 
     def load_dataset_benchmark_cases(
@@ -1545,6 +1640,34 @@ class DisabledKnowledgeRepository:
     def get_dataset_snapshot(self, dataset_id: str) -> dict[str, Any] | None:
         _ = dataset_id
         return None
+
+    def rag_ticket_family_token_summary(
+        self,
+        *,
+        ticket_id: str,
+        client_ticket_id: str | None = None,
+    ) -> dict[str, Any]:
+        identity = resolve_ticket_family_identity(
+            {
+                "ticket_id": ticket_id,
+                "client_ticket_id": client_ticket_id,
+            }
+        )
+        return {
+            **identity,
+            "entries": [],
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_prompt_tokens": 0,
+            "total_completion_tokens": 0,
+            "total_cached_input_tokens": 0,
+            "total_reasoning_tokens": 0,
+            "total_tool_tokens": 0,
+            "total_embedding_tokens": 0,
+            "known_cost_total": 0.0,
+            "unknown_cost_present": False,
+            "cost_by_model": [],
+        }
 
     def load_dataset_benchmark_cases(
         self,
@@ -2241,6 +2364,8 @@ class PostgresKnowledgeRepository:
                             completion_tokens INTEGER,
                             embedding_tokens INTEGER,
                             avg_cost_per_query DOUBLE PRECISION,
+                            usage_ledger JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            usage_summary JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                             confidence_score DOUBLE PRECISION,
                             embedding_provider TEXT,
                             embedding_model TEXT,
@@ -2273,6 +2398,8 @@ class PostgresKnowledgeRepository:
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS embedding_dimensions INTEGER",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS embedding_request_meta JSONB NOT NULL DEFAULT '[]'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS query_understanding_meta JSONB NOT NULL DEFAULT '{{}}'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS usage_ledger JSONB NOT NULL DEFAULT '[]'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS usage_summary JSONB NOT NULL DEFAULT '{{}}'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS primary_source_type TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS primary_chunk_strategy TEXT",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS reranker_provider TEXT",
@@ -2468,6 +2595,8 @@ class PostgresKnowledgeRepository:
                             top1_similarity_score DOUBLE PRECISION,
                             avg_selected_similarity_score DOUBLE PRECISION,
                             avg_cost_per_query DOUBLE PRECISION,
+                            usage_ledger JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            usage_summary JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                             judge_votes JSONB NOT NULL DEFAULT '[]'::jsonb,
                             judge_disagreement_flag BOOLEAN NOT NULL DEFAULT FALSE
                         )
@@ -2746,6 +2875,8 @@ class PostgresKnowledgeRepository:
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS top1_similarity_score DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS avg_selected_similarity_score DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS avg_cost_per_query DOUBLE PRECISION",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS usage_ledger JSONB NOT NULL DEFAULT '[]'::jsonb",
+                    "ALTER TABLE {} ADD COLUMN IF NOT EXISTS usage_summary JSONB NOT NULL DEFAULT '{{}}'::jsonb",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS answer_accuracy_score DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS answer_logic_score DOUBLE PRECISION",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS route_correct_flag BOOLEAN",
@@ -5312,6 +5443,8 @@ class PostgresKnowledgeRepository:
             "completion_tokens",
             "embedding_tokens",
             "avg_cost_per_query",
+            "usage_ledger",
+            "usage_summary",
             "confidence_score",
             "embedding_provider",
             "embedding_model",
@@ -5368,6 +5501,8 @@ class PostgresKnowledgeRepository:
             int(run.get("completion_tokens") or 0) if run.get("completion_tokens") is not None else None,
             int(run.get("embedding_tokens") or 0) if run.get("embedding_tokens") is not None else None,
             _safe_float(run.get("avg_cost_per_query"), 0.0) if run.get("avg_cost_per_query") is not None else None,
+            Json(run.get("usage_ledger") or []),
+            Json(run.get("usage_summary") or {}),
             _safe_float(run.get("confidence_score"), 0.0) if run.get("confidence_score") is not None else None,
             _clean_text(run.get("embedding_provider")),
             _clean_text(run.get("embedding_model")),
@@ -5420,6 +5555,8 @@ class PostgresKnowledgeRepository:
                                 "cited_chunk_ids",
                                 "embedding_request_meta",
                                 "query_understanding_meta",
+                                "usage_ledger",
+                                "usage_summary",
                             }
                             else sql.SQL("%s")
                             for column in columns
@@ -5483,6 +5620,85 @@ class PostgresKnowledgeRepository:
         review_sample = build_live_review_sample(run)
         if review_sample is not None:
             self.upsert_review_sample(sample=review_sample)
+
+    def rag_ticket_family_token_summary(
+        self,
+        *,
+        ticket_id: str,
+        client_ticket_id: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_ticket_id = _clean_text(ticket_id)
+        if not normalized_ticket_id:
+            raise ValueError("ticket_id is required")
+        identity = resolve_ticket_family_identity(
+            {
+                "ticket_id": normalized_ticket_id,
+                "client_ticket_id": client_ticket_id,
+            }
+        )
+        canonical_ticket_id = _clean_text(identity.get("canonical_ticket_id")) or normalized_ticket_id
+        related_prefix = f"{canonical_ticket_id}-%"
+        rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    ticket_id,
+                    usage_ledger,
+                    prompt_tokens,
+                    completion_tokens,
+                    embedding_tokens,
+                    model_name,
+                    embedding_provider,
+                    embedding_model
+                FROM {}
+                WHERE ticket_id = %s OR ticket_id LIKE %s
+                ORDER BY created_at ASC, request_id ASC
+                """
+            ).format(self._table("support_rag_query_runs")),
+            (canonical_ticket_id, related_prefix),
+        )
+        usage_ledger: list[dict[str, Any]] = []
+        related_ticket_ids: list[str] = []
+        for row in rows:
+            row_ticket_id = _clean_text(row[0])
+            if row_ticket_id and row_ticket_id != canonical_ticket_id and row_ticket_id not in related_ticket_ids:
+                related_ticket_ids.append(row_ticket_id)
+            row_ledger = [dict(item) for item in _json_list(row[1]) if isinstance(item, dict)]
+            if row_ledger:
+                usage_ledger.extend(row_ledger)
+                continue
+            model_name = _clean_text(row[5])
+            if model_name:
+                provider, model = parse_provider_model_reference(model_name, default_provider="openai")
+                usage_ledger.append(
+                    build_usage_ledger_entry(
+                        provider=provider,
+                        model=model,
+                        stage="rag_answer",
+                        prompt_tokens=int(row[2] or 0),
+                        completion_tokens=int(row[3] or 0),
+                        input_tokens=int(row[2] or 0),
+                        output_tokens=int(row[3] or 0),
+                    )
+                )
+            embedding_provider = _clean_text(row[6])
+            embedding_model = _clean_text(row[7])
+            embedding_tokens = int(row[4] or 0)
+            if embedding_provider and embedding_model and embedding_tokens:
+                usage_ledger.append(
+                    build_usage_ledger_entry(
+                        provider=embedding_provider,
+                        model=embedding_model,
+                        stage="embedding",
+                        embedding_tokens=embedding_tokens,
+                    )
+                )
+        usage_summary = aggregate_usage_ledger(usage_ledger)
+        return {
+            "canonical_ticket_id": canonical_ticket_id,
+            "related_ticket_ids": related_ticket_ids,
+            **usage_summary,
+        }
 
     def upsert_rag_eval_run(
         self,
@@ -5791,6 +6007,8 @@ class PostgresKnowledgeRepository:
             "top1_similarity_score",
             "avg_selected_similarity_score",
             "avg_cost_per_query",
+            "usage_ledger",
+            "usage_summary",
             "judge_votes",
             "judge_disagreement_flag",
         ]
@@ -5955,6 +6173,8 @@ class PostgresKnowledgeRepository:
                 if row.get("avg_selected_similarity_score") is not None
                 else None,
                 _safe_float(row.get("avg_cost_per_query"), 0.0) if row.get("avg_cost_per_query") is not None else None,
+                Json(row.get("usage_ledger") or []),
+                Json(row.get("usage_summary") or {}),
                 Json(row.get("judge_votes") or []),
                 bool(row.get("judge_disagreement_flag")),
             )
@@ -5992,6 +6212,8 @@ class PostgresKnowledgeRepository:
                                     "expected_evidence_refs",
                                     "answer_key_points",
                                     "trace_payload",
+                                    "usage_ledger",
+                                    "usage_summary",
                                     "judge_votes",
                                 }
                                 else sql.SQL("%s")
@@ -9708,6 +9930,7 @@ class PostgresKnowledgeRepository:
                     top1_similarity_score,
                     avg_selected_similarity_score,
                     avg_cost_per_query,
+                    usage_summary,
                     judge_disagreement_flag
                 FROM {}
                 WHERE eval_run_id = ANY(%s)
@@ -9796,6 +10019,7 @@ class PostgresKnowledgeRepository:
                 top1_similarity_score,
                 avg_selected_similarity_score,
                 avg_cost_per_query,
+                usage_summary,
                 judge_disagreement_flag,
             ) = row
             payload = {
@@ -9877,6 +10101,7 @@ class PostgresKnowledgeRepository:
                 "top1_similarity_score": _coalesce_metric(top1_similarity_score),
                 "avg_selected_similarity_score": _coalesce_metric(avg_selected_similarity_score),
                 "avg_cost_per_query": _coalesce_metric(avg_cost_per_query),
+                "usage_summary": _json_dict(usage_summary),
                 "judge_disagreement_flag": bool(judge_disagreement_flag) if judge_disagreement_flag is not None else None,
             }
             grouped.setdefault(str(eval_run_id), {})[str(test_case_id)] = payload
@@ -9987,6 +10212,7 @@ class PostgresKnowledgeRepository:
                     top1_similarity_score,
                     avg_selected_similarity_score,
                     avg_cost_per_query,
+                    usage_summary,
                     judge_votes,
                     judge_disagreement_flag
                 FROM {}
@@ -10106,8 +10332,12 @@ class PostgresKnowledgeRepository:
                 "top1_similarity_score": _coalesce_metric(row[82]),
                 "avg_selected_similarity_score": _coalesce_metric(row[83]),
                 "avg_cost_per_query": _coalesce_metric(row[84]),
-                "judge_votes": _json_list(row[85]),
-                "judge_disagreement_flag": bool(row[86]) if row[86] is not None else None,
+                "usage_summary": _json_dict(row[85]),
+                "judge_votes": _json_list(row[86]),
+                "judge_disagreement_flag": bool(row[87]) if row[87] is not None else None,
+                "execution_mode": _clean_text(trace_payload.get("execution_mode")),
+                "agent_fallback_used": bool(trace_payload.get("agent_fallback_used")) if trace_payload.get("agent_fallback_used") is not None else None,
+                "agent_fallback_reason": _clean_text(trace_payload.get("agent_fallback_reason")),
             }
             grouped.setdefault(str(row[0]), {})[str(row[1])] = payload
         return grouped
@@ -10651,6 +10881,7 @@ class PostgresKnowledgeRepository:
             if row.get("judge_disagreement_flag") is not None
             else bool(trace_payload.get("judge_disagreement_flag")),
         }
+        usage_summary = _json_dict(row.get("usage_summary"))
         payload = {
             "sample_source": "benchmark",
             "eval_run_id": row.get("eval_run_id"),
@@ -10674,6 +10905,11 @@ class PostgresKnowledgeRepository:
             "rewritten_query": None,
             "intent": None,
             "generation_mode": trace_payload.get("generation_mode"),
+            "execution_mode": _clean_text(trace_payload.get("execution_mode")),
+            "agent_fallback_used": bool(trace_payload.get("agent_fallback_used"))
+            if trace_payload.get("agent_fallback_used") is not None
+            else None,
+            "agent_fallback_reason": _clean_text(trace_payload.get("agent_fallback_reason")),
             "needs_human": row.get("needs_human"),
             "handoff_reason": trace_payload.get("handoff_reason"),
             "expected_answer_text": _clean_text(trace_payload.get("expected_answer_text")),
@@ -10765,6 +11001,7 @@ class PostgresKnowledgeRepository:
             "candidate_funnel": candidate_funnel,
             "judge_summary": judge_summary,
             "strategy_snapshot": strategy_snapshot,
+            "usage_summary": usage_summary,
         }
         if not payload["answer_citations"] and payload["cited_chunk_ids"]:
             derived_citations: list[dict[str, Any]] = []
@@ -11974,13 +12211,27 @@ class PostgresKnowledgeRepository:
                 "judge_error_rate": _mean_from_rows(case_rows, "judge_error_rate"),
                 "case_execution_error_rate": case_execution_error_rate,
             }
+            benchmark_usage_summary = _merge_usage_summaries(case_rows)
             run["metrics"] = benchmark_metrics
+            run["usage_summary"] = benchmark_usage_summary
             run["diagnostics"] = _benchmark_run_diagnostics(case_rows)
             gate_runs.append({"eval_run_id": eval_run_id, "metrics": benchmark_metrics})
         session_gate = build_session_gate(gate_runs)
         payload["session_gate"] = session_gate
         payload["gate_status"] = session_gate.get("overall_status")
         payload["gate_failure_dimensions"] = list(session_gate.get("failure_dimensions") or [])
+        payload["per_run_gate_status"] = dict(session_gate.get("per_run_gate_status") or {})
+        payload["failed_run_ids"] = [
+            _clean_text(run.get("eval_run_id"))
+            for run in runs
+            if _clean_text(run.get("dataset_name")) in payload["per_run_gate_status"]
+            and (payload["per_run_gate_status"].get(_clean_text(run.get("dataset_name"))) or {}).get("overall_status") != "pass"
+        ]
+        payload["failed_dataset_names"] = [
+            name
+            for name, status in (payload["per_run_gate_status"] or {}).items()
+            if isinstance(status, dict) and status.get("overall_status") != "pass"
+        ]
         payload["run_history"] = [dict(item) for item in runs]
         payload["run_comparison"] = _benchmark_run_comparison(runs)
         return payload
@@ -12070,9 +12321,10 @@ class PostgresKnowledgeRepository:
             "judge_error_rate": _mean_from_rows(candidate_rows, "judge_error_rate"),
             "case_execution_error_rate": _rate_from_rows(candidate_rows, "case_execution_error"),
         }
+        overview_usage_summary = _merge_usage_summaries(candidate_rows)
         sections = {
             "summary": {
-                "title": "Scorecard",
+                "title": "Overview",
                 "subtitle": "Read retrieval, generation, and performance outcomes together before drilling into traces.",
                 "baseline_experiment_id": (display_baseline or {}).get("experiment_id"),
                 "candidate_experiment_id": (display_candidate or {}).get("experiment_id"),
@@ -12084,6 +12336,10 @@ class PostgresKnowledgeRepository:
                     "context_relevance_score": generation_summary_cards["context_relevance_score"],
                     "benchmark_p95_total_latency_ms": performance_summary_cards["benchmark_p95_total_latency_ms"],
                 },
+            },
+            "overview_usage_summary": {
+                "title": "Token & Cost Summary",
+                "cards": overview_usage_summary,
             },
             "retrieval_summary": {
                 "title": "Retrieval",

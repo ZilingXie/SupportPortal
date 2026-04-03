@@ -82,6 +82,18 @@ class RagSufficiencyJudgeTests(unittest.TestCase):
                         "source": "docs",
                     }
                 ],
+                packed_evidence={
+                    "packed_context_text": "[chunk-1] official/join.md | Join a channel\nUse joinChannel with the same channel name.",
+                    "packed_chunk_ids": ["chunk-1"],
+                    "selected_contexts": [
+                        {
+                            "chunk_id": "chunk-1",
+                            "source_path": "official/join.md",
+                            "heading": "Join a channel",
+                            "text_excerpt": "Use joinChannel with the same channel name.",
+                        }
+                    ],
+                },
                 evidence_summary={"top_k": 3},
             )
 
@@ -90,6 +102,8 @@ class RagSufficiencyJudgeTests(unittest.TestCase):
         self.assertNotIn("temperature", calls[1])
         self.assertEqual(calls[1]["model"], "gpt-5.4")
         self.assertEqual(calls[1]["reasoning"]["effort"], "low")
+        self.assertIn("## Packed Evidence", calls[1]["input"][1]["content"][0]["text"])
+        self.assertIn("packed_context_text", calls[1]["input"][1]["content"][0]["text"])
         self.assertEqual(result.decision, "answer")
         self.assertEqual(result.reason, "supported_after_retry")
         self.assertEqual(result.confidence, 0.91)

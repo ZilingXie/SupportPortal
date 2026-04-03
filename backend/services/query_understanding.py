@@ -21,6 +21,7 @@ from backend.services.prompts.query_understanding import (
     build_self_query_user_prompt,
 )
 from backend.services.query_expansion_cache import QueryExpansionCache, build_query_expansion_cache_key
+from backend.services.token_usage import build_usage_ledger_entry
 
 if TYPE_CHECKING:
     from backend.services.rag_qa import RetrievedChunk
@@ -181,6 +182,7 @@ class QueryUnderstandingResult:
     intent_latency_ms: float = 0.0
     rewrite_latency_ms: float = 0.0
     cache_hit: bool = False
+    llm_usage_ledger: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def semantic_query(self) -> str:
@@ -636,16 +638,26 @@ def _should_attempt_decomposition(query: str) -> bool:
 
 def _invoke_query_expansion_llm(
     *,
+    stage: str,
     system_prompt: str,
     user_prompt: str,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
     profile = resolve_model_profile(QUERY_EXPANSION_SCENARIO)
     result = invoke_responses_text(
         profile=profile,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
     )
-    return _parse_llm_json_payload(result.text)
+    usage_entry = build_usage_ledger_entry(
+        provider=profile.provider,
+        model=profile.model,
+        stage=stage,
+        prompt_tokens=result.prompt_tokens,
+        completion_tokens=result.completion_tokens,
+        input_tokens=result.prompt_tokens,
+        output_tokens=result.completion_tokens,
+    )
+    return _parse_llm_json_payload(result.text), usage_entry
 
 
 def _query_expansion_prompt_model_version() -> str:
@@ -954,22 +966,27 @@ def understand_rag_query(
     llm_self_query_raw: dict[str, Any] = {}
     llm_rewrite_raw: dict[str, Any] = {}
     llm_decomposition_raw: dict[str, Any] = {}
+    llm_usage_ledger: list[dict[str, Any]] = []
     if cache_payload:
         llm_self_query_raw = dict(cache_payload.get("self_query") or {})
         llm_rewrite_raw = dict(cache_payload.get("rewrite") or {})
         llm_decomposition_raw = dict(cache_payload.get("decomposition") or {})
     elif _query_expansion_enabled():
         try:
-            llm_self_query_raw = _invoke_query_expansion_llm(
+            llm_self_query_raw, usage_entry = _invoke_query_expansion_llm(
+                stage="query_self_query",
                 system_prompt=build_self_query_system_prompt(),
                 user_prompt=build_self_query_user_prompt(query=normalized_query, glossary_hits=dictionary_hits),
             )
+            if usage_entry:
+                llm_usage_ledger.append(usage_entry)
         except (LlmInvocationError, ValueError) as exc:
             if "missing_api_key" not in str(exc):
                 LOGGER.warning("Query self-query planning failed: %s", exc)
                 fallback_mode = "llm_self_query_error"
         try:
-            llm_rewrite_raw = _invoke_query_expansion_llm(
+            llm_rewrite_raw, usage_entry = _invoke_query_expansion_llm(
+                stage="query_rewrite",
                 system_prompt=build_query_rewrite_system_prompt(),
                 user_prompt=build_query_rewrite_user_prompt(
                     query=normalized_query,
@@ -982,13 +999,16 @@ def understand_rag_query(
                     },
                 ),
             )
+            if usage_entry:
+                llm_usage_ledger.append(usage_entry)
         except (LlmInvocationError, ValueError) as exc:
             if "missing_api_key" not in str(exc):
                 LOGGER.warning("Query rewrite failed: %s", exc)
                 fallback_mode = fallback_mode if fallback_mode != "none" else "llm_rewrite_error"
         if _should_attempt_decomposition(normalized_query):
             try:
-                llm_decomposition_raw = _invoke_query_expansion_llm(
+                llm_decomposition_raw, usage_entry = _invoke_query_expansion_llm(
+                    stage="query_decomposition",
                     system_prompt=build_query_decomposition_system_prompt(),
                     user_prompt=build_query_decomposition_user_prompt(
                         query=normalized_query,
@@ -999,6 +1019,8 @@ def understand_rag_query(
                         },
                     ),
                 )
+                if usage_entry:
+                    llm_usage_ledger.append(usage_entry)
             except (LlmInvocationError, ValueError) as exc:
                 if "missing_api_key" not in str(exc):
                     LOGGER.warning("Query decomposition failed: %s", exc)
@@ -1073,4 +1095,5 @@ def understand_rag_query(
         intent_latency_ms=intent_latency_ms,
         rewrite_latency_ms=rewrite_latency_ms,
         cache_hit=cache_hit,
+        llm_usage_ledger=llm_usage_ledger,
     )

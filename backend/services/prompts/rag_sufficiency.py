@@ -46,6 +46,7 @@ def build_rag_sufficiency_user_prompt(
     rag_answer: str,
     sources: list[str] | None,
     citations: list[dict[str, str]] | None,
+    packed_evidence: dict[str, Any] | None = None,
     evidence_summary: dict[str, Any] | None,
 ) -> str:
     return "\n".join(
@@ -70,6 +71,9 @@ def build_rag_sufficiency_user_prompt(
             "",
             "## Citations",
             _dump_json([dict(item) for item in citations or [] if isinstance(item, dict)]),
+            "",
+            "## Packed Evidence",
+            _dump_json(dict(packed_evidence or {})),
             "",
             "## Evidence Summary",
             _dump_json(dict(evidence_summary or {})),

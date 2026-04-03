@@ -42,16 +42,10 @@ from backend.services.support_router import (
     decide_support_route,
     resolve_support_message,
 )
+from backend.services.token_usage import aggregate_usage_ledger, build_usage_ledger_entry
 
 if TYPE_CHECKING:
     from backend.repositories.knowledge_repository import KnowledgeRepository
-
-
-_MODEL_PRICING = {
-    "gpt-4.1": {"prompt_per_1k": 0.002, "completion_per_1k": 0.008},
-    "gpt-4.1-mini": {"prompt_per_1k": 0.0004, "completion_per_1k": 0.0016},
-    "gpt-4o-mini": {"prompt_per_1k": 0.00015, "completion_per_1k": 0.0006},
-}
 
 
 @dataclass(frozen=True)
@@ -257,15 +251,23 @@ def _failure_stage_and_bucket(
 ) -> tuple[str, str | None]:
     if case.expected_route_family != decision.route_family or case.expected_execution_action != decision.execution_action:
         return "routing", "route_to_wrong_system"
+    if retrieval_metrics.get("query_understanding_failed") is True:
+        return "query_understanding", "query_understanding_failed"
     if (judge_aggregate.get("judge_error_rate") or 0.0) >= 0.67 or judge_aggregate.get("judge_disagreement_flag") is True:
         return "judge", "judge_unstable_or_timed_out"
     if used_prohibited_agora_docs:
         return "business/policy", "answer_should_not_have_used_agora_docs"
     if case.expected_execution_action == "rag":
+        if retrieval_metrics.get("expected_doc_retrieved") is False:
+            return "retrieval", "missing_expected_doc"
+        if retrieval_metrics.get("expected_doc_survived_rerank") is False:
+            return "rerank", "expected_doc_dropped_after_rerank"
+        if retrieval_metrics.get("expected_doc_selected_for_context") is False:
+            return "context_selection", "expected_doc_not_selected"
         evidence_hit = retrieval_metrics.get("evidence_hit_at_5")
         evidence_coverage = retrieval_metrics.get("evidence_coverage")
         if evidence_hit == 0.0:
-            return "retrieval", "retrieved_nothing_useful"
+            return "retrieval", "missing_expected_doc"
         if evidence_coverage is not None and 0.0 < float(evidence_coverage) < 1.0:
             return "retrieval", "retrieved_partially_useful_context"
         if judge_aggregate.get("hallucination_flag") is True:
@@ -324,20 +326,6 @@ def _strategy_snapshot(judge_models: list[str]) -> dict[str, Any]:
         "context_compression_model": _clean_text(os.getenv("RAG_CONTEXT_COMPRESSION_MODEL")) or "gpt-5.4-mini",
         "judge_models": judge_models,
     }
-
-
-def _estimate_query_cost(result: RagQueryResult) -> float:
-    trace = result.trace
-    pricing = _MODEL_PRICING.get(_clean_text(trace.model_name), {})
-    prompt_cost = (max(0, int(trace.prompt_tokens or 0)) / 1000.0) * float(pricing.get("prompt_per_1k", 0.0))
-    completion_cost = (max(0, int(trace.completion_tokens or 0)) / 1000.0) * float(
-        pricing.get("completion_per_1k", 0.0)
-    )
-    embedding_rate = 0.0
-    if _clean_text(trace.embedding_model) == embedding_model_id():
-        embedding_rate = embedding_external_cost_per_1k()
-    embedding_cost = (max(0, int(trace.embedding_tokens or 0)) / 1000.0) * embedding_rate
-    return round(prompt_cost + completion_cost + embedding_cost, 6)
 
 
 def _default_scope_label(case: BenchmarkCase) -> str:
@@ -524,30 +512,40 @@ def _root_cause_label(
     judge_aggregate: dict[str, Any],
 ) -> str:
     if case.route_aware and execution_result.actual_route != case.expected_route:
-        return "route_mismatch"
+        return "route_to_wrong_system"
     if execution_result.actual_route == "web_search":
         if not execution_result.search_used:
             return "web_search_failure"
         if judge_aggregate.get("hallucination_flag") is True:
-            return "generation_hallucination"
+            return "answer_contains_unsupported_claim"
         return "grounded_answer"
     if execution_result.actual_route == "refuse":
         if judge_aggregate.get("hallucination_flag") is True:
-            return "generation_hallucination"
+            return "answer_contains_unsupported_claim"
         return "grounded_answer"
     result = execution_result.rag_result
     if result is None:
-        return "route_mismatch"
+        return "route_to_wrong_system"
     if case.expected_execution_action != "rag":
         return "policy_controlled_response" if case.expected_execution_action == "controlled_response" else "grounded_answer"
+    if retrieval_metrics.get("query_understanding_failed") is True:
+        return "query_understanding_failed"
+    if retrieval_metrics.get("expected_doc_retrieved") is False or retrieval_metrics.get("hit_at_5") == 0.0:
+        return "missing_expected_doc"
+    if retrieval_metrics.get("expected_doc_survived_rerank") is False:
+        return "expected_doc_dropped_after_rerank"
+    if retrieval_metrics.get("expected_doc_selected_for_context") is False:
+        return "expected_doc_not_selected"
     if retrieval_metrics.get("hit_at_5") == 0.0:
-        return "retrieval_miss"
+        return "missing_expected_doc"
     if int(result.trace.selected_doc_count or 0) <= 0:
-        return "retrieval_miss"
+        return "expected_doc_not_selected"
     if judge_aggregate.get("hallucination_flag") is True:
-        return "generation_hallucination"
+        return "answer_contains_unsupported_claim"
     if (judge_aggregate.get("citation_correctness_score") or 0.0) < 0.70:
         return "citation_issue"
+    if (judge_aggregate.get("answer_accuracy_score") or 1.0) < 0.70:
+        return "unused_selected_evidence"
     if (judge_aggregate.get("needs_human") is True or result.trace.needs_human) and not case.expected_handoff:
         return "unnecessary_handoff"
     return "grounded_answer"
@@ -635,6 +633,9 @@ def _build_trace_payload(
             "cache_hit": bool(trace.cache_hit) if trace is not None else False,
             "prf_used": bool(trace.prf_used) if trace is not None else False,
         },
+        "execution_mode": trace.execution_mode if trace is not None else "legacy",
+        "agent_fallback_used": bool(trace.agent_fallback_used) if trace is not None else False,
+        "agent_fallback_reason": trace.agent_fallback_reason if trace is not None else None,
         "candidate_funnel": {
             "first_pass_candidate_count": trace.first_pass_candidate_count if trace is not None else None,
             "second_pass_candidate_count": trace.second_pass_candidate_count if trace is not None else None,
@@ -784,6 +785,10 @@ Scoring rules:
     if payload is None:
         raise ValueError(f"Judge {judge_model} returned invalid JSON")
     payload["judge_model"] = judge_model
+    payload["judge_provider"] = provider
+    payload["judge_resolved_model"] = response.model_name
+    payload["prompt_tokens"] = response.prompt_tokens
+    payload["completion_tokens"] = response.completion_tokens
     if payload.get("cr_score") is None and payload.get("context_relevance_score") is not None:
         payload["cr_score"] = payload.get("context_relevance_score")
     if payload.get("ar_score") is None and payload.get("answer_relevance_score") is not None:
@@ -933,6 +938,59 @@ def _build_eval_row(
     )
     chunk_strategy = rag_result.trace.primary_chunk_strategy if rag_result is not None else None
     retrieval_strategy = rag_result.trace.retrieval_strategy if rag_result is not None else f"route_{execution_result.actual_route}"
+    usage_ledger: list[dict[str, Any]] = []
+    if rag_result is not None:
+        for entry in list(getattr(rag_result.trace, "query_expansion_usage_ledger", []) or []):
+            if isinstance(entry, dict):
+                usage_ledger.append(dict(entry))
+    if rag_result is not None and _clean_text(rag_result.trace.model_name):
+        provider, model = parse_provider_model_reference(rag_result.trace.model_name, default_provider="openai")
+        usage_ledger.append(
+            build_usage_ledger_entry(
+                provider=provider,
+                model=model,
+                stage="rag_answer",
+                prompt_tokens=rag_result.trace.prompt_tokens,
+                completion_tokens=rag_result.trace.completion_tokens,
+                input_tokens=rag_result.trace.prompt_tokens,
+                output_tokens=rag_result.trace.completion_tokens,
+            )
+        )
+    if (
+        rag_result is not None
+        and _clean_text(rag_result.trace.embedding_provider)
+        and _clean_text(rag_result.trace.embedding_model)
+        and int(rag_result.trace.embedding_tokens or 0) > 0
+    ):
+        usage_ledger.append(
+            build_usage_ledger_entry(
+                provider=rag_result.trace.embedding_provider,
+                model=rag_result.trace.embedding_model,
+                stage="embedding",
+                embedding_tokens=rag_result.trace.embedding_tokens,
+            )
+        )
+    if rag_result is not None:
+        for entry in list(getattr(rag_result.trace, "context_compression_usage_ledger", []) or []):
+            if isinstance(entry, dict):
+                usage_ledger.append(dict(entry))
+    for vote in judge_votes:
+        judge_model = _clean_text(vote.get("judge_model"))
+        if not judge_model:
+            continue
+        provider, model = parse_provider_model_reference(judge_model, default_provider="openai")
+        usage_ledger.append(
+            build_usage_ledger_entry(
+                provider=provider,
+                model=model,
+                stage="benchmark_judge",
+                prompt_tokens=int(vote.get("prompt_tokens") or 0),
+                completion_tokens=int(vote.get("completion_tokens") or 0),
+                input_tokens=int(vote.get("prompt_tokens") or 0),
+                output_tokens=int(vote.get("completion_tokens") or 0),
+            )
+        )
+    usage_summary = aggregate_usage_ledger(usage_ledger)
     row = {
         "test_case_id": case.test_case_id,
         "dataset_schema_version": case.dataset_schema_version,
@@ -1053,7 +1111,9 @@ def _build_eval_row(
         "selected_doc_count": rag_result.trace.selected_doc_count if rag_result is not None else None,
         "top1_similarity_score": rag_result.trace.top1_similarity_score if rag_result is not None else None,
         "avg_selected_similarity_score": rag_result.trace.avg_selected_similarity_score if rag_result is not None else None,
-        "avg_cost_per_query": _estimate_query_cost(rag_result) if rag_result is not None else None,
+        "avg_cost_per_query": usage_summary["known_cost_total"],
+        "usage_ledger": usage_ledger,
+        "usage_summary": usage_summary,
         "failure_stage": failure_stage,
         "failure_bucket": failure_bucket,
     }

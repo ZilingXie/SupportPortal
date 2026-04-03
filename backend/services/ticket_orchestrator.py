@@ -54,6 +54,7 @@ class SkillExecutionResult:
     search_used: bool
     matched_signals: list[str] = field(default_factory=list)
     evidence_summary: dict[str, Any] | None = None
+    packed_evidence: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,7 @@ class TicketExecutionResult:
     sources: list[str]
     citations: list[dict[str, str]]
     evidence_summary: dict[str, Any] | None
+    packed_evidence: dict[str, Any] | None
     needs_investigating: bool
     next_status: str
     answer_route: str
@@ -190,6 +192,7 @@ def _build_skill_execution_result(
         search_used=bool(resolution.search_used),
         matched_signals=list(resolution.matched_signals or route_decision.matched_signals),
         evidence_summary=dict(getattr(resolution, "evidence_summary", None) or {}) or None,
+        packed_evidence=dict(getattr(resolution, "packed_evidence", None) or {}) or None,
     )
 
 
@@ -217,6 +220,7 @@ def assess_rag_answer_sufficiency(
         rag_answer=skill_result.answer,
         sources=skill_result.sources,
         citations=skill_result.citations,
+        packed_evidence=skill_result.packed_evidence,
         evidence_summary=skill_result.evidence_summary,
     )
     return SufficiencyAssessment(
@@ -334,6 +338,7 @@ def orchestrate_ticket_execution(
         sources=list(skill_result.sources),
         citations=[dict(item) for item in skill_result.citations],
         evidence_summary=dict(skill_result.evidence_summary or {}) or None,
+        packed_evidence=dict(skill_result.packed_evidence or {}) or None,
         needs_investigating=needs_investigating,
         next_status=normalize_ticket_status(next_status),
         answer_route=skill_result.answer_route,

@@ -147,7 +147,7 @@ def resolve_model_profile(
             temperature=None,
             timeout_seconds=_safe_positive_float_env("OPENAI_WEB_SEARCH_TIMEOUT_SECONDS", 30.0),
             max_retries=1,
-            fallback_models=("gpt-5",),
+            fallback_models=("gpt-5.4-mini",),
         )
     if scenario == RAG_ANSWER_SCENARIO:
         return ModelProfile(
@@ -160,7 +160,7 @@ def resolve_model_profile(
             temperature=0.0,
             timeout_seconds=_safe_positive_float_env("RAG_REQUEST_TIMEOUT_SECONDS", 20.0),
             max_retries=_safe_int_env("RAG_OPENAI_MAX_RETRIES", 1),
-            fallback_models=("gpt-4.1", "gpt-4o-mini"),
+            fallback_models=("gpt-5.4-mini",),
         )
     if scenario == RAG_SUFFICIENCY_SCENARIO:
         return ModelProfile(
@@ -186,7 +186,7 @@ def resolve_model_profile(
             temperature=_safe_float_env("RAG_QUERY_EXPANSION_TEMPERATURE", 0.0),
             timeout_seconds=_safe_positive_float_env("RAG_QUERY_EXPANSION_TIMEOUT_SECONDS", 8.0),
             max_retries=1,
-            fallback_models=("gpt-5.4-nano",),
+            fallback_models=(),
         )
     if scenario == RAG_AGENT_PLANNER_SCENARIO:
         return ModelProfile(
@@ -199,7 +199,7 @@ def resolve_model_profile(
             temperature=_safe_float_env("RAG_AGENT_PLANNER_TEMPERATURE", 0.0),
             timeout_seconds=_safe_positive_float_env("RAG_AGENT_PLANNER_TIMEOUT_SECONDS", 6.0),
             max_retries=1,
-            fallback_models=("gpt-4.1-mini",),
+            fallback_models=(),
         )
     if scenario == RAG_CONTEXT_COMPRESSION_SCENARIO:
         return ModelProfile(
@@ -212,7 +212,7 @@ def resolve_model_profile(
             temperature=0.0,
             timeout_seconds=_safe_positive_float_env("RAG_CONTEXT_COMPRESSION_TIMEOUT_SECONDS", 8.0),
             max_retries=1,
-            fallback_models=("gpt-5.4-nano",),
+            fallback_models=(),
         )
     if scenario == ENGINEER_HELPER_SCENARIO:
         return ModelProfile(
@@ -225,7 +225,7 @@ def resolve_model_profile(
             temperature=0.0,
             timeout_seconds=_safe_positive_float_env("OPENAI_REQUEST_TIMEOUT_SECONDS", 20.0),
             max_retries=_safe_int_env("OPENAI_MAX_RETRIES", 1),
-            fallback_models=("gpt-4.1", "gpt-4o-mini"),
+            fallback_models=("gpt-5.4-mini",),
         )
     if scenario == KNOWLEDGE_INGESTION_SCENARIO:
         return ModelProfile(
@@ -237,7 +237,7 @@ def resolve_model_profile(
             temperature=0.0,
             timeout_seconds=_safe_positive_float_env("OPENAI_REQUEST_TIMEOUT_SECONDS", 20.0),
             max_retries=_safe_int_env("OPENAI_MAX_RETRIES", 1),
-            fallback_models=("gpt-4.1",),
+            fallback_models=(),
         )
     if scenario == BENCHMARK_JUDGE_SCENARIO:
         resolved_provider = provider or "openai"
