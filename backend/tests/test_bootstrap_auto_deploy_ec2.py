@@ -37,6 +37,7 @@ class BootstrapAutoDeployEc2Tests(unittest.TestCase):
         self.fake_bin = self.root / "fake-bin"
         self.fake_bin.mkdir()
         self.fake_aws_source = self.root / "fake-aws-source"
+        self.fake_unzip_source = self.root / "fake-unzip-source"
         self.etc_dir = self.root / "etc-supportportal"
         self.systemd_dir = self.root / "systemd"
         self.remote_bare, self.seed, self.repo = self._init_remote_repo_on_main()
@@ -171,10 +172,22 @@ class BootstrapAutoDeployEc2Tests(unittest.TestCase):
             self.fake_bin / "apt-get",
             textwrap.dedent(
                 """\
-                #!/usr/bin/env bash
-                state_dir="${BOOTSTRAP_TEST_STATE_DIR:?}"
-                printf '%s\n' "$*" >> "${state_dir}/apt_get_calls.log"
-                exit 0
+                #!/usr/bin/env python3
+                import os
+                import sys
+                from pathlib import Path
+
+                state_dir = Path(os.environ["BOOTSTRAP_TEST_STATE_DIR"])
+                with (state_dir / "apt_get_calls.log").open("a", encoding="utf-8") as handle:
+                    handle.write(" ".join(sys.argv[1:]) + "\\n")
+
+                if os.environ.get("BOOTSTRAP_TEST_INSTALL_UNZIP") == "1" and "install" in sys.argv[1:]:
+                    fake_bin = Path(os.environ["BOOTSTRAP_TEST_FAKE_BIN"])
+                    unzip = fake_bin / "unzip"
+                    unzip.write_text(Path(os.environ["BOOTSTRAP_FAKE_UNZIP_SOURCE"]).read_text(encoding="utf-8"), encoding="utf-8")
+                    unzip.chmod(0o755)
+
+                sys.exit(0)
                 """
             ),
         )
@@ -203,32 +216,38 @@ class BootstrapAutoDeployEc2Tests(unittest.TestCase):
             ),
         )
 
+        fake_unzip = textwrap.dedent(
+            """\
+            #!/usr/bin/env python3
+            import os
+            import sys
+            from pathlib import Path
+
+            state_dir = Path(os.environ["BOOTSTRAP_TEST_STATE_DIR"])
+            with (state_dir / "unzip_calls.log").open("a", encoding="utf-8") as handle:
+                handle.write(" ".join(sys.argv[1:]) + "\\n")
+
+            install_dir = Path("aws")
+            install_dir.mkdir(parents=True, exist_ok=True)
+            install_script = install_dir / "install"
+            install_script.write_text(
+                "#!/usr/bin/env bash\\n"
+                "state_dir=\\\"${BOOTSTRAP_TEST_STATE_DIR:?}\\\"\\n"
+                "printf '%s\\\\n' \\\"$*\\\" >> \\\"${state_dir}/aws_install_calls.log\\\"\\n"
+                "cp \\\"${BOOTSTRAP_FAKE_AWS_SOURCE:?}\\\" \\\"${BOOTSTRAP_TEST_FAKE_BIN:?}/aws\\\"\\n"
+                "chmod +x \\\"${BOOTSTRAP_TEST_FAKE_BIN:?}/aws\\\"\\n",
+                encoding="utf-8",
+            )
+            install_script.chmod(0o755)
+            """
+        )
+        self.fake_unzip_source.write_text(fake_unzip, encoding="utf-8")
+        self.fake_unzip_source.chmod(0o755)
+
         self._write_executable(
             self.fake_bin / "unzip",
             textwrap.dedent(
-                """\
-                #!/usr/bin/env python3
-                import os
-                import sys
-                from pathlib import Path
-
-                state_dir = Path(os.environ["BOOTSTRAP_TEST_STATE_DIR"])
-                with (state_dir / "unzip_calls.log").open("a", encoding="utf-8") as handle:
-                    handle.write(" ".join(sys.argv[1:]) + "\\n")
-
-                install_dir = Path("aws")
-                install_dir.mkdir(parents=True, exist_ok=True)
-                install_script = install_dir / "install"
-                install_script.write_text(
-                    "#!/usr/bin/env bash\\n"
-                    "state_dir=\\\"${BOOTSTRAP_TEST_STATE_DIR:?}\\\"\\n"
-                    "printf '%s\\\\n' \\\"$*\\\" >> \\\"${state_dir}/aws_install_calls.log\\\"\\n"
-                    "cp \\\"${BOOTSTRAP_FAKE_AWS_SOURCE:?}\\\" \\\"${BOOTSTRAP_TEST_FAKE_BIN:?}/aws\\\"\\n"
-                    "chmod +x \\\"${BOOTSTRAP_TEST_FAKE_BIN:?}/aws\\\"\\n",
-                    encoding="utf-8",
-                )
-                install_script.chmod(0o755)
-                """
+                fake_unzip
             ),
         )
 
@@ -253,6 +272,7 @@ class BootstrapAutoDeployEc2Tests(unittest.TestCase):
         env["BOOTSTRAP_TEST_CREATED_IDENTITIES"] = str(self.state_dir / "created_identities.txt")
         env["BOOTSTRAP_TEST_FAKE_BIN"] = str(self.fake_bin)
         env["BOOTSTRAP_FAKE_AWS_SOURCE"] = str(self.fake_aws_source)
+        env["BOOTSTRAP_FAKE_UNZIP_SOURCE"] = str(self.fake_unzip_source)
         env["BOOTSTRAP_REPO_ROOT"] = str(self.repo)
         env["BOOTSTRAP_AUTO_DEPLOY_ETC_DIR"] = str(self.etc_dir)
         env["BOOTSTRAP_SYSTEMD_TARGET_DIR"] = str(self.systemd_dir)
@@ -322,6 +342,14 @@ class BootstrapAutoDeployEc2Tests(unittest.TestCase):
         self.assertIn("DEPLOY_AWS_REGION=us-east-1", env_example)
         self.assertIn("DEPLOY_ALERT_FROM=", env_example)
         self.assertIn("DEPLOY_ALERT_TO=", env_example)
+        self.assertIn("DEPLOY_REPORT_ENABLE_AI=true", env_example)
+        self.assertIn("DEPLOY_REPORT_MODEL=gpt-5.4-mini", env_example)
+        self.assertIn("DEPLOY_REPORT_LOG_SINCE=24h", env_example)
+
+    def test_bootstrap_script_does_not_require_unzip_before_install(self) -> None:
+        script = BOOTSTRAP_SCRIPT.read_text(encoding="utf-8")
+
+        self.assertNotIn("require_cmd unzip", script)
 
 
 if __name__ == "__main__":

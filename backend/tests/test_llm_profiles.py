@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from backend.services.llm_profiles import (
+    AUTO_DEPLOY_REPORT_SCENARIO,
     BENCHMARK_JUDGE_SCENARIO,
     ENGINEER_HELPER_SCENARIO,
     KNOWLEDGE_INGESTION_SCENARIO,
@@ -30,6 +31,7 @@ class LlmProfileTests(unittest.TestCase):
             compression = resolve_model_profile(RAG_CONTEXT_COMPRESSION_SCENARIO)
             engineer = resolve_model_profile(ENGINEER_HELPER_SCENARIO)
             ingestion = resolve_model_profile(KNOWLEDGE_INGESTION_SCENARIO)
+            auto_deploy_report = resolve_model_profile(AUTO_DEPLOY_REPORT_SCENARIO)
 
         self.assertEqual(web_search.provider, "openai")
         self.assertEqual(web_search.api_mode, "openai_responses")
@@ -67,6 +69,11 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(ingestion.provider, "openai")
         self.assertEqual(ingestion.api_mode, "openai_chat")
         self.assertEqual(ingestion.model, "gpt-5.4-mini")
+
+        self.assertEqual(auto_deploy_report.provider, "openai")
+        self.assertEqual(auto_deploy_report.api_mode, "openai_responses")
+        self.assertEqual(auto_deploy_report.model, "gpt-5.4-mini")
+        self.assertEqual(auto_deploy_report.reasoning_effort, "low")
 
     def test_resolve_model_profile_honors_scene_specific_env_overrides(self) -> None:
         with patch.dict(
@@ -121,6 +128,7 @@ class LlmProfileTests(unittest.TestCase):
                 resolve_model_profile(RAG_CONTEXT_COMPRESSION_SCENARIO),
                 resolve_model_profile(ENGINEER_HELPER_SCENARIO),
                 resolve_model_profile(KNOWLEDGE_INGESTION_SCENARIO),
+                resolve_model_profile(AUTO_DEPLOY_REPORT_SCENARIO),
             ]
 
         allowed_models = {"gpt-5.4", "gpt-5.4-mini"}

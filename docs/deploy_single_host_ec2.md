@@ -237,17 +237,19 @@ chmod +x deployment/deploy_ec2.sh
 
 仓库已提供以下资产：
 1. 自动调度 wrapper：`scripts/ops/auto_deploy_ec2.sh`
-2. 一键 bootstrap 脚本：`scripts/ops/bootstrap_auto_deploy_ec2.sh`
-3. systemd service：`deployment/systemd/supportportal-auto-deploy.service`
-4. systemd timer：`deployment/systemd/supportportal-auto-deploy.timer`
-5. 环境变量模板：`deployment/systemd/auto-deploy.env.example`
+2. 日报/AI 分析 helper：`scripts/ops/build_auto_deploy_report.py`
+3. 一键 bootstrap 脚本：`scripts/ops/bootstrap_auto_deploy_ec2.sh`
+4. systemd service：`deployment/systemd/supportportal-auto-deploy.service`
+5. systemd timer：`deployment/systemd/supportportal-auto-deploy.timer`
+6. 环境变量模板：`deployment/systemd/auto-deploy.env.example`
 
 自动调度 wrapper 会执行：
 1. 获取 `origin` 最新 refs。
 2. 比较本地 `HEAD` 和 `origin/main`。
 3. 如果远端有新提交，调用 `deployment/deploy_ec2.sh --branch main --domain support.stellarix.space` 做完整部署。
 4. 如果没有新提交，只做内外网健康检查，不重启容器。
-5. 任何步骤失败都会尝试调用 Amazon SES 发失败邮件。
+5. 无论成功还是失败，都会尝试调用 Amazon SES 发一封日报。
+6. 日报会附带 `docker compose ps` 摘要、最近 docker 日志摘录，以及可选的 AI 日志分析。
 
 #### 4.4.1 前置条件
 
@@ -256,6 +258,7 @@ chmod +x deployment/deploy_ec2.sh
 3. `DEPLOY_ALERT_FROM` 已在 SES 对应 region 完成验证。
 4. SES 账号已退出 sandbox；如果还没退出，收件邮箱也必须先验证。
 5. 机器可访问互联网下载 AWS CLI 安装包。
+6. 如果你希望日报包含 AI 日志分析，仓库 `.env` 中需要有可用的 `OPENAI_API_KEY`。
 
 建议的最小 IAM policy：
 
@@ -283,12 +286,27 @@ DEPLOY_DOMAIN=support.stellarix.space
 DEPLOY_AWS_REGION=us-east-1
 DEPLOY_ALERT_FROM=alerts@example.com
 DEPLOY_ALERT_TO=alerts@example.com
+DEPLOY_REPORT_ENABLE_AI=true
+DEPLOY_REPORT_MODEL=gpt-5.4-mini
+DEPLOY_REPORT_REASONING_EFFORT=low
+DEPLOY_REPORT_LOG_SINCE=24h
+DEPLOY_REPORT_LOG_LINES_PER_SERVICE=120
+DEPLOY_REPORT_MAX_LOG_CHARS=12000
+DEPLOY_REPORT_TIMEZONE=Asia/Shanghai
 ```
 
 如果你已经习惯旧命名，bootstrap 脚本也兼容：
 1. `AWS_REGION`
 2. `ALERT_FROM_EMAIL`
 3. `ALERT_TO_EMAIL`
+
+如果启用 AI 日志分析，还需要在同一个仓库 `.env` 中保留：
+
+```env
+OPENAI_API_KEY=<your-openai-key>
+```
+
+`OPENAI_API_KEY` 继续只放在仓库 `.env` 中；它不会被复制到 `/etc/supportportal/auto-deploy.env`。
 
 然后直接运行：
 
@@ -326,6 +344,15 @@ sudo nano /etc/supportportal/auto-deploy.env
 3. `DEPLOY_ALERT_TO=<你的收件邮箱>`
 4. `DEPLOY_ALERT_FROM=<SES 已验证发件地址>`
 5. `DEPLOY_AWS_REGION=<SES 所在 region>`
+
+可选覆盖：
+1. `DEPLOY_REPORT_ENABLE_AI=true`
+2. `DEPLOY_REPORT_MODEL=gpt-5.4-mini`
+3. `DEPLOY_REPORT_REASONING_EFFORT=low`
+4. `DEPLOY_REPORT_LOG_SINCE=24h`
+5. `DEPLOY_REPORT_LOG_LINES_PER_SERVICE=120`
+6. `DEPLOY_REPORT_MAX_LOG_CHARS=12000`
+7. `DEPLOY_REPORT_TIMEZONE=Asia/Shanghai`
 
 安装 systemd unit。下面的命令会把默认仓库路径 `/opt/supportportal/SupportPortal` 和默认用户 `ubuntu` 替换成当前机器的真实值：
 
@@ -369,6 +396,17 @@ systemctl list-timers supportportal-auto-deploy.timer
 journalctl -u supportportal-auto-deploy.service -n 200 --no-pager
 ```
 
+每次运行都会尝试发一封日报：
+1. 成功标题：`SupportPortal Report 4/4`
+2. 失败标题：`[Failed] SupportPortal Report 4/4`
+
+日报正文固定包含：
+1. 运行摘要
+2. 健康检查结果
+3. `docker compose ps` 服务状态
+4. AI 日志分析
+5. 可疑原始日志 / 回退诊断
+
 #### 4.4.5 故障排查
 
 1. 如果 service 直接失败，先看：
@@ -388,10 +426,16 @@ journalctl -u supportportal-auto-deploy.service -n 200 --no-pager
    - 检查 `DEPLOY_ALERT_FROM` 是否已在对应 region 验证。
    - 检查 EC2 IAM role 是否有 `ses:SendEmail` 权限。
    - 检查 SES 是否仍处于 sandbox。
+   - 检查 `journalctl -u supportportal-auto-deploy.service` 里是否出现 `Daily report sent via SES`。
 
 5. 如果 systemd 没有按时触发：
    - 用 `systemctl list-timers supportportal-auto-deploy.timer` 检查下次触发时间。
    - 确认 `Persistent=true` 已生效；实例关机错过时间窗后，开机应自动补跑一次。
+
+6. 如果日报收到了，但 AI 区块显示 unavailable：
+   - 先检查仓库 `.env` 中是否存在 `OPENAI_API_KEY`。
+   - 检查 `DEPLOY_REPORT_ENABLE_AI` 是否被设为 `false`。
+   - 如果 OpenAI 调用失败，日报仍会照常发送，但 AI 区块会回退成 unavailable 文本，不会阻塞部署或健康检查。
 
 ---
 
