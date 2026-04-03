@@ -157,7 +157,7 @@ def resolve_model_profile(
             model=_clean_text(os.getenv("RAG_ANSWER_MODEL")) or "gpt-5.4",
             api_mode=OPENAI_RESPONSES_API,
             api_key=_openai_api_key(),
-            reasoning_effort=_clean_text(os.getenv("RAG_ANSWER_REASONING_EFFORT")) or "high",
+            reasoning_effort=_clean_text(os.getenv("RAG_ANSWER_REASONING_EFFORT")) or "medium",
             temperature=0.0,
             timeout_seconds=_safe_positive_float_env("RAG_REQUEST_TIMEOUT_SECONDS", 20.0),
             max_retries=_safe_int_env("RAG_OPENAI_MAX_RETRIES", 1),

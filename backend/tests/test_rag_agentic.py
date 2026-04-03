@@ -11,6 +11,7 @@ from backend.services.rag_qa import (
     AgenticRoundResult,
     RetrievedChunk,
     _build_agentic_retrieval_plan,
+    _execute_agentic_round,
     _judge_agentic_round,
     _merge_agentic_tool_results,
     run_rag_query,
@@ -95,6 +96,18 @@ class RagAgenticTests(unittest.TestCase):
         self.assertEqual(plan.first_pass_tools[:3], ["p_vec", "s_vec", "p_bm25"])
         self.assertEqual(plan.query_variants[0][0], "original")
         self.assertTrue(plan.ticket_context_used)
+
+    def test_build_agentic_retrieval_plan_uses_lean_first_pass_for_simple_lexical_query(self) -> None:
+        plan = _build_agentic_retrieval_plan(
+            message="how to join channel",
+            top_k=5,
+            query_understanding=None,
+            ticket_context=None,
+        )
+
+        self.assertEqual(plan.query_class, "lexical_exact")
+        self.assertEqual(plan.first_pass_tools, ["p_bm25", "p_fts", "p_vec"])
+        self.assertEqual(plan.query_variants, [("original", "how to join channel")])
 
     def test_merge_agentic_tool_results_caps_shadow_share_and_records_fusion_trace(self) -> None:
         primary_a = RetrievedChunk(
@@ -301,3 +314,71 @@ class RagAgenticTests(unittest.TestCase):
         self.assertEqual(result.trace.agent_recovery_action, "lexical_recovery")
         self.assertTrue(result.trace.ticket_context_used)
         self.assertEqual(result.answer.answer, "Error 109 means the token is expired.")
+
+    def test_execute_agentic_round_disables_vector_family_after_first_runtime_failure(self) -> None:
+        plan = AgenticRetrievalPlan(
+            query_class="lexical_exact",
+            first_pass_tools=["p_vec", "s_vec", "p_bm25"],
+            query_variants=[
+                ("original", "how to join channel"),
+                ("rewrite", "join channel with token"),
+            ],
+            decomposition_targets=[],
+            evidence_goal="exact_match",
+            recovery_bias="lexical",
+            ticket_context_used=False,
+            exact_terms=["join", "channel"],
+        )
+        chunk = RetrievedChunk(
+            chunk_id="chunk-1",
+            text="Call joinChannel with the same channel name on each client to join channel successfully.",
+            source_path="official/get-started.md",
+            similarity=0.91,
+            index_role="primary",
+        )
+        config = {
+            "top_k": 5,
+            "vector_candidate_k": 10,
+            "bm25_candidate_k": 10,
+            "keyword_candidate_k": 10,
+            "fusion_candidate_k": 10,
+            "rerank_top_n": 5,
+            "agent_shadow_ratio_cap": 0.4,
+            "agent_final_shadow_cap": 1,
+            "agent_recovery_shadow_cap": 2,
+            "vector_enabled": True,
+            "rerank_enabled": False,
+        }
+        rerank_info = {
+            "post_rerank_count": 1,
+            "hints": {},
+            "applied_filter": False,
+            "filter_type": None,
+            "candidate_reasons": {},
+        }
+
+        with patch(
+            "backend.services.rag_qa._retrieve_chunks",
+            side_effect=RuntimeError("embedding provider unavailable"),
+        ) as vector_mock, patch(
+            "backend.services.rag_qa._retrieve_bm25_chunks",
+            return_value=[chunk],
+        ), patch(
+            "backend.services.rag_qa._metadata_rerank",
+            return_value=([chunk], rerank_info),
+        ), patch(
+            "backend.services.rag_qa._rerank_chunks",
+            side_effect=AssertionError("rerank should be skipped when disabled"),
+        ):
+            result = _execute_agentic_round(
+                message="how to join channel",
+                config=config,
+                plan=plan,
+                round_index=1,
+                retrieval_plan=RetrievalPlan(semantic_query="how to join channel"),
+                query_understanding=None,
+                ticket_context=None,
+            )
+
+        self.assertEqual(vector_mock.call_count, 1)
+        self.assertEqual(result.final_chunks[0].chunk_id, "chunk-1")

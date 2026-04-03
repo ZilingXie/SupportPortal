@@ -173,6 +173,27 @@ class KnowledgeRepositoryBm25HookTests(unittest.TestCase):
         self.assertIn("ADD COLUMN IF NOT EXISTS usage_ledger", executed_sql)
         self.assertIn("ADD COLUMN IF NOT EXISTS usage_summary", executed_sql)
 
+    def test_initialize_replays_query_run_usage_column_alters_when_schema_version_matches(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        fake_connection = _FakeConnection()
+
+        with patch.object(repository, "_connect", return_value=fake_connection):
+            with patch.object(repository, "_ensure_bootstrap_version_table"):
+                with patch.object(repository, "_bootstrap_version_matches", return_value=True):
+                    with patch("backend.repositories.knowledge_repository.validate_embedding_provider_dim") as validate_mock:
+                        with patch.object(repository, "_ensure_vector_table") as ensure_vector_mock:
+                            with patch.object(repository, "_record_bootstrap_version") as record_version_mock:
+                                with patch.object(repository, "_backfill_bm25_index_if_needed") as backfill_mock:
+                                    repository.initialize()
+
+        executed_sql = "\n".join(fake_connection._cursor.executed)
+        self.assertIn("ADD COLUMN IF NOT EXISTS usage_ledger", executed_sql)
+        self.assertIn("ADD COLUMN IF NOT EXISTS usage_summary", executed_sql)
+        validate_mock.assert_not_called()
+        ensure_vector_mock.assert_not_called()
+        record_version_mock.assert_not_called()
+        backfill_mock.assert_not_called()
+
     def test_backfill_bm25_index_runs_when_primary_chunks_exist_without_docs(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
         cursor = _SequenceCursor(fetchone_results=[(0,), (124,)])

@@ -14,6 +14,34 @@ For each new entry, record:
 
 ## 2026-04-02 - Query-understanding prompt surface for client RAG retrieval planning
 
+## 2026-04-03 - Lower-latency default reasoning for client RAG answers
+
+- Area or subsystem: Client AI technical RAG answer generation
+- Prompt or model version: `rag-answer-reasoning-latency-v1`
+- Summary: Lowered the default `rag_answer` reasoning effort from `high` to `medium`, and introduced a separate `RAG_COMPLEX_ANSWER_REASONING_EFFORT` override so complex troubleshooting/comparison questions can still opt back into `high` reasoning without forcing simple FAQ/how-to queries through the slower path.
+- Reason: The client-facing RAG answer stage was overpaying latency on straightforward grounded questions such as `how to join channel`. Splitting the default and complex reasoning tiers keeps the common path faster while preserving headroom for genuinely harder questions.
+- Affected files or config:
+  - `backend/services/llm_profiles.py`
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_rag_qa.py`
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Expected behavior change:
+  - Standard grounded RAG answers now default to `reasoning_effort="medium"`.
+  - Complex/troubleshooting/comparison answer paths can promote themselves to `RAG_COMPLEX_ANSWER_REASONING_EFFORT` instead of forcing every query through the higher-latency setting.
+  - Runtime config now exposes both `RAG_ANSWER_REASONING_EFFORT` and `RAG_COMPLEX_ANSWER_REASONING_EFFORT`, making the fast path and escalation path independently tunable.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_llm_profiles backend.tests.test_rag_qa`
+  - `podman exec deployment_rag_api_1 python -c "from backend.services.llm_profiles import resolve_model_profile, RAG_ANSWER_SCENARIO; print(resolve_model_profile(RAG_ANSWER_SCENARIO).reasoning_effort)"`
+  - `podman exec deployment_rag_api_1 python -c "import os; print(os.getenv('RAG_COMPLEX_ANSWER_REASONING_EFFORT'), os.getenv('RAG_ANSWER_REASONING_EFFORT'))"`
+  - Verification result:
+    - Focused runtime/profile regression passed in the targeted unittest suite included in the larger 91-test run.
+    - `deployment_rag_api_1` reported `medium` for `resolve_model_profile(RAG_ANSWER_SCENARIO).reasoning_effort`.
+    - The container environment exposed `RAG_COMPLEX_ANSWER_REASONING_EFFORT=high` and `RAG_ANSWER_REASONING_EFFORT=medium`, matching the intended default/escalation split.
+
 - Area or subsystem: Client AI technical RAG retrieval planning
 - Prompt or model version: `query-understanding-v1-en`
 - Summary: Added a dedicated query-understanding prompt surface for self-query planning, retrieval-oriented rewrite/enhancement, and limited decomposition. These prompts are modularized under `backend/services/prompts/query_understanding.py` and are designed for English-only V1 query planning while leaving a profile/registry seam for future locale- or product-specific prompt sets.

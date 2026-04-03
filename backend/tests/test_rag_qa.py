@@ -71,6 +71,20 @@ class RagQaHybridTests(unittest.TestCase):
             config = _get_rag_config(top_k=6)
         self.assertEqual(config["rerank_api_key"], "test-rerank-key")
 
+    def test_get_rag_config_disables_vector_and_rerank_without_provider_credentials(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "EMBEDDING_PROVIDER": "siliconflow",
+                "RAG_RERANK_PROVIDER": "siliconflow",
+            },
+            clear=True,
+        ):
+            config = _get_rag_config(top_k=6)
+
+        self.assertFalse(config["vector_enabled"])
+        self.assertFalse(config["rerank_enabled"])
+
     def test_select_bm25_query_terms_filters_overly_common_terms(self) -> None:
         selected = _select_bm25_query_terms(
             terms=["agora", "token", "recommended", "app", "id"],
@@ -2052,8 +2066,13 @@ class RagQaHybridTests(unittest.TestCase):
         def fake_retrieve_chunks(*args, **kwargs):
             _ = args
             _ = kwargs
-            retrieval_started.set()
             return [vector_chunk]
+
+        def fake_retrieve_bm25_chunks(*args, **kwargs):
+            _ = args
+            _ = kwargs
+            retrieval_started.set()
+            return []
 
         with patch("backend.services.rag_qa._get_rag_config") as config_mock:
             config_mock.return_value = {
@@ -2083,7 +2102,7 @@ class RagQaHybridTests(unittest.TestCase):
             with patch("backend.services.rag_qa.get_embedding_provider", return_value=self._FakeProvider()):
                 with patch("backend.services.rag_qa.understand_rag_query", side_effect=fake_understand):
                     with patch("backend.services.rag_qa._retrieve_chunks", side_effect=fake_retrieve_chunks):
-                        with patch("backend.services.rag_qa._retrieve_bm25_chunks", return_value=[]):
+                        with patch("backend.services.rag_qa._retrieve_bm25_chunks", side_effect=fake_retrieve_bm25_chunks):
                             with patch("backend.services.rag_qa._retrieve_fts_chunks", return_value=[]):
                                 with patch(
                                     "backend.services.rag_qa._metadata_rerank",

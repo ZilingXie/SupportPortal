@@ -160,7 +160,10 @@ def _shared_token() -> str:
 
 
 def _timeout_seconds() -> float:
-    return _safe_float_env("RAG_SERVICE_TIMEOUT_SECONDS", 45.0)
+    return _safe_float_env(
+        "CLIENT_RAG_SERVICE_TIMEOUT_SECONDS",
+        _safe_float_env("RAG_SERVICE_TIMEOUT_SECONDS", 25.0),
+    )
 
 
 def _json_loads(raw: bytes) -> Any:
