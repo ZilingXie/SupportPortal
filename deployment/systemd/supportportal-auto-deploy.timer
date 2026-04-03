@@ -1,0 +1,10 @@
+[Unit]
+Description=Run SupportPortal daily auto deploy
+
+[Timer]
+Unit=supportportal-auto-deploy.service
+OnCalendar=*-*-* 19:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

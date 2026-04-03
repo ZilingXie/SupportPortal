@@ -11,6 +11,8 @@ TARGET_BRANCH=""
 SKIP_PULL=0
 SKIP_EXTERNAL_CHECK=0
 FOLLOW_LOGS=0
+DEPLOY_LOCK_FILE="${DEPLOY_LOCK_FILE:-${PROJECT_ROOT}/.deploy_ec2.lock}"
+DEPLOY_LOCK_ALREADY_HELD="${DEPLOY_LOCK_ALREADY_HELD:-0}"
 
 log() {
   printf '[deploy] %s\n' "$*"
@@ -43,6 +45,19 @@ EOF
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "Missing command: $1"
+}
+
+acquire_deploy_lock() {
+  if [[ "${DEPLOY_LOCK_ALREADY_HELD}" == "1" ]]; then
+    log "Using pre-acquired deploy lock: ${DEPLOY_LOCK_FILE}"
+    return 0
+  fi
+
+  require_cmd flock
+  mkdir -p "$(dirname -- "${DEPLOY_LOCK_FILE}")"
+  exec 9>"${DEPLOY_LOCK_FILE}"
+  flock -n 9 || fail "Another deployment is already running (lock: ${DEPLOY_LOCK_FILE})"
+  log "Acquired deploy lock: ${DEPLOY_LOCK_FILE}"
 }
 
 git_head_summary() {
@@ -252,6 +267,7 @@ main() {
   require_cmd git
   require_cmd docker
   require_cmd curl
+  acquire_deploy_lock
 
   [[ -f "${COMPOSE_FILE}" ]] || fail "Compose file not found: ${COMPOSE_FILE}"
 

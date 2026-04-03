@@ -213,6 +213,7 @@ chmod +x deployment/deploy_ec2.sh
 2. 重启容器（`docker compose down` + `up -d --build`）。
 3. 健康检查（`http://127.0.0.1:<NGINX_HOST_PORT>/health`）。
 4. 外网检查（默认 `https://support.stellarix.space/health`）。
+5. 使用仓库根目录下的 `.deploy_ec2.lock` 避免并发部署。
 
 常用参数：
 
@@ -229,6 +230,131 @@ chmod +x deployment/deploy_ec2.sh
 # 部署后跟随日志
 ./deployment/deploy_ec2.sh --logs
 ```
+
+---
+
+### 4.4 EC2 每日自动部署 + 失败邮件告警
+
+仓库已提供以下资产：
+1. 自动调度 wrapper：`scripts/ops/auto_deploy_ec2.sh`
+2. systemd service：`deployment/systemd/supportportal-auto-deploy.service`
+3. systemd timer：`deployment/systemd/supportportal-auto-deploy.timer`
+4. 环境变量模板：`deployment/systemd/auto-deploy.env.example`
+
+自动调度 wrapper 会执行：
+1. 获取 `origin` 最新 refs。
+2. 比较本地 `HEAD` 和 `origin/main`。
+3. 如果远端有新提交，调用 `deployment/deploy_ec2.sh --branch main --domain support.stellarix.space` 做完整部署。
+4. 如果没有新提交，只做内外网健康检查，不重启容器。
+5. 任何步骤失败都会尝试调用 Amazon SES 发失败邮件。
+
+#### 4.4.1 前置条件
+
+1. EC2 上的部署仓库保持在干净的 `main`。
+2. 已安装 AWS CLI，并且 `aws sesv2 send-email` 可用。
+3. `DEPLOY_ALERT_FROM` 已在 SES 对应 region 完成验证。
+4. SES 账号已退出 sandbox；如果还没退出，收件邮箱也必须先验证。
+5. EC2 已绑定允许发 SES 邮件的 IAM role。
+
+建议的最小 IAM policy：
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ses:SendEmail"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+#### 4.4.2 安装配置
+
+先准备 `/etc/supportportal/auto-deploy.env`：
+
+```bash
+sudo install -d -m 0755 /etc/supportportal
+sudo cp deployment/systemd/auto-deploy.env.example /etc/supportportal/auto-deploy.env
+sudo nano /etc/supportportal/auto-deploy.env
+```
+
+至少填写：
+1. `DEPLOY_BRANCH=main`
+2. `DEPLOY_DOMAIN=support.stellarix.space`
+3. `DEPLOY_ALERT_TO=<你的收件邮箱>`
+4. `DEPLOY_ALERT_FROM=<SES 已验证发件地址>`
+5. `DEPLOY_AWS_REGION=<SES 所在 region>`
+
+安装 systemd unit。下面的命令会把默认仓库路径 `/opt/supportportal/SupportPortal` 和默认用户 `ubuntu` 替换成当前机器的真实值：
+
+```bash
+sudo sed \
+  -e "s#/opt/supportportal/SupportPortal#${HOME}/SupportPortal#g" \
+  -e "s#User=ubuntu#User=${USER}#g" \
+  deployment/systemd/supportportal-auto-deploy.service \
+  | sudo tee /etc/systemd/system/supportportal-auto-deploy.service >/dev/null
+
+sudo cp deployment/systemd/supportportal-auto-deploy.timer /etc/systemd/system/supportportal-auto-deploy.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now supportportal-auto-deploy.timer
+```
+
+默认 timer 使用：
+
+```ini
+OnCalendar=*-*-* 19:00:00 UTC
+```
+
+这等价于每天北京时间 03:00。如果你的 EC2 已经把系统时区切到 `Asia/Shanghai`，也可以把 timer 改成：
+
+```ini
+OnCalendar=*-*-* 03:00:00 Asia/Shanghai
+```
+
+#### 4.4.3 手动触发与状态检查
+
+```bash
+# 立刻执行一次
+sudo systemctl start supportportal-auto-deploy.service
+
+# 看最近一次运行状态
+sudo systemctl status supportportal-auto-deploy.service
+
+# 看下一次触发时间
+systemctl list-timers supportportal-auto-deploy.timer
+
+# 看日志
+journalctl -u supportportal-auto-deploy.service -n 200 --no-pager
+```
+
+#### 4.4.4 故障排查
+
+1. 如果 service 直接失败，先看：
+
+```bash
+journalctl -u supportportal-auto-deploy.service -n 200 --no-pager
+```
+
+2. 如果日志提示 `Deploy checkout must be clean`：
+   - 说明部署仓库有未提交或未清理的改动，先恢复到干净 `main`。
+
+3. 如果日志提示 `Another deployment or auto health check is already running`：
+   - 说明有手动部署或另一轮自动任务正在执行。
+   - 两个脚本共享 `.deploy_ec2.lock`，等上一轮完成后再重试。
+
+4. 如果部署成功但没有收到邮件：
+   - 检查 `DEPLOY_ALERT_FROM` 是否已在对应 region 验证。
+   - 检查 EC2 IAM role 是否有 `ses:SendEmail` 权限。
+   - 检查 SES 是否仍处于 sandbox。
+
+5. 如果 systemd 没有按时触发：
+   - 用 `systemctl list-timers supportportal-auto-deploy.timer` 检查下次触发时间。
+   - 确认 `Persistent=true` 已生效；实例关机错过时间窗后，开机应自动补跑一次。
 
 ---
 

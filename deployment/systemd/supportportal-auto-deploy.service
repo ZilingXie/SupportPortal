@@ -1,0 +1,14 @@
+[Unit]
+Description=SupportPortal daily auto deploy
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/opt/supportportal/SupportPortal
+EnvironmentFile=/etc/supportportal/auto-deploy.env
+ExecStart=/opt/supportportal/SupportPortal/scripts/ops/auto_deploy_ec2.sh
+
+[Install]
+WantedBy=multi-user.target
