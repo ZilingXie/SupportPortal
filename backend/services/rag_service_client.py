@@ -48,6 +48,7 @@ class RagTicketAnswerDetail:
     needs_engineer_guidance: bool
     reason: str
     evidence_summary: dict[str, Any] | None = None
+    packed_evidence: dict[str, Any] | None = None
 
     def as_answer_tuple(self) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
         return (
@@ -67,6 +68,7 @@ def map_rag_payload_to_ticket_answer_detail(
     decision = str(payload.get("decision") or "").strip().lower()
     raw_reason = str(payload.get("reason") or "").strip()
     evidence_summary = payload.get("evidence_summary") if isinstance(payload.get("evidence_summary"), dict) else None
+    packed_evidence = payload.get("packed_evidence") if isinstance(payload.get("packed_evidence"), dict) else None
     if decision == "answer":
         answer = str(payload.get("answer") or "").strip()
         if answer:
@@ -80,6 +82,7 @@ def map_rag_payload_to_ticket_answer_detail(
                 needs_engineer_guidance=False,
                 reason=raw_reason or "grounded_answer",
                 evidence_summary=evidence_summary,
+                packed_evidence=packed_evidence,
             )
     return RagTicketAnswerDetail(
         answer=insufficient_reply,
@@ -89,6 +92,7 @@ def map_rag_payload_to_ticket_answer_detail(
         needs_engineer_guidance=True,
         reason=raw_reason or "insufficient_evidence",
         evidence_summary=evidence_summary,
+        packed_evidence=packed_evidence,
     )
 
 
@@ -128,6 +132,13 @@ def map_live_detail_payload_to_ticket_answer_detail(payload: dict[str, Any]) -> 
         if isinstance(payload.get("evidence_summary"), dict)
         else None
     )
+    packed_evidence = (
+        primary.get("packed_evidence")
+        if isinstance(primary.get("packed_evidence"), dict)
+        else payload.get("packed_evidence")
+        if isinstance(payload.get("packed_evidence"), dict)
+        else None
+    )
     return RagTicketAnswerDetail(
         answer=answer,
         confidence=confidence,
@@ -136,6 +147,7 @@ def map_live_detail_payload_to_ticket_answer_detail(payload: dict[str, Any]) -> 
         needs_engineer_guidance=False,
         reason="recovered_live_detail",
         evidence_summary=evidence_summary,
+        packed_evidence=packed_evidence,
     )
 
 
@@ -517,6 +529,19 @@ class RagServiceClient:
 
     def knowledge_metrics(self) -> dict[str, Any]:
         return self._request("GET", "/internal/knowledge/metrics")
+
+    def get_ticket_family_token_summary(
+        self,
+        *,
+        ticket_id: str,
+        client_ticket_id: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_ticket_id = str(ticket_id or "").strip()
+        if not normalized_ticket_id:
+            raise RagServiceError("ticket_id is required")
+        query = {"client_ticket_id": str(client_ticket_id or "").strip() or None}
+        quoted = urllib.parse.quote(normalized_ticket_id, safe="")
+        return self._request("GET", f"/internal/rag/ticket-families/{quoted}/token-usage", query=query)
 
     def rag_dashboard_page(
         self,

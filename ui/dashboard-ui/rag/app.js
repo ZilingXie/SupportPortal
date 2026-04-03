@@ -37,7 +37,7 @@ const ragPageContainers = {
 };
 
 const PAGE_LABELS = {
-  scorecard: "Scorecard",
+  scorecard: "Overview",
   routing: "Routing",
   retrieval: "Retrieval",
   generation: "Generation",
@@ -277,6 +277,39 @@ function buildDefinitionGrid(items) {
         )
         .join("")}
     </div>
+  `;
+}
+
+function buildUsageSummaryPanel(title, usageSummary, options = {}) {
+  const summary = usageSummary && typeof usageSummary === "object" ? usageSummary : {};
+  const cards = {
+    total_input_tokens: summary.total_input_tokens,
+    total_output_tokens: summary.total_output_tokens,
+    total_embedding_tokens: summary.total_embedding_tokens,
+    avg_input_tokens_per_case: summary.avg_input_tokens_per_case,
+    avg_output_tokens_per_case: summary.avg_output_tokens_per_case,
+    known_cost_total: summary.known_cost_total,
+    unknown_cost_present: summary.unknown_cost_present,
+  };
+  const costRows = Array.isArray(summary.cost_by_model) ? summary.cost_by_model : [];
+  return `
+    <section class="panel-card">
+      <div class="panel-header">
+        <div>
+          <h3>${escapeHtml(title)}</h3>
+          <p>${escapeHtml(options.subtitle || "Provider-aware token and cost summary.")}</p>
+        </div>
+      </div>
+      ${buildMetricCards(cards)}
+      ${
+        costRows.length
+          ? buildTable(costRows, {
+              columns: ["provider", "model", "input_tokens", "output_tokens", "embedding_tokens", "known_cost", "unknown_cost"],
+              emptyLabel: "No cost_by_model rows available for this scope.",
+            })
+          : '<div class="empty-state">No cost_by_model rows available for this scope.</div>'
+      }
+    </section>
   `;
 }
 
@@ -552,6 +585,7 @@ function buildRunDistributionTable(title, rows, options = {}) {
 
 function buildBenchmarkRunHistory(benchmarkSession) {
   const runs = Array.isArray(benchmarkSession?.run_history) ? benchmarkSession.run_history : Array.isArray(benchmarkSession?.runs) ? benchmarkSession.runs : [];
+  const perRunGateStatus = benchmarkSession?.per_run_gate_status || {};
   if (!runs.length) {
     return `<section class="panel-card benchmark-run-history"><div class="empty-state">No benchmark runs recorded for this session yet.</div></section>`;
   }
@@ -567,6 +601,8 @@ function buildBenchmarkRunHistory(benchmarkSession) {
         ${runs
           .map((run) => {
             const diagnostics = run?.diagnostics || {};
+            const gateStatus = perRunGateStatus[run?.dataset_name || run?.label || ""] || {};
+            const usageSummary = run?.usage_summary || {};
             return `
               <article class="benchmark-run-card">
                 <div class="panel-header">
@@ -581,11 +617,14 @@ function buildBenchmarkRunHistory(benchmarkSession) {
                 </div>
                 ${buildDefinitionGrid([
                   { label: "Experiment", value: run.experiment_id },
+                  { label: "Gate Status", value: gateStatus.overall_status },
                   { label: "Finished At", value: run.finished_at || run.started_at },
                   { label: "Evidence Precision@5", value: run.metrics?.evidence_precision_at_5 },
                   { label: "Context Relevance", value: run.metrics?.context_relevance_score },
                   { label: "Faithfulness", value: run.metrics?.faithfulness_score },
                   { label: "Judge Error Rate", value: run.metrics?.judge_error_rate },
+                  { label: "Total Input Tokens", value: usageSummary.total_input_tokens },
+                  { label: "Known Cost Total", value: usageSummary.known_cost_total },
                 ])}
                 <div class="benchmark-distribution-grid">
                   ${buildRunDistributionTable("Failure Stage Distribution", diagnostics.failure_stage_distribution, {
@@ -621,9 +660,10 @@ function buildBenchmarkRunComparison(benchmarkSession) {
         <div class="panel-header">
           <div>
             <h3>Run Comparison</h3>
-            <p>No comparable baseline run is available in this session yet.</p>
+            <p>No comparable baseline run is available for this dataset_name + benchmark_version pair.</p>
           </div>
         </div>
+        <div class="empty-state">No aligned baseline run was found for the current benchmark run.</div>
       </section>
     `;
   }
@@ -632,12 +672,14 @@ function buildBenchmarkRunComparison(benchmarkSession) {
       <div class="panel-header">
         <div>
           <h3>Run Comparison</h3>
-          <p>Compare the current benchmark run against the nearest available baseline run in this session.</p>
+          <p>Compare the current benchmark run against the aligned baseline run for the same dataset_name + benchmark_version.</p>
         </div>
       </div>
       ${buildDefinitionGrid([
         { label: "Current Run", value: comparison.current_label || comparison.current_eval_run_id },
         { label: "Baseline Run", value: comparison.baseline_label || comparison.baseline_eval_run_id },
+        { label: "Dataset Name", value: comparison.dataset_name },
+        { label: "Benchmark Version", value: comparison.benchmark_version },
       ])}
       ${buildTable(comparison.rows || [], {
         columns: ["label", "current", "baseline", "delta"],
@@ -655,6 +697,7 @@ function buildBenchmarkSessionPanel(benchmarkSession) {
   const improvementEntries = Array.isArray(session.improvement_entries) ? session.improvement_entries : [];
   const runs = Array.isArray(session.runs) ? session.runs : [];
   const gateFailures = Array.isArray(session.gate_failure_dimensions) ? session.gate_failure_dimensions : [];
+  const failedDatasetNames = Array.isArray(session.failed_dataset_names) ? session.failed_dataset_names : [];
   const improvementSummary = normalizeString(session.improvement_summary);
   const runRows = runs.map((run) => ({
     label: run.label || run.dataset_name || run.benchmark_version || run.eval_run_id,
@@ -678,6 +721,7 @@ function buildBenchmarkSessionPanel(benchmarkSession) {
         { label: "Session Id", value: session.benchmark_session_id },
         { label: "Previous Session", value: session.previous_session_id || "(none)" },
         { label: "Gate Status", value: session.gate_status || "-" },
+        { label: "Failed Datasets", value: failedDatasetNames.join(", ") || "-" },
         { label: "Started At", value: session.started_at ? formatDateTime(session.started_at) : "-" },
         { label: "Finished At", value: session.finished_at ? formatDateTime(session.finished_at) : "-" },
       ])}
@@ -1272,6 +1316,9 @@ function buildTraceOverview(trace) {
     { label: "Language", value: trace.language },
     { label: "Retrieval Strategy", value: trace.retrieval_strategy },
     { label: "Generation Mode", value: trace.generation_mode },
+    { label: "Execution Mode", value: trace.execution_mode },
+    { label: "Agent Fallback Used", value: trace.agent_fallback_used },
+    { label: "Agent Fallback Reason", value: trace.agent_fallback_reason },
     { label: "Needs Human", value: trace.needs_human },
     { label: "Handoff Reason", value: trace.handoff_reason },
     { label: "Created At", value: trace.created_at ? formatDateTime(trace.created_at) : "-" },
@@ -1686,6 +1733,16 @@ function buildCaseDetailDiagnostics(primary) {
   `;
 }
 
+function buildCaseDetailUsage(primary) {
+  const usageSummary = primary?.usage_summary || {};
+  if (!Object.keys(usageSummary).length) {
+    return "";
+  }
+  return buildUsageSummaryPanel("Token & Cost Summary", usageSummary, {
+    subtitle: "Case-level token ledger summary captured for this benchmark sample.",
+  });
+}
+
 function renderCaseDetailSurface(detailPayload = {}, options = {}) {
   const primary = detailPayload.primary || null;
   const baseline = detailPayload.baseline || null;
@@ -1700,6 +1757,7 @@ function renderCaseDetailSurface(detailPayload = {}, options = {}) {
     buildCaseDetailFailureAndPolicy(primary),
     buildCaseDetailEvidence(primary),
     buildCaseDetailDiagnostics(primary),
+    buildCaseDetailUsage(primary),
     buildCaseDetailQuality(primary),
     primary?.related_ingestion_ids?.length
       ? `
@@ -1895,6 +1953,7 @@ function renderScorecardPage(payload) {
   const root = ragPageContainers["scorecard"].root;
   const sections = payload.sections || {};
   const summary = sections.summary || {};
+  const overviewUsageSummary = sections.overview_usage_summary || {};
   const retrievalSummary = sections.retrieval_summary || {};
   const generationSummary = sections.generation_summary || {};
   const performanceSummary = sections.performance_summary || {};
@@ -1907,13 +1966,16 @@ function renderScorecardPage(payload) {
     <section class="hero-card">
       <div class="hero-copy">
         <p class="eyebrow">Four-Layer Scorecard</p>
-        <h2>${escapeHtml(summary.title || "Scorecard")}</h2>
+        <h2>${escapeHtml(summary.title || "Overview")}</h2>
         <p>${escapeHtml(summary.subtitle || "Read routing, retrieval, generation, and business outcomes together.")}</p>
       </div>
       ${buildExperimentComparisonControls(summary, payload.benchmark_selector)}
       ${buildMetricCards(summary.cards || {})}
     </section>
     ${buildBenchmarkSessionPanel(payload.benchmark_session)}
+    ${buildUsageSummaryPanel(overviewUsageSummary.title || "Token & Cost Summary", overviewUsageSummary.cards || {}, {
+      subtitle: "Overview token and cost summary for the current candidate benchmark run.",
+    })}
     <div class="three-column-grid">
       <section class="panel-card">
         <div class="panel-header">

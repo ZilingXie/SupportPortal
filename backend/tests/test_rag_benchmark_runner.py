@@ -8,6 +8,8 @@ from pathlib import Path
 from unittest import mock
 
 from backend.services.rag_benchmark_runner import (
+    BenchmarkExecutionResult,
+    _build_trace_payload,
     _failure_stage_and_bucket,
     _strategy_snapshot,
     resolve_judge_models,
@@ -436,6 +438,62 @@ class RagBenchmarkRunnerTests(unittest.TestCase):
         self.assertEqual(stage, "judge")
         self.assertEqual(bucket, "judge_unstable_or_timed_out")
 
+    def test_failure_stage_and_bucket_classifies_query_understanding_failures(self) -> None:
+        case = mock.Mock(expected_route_family="agora_docs_rag", expected_execution_action="rag")
+        decision = mock.Mock(route_family="agora_docs_rag", execution_action="rag")
+
+        stage, bucket = _failure_stage_and_bucket(
+            case=case,
+            decision=decision,
+            retrieval_metrics={
+                "evidence_hit_at_5": 1.0,
+                "evidence_coverage": 1.0,
+                "query_understanding_failed": True,
+            },
+            judge_aggregate={},
+            response_policy_followed=True,
+            used_prohibited_agora_docs=False,
+        )
+
+        self.assertEqual(stage, "query_understanding")
+        self.assertEqual(bucket, "query_understanding_failed")
+
+    def test_failure_stage_and_bucket_classifies_rerank_and_context_selection_failures(self) -> None:
+        case = mock.Mock(expected_route_family="agora_docs_rag", expected_execution_action="rag")
+        decision = mock.Mock(route_family="agora_docs_rag", execution_action="rag")
+
+        rerank_stage, rerank_bucket = _failure_stage_and_bucket(
+            case=case,
+            decision=decision,
+            retrieval_metrics={
+                "evidence_hit_at_5": 1.0,
+                "evidence_coverage": 1.0,
+                "expected_doc_retrieved": True,
+                "expected_doc_survived_rerank": False,
+            },
+            judge_aggregate={},
+            response_policy_followed=True,
+            used_prohibited_agora_docs=False,
+        )
+        context_stage, context_bucket = _failure_stage_and_bucket(
+            case=case,
+            decision=decision,
+            retrieval_metrics={
+                "evidence_hit_at_5": 1.0,
+                "evidence_coverage": 1.0,
+                "expected_doc_survived_rerank": True,
+                "expected_doc_selected_for_context": False,
+            },
+            judge_aggregate={},
+            response_policy_followed=True,
+            used_prohibited_agora_docs=False,
+        )
+
+        self.assertEqual(rerank_stage, "rerank")
+        self.assertEqual(rerank_bucket, "expected_doc_dropped_after_rerank")
+        self.assertEqual(context_stage, "context_selection")
+        self.assertEqual(context_bucket, "expected_doc_not_selected")
+
     def test_failure_stage_and_bucket_uses_business_policy_stage_name(self) -> None:
         case = mock.Mock(expected_route_family="agora_docs_rag", expected_execution_action="rag")
         decision = mock.Mock(route_family="agora_docs_rag", execution_action="rag")
@@ -451,6 +509,91 @@ class RagBenchmarkRunnerTests(unittest.TestCase):
 
         self.assertEqual(stage, "business/policy")
         self.assertEqual(bucket, "answer_correct_but_not_relevant")
+
+    def test_build_trace_payload_exposes_execution_mode_and_agent_fallback_fields(self) -> None:
+        case = mock.Mock(
+            question="How do I join a channel?",
+            query_type="how_to",
+            source_type="official_markdown_upload",
+            product="video-calling",
+            language="en",
+            expected_document_ids=["official-doc-1"],
+            expected_document_relevance=[],
+            expected_heading_paths=["Join a channel"],
+            expected_evidence_refs=[],
+            anchor_set_id="anchor-1",
+            expected_behavior="answer",
+            expected_route="rag",
+            expected_scope_label="agora_technical",
+            route_aware=True,
+            retrieval_metrics_enabled=True,
+        )
+        decision = mock.Mock(
+            route_family="agora_docs_rag",
+            execution_action="rag",
+            tooling_profile="agora_docs_only",
+        )
+        execution_result = BenchmarkExecutionResult(
+            answer_text="Use joinChannel.",
+            confidence=0.9,
+            sources=["docs"],
+            citations=[],
+            needs_human=False,
+            actual_route="rag",
+            actual_scope_label="agora_technical",
+            route_reason="technical_docs_match",
+            route_confidence=0.98,
+            search_used=False,
+            rag_result=RagQueryResult(
+                answer=RagAnswer(answer="Use joinChannel.", confidence=0.9, sources=["docs"], citations=[]),
+                trace=RagQueryTrace(
+                    query_type="how_to",
+                    retrieval_strategy="agentic_multi_tool_v1",
+                    vector_candidates_count=3,
+                    bm25_candidates_count=2,
+                    reranked_candidates_count=1,
+                    retrieved_chunk_ids=["chunk-1"],
+                    selected_chunk_ids=["chunk-1"],
+                    vector_retrieval_latency_ms=10.0,
+                    bm25_retrieval_latency_ms=6.0,
+                    retrieval_latency_ms=16.0,
+                    rerank_latency_ms=4.0,
+                    generation_latency_ms=30.0,
+                    total_latency_ms=55.0,
+                    prompt_tokens=100,
+                    completion_tokens=40,
+                    embedding_tokens=20,
+                    embedding_provider="siliconflow",
+                    embedding_model="BAAI/bge-m3",
+                    embedding_dimensions=1024,
+                    embedding_request_meta=[],
+                    model_name="gpt-5.4",
+                    answer_length=16,
+                    citation_count=0,
+                    cited_chunk_ids=[],
+                    needs_human=False,
+                    handoff_reason=None,
+                    confidence_score=0.9,
+                    primary_source_type="official_markdown_upload",
+                    primary_chunk_strategy="markdown_header_v1",
+                    execution_mode="legacy",
+                    agent_fallback_used=True,
+                    agent_fallback_reason="planner_timeout",
+                ),
+            ),
+        )
+
+        payload = _build_trace_payload(
+            case=case,
+            execution_result=execution_result,
+            retrieval_metrics={"evidence_hit_at_5": 1.0, "evidence_coverage": 1.0},
+            judge_votes=[],
+            decision=decision,
+        )
+
+        self.assertEqual(payload["execution_mode"], "legacy")
+        self.assertTrue(payload["agent_fallback_used"])
+        self.assertEqual(payload["agent_fallback_reason"], "planner_timeout")
 
     def test_resolve_judge_models_requires_exactly_three_models(self) -> None:
         with self.assertRaises(ValueError):

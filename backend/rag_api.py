@@ -33,12 +33,14 @@ from backend.services.knowledge_monitoring import (
     build_knowledge_event_payload,
     now_iso,
 )
+from backend.services.llm_profiles import parse_provider_model_reference
 from backend.services.rag_benchmark_session import build_local_benchmark_session_record
 from backend.services.rag_evidence_summary import build_rag_evidence_summary
 from backend.services.local_source_sync import ingest_source_document, stage_source_document
 from backend.services.local_benchmark_sync import sync_default_local_benchmarks
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, run_rag_query
 from backend.services.task_queue import AsyncRedisTaskQueue
+from backend.services.token_usage import aggregate_usage_ledger, build_usage_ledger_entry
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(dotenv_path=BASE_DIR / ".env", override=False)
@@ -56,11 +58,6 @@ PRIMARY_RAG_WORKBENCH_PAGES = (
     "diagnosis",
     "review",
 )
-_CHAT_MODEL_PRICING = {
-    "gpt-4.1": {"prompt_per_1k": 0.002, "completion_per_1k": 0.008},
-    "gpt-4.1-mini": {"prompt_per_1k": 0.0004, "completion_per_1k": 0.0016},
-    "gpt-4o-mini": {"prompt_per_1k": 0.00015, "completion_per_1k": 0.0006},
-}
 RAG_PROMPT_VERSION = "rag-v3-context-budget-compression"
 
 
@@ -138,6 +135,9 @@ def _trace_query_understanding_meta(trace: Any) -> dict[str, Any]:
         "query_class": getattr(trace, "query_class", None),
         "agent_iterations": list(getattr(trace, "agent_iterations", []) or []),
         "agent_recovery_action": getattr(trace, "agent_recovery_action", None),
+        "execution_mode": getattr(trace, "execution_mode", None),
+        "agent_fallback_used": bool(getattr(trace, "agent_fallback_used", False)),
+        "agent_fallback_reason": getattr(trace, "agent_fallback_reason", None),
         "ticket_context_used": bool(getattr(trace, "ticket_context_used", False)),
         "primary_shadow_mix": dict(getattr(trace, "primary_shadow_mix", {}) or {}),
         "context_budget_enabled": bool(getattr(trace, "context_budget_enabled", False)),
@@ -152,6 +152,60 @@ def _trace_query_understanding_meta(trace: Any) -> dict[str, Any]:
         "compression_model": getattr(trace, "compression_model", None),
         "extractive_segment_count": int(getattr(trace, "extractive_segment_count", 0) or 0),
         "packed_evidence_count": int(getattr(trace, "packed_evidence_count", 0) or 0),
+    }
+
+
+def _build_usage_ledger(trace: Any) -> list[dict[str, Any]]:
+    ledger: list[dict[str, Any]] = []
+    for entry in list(getattr(trace, "query_expansion_usage_ledger", []) or []):
+        if isinstance(entry, dict):
+            ledger.append(dict(entry))
+    model_name = _clean_text(getattr(trace, "model_name", None))
+    if model_name:
+        provider, model = parse_provider_model_reference(model_name, default_provider="openai")
+        ledger.append(
+            build_usage_ledger_entry(
+                provider=provider,
+                model=model,
+                stage="rag_answer",
+                input_tokens=int(getattr(trace, "prompt_tokens", 0) or 0),
+                output_tokens=int(getattr(trace, "completion_tokens", 0) or 0),
+                prompt_tokens=int(getattr(trace, "prompt_tokens", 0) or 0),
+                completion_tokens=int(getattr(trace, "completion_tokens", 0) or 0),
+            )
+        )
+    embedding_model = _clean_text(getattr(trace, "embedding_model", None))
+    embedding_provider = _clean_text(getattr(trace, "embedding_provider", None))
+    embedding_tokens = int(getattr(trace, "embedding_tokens", 0) or 0)
+    if embedding_model and embedding_provider and embedding_tokens:
+        ledger.append(
+            build_usage_ledger_entry(
+                provider=embedding_provider,
+                model=embedding_model,
+                stage="embedding",
+                embedding_tokens=embedding_tokens,
+            )
+        )
+    for entry in list(getattr(trace, "context_compression_usage_ledger", []) or []):
+        if isinstance(entry, dict):
+            ledger.append(dict(entry))
+    return ledger
+
+
+def _empty_usage_summary() -> dict[str, Any]:
+    return aggregate_usage_ledger([])
+
+
+def _packed_evidence_payload(trace: Any) -> dict[str, Any] | None:
+    packed_context = str(getattr(trace, "packed_context_text", "") or "").strip()
+    packed_chunk_ids = list(getattr(trace, "packed_chunk_ids", []) or [])
+    selected_contexts = [dict(item) for item in getattr(trace, "selected_contexts", []) or [] if isinstance(item, dict)]
+    if not packed_context and not packed_chunk_ids and not selected_contexts:
+        return None
+    return {
+        "prompt_context": packed_context,
+        "chunk_ids": packed_chunk_ids,
+        "selected_contexts": selected_contexts,
     }
 
 class RagQueryRequest(BaseModel):
@@ -261,21 +315,6 @@ def _knowledge_reranker_provider() -> str:
 
 def _knowledge_reranker_model() -> str:
     return (os.getenv("RAG_RERANK_MODEL") or "BAAI/bge-reranker-v2-m3").strip() or "BAAI/bge-reranker-v2-m3"
-
-
-def _query_cost(
-    *,
-    model_name: str | None,
-    prompt_tokens: int,
-    completion_tokens: int,
-    embedding_tokens: int,
-) -> float:
-    chat_pricing = _CHAT_MODEL_PRICING.get((model_name or "").strip(), {})
-    embedding_rate = embedding_external_cost_per_1k()
-    prompt_cost = (max(0, int(prompt_tokens or 0)) / 1000.0) * float(chat_pricing.get("prompt_per_1k", 0.0))
-    completion_cost = (max(0, int(completion_tokens or 0)) / 1000.0) * float(chat_pricing.get("completion_per_1k", 0.0))
-    embedding_cost = (max(0, int(embedding_tokens or 0)) / 1000.0) * float(embedding_rate)
-    return round(prompt_cost + completion_cost + embedding_cost, 6)
 
 
 def _require_internal_auth(authorization: str | None = Header(default=None)) -> None:
@@ -519,6 +558,8 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             request.ticket_id,
             exc,
         )
+        usage_ledger: list[dict[str, Any]] = []
+        usage_summary = _empty_usage_summary()
         if knowledge_repository.is_enabled():
             knowledge_repository.record_rag_query_run(
                 run={
@@ -545,7 +586,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
                     "prompt_tokens": 0,
                     "completion_tokens": 0,
                     "embedding_tokens": 0,
-                    "avg_cost_per_query": 0.0,
+                    "avg_cost_per_query": usage_summary["known_cost_total"],
                     "confidence_score": 0.0,
                     "embedding_provider": _knowledge_embedding_provider(),
                     "embedding_model": _knowledge_embedding_model(),
@@ -573,6 +614,8 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
                     "cited_chunk_ids": [],
                     "model_name": None,
                     "query_understanding_meta": {},
+                    "usage_ledger": usage_ledger,
+                    "usage_summary": usage_summary,
                     "prompt_version": RAG_PROMPT_VERSION,
                     "created_at": now_iso(),
                 },
@@ -600,10 +643,13 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             "citations": [],
             "reason": "rag_query_failed",
             "evidence_summary": evidence_summary,
+            "packed_evidence": None,
             "query_understanding": {},
         }
 
     if result is None:
+        usage_ledger: list[dict[str, Any]] = []
+        usage_summary = _empty_usage_summary()
         if knowledge_repository.is_enabled():
             knowledge_repository.record_rag_query_run(
                 run={
@@ -630,7 +676,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
                     "prompt_tokens": 0,
                     "completion_tokens": 0,
                     "embedding_tokens": 0,
-                    "avg_cost_per_query": 0.0,
+                    "avg_cost_per_query": usage_summary["known_cost_total"],
                     "confidence_score": 0.0,
                     "embedding_provider": _knowledge_embedding_provider(),
                     "embedding_model": _knowledge_embedding_model(),
@@ -658,6 +704,8 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
                     "cited_chunk_ids": [],
                     "model_name": None,
                     "query_understanding_meta": {},
+                    "usage_ledger": usage_ledger,
+                    "usage_summary": usage_summary,
                     "prompt_version": RAG_PROMPT_VERSION,
                     "created_at": now_iso(),
                 },
@@ -697,6 +745,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             "citations": [],
             "reason": "rag_unavailable",
             "evidence_summary": evidence_summary,
+            "packed_evidence": None,
             "query_understanding": {},
         }
 
@@ -704,6 +753,9 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
     trace = result.trace
     candidates = trace.retrieval_candidates or []
     query_understanding_meta = _trace_query_understanding_meta(trace)
+    packed_evidence = _packed_evidence_payload(trace)
+    usage_ledger = _build_usage_ledger(trace)
+    usage_summary = aggregate_usage_ledger(usage_ledger)
     evidence_summary = build_rag_evidence_summary(
         quality_signals=_build_quality_signals(
             generation_mode=trace.generation_mode,
@@ -756,12 +808,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             "prompt_tokens": trace.prompt_tokens,
             "completion_tokens": trace.completion_tokens,
             "embedding_tokens": trace.embedding_tokens,
-            "avg_cost_per_query": _query_cost(
-                model_name=trace.model_name,
-                prompt_tokens=trace.prompt_tokens,
-                completion_tokens=trace.completion_tokens,
-                embedding_tokens=trace.embedding_tokens,
-            ),
+            "avg_cost_per_query": usage_summary["known_cost_total"],
             "confidence_score": trace.confidence_score,
             "embedding_provider": trace.embedding_provider,
             "embedding_model": trace.embedding_model,
@@ -789,6 +836,8 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             "cited_chunk_ids": trace.cited_chunk_ids,
             "model_name": trace.model_name,
             "query_understanding_meta": query_understanding_meta,
+            "usage_ledger": usage_ledger,
+            "usage_summary": usage_summary,
             "prompt_version": RAG_PROMPT_VERSION,
             "created_at": now_iso(),
         },
@@ -804,6 +853,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             "citations": [],
             "reason": trace.handoff_reason or "insufficient_evidence",
             "evidence_summary": evidence_summary,
+            "packed_evidence": packed_evidence,
             "query_understanding": query_understanding_meta,
         }
 
@@ -815,8 +865,22 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
         "citations": rag_answer.citations,
         "reason": "grounded_answer",
         "evidence_summary": evidence_summary,
+        "packed_evidence": packed_evidence,
         "query_understanding": query_understanding_meta,
     }
+
+
+@app.get("/internal/rag/ticket-families/{ticket_id}/token-usage")
+def internal_rag_ticket_family_token_usage(
+    ticket_id: str,
+    client_ticket_id: str | None = Query(default=None),
+    _: None = Depends(_require_internal_auth),
+) -> dict[str, Any]:
+    repository = _require_knowledge_repository()
+    return repository.rag_ticket_family_token_summary(
+        ticket_id=ticket_id,
+        client_ticket_id=client_ticket_id,
+    )
 
 
 @app.get("/internal/dashboard/rag/{page}")

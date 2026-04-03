@@ -87,6 +87,7 @@ from backend.services.ticket_message_sentiment import (
     build_ticket_message_sentiment_event,
     classify_customer_message_sentiment,
 )
+from backend.services.token_usage import aggregate_usage_ledger, resolve_ticket_family_identity
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 UI_DIR = BASE_DIR / "ui"
@@ -888,6 +889,7 @@ def _build_rag_answer_detail(
             needs_engineer_guidance=True,
             reason="rag_unavailable",
             evidence_summary=None,
+            packed_evidence=None,
         )
 
     if answer_detail.needs_engineer_guidance:
@@ -952,6 +954,7 @@ def resolve_support_message(
             search_used=False,
             matched_signals=list(active_decision.matched_signals),
             evidence_summary=dict(rag_answer.evidence_summary or {}) or None,
+            packed_evidence=dict(rag_answer.packed_evidence or {}) or None,
         )
     return resolve_support_route_message(
         message,
@@ -1849,6 +1852,24 @@ def get_ticket_detail(ticket_id: str) -> dict[str, Any]:
     if engineer_case is None:
         raise HTTPException(status_code=404, detail="Ticket not found")
     client_ref = engineer_case.get("client_ticket_ref") if isinstance(engineer_case.get("client_ticket_ref"), dict) else {}
+    client_ticket_id = str(client_ref.get("ticket_id") or "").strip() or None
+    try:
+        engineer_case["token_usage"] = rag_service_client.get_ticket_family_token_summary(
+            ticket_id=ticket_id,
+            client_ticket_id=client_ticket_id,
+        )
+    except RagServiceError:
+        engineer_case["token_usage"] = {
+            **resolve_ticket_family_identity(
+                {
+                    "ticket_id": ticket_id,
+                    "client_ticket_id": client_ticket_id,
+                    "client_ticket_ref": client_ref,
+                },
+                related_ticket_ids=[str(engineer_case.get("engineer_case_id") or ticket_id)],
+            ),
+            **aggregate_usage_ledger([]),
+        }
     engineer_case["engineer_request_records"] = build_engineer_request_records(
         str(client_ref.get("ticket_id") or "")
     )

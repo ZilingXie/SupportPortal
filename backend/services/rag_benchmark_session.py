@@ -166,7 +166,47 @@ def _aggregate_session_metric(
     return round(sum(numeric_values) / len(numeric_values), 4)
 
 
+def _build_single_run_gate(metrics: dict[str, Any]) -> dict[str, Any]:
+    gate = {
+        "overall_status": "pass",
+        "failure_dimensions": [],
+        "retrieval": {"status": "pass", "metrics": {}},
+        "generation": {"status": "pass", "metrics": {}},
+        "performance": {"status": "pass", "metrics": {}},
+    }
+    for dimension, thresholds in _SESSION_GATE_THRESHOLDS.items():
+        dimension_status = "pass"
+        dimension_metrics: dict[str, Any] = {}
+        for metric_name, threshold in thresholds.items():
+            clean_name = metric_name.replace("_max", "").replace("_min", "")
+            value = _safe_float(metrics.get(clean_name))
+            dimension_metrics[clean_name] = value
+            if value is None:
+                dimension_status = "fail"
+                continue
+            if metric_name.endswith("_max") and value > threshold:
+                dimension_status = "fail"
+            if metric_name.endswith("_min") and value < threshold:
+                dimension_status = "fail"
+        gate[dimension] = {"status": dimension_status, "metrics": dimension_metrics}
+        if dimension_status == "fail":
+            gate["failure_dimensions"].append(dimension)
+    gate["overall_status"] = "pass" if not gate["failure_dimensions"] else "fail"
+    return gate
+
+
 def build_session_gate(runs: list[dict[str, Any]]) -> dict[str, Any]:
+    per_run_gate_status: dict[str, dict[str, Any]] = {}
+    overall_status = "pass"
+    failure_dimensions: list[str] = []
+    for run in runs:
+        run_name = _clean_text(run.get("dataset_name")) or _clean_text(run.get("eval_run_id")) or "unknown"
+        metrics = run.get("metrics") if isinstance(run.get("metrics"), dict) else {}
+        run_gate = _build_single_run_gate(metrics)
+        per_run_gate_status[run_name] = run_gate
+        if run_gate["overall_status"] != "pass":
+            overall_status = "fail"
+
     retrieval_metrics = {
         "evidence_precision_at_5": _aggregate_session_metric(runs, "evidence_precision_at_5"),
         "evidence_recall_at_5": _aggregate_session_metric(runs, "evidence_recall_at_5"),
@@ -197,7 +237,6 @@ def build_session_gate(runs: list[dict[str, Any]]) -> dict[str, Any]:
     retrieval_status = "pass"
     generation_status = "pass"
     performance_status = "pass"
-    failure_dimensions: list[str] = []
 
     for metric_name, threshold in _SESSION_GATE_THRESHOLDS["retrieval"].items():
         value = retrieval_metrics.get(metric_name.replace("_min", ""))
@@ -226,8 +265,9 @@ def build_session_gate(runs: list[dict[str, Any]]) -> dict[str, Any]:
         failure_dimensions.append("performance")
 
     return {
-        "overall_status": "pass" if not failure_dimensions else "fail",
+        "overall_status": "fail" if overall_status == "fail" or failure_dimensions else "pass",
         "failure_dimensions": failure_dimensions,
+        "per_run_gate_status": per_run_gate_status,
         "retrieval": {"status": retrieval_status, "metrics": retrieval_metrics},
         "generation": {"status": generation_status, "metrics": generation_metrics},
         "performance": {"status": performance_status, "metrics": performance_metrics},

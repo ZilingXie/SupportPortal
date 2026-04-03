@@ -174,6 +174,44 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(ticket["active_engineer_case_id"], "TK-040-1")
         self.assertEqual(ticket["engineer_case_count"], 1)
 
+    def test_engineer_ticket_detail_includes_canonical_ticket_family_token_summary(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-040",
+            subject="how to join channel",
+            status="investigating",
+            active_investigation={
+                "id": "TK-040-1",
+                "state": "active",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "support_query",
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:00:00+00:00",
+                "messages": [],
+            },
+        )
+
+        with patch.object(
+            main.rag_service_client,
+            "get_ticket_family_token_summary",
+            return_value={
+                "canonical_ticket_id": "TK-040",
+                "related_ticket_ids": ["TK-040-1"],
+                "total_input_tokens": 1200,
+                "total_output_tokens": 300,
+                "total_embedding_tokens": 100,
+                "known_cost_total": 0.12,
+                "unknown_cost_present": False,
+                "cost_by_model": [{"provider": "openai", "model": "gpt-5.4", "known_cost": 0.12}],
+            },
+        ):
+            detail = self.client.get("/api/engineer/tickets/TK-040-1")
+
+        self.assertEqual(detail.status_code, 200, detail.text)
+        payload = detail.json()["ticket"]
+        self.assertEqual(payload["token_usage"]["canonical_ticket_id"], "TK-040")
+        self.assertEqual(payload["token_usage"]["related_ticket_ids"], ["TK-040-1"])
+        self.assertEqual(payload["token_usage"]["total_input_tokens"], 1200)
+
     def test_repository_normalizes_legacy_waiting_for_engineer_status_to_investigating(self) -> None:
         ticket = self._seed_ticket(status="waiting_for_engineer")
         loaded = self.repository.get_ticket(str(ticket["ticket_id"]))

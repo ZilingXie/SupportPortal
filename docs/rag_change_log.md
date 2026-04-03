@@ -1739,3 +1739,61 @@ For each new entry, record:
   - `curl -sS http://localhost:8080/health`
   - `curl -sS 'http://localhost:8080/api/dashboard/rag/scorecard?range=30d'`
   - `python scripts/run_rag_benchmark_session.py --session-name "Diagnostic Dashboard Baseline"` was started as `BSESS-C3A50AADB12E`, produced live diagnostic execution signals including `RAG structured answer invalid, using extractive fallback.` and `Query rewrite failed: query_expansion_request_failed: The read operation timed out`, then was manually aborted and marked `failed` because the full 3-dataset session exceeded the synchronous verification window for this implementation turn.
+
+## 2026-04-03 - Add provider-aware token and cost ledgers plus execution truth alignment
+
+- Summary: Added provider-aware token and cost ledgers across RAG query runs and benchmark cases, exposed execution-mode and agent fallback truth in benchmark/dashboard payloads, aligned the sufficiency judge to consume the same packed evidence envelope as answer generation, hardened session/run comparison semantics, and exposed canonical ticket-family token usage in ticket detail views.
+- Reason: Benchmark and dashboard outputs were still mixing partial execution truth, old pricing assumptions, and incomplete token accounting. The system needed to explain which path actually ran, what evidence both answer/judge saw, and how much each benchmark case or ticket family consumed across OpenAI and SiliconFlow.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/rag_api.py`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/services/prompts/rag_sufficiency.py`
+  - `backend/services/query_understanding.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/services/rag_benchmark_session.py`
+  - `backend/services/rag_context_budget.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/services/rag_sufficiency_judge.py`
+  - `backend/services/rag_sufficiency_prompt.py`
+  - `backend/services/support_router.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/services/token_usage.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_knowledge_repository_bm25.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_benchmark_session.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `backend/tests/test_rag_sufficiency_judge.py`
+  - `backend/tests/test_token_usage.py`
+  - `ui/dashboard-ui/app.js`
+  - `ui/dashboard-ui/rag/app.js`
+  - `ui/dashboard-ui/rag/index.html`
+  - `docs/feature_list.md`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - `support_rag_query_runs` and `support_rag_eval_results` now persist `usage_ledger` and `usage_summary` JSONB columns for future-ready token accounting.
+  - Benchmark case payloads, run/session summaries, and ticket detail payloads now aggregate provider-qualified token/cost data and canonical ticket-family summaries.
+  - No vector reset, ingestion backfill, embedding change, or retrieval algorithm change was introduced in this turn.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_profiles.py backend/tests/test_token_usage.py backend/tests/test_rag_sufficiency_judge.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_rag_benchmark_session.py backend/tests/test_rag_scorecard_repository.py backend/tests/test_dashboard_ui_contract.py backend/tests/test_investigation_flow.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_knowledge_repository_bm25.py backend/tests/test_prompt_modules.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/main.py backend/rag_api.py backend/repositories/knowledge_repository.py backend/services/llm_profiles.py backend/services/prompts/rag_sufficiency.py backend/services/query_understanding.py backend/services/rag_benchmark_runner.py backend/services/rag_benchmark_session.py backend/services/rag_context_budget.py backend/services/rag_qa.py backend/services/rag_service_client.py backend/services/rag_sufficiency_judge.py backend/services/support_router.py backend/services/ticket_orchestrator.py backend/services/token_usage.py backend/services/rag_sufficiency_prompt.py`
+  - `node --check ui/dashboard-ui/rag/app.js`
+  - `node --check ui/dashboard-ui/app.js`
+  - `ln -sfn /Users/xieziling/Desktop/personal_proj/SupportPortal/.env /Users/xieziling/.config/superpowers/worktrees/SupportPortal/rag-architecture-eval-review/.env`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health`
+  - `curl -sS 'http://localhost:8080/api/dashboard/rag/scorecard?range=30d'`
+  - `curl -sS -X POST http://localhost:8080/api/tickets/query -H 'Content-Type: application/json' --data '{"ticket_id":"TK-TOK-001","customer_id":"C-TOK-001","message":"How do I join a channel in Agora?"}'`
+  - `curl -sS -X POST http://localhost:8080/api/tickets/TK-TOK-001/request-engineer-assistance -H 'Content-Type: application/json'`
+  - `curl -sS http://localhost:8080/api/engineer/tickets/TK-TOK-001-1`

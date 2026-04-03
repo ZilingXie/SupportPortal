@@ -233,3 +233,32 @@ For each new entry, record:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_benchmark_runner.py backend/repositories/knowledge_repository.py`
   - `node --check ui/dashboard-ui/rag/app.js`
+
+- Area or subsystem: RAG model normalization, provider-aware usage ledger, and sufficiency judge evidence alignment
+- Prompt or model version: `gpt54-ledger-and-shared-packed-evidence-v1`
+- Summary: Normalized GPT defaults to the GPT-5.4 family, extended usage tracking to provider-qualified ledgers with future-ready token fields, and updated the sufficiency-judge prompt path so the judge consumes the same packed evidence envelope as the answer model.
+- Reason: Prompt/model evaluations were still using partial cost estimates and a slimmer judge evidence view than answer generation, which undermined both quality diagnostics and cost transparency. The system also needed a stable token schema that can later absorb prompt-token, cached-token, and reasoning-token fields without another persistence reset.
+- Affected files or config:
+  - `backend/services/llm_profiles.py`
+  - `backend/services/prompts/rag_sufficiency.py`
+  - `backend/services/rag_sufficiency_prompt.py`
+  - `backend/services/rag_sufficiency_judge.py`
+  - `backend/services/query_understanding.py`
+  - `backend/services/rag_context_budget.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/token_usage.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_rag_sufficiency_judge.py`
+  - `backend/tests/test_token_usage.py`
+  - `docs/feature_list.md`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Expected behavior change:
+  - GPT-backed RAG scenes now default to `gpt-5.4` or `gpt-5.4-mini`, with no lingering `gpt-4.*` default path in the benchmark/cost model profiles.
+  - Usage ledgers now carry provider, model, input/output/prompt/completion/cached/reasoning/tool/embedding token slots, plus unknown-cost markers for unpriced models.
+  - Sufficiency judgment now reviews the same packed evidence context that answer generation saw, reducing answer/judge drift while keeping the conservative investigate policy unchanged.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_profiles.py backend/tests/test_token_usage.py backend/tests/test_rag_sufficiency_judge.py backend/tests/test_prompt_modules.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/llm_profiles.py backend/services/prompts/rag_sufficiency.py backend/services/rag_sufficiency_prompt.py backend/services/rag_sufficiency_judge.py backend/services/query_understanding.py backend/services/rag_context_budget.py backend/services/rag_qa.py backend/services/token_usage.py`

@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from backend.services.rag_benchmark_session import (
+    build_session_gate,
     build_local_benchmark_session_record,
     parse_rag_change_log_entries,
     run_local_benchmark_session,
@@ -34,6 +35,51 @@ class _FakeSessionRepository:
 
 
 class RagBenchmarkSessionTests(unittest.TestCase):
+    def test_build_session_gate_fails_session_when_any_dataset_run_fails(self) -> None:
+        gate = build_session_gate(
+            [
+                {
+                    "dataset_name": "Canonical",
+                    "metrics": {
+                        "evidence_precision_at_5": 0.9,
+                        "evidence_recall_at_5": 0.9,
+                        "evidence_ndcg_at_5": 0.9,
+                        "context_relevance_score": 0.9,
+                        "answer_relevance_score": 0.9,
+                        "faithfulness_score": 0.9,
+                        "citation_correctness_score": 0.9,
+                        "response_completeness_score": 0.9,
+                        "benchmark_p95_total_latency_ms": 1800.0,
+                        "benchmark_throughput_cases_per_sec": 0.4,
+                        "judge_error_rate": 0.0,
+                        "case_execution_error_rate": 0.0,
+                    },
+                },
+                {
+                    "dataset_name": "Real User",
+                    "metrics": {
+                        "evidence_precision_at_5": 0.2,
+                        "evidence_recall_at_5": 0.2,
+                        "evidence_ndcg_at_5": 0.2,
+                        "context_relevance_score": 0.2,
+                        "answer_relevance_score": 0.2,
+                        "faithfulness_score": 0.2,
+                        "citation_correctness_score": 0.2,
+                        "response_completeness_score": 0.2,
+                        "benchmark_p95_total_latency_ms": 1800.0,
+                        "benchmark_throughput_cases_per_sec": 0.4,
+                        "judge_error_rate": 0.0,
+                        "case_execution_error_rate": 0.0,
+                    },
+                },
+            ]
+        )
+
+        self.assertEqual(gate["overall_status"], "fail")
+        self.assertIn("per_run_gate_status", gate)
+        self.assertEqual(gate["per_run_gate_status"]["Canonical"]["overall_status"], "pass")
+        self.assertEqual(gate["per_run_gate_status"]["Real User"]["overall_status"], "fail")
+
     def test_parse_rag_change_log_entries_preserves_file_order_and_ignores_malformed_sections(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             changelog_path = Path(tmpdir) / "rag_change_log.md"

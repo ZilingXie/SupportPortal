@@ -40,6 +40,7 @@
 ### 已完成
 - Dashboard 可查看全量工单列表。
 - Dashboard 可查看工单详情与时间线。
+- Dashboard 的 ticket detail 可查看按工单 family 聚合的 token 用量与成本摘要。
 - Dashboard 可跟踪实时事件流。
 
 ### 未完成
@@ -51,6 +52,7 @@
 - Dashboard 可同步本地 benchmark 数据集。
 - Dashboard 可发起 benchmark 运行并查看会话。
 - Dashboard 可按 benchmark run 和 session 查看诊断分布与对比结果。
+- Dashboard 的 Overview 可查看 benchmark token/cost 汇总与 provider/model 明细。
 - Dashboard 可复盘 live 与 benchmark case。
 - Dashboard 可查看 query-understanding、候选漏斗和 judge 分歧诊断。
 - Dashboard 可评审样本并导出结果。
@@ -65,6 +67,7 @@
 - 系统会做混合检索与重排召回。
 - 查询扩展会用词典、LLM 和 PRF 优化技术检索。
 - 系统会按上下文预算压缩证据再生成技术答案。
+- 系统会按 provider/model 统计 RAG token 与成本，并支持 future-ready usage ledger。
 - 系统会输出 benchmark 分层诊断与失败归因。
 - 证据不足时会转工程师处理。
 - 系统已具备本地 benchmark 评测链路。
