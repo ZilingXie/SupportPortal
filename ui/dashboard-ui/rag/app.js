@@ -531,6 +531,122 @@ function buildExperimentComparisonControls(summary, benchmarkSelector = null) {
   `;
 }
 
+function buildRunDistributionTable(title, rows, options = {}) {
+  const items = Array.isArray(rows) ? rows : [];
+  const columns = options.columns || ["label", "count", "share"];
+  return `
+    <section class="panel-card benchmark-distribution-card">
+      <div class="panel-header">
+        <div>
+          <h3>${escapeHtml(title)}</h3>
+          <p>${escapeHtml(options.subtitle || "Diagnostic distribution for this benchmark run.")}</p>
+        </div>
+      </div>
+      ${buildTable(items, {
+        columns,
+        emptyLabel: options.emptyLabel || "No distribution data available for this run.",
+      })}
+    </section>
+  `;
+}
+
+function buildBenchmarkRunHistory(benchmarkSession) {
+  const runs = Array.isArray(benchmarkSession?.run_history) ? benchmarkSession.run_history : Array.isArray(benchmarkSession?.runs) ? benchmarkSession.runs : [];
+  if (!runs.length) {
+    return `<section class="panel-card benchmark-run-history"><div class="empty-state">No benchmark runs recorded for this session yet.</div></section>`;
+  }
+  return `
+    <section class="panel-card benchmark-run-history">
+      <div class="panel-header">
+        <div>
+          <h3>Run History</h3>
+          <p>Every benchmark run in the session, with per-run diagnostics and slice distributions.</p>
+        </div>
+      </div>
+      <div class="benchmark-run-history-list">
+        ${runs
+          .map((run) => {
+            const diagnostics = run?.diagnostics || {};
+            return `
+              <article class="benchmark-run-card">
+                <div class="panel-header">
+                  <div>
+                    <h4>${escapeHtml(run.label || run.dataset_name || run.eval_run_id || "Benchmark Run")}</h4>
+                    <p>${escapeHtml(run.benchmark_version || run.eval_run_id || "-")}</p>
+                  </div>
+                  <div class="chip-row">
+                    <span class="chip chip-neutral">${escapeHtml(run.status || "queued")}</span>
+                    ${run.is_current ? `<span class="chip chip-success">Current</span>` : ""}
+                  </div>
+                </div>
+                ${buildDefinitionGrid([
+                  { label: "Experiment", value: run.experiment_id },
+                  { label: "Finished At", value: run.finished_at || run.started_at },
+                  { label: "Evidence Precision@5", value: run.metrics?.evidence_precision_at_5 },
+                  { label: "Context Relevance", value: run.metrics?.context_relevance_score },
+                  { label: "Faithfulness", value: run.metrics?.faithfulness_score },
+                  { label: "Judge Error Rate", value: run.metrics?.judge_error_rate },
+                ])}
+                <div class="benchmark-distribution-grid">
+                  ${buildRunDistributionTable("Failure Stage Distribution", diagnostics.failure_stage_distribution, {
+                    subtitle: "Where this run most often broke down.",
+                  })}
+                  ${buildRunDistributionTable("Root Cause Distribution", diagnostics.root_cause_distribution, {
+                    subtitle: "Which root causes appeared most often in this run.",
+                  })}
+                  ${buildRunDistributionTable("Category Slice", diagnostics.category_distribution, {
+                    subtitle: "Distribution by benchmark category.",
+                  })}
+                  ${buildRunDistributionTable("Query Type Slice", diagnostics.query_type_distribution, {
+                    subtitle: "Distribution by query type.",
+                  })}
+                  ${buildRunDistributionTable("Source Type Slice", diagnostics.source_type_distribution, {
+                    subtitle: "Distribution by source type.",
+                  })}
+                </div>
+              </article>
+            `;
+          })
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+function buildBenchmarkRunComparison(benchmarkSession) {
+  const comparison = benchmarkSession?.run_comparison || null;
+  if (!comparison?.rows?.length) {
+    return `
+      <section class="panel-card benchmark-run-comparison">
+        <div class="panel-header">
+          <div>
+            <h3>Run Comparison</h3>
+            <p>No comparable baseline run is available in this session yet.</p>
+          </div>
+        </div>
+      </section>
+    `;
+  }
+  return `
+    <section class="panel-card benchmark-run-comparison">
+      <div class="panel-header">
+        <div>
+          <h3>Run Comparison</h3>
+          <p>Compare the current benchmark run against the nearest available baseline run in this session.</p>
+        </div>
+      </div>
+      ${buildDefinitionGrid([
+        { label: "Current Run", value: comparison.current_label || comparison.current_eval_run_id },
+        { label: "Baseline Run", value: comparison.baseline_label || comparison.baseline_eval_run_id },
+      ])}
+      ${buildTable(comparison.rows || [], {
+        columns: ["label", "current", "baseline", "delta"],
+        emptyLabel: "No comparison metrics available yet.",
+      })}
+    </section>
+  `;
+}
+
 function buildBenchmarkSessionPanel(benchmarkSession) {
   const session = benchmarkSession && typeof benchmarkSession === "object" ? benchmarkSession : null;
   if (!normalizeString(session?.benchmark_session_id)) {
@@ -605,6 +721,8 @@ function buildBenchmarkSessionPanel(benchmarkSession) {
       columns: ["label", "benchmark_version", "status", "experiment_id", "eval_run_id", "finished_at"],
       emptyLabel: "No linked benchmark runs have been recorded for this session yet.",
     })}
+    ${buildBenchmarkRunComparison(session)}
+    ${buildBenchmarkRunHistory(session)}
   `;
 }
 
@@ -1475,6 +1593,99 @@ function buildCaseDetailQuality(primary) {
   `;
 }
 
+function buildCaseDetailDiagnostics(primary) {
+  const queryUnderstanding = primary?.query_understanding || {};
+  const candidateFunnel = primary?.candidate_funnel || {};
+  const judgeSummary = primary?.judge_summary || {};
+  const strategySnapshot = primary?.strategy_snapshot || {};
+  const queryItems = [
+    { label: "Query Profile", value: queryUnderstanding.query_profile },
+    { label: "Fallback Mode", value: queryUnderstanding.fallback_mode },
+    { label: "Cache Hit", value: queryUnderstanding.cache_hit },
+    { label: "PRF Used", value: queryUnderstanding.prf_used },
+  ].filter((item) => item.value !== undefined && item.value !== null && item.value !== "");
+  const funnelItems = [
+    { label: "First Pass Candidates", value: candidateFunnel.first_pass_candidate_count },
+    { label: "Second Pass Candidates", value: candidateFunnel.second_pass_candidate_count },
+    { label: "Vector Candidates", value: candidateFunnel.vector_candidates_count },
+    { label: "BM25 Candidates", value: candidateFunnel.bm25_candidates_count },
+    { label: "Reranked Candidates", value: candidateFunnel.reranked_candidates_count },
+    { label: "Selected Contexts", value: candidateFunnel.selected_context_count },
+  ].filter((item) => item.value !== undefined && item.value !== null && item.value !== "");
+  const judgeItems = [
+    { label: "Judge Vote Count", value: judgeSummary.judge_vote_count },
+    { label: "Judge Error Rate", value: judgeSummary.judge_error_rate },
+    { label: "Judge Disagreement", value: judgeSummary.judge_disagreement_flag },
+  ].filter((item) => item.value !== undefined && item.value !== null && item.value !== "");
+
+  if (!queryItems.length && !funnelItems.length && !judgeItems.length && !Object.keys(strategySnapshot).length) {
+    return "";
+  }
+
+  return `
+    <section class="panel-card detail-surface">
+      <div class="panel-header">
+        <div>
+          <h3>Query Understanding</h3>
+          <p>Inspect query planning, filter provenance, candidate funnel, and judge disagreement together.</p>
+        </div>
+      </div>
+      <div class="case-detail-diagnostic-grid">
+        <section class="detail-subsection">
+          <div class="detail-subsection-header">
+            <h4>Query Understanding</h4>
+          </div>
+          ${queryItems.length ? buildDefinitionGrid(queryItems) : `<div class="empty-state">No query-understanding diagnostics stored for this case.</div>`}
+          ${
+            Array.isArray(queryUnderstanding.dictionary_hits) && queryUnderstanding.dictionary_hits.length
+              ? `<pre class="case-detail-code-block">${escapeHtml(JSON.stringify(queryUnderstanding.dictionary_hits, null, 2))}</pre>`
+              : ""
+          }
+        </section>
+        <section class="detail-subsection">
+          <div class="detail-subsection-header">
+            <h4>Filter Provenance</h4>
+          </div>
+          <pre class="case-detail-code-block">${escapeHtml(
+            JSON.stringify(
+              {
+                dictionary_hits: queryUnderstanding.dictionary_hits || [],
+                hard_filter_sources: queryUnderstanding.hard_filter_sources || {},
+                applied_hard_filters: queryUnderstanding.applied_hard_filters || {},
+                applied_soft_signals: queryUnderstanding.applied_soft_signals || {},
+              },
+              null,
+              2
+            )
+          )}</pre>
+        </section>
+      </div>
+      <div class="case-detail-funnel-grid">
+        <section class="detail-subsection">
+          <div class="detail-subsection-header">
+            <h4>Candidate Funnel</h4>
+          </div>
+          ${funnelItems.length ? buildDefinitionGrid(funnelItems) : `<div class="empty-state">No candidate funnel data stored for this case.</div>`}
+          <pre class="case-detail-code-block">${escapeHtml(JSON.stringify(candidateFunnel, null, 2))}</pre>
+        </section>
+        <section class="detail-subsection">
+          <div class="detail-subsection-header">
+            <h4>Judge Disagreement</h4>
+          </div>
+          ${judgeItems.length ? buildDefinitionGrid(judgeItems) : `<div class="empty-state">No judge summary stored for this case.</div>`}
+          <pre class="case-detail-code-block">${escapeHtml(JSON.stringify(judgeSummary, null, 2))}</pre>
+        </section>
+      </div>
+      <section class="detail-subsection">
+        <div class="detail-subsection-header">
+          <h4>Strategy Snapshot</h4>
+        </div>
+        <pre class="case-detail-code-block">${escapeHtml(JSON.stringify(strategySnapshot, null, 2))}</pre>
+      </section>
+    </section>
+  `;
+}
+
 function renderCaseDetailSurface(detailPayload = {}, options = {}) {
   const primary = detailPayload.primary || null;
   const baseline = detailPayload.baseline || null;
@@ -1488,6 +1699,7 @@ function renderCaseDetailSurface(detailPayload = {}, options = {}) {
     buildCaseDetailAnswer(primary),
     buildCaseDetailFailureAndPolicy(primary),
     buildCaseDetailEvidence(primary),
+    buildCaseDetailDiagnostics(primary),
     buildCaseDetailQuality(primary),
     primary?.related_ingestion_ids?.length
       ? `

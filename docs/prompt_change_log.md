@@ -236,3 +236,29 @@ For each new entry, record:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_context_budget.py backend/tests/test_rag_qa.py backend/tests/test_rag_evidence_summary.py backend/tests/test_prompt_modules.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_llm_profiles.py -q`
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/rag_api.py backend/services/llm_profiles.py backend/services/prompts/rag_context_compression.py backend/services/rag_context_budget.py backend/services/rag_evidence_summary.py backend/services/rag_benchmark_runner.py backend/services/rag_qa.py backend/tests/test_rag_context_budget.py backend/tests/test_rag_evidence_summary.py backend/tests/test_prompt_modules.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_rag_qa.py backend/tests/test_llm_profiles.py`
+
+- Area or subsystem: Benchmark diagnostics, run strategy snapshots, and RAG dashboard visualization payloads
+- Prompt or model version: `benchmark-diagnostic-visibility-v1`
+- Summary: Expanded benchmark run profiles and case traces so dashboard views can expose answer/judge model selections, query-understanding toggles, expansion settings, rerank windows, judge disagreement, and candidate-funnel diagnostics for every benchmark run and case detail.
+- Reason: Prompt and model changes are only auditable if each benchmark run records the actual active scene/model configuration and surfaces it in the review UI. The previous payloads carried too little prompt/model context to explain regressions or compare runs confidently.
+- Affected files or config:
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_dashboard_contract.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `ui/dashboard-ui/rag/app.js`
+  - `ui/dashboard-ui/rag/styles.css`
+  - `docs/feature_list.md`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Expected behavior change:
+  - Benchmark runs now expose a richer strategy snapshot that includes answer model, judge models, query-understanding switches, retrieval windows, rerank windows, and future context-budget markers.
+  - Case detail payloads now surface query-understanding hits, filter provenance, candidate-funnel counts, and judge disagreement without changing any client-facing ticket API.
+  - The RAG dashboard can now visualize benchmark run history, run comparison, and run-level diagnostic distributions from the same benchmark session payload.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_benchmark.py backend/tests/test_rag_benchmark_runner.py backend/tests/test_rag_scorecard_repository.py backend/tests/test_rag_benchmark_session.py backend/tests/test_run_rag_benchmark_session_cli.py backend/tests/test_dashboard_ui_contract.py backend/tests/test_rag_dashboard_contract.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_benchmark_runner.py backend/repositories/knowledge_repository.py`
+  - `node --check ui/dashboard-ui/rag/app.js`

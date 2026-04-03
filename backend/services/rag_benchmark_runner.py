@@ -257,8 +257,10 @@ def _failure_stage_and_bucket(
 ) -> tuple[str, str | None]:
     if case.expected_route_family != decision.route_family or case.expected_execution_action != decision.execution_action:
         return "routing", "route_to_wrong_system"
+    if (judge_aggregate.get("judge_error_rate") or 0.0) >= 0.67 or judge_aggregate.get("judge_disagreement_flag") is True:
+        return "judge", "judge_unstable_or_timed_out"
     if used_prohibited_agora_docs:
-        return "generation", "answer_should_not_have_used_agora_docs"
+        return "business/policy", "answer_should_not_have_used_agora_docs"
     if case.expected_execution_action == "rag":
         evidence_hit = retrieval_metrics.get("evidence_hit_at_5")
         evidence_coverage = retrieval_metrics.get("evidence_coverage")
@@ -275,8 +277,8 @@ def _failure_stage_and_bucket(
         if evidence_hit == 1.0 and (judge_aggregate.get("answer_accuracy_score") or 1.0) < 0.7:
             return "generation", "retrieved_useful_context_but_answer_missed_it"
     if not response_policy_followed:
-        return "business", "answer_correct_but_not_relevant"
-    return "business", None
+        return "business/policy", "answer_correct_but_not_relevant"
+    return "business/policy", None
 
 
 def _strategy_snapshot(judge_models: list[str]) -> dict[str, Any]:
@@ -287,7 +289,15 @@ def _strategy_snapshot(judge_models: list[str]) -> dict[str, Any]:
         "embedding_model": embedding_model_id(),
         "vector_table": _vector_table_name(),
         "rag_top_k": _clean_text(os.getenv("RAG_TOP_K")) or None,
+        "retrieval_top_k": _clean_text(os.getenv("RAG_TOP_K")) or None,
+        "vector_candidate_k": _clean_text(os.getenv("RAG_VECTOR_CANDIDATE_K")) or None,
+        "bm25_candidate_k": _clean_text(os.getenv("RAG_BM25_CANDIDATE_K")) or None,
+        "fusion_candidate_k": _clean_text(os.getenv("RAG_FUSION_CANDIDATE_K")) or None,
+        "rerank_top_n": _clean_text(os.getenv("RAG_RERANK_TOP_N")) or None,
         "chat_model": rag_answer_profile.model,
+        "answer_model": rag_answer_profile.model,
+        "answer_reasoning_effort": rag_answer_profile.reasoning_effort,
+        "reranker_provider": _clean_text(os.getenv("RAG_RERANK_PROVIDER")) or None,
         "reranker_model": _clean_text(os.getenv("RAG_RERANK_MODEL")),
         "query_understanding_enabled": (_clean_text(os.getenv("RAG_QUERY_UNDERSTANDING_ENABLED")) or "").lower()
         not in {"0", "false", "no", "off"},
@@ -611,6 +621,29 @@ def _build_trace_payload(
         "vector_candidates_count": trace.vector_candidates_count if trace is not None else None,
         "bm25_candidates_count": trace.bm25_candidates_count if trace is not None else None,
         "reranked_candidates_count": trace.reranked_candidates_count if trace is not None else None,
+        "query_understanding": {
+            "query_profile": trace.query_profile if trace is not None else "",
+            "dictionary_hits": list(trace.dictionary_hits) if trace is not None else [],
+            "rule_expansions": list(trace.rule_expansions) if trace is not None else [],
+            "llm_expansions": list(trace.llm_expansions) if trace is not None else [],
+            "prf_expansions": list(trace.prf_expansions) if trace is not None else [],
+            "hard_filter_sources": dict(trace.hard_filter_sources) if trace is not None else {},
+            "applied_hard_filters": dict(trace.applied_hard_filters) if trace is not None else {},
+            "applied_soft_signals": dict(trace.applied_soft_signals) if trace is not None else {},
+            "glossary_hit_terms": list(trace.glossary_hit_terms) if trace is not None else [],
+            "fallback_mode": trace.fallback_mode if trace is not None else "disabled",
+            "cache_hit": bool(trace.cache_hit) if trace is not None else False,
+            "prf_used": bool(trace.prf_used) if trace is not None else False,
+        },
+        "candidate_funnel": {
+            "first_pass_candidate_count": trace.first_pass_candidate_count if trace is not None else None,
+            "second_pass_candidate_count": trace.second_pass_candidate_count if trace is not None else None,
+            "vector_candidates_count": trace.vector_candidates_count if trace is not None else None,
+            "bm25_candidates_count": trace.bm25_candidates_count if trace is not None else None,
+            "reranked_candidates_count": trace.reranked_candidates_count if trace is not None else None,
+            "selected_context_count": len(selected_contexts),
+            "selected_doc_count": trace.selected_doc_count if trace is not None else None,
+        },
         "retrieval_candidates": retrieval_candidates,
         "selected_contexts": selected_contexts,
         "latency_ms": {

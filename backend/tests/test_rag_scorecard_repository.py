@@ -637,6 +637,143 @@ class RagScorecardRepositoryTests(unittest.TestCase):
         self.assertEqual(payload["gate_failure_dimensions"], [])
         self.assertIn("session_gate", payload)
 
+    def test_benchmark_session_payload_includes_run_level_diagnostics_and_slices(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        started_at = datetime(2026, 4, 2, 1, 0, tzinfo=timezone.utc)
+        finished_at = datetime(2026, 4, 2, 1, 30, tzinfo=timezone.utc)
+        session_row = (
+            "BSESS-2",
+            "session-2",
+            "completed",
+            None,
+            [{"dataset_name": "mixed", "label": "Mixed", "benchmark_version": "mixed-v1"}],
+            None,
+            [],
+            None,
+            "",
+            started_at,
+            finished_at,
+        )
+        run_rows = [
+            (
+                "EVAL-2",
+                "mixed",
+                "offline_benchmark",
+                "session-2::mixed",
+                "mixed-v1",
+                "mixed_route_v2",
+                "completed",
+                started_at,
+                finished_at,
+            )
+        ]
+
+        with patch.object(repository, "_query_rows", side_effect=[[session_row], run_rows]), patch.object(
+            repository,
+            "_benchmark_case_summary_rows",
+            return_value={
+                "EVAL-2": {
+                    "case-1": {
+                        "failure_stage": "retrieval",
+                        "root_cause_label": "missing_expected_doc",
+                        "category": "scenario",
+                        "query_type": "how_to",
+                        "source_type": "official_markdown_upload",
+                        "evidence_precision_at_5": 0.7,
+                        "evidence_recall_at_5": 0.6,
+                        "evidence_ndcg_at_5": 0.65,
+                        "context_relevance_score": 0.71,
+                        "answer_relevance_score": 0.68,
+                        "faithfulness_score": 0.74,
+                        "citation_correctness_score": 0.8,
+                        "response_completeness_score": 0.61,
+                    },
+                    "case-2": {
+                        "failure_stage": "generation",
+                        "root_cause_label": "unused_selected_evidence",
+                        "category": "fact",
+                        "query_type": "faq",
+                        "source_type": "technical_article",
+                        "evidence_precision_at_5": 0.9,
+                        "evidence_recall_at_5": 0.88,
+                        "evidence_ndcg_at_5": 0.89,
+                        "context_relevance_score": 0.9,
+                        "answer_relevance_score": 0.84,
+                        "faithfulness_score": 0.81,
+                        "citation_correctness_score": 0.86,
+                        "response_completeness_score": 0.77,
+                    },
+                }
+            },
+        ):
+            payload = repository._benchmark_session_payload_for_eval_run("EVAL-2")
+
+        assert payload is not None
+        diagnostics = payload["runs"][0]["diagnostics"]
+        self.assertEqual(diagnostics["failure_stage_distribution"][0]["label"], "generation")
+        self.assertEqual(diagnostics["root_cause_distribution"][0]["label"], "missing_expected_doc")
+        self.assertEqual(diagnostics["category_distribution"][0]["label"], "fact")
+        self.assertEqual(diagnostics["query_type_distribution"][0]["label"], "faq")
+        self.assertEqual(diagnostics["source_type_distribution"][0]["label"], "official_markdown_upload")
+
+    def test_benchmark_trace_detail_exposes_query_understanding_and_candidate_funnel(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        row = {
+            "eval_run_id": "EVAL-3",
+            "experiment_id": "exp-3",
+            "test_case_id": "case-123",
+            "question": "How do I join a channel in Node.js?",
+            "query_type": "how_to",
+            "source_type": "official_markdown_upload",
+            "trace_payload": {
+                "actual_answer_text": "Use joinChannel.",
+                "actual_route": "rag",
+                "selected_contexts": [
+                    {"chunk_id": "chunk-1", "doc_id": "doc-1", "heading": "Join Channel", "text": "Use joinChannel."}
+                ],
+                "retrieval_candidates": [
+                    {
+                        "chunk_id": "chunk-1",
+                        "doc_id": "doc-1",
+                        "rank_before_rerank": 1,
+                        "rank_after_rerank": 1,
+                        "used_in_final_answer": True,
+                    }
+                ],
+                "dictionary_hits": [{"canonical_term": "Channel"}],
+                "rule_expansions": ["agora channel"],
+                "llm_expansions": ["join an Agora RTC channel"],
+                "prf_expansions": ["joinchannel"],
+                "hard_filter_sources": {"language": "rule"},
+                "applied_hard_filters": {"language": "nodejs"},
+                "applied_soft_signals": {"topic": ["join"]},
+                "first_pass_candidate_count": 14,
+                "second_pass_candidate_count": 6,
+                "judge_votes": [{"judge_model": "openai:gpt-5.4", "answer_relevance_score": 0.9}],
+                "judge_disagreement_flag": True,
+            },
+            "failure_stage": "generation",
+            "failure_bucket": "retrieved_useful_context_but_answer_missed_it",
+            "judge_error_rate": 0.33,
+        }
+
+        with patch.object(repository, "_chunk_details", return_value={"chunk-1": {"chunk_id": "chunk-1", "heading": "Join Channel"}}):
+            payload = repository._benchmark_trace_detail(
+                row,
+                run_meta={
+                    "benchmark_version": "mixed-v1",
+                    "judge_models": ["openai:gpt-5.4"],
+                    "strategy_snapshot": {"query_understanding_enabled": True, "answer_model": "gpt-5.4"},
+                },
+            )
+
+        self.assertEqual(payload["query_understanding"]["dictionary_hits"][0]["canonical_term"], "Channel")
+        self.assertEqual(payload["query_understanding"]["hard_filter_sources"]["language"], "rule")
+        self.assertEqual(payload["candidate_funnel"]["first_pass_candidate_count"], 14)
+        self.assertEqual(payload["candidate_funnel"]["second_pass_candidate_count"], 6)
+        self.assertTrue(payload["judge_summary"]["judge_disagreement_flag"])
+        self.assertEqual(payload["strategy_snapshot"]["answer_model"], "gpt-5.4")
+
     def test_benchmark_session_payload_for_eval_run_orders_runs_by_catalog_snapshot(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
         started_at = datetime(2026, 3, 30, 1, 0, tzinfo=timezone.utc)

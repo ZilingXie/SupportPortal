@@ -7,7 +7,12 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from backend.services.rag_benchmark_runner import _strategy_snapshot, resolve_judge_models, run_benchmark
+from backend.services.rag_benchmark_runner import (
+    _failure_stage_and_bucket,
+    _strategy_snapshot,
+    resolve_judge_models,
+    run_benchmark,
+)
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, RagAnswer, RagQueryResult, RagQueryTrace
 from backend.services.support_router import SupportResolution
 
@@ -393,6 +398,59 @@ class RagBenchmarkRunnerTests(unittest.TestCase):
         self.assertTrue(snapshot["context_compression_enabled"])
         self.assertEqual(snapshot["context_compression_model"], "gpt-5.4-mini")
         self.assertEqual(snapshot["query_expansion_model"], "gpt-5.4-mini")
+
+    def test_strategy_snapshot_includes_run_profile_and_context_budget_markers(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "RAG_TOP_K": "8",
+                "RAG_RERANK_TOP_N": "32",
+                "RAG_CONTEXT_BUDGET_ENABLED": "true",
+                "RAG_CONTEXT_COMPRESSION_ENABLED": "true",
+            },
+            clear=False,
+        ):
+            snapshot = _strategy_snapshot(["openai:gpt-5.4"])
+
+        self.assertEqual(snapshot["answer_model"], "gpt-5.4")
+        self.assertEqual(snapshot["retrieval_top_k"], "8")
+        self.assertEqual(snapshot["rerank_top_n"], "32")
+        self.assertTrue(snapshot["context_budget_enabled"])
+        self.assertTrue(snapshot["context_compression_enabled"])
+        self.assertIn("judge_models", snapshot)
+        self.assertIn("query_understanding_version", snapshot)
+
+    def test_failure_stage_and_bucket_classifies_judge_failures_separately(self) -> None:
+        case = mock.Mock(expected_route_family="agora_docs_rag", expected_execution_action="rag")
+        decision = mock.Mock(route_family="agora_docs_rag", execution_action="rag")
+
+        stage, bucket = _failure_stage_and_bucket(
+            case=case,
+            decision=decision,
+            retrieval_metrics={"evidence_hit_at_5": 1.0, "evidence_coverage": 1.0},
+            judge_aggregate={"judge_error_rate": 1.0, "judge_disagreement_flag": True},
+            response_policy_followed=True,
+            used_prohibited_agora_docs=False,
+        )
+
+        self.assertEqual(stage, "judge")
+        self.assertEqual(bucket, "judge_unstable_or_timed_out")
+
+    def test_failure_stage_and_bucket_uses_business_policy_stage_name(self) -> None:
+        case = mock.Mock(expected_route_family="agora_docs_rag", expected_execution_action="rag")
+        decision = mock.Mock(route_family="agora_docs_rag", execution_action="rag")
+
+        stage, bucket = _failure_stage_and_bucket(
+            case=case,
+            decision=decision,
+            retrieval_metrics={"evidence_hit_at_5": 1.0, "evidence_coverage": 1.0},
+            judge_aggregate={},
+            response_policy_followed=False,
+            used_prohibited_agora_docs=False,
+        )
+
+        self.assertEqual(stage, "business/policy")
+        self.assertEqual(bucket, "answer_correct_but_not_relevant")
 
     def test_resolve_judge_models_requires_exactly_three_models(self) -> None:
         with self.assertRaises(ValueError):

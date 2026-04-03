@@ -51,7 +51,9 @@
 ### 已完成
 - Dashboard 可同步本地 benchmark 数据集。
 - Dashboard 可发起 benchmark 运行并查看会话。
+- Dashboard 可按 benchmark run 和 session 查看诊断分布与对比结果。
 - Dashboard 可复盘 live 与 benchmark case。
+- Dashboard 可查看 query-understanding、候选漏斗和 judge 分歧诊断。
 - Dashboard 可评审样本并导出结果。
 
 ### 未完成
@@ -65,6 +67,7 @@
 - 查询扩展会用词典、LLM 和 PRF 优化技术检索。
 - 技术问答会用 Agentic 双轮检索规划主库与影子索引。
 - 系统会按上下文预算压缩证据再生成技术答案。
+- 系统会输出 benchmark 分层诊断与失败归因。
 - 证据不足时会转工程师处理。
 - 系统已具备本地 benchmark 评测链路。
 
