@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import textwrap
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -37,7 +38,18 @@ class AutoDeployEc2Tests(unittest.TestCase):
         self.fake_bin = self.root / "fake-bin"
         self.fake_bin.mkdir()
         self.remote_bare, self.seed, self.repo = self._init_remote_repo_on_main()
-        self._write(self.repo, ".env", "NGINX_HOST_PORT=18080\n")
+        self._write(
+            self.repo,
+            ".env",
+            textwrap.dedent(
+                """\
+                NGINX_HOST_PORT=18080
+                DEPLOY_REPORT_TIMEZONE=Asia/Shanghai
+                DEPLOY_REPORT_ENABLE_AI=true
+                """
+            ),
+        )
+        self._write(self.repo, "deployment/docker-compose.single-host.yml", "services: {}\n")
         self.deploy_script = self.root / "fake-deploy-ec2.sh"
         self._install_fake_commands()
 
@@ -67,7 +79,8 @@ class AutoDeployEc2Tests(unittest.TestCase):
         _git(["config", "user.name", "Auto Deploy Tester"], cwd=seed)
         _git(["config", "user.email", "auto-deploy@example.com"], cwd=seed)
         self._write(seed, "README.md", "initial\n")
-        self._write(seed, ".gitignore", ".env\n")
+        self._write(seed, ".gitignore", ".env\n.deploy_ec2.lock\n")
+        self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
         self._commit_all(seed, "Initial commit")
         _git(["push", "origin", "main"], cwd=seed)
 
@@ -158,6 +171,44 @@ class AutoDeployEc2Tests(unittest.TestCase):
         )
 
         self._write_executable(
+            self.fake_bin / "docker",
+            textwrap.dedent(
+                """\
+                #!/usr/bin/env python3
+                import json
+                import os
+                import sys
+                from pathlib import Path
+
+                state_dir = Path(os.environ["AUTO_DEPLOY_TEST_STATE_DIR"])
+                args = sys.argv[1:]
+                with (state_dir / "docker_calls.jsonl").open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps({"argv": args}) + "\\n")
+
+                if args[:1] != ["compose"]:
+                    print("unexpected docker invocation", args, file=sys.stderr)
+                    sys.exit(1)
+
+                if "ps" in args:
+                    print(os.environ.get("FAKE_DOCKER_PS_OUTPUT", "NAME\\napi up"))
+                    sys.exit(0)
+
+                if "logs" in args:
+                    print(
+                        os.environ.get(
+                            "FAKE_DOCKER_LOGS_OUTPUT",
+                            "api | INFO startup complete\\nworker | WARNING queue depth high",
+                        )
+                    )
+                    sys.exit(0)
+
+                print("unsupported docker compose invocation", args, file=sys.stderr)
+                sys.exit(1)
+                """
+            ),
+        )
+
+        self._write_executable(
             self.fake_bin / "flock",
             textwrap.dedent(
                 """\
@@ -190,6 +241,7 @@ class AutoDeployEc2Tests(unittest.TestCase):
         env["DEPLOY_ALERT_TO"] = "ops@example.com"
         env["DEPLOY_ALERT_FROM"] = "alerts@example.com"
         env["DEPLOY_AWS_REGION"] = "us-east-1"
+        env["AUTO_DEPLOY_REPORT_NOW_UTC"] = "2026-04-03T19:00:00Z"
         if extra_env:
             env.update(extra_env)
         return env
@@ -226,7 +278,23 @@ class AutoDeployEc2Tests(unittest.TestCase):
                 "https://support.stellarix.space/health",
             ],
         )
-        self.assertEqual(self._read_json_lines(self.state_dir / "aws_calls.jsonl"), [])
+        aws_calls = self._read_json_lines(self.state_dir / "aws_calls.jsonl")
+        self.assertEqual(len(aws_calls), 1)
+        payload = aws_calls[0]["payload"]
+        self.assertIsInstance(payload, dict)
+        assert isinstance(payload, dict)
+        self.assertEqual(
+            payload["Content"]["Simple"]["Subject"]["Data"],
+            "SupportPortal Report 4/4",
+        )
+        body = payload["Content"]["Simple"]["Body"]["Text"]["Data"]
+        self.assertIn("运行摘要", body)
+        self.assertIn("执行模式：health-only", body)
+        self.assertIn("AI 日志分析", body)
+        self.assertIn("AI analysis unavailable", body)
+        docker_calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+        self.assertTrue(any("ps" in call["argv"] for call in docker_calls))
+        self.assertTrue(any("logs" in call["argv"] for call in docker_calls))
 
     def test_deploy_mode_invokes_deploy_script_when_origin_main_is_ahead(self) -> None:
         self._advance_origin_main()
@@ -244,7 +312,13 @@ class AutoDeployEc2Tests(unittest.TestCase):
             "1",
         )
         self.assertEqual(self._read_json_lines(self.state_dir / "curl_calls.jsonl"), [])
-        self.assertEqual(self._read_json_lines(self.state_dir / "aws_calls.jsonl"), [])
+        aws_calls = self._read_json_lines(self.state_dir / "aws_calls.jsonl")
+        self.assertEqual(len(aws_calls), 1)
+        payload = aws_calls[0]["payload"]
+        self.assertIsInstance(payload, dict)
+        assert isinstance(payload, dict)
+        self.assertEqual(payload["Content"]["Simple"]["Subject"]["Data"], "SupportPortal Report 4/4")
+        self.assertIn("执行模式：deploy", payload["Content"]["Simple"]["Body"]["Text"]["Data"])
 
     def test_failed_health_check_sends_ses_alert_with_context(self) -> None:
         result = self._run_script(
@@ -265,11 +339,11 @@ class AutoDeployEc2Tests(unittest.TestCase):
         self.assertEqual(payload["Destination"]["ToAddresses"], ["ops@example.com"])
         subject = payload["Content"]["Simple"]["Subject"]["Data"]
         body = payload["Content"]["Simple"]["Body"]["Text"]["Data"]
-        self.assertIn("[SupportPortal][auto-deploy failed] test-host.example main", subject)
-        self.assertIn("Execution mode: health-only", body)
-        self.assertIn("Failed step: Internal health check", body)
-        self.assertIn("Branch: main", body)
-        self.assertIn("Recent log tail:", body)
+        self.assertEqual(subject, "[Failed] SupportPortal Report 4/4")
+        self.assertIn("执行模式：health-only", body)
+        self.assertIn("失败步骤：Internal health check", body)
+        self.assertIn("分支：main", body)
+        self.assertIn("可疑原始日志", body)
 
 
 class AutoDeployAssetTests(unittest.TestCase):
@@ -298,6 +372,10 @@ class AutoDeployAssetTests(unittest.TestCase):
         self.assertIn("DEPLOY_ALERT_TO=", env_example)
         self.assertIn("DEPLOY_ALERT_FROM=", env_example)
         self.assertIn("DEPLOY_AWS_REGION=", env_example)
+        self.assertIn("DEPLOY_REPORT_ENABLE_AI=", env_example)
+        self.assertIn("DEPLOY_REPORT_LOG_SINCE=", env_example)
+        self.assertIn("DEPLOY_REPORT_LOG_LINES_PER_SERVICE=", env_example)
+        self.assertIn("DEPLOY_REPORT_MAX_LOG_CHARS=", env_example)
 
 
 if __name__ == "__main__":

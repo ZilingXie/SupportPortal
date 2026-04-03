@@ -262,3 +262,30 @@ For each new entry, record:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_profiles.py backend/tests/test_token_usage.py backend/tests/test_rag_sufficiency_judge.py backend/tests/test_prompt_modules.py -q`
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/llm_profiles.py backend/services/prompts/rag_sufficiency.py backend/services/rag_sufficiency_prompt.py backend/services/rag_sufficiency_judge.py backend/services/query_understanding.py backend/services/rag_context_budget.py backend/services/rag_qa.py backend/services/token_usage.py`
+
+- Area or subsystem: EC2 auto deploy daily report and docker-log AI diagnostics
+- Prompt or model version: `auto-deploy-report-v1`
+- Summary: Added a dedicated `auto_deploy_report` LLM scene for the EC2 auto-deploy日报 path, so every scheduled run can email a Chinese health summary with docker status, suspicious raw log excerpts, and an AI risk review without reusing product-facing engineer prompts.
+- Reason: The old automation only emailed on failure and had no model-driven log inspection. The new daily report needs a separate low-cost, low-reasoning scene so ops reporting can evolve independently from client/product LLM behavior and still degrade safely when AI is unavailable.
+- Affected files or config:
+  - `backend/services/auto_deploy_report.py`
+  - `backend/services/llm_profiles.py`
+  - `scripts/ops/auto_deploy_ec2.sh`
+  - `scripts/ops/build_auto_deploy_report.py`
+  - `.env.example`
+  - `deployment/systemd/auto-deploy.env.example`
+  - `backend/tests/test_auto_deploy_report.py`
+  - `backend/tests/test_auto_deploy_ec2.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_bootstrap_auto_deploy_ec2.py`
+  - `docs/deploy_single_host_ec2.md`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - `supportportal-auto-deploy.service` now attempts to send one SES daily report on every run instead of only sending mail on failure.
+  - The report subject now uses `SupportPortal Report <M/D>` on success and `[Failed] SupportPortal Report <M/D>` on failure.
+  - When `OPENAI_API_KEY` is present, the report includes AI analysis of recent docker logs using the dedicated `auto_deploy_report` scene; otherwise the email still sends with an explicit unavailable note.
+- Verification:
+  - `python3 -m unittest backend.tests.test_bootstrap_auto_deploy_ec2 backend.tests.test_auto_deploy_report backend.tests.test_auto_deploy_ec2 backend.tests.test_llm_profiles backend.tests.test_workflow_scripts backend.tests.test_single_host_compose`
+  - `bash -n scripts/ops/auto_deploy_ec2.sh scripts/ops/bootstrap_auto_deploy_ec2.sh deployment/deploy_ec2.sh`
+  - `python3 -m py_compile backend/services/auto_deploy_report.py scripts/ops/build_auto_deploy_report.py backend/services/llm_profiles.py`
+  - `git diff --check`

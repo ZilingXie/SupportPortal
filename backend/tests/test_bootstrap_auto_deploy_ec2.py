@@ -342,6 +342,9 @@ class BootstrapAutoDeployEc2Tests(unittest.TestCase):
         self.assertIn("DEPLOY_AWS_REGION=us-east-1", env_example)
         self.assertIn("DEPLOY_ALERT_FROM=", env_example)
         self.assertIn("DEPLOY_ALERT_TO=", env_example)
+        self.assertIn("DEPLOY_REPORT_ENABLE_AI=true", env_example)
+        self.assertIn("DEPLOY_REPORT_MODEL=gpt-5.4-mini", env_example)
+        self.assertIn("DEPLOY_REPORT_LOG_SINCE=24h", env_example)
 
     def test_bootstrap_script_does_not_require_unzip_before_install(self) -> None:
         script = BOOTSTRAP_SCRIPT.read_text(encoding="utf-8")

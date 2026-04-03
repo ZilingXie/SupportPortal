@@ -18,6 +18,7 @@ RAG_CONTEXT_COMPRESSION_SCENARIO = "rag_context_compression"
 ENGINEER_HELPER_SCENARIO = "engineer_helper"
 KNOWLEDGE_INGESTION_SCENARIO = "knowledge_ingestion_metadata"
 BENCHMARK_JUDGE_SCENARIO = "benchmark_judge"
+AUTO_DEPLOY_REPORT_SCENARIO = "auto_deploy_report"
 
 ProviderName = Literal["openai", "siliconflow"]
 ApiModeName = Literal[
@@ -263,5 +264,18 @@ def resolve_model_profile(
             temperature=0.0,
             timeout_seconds=_safe_positive_float_env("RAG_BENCHMARK_JUDGE_TIMEOUT_SECONDS", 30.0),
             max_retries=1,
+        )
+    if scenario == AUTO_DEPLOY_REPORT_SCENARIO:
+        return ModelProfile(
+            scenario=scenario,
+            provider="openai",
+            model=_clean_text(os.getenv("DEPLOY_REPORT_MODEL")) or "gpt-5.4-mini",
+            api_mode=OPENAI_RESPONSES_API,
+            api_key=_openai_api_key(),
+            reasoning_effort=_clean_text(os.getenv("DEPLOY_REPORT_REASONING_EFFORT")) or "low",
+            temperature=0.0,
+            timeout_seconds=_safe_positive_float_env("DEPLOY_REPORT_TIMEOUT_SECONDS", 15.0),
+            max_retries=_safe_int_env("DEPLOY_REPORT_MAX_RETRIES", 1),
+            fallback_models=(),
         )
     raise ValueError(f"unsupported model scenario: {scenario}")
