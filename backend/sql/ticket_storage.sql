@@ -14,8 +14,8 @@ CREATE TABLE IF NOT EXISTS support_tickets (
     subject TEXT NOT NULL,
     status TEXT NOT NULL,
     last_engineer_action JSONB,
-    engineer_handoff_packet JSONB,
-    engineer_agent_state JSONB,
+    active_engineer_case_id TEXT,
+    engineer_case_count INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
@@ -62,6 +62,41 @@ CREATE TABLE IF NOT EXISTS support_ticket_investigation_messages (
     meta JSONB
 );
 
+CREATE TABLE IF NOT EXISTS support_engineer_cases (
+    engineer_case_id TEXT PRIMARY KEY,
+    client_ticket_id TEXT NOT NULL REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
+    case_sequence INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL,
+    trigger_source TEXT NOT NULL,
+    trigger_reason TEXT NOT NULL,
+    draft_customer_reply TEXT,
+    final_confirmation_requested_at TIMESTAMPTZ,
+    engineer_handoff_packet JSONB,
+    engineer_agent_state JSONB,
+    opened_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    closed_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS support_engineer_case_messages (
+    id BIGSERIAL PRIMARY KEY,
+    message_id TEXT NOT NULL,
+    engineer_case_id TEXT NOT NULL REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    meta JSONB
+);
+
+CREATE TABLE IF NOT EXISTS support_engineer_case_events (
+    id BIGSERIAL PRIMARY KEY,
+    engineer_case_id TEXT REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_support_tickets_status_updated
     ON support_tickets (status, updated_at DESC);
 
@@ -76,3 +111,15 @@ CREATE INDEX IF NOT EXISTS idx_support_ticket_investigations_ticket_updated
 
 CREATE INDEX IF NOT EXISTS idx_support_ticket_investigation_messages_created
     ON support_ticket_investigation_messages (investigation_id, created_at ASC, id ASC);
+
+CREATE INDEX IF NOT EXISTS idx_support_engineer_cases_ticket_updated
+    ON support_engineer_cases (client_ticket_id, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_support_engineer_cases_status_updated
+    ON support_engineer_cases (status, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_support_engineer_case_messages_created
+    ON support_engineer_case_messages (engineer_case_id, created_at ASC, id ASC);
+
+CREATE INDEX IF NOT EXISTS idx_support_engineer_case_events_created
+    ON support_engineer_case_events (engineer_case_id, created_at DESC);

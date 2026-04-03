@@ -18,6 +18,7 @@ LOGGER = logging.getLogger(__name__)
 _VALID_STATUSES = {"open", "communicating", "escalated", "investigating", "resolved"}
 _VALID_ROLES = {"customer", "assistant", "engineer", "system"}
 _VALID_INVESTIGATION_ROLES = {"engineer_ai", "engineer", "system"}
+_VALID_INVESTIGATION_STATES = {"active", "awaiting_confirmation", "closed"}
 _RETRYABLE_STORAGE_ERROR_SNIPPETS = (
     "connection timeout expired",
     "server closed the connection unexpectedly",
@@ -29,10 +30,11 @@ _RETRYABLE_STORAGE_ERROR_SNIPPETS = (
 _ResultT = TypeVar("_ResultT")
 _VALID_MESSAGE_SENTIMENTS = {"good", "bad", "neutral"}
 _TICKET_SCHEMA_VERSION_KEY = "ticket_flow_schema_version"
-_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v3"
+_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v4"
 _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
     "2026-single-ai-managed-v2",
     "2026-single-ai-managed-v3",
+    "2026-single-ai-managed-v4",
 }
 
 
@@ -65,6 +67,11 @@ def _normalize_investigation_role(value: Any) -> str:
     return role if role in _VALID_INVESTIGATION_ROLES else "engineer_ai"
 
 
+def _normalize_investigation_state(value: Any) -> str:
+    state = str(value or "active").strip().lower()
+    return state if state in _VALID_INVESTIGATION_STATES else "active"
+
+
 def _normalize_message_sentiment_label(value: Any) -> str | None:
     label = str(value or "").strip().lower()
     return label if label in _VALID_MESSAGE_SENTIMENTS else None
@@ -76,6 +83,14 @@ def _safe_positive_int(value: Any, default_value: int) -> int:
     except (TypeError, ValueError):
         return default_value
     return parsed if parsed > 0 else default_value
+
+
+def _safe_non_negative_int(value: Any, default_value: int = 0) -> int:
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default_value
+    return parsed if parsed >= 0 else default_value
 
 
 def _safe_positive_float(value: Any, default_value: float) -> float:
@@ -95,6 +110,125 @@ def _is_retryable_storage_error(exc: BaseException) -> bool:
         return True
     message = _clean_error_text(exc).lower()
     return any(snippet in message for snippet in _RETRYABLE_STORAGE_ERROR_SNIPPETS)
+
+
+def _case_sequence_from_identifiers(engineer_case_id: Any, case_sequence: Any) -> int:
+    explicit = _safe_positive_int(case_sequence, 0)
+    if explicit:
+        return explicit
+    text = str(engineer_case_id or "").strip()
+    if "-" not in text:
+        return 1
+    suffix = text.rsplit("-", 1)[-1]
+    return _safe_positive_int(suffix, 1)
+
+
+def _ticket_client_reference(ticket: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(ticket, dict):
+        return {"ticket_id": "", "subject": ""}
+    return {
+        "ticket_id": str(ticket.get("ticket_id") or "").strip(),
+        "subject": str(ticket.get("subject") or "").strip(),
+    }
+
+
+def _build_case_investigation_view(
+    investigation_id: str,
+    *,
+    state: Any,
+    trigger_reason: Any,
+    trigger_source: Any,
+    draft_customer_reply: Any,
+    final_confirmation_requested_at: Any,
+    opened_at: Any,
+    updated_at: Any,
+    closed_at: Any,
+    messages: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "id": str(investigation_id or "").strip(),
+        "state": _normalize_investigation_state(state),
+        "trigger_reason": str(trigger_reason or "").strip(),
+        "trigger_source": str(trigger_source or "").strip(),
+        "draft_customer_reply": str(draft_customer_reply or "").strip(),
+        "final_confirmation_requested_at": _to_iso(final_confirmation_requested_at)
+        if final_confirmation_requested_at is not None
+        else None,
+        "opened_at": _to_iso(opened_at),
+        "updated_at": _to_iso(updated_at),
+        "closed_at": _to_iso(closed_at) if closed_at is not None else None,
+        "messages": copy.deepcopy(messages),
+    }
+
+
+def _engineer_case_record_to_payload(
+    engineer_case: dict[str, Any],
+    *,
+    client_ticket: dict[str, Any] | None,
+    include_client_messages: bool,
+) -> dict[str, Any]:
+    internal_messages = (
+        [copy.deepcopy(item) for item in engineer_case.get("messages", []) if isinstance(item, dict)]
+        if isinstance(engineer_case.get("messages"), list)
+        else []
+    )
+    investigation = _build_case_investigation_view(
+        str(engineer_case.get("thread_id") or engineer_case.get("engineer_case_id") or ""),
+        state=engineer_case.get("investigation_state"),
+        trigger_reason=engineer_case.get("trigger_reason"),
+        trigger_source=engineer_case.get("trigger_source"),
+        draft_customer_reply=engineer_case.get("draft_customer_reply"),
+        final_confirmation_requested_at=engineer_case.get("final_confirmation_requested_at"),
+        opened_at=engineer_case.get("opened_at"),
+        updated_at=engineer_case.get("updated_at"),
+        closed_at=engineer_case.get("closed_at"),
+        messages=internal_messages,
+    )
+    parent_ref = _ticket_client_reference(client_ticket)
+    title = str(engineer_case.get("title") or "").strip() or parent_ref["subject"] or "Engineer case"
+    client_messages = (
+        [copy.deepcopy(item) for item in client_ticket.get("messages", []) if isinstance(item, dict)]
+        if include_client_messages and isinstance(client_ticket, dict) and isinstance(client_ticket.get("messages"), list)
+        else []
+    )
+    is_closed = investigation["state"] == "closed"
+    return {
+        "engineer_case_id": str(engineer_case.get("engineer_case_id") or "").strip(),
+        "ticket_id": str(engineer_case.get("engineer_case_id") or "").strip(),
+        "client_ticket_id": parent_ref["ticket_id"],
+        "client_ticket_ref": parent_ref,
+        "case_sequence": _case_sequence_from_identifiers(
+            engineer_case.get("engineer_case_id"),
+            engineer_case.get("case_sequence"),
+        ),
+        "title": title,
+        "subject": title,
+        "status": _normalize_status(engineer_case.get("status")),
+        "trigger_source": str(engineer_case.get("trigger_source") or "").strip(),
+        "trigger_reason": str(engineer_case.get("trigger_reason") or "").strip(),
+        "requester": str((client_ticket or {}).get("requester") or "").strip(),
+        "customer_id": str((client_ticket or {}).get("customer_id") or "").strip(),
+        "last_engineer_action": (client_ticket or {}).get("last_engineer_action"),
+        "created_at": _to_iso(engineer_case.get("opened_at")),
+        "opened_at": _to_iso(engineer_case.get("opened_at")),
+        "updated_at": _to_iso(engineer_case.get("updated_at")),
+        "closed_at": _to_iso(engineer_case.get("closed_at"))
+        if engineer_case.get("closed_at") is not None
+        else None,
+        "messages": client_messages,
+        "active_investigation": None if is_closed else investigation,
+        "investigation_history": [investigation] if is_closed else [],
+        "engineer_handoff_packet": (
+            copy.deepcopy(engineer_case.get("engineer_handoff_packet"))
+            if isinstance(engineer_case.get("engineer_handoff_packet"), dict)
+            else None
+        ),
+        "engineer_agent_state": (
+            copy.deepcopy(engineer_case.get("engineer_agent_state"))
+            if isinstance(engineer_case.get("engineer_agent_state"), dict)
+            else None
+        ),
+    }
 
 
 class TicketRepository(Protocol):
@@ -131,6 +265,59 @@ class TicketRepository(Protocol):
     ) -> bool:
         ...
 
+    def get_engineer_case(
+        self,
+        engineer_case_id: str,
+        *,
+        include_client_messages: bool = True,
+    ) -> dict[str, Any] | None:
+        ...
+
+    def list_engineer_cases(
+        self,
+        *,
+        include_client_messages: bool = True,
+    ) -> list[dict[str, Any]]:
+        ...
+
+    def list_ticket_engineer_cases(
+        self,
+        ticket_id: str,
+        *,
+        include_client_messages: bool = True,
+    ) -> list[dict[str, Any]]:
+        ...
+
+    def get_active_engineer_case(
+        self,
+        ticket_id: str,
+        *,
+        include_client_messages: bool = True,
+    ) -> dict[str, Any] | None:
+        ...
+
+    def save_engineer_case(
+        self,
+        engineer_case: dict[str, Any],
+        new_messages: list[dict[str, Any]] | None = None,
+    ) -> None:
+        ...
+
+    def record_engineer_case_event(
+        self,
+        engineer_case_id: str | None,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        ...
+
+    def list_engineer_case_events(
+        self,
+        engineer_case_id: str,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        ...
+
     def get_active_investigation(self, ticket_id: str) -> dict[str, Any] | None:
         ...
 
@@ -164,6 +351,8 @@ class InMemoryTicketRepository:
         self._tickets: dict[str, dict[str, Any]] = {}
         self._events: list[dict[str, Any]] = []
         self._investigations: dict[str, list[dict[str, Any]]] = {}
+        self._engineer_cases: dict[str, dict[str, Any]] = {}
+        self._engineer_case_events: list[dict[str, Any]] = []
 
     def initialize(self) -> None:
         return None
@@ -179,14 +368,11 @@ class InMemoryTicketRepository:
         if ticket is None:
             return None
         item = copy.deepcopy(ticket)
-        investigations = self.list_ticket_investigations(ticket_id, include_messages=True)
-        active = next((inv for inv in investigations if str(inv.get("state") or "").lower() != "closed"), None)
-        history = [inv for inv in investigations if str(inv.get("state") or "").lower() == "closed"]
-        item["active_investigation"] = copy.deepcopy(active) if active is not None else None
-        item["investigation_history"] = copy.deepcopy(history)
         item["status"] = _normalize_status(item.get("status"))
-        item.setdefault("engineer_handoff_packet", None)
-        item.setdefault("engineer_agent_state", None)
+        item["active_engineer_case_id"] = str(item.get("active_engineer_case_id") or "").strip() or None
+        item["engineer_case_count"] = _safe_non_negative_int(item.get("engineer_case_count"), 0)
+        if not isinstance(item.get("messages"), list):
+            item["messages"] = []
         return item
 
     def list_tickets(self, include_messages: bool = True) -> list[dict[str, Any]]:
@@ -209,6 +395,15 @@ class InMemoryTicketRepository:
             raise ValueError("ticket_id is required")
         saved_ticket = copy.deepcopy(ticket)
         saved_ticket["status"] = _normalize_status(saved_ticket.get("status"))
+        saved_ticket["active_engineer_case_id"] = (
+            str(saved_ticket.get("active_engineer_case_id") or "").strip() or None
+        )
+        saved_ticket["engineer_case_count"] = _safe_non_negative_int(
+            saved_ticket.get("engineer_case_count"),
+            0,
+        )
+        if not isinstance(saved_ticket.get("messages"), list):
+            saved_ticket["messages"] = []
         self._tickets[ticket_id] = saved_ticket
 
         investigations: list[dict[str, Any]] = []
@@ -220,6 +415,7 @@ class InMemoryTicketRepository:
             investigations.extend(copy.deepcopy(item) for item in history if isinstance(item, dict))
         if investigations:
             self._investigations[ticket_id] = investigations
+            self._backfill_engineer_cases_from_legacy_ticket(ticket_id)
 
     def update_message_sentiment_label(
         self,
@@ -256,6 +452,256 @@ class InMemoryTicketRepository:
             ticket["updated_at"] = ticket.get("updated_at") or _utc_now()
             return True
         return False
+
+    def _normalize_engineer_case_record(self, engineer_case: dict[str, Any]) -> dict[str, Any]:
+        engineer_case_id = str(engineer_case.get("engineer_case_id") or "").strip()
+        if not engineer_case_id:
+            raise ValueError("engineer_case_id is required")
+        client_ticket_id = str(engineer_case.get("client_ticket_id") or "").strip()
+        if not client_ticket_id:
+            raise ValueError("client_ticket_id is required")
+        opened_at = engineer_case.get("opened_at") or _utc_now()
+        updated_at = engineer_case.get("updated_at") or opened_at
+        normalized = copy.deepcopy(engineer_case)
+        normalized["engineer_case_id"] = engineer_case_id
+        normalized["client_ticket_id"] = client_ticket_id
+        normalized["case_sequence"] = _case_sequence_from_identifiers(
+            engineer_case_id,
+            engineer_case.get("case_sequence"),
+        )
+        normalized["title"] = str(normalized.get("title") or "").strip() or "Engineer case"
+        normalized["status"] = _normalize_status(normalized.get("status"))
+        normalized["trigger_source"] = str(normalized.get("trigger_source") or "").strip() or "support_query"
+        normalized["trigger_reason"] = str(normalized.get("trigger_reason") or "").strip() or "unknown"
+        normalized["investigation_state"] = _normalize_investigation_state(
+            normalized.get("investigation_state")
+        )
+        normalized["draft_customer_reply"] = str(normalized.get("draft_customer_reply") or "").strip()
+        normalized["final_confirmation_requested_at"] = normalized.get("final_confirmation_requested_at")
+        normalized["engineer_handoff_packet"] = (
+            copy.deepcopy(normalized.get("engineer_handoff_packet"))
+            if isinstance(normalized.get("engineer_handoff_packet"), dict)
+            else None
+        )
+        normalized["engineer_agent_state"] = (
+            copy.deepcopy(normalized.get("engineer_agent_state"))
+            if isinstance(normalized.get("engineer_agent_state"), dict)
+            else None
+        )
+        normalized["opened_at"] = opened_at
+        normalized["updated_at"] = updated_at
+        normalized["closed_at"] = normalized.get("closed_at")
+        normalized["messages"] = (
+            [copy.deepcopy(item) for item in normalized.get("messages", []) if isinstance(item, dict)]
+            if isinstance(normalized.get("messages"), list)
+            else []
+        )
+        return normalized
+
+    def _backfill_engineer_cases_from_legacy_ticket(self, ticket_id: str) -> None:
+        normalized_ticket_id = str(ticket_id or "").strip()
+        if not normalized_ticket_id:
+            return
+        if any(
+            str(item.get("client_ticket_id") or "").strip() == normalized_ticket_id
+            for item in self._engineer_cases.values()
+        ):
+            return
+        ticket = self._tickets.get(normalized_ticket_id)
+        if not isinstance(ticket, dict):
+            return
+        investigations = self.list_ticket_investigations(normalized_ticket_id, include_messages=True)
+        if not investigations:
+            return
+        investigations = sorted(
+            investigations,
+            key=lambda item: str(item.get("opened_at") or item.get("updated_at") or ""),
+        )
+        for index, investigation in enumerate(investigations, start=1):
+            engineer_case_id = f"{normalized_ticket_id}-{index}"
+            record = {
+                "engineer_case_id": engineer_case_id,
+                "client_ticket_id": normalized_ticket_id,
+                "case_sequence": index,
+                "title": str(ticket.get("subject") or "Engineer case").strip() or "Engineer case",
+                "status": (
+                    "investigating"
+                    if _normalize_investigation_state(investigation.get("state")) != "closed"
+                    else _normalize_status(ticket.get("status"))
+                ),
+                "trigger_source": investigation.get("trigger_source"),
+                "trigger_reason": investigation.get("trigger_reason"),
+                "investigation_state": investigation.get("state"),
+                "draft_customer_reply": investigation.get("draft_customer_reply"),
+                "final_confirmation_requested_at": investigation.get("final_confirmation_requested_at"),
+                "engineer_handoff_packet": (
+                    copy.deepcopy(ticket.get("engineer_handoff_packet"))
+                    if isinstance(ticket.get("engineer_handoff_packet"), dict)
+                    else None
+                ),
+                "engineer_agent_state": (
+                    copy.deepcopy(ticket.get("engineer_agent_state"))
+                    if isinstance(ticket.get("engineer_agent_state"), dict)
+                    else None
+                ),
+                "opened_at": investigation.get("opened_at"),
+                "updated_at": investigation.get("updated_at"),
+                "closed_at": investigation.get("closed_at"),
+                "messages": investigation.get("messages") or [],
+            }
+            self._engineer_cases[engineer_case_id] = self._normalize_engineer_case_record(record)
+        ticket["engineer_case_count"] = len(investigations)
+        active = next(
+            (
+                case
+                for case in self._engineer_cases.values()
+                if str(case.get("client_ticket_id") or "").strip() == normalized_ticket_id
+                and _normalize_investigation_state(case.get("investigation_state")) != "closed"
+            ),
+            None,
+        )
+        ticket["active_engineer_case_id"] = (
+            str(active.get("engineer_case_id") or "").strip() if isinstance(active, dict) else None
+        )
+
+    def get_engineer_case(
+        self,
+        engineer_case_id: str,
+        *,
+        include_client_messages: bool = True,
+    ) -> dict[str, Any] | None:
+        self._backfill_engineer_cases_from_legacy_ticket(
+            str(engineer_case_id).rsplit("-", 1)[0] if "-" in str(engineer_case_id) else engineer_case_id
+        )
+        engineer_case = self._engineer_cases.get(str(engineer_case_id).strip())
+        if engineer_case is None:
+            return None
+        client_ticket = self.get_ticket(str(engineer_case.get("client_ticket_id") or ""))
+        return _engineer_case_record_to_payload(
+            engineer_case,
+            client_ticket=client_ticket,
+            include_client_messages=include_client_messages,
+        )
+
+    def list_engineer_cases(
+        self,
+        *,
+        include_client_messages: bool = True,
+    ) -> list[dict[str, Any]]:
+        case_payloads: list[dict[str, Any]] = []
+        for ticket_id in list(self._tickets):
+            self._backfill_engineer_cases_from_legacy_ticket(ticket_id)
+        for engineer_case in self._engineer_cases.values():
+            client_ticket = self.get_ticket(str(engineer_case.get("client_ticket_id") or ""))
+            case_payloads.append(
+                _engineer_case_record_to_payload(
+                    engineer_case,
+                    client_ticket=client_ticket,
+                    include_client_messages=include_client_messages,
+                )
+            )
+        return case_payloads
+
+    def list_ticket_engineer_cases(
+        self,
+        ticket_id: str,
+        *,
+        include_client_messages: bool = True,
+    ) -> list[dict[str, Any]]:
+        normalized_ticket_id = str(ticket_id).strip()
+        self._backfill_engineer_cases_from_legacy_ticket(normalized_ticket_id)
+        rows = [
+            item
+            for item in self.list_engineer_cases(include_client_messages=include_client_messages)
+            if str(item.get("client_ticket_id") or "").strip() == normalized_ticket_id
+        ]
+        rows.sort(
+            key=lambda item: _safe_non_negative_int(item.get("case_sequence"), 0),
+            reverse=True,
+        )
+        return rows
+
+    def get_active_engineer_case(
+        self,
+        ticket_id: str,
+        *,
+        include_client_messages: bool = True,
+    ) -> dict[str, Any] | None:
+        normalized_ticket_id = str(ticket_id).strip()
+        self._backfill_engineer_cases_from_legacy_ticket(normalized_ticket_id)
+        active_case = next(
+            (
+                copy.deepcopy(item)
+                for item in self._engineer_cases.values()
+                if str(item.get("client_ticket_id") or "").strip() == normalized_ticket_id
+                and _normalize_investigation_state(item.get("investigation_state")) != "closed"
+            ),
+            None,
+        )
+        if active_case is None:
+            return None
+        client_ticket = self.get_ticket(normalized_ticket_id)
+        return _engineer_case_record_to_payload(
+            active_case,
+            client_ticket=client_ticket,
+            include_client_messages=include_client_messages,
+        )
+
+    def save_engineer_case(
+        self,
+        engineer_case: dict[str, Any],
+        new_messages: list[dict[str, Any]] | None = None,
+    ) -> None:
+        saved = self._normalize_engineer_case_record(engineer_case)
+        if new_messages:
+            existing_ids = {str(item.get("id") or "").strip() for item in saved["messages"]}
+            for item in new_messages:
+                message_id = str(item.get("id") or "").strip()
+                if message_id and message_id not in existing_ids:
+                    saved["messages"].append(copy.deepcopy(item))
+                    existing_ids.add(message_id)
+        self._engineer_cases[str(saved["engineer_case_id"])] = saved
+        ticket = self._tickets.get(str(saved.get("client_ticket_id") or "").strip())
+        if isinstance(ticket, dict):
+            ticket["engineer_case_count"] = max(
+                _safe_non_negative_int(ticket.get("engineer_case_count"), 0),
+                _case_sequence_from_identifiers(saved.get("engineer_case_id"), saved.get("case_sequence")),
+            )
+            if _normalize_investigation_state(saved.get("investigation_state")) == "closed":
+                if str(ticket.get("active_engineer_case_id") or "").strip() == str(saved.get("engineer_case_id") or "").strip():
+                    ticket["active_engineer_case_id"] = None
+            else:
+                ticket["active_engineer_case_id"] = str(saved.get("engineer_case_id") or "").strip() or None
+
+    def record_engineer_case_event(
+        self,
+        engineer_case_id: str | None,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        created_at = payload.get("created_at") or _utc_now()
+        self._engineer_case_events.append(
+            {
+                "engineer_case_id": engineer_case_id,
+                "event_type": event_type,
+                "payload": copy.deepcopy(payload),
+                "created_at": created_at,
+            }
+        )
+
+    def list_engineer_case_events(
+        self,
+        engineer_case_id: str,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        safe_limit = _safe_positive_int(limit, 100)
+        normalized_case_id = str(engineer_case_id).strip()
+        filtered = [
+            item
+            for item in reversed(self._engineer_case_events)
+            if str(item.get("engineer_case_id") or "").strip() == normalized_case_id
+        ]
+        return [copy.deepcopy(item) for item in filtered[:safe_limit]]
 
     def get_active_investigation(self, ticket_id: str) -> dict[str, Any] | None:
         investigations = self._investigations.get(ticket_id, [])
@@ -505,8 +951,8 @@ class PostgresTicketRepository:
                             subject TEXT NOT NULL,
                             status TEXT NOT NULL,
                             last_engineer_action JSONB,
-                            engineer_handoff_packet JSONB,
-                            engineer_agent_state JSONB,
+                            active_engineer_case_id TEXT,
+                            engineer_case_count INTEGER NOT NULL DEFAULT 0,
                             created_at TIMESTAMPTZ NOT NULL,
                             updated_at TIMESTAMPTZ NOT NULL
                         )
@@ -515,12 +961,12 @@ class PostgresTicketRepository:
                 )
                 cur.execute(
                     sql.SQL(
-                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS engineer_handoff_packet JSONB"
+                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS active_engineer_case_id TEXT"
                     ).format(self._table("support_tickets"))
                 )
                 cur.execute(
                     sql.SQL(
-                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS engineer_agent_state JSONB"
+                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS engineer_case_count INTEGER NOT NULL DEFAULT 0"
                     ).format(self._table("support_tickets"))
                 )
                 cur.execute(
@@ -600,6 +1046,65 @@ class PostgresTicketRepository:
                 cur.execute(
                     sql.SQL(
                         """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            engineer_case_id TEXT PRIMARY KEY,
+                            client_ticket_id TEXT NOT NULL REFERENCES {}(ticket_id) ON DELETE CASCADE,
+                            case_sequence INTEGER NOT NULL,
+                            title TEXT NOT NULL,
+                            status TEXT NOT NULL,
+                            trigger_source TEXT NOT NULL,
+                            trigger_reason TEXT NOT NULL,
+                            draft_customer_reply TEXT,
+                            final_confirmation_requested_at TIMESTAMPTZ,
+                            engineer_handoff_packet JSONB,
+                            engineer_agent_state JSONB,
+                            opened_at TIMESTAMPTZ NOT NULL,
+                            updated_at TIMESTAMPTZ NOT NULL,
+                            closed_at TIMESTAMPTZ
+                        )
+                        """
+                    ).format(
+                        self._table("support_engineer_cases"),
+                        self._table("support_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            id BIGSERIAL PRIMARY KEY,
+                            message_id TEXT NOT NULL,
+                            engineer_case_id TEXT NOT NULL REFERENCES {}(engineer_case_id) ON DELETE CASCADE,
+                            role TEXT NOT NULL,
+                            content TEXT NOT NULL,
+                            created_at TIMESTAMPTZ NOT NULL,
+                            meta JSONB
+                        )
+                        """
+                    ).format(
+                        self._table("support_engineer_case_messages"),
+                        self._table("support_engineer_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            id BIGSERIAL PRIMARY KEY,
+                            engineer_case_id TEXT REFERENCES {}(engineer_case_id) ON DELETE CASCADE,
+                            event_type TEXT NOT NULL,
+                            payload JSONB NOT NULL,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    ).format(
+                        self._table("support_engineer_case_events"),
+                        self._table("support_engineer_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
                         INSERT INTO {} (config_key, config_value, updated_at)
                         VALUES (%s, %s, NOW())
                         ON CONFLICT (config_key) DO UPDATE SET
@@ -643,7 +1148,221 @@ class PostgresTicketRepository:
                         self._table("support_ticket_investigation_messages"),
                     )
                 )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (client_ticket_id, updated_at DESC)").format(
+                        sql.Identifier("idx_support_engineer_cases_ticket_updated"),
+                        self._table("support_engineer_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (status, updated_at DESC)").format(
+                        sql.Identifier("idx_support_engineer_cases_status_updated"),
+                        self._table("support_engineer_cases"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (engineer_case_id, created_at ASC, id ASC)").format(
+                        sql.Identifier("idx_support_engineer_case_messages_created"),
+                        self._table("support_engineer_case_messages"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (engineer_case_id, created_at DESC)").format(
+                        sql.Identifier("idx_support_engineer_case_events_created"),
+                        self._table("support_engineer_case_events"),
+                    )
+                )
+                self._backfill_engineer_cases_from_legacy_storage(cur)
             conn.commit()
+
+    def _legacy_support_ticket_has_column(self, cur: psycopg.Cursor[Any], column_name: str) -> bool:
+        cur.execute(
+            """
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = %s
+              AND table_name = 'support_tickets'
+              AND column_name = %s
+            LIMIT 1
+            """,
+            (self._schema, column_name),
+        )
+        return cur.fetchone() is not None
+
+    def _backfill_engineer_case_title(
+        self,
+        *,
+        subject: str,
+        messages: list[dict[str, Any]],
+    ) -> str:
+        for message in reversed(messages):
+            if _normalize_role(message.get("role")) != "customer":
+                continue
+            content = str(message.get("content") or "").strip()
+            if content:
+                return content[:120]
+        return subject[:120] or "Engineer case"
+
+    def _backfill_engineer_cases_from_legacy_storage(self, cur: psycopg.Cursor[Any]) -> None:
+        legacy_handoff_supported = self._legacy_support_ticket_has_column(cur, "engineer_handoff_packet")
+        legacy_agent_supported = self._legacy_support_ticket_has_column(cur, "engineer_agent_state")
+
+        select_fields = [
+            sql.SQL("ticket_id"),
+            sql.SQL("subject"),
+            sql.SQL("status"),
+        ]
+        if legacy_handoff_supported:
+            select_fields.append(sql.SQL("engineer_handoff_packet"))
+        else:
+            select_fields.append(sql.SQL("NULL::jsonb"))
+        if legacy_agent_supported:
+            select_fields.append(sql.SQL("engineer_agent_state"))
+        else:
+            select_fields.append(sql.SQL("NULL::jsonb"))
+
+        cur.execute(
+            sql.SQL("SELECT {} FROM {}").format(
+                sql.SQL(", ").join(select_fields),
+                self._table("support_tickets"),
+            )
+        )
+        rows = cur.fetchall()
+        ticket_ids = [str(row[0]) for row in rows]
+        if not ticket_ids:
+            return
+
+        connection = cur.connection
+        message_map = self._fetch_messages(connection, ticket_ids)
+        investigation_map = self._fetch_investigations(
+            connection,
+            ticket_ids,
+            include_messages=True,
+        )
+        cur.execute(
+            sql.SQL(
+                """
+                SELECT client_ticket_id, COUNT(*)
+                FROM {}
+                GROUP BY client_ticket_id
+                """
+            ).format(self._table("support_engineer_cases"))
+        )
+        existing_counts = {
+            str(row[0]): _safe_non_negative_int(row[1], 0)
+            for row in cur.fetchall()
+        }
+
+        for row in rows:
+            ticket_id = str(row[0])
+            subject = str(row[1] or "").strip()
+            ticket_status = _normalize_status(row[2])
+            legacy_handoff = row[3] if isinstance(row[3], dict) else None
+            legacy_agent = row[4] if isinstance(row[4], dict) else None
+            if existing_counts.get(ticket_id, 0):
+                continue
+            investigations = sorted(
+                investigation_map.get(ticket_id, []),
+                key=lambda item: str(item.get("opened_at") or item.get("updated_at") or ""),
+            )
+            if not investigations:
+                continue
+            active_case_id: str | None = None
+            for index, investigation in enumerate(investigations, start=1):
+                engineer_case_id = f"{ticket_id}-{index}"
+                is_closed = _normalize_investigation_state(investigation.get("state")) == "closed"
+                case_status = ticket_status if is_closed else "investigating"
+                case_title = self._backfill_engineer_case_title(
+                    subject=subject,
+                    messages=message_map.get(ticket_id, []),
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} (
+                            engineer_case_id,
+                            client_ticket_id,
+                            case_sequence,
+                            title,
+                            status,
+                            trigger_source,
+                            trigger_reason,
+                            draft_customer_reply,
+                            final_confirmation_requested_at,
+                            engineer_handoff_packet,
+                            engineer_agent_state,
+                            opened_at,
+                            updated_at,
+                            closed_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (engineer_case_id) DO NOTHING
+                        """
+                    ).format(self._table("support_engineer_cases")),
+                    (
+                        engineer_case_id,
+                        ticket_id,
+                        index,
+                        case_title,
+                        case_status,
+                        str(investigation.get("trigger_source") or "legacy_backfill"),
+                        str(investigation.get("trigger_reason") or "legacy_backfill"),
+                        str(investigation.get("draft_customer_reply") or ""),
+                        investigation.get("final_confirmation_requested_at"),
+                        Json(legacy_handoff) if legacy_handoff else None,
+                        Json(legacy_agent) if legacy_agent else None,
+                        investigation.get("opened_at"),
+                        investigation.get("updated_at"),
+                        investigation.get("closed_at"),
+                    ),
+                )
+                for message in list(investigation.get("messages") or []):
+                    if not isinstance(message, dict):
+                        continue
+                    content = str(message.get("content") or "").strip()
+                    if not content:
+                        continue
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (
+                                message_id,
+                                engineer_case_id,
+                                role,
+                                content,
+                                created_at,
+                                meta
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                            ON CONFLICT DO NOTHING
+                            """
+                        ).format(self._table("support_engineer_case_messages")),
+                        (
+                            str(message.get("id") or f"{engineer_case_id}-{uuid4().hex[:8]}"),
+                            engineer_case_id,
+                            _normalize_investigation_role(message.get("role")),
+                            content,
+                            message.get("created_at") or investigation.get("updated_at") or _utc_now(),
+                            Json(message.get("meta")) if isinstance(message.get("meta"), dict) else None,
+                        ),
+                    )
+                if not is_closed:
+                    active_case_id = engineer_case_id
+            cur.execute(
+                sql.SQL(
+                    """
+                    UPDATE {}
+                    SET active_engineer_case_id = %s,
+                        engineer_case_count = %s
+                    WHERE ticket_id = %s
+                    """
+                ).format(self._table("support_tickets")),
+                (
+                    active_case_id,
+                    len(investigations),
+                    ticket_id,
+                ),
+            )
 
     def exists(self, ticket_id: str) -> bool:
         def _operation(conn: psycopg.Connection[Any]) -> bool:
@@ -769,22 +1488,110 @@ class PostgresTicketRepository:
             grouped[str(row[1])].append(investigation)
         return grouped
 
+    def _fetch_engineer_case_rows(
+        self,
+        conn: psycopg.Connection[Any],
+        *,
+        engineer_case_ids: list[str] | None = None,
+        ticket_ids: list[str] | None = None,
+    ) -> list[tuple[Any, ...]]:
+        conditions: list[sql.SQL] = []
+        parameters: list[Any] = []
+        if engineer_case_ids:
+            conditions.append(sql.SQL("engineer_case_id = ANY(%s)"))
+            parameters.append(engineer_case_ids)
+        if ticket_ids:
+            conditions.append(sql.SQL("client_ticket_id = ANY(%s)"))
+            parameters.append(ticket_ids)
+
+        query = sql.SQL(
+            """
+            SELECT
+                engineer_case_id,
+                client_ticket_id,
+                case_sequence,
+                title,
+                status,
+                trigger_source,
+                trigger_reason,
+                draft_customer_reply,
+                final_confirmation_requested_at,
+                engineer_handoff_packet,
+                engineer_agent_state,
+                opened_at,
+                updated_at,
+                closed_at
+            FROM {}
+            """
+        ).format(self._table("support_engineer_cases"))
+        if conditions:
+            query += sql.SQL(" WHERE ") + sql.SQL(" AND ").join(conditions)
+        query += sql.SQL(" ORDER BY updated_at DESC, opened_at DESC")
+        with conn.cursor() as cur:
+            cur.execute(query, tuple(parameters))
+            return cur.fetchall()
+
+    def _fetch_engineer_case_messages(
+        self,
+        conn: psycopg.Connection[Any],
+        engineer_case_ids: list[str],
+    ) -> dict[str, list[dict[str, Any]]]:
+        grouped: dict[str, list[dict[str, Any]]] = {engineer_case_id: [] for engineer_case_id in engineer_case_ids}
+        if not engineer_case_ids:
+            return grouped
+        with conn.cursor() as cur:
+            cur.execute(
+                sql.SQL(
+                    """
+                    SELECT message_id, engineer_case_id, role, content, created_at, meta
+                    FROM {}
+                    WHERE engineer_case_id = ANY(%s)
+                    ORDER BY created_at ASC, id ASC
+                    """
+                ).format(self._table("support_engineer_case_messages")),
+                (engineer_case_ids,),
+            )
+            for row in cur.fetchall():
+                grouped.setdefault(str(row[1]), []).append(
+                    {
+                        "id": str(row[0]),
+                        "role": _normalize_investigation_role(row[2]),
+                        "content": str(row[3]),
+                        "created_at": _to_iso(row[4]),
+                        "meta": row[5] if isinstance(row[5], dict) else None,
+                    }
+                )
+        return grouped
+
+    def _row_to_engineer_case_record(
+        self,
+        row: tuple[Any, ...],
+        messages: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return {
+            "engineer_case_id": str(row[0]),
+            "client_ticket_id": str(row[1]),
+            "case_sequence": _safe_positive_int(row[2], 1),
+            "title": str(row[3]),
+            "status": _normalize_status(row[4]),
+            "trigger_source": str(row[5]),
+            "trigger_reason": str(row[6]),
+            "draft_customer_reply": str(row[7] or ""),
+            "final_confirmation_requested_at": _to_iso(row[8]) if row[8] is not None else None,
+            "engineer_handoff_packet": row[9] if isinstance(row[9], dict) else None,
+            "engineer_agent_state": row[10] if isinstance(row[10], dict) else None,
+            "opened_at": _to_iso(row[11]),
+            "updated_at": _to_iso(row[12]),
+            "closed_at": _to_iso(row[13]) if row[13] is not None else None,
+            "investigation_state": "closed" if row[13] is not None else "active",
+            "messages": messages,
+        }
+
     def _row_to_ticket(
         self,
         row: tuple[Any, ...],
         messages: list[dict[str, Any]],
-        investigations: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        all_investigations = investigations or []
-        active_investigation = next(
-            (copy.deepcopy(item) for item in all_investigations if str(item.get("state") or "").strip().lower() != "closed"),
-            None,
-        )
-        history = [
-            copy.deepcopy(item)
-            for item in all_investigations
-            if str(item.get("state") or "").strip().lower() == "closed"
-        ]
         return {
             "ticket_id": str(row[0]),
             "customer_id": str(row[1]),
@@ -792,51 +1599,68 @@ class PostgresTicketRepository:
             "subject": str(row[3]),
             "status": _normalize_status(row[4]),
             "last_engineer_action": row[5],
-            "engineer_handoff_packet": row[6] if isinstance(row[6], dict) else None,
-            "engineer_agent_state": row[7] if isinstance(row[7], dict) else None,
+            "active_engineer_case_id": str(row[6]).strip() if row[6] is not None and str(row[6]).strip() else None,
+            "engineer_case_count": _safe_non_negative_int(row[7], 0),
             "created_at": _to_iso(row[8]),
             "updated_at": _to_iso(row[9]),
             "messages": messages,
-            "active_investigation": active_investigation,
-            "investigation_history": history,
+        }
+
+    def _fetch_ticket_rows(
+        self,
+        conn: psycopg.Connection[Any],
+        *,
+        ticket_ids: list[str] | None = None,
+    ) -> list[tuple[Any, ...]]:
+        query = sql.SQL(
+            """
+            SELECT
+                ticket_id,
+                customer_id,
+                requester,
+                subject,
+                status,
+                last_engineer_action,
+                active_engineer_case_id,
+                engineer_case_count,
+                created_at,
+                updated_at
+            FROM {}
+            """
+        ).format(self._table("support_tickets"))
+        parameters: tuple[Any, ...] = ()
+        if ticket_ids:
+            query += sql.SQL(" WHERE ticket_id = ANY(%s)")
+            parameters = (ticket_ids,)
+        with conn.cursor() as cur:
+            cur.execute(query, parameters)
+            return cur.fetchall()
+
+    def _fetch_ticket_map(
+        self,
+        conn: psycopg.Connection[Any],
+        ticket_ids: list[str],
+        *,
+        include_messages: bool,
+    ) -> dict[str, dict[str, Any]]:
+        rows = self._fetch_ticket_rows(conn, ticket_ids=ticket_ids)
+        message_map = self._fetch_messages(conn, ticket_ids) if include_messages else {}
+        return {
+            str(row[0]): self._row_to_ticket(row, message_map.get(str(row[0]), []))
+            for row in rows
         }
 
     def _fetch_tickets(self, include_messages: bool) -> list[dict[str, Any]]:
         def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
-            with conn.cursor() as cur:
-                cur.execute(
-                    sql.SQL(
-                        """
-                        SELECT
-                            ticket_id,
-                            customer_id,
-                            requester,
-                            subject,
-                            status,
-                            last_engineer_action,
-                            engineer_handoff_packet,
-                            engineer_agent_state,
-                            created_at,
-                            updated_at
-                        FROM {}
-                        """
-                    ).format(self._table("support_tickets"))
-                )
-                rows = cur.fetchall()
+            rows = self._fetch_ticket_rows(conn)
             ticket_ids = [str(row[0]) for row in rows]
             message_map = self._fetch_messages(conn, ticket_ids) if include_messages else {}
-            investigation_map = self._fetch_investigations(
-                conn,
-                ticket_ids,
-                include_messages=include_messages,
-            )
             tickets: list[dict[str, Any]] = []
             for row in rows:
                 ticket_id = str(row[0])
                 ticket = self._row_to_ticket(
                     row,
                     message_map.get(ticket_id, []),
-                    investigation_map.get(ticket_id, []),
                 )
                 tickets.append(ticket)
             return tickets
@@ -845,40 +1669,14 @@ class PostgresTicketRepository:
 
     def get_ticket(self, ticket_id: str) -> dict[str, Any] | None:
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
-            with conn.cursor() as cur:
-                cur.execute(
-                    sql.SQL(
-                        """
-                        SELECT
-                            ticket_id,
-                            customer_id,
-                            requester,
-                            subject,
-                            status,
-                            last_engineer_action,
-                            engineer_handoff_packet,
-                            engineer_agent_state,
-                            created_at,
-                            updated_at
-                        FROM {}
-                        WHERE ticket_id = %s
-                        """
-                    ).format(self._table("support_tickets")),
-                    (ticket_id,),
-                )
-                row = cur.fetchone()
+            rows = self._fetch_ticket_rows(conn, ticket_ids=[ticket_id])
+            row = rows[0] if rows else None
             if row is None:
                 return None
             message_map = self._fetch_messages(conn, [ticket_id])
-            investigation_map = self._fetch_investigations(
-                conn,
-                [ticket_id],
-                include_messages=True,
-            )
             return self._row_to_ticket(
                 row,
                 message_map.get(ticket_id, []),
-                investigation_map.get(ticket_id, []),
             )
 
         return self._run_with_connection_retry("get_ticket", _operation)
@@ -901,16 +1699,8 @@ class PostgresTicketRepository:
         subject = str(ticket.get("subject") or "General support request")
         status = _normalize_status(ticket.get("status"))
         last_action = ticket.get("last_engineer_action")
-        engineer_handoff_packet = (
-            ticket.get("engineer_handoff_packet")
-            if isinstance(ticket.get("engineer_handoff_packet"), dict)
-            else None
-        )
-        engineer_agent_state = (
-            ticket.get("engineer_agent_state")
-            if isinstance(ticket.get("engineer_agent_state"), dict)
-            else None
-        )
+        active_engineer_case_id = str(ticket.get("active_engineer_case_id") or "").strip() or None
+        engineer_case_count = _safe_non_negative_int(ticket.get("engineer_case_count"), 0)
 
         def _operation(conn: psycopg.Connection[Any]) -> None:
             with conn.transaction():
@@ -925,8 +1715,8 @@ class PostgresTicketRepository:
                                 subject,
                                 status,
                                 last_engineer_action,
-                                engineer_handoff_packet,
-                                engineer_agent_state,
+                                active_engineer_case_id,
+                                engineer_case_count,
                                 created_at,
                                 updated_at
                             )
@@ -937,8 +1727,8 @@ class PostgresTicketRepository:
                                 subject = EXCLUDED.subject,
                                 status = EXCLUDED.status,
                                 last_engineer_action = EXCLUDED.last_engineer_action,
-                                engineer_handoff_packet = EXCLUDED.engineer_handoff_packet,
-                                engineer_agent_state = EXCLUDED.engineer_agent_state,
+                                active_engineer_case_id = EXCLUDED.active_engineer_case_id,
+                                engineer_case_count = EXCLUDED.engineer_case_count,
                                 updated_at = EXCLUDED.updated_at
                             """
                         ).format(self._table("support_tickets")),
@@ -949,8 +1739,8 @@ class PostgresTicketRepository:
                             subject,
                             status,
                             Json(last_action) if isinstance(last_action, dict) else None,
-                            Json(engineer_handoff_packet) if engineer_handoff_packet else None,
-                            Json(engineer_agent_state) if engineer_agent_state else None,
+                            active_engineer_case_id,
+                            engineer_case_count,
                             created_at,
                             updated_at,
                         ),
@@ -1044,6 +1834,303 @@ class PostgresTicketRepository:
                     return cur.rowcount > 0
 
         return self._run_with_connection_retry("update_message_sentiment_label", _operation)
+
+    def get_engineer_case(
+        self,
+        engineer_case_id: str,
+        *,
+        include_client_messages: bool = True,
+    ) -> dict[str, Any] | None:
+        normalized_case_id = str(engineer_case_id).strip()
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            rows = self._fetch_engineer_case_rows(conn, engineer_case_ids=[normalized_case_id])
+            if not rows:
+                return None
+            row = rows[0]
+            record = self._row_to_engineer_case_record(
+                row,
+                self._fetch_engineer_case_messages(conn, [normalized_case_id]).get(normalized_case_id, []),
+            )
+            ticket_map = self._fetch_ticket_map(
+                conn,
+                [str(record.get("client_ticket_id") or "")],
+                include_messages=include_client_messages,
+            )
+            client_ticket = ticket_map.get(str(record.get("client_ticket_id") or ""))
+            return _engineer_case_record_to_payload(
+                record,
+                client_ticket=client_ticket,
+                include_client_messages=include_client_messages,
+            )
+
+        return self._run_with_connection_retry("get_engineer_case", _operation)
+
+    def list_engineer_cases(
+        self,
+        *,
+        include_client_messages: bool = True,
+    ) -> list[dict[str, Any]]:
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            rows = self._fetch_engineer_case_rows(conn)
+            case_ids = [str(row[0]) for row in rows]
+            message_map = self._fetch_engineer_case_messages(conn, case_ids)
+            client_ticket_ids = sorted({str(row[1]) for row in rows})
+            client_ticket_map = self._fetch_ticket_map(
+                conn,
+                client_ticket_ids,
+                include_messages=include_client_messages,
+            )
+            payloads: list[dict[str, Any]] = []
+            for row in rows:
+                record = self._row_to_engineer_case_record(
+                    row,
+                    message_map.get(str(row[0]), []),
+                )
+                payloads.append(
+                    _engineer_case_record_to_payload(
+                        record,
+                        client_ticket=client_ticket_map.get(str(record.get("client_ticket_id") or "")),
+                        include_client_messages=include_client_messages,
+                    )
+                )
+            return payloads
+
+        return self._run_with_connection_retry("list_engineer_cases", _operation)
+
+    def list_ticket_engineer_cases(
+        self,
+        ticket_id: str,
+        *,
+        include_client_messages: bool = True,
+    ) -> list[dict[str, Any]]:
+        normalized_ticket_id = str(ticket_id).strip()
+
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            rows = self._fetch_engineer_case_rows(conn, ticket_ids=[normalized_ticket_id])
+            case_ids = [str(row[0]) for row in rows]
+            message_map = self._fetch_engineer_case_messages(conn, case_ids)
+            client_ticket = self._fetch_ticket_map(
+                conn,
+                [normalized_ticket_id],
+                include_messages=include_client_messages,
+            ).get(normalized_ticket_id)
+            payloads: list[dict[str, Any]] = []
+            for row in rows:
+                record = self._row_to_engineer_case_record(
+                    row,
+                    message_map.get(str(row[0]), []),
+                )
+                payloads.append(
+                    _engineer_case_record_to_payload(
+                        record,
+                        client_ticket=client_ticket,
+                        include_client_messages=include_client_messages,
+                    )
+                )
+            return payloads
+
+        return self._run_with_connection_retry("list_ticket_engineer_cases", _operation)
+
+    def get_active_engineer_case(
+        self,
+        ticket_id: str,
+        *,
+        include_client_messages: bool = True,
+    ) -> dict[str, Any] | None:
+        normalized_ticket_id = str(ticket_id).strip()
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            rows = self._fetch_engineer_case_rows(conn, ticket_ids=[normalized_ticket_id])
+            if not rows:
+                return None
+            message_map = self._fetch_engineer_case_messages(conn, [str(row[0]) for row in rows])
+            client_ticket = self._fetch_ticket_map(
+                conn,
+                [normalized_ticket_id],
+                include_messages=include_client_messages,
+            ).get(normalized_ticket_id)
+            for row in rows:
+                record = self._row_to_engineer_case_record(
+                    row,
+                    message_map.get(str(row[0]), []),
+                )
+                if _normalize_investigation_state(record.get("investigation_state")) == "closed":
+                    continue
+                return _engineer_case_record_to_payload(
+                    record,
+                    client_ticket=client_ticket,
+                    include_client_messages=include_client_messages,
+                )
+            return None
+
+        return self._run_with_connection_retry("get_active_engineer_case", _operation)
+
+    def save_engineer_case(
+        self,
+        engineer_case: dict[str, Any],
+        new_messages: list[dict[str, Any]] | None = None,
+    ) -> None:
+        saved = copy.deepcopy(engineer_case)
+        engineer_case_id = str(saved.get("engineer_case_id") or "").strip()
+        if not engineer_case_id:
+            raise ValueError("engineer_case_id is required")
+        client_ticket_id = str(saved.get("client_ticket_id") or "").strip()
+        if not client_ticket_id:
+            raise ValueError("client_ticket_id is required")
+        case_sequence = _case_sequence_from_identifiers(engineer_case_id, saved.get("case_sequence"))
+        status = _normalize_status(saved.get("status"))
+        trigger_source = str(saved.get("trigger_source") or "support_query").strip() or "support_query"
+        trigger_reason = str(saved.get("trigger_reason") or "unknown").strip() or "unknown"
+        draft_customer_reply = str(saved.get("draft_customer_reply") or "").strip()
+        final_confirmation_requested_at = saved.get("final_confirmation_requested_at")
+        engineer_handoff_packet = saved.get("engineer_handoff_packet") if isinstance(saved.get("engineer_handoff_packet"), dict) else None
+        engineer_agent_state = saved.get("engineer_agent_state") if isinstance(saved.get("engineer_agent_state"), dict) else None
+        opened_at = saved.get("opened_at") or _utc_now()
+        updated_at = saved.get("updated_at") or opened_at
+        closed_at = saved.get("closed_at")
+
+        def _operation(conn: psycopg.Connection[Any]) -> None:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (
+                                engineer_case_id,
+                                client_ticket_id,
+                                case_sequence,
+                                title,
+                                status,
+                                trigger_source,
+                                trigger_reason,
+                                draft_customer_reply,
+                                final_confirmation_requested_at,
+                                engineer_handoff_packet,
+                                engineer_agent_state,
+                                opened_at,
+                                updated_at,
+                                closed_at
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (engineer_case_id) DO UPDATE SET
+                                client_ticket_id = EXCLUDED.client_ticket_id,
+                                case_sequence = EXCLUDED.case_sequence,
+                                title = EXCLUDED.title,
+                                status = EXCLUDED.status,
+                                trigger_source = EXCLUDED.trigger_source,
+                                trigger_reason = EXCLUDED.trigger_reason,
+                                draft_customer_reply = EXCLUDED.draft_customer_reply,
+                                final_confirmation_requested_at = EXCLUDED.final_confirmation_requested_at,
+                                engineer_handoff_packet = EXCLUDED.engineer_handoff_packet,
+                                engineer_agent_state = EXCLUDED.engineer_agent_state,
+                                updated_at = EXCLUDED.updated_at,
+                                closed_at = EXCLUDED.closed_at
+                            """
+                        ).format(self._table("support_engineer_cases")),
+                        (
+                            engineer_case_id,
+                            client_ticket_id,
+                            case_sequence,
+                            str(saved.get("title") or "").strip() or "Engineer case",
+                            status,
+                            trigger_source,
+                            trigger_reason,
+                            draft_customer_reply,
+                            final_confirmation_requested_at,
+                            Json(engineer_handoff_packet) if engineer_handoff_packet else None,
+                            Json(engineer_agent_state) if engineer_agent_state else None,
+                            opened_at,
+                            updated_at,
+                            closed_at,
+                        ),
+                    )
+                    for message in new_messages or []:
+                        content = str(message.get("content") or "").strip()
+                        if not content:
+                            continue
+                        cur.execute(
+                            sql.SQL(
+                                """
+                                INSERT INTO {} (
+                                    message_id,
+                                    engineer_case_id,
+                                    role,
+                                    content,
+                                    created_at,
+                                    meta
+                                )
+                                VALUES (%s, %s, %s, %s, %s, %s)
+                                """
+                            ).format(self._table("support_engineer_case_messages")),
+                            (
+                                str(message.get("id") or f"{engineer_case_id}-{uuid4().hex[:8]}"),
+                                engineer_case_id,
+                                _normalize_investigation_role(message.get("role")),
+                                content,
+                                message.get("created_at") or updated_at,
+                                Json(message.get("meta")) if isinstance(message.get("meta"), dict) else None,
+                            ),
+                        )
+
+        self._run_with_connection_retry("save_engineer_case", _operation)
+
+    def record_engineer_case_event(
+        self,
+        engineer_case_id: str | None,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        def _operation(conn: psycopg.Connection[Any]) -> None:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (engineer_case_id, event_type, payload)
+                            VALUES (%s, %s, %s)
+                            """
+                        ).format(self._table("support_engineer_case_events")),
+                        (engineer_case_id, event_type, Json(payload)),
+                    )
+
+        self._run_with_connection_retry("record_engineer_case_event", _operation)
+
+    def list_engineer_case_events(
+        self,
+        engineer_case_id: str,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        safe_limit = _safe_positive_int(limit, 100)
+
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT engineer_case_id, event_type, payload, created_at
+                        FROM {}
+                        WHERE engineer_case_id = %s
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT %s
+                        """
+                    ).format(self._table("support_engineer_case_events")),
+                    (engineer_case_id, safe_limit),
+                )
+                rows = cur.fetchall()
+            events: list[dict[str, Any]] = []
+            for row in rows:
+                events.append(
+                    {
+                        "engineer_case_id": str(row[0]) if row[0] is not None else None,
+                        "event_type": str(row[1]),
+                        "payload": row[2] if isinstance(row[2], dict) else {},
+                        "created_at": _to_iso(row[3]),
+                    }
+                )
+            return events
+
+        return self._run_with_connection_retry("list_engineer_case_events", _operation)
 
     def get_active_investigation(self, ticket_id: str) -> dict[str, Any] | None:
         investigations = self.list_ticket_investigations(ticket_id=ticket_id, include_messages=True)

@@ -564,14 +564,15 @@ async function syncTicketsFromBackend(options = {}) {
     return;
   }
   try {
-    const response = await fetch("/api/engineer/tickets?status=all");
+    const response = await fetch(
+      `/api/tickets?customer_id=${encodeURIComponent(state.user.id)}&status=all`
+    );
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
     const payload = await response.json();
     const incoming = Array.isArray(payload?.tickets) ? payload.tickets : [];
     const mapped = incoming
-      .filter((ticket) => String(ticket?.customer_id || "") === state.user.id)
       .map(normalizeBackendTicket)
       .filter(Boolean);
 

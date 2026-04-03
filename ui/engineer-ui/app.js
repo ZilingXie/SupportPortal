@@ -1327,8 +1327,10 @@ function sortTicketsByRecency(items) {
 function describeTicketPoolTicket(ticket) {
   const ticketId = String(ticket.ticket_id || "-");
   const status = normalizeStatusValue(ticket.status || "open");
-  const subject = String(ticket.subject || "(No subject)");
+  const subject = String(ticket.title || ticket.subject || "(No subject)");
   const requester = String(ticket.requester || ticket.customer_id || "Unknown");
+  const clientTicketId = String(ticket?.client_ticket_ref?.ticket_id || ticket?.client_ticket_id || "").trim();
+  const clientTicketSubject = String(ticket?.client_ticket_ref?.subject || "").trim();
   const investigationPreview = latestInvestigationUpdate(ticket);
   const pendingQuestion = String(investigationPreview || "").trim();
   const parsedEngineerRequest = parseEngineerRequest(pendingQuestion);
@@ -1339,6 +1341,8 @@ function describeTicketPoolTicket(ticket) {
     status,
     subject,
     requester,
+    clientTicketId,
+    clientTicketSubject,
     pendingQuestion,
     pendingPreview,
     surfaceClass: statusSurfaceClass(status),
@@ -1374,6 +1378,15 @@ function renderTicketPoolList(rows) {
 
               <div class="ticket-row-secondary">
                 <div class="ticket-row-meta">
+                  ${
+                    item.clientTicketId
+                      ? `<span><strong>Client Ticket</strong> ${escapeHtml(item.clientTicketId)}${
+                          item.clientTicketSubject
+                            ? ` · ${escapeHtml(item.clientTicketSubject)}`
+                            : ""
+                        }</span>`
+                      : ""
+                  }
                   <span><strong>Requester</strong> ${escapeHtml(item.requester)}</span>
                   <span><strong>Updated</strong> ${escapeHtml(formatDateTime(ticket.updated_at))}</span>
                   <span><strong>Created</strong> ${escapeHtml(formatDateTime(ticket.created_at))}</span>
@@ -1420,6 +1433,13 @@ function renderTicketPoolGrid(rows) {
               </div>
               <h3 class="ticket-pool-card-title">${escapeHtml(item.subject)}</h3>
               <div class="ticket-pool-card-meta">
+                ${
+                  item.clientTicketId
+                    ? `<span><strong>Client Ticket</strong> ${escapeHtml(item.clientTicketId)}${
+                        item.clientTicketSubject ? ` · ${escapeHtml(item.clientTicketSubject)}` : ""
+                      }</span>`
+                    : ""
+                }
                 <span><strong>Requester</strong> ${escapeHtml(item.requester)}</span>
                 <span><strong>Updated</strong> ${escapeHtml(formatDateTime(ticket.updated_at))}</span>
                 <span><strong>Created</strong> ${escapeHtml(formatDateTime(ticket.created_at))}</span>
@@ -1736,6 +1756,8 @@ function renderTicketDetailView() {
 
   const ticket = selectedTicket;
   const ticketId = String(ticket.ticket_id || selectedTicketId || "-");
+  const clientTicketId = String(ticket?.client_ticket_ref?.ticket_id || ticket?.client_ticket_id || "").trim();
+  const clientTicketSubject = String(ticket?.client_ticket_ref?.subject || "").trim();
   const status = normalizeStatusValue(ticket.status || "open");
   const requester = String(ticket.requester || ticket.customer_id || "Unknown");
   const activeInvestigation = getActiveInvestigation(ticket);
@@ -1785,9 +1807,16 @@ function renderTicketDetailView() {
         <div class="workspace-header-main">
           <div class="workspace-header-copy">
             <h2 class="workspace-ticket-title">${escapeHtml(
-              String(ticket.subject || "(No subject)")
+              String(ticket.title || ticket.subject || "(No subject)")
             )}</h2>
             <div class="workspace-header-meta">
+              ${
+                clientTicketId
+                  ? `<span>Client Ticket ${escapeHtml(clientTicketId)}${
+                      clientTicketSubject ? ` · ${escapeHtml(clientTicketSubject)}` : ""
+                    }</span>`
+                  : ""
+              }
               <span>Requester ${escapeHtml(requester)}</span>
               <span>Created ${escapeHtml(formatDateTime(ticket.created_at))}</span>
               <span>Updated ${escapeHtml(formatDateTime(ticket.updated_at))}</span>

@@ -124,8 +124,8 @@ class EngineerUiContractTests(unittest.TestCase):
 
         self.assertIn("Concierge AI", html)
         self.assertIn("Manrope", html)
-        self.assertIn("./styles.css?v=20260401-engineer-ticket-cleanup-1", html)
-        self.assertIn('./app.js?v=20260401-engineer-ticket-cleanup-1', html)
+        self.assertIn("./styles.css?v=20260402-engineer-case-split-1", html)
+        self.assertIn('./app.js?v=20260402-engineer-case-split-1', html)
         self.assertIn("function parseRoute()", app_source)
         self.assertIn('path.startsWith("/tickets/")', app_source)
         self.assertIn("function renderTicketPoolView()", app_source)
@@ -560,6 +560,74 @@ class EngineerUiContractTests(unittest.TestCase):
                 }}
                 if (html.includes("No tickets match the current filters.")) {{
                   throw new Error("Engineer empty state should be status-aware instead of generic.");
+                }}
+              """
+            )
+        )
+
+    def test_engineer_pool_and_detail_use_engineer_case_identity_with_parent_client_reference(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                tickets = [
+                  {
+                    ticket_id: "TK-040-1",
+                    engineer_case_id: "TK-040-1",
+                    title: "black screen issue",
+                    subject: "how to join channel",
+                    requester: "user-1",
+                    customer_id: "user-1",
+                    status: "investigating",
+                    client_ticket_ref: {
+                      ticket_id: "TK-040",
+                      subject: "how to join channel",
+                    },
+                    created_at: "2026-04-02T08:00:00+00:00",
+                    updated_at: "2026-04-02T08:10:00+00:00",
+                    active_investigation: {
+                      id: "TK-040-1",
+                      state: "active",
+                      messages: [
+                        {
+                          id: "TK-040-1-m1",
+                          role: "engineer_ai",
+                          content: "Please confirm whether this black screen issue reproduces on all devices.",
+                          created_at: "2026-04-02T08:05:00+00:00",
+                        },
+                      ],
+                    },
+                  },
+                ];
+                selectedPoolStatus = "investigating";
+
+                const poolHtml = renderTicketPoolView();
+                if (!poolHtml.includes("TK-040-1")) {{
+                  throw new Error("Engineer pool should use the engineer case id as the primary visible id.");
+                }}
+                if (!poolHtml.includes("black screen issue")) {{
+                  throw new Error("Engineer pool should render the engineer case title snapshot.");
+                }}
+                if (!poolHtml.includes("Client Ticket</strong> TK-040 · how to join channel")) {{
+                  throw new Error("Engineer pool should render the parent client ticket reference as secondary metadata.");
+                }}
+
+                selectedTicketId = "TK-040-1";
+                selectedTicket = tickets[0];
+                selectedTicketSummary = "Current understanding: black screen issue blocks the client AI flow.";
+                selectedTicketNextAction = "Confirm the affected device scope.";
+
+                const detailHtml = renderTicketDetailView();
+                if (!detailHtml.includes("Ticket #TK-040-1")) {{
+                  throw new Error("Engineer detail should label the engineer case id in the header.");
+                }}
+                if (!detailHtml.includes(">black screen issue<")) {{
+                  throw new Error("Engineer detail should use the engineer case title as the primary title.");
+                }}
+                if (!detailHtml.includes("Client Ticket TK-040 · how to join channel")) {{
+                  throw new Error("Engineer detail should show the linked parent client ticket reference.");
+                }}
+                if (detailHtml.includes(">how to join channel</h2>")) {{
+                  throw new Error("Engineer detail title should not fall back to the parent client ticket subject.");
                 }}
               """
             )

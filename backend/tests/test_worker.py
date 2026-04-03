@@ -487,15 +487,17 @@ class WorkerResilienceTests(unittest.TestCase):
         ):
             worker._process_ticket_query(bus, dict(self.task))
 
-        saved_ticket = repository.save_ticket.call_args.args[0]
+        saved_ticket = repository.save_ticket.call_args_list[0].args[0]
+        saved_engineer_case = repository.save_engineer_case.call_args.kwargs["engineer_case"]
         self.assertEqual(saved_ticket["status"], "investigating")
         self.assertEqual(saved_ticket["messages"][-1]["content"], investigation_result["public_reply"])
         self.assertEqual(
-            saved_ticket["engineer_handoff_packet"]["rag_result"]["candidate_answer"],
+            saved_engineer_case["engineer_handoff_packet"]["rag_result"]["candidate_answer"],
             "Please upgrade to SDK 4.2.2 and retry token renewal.",
         )
-        self.assertEqual(saved_ticket["engineer_agent_state"]["phase"], "gather_missing_inputs")
-        self.assertEqual(repository.save_investigation.call_count, 1)
+        self.assertEqual(saved_engineer_case["engineer_agent_state"]["phase"], "gather_missing_inputs")
+        self.assertEqual(saved_engineer_case["engineer_case_id"], "T-RETRY-1")
+        self.assertEqual(repository.save_engineer_case.call_count, 1)
         self.assertIsInstance(captured_opening_context, dict)
         self.assertIn("Need help with token generation", captured_opening_context["issue_summary"])
         self.assertIn(
