@@ -49,17 +49,6 @@ ensure_task_not_in_root_workspace "$expected_branch"
 ensure_root_workspace_ready
 require_gh
 
-legacy_mac_json="$(legacy_mac_pr_json)"
-if python3 - "$legacy_mac_json" <<'PY'
-import json
-import sys
-payload = json.loads(sys.argv[1] or "[]")
-sys.exit(0 if payload else 1)
-PY
-then
-  die "A legacy mac->main PR is still open. Drain it before using direct-to-main finalization."
-fi
-
 acquire_main_finalization_lock
 trap 'release_main_finalization_lock' EXIT
 

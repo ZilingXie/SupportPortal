@@ -117,20 +117,15 @@ class WorkflowScriptTests(unittest.TestCase):
         self._write(seed, "README.md", "initial\n")
         self._commit_all(seed, "Initial commit")
         _git(["push", "origin", "main"], cwd=seed)
-        _git(["switch", "-c", "mac"], cwd=seed)
-        _git(["push", "-u", "origin", "mac"], cwd=seed)
 
         repo = self.root / "repo"
         _git(["clone", str(bare), str(repo)], cwd=self.root)
         _git(["config", "user.name", "Workflow Tester"], cwd=repo)
         _git(["config", "user.email", "workflow@example.com"], cwd=repo)
-        _git(["switch", "mac"], cwd=repo)
         return bare, seed, repo
 
     def _init_remote_repo_on_main(self) -> tuple[Path, Path, Path]:
-        bare, seed, repo = self._init_remote_repo()
-        _git(["switch", "main"], cwd=repo)
-        return bare, seed, repo
+        return self._init_remote_repo()
 
     def _script_env(self) -> dict[str, str]:
         env = os.environ.copy()
@@ -628,7 +623,8 @@ class WorkflowScriptTests(unittest.TestCase):
         self.assertIn("Current worktree must be clean", result.stderr)
 
     def test_create_task_worktree_requires_main_in_root_workspace(self) -> None:
-        _, _, repo = self._init_remote_repo()
+        _, _, repo = self._init_remote_repo_on_main()
+        _git(["switch", "-c", "scratch"], cwd=repo)
 
         result = self._run_workflow("create_task_worktree.sh", repo, "Engineer Opt")
 
@@ -684,51 +680,6 @@ class WorkflowScriptTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("unmerged paths", result.stderr.lower())
-
-    def test_sync_mac_from_main_merges_origin_main_into_clean_mac(self) -> None:
-        _, seed, repo = self._init_remote_repo()
-
-        self._write(repo, "mac.txt", "mac only\n")
-        self._commit_all(repo, "Mac-only change")
-        _git(["push", "origin", "mac"], cwd=repo)
-        self._advance_origin_main(seed)
-
-        result = self._run_workflow("sync_mac_from_main.sh", repo)
-
-        self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertEqual(_git(["branch", "--show-current"], cwd=repo).stdout.strip(), "mac")
-        self.assertEqual(
-            _git(["merge-base", "--is-ancestor", "origin/main", "HEAD"], cwd=repo, check=False).returncode,
-            0,
-        )
-        parents = _git(["rev-list", "--parents", "-n", "1", "HEAD"], cwd=repo).stdout.strip().split()
-        self.assertGreaterEqual(len(parents), 3)
-
-    def test_check_release_ready_requires_synced_mac(self) -> None:
-        _, seed, repo = self._init_remote_repo()
-        self._advance_origin_main(seed)
-
-        result = self._run_workflow("check_release_ready.sh", repo)
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Run scripts/workflow/sync_mac_from_main.sh first.", result.stderr)
-
-    def test_check_release_ready_reports_pr_parameters_when_ready(self) -> None:
-        _, seed, repo = self._init_remote_repo()
-        self._write(repo, "mac.txt", "mac only\n")
-        self._commit_all(repo, "Mac-only change")
-        _git(["push", "origin", "mac"], cwd=repo)
-        self._advance_origin_main(seed)
-
-        sync_result = self._run_workflow("sync_mac_from_main.sh", repo)
-        self.assertEqual(sync_result.returncode, 0, msg=sync_result.stderr)
-
-        result = self._run_workflow("check_release_ready.sh", repo)
-
-        self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertIn("base=main", result.stdout)
-        self.assertIn("head=mac", result.stdout)
-        self.assertIn("Create a new PR", result.stdout)
 
     def test_link_worktree_env_links_root_env_into_target(self) -> None:
         repo = self._init_repo()
@@ -839,6 +790,39 @@ class WorkflowScriptTests(unittest.TestCase):
         calls = self._read_fake_gh_calls(state_dir)
         self.assertFalse(any(call[:2] == ["pr", "create"] for call in calls))
         self.assertTrue(any(call[:2] == ["pr", "merge"] for call in calls))
+
+    def test_finalize_task_to_main_ignores_stale_mac_named_prs(self) -> None:
+        bare, _, repo = self._init_remote_repo_on_main()
+        task_worktree = self._add_task_worktree(repo)
+        self._write(task_worktree, "README.md", "task change\n")
+        fake_bin, state_dir = self._install_fake_gh(bare)
+        state = self._read_fake_gh_state(state_dir)
+        state["next_pr"] = 2
+        state["prs"]["mac"] = {
+            "number": 1,
+            "url": "https://example.test/pr/1",
+            "title": "Stale legacy branch PR",
+            "body": "legacy",
+            "state": "OPEN",
+            "isDraft": False,
+            "headRefName": "mac",
+            "baseRefName": "main",
+            "mergedAt": None,
+            "mergeCommit": None,
+        }
+        self._write_fake_gh_state(state_dir, state)
+
+        result = self._run_workflow(
+            "finalize_task_to_main.sh",
+            task_worktree,
+            "codex/example-task",
+            "--verify",
+            "git diff --check",
+            extra_env=self._fake_gh_env(fake_bin, state_dir, bare),
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("Merged PR", result.stdout)
 
     def test_finalize_task_to_main_auto_verifies_valid_feature_list_changes(self) -> None:
         bare, _, repo = self._init_remote_repo_on_main()

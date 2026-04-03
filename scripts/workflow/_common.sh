@@ -212,9 +212,6 @@ branch_to_worktree_name() {
   local branch="$1"
 
   case "$branch" in
-    mac)
-      printf '%s\n' "mac-integration"
-      ;;
     codex/*)
       printf '%s\n' "${branch#codex/}"
       ;;
@@ -284,11 +281,6 @@ existing_open_pr_json() {
 
   require_gh
   gh pr list --state open --head "$branch" --base main --json number,url,title,state,headRefName,baseRefName
-}
-
-legacy_mac_pr_json() {
-  require_gh
-  gh pr list --state open --head mac --base main --json number,url,title,state,headRefName,baseRefName
 }
 
 is_known_artifact() {
