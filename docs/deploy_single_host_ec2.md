@@ -237,9 +237,10 @@ chmod +x deployment/deploy_ec2.sh
 
 仓库已提供以下资产：
 1. 自动调度 wrapper：`scripts/ops/auto_deploy_ec2.sh`
-2. systemd service：`deployment/systemd/supportportal-auto-deploy.service`
-3. systemd timer：`deployment/systemd/supportportal-auto-deploy.timer`
-4. 环境变量模板：`deployment/systemd/auto-deploy.env.example`
+2. 一键 bootstrap 脚本：`scripts/ops/bootstrap_auto_deploy_ec2.sh`
+3. systemd service：`deployment/systemd/supportportal-auto-deploy.service`
+4. systemd timer：`deployment/systemd/supportportal-auto-deploy.timer`
+5. 环境变量模板：`deployment/systemd/auto-deploy.env.example`
 
 自动调度 wrapper 会执行：
 1. 获取 `origin` 最新 refs。
@@ -251,10 +252,10 @@ chmod +x deployment/deploy_ec2.sh
 #### 4.4.1 前置条件
 
 1. EC2 上的部署仓库保持在干净的 `main`。
-2. 已安装 AWS CLI，并且 `aws sesv2 send-email` 可用。
+2. EC2 已绑定允许发 SES 邮件的 IAM role。
 3. `DEPLOY_ALERT_FROM` 已在 SES 对应 region 完成验证。
 4. SES 账号已退出 sandbox；如果还没退出，收件邮箱也必须先验证。
-5. EC2 已绑定允许发 SES 邮件的 IAM role。
+5. 机器可访问互联网下载 AWS CLI 安装包。
 
 建议的最小 IAM policy：
 
@@ -273,7 +274,43 @@ chmod +x deployment/deploy_ec2.sh
 }
 ```
 
-#### 4.4.2 安装配置
+#### 4.4.2 推荐：一键 bootstrap
+
+先在仓库 `.env` 中填写这些键：
+
+```env
+DEPLOY_DOMAIN=support.stellarix.space
+DEPLOY_AWS_REGION=us-east-1
+DEPLOY_ALERT_FROM=alerts@example.com
+DEPLOY_ALERT_TO=alerts@example.com
+```
+
+如果你已经习惯旧命名，bootstrap 脚本也兼容：
+1. `AWS_REGION`
+2. `ALERT_FROM_EMAIL`
+3. `ALERT_TO_EMAIL`
+
+然后直接运行：
+
+```bash
+cd ~/SupportPortal
+git fetch origin
+git switch main
+git pull --ff-only origin main
+chmod +x scripts/ops/bootstrap_auto_deploy_ec2.sh
+./scripts/ops/bootstrap_auto_deploy_ec2.sh
+```
+
+bootstrap 脚本会尽可能自动完成：
+1. 安装 AWS CLI。
+2. 校验 EC2 IAM role 是否可用。
+3. 为 `DEPLOY_ALERT_FROM` / `DEPLOY_ALERT_TO` 创建 SES email identity。
+4. 从仓库 `.env` 生成 `/etc/supportportal/auto-deploy.env`。
+5. 安装并启用 `supportportal-auto-deploy.timer`。
+
+如果脚本提示 `AWS credentials unavailable`，先给实例绑定 IAM role，再重新运行一次。
+
+#### 4.4.3 手动安装配置
 
 先准备 `/etc/supportportal/auto-deploy.env`：
 
@@ -316,7 +353,7 @@ OnCalendar=*-*-* 19:00:00 UTC
 OnCalendar=*-*-* 03:00:00 Asia/Shanghai
 ```
 
-#### 4.4.3 手动触发与状态检查
+#### 4.4.4 手动触发与状态检查
 
 ```bash
 # 立刻执行一次
@@ -332,7 +369,7 @@ systemctl list-timers supportportal-auto-deploy.timer
 journalctl -u supportportal-auto-deploy.service -n 200 --no-pager
 ```
 
-#### 4.4.4 故障排查
+#### 4.4.5 故障排查
 
 1. 如果 service 直接失败，先看：
 
