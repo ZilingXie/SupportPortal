@@ -177,35 +177,6 @@ For each new entry, record:
 
 ## 2026-04-02
 
-- Area or subsystem: Agentic RAG planner prompt, planner model routing, and dual-index retrieval planning
-- Prompt or model version: `rag-agent-planner-v1`
-- Summary: Added a dedicated `rag_agent_planner` prompt/module and model profile so technical RAG can classify query type, choose first-pass retrieval tools, derive query variants and decomposition targets, and bias primary-versus-shadow retrieval using optional ticket context before answer generation.
-- Reason: The prior query-understanding and hybrid retrieval stack improved recall but still executed a mostly static retrieval plan. A dedicated planner prompt and scene make retrieval strategy explicit, auditable, and adaptable for configuration, troubleshooting, exact-match, and comparison questions without changing the answer prompt contract.
-- Affected files or config:
-  - `backend/services/llm_profiles.py`
-  - `backend/services/prompts/__init__.py`
-  - `backend/services/prompts/rag_agent_planner.py`
-  - `backend/services/rag_qa.py`
-  - `backend/rag_api.py`
-  - `backend/services/rag_service_client.py`
-  - `backend/tests/test_prompt_modules.py`
-  - `backend/tests/test_llm_profiles.py`
-  - `backend/tests/test_rag_agentic.py`
-  - `backend/tests/test_rag_qa.py`
-  - `backend/tests/test_rag_service_client.py`
-  - `docs/prompt_change_log.md`
-  - `docs/rag_change_log.md`
-- Expected behavior change:
-  - Technical RAG now has a dedicated `gpt-5.4-mini` planner scene with its own timeout, temperature, and fallback model settings.
-  - Planner prompts can emit query class, evidence goal, recovery bias, exact terms, decomposition targets, and multiple query variants before retrieval begins.
-  - Optional `ticket_context` now influences retrieval planning and is reflected in additive agentic trace metadata.
-  - The customer-facing answer prompt and refusal/sufficiency contracts remain unchanged in this entry.
-- Verification:
-  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_prompt_modules.py backend/tests/test_llm_profiles.py backend/tests/test_rag_agentic.py backend/tests/test_rag_service_client.py backend/tests/test_knowledge_repository_bm25.py -q`
-  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_qa.py -q`
-  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_support_router.py backend/tests/test_ticket_orchestrator.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py -q`
-  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/main.py backend/rag_api.py backend/repositories/knowledge_repository.py backend/services/bm25_index.py backend/services/llm_profiles.py backend/services/prompts/__init__.py backend/services/prompts/rag_agent_planner.py backend/services/rag_qa.py backend/services/rag_service_client.py backend/tests/test_prompt_modules.py backend/tests/test_llm_profiles.py backend/tests/test_rag_agentic.py backend/tests/test_rag_qa.py backend/tests/test_rag_service_client.py backend/tests/test_knowledge_repository_bm25.py`
-
 - Area or subsystem: RAG context compression prompt and compression-model activation
 - Prompt or model version: `rag-context-compression-v1`
 - Summary: Added a dedicated evidence-compression prompt module and enabled a new `rag_context_compression` model scene so oversized or redundant reranked candidates can be packed into a tighter evidence bundle before answer generation and sufficiency judging.

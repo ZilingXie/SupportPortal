@@ -26,19 +26,15 @@ from backend.services.llm_profiles import (
     RAG_CONTEXT_COMPRESSION_SCENARIO,
     resolve_model_profile,
 )
-from backend.services.prompts.rag_agent_planner import (
-    build_rag_agent_planner_system_prompt,
-    build_rag_agent_planner_user_prompt,
-)
-from backend.services.prompts.rag_context_compression import (
-    build_rag_context_compression_system_prompt,
-    build_rag_context_compression_user_prompt,
-)
 from backend.services.rag_context_budget import (
     PackedEvidence,
     build_packed_evidence,
     estimate_text_tokens,
     model_context_window,
+)
+from backend.services.prompts.rag_agent_planner import (
+    build_rag_agent_planner_system_prompt,
+    build_rag_agent_planner_user_prompt,
 )
 from backend.services.prompts.rag_answer import build_rag_answer_system_prompt, build_rag_answer_user_prompt
 from backend.services.query_understanding import (
@@ -877,6 +873,8 @@ def _execute_agentic_round(
     vector_latency_ms = 0.0
     bm25_latency_ms = 0.0
     keyword_latency_ms = 0.0
+    variant_config = dict(config)
+    variant_config["_retrieval_plan"] = retrieval_plan
 
     for tool_name in tool_names:
         family = _tool_family(tool_name)
@@ -889,7 +887,7 @@ def _execute_agentic_round(
                 if family == "vector":
                     raw_chunks = _retrieve_chunks(
                         query_text,
-                        config,
+                        variant_config,
                         limit=int(config.get("vector_candidate_k") or config.get("top_k") or 5),
                         index_role=index_role,
                     )
@@ -897,7 +895,7 @@ def _execute_agentic_round(
                 elif family == "bm25":
                     raw_chunks = _retrieve_bm25_chunks(
                         query_text,
-                        config,
+                        variant_config,
                         limit=int(config.get("bm25_candidate_k") or config.get("top_k") or 5),
                         index_role=index_role,
                     )
@@ -905,7 +903,7 @@ def _execute_agentic_round(
                 elif family == "fts":
                     raw_chunks = _retrieve_fts_chunks(
                         query_text,
-                        config,
+                        variant_config,
                         limit=int(config.get("keyword_candidate_k") or config.get("top_k") or 5),
                         index_role=index_role,
                     )
@@ -913,7 +911,7 @@ def _execute_agentic_round(
                 else:
                     raw_chunks = _retrieve_keyword_chunks(
                         query_text,
-                        config,
+                        variant_config,
                         limit=int(config.get("keyword_candidate_k") or config.get("top_k") or 5),
                         index_role=index_role,
                     )
@@ -927,7 +925,7 @@ def _execute_agentic_round(
                 try:
                     raw_chunks = _retrieve_keyword_chunks(
                         query_text,
-                        config,
+                        variant_config,
                         limit=int(config.get("keyword_candidate_k") or config.get("top_k") or 5),
                         index_role=index_role,
                     )
@@ -1895,7 +1893,10 @@ def _retrieve_chunks(
 
     with psycopg.connect(config["dsn"]) as conn:
         with conn.cursor() as cur:
-            cur.execute(query, (vector_param, normalized_index_role, *filter_params, vector_param, int(limit or config["top_k"])))
+            cur.execute(
+                query,
+                (vector_param, normalized_index_role, *filter_params, vector_param, int(limit or config["top_k"])),
+            )
             rows = cur.fetchall()
 
     chunks: list[RetrievedChunk] = []

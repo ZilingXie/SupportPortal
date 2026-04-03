@@ -1548,40 +1548,6 @@ For each new entry, record:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_profiles.py backend/tests/test_query_understanding.py backend/tests/test_rag_qa.py backend/tests/test_rag_benchmark_runner.py -q`
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
 
-## 2026-04-02 - Replace single-pass RAG retrieval with Agentic RAG V2
-
-- Summary: Replaced the default single-pass `run_rag_query` flow with a two-round agentic retrieval executor that plans against query understanding and optional ticket context, searches `primary + shadow` indexes with query-aware weighted fusion, and lets rerank-driven judge decisions trigger one recovery round or direct handoff.
-- Reason: The previous pipeline already had hybrid retrieval and reranking, but it was static. This change raises retrieval quality for exact-match, configuration, troubleshooting, and comparison questions by introducing multi-granularity recall, query-class-specific weighting, and deterministic escalation rules.
-- Affected files or config:
-  - `backend/main.py`
-  - `backend/rag_api.py`
-  - `backend/repositories/knowledge_repository.py`
-  - `backend/services/bm25_index.py`
-  - `backend/services/llm_profiles.py`
-  - `backend/services/prompts/__init__.py`
-  - `backend/services/prompts/rag_agent_planner.py`
-  - `backend/services/rag_qa.py`
-  - `backend/services/rag_service_client.py`
-  - `backend/tests/test_knowledge_repository_bm25.py`
-  - `backend/tests/test_llm_profiles.py`
-  - `backend/tests/test_prompt_modules.py`
-  - `backend/tests/test_rag_agentic.py`
-  - `backend/tests/test_rag_qa.py`
-  - `backend/tests/test_rag_service_client.py`
-  - `docs/rag_change_log.md`
-- Data impact:
-  - No new tables or schema migrations were added.
-  - Runtime retrieval strategy now defaults to `agentic_multi_tool_v1` behind `RAG_AGENT_ENABLED=true`.
-  - BM25 payload generation, full rebuild, and per-document replacement now index both `primary` and `shadow` rows using the existing `index_role` column.
-  - `/internal/rag/query` and the internal RAG client now accept `ticket_context`, and RAG traces persist agent plan metadata, iterations, recovery action, and `primary/shadow` mix through existing JSON telemetry fields.
-  - The online retriever now parameterizes vector, BM25, FTS, and keyword fallback by `index_role`; `shadow` chunks can participate in retrieval and rerank, while final answer selection still caps `shadow` context by default.
-- Verification:
-  - `./.venv/bin/python -m pytest backend/tests/test_prompt_modules.py backend/tests/test_llm_profiles.py backend/tests/test_rag_agentic.py backend/tests/test_rag_service_client.py backend/tests/test_knowledge_repository_bm25.py -q`
-  - `./.venv/bin/python -m pytest backend/tests/test_rag_qa.py -q`
-  - `./.venv/bin/python -m pytest backend/tests/test_rag_qa.py backend/tests/test_rag_agentic.py backend/tests/test_rag_service_client.py backend/tests/test_knowledge_repository_bm25.py backend/tests/test_prompt_modules.py backend/tests/test_llm_profiles.py -q`
-  - `./.venv/bin/python -m pytest backend/tests/test_support_router.py backend/tests/test_ticket_orchestrator.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py -q`
-  - `./.venv/bin/python -m py_compile backend/main.py backend/rag_api.py backend/repositories/knowledge_repository.py backend/services/bm25_index.py backend/services/llm_profiles.py backend/services/prompts/__init__.py backend/services/prompts/rag_agent_planner.py backend/services/rag_qa.py backend/services/rag_service_client.py`
-
 ## 2026-04-02 - Refactor RAG evaluation into unified retrieval, generation, and performance metrics
 
 - Summary: Reworked the offline and dashboard evaluation flow around standard IR retrieval metrics, rubric-based generation metrics, and first-class benchmark/live performance metrics; added graded relevance support, benchmark session gate evaluation, and a visible dashboard performance page.
@@ -1618,6 +1584,39 @@ For each new entry, record:
   - `node --check ui/dashboard-ui/rag/app.js`
   - `git diff --check`
 
+## 2026-04-02 - Replace single-pass RAG retrieval with Agentic RAG V2
+
+- Summary: Replaced the default single-pass `run_rag_query` flow with a two-round agentic retrieval executor that plans against query understanding and optional ticket context, searches `primary + shadow` indexes with query-aware weighted fusion, and lets rerank-driven judge decisions trigger one recovery round or direct handoff.
+- Reason: The previous pipeline already had hybrid retrieval and reranking, but it was static. This change raises retrieval quality for exact-match, configuration, troubleshooting, and comparison questions by introducing multi-granularity recall, query-class-specific weighting, and deterministic escalation rules.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/rag_api.py`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/services/bm25_index.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/services/prompts/__init__.py`
+  - `backend/services/prompts/rag_agent_planner.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/tests/test_knowledge_repository_bm25.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No new tables or schema migrations were added.
+  - Runtime retrieval strategy now defaults to `agentic_multi_tool_v1` behind `RAG_AGENT_ENABLED=true`.
+  - BM25 payload generation, full rebuild, and per-document replacement now index both `primary` and `shadow` rows using the existing `index_role` column.
+  - `/internal/rag/query` and the internal RAG client now accept `ticket_context`, and RAG traces persist agent plan metadata, iterations, recovery action, and `primary/shadow` mix through existing JSON telemetry fields.
+  - The online retriever now parameterizes vector, BM25, FTS, and keyword fallback by `index_role`; `shadow` chunks can participate in retrieval and rerank, while final answer selection still caps `shadow` context by default.
+- Verification:
+  - `./.venv/bin/python -m pytest backend/tests/test_prompt_modules.py backend/tests/test_llm_profiles.py backend/tests/test_rag_agentic.py backend/tests/test_rag_service_client.py backend/tests/test_knowledge_repository_bm25.py -q`
+  - `./.venv/bin/python -m pytest backend/tests/test_rag_qa.py -q`
+  - `./.venv/bin/python -m pytest backend/tests/test_rag_qa.py backend/tests/test_rag_agentic.py backend/tests/test_rag_service_client.py backend/tests/test_knowledge_repository_bm25.py backend/tests/test_prompt_modules.py backend/tests/test_llm_profiles.py -q`
+  - `./.venv/bin/python -m pytest backend/tests/test_support_router.py backend/tests/test_ticket_orchestrator.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py -q`
+  - `./.venv/bin/python -m py_compile backend/main.py backend/rag_api.py backend/repositories/knowledge_repository.py backend/services/bm25_index.py backend/services/llm_profiles.py backend/services/prompts/__init__.py backend/services/prompts/rag_agent_planner.py backend/services/rag_qa.py backend/services/rag_service_client.py`
 ## 2026-04-02 - Split engineer investigations into first-class engineer cases linked to client tickets
 
 - Summary: Refactored the escalation path so customer-facing tickets remain canonical `client tickets` while engineer-facing work is persisted as first-class `engineer cases` with IDs like `TK-040-1`, case-level `engineer_handoff_packet` / `engineer_agent_state`, and dedicated internal message/event tables.
