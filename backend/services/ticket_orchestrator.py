@@ -18,6 +18,8 @@ from backend.services.support_router import (
 )
 
 RAG_INSUFFICIENT_EVIDENCE_REASON = "rag_insufficient_evidence"
+RAG_SERVICE_ERROR_REASON = "rag_service_error"
+RAG_UNAVAILABLE_REASON = "rag_unavailable"
 RAG_POST_CHECK_INSUFFICIENT_REASON = "rag_post_check_insufficient"
 RAG_POST_CHECK_ERROR_REASON = "rag_post_check_error"
 _GENERIC_HOW_TO_RE = re.compile(r"^\s*(how\s+(?:do\s+i\s+)?(?:to|can\s+i)|what\s+is|what\s+are)\b", re.IGNORECASE)
@@ -308,7 +310,11 @@ def orchestrate_ticket_execution(
     needs_investigating = bool(skill_result.needs_investigating)
     investigation_reason: str | None = None
     if needs_investigating and execution_plan.execution_action == "rag":
-        investigation_reason = RAG_INSUFFICIENT_EVIDENCE_REASON
+        normalized_route_reason = str(skill_result.route_reason or "").strip().lower()
+        if normalized_route_reason in {RAG_SERVICE_ERROR_REASON, RAG_UNAVAILABLE_REASON}:
+            investigation_reason = normalized_route_reason
+        else:
+            investigation_reason = RAG_INSUFFICIENT_EVIDENCE_REASON
     elif execution_plan.requires_sufficiency_assessment:
         try:
             sufficiency = assess_rag_answer_sufficiency(

@@ -17,6 +17,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from backend.services.rag_benchmark_session import run_local_benchmark_session
+from backend.services.rag_benchmark_readiness import BenchmarkReadinessError
 
 load_dotenv(dotenv_path=REPO_ROOT / ".env", override=False)
 
@@ -62,11 +63,15 @@ def main(argv: list[str] | None = None) -> int:
     repository = create_knowledge_repository()
     repository.initialize()
 
-    summary = run_local_benchmark_session(
-        repository=repository,
-        session_name=args.session_name,
-        top_k=args.top_k,
-    )
+    try:
+        summary = run_local_benchmark_session(
+            repository=repository,
+            session_name=args.session_name,
+            top_k=args.top_k,
+        )
+    except BenchmarkReadinessError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     print(f"Benchmark session: {summary['benchmark_session_id']}")
     print(f"Session name: {summary['session_name']}")
     print(f"Previous session: {summary.get('previous_session_id') or '(none)'}")

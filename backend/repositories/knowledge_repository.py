@@ -96,7 +96,7 @@ _CHUNK_STRATEGIES = {
     "technical": "markdown_header_v1",
 }
 _KNOWLEDGE_BOOTSTRAP_REPOSITORY = "knowledge_repository"
-_KNOWLEDGE_BOOTSTRAP_VERSION = "2026-04-02-query-understanding-v1"
+_KNOWLEDGE_BOOTSTRAP_VERSION = "2026-04-03-rag-live-query-service-error-v1"
 
 _SOURCE_TYPE_TO_ENTRY_TYPE = {
     "official_markdown_upload": "official_document",
@@ -702,6 +702,9 @@ class KnowledgeRepository(Protocol):
     def is_enabled(self) -> bool:
         ...
 
+    def get_local_benchmark_readiness_snapshot(self) -> dict[str, Any]:
+        ...
+
     def upsert_source_document(
         self,
         *,
@@ -1128,6 +1131,18 @@ class DisabledKnowledgeRepository:
 
     def is_enabled(self) -> bool:
         return False
+
+    def get_local_benchmark_readiness_snapshot(self) -> dict[str, Any]:
+        return {
+            "active_document_ids": [],
+            "source_documents_total": 0,
+            "source_documents_pending": 0,
+            "source_documents_claimed": 0,
+            "source_documents_failed": 0,
+            "dataset_snapshots": [],
+            "eval_results_count": 0,
+            "latest_benchmark_session": None,
+        }
 
     def _raise(self) -> None:
         raise RuntimeError("Knowledge repository is not configured")
@@ -4413,6 +4428,89 @@ class PostgresKnowledgeRepository:
             sync_runs_last_24h=sync_row[0],
             sync_runs_failed_last_24h=sync_row[1],
         )
+
+    def get_local_benchmark_readiness_snapshot(self) -> dict[str, Any]:
+        active_document_rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT document_id
+                FROM {}
+                WHERE is_active
+                ORDER BY document_id ASC
+                """
+            ).format(self._table("support_knowledge_documents"))
+        )
+        source_rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    COUNT(*) AS total_count,
+                    COUNT(*) FILTER (WHERE sync_status = 'pending') AS pending_count,
+                    COUNT(*) FILTER (WHERE sync_status = 'claimed') AS claimed_count,
+                    COUNT(*) FILTER (WHERE sync_status = 'failed') AS failed_count
+                FROM {}
+                """
+            ).format(self._table("support_knowledge_source_documents"))
+        )
+        dataset_rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT dataset_id, dataset_name, benchmark_version, status
+                FROM {}
+                ORDER BY dataset_name ASC, benchmark_version ASC
+                """
+            ).format(self._table("support_rag_datasets"))
+        )
+        eval_result_rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT COUNT(*)
+                FROM {}
+                """
+            ).format(self._table("support_rag_eval_results"))
+        )
+        latest_session_rows = self._query_rows(
+            sql.SQL(
+                """
+                SELECT
+                    benchmark_session_id,
+                    session_name,
+                    status,
+                    previous_session_id,
+                    benchmark_catalog_snapshot,
+                    improvement_summary,
+                    improvement_entries,
+                    changelog_end_entry_index,
+                    error_message,
+                    started_at,
+                    finished_at
+                FROM {}
+                ORDER BY COALESCE(finished_at, started_at) DESC NULLS LAST, benchmark_session_id DESC
+                LIMIT 1
+                """
+            ).format(self._table("support_rag_benchmark_sessions"))
+        )
+        source_row = source_rows[0] if source_rows else (0, 0, 0, 0)
+        return {
+            "active_document_ids": [str(row[0]) for row in active_document_rows if row and row[0]],
+            "source_documents_total": int(source_row[0] or 0),
+            "source_documents_pending": int(source_row[1] or 0),
+            "source_documents_claimed": int(source_row[2] or 0),
+            "source_documents_failed": int(source_row[3] or 0),
+            "dataset_snapshots": [
+                {
+                    "dataset_id": row[0],
+                    "dataset_name": row[1],
+                    "benchmark_version": row[2],
+                    "status": row[3],
+                }
+                for row in dataset_rows
+            ],
+            "eval_results_count": int((eval_result_rows[0][0] if eval_result_rows else 0) or 0),
+            "latest_benchmark_session": _benchmark_session_payload_from_row(latest_session_rows[0])
+            if latest_session_rows
+            else None,
+        }
 
     def mark_ingestion_processing(self, ingestion_id: str) -> None:
         with self._connect() as conn:

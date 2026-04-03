@@ -20,6 +20,8 @@ RUN python -m pip install --upgrade pip && \
     python -m pip show uvicorn fastapi >/dev/null
 
 COPY backend /app/backend
+COPY benchmarks /app/benchmarks
+COPY docs /app/docs
 COPY dictionary /app/dictionary
 COPY ui /app/ui
 

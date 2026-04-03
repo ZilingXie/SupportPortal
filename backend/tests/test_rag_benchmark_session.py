@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from backend.services.rag_benchmark_readiness import BenchmarkReadinessError
 from backend.services.rag_benchmark_session import (
     build_session_gate,
     build_local_benchmark_session_record,
@@ -293,6 +294,7 @@ class RagBenchmarkSessionTests(unittest.TestCase):
                 benchmark_specs=benchmark_specs,
                 changelog_path=changelog_path,
                 run_benchmark_fn=fake_run_benchmark,
+                readiness_report_fn=lambda **_: {"ready_for_session": True},
             )
 
         self.assertEqual(summary["session_name"], "session-a")
@@ -353,6 +355,7 @@ class RagBenchmarkSessionTests(unittest.TestCase):
                     benchmark_specs=benchmark_specs,
                     changelog_path=changelog_path,
                     run_benchmark_fn=fake_run_benchmark,
+                    readiness_report_fn=lambda **_: {"ready_for_session": True},
                 )
 
         self.assertEqual([Path(str(call["dataset_path"])).stem for call in calls], ["alpha", "beta"])
@@ -415,9 +418,27 @@ class RagBenchmarkSessionTests(unittest.TestCase):
                 benchmark_specs=benchmark_specs,
                 changelog_path=changelog_path,
                 run_benchmark_fn=fake_run_benchmark,
+                readiness_report_fn=lambda **_: {"ready_for_session": True},
             )
 
         self.assertEqual(summary["gate_status"], "fail")
         self.assertIn("performance", summary["gate_failure_dimensions"])
         self.assertIn("session_gate", summary)
         self.assertEqual(summary["session_gate"]["performance"]["status"], "fail")
+
+    def test_run_local_benchmark_session_blocks_when_readiness_check_fails(self) -> None:
+        repository = _FakeSessionRepository()
+
+        with self.assertRaises(BenchmarkReadinessError):
+            run_local_benchmark_session(
+                repository=repository,
+                session_name="session-blocked",
+                readiness_report_fn=lambda **_: {
+                    "ready_for_session": False,
+                    "failures": [
+                        "benchmark expected_document_ids still miss 21 active knowledge docs",
+                    ],
+                },
+            )
+
+        self.assertEqual(repository.session_writes, [])

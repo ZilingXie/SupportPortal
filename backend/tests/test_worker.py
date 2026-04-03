@@ -518,10 +518,151 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(first_event["execution_action"], "rag")
         investigation_event = repository.record_event.call_args_list[1].args[2]
         self.assertEqual(investigation_event["agent_phase"], "gather_missing_inputs")
+
+    def test_process_ticket_query_service_error_preserves_service_error_reason(self) -> None:
+        initial_ticket = _build_ticket(
+            ticket_id="T-SVCERR",
+            customer_message="how to join channel",
+        )
+        repository = Mock()
+        repository.get_ticket.side_effect = [
+            copy.deepcopy(initial_ticket),
+            copy.deepcopy(initial_ticket),
+        ]
+        repository.list_ticket_events.return_value = []
+        repository.save_ticket.return_value = None
+        repository.save_investigation.return_value = None
+        repository.record_event.return_value = None
+        bus = Mock()
+
+        execution = types.SimpleNamespace(
+            answer="I couldn't find enough information in the available support knowledge base to answer that question.",
+            confidence=0.0,
+            sources=[],
+            citations=[],
+            needs_engineer_guidance=True,
+            answer_route="rag",
+            scope_label="agora_technical",
+            route_reason="rag_service_error",
+            route_confidence=0.98,
+            search_used=False,
+            matched_signals=["join channel"],
+            route_family="agora_docs_rag",
+            execution_action="rag",
+            tooling_profile="agora_docs_only",
+            needs_investigating=True,
+            next_status="investigating",
+            investigation_reason="rag_service_error",
+            evidence_summary=None,
+        )
+
+        captured_opening_context = None
+
+        def _start_or_refresh(ticket, **kwargs):
+            nonlocal captured_opening_context
+            trigger_reason = kwargs["trigger_reason"]
+            captured_opening_context = copy.deepcopy(kwargs.get("opening_context"))
+            ticket["status"] = "investigating"
+            ticket["active_investigation"] = {
+                "id": "INV-SVCERR-1",
+                "state": "active",
+                "trigger_reason": trigger_reason,
+                "trigger_source": "worker_async_rag",
+                "messages": [
+                    {
+                        "id": "INV-SVCERR-1-m1",
+                        "role": "engineer_ai",
+                        "content": "RAG service failed before it returned a grounded answer.",
+                        "created_at": "2026-03-22T00:01:05+00:00",
+                    }
+                ],
+            }
+            execution_context = kwargs.get("execution_context") or {}
+            ticket["engineer_handoff_packet"] = {
+                "source": "worker_async_rag",
+                "conversation_summary": "Customer: how to join channel",
+                "latest_customer_message": "how to join channel",
+                "latest_client_ai_reply": "I've opened an engineer ticket for this issue and we're investigating further. I'll reply here as soon as the engineer review is confirmed.",
+                "route_summary": {
+                    "answer_route": "rag",
+                    "route_reason": execution_context.get("route_reason"),
+                },
+                "rag_result": {
+                    "candidate_answer": "RAG service error prevented a grounded answer from being produced.",
+                    "sources": [],
+                    "citations": [],
+                    "evidence_summary": {},
+                },
+                "unresolved_reason": trigger_reason,
+                "customer_language_hint": "en",
+                "created_at": "2026-03-22T00:01:05+00:00",
+                "updated_at": "2026-03-22T00:01:05+00:00",
+            }
+            ticket["engineer_agent_state"] = {
+                "phase": "gather_missing_inputs",
+                "issue_understanding": "how to join channel",
+                "knowledge_summary": "RAG service failed before a grounded answer was available.",
+                "why_not_solved": "The RAG service failed before it could return a grounded answer, so client AI could not respond safely.",
+                "goal": "Restore the RAG service path and rerun the customer query.",
+                "known_facts": ["Customer reported: how to join channel"],
+                "missing_information": ["Confirm the RAG service error type and the failing request trace."],
+                "next_request_for_engineer": "Confirm the RAG service error type and the failing request trace.",
+                "resolution_hypothesis": "",
+                "ready_to_reply": False,
+                "last_refreshed_at": "2026-03-22T00:01:05+00:00",
+            }
+            return {
+                "created": True,
+                "public_reply": "I've opened an engineer ticket for this issue and we're investigating further. I'll reply here as soon as the engineer review is confirmed.",
+                "active_investigation": copy.deepcopy(ticket["active_investigation"]),
+                "new_internal_messages": [],
+            }
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "_orchestrate_worker_support_message",
+            return_value=execution,
+        ), patch.object(
+            worker,
+            "start_or_refresh_investigation",
+            side_effect=_start_or_refresh,
+        ), patch.object(
+            worker,
+            "build_client_sync_event",
+            return_value={"event": "ticket_ai_response_ready"},
+        ), patch.object(
+            worker,
+            "ensure_ticket_defaults",
+            side_effect=lambda ticket: None,
+        ), patch.object(
+            worker,
+            "now_iso",
+            return_value="2026-03-22T00:01:05+00:00",
+        ):
+            worker._process_ticket_query(bus, dict(self.task, ticket_id="T-SVCERR", customer_message="how to join channel"))
+
+        saved_ticket = repository.save_ticket.call_args_list[0].args[0]
+        saved_engineer_case = repository.save_engineer_case.call_args.kwargs["engineer_case"]
+        self.assertEqual(saved_ticket["status"], "investigating")
+        self.assertEqual(saved_ticket["messages"][-1]["content"], "I've opened an engineer ticket for this issue and we're investigating further. I'll reply here as soon as the engineer review is confirmed.")
+        self.assertEqual(saved_engineer_case["trigger_reason"], "rag_service_error")
+        self.assertEqual(saved_engineer_case["engineer_handoff_packet"]["route_summary"]["route_reason"], "rag_service_error")
+        self.assertEqual(saved_engineer_case["engineer_handoff_packet"]["unresolved_reason"], "rag_service_error")
+        self.assertEqual(
+            saved_engineer_case["engineer_handoff_packet"]["rag_result"]["candidate_answer"],
+            "RAG service error prevented a grounded answer from being produced.",
+        )
+        self.assertIsInstance(captured_opening_context, dict)
+        self.assertIn("RAG service failed", captured_opening_context["rag_answer_summary"])
+        first_event = repository.record_event.call_args_list[0].args[2]
+        self.assertEqual(first_event["status"], "investigating")
+        self.assertEqual(first_event["execution_action"], "rag")
+        investigation_event = repository.record_event.call_args_list[1].args[2]
+        self.assertEqual(investigation_event["agent_phase"], "gather_missing_inputs")
         self.assertFalse(investigation_event["agent_ready_to_reply"])
         self.assertEqual(
             investigation_event["agent_next_request_for_engineer"],
-            "Please confirm Android 14 scope and exact SDK version.",
+            "Confirm the RAG service error type and the failing request trace.",
         )
 
     def test_process_ticket_message_sentiment_persists_label_and_records_event(self) -> None:

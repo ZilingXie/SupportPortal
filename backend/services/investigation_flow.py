@@ -129,7 +129,19 @@ def build_investigation_opening_context(
     if normalized_reason == "engineer_investigate" and not has_rag_context:
         return None
 
-    if normalized_reason == "rag_insufficient_evidence":
+    if normalized_reason == "rag_service_error":
+        rag_summary = "AI could not complete the RAG request because the RAG service failed before it could return a grounded answer."
+        action_needed = (
+            "Check the RAG service health, inspect the request trace and error logs, verify telemetry/database writes, "
+            "and rerun the customer query only after the service path is healthy."
+        )
+    elif normalized_reason == "rag_unavailable":
+        rag_summary = "AI could not complete the RAG request because the RAG service was unavailable."
+        action_needed = (
+            "Confirm the RAG service configuration, connectivity, and shared auth, then rerun the customer query once "
+            "the service is reachable again."
+        )
+    elif normalized_reason == "rag_insufficient_evidence":
         rag_summary = "AI could not find enough grounded doc evidence to answer safely."
         action_needed = (
             "Reproduce the issue, confirm the affected platform, SDK version, and configuration, collect logs or "
@@ -303,8 +315,15 @@ def _build_handoff_route_summary(execution_context: dict[str, Any] | None = None
 
 def _build_handoff_rag_result(execution_context: dict[str, Any] | None = None) -> dict[str, Any]:
     execution = execution_context if isinstance(execution_context, dict) else {}
+    route_reason = _compact_text(execution.get("route_reason")).lower()
+    if route_reason == "rag_service_error":
+        candidate_answer = "RAG service error prevented a grounded answer from being produced."
+    elif route_reason == "rag_unavailable":
+        candidate_answer = "RAG service unavailability prevented a grounded answer from being produced."
+    else:
+        candidate_answer = str(execution.get("answer") or "").strip()
     return {
-        "candidate_answer": str(execution.get("answer") or "").strip(),
+        "candidate_answer": candidate_answer,
         "sources": list(execution.get("sources") or []),
         "citations": [dict(item) for item in list(execution.get("citations") or []) if isinstance(item, dict)],
         "evidence_summary": (
