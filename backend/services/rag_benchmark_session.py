@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 from uuid import uuid4
 
-from backend.services.local_benchmark_sync import LOCAL_BENCHMARK_SPECS
+from backend.services.local_benchmark_sync import LOCAL_BENCHMARK_SPECS, benchmark_content_version
 from backend.services.rag_benchmark_runner import run_benchmark
 
 if TYPE_CHECKING:
@@ -108,7 +108,7 @@ def _catalog_snapshot(
             "dataset_name": _clean_text(spec.get("dataset_name")) or Path(spec["path"]).stem,
             "label": _clean_text(spec.get("label")) or _clean_text(spec.get("dataset_name")) or Path(spec["path"]).stem,
             "path": str(Path(spec["path"]).expanduser().resolve()),
-            "benchmark_version": _clean_text(spec.get("benchmark_version")) or Path(spec["path"]).stem,
+            "benchmark_version": _clean_text(spec.get("benchmark_version")) or benchmark_content_version(spec["path"]),
         }
         for spec in specs
     ]
@@ -126,7 +126,8 @@ def _session_run_specs(
                 "dataset_name": _clean_text(spec.get("dataset_name")) or Path(spec.get("path") or "").stem,
                 "label": _clean_text(spec.get("label")) or _clean_text(spec.get("dataset_name")),
                 "path": Path(spec.get("path") or "").expanduser().resolve(),
-                "benchmark_version": _clean_text(spec.get("benchmark_version")) or Path(spec.get("path") or "").stem,
+                "benchmark_version": _clean_text(spec.get("benchmark_version"))
+                or benchmark_content_version(spec.get("path") or ""),
             }
             for spec in stored
         ]
@@ -135,7 +136,7 @@ def _session_run_specs(
             "dataset_name": _clean_text(spec.get("dataset_name")) or Path(spec["path"]).stem,
             "label": _clean_text(spec.get("label")) or _clean_text(spec.get("dataset_name")),
             "path": Path(spec["path"]).expanduser().resolve(),
-            "benchmark_version": _clean_text(spec.get("benchmark_version")) or Path(spec["path"]).stem,
+            "benchmark_version": _clean_text(spec.get("benchmark_version")) or benchmark_content_version(spec["path"]),
         }
         for spec in list(benchmark_specs or LOCAL_BENCHMARK_SPECS)
     ]
@@ -358,7 +359,7 @@ def run_local_benchmark_session(
     runs: list[dict[str, Any]] = []
     try:
         for index, spec in enumerate(specs):
-            benchmark_version = _clean_text(spec.get("benchmark_version")) or Path(spec["path"]).stem
+            benchmark_version = _clean_text(spec.get("benchmark_version")) or benchmark_content_version(spec["path"])
             run_summary = run_benchmark_fn(
                 dataset_path=Path(spec["path"]).expanduser().resolve(),
                 experiment_id=f"{_clean_text(running_record.get('session_name'))}::{benchmark_version}",

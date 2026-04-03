@@ -624,11 +624,9 @@ class RagScorecardRepositoryTests(unittest.TestCase):
                             "total_input_tokens": 1200,
                             "total_output_tokens": 300,
                             "total_embedding_tokens": 100,
-                            "known_cost_total": 0.12,
-                            "unknown_cost_present": False,
-                            "cost_by_model": [
-                                {"provider": "openai", "model": "gpt-5.4", "known_cost": 0.1},
-                                {"provider": "openai", "model": "gpt-5.4-mini", "known_cost": 0.02},
+                            "token_by_model": [
+                                {"provider": "openai", "model": "gpt-5.4", "input_tokens": 1000, "output_tokens": 250},
+                                {"provider": "openai", "model": "gpt-5.4-mini", "input_tokens": 200, "output_tokens": 50},
                             ],
                         },
                     }
@@ -645,8 +643,7 @@ class RagScorecardRepositoryTests(unittest.TestCase):
         self.assertEqual(summary["total_input_tokens"], 1200)
         self.assertEqual(summary["total_output_tokens"], 300)
         self.assertEqual(summary["total_embedding_tokens"], 100)
-        self.assertEqual(summary["known_cost_total"], 0.12)
-        self.assertFalse(summary["unknown_cost_present"])
+        self.assertEqual(len(summary["token_by_model"]), 2)
 
     def test_benchmark_session_payload_for_eval_run_includes_gate_status(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
@@ -753,6 +750,8 @@ class RagScorecardRepositoryTests(unittest.TestCase):
                     "case-1": {
                         "failure_stage": "retrieval",
                         "root_cause_label": "missing_expected_doc",
+                        "execution_mode": "agentic",
+                        "agent_fallback_used": False,
                         "category": "scenario",
                         "query_type": "how_to",
                         "source_type": "official_markdown_upload",
@@ -768,6 +767,8 @@ class RagScorecardRepositoryTests(unittest.TestCase):
                     "case-2": {
                         "failure_stage": "generation",
                         "root_cause_label": "unused_selected_evidence",
+                        "execution_mode": "legacy",
+                        "agent_fallback_used": True,
                         "category": "fact",
                         "query_type": "faq",
                         "source_type": "technical_article",
@@ -792,6 +793,104 @@ class RagScorecardRepositoryTests(unittest.TestCase):
         self.assertEqual(diagnostics["category_distribution"][0]["label"], "fact")
         self.assertEqual(diagnostics["query_type_distribution"][0]["label"], "faq")
         self.assertEqual(diagnostics["source_type_distribution"][0]["label"], "official_markdown_upload")
+        self.assertEqual(diagnostics["execution_mode_distribution"][0]["label"], "agentic")
+        self.assertEqual(diagnostics["agent_fallback_distribution"][0]["label"], "false")
+
+    def test_benchmark_session_payload_for_eval_run_uses_dataset_name_keys_for_gate_status(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        started_at = datetime(2026, 4, 2, 1, 0, tzinfo=timezone.utc)
+        finished_at = datetime(2026, 4, 2, 1, 30, tzinfo=timezone.utc)
+        session_row = (
+            "BSESS-FAIL",
+            "session-fail",
+            "completed",
+            None,
+            [
+                {
+                    "dataset_name": "Canonical",
+                    "label": "Canonical",
+                    "benchmark_version": "canonical-v1",
+                }
+            ],
+            None,
+            [],
+            None,
+            "",
+            started_at,
+            finished_at,
+        )
+        run_rows = [
+            (
+                "EVAL-CANONICAL",
+                "Canonical",
+                "offline_benchmark",
+                "session-fail::Canonical",
+                "canonical-v1",
+                "mixed_route_v2",
+                "completed",
+                started_at,
+                finished_at,
+            )
+        ]
+
+        with patch.object(repository, "_query_rows", side_effect=[[session_row], run_rows]), patch.object(
+            repository,
+            "_benchmark_case_summary_rows",
+            return_value={
+                "EVAL-CANONICAL": {
+                    "case-1": {
+                        "evidence_precision_at_5": 0.1,
+                        "evidence_recall_at_5": 0.1,
+                        "evidence_ndcg_at_5": 0.1,
+                        "context_relevance_score": 0.1,
+                        "answer_relevance_score": 0.1,
+                        "faithfulness_score": 0.1,
+                        "citation_correctness_score": 0.1,
+                        "response_completeness_score": 0.1,
+                        "benchmark_p95_total_latency_ms": 1800.0,
+                        "benchmark_throughput_cases_per_sec": 0.41,
+                        "judge_error_rate": 0.0,
+                        "case_execution_error_rate": 0.0,
+                    }
+                }
+            },
+        ):
+            payload = repository._benchmark_session_payload_for_eval_run("EVAL-CANONICAL")
+
+        assert payload is not None
+        self.assertEqual(payload["gate_status"], "fail")
+        self.assertEqual(payload["failed_dataset_names"], ["Canonical"])
+        self.assertEqual(payload["per_run_gate_status"]["Canonical"]["overall_status"], "fail")
+
+    def test_benchmark_run_comparison_is_token_only(self) -> None:
+        session_row = {
+            "runs": [
+                {
+                    "eval_run_id": "run-current",
+                    "dataset_name": "Canonical",
+                    "benchmark_version": "canonical-v2",
+                    "is_current": True,
+                    "metrics": {"evidence_precision_at_5": 0.8},
+                    "usage_summary": {"total_input_tokens": 100, "total_output_tokens": 25},
+                },
+                {
+                    "eval_run_id": "run-baseline",
+                    "dataset_name": "Canonical",
+                    "benchmark_version": "canonical-v2",
+                    "is_current": False,
+                    "metrics": {"evidence_precision_at_5": 0.7},
+                    "usage_summary": {"total_input_tokens": 90, "total_output_tokens": 20},
+                },
+            ]
+        }
+
+        comparison = knowledge_repository_module._benchmark_run_comparison(session_row["runs"])
+
+        assert comparison is not None
+        metric_names = [row["metric"] for row in comparison["rows"]]
+        self.assertIn("total_input_tokens", metric_names)
+        self.assertIn("total_output_tokens", metric_names)
+        self.assertNotIn("known_cost_total", metric_names)
 
     def test_benchmark_trace_detail_exposes_query_understanding_and_candidate_funnel(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")

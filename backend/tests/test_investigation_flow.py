@@ -199,9 +199,7 @@ class InvestigationFlowTests(unittest.TestCase):
                 "total_input_tokens": 1200,
                 "total_output_tokens": 300,
                 "total_embedding_tokens": 100,
-                "known_cost_total": 0.12,
-                "unknown_cost_present": False,
-                "cost_by_model": [{"provider": "openai", "model": "gpt-5.4", "known_cost": 0.12}],
+                "token_by_model": [{"provider": "openai", "model": "gpt-5.4", "input_tokens": 1200, "output_tokens": 300}],
             },
         ):
             detail = self.client.get("/api/engineer/tickets/TK-040-1")

@@ -36,7 +36,11 @@ def create_knowledge_repository():
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run the 3-group local RAG benchmark session with changelog-driven improvement notes."
+        description=(
+            "Run the 3-group local RAG benchmark session with changelog-driven improvement notes. "
+            "The session always runs the Canonical, Mixed, and Real User local datasets and records "
+            "content-based benchmark versions for stable comparisons."
+        )
     )
     parser.add_argument(
         "--session-name",
@@ -66,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Benchmark session: {summary['benchmark_session_id']}")
     print(f"Session name: {summary['session_name']}")
     print(f"Previous session: {summary.get('previous_session_id') or '(none)'}")
+    print("Session protocol: Canonical + Mixed + Real User (content-hash benchmark versions)")
     print("Improvements since previous benchmark session:")
     print(summary.get("improvement_summary") or "(none)")
     for run in summary.get("runs") or []:

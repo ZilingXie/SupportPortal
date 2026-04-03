@@ -475,13 +475,11 @@ function buildTokenUsagePanel(tokenUsage) {
       { label: "total_input_tokens", value: formatNumber(usage.total_input_tokens) },
       { label: "total_output_tokens", value: formatNumber(usage.total_output_tokens) },
       { label: "total_embedding_tokens", value: formatNumber(usage.total_embedding_tokens) },
-      { label: "known_cost_total", value: formatDecimal(usage.known_cost_total, 4) },
-      { label: "unknown_cost_present", value: String(Boolean(usage.unknown_cost_present)) },
     ])}
     ${
-      Array.isArray(usage.cost_by_model) && usage.cost_by_model.length
-        ? `<p class="detail-note">cost_by_model: ${escapeHtml(JSON.stringify(usage.cost_by_model))}</p>`
-        : `<p class="detail-note">cost_by_model: []</p>`
+      Array.isArray(usage.token_by_model) && usage.token_by_model.length
+        ? `<p class="detail-note">token_by_model: ${escapeHtml(JSON.stringify(usage.token_by_model))}</p>`
+        : `<p class="detail-note">token_by_model: []</p>`
     }
   `;
 }

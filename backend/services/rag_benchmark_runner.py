@@ -12,7 +12,6 @@ from uuid import uuid4
 
 from backend.services.embedding_provider import (
     DEFAULT_PGVECTOR_TABLE,
-    embedding_external_cost_per_1k,
     embedding_model_id,
     embedding_provider_name,
 )
@@ -24,6 +23,7 @@ from backend.services.llm_profiles import (
     parse_provider_model_reference,
     resolve_model_profile,
 )
+from backend.services.local_benchmark_sync import benchmark_content_version
 from backend.services.rag_benchmark import (
     DEFAULT_JUDGE_MODELS,
     BenchmarkCase,
@@ -1111,7 +1111,7 @@ def _build_eval_row(
         "selected_doc_count": rag_result.trace.selected_doc_count if rag_result is not None else None,
         "top1_similarity_score": rag_result.trace.top1_similarity_score if rag_result is not None else None,
         "avg_selected_similarity_score": rag_result.trace.avg_selected_similarity_score if rag_result is not None else None,
-        "avg_cost_per_query": usage_summary["known_cost_total"],
+        "avg_cost_per_query": None,
         "usage_ledger": usage_ledger,
         "usage_summary": usage_summary,
         "failure_stage": failure_stage,
@@ -1169,7 +1169,7 @@ def run_benchmark(
     else:
         assert dataset_path is not None
         cases = load_benchmark_cases(dataset_path)
-        benchmark_version = Path(dataset_path).stem
+        benchmark_version = benchmark_content_version(dataset_path)
         dataset_name = Path(dataset_path).name
     if limit is not None:
         cases = cases[: max(0, int(limit))]

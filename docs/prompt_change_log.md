@@ -263,6 +263,35 @@ For each new entry, record:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/llm_profiles.py backend/services/prompts/rag_sufficiency.py backend/services/rag_sufficiency_prompt.py backend/services/rag_sufficiency_judge.py backend/services/query_understanding.py backend/services/rag_context_budget.py backend/services/rag_qa.py backend/services/token_usage.py`
 
+- Area or subsystem: RAG token-only telemetry, GPT-family fallback cleanup, and dashboard summary wording
+- Prompt or model version: `gpt54-token-only-observability-v1`
+- Summary: Kept GPT-backed RAG defaults inside the GPT-5.4 family, removed active cost presentation from benchmark/ticket dashboard flows, and retained future-ready usage-ledger fields so later prompt/model changes can add cached or reasoning token views without another schema rewrite.
+- Reason: The next benchmark cycle needs trustworthy token telemetry and execution truth first. Presenting stale or partial pricing would create noise, while leaving older GPT fallback defaults in place would blur model-family comparisons.
+- Affected files or config:
+  - `backend/rag_api.py`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/token_usage.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_rag_benchmark_session.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `backend/tests/test_token_usage.py`
+  - `ui/dashboard-ui/app.js`
+  - `ui/dashboard-ui/rag/app.js`
+  - `docs/feature_list.md`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Expected behavior change:
+  - Active benchmark and ticket dashboards now show token-only usage summaries rather than mixed token/cost summaries.
+  - The RAG answer fallback chain now stays inside the GPT-5.4 family by default.
+  - Usage ledgers still carry future-ready token slots such as cached/reasoning/tool tokens even though the current UI only surfaces input/output/embedding totals.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_token_usage.py backend/tests/test_rag_scorecard_repository.py backend/tests/test_dashboard_ui_contract.py backend/tests/test_rag_benchmark_session.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/token_usage.py backend/repositories/knowledge_repository.py backend/rag_api.py backend/services/rag_benchmark_runner.py backend/services/rag_qa.py`
+  - `node --check ui/dashboard-ui/rag/app.js`
+  - `node --check ui/dashboard-ui/app.js`
 - Area or subsystem: EC2 auto deploy daily report and docker-log AI diagnostics
 - Prompt or model version: `auto-deploy-report-v1`
 - Summary: Added a dedicated `auto_deploy_report` LLM scene for the EC2 auto-deploy日报 path, so every scheduled run can email a Chinese health summary with docker status, suspicious raw log excerpts, and an AI risk review without reusing product-facing engineer prompts.
