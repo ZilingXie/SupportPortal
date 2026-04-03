@@ -31,10 +31,26 @@ class QueryUnderstandingTests(unittest.TestCase):
         self.assertEqual(Path(profile.symptom_lexicon_path).name, "troubleshooting_lexicon_en.json")
 
     def test_understand_rag_query_normalizes_glossary_terms_and_caps_hits(self) -> None:
-        result = understand_rag_query(
-            "How do Cloud Recording, jitter, packet loss, channel profile, App ID, "
-            "and Interactive Live Streaming work together?"
-        )
+        llm_outputs = [
+            LlmTextResult(
+                text='{"semantic_query":"How do Agora Cloud Recording, jitter, packet loss, channel profile, App ID, and Interactive Live Streaming work together?","hard_filters":{},"soft_signals":{"keywords":["cloud recording","packet loss","interactive live streaming"]}}',
+                model_name="gpt-5.4-mini",
+            ),
+            LlmTextResult(
+                text='{"rewritten_queries":["agora cloud recording packet loss channel profile app id interactive live streaming"]}',
+                model_name="gpt-5.4-mini",
+            ),
+            LlmTextResult(
+                text='{"decomposition_subqueries":["How does Cloud Recording work with channel profile?","How do jitter and packet loss affect Interactive Live Streaming?"]}',
+                model_name="gpt-5.4-mini",
+            ),
+        ]
+
+        with patch("backend.services.query_understanding.invoke_responses_text", side_effect=llm_outputs):
+            result = understand_rag_query(
+                "How do Cloud Recording, jitter, packet loss, channel profile, App ID, "
+                "and Interactive Live Streaming work together?"
+            )
 
         self.assertEqual(result.query_profile, "en")
         self.assertLessEqual(len(result.glossary_hits), GLOSSARY_HIT_LIMIT)

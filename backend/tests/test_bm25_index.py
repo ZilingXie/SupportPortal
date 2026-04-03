@@ -30,7 +30,7 @@ class Bm25IndexTests(unittest.TestCase):
         self.assertTrue(any(item["term"] == "buildtokenwithuidandprivilege" for item in payload["terms"]))
         self.assertTrue(any(item["term"] == "token" for item in payload["postings"]))
 
-    def test_build_bm25_index_payload_skips_non_primary_index_roles(self) -> None:
+    def test_build_bm25_index_payload_builds_docs_for_shadow_index_roles(self) -> None:
         payload = build_bm25_index_payload(
             rows=[
                 {
@@ -43,10 +43,12 @@ class Bm25IndexTests(unittest.TestCase):
             index_role="shadow",
         )
 
-        self.assertEqual(payload["docs"], [])
-        self.assertEqual(payload["postings"], [])
-        self.assertEqual(payload["terms"], [])
-        self.assertEqual(payload["stats"]["doc_count"], 0)
+        self.assertEqual(payload["stats"]["index_role"], "shadow")
+        self.assertEqual(payload["stats"]["doc_count"], 1)
+        self.assertEqual(payload["docs"][0]["chunk_id"], "chunk-shadow")
+        self.assertEqual(payload["docs"][0]["index_role"], "shadow")
+        self.assertTrue(any(item["term"] == "shadow" for item in payload["postings"]))
+        self.assertTrue(any(item["term"] == "shadow" for item in payload["terms"]))
 
 
 if __name__ == "__main__":
