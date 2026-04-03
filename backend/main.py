@@ -864,6 +864,19 @@ def _build_rag_answer_detail(
     customer_id: str | None = None,
     ticket_context: list[dict[str, str]] | None = None,
 ) -> RagTicketAnswerDetail:
+    def _rag_failure_reason(error: RagServiceError) -> str:
+        if error.status_code is not None:
+            return "rag_service_error"
+        normalized_message = str(error).strip().lower()
+        if (
+            "not configured" in normalized_message
+            or "request failed" in normalized_message
+            or "timeout" in normalized_message
+            or "timed out" in normalized_message
+        ):
+            return "rag_unavailable"
+        return "rag_service_error"
+
     request_id = f"rag-{uuid4().hex[:12]}"
     try:
         answer_detail = rag_service_client.query_answer_with_recovery_detail(
@@ -875,10 +888,13 @@ def _build_rag_answer_detail(
             insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
         )
     except RagServiceError as exc:
+        failure_reason = _rag_failure_reason(exc)
         LOGGER.warning(
-            "RAG service unavailable request_id=%s ticket_id=%s error=%s",
+            "RAG service call failed request_id=%s ticket_id=%s reason=%s status_code=%s error=%s",
             request_id,
             ticket_id,
+            failure_reason,
+            exc.status_code,
             exc,
         )
         return RagTicketAnswerDetail(
@@ -887,7 +903,7 @@ def _build_rag_answer_detail(
             sources=[],
             citations=[],
             needs_engineer_guidance=True,
-            reason="rag_unavailable",
+            reason=failure_reason,
             evidence_summary=None,
             packed_evidence=None,
         )

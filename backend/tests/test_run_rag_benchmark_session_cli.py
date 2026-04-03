@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from backend.services.rag_benchmark_readiness import BenchmarkReadinessError
+
 
 def _load_script_module():
     module_path = Path(__file__).resolve().parents[2] / "scripts" / "run_rag_benchmark_session.py"
@@ -67,6 +69,23 @@ class RunRagBenchmarkSessionCliTests(unittest.TestCase):
         self.assertIn("Eval run: EVAL-1", output)
         self.assertIn("Dataset: agora_rag_testset_100_standrad_en", output)
         self.assertIn("Eval run: EVAL-2", output)
+
+    def test_cli_returns_error_when_session_is_not_ready(self) -> None:
+        module = _load_script_module()
+        repository = Mock()
+
+        with patch.object(module, "create_knowledge_repository", return_value=repository), patch.object(
+            module,
+            "run_local_benchmark_session",
+            side_effect=BenchmarkReadinessError(
+                "Local benchmark session is not ready: benchmark expected_document_ids still miss 21 active knowledge docs",
+                report={"ready_for_session": False},
+            ),
+        ), patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            exit_code = module.main(["--session-name", "session-2"])
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("not ready", stderr.getvalue().lower())
 
 
 if __name__ == "__main__":

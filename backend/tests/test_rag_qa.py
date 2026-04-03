@@ -4,7 +4,10 @@ import os
 import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
+
+import psycopg
 
 from backend.services.llm_factory import LlmTextResult
 from backend.services.rag_context_budget import ContextBudget, PackedEvidence
@@ -15,6 +18,7 @@ from backend.services.rag_qa import (
     _extract_metadata_hints,
     _get_rag_config,
     _metadata_rerank,
+    _retrieve_bm25_chunks,
     _resolve_active_vector_table,
     _rrf_merge,
     _select_diverse_chunks,
@@ -300,6 +304,76 @@ class RagQaHybridTests(unittest.TestCase):
         self.assertIn("matched_postings AS MATERIALIZED", source)
         self.assertIn("matched_docs AS MATERIALIZED", source)
         self.assertIn("SELECT DISTINCT chunk_id FROM matched_postings", source)
+
+    def test_retrieve_bm25_chunks_binds_index_role_after_bm25_constants(self) -> None:
+        class _FakeCursor:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, tuple[object, ...] | None]] = []
+
+            def execute(self, query: object, params: tuple[object, ...] | None = None) -> None:
+                self.calls.append((query, params))
+
+            def fetchall(self) -> list[tuple[object, ...]]:
+                if len(self.calls) == 1:
+                    return [("token", 10)]
+                if len(self.calls) == 3:
+                    return []
+                return []
+
+            def fetchone(self) -> tuple[object, ...]:
+                return (100,)
+
+            def __enter__(self) -> "_FakeCursor":
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                return False
+
+        class _FakeConnection:
+            def __init__(self, cursor: _FakeCursor) -> None:
+                self._cursor = cursor
+
+            def cursor(self) -> _FakeCursor:
+                return self._cursor
+
+            def __enter__(self) -> "_FakeConnection":
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> bool:
+                return False
+
+        fake_cursor = _FakeCursor()
+        fake_psycopg = SimpleNamespace(
+            sql=psycopg.sql,
+            connect=lambda *_args, **_kwargs: _FakeConnection(fake_cursor),
+        )
+        config = {
+            "dsn": "postgresql://example",
+            "table": "supportportal.docagent_chunks_bge_m3_1024",
+            "app_schema": "supportportal",
+            "bm25_candidate_k": 12,
+            "bm25_k1": 1.2,
+            "bm25_b": 0.75,
+            "bm25_max_term_doc_freq_ratio": 0.08,
+            "bm25_max_query_terms": 6,
+        }
+
+        with patch("backend.services.rag_qa._import_psycopg", return_value=fake_psycopg), patch(
+            "backend.services.rag_qa.tokenize_bm25_query",
+            return_value=["token"],
+        ), patch(
+            "backend.services.rag_qa._select_bm25_query_terms",
+            return_value=["token"],
+        ):
+            _retrieve_bm25_chunks("token question", config, index_role="shadow")
+
+        _, params = fake_cursor.calls[2]
+        assert params is not None
+        self.assertEqual(params[5], 1.2)
+        self.assertEqual(params[6], 1.2)
+        self.assertEqual(params[7], 0.75)
+        self.assertEqual(params[8], 0.75)
+        self.assertEqual(params[9], "shadow")
 
     def test_extract_metadata_hints_recognizes_language_method_and_structure_intent(self) -> None:
         hints = _extract_metadata_hints("Node.js 的 BuildTokenWithUidAndPrivilege Docker parameter 是什么")

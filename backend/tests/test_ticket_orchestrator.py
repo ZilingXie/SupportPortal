@@ -97,6 +97,33 @@ class TicketOrchestratorTests(unittest.TestCase):
         self.assertEqual(execution.investigation_reason, "rag_insufficient_evidence")
         sufficiency_mock.assert_not_called()
 
+    def test_rag_service_error_keeps_service_error_reason_for_investigation(self) -> None:
+        execution = orchestrate_ticket_execution(
+            "How do I join a channel?",
+            decision=_decision("rag"),
+            resolution_builder=lambda *_args, **_kwargs: SupportResolution(
+                answer="I couldn't find enough information in the available support knowledge base to answer that question.",
+                confidence=0.0,
+                sources=[],
+                citations=[],
+                needs_engineer_guidance=True,
+                answer_route="rag",
+                scope_label="agora_technical",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+                route_reason="rag_service_error",
+                route_confidence=0.94,
+                search_used=False,
+                matched_signals=["join channel"],
+            ),
+        )
+
+        self.assertTrue(execution.needs_investigating)
+        self.assertEqual(execution.next_status, INVESTIGATING_STATUS)
+        self.assertEqual(execution.route_reason, "rag_service_error")
+        self.assertEqual(execution.investigation_reason, "rag_service_error")
+
     def test_rag_answer_runs_post_check_and_stays_communicating_when_allowed(self) -> None:
         with patch(
             "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency",

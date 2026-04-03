@@ -4,11 +4,20 @@ import os
 import unittest
 from unittest.mock import patch
 
-from backend.repositories.knowledge_repository import PostgresKnowledgeRepository, create_knowledge_repository
+from backend.repositories.knowledge_repository import (
+    PostgresKnowledgeRepository,
+    _KNOWLEDGE_BOOTSTRAP_VERSION,
+    create_knowledge_repository,
+)
 
 
 class _FakeCursor:
+    def __init__(self) -> None:
+        self.executed: list[str] = []
+
     def execute(self, *_args, **_kwargs) -> None:
+        if _args:
+            self.executed.append(str(_args[0]))
         return None
 
     def executemany(self, *_args, **_kwargs) -> None:
@@ -28,8 +37,11 @@ class _FakeCursor:
 
 
 class _FakeConnection:
+    def __init__(self) -> None:
+        self._cursor = _FakeCursor()
+
     def cursor(self) -> _FakeCursor:
-        return _FakeCursor()
+        return self._cursor
 
     def commit(self) -> None:
         return None
@@ -43,6 +55,7 @@ class _FakeConnection:
 
 class _SequenceCursor(_FakeCursor):
     def __init__(self, *, fetchone_results=None) -> None:
+        super().__init__()
         self.fetchone_results = list(fetchone_results or [])
         self.fetchall_results = []
 
@@ -56,6 +69,9 @@ class _SequenceCursor(_FakeCursor):
 
 
 class KnowledgeRepositoryBm25HookTests(unittest.TestCase):
+    def test_bootstrap_version_advances_for_live_query_usage_schema_fix(self) -> None:
+        self.assertNotEqual(_KNOWLEDGE_BOOTSTRAP_VERSION, "2026-04-02-query-understanding-v1")
+
     def test_initialize_accepts_jsonb_defaults_in_bm25_telemetry_schema(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
 
@@ -139,6 +155,23 @@ class KnowledgeRepositoryBm25HookTests(unittest.TestCase):
                                     repository.initialize()
 
         record_version_mock.assert_called_once()
+
+    def test_initialize_replays_query_run_usage_column_alters_when_bootstrap_runs(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        fake_connection = _FakeConnection()
+
+        with patch.object(repository, "_connect", return_value=fake_connection):
+            with patch.object(repository, "_ensure_bootstrap_version_table"):
+                with patch.object(repository, "_bootstrap_version_matches", return_value=False):
+                    with patch.object(repository, "_record_bootstrap_version"):
+                        with patch("backend.repositories.knowledge_repository.validate_embedding_provider_dim", return_value=1024):
+                            with patch.object(repository, "_ensure_vector_table"):
+                                with patch.object(repository, "_backfill_bm25_index_if_needed", return_value=0):
+                                    repository.initialize()
+
+        executed_sql = "\n".join(fake_connection._cursor.executed)
+        self.assertIn("ADD COLUMN IF NOT EXISTS usage_ledger", executed_sql)
+        self.assertIn("ADD COLUMN IF NOT EXISTS usage_summary", executed_sql)
 
     def test_backfill_bm25_index_runs_when_primary_chunks_exist_without_docs(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")

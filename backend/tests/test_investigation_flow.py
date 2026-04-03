@@ -651,6 +651,62 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(payload["route_reason"], "rag_insufficient_evidence")
         self.assertEqual(payload["answer"], "Got it, let me check this for you.")
 
+    def test_rag_http_500_keeps_service_error_reason_in_ticket_and_handoff(self) -> None:
+        with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="Got it, let me check this for you.",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main.rag_service_client,
+            "query_answer_with_recovery_detail",
+            side_effect=main.RagServiceError("RAG service returned HTTP 500", status_code=500),
+        ), patch.object(
+            main,
+            "analyze_ticket_message",
+            return_value=_rag_route_decision(reason="joining_channel_support"),
+        ), patch.object(main, "_enqueue_or_defer_message_sentiment_tag", AsyncMock(return_value=False)), patch.object(
+            main,
+            "dispatch_event",
+            AsyncMock(),
+        ):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-RAG-SVCERR-100",
+                    "customer_id": "C-001",
+                    "message": "how to join channel",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "investigating")
+        self.assertEqual(payload["route_reason"], "rag_service_error")
+
+        detail = self.client.get("/api/engineer/tickets/TK-RAG-SVCERR-100-1")
+        self.assertEqual(detail.status_code, 200, detail.text)
+        ticket = detail.json()["ticket"]
+        self.assertEqual(ticket["active_investigation"]["trigger_reason"], "rag_service_error")
+        self.assertEqual(ticket["engineer_handoff_packet"]["route_summary"]["route_reason"], "rag_service_error")
+        self.assertEqual(ticket["engineer_handoff_packet"]["unresolved_reason"], "rag_service_error")
+        self.assertEqual(
+            ticket["engineer_handoff_packet"]["rag_result"]["candidate_answer"],
+            "RAG service error prevented a grounded answer from being produced.",
+        )
+        self.assertIn("RAG service failed", ticket["active_investigation"]["messages"][0]["content"])
+        self.assertNotIn(
+            "could not find enough grounded doc evidence",
+            ticket["active_investigation"]["messages"][0]["content"],
+        )
+
     def test_customer_message_sentiment_falls_back_to_background_tagging_when_queue_is_unavailable(self) -> None:
         resolution = SupportResolution(
             answer="Please confirm whether the token server allows renewal.",

@@ -7,6 +7,11 @@ from typing import TYPE_CHECKING, Any, Callable
 from uuid import uuid4
 
 from backend.services.local_benchmark_sync import LOCAL_BENCHMARK_SPECS, benchmark_content_version
+from backend.services.rag_benchmark_readiness import (
+    BenchmarkReadinessError,
+    build_local_benchmark_readiness_report,
+    format_local_benchmark_readiness_failures,
+)
 from backend.services.rag_benchmark_runner import run_benchmark
 
 if TYPE_CHECKING:
@@ -331,11 +336,33 @@ def run_local_benchmark_session(
     changelog_path: str | Path = DEFAULT_RAG_CHANGELOG_PATH,
     benchmark_session_id: str | None = None,
     run_benchmark_fn: Callable[..., dict[str, Any]] = run_benchmark,
+    readiness_report_fn: Callable[..., dict[str, Any]] | None = build_local_benchmark_readiness_report,
 ) -> dict[str, Any]:
     stored_session_getter = getattr(repository, "get_rag_benchmark_session", None)
     session_record: dict[str, Any] | None = None
     if _clean_text(benchmark_session_id) and callable(stored_session_getter):
         session_record = stored_session_getter(_clean_text(benchmark_session_id))
+
+    if readiness_report_fn is not None:
+        readiness_report = readiness_report_fn(
+            repository=repository,
+            benchmark_specs=benchmark_specs,
+        )
+        if not bool(readiness_report.get("ready_for_session")):
+            error = BenchmarkReadinessError(
+                format_local_benchmark_readiness_failures(readiness_report),
+                report=readiness_report,
+            )
+            if session_record is not None:
+                repository.upsert_rag_benchmark_session(
+                    session={
+                        **session_record,
+                        "status": "failed",
+                        "error_message": str(error),
+                        "finished_at": _utc_now(),
+                    }
+                )
+            raise error
 
     if session_record is None:
         session_record = build_local_benchmark_session_record(

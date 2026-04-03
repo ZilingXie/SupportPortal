@@ -1836,3 +1836,93 @@ For each new entry, record:
   - `node --check ui/dashboard-ui/rag/app.js`
   - `node --check ui/dashboard-ui/app.js`
   - `git diff --check`
+
+## 2026-04-03 - Local Benchmark Readiness Guard And Corpus Prep
+
+- Summary:
+  - Added a single local-benchmark readiness report that verifies all three NDJSON benchmark files are parseable, every RAG `expected_document_id` exists in the active corpus, the three content-hash dataset mirrors exist in `support_rag_datasets`, and source docs are idle before any full benchmark session can start.
+  - Added a corpus-prep script that restores missing official benchmark docs from `ag_docs` and then syncs the three local benchmark datasets so the next session can establish a trustworthy baseline instead of running against a mismatched corpus.
+- Reason:
+  - The current benchmark flow was operational, but it still allowed false-start session runs when the benchmark truth referenced official docs that were no longer active in the database and when local benchmark mirrors had not been synced into dataset tables.
+- Affected files/config:
+  - `backend/Dockerfile`
+  - `backend/services/rag_benchmark_readiness.py`
+  - `backend/services/rag_benchmark_session.py`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/rag_api.py`
+  - `scripts/run_rag_benchmark_session.py`
+  - `scripts/prepare_rag_benchmark_corpus.py`
+  - `backend/tests/test_rag_benchmark_runtime_contract.py`
+  - `backend/tests/test_rag_benchmark_readiness.py`
+  - `backend/tests/test_prepare_rag_benchmark_corpus_cli.py`
+  - `backend/tests/test_run_rag_benchmark_session_cli.py`
+  - `backend/tests/test_rag_benchmark_session.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Full local benchmark sessions now fail fast with an explicit readiness error instead of silently producing misleading retrieval/generation scores against an incomplete active corpus.
+  - The new prep path restores missing official benchmark documents through the existing ingestion pipeline, preserves the local benchmark files as the single source of truth, and only treats the session as runnable once the mirrored dataset versions match the local file content hashes.
+  - The backend image now ships `docs/` and `benchmarks/`, so containerized `rag_api` and `rag_worker` can build benchmark session records and load the three local benchmark datasets without host-only file assumptions.
+  - No benchmark file regeneration, embedding model swap, vector reset, or retrieval-strategy replacement was introduced in this turn.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_benchmark_runtime_contract.py backend/tests/test_run_rag_benchmark_cli.py backend/tests/test_run_rag_benchmark_session_cli.py backend/tests/test_local_benchmark_sync.py backend/tests/test_rag_benchmark_session.py backend/tests/test_rag_benchmark_readiness.py backend/tests/test_prepare_rag_benchmark_corpus_cli.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_benchmark_readiness.py backend/services/rag_benchmark_session.py backend/repositories/knowledge_repository.py backend/rag_api.py scripts/run_rag_benchmark_session.py scripts/prepare_rag_benchmark_corpus.py`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python scripts/prepare_rag_benchmark_corpus.py`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python scripts/prepare_rag_benchmark_corpus.py --check-only`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health`
+  - `POST /api/dashboard/rag/benchmarks/sessions/local-run -> 202 Accepted (benchmark_session_id=BSESS-5CF8EEBD3A1C)`
+
+## 2026-04-03 - BM25 Benchmark Session Bind Fix
+
+- Summary:
+  - Fixed the BM25 retrieval query parameter order so `v.index_role` is bound with the actual index-role string instead of accidentally receiving `bm25_k1`.
+  - Aborted the first post-prep benchmark session after detecting the runtime bind bug in worker logs, rebuilt the containers, and requeued a clean baseline session.
+- Reason:
+  - The first benchmark rerun surfaced a real runtime defect during BM25 retrieval (`operator does not exist: text = double precision`), which would have polluted any baseline metrics collected from that session.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - BM25 retrieval no longer falls back because of an internal SQL bind-order bug when benchmark sessions execute the primary/shadow BM25 tools.
+  - Benchmark session `BSESS-5CF8EEBD3A1C` was explicitly marked `failed` after startup because it ran before the fix; clean rerun `BSESS-6034FFA77398` was queued after container rebuild.
+  - No benchmark truth, corpus contents, embedding model, or routing policy changed in this fix.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_qa.py backend/tests/test_rag_benchmark_runtime_contract.py backend/tests/test_run_rag_benchmark_cli.py backend/tests/test_run_rag_benchmark_session_cli.py backend/tests/test_local_benchmark_sync.py backend/tests/test_rag_benchmark_session.py backend/tests/test_rag_benchmark_readiness.py backend/tests/test_prepare_rag_benchmark_corpus_cli.py -q`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `curl -sS http://localhost:8080/health`
+  - `UPDATE supportportal.support_rag_benchmark_sessions ... WHERE benchmark_session_id='BSESS-5CF8EEBD3A1C'`
+  - `POST /api/dashboard/rag/benchmarks/sessions/local-run -> 202 Accepted (benchmark_session_id=BSESS-6034FFA77398)`
+
+## 2026-04-03 - Live RAG telemetry failure no longer masquerades as insufficient evidence
+
+- Summary:
+  - Promoted live-query telemetry writes in `rag_api` to best-effort behavior so `/internal/rag/query` still returns the grounded answer when `support_rag_query_runs` persistence fails after generation.
+  - Split live ticket investigation reasons so real RAG internal failures surface as `rag_service_error`, true service reachability/configuration failures remain `rag_unavailable`, and only actual evidence gaps stay `rag_insufficient_evidence`.
+  - Advanced the knowledge bootstrap version so existing databases replay the `support_rag_query_runs` `usage_ledger` and `usage_summary` `ALTER TABLE` statements during initialization.
+- Reason:
+  - Live ticket queries such as `how to join channel` were successfully producing an answer inside `rag_api`, but the final telemetry insert crashed on databases that still lacked `usage_ledger` and `usage_summary`. The resulting HTTP 500 was then collapsed into `rag_unavailable` and later into `rag_insufficient_evidence`, which incorrectly opened engineer cases for an infrastructure/schema problem.
+- Affected files/config:
+  - `backend/rag_api.py`
+  - `backend/main.py`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/services/investigation_flow.py`
+  - `backend/services/engineer_agent.py`
+  - `backend/tests/test_rag_api.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_ticket_orchestrator.py`
+  - `backend/tests/test_knowledge_repository_bm25.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Existing databases now require one more knowledge bootstrap pass to mark version `2026-04-03-rag-live-query-service-error-v1`, which replays the already-defined `usage_ledger` and `usage_summary` query-run column alters.
+  - Live `/internal/rag/query` success responses are no longer blocked by telemetry-write failures, so customer-visible grounded answers survive schema drift in `support_rag_query_runs`.
+  - Engineer handoff packets and investigation openings now preserve infrastructure failure reasons instead of mislabeling them as insufficient evidence.
+  - No retrieval algorithm, corpus contents, chunking policy, embedding model, or benchmark truth changed in this fix.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_api.py backend/tests/test_ticket_orchestrator.py backend/tests/test_investigation_flow.py backend/tests/test_knowledge_repository_bm25.py -q`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/rag_api.py backend/main.py backend/repositories/knowledge_repository.py backend/services/ticket_orchestrator.py backend/services/investigation_flow.py backend/services/engineer_agent.py`
+  - `git diff --check`
