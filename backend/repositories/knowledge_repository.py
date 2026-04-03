@@ -1973,6 +1973,39 @@ class PostgresKnowledgeRepository:
             (_KNOWLEDGE_BOOTSTRAP_REPOSITORY, _KNOWLEDGE_BOOTSTRAP_VERSION),
         )
 
+    def _ensure_rag_query_telemetry_schema(self, *, cur: psycopg.Cursor[Any]) -> None:
+        query_run_alters = [
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS confidence_score DOUBLE PRECISION",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS embedding_provider TEXT",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS embedding_model TEXT",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS embedding_dimensions INTEGER",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS embedding_request_meta JSONB NOT NULL DEFAULT '[]'::jsonb",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS query_understanding_meta JSONB NOT NULL DEFAULT '{{}}'::jsonb",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS usage_ledger JSONB NOT NULL DEFAULT '[]'::jsonb",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS usage_summary JSONB NOT NULL DEFAULT '{{}}'::jsonb",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS primary_source_type TEXT",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS primary_chunk_strategy TEXT",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS reranker_provider TEXT",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS reranker_model TEXT",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS generation_mode TEXT NOT NULL DEFAULT 'structured_answer'",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS structured_retry_used BOOLEAN NOT NULL DEFAULT FALSE",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS extractive_fallback_used BOOLEAN NOT NULL DEFAULT FALSE",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS selected_doc_count INTEGER",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS top1_similarity_score DOUBLE PRECISION",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS avg_selected_similarity_score DOUBLE PRECISION",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS citation_coverage_ratio DOUBLE PRECISION",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS error_flag BOOLEAN NOT NULL DEFAULT FALSE",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS timeout_flag BOOLEAN NOT NULL DEFAULT FALSE",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS error_type TEXT",
+        ]
+        for statement in query_run_alters:
+            cur.execute(sql.SQL(statement).format(self._table("support_rag_query_runs")))
+        cur.execute(
+            sql.SQL(
+                "ALTER TABLE {} ADD COLUMN IF NOT EXISTS candidate_trace JSONB NOT NULL DEFAULT '{{}}'::jsonb"
+            ).format(self._table("support_rag_query_candidates"))
+        )
+
     def initialize(self) -> None:
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -1988,6 +2021,7 @@ class PostgresKnowledgeRepository:
                 )
                 self._ensure_bootstrap_version_table(cur=cur)
                 if self._bootstrap_version_matches(cur=cur):
+                    self._ensure_rag_query_telemetry_schema(cur=cur)
                     conn.commit()
                     return
                 cur.execute("CREATE EXTENSION IF NOT EXISTS vector")

@@ -12,6 +12,51 @@ For each new entry, record:
 
 ## 2026-04-02 - Query-understanding layer before client RAG retrieval
 
+## 2026-04-03 - Client RAG latency and failure-path hardening
+
+- Summary: Hardened the client RAG path so telemetry persistence is best-effort, startup now self-heals missing live-query telemetry columns even when the bootstrap version already matches, simple lexical how-to queries run a leaner first-pass retrieval plan, vector/rerank branches fail fast when providers are unavailable, BM25 regression coverage now protects the fixed SQL path, and the client-facing RAG timeout is split out to a dedicated 25-second budget.
+- Reason: Client questions were spending too long in retrieval/generation and could still fall into `rag_unavailable` because a non-core telemetry write or a dead external dependency delayed or broke the answer path. The goal of this change is to preserve grounded answers first and only degrade optional observability or retrieval branches when dependencies are unhealthy.
+- Affected files or config:
+  - `backend/rag_api.py`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/tests/test_rag_api.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_knowledge_repository_bm25.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `backend/tests/test_single_host_compose.py`
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `docs/rag_change_log.md`
+  - `docs/prompt_change_log.md`
+- Data impact:
+  - `/internal/rag/query` now keeps returning the grounded answer even if `record_rag_query_run(...)` fails, and the returned `evidence_summary` now carries `diagnostics.telemetry_persist_failed` metadata so downstream ticket/dashboard detail can still expose the degraded telemetry state.
+  - Startup initialization now always replays safe `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements for `support_rag_query_runs`, including `usage_ledger`, `usage_summary`, and `candidate_trace`, even when the knowledge bootstrap version already matches the current release marker.
+  - Runtime retrieval config now has explicit vector/rerank capability gating and a leaner lexical first pass, reducing wasted fan-out when provider credentials or provider health are missing.
+  - Client callers now use `CLIENT_RAG_SERVICE_TIMEOUT_SECONDS` as the primary RAG-service deadline, decoupling end-user latency from longer shared/internal timeout defaults.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/rag_api.py backend/tests/test_rag_api.py`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_rag_api backend.tests.test_rag_agentic backend.tests.test_rag_qa backend.tests.test_knowledge_repository_bm25 backend.tests.test_llm_profiles backend.tests.test_rag_service_client`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_single_host_compose`
+  - `bash scripts/workflow/link_worktree_env.sh /Users/xieziling/.config/superpowers/worktrees/SupportPortal/rag-latency-optimization`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://localhost:8080/health`
+  - `podman exec deployment_api_1 python -c "from backend.services.rag_service_client import _timeout_seconds; print(_timeout_seconds())"`
+  - `podman exec deployment_rag_api_1 python -c "import json; from backend.services.rag_qa import _get_rag_config; cfg=_get_rag_config(); print(json.dumps({'vector_enabled': cfg.get('vector_enabled'), 'rerank_enabled': cfg.get('rerank_enabled'), 'rerank_timeout_seconds': cfg.get('rerank_timeout_seconds'), 'request_timeout_seconds': cfg.get('request_timeout_seconds')}, ensure_ascii=False))"`
+  - Verification result:
+    - Focused regression suite passed: `91 tests` in the targeted RAG/API/config set.
+    - Single-host compose contract test passed: `2 tests`.
+    - `py_compile` completed without errors for the touched API test surface.
+    - `podman-compose ... ps` showed all single-host services `Up`, and the rebuilt containers picked up the new env defaults.
+    - Host `/health` returned `status="ok"` but still reported `knowledge_storage="unreachable"` and `rag_service="unreachable"` in the current environment, so live end-to-end RAG answer smoke remains blocked by the existing knowledge-store connectivity state rather than by this code change.
+    - Runtime container probes confirmed `CLIENT_RAG_SERVICE_TIMEOUT_SECONDS=25.0` on `deployment_api_1`, and `deployment_rag_api_1` reported `vector_enabled=true`, `rerank_enabled=true`, `rerank_timeout_seconds=6.0`.
+
 - Summary: Added an English-only query-understanding layer ahead of the client AI `rag` skill, including glossary normalization, schema-based self-query planning, retrieval-oriented rewrite/enhancement, limited multi-part decomposition, richer trace metadata, and live telemetry persistence for query-understanding outputs.
 - Reason: The client AI flow already had strong routing and post-RAG sufficiency gating, but retrieval still relied too heavily on raw customer wording. This change improves retrieval planning before candidate search so the system can normalize Agora terminology, infer stable metadata filters, expand retrieval queries safely, and decompose complex technical questions without changing the external ticket API.
 - Affected files or config:

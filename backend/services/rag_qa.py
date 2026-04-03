@@ -288,6 +288,74 @@ def _feature_flag_enabled(name: str, default: bool = True) -> bool:
     return default
 
 
+def _clean_env_text(name: str) -> str:
+    return (os.getenv(name) or "").strip()
+
+
+def _openai_api_key() -> str:
+    return _clean_env_text("OPENAI_API_KEY")
+
+
+def _siliconflow_api_key() -> str:
+    return (
+        _clean_env_text("SILICONFLOW_API_KEY")
+        or _clean_env_text("SILICONFLOW_KEY")
+        or _clean_env_text("SILLICONFLOW_KEY")
+        or _clean_env_text("siliconflow_key")
+        or _clean_env_text("silliconflow_key")
+    )
+
+
+def _embedding_capability_enabled(provider: str | None = None) -> bool:
+    if not _feature_flag_enabled("RAG_VECTOR_RETRIEVAL_ENABLED", True):
+        return False
+    normalized_provider = str(provider or embedding_provider_name()).strip().lower()
+    if normalized_provider == "siliconflow":
+        return bool(_siliconflow_api_key())
+    if normalized_provider == "openai":
+        return bool(_openai_api_key())
+    if normalized_provider == "local_bge_m3":
+        return True
+    return False
+
+
+def _rerank_capability_enabled(
+    *,
+    provider: str,
+    api_key: str,
+    base_url: str,
+    model: str,
+) -> bool:
+    if not _feature_flag_enabled("RAG_RERANK_ENABLED", True):
+        return False
+    normalized_provider = str(provider or "").strip().lower()
+    if normalized_provider != "siliconflow":
+        return False
+    return bool(api_key and base_url and model)
+
+
+def _is_simple_lexical_query(message: str) -> bool:
+    normalized = " ".join(str(message or "").split()).strip()
+    if not normalized:
+        return False
+    if re.search(r"\b\d{3,5}\b", normalized.lower()):
+        return False
+    return len(normalized.split()) <= 6 and len(_extract_query_terms(normalized, max_terms=8)) <= 4
+
+
+def _effective_answer_reasoning_effort(
+    *,
+    base_effort: str | None,
+    query_class: str | None = None,
+    query_type: str | None = None,
+) -> str:
+    normalized = str(base_effort or "").strip().lower() or "medium"
+    complex_default = _clean_env_text("RAG_COMPLEX_ANSWER_REASONING_EFFORT").lower() or "high"
+    if query_class in {"troubleshooting_why", "comparison"} or query_type == "troubleshooting":
+        return complex_default
+    return normalized
+
+
 def _copy_chunk(chunk: RetrievedChunk) -> RetrievedChunk:
     return replace(
         chunk,
@@ -421,7 +489,7 @@ def _classify_agentic_query(
 
 def _tool_order_for_query_class(query_class: str) -> tuple[list[str], str, str]:
     if query_class == "lexical_exact":
-        return (["p_bm25", "p_fts", "p_vec", "s_bm25", "s_fts", "s_vec"], "exact_match", "lexical")
+        return (["p_bm25", "p_fts", "p_vec"], "exact_match", "lexical")
     if query_class == "troubleshooting_why":
         return (["p_vec", "s_vec", "p_bm25", "s_bm25", "p_fts", "s_fts"], "causal_grounding", "semantic")
     if query_class == "comparison":
@@ -535,14 +603,20 @@ def _build_agentic_retrieval_plan(
     query_class = _classify_agentic_query(message, query_understanding)
     tool_order, evidence_goal, recovery_bias = _tool_order_for_query_class(query_class)
     query_variants = [("original", " ".join(str(message or "").split()).strip())]
+    simple_lexical_query = query_class == "lexical_exact" and _is_simple_lexical_query(message)
     if query_understanding is not None:
         semantic_query = " ".join(str(query_understanding.semantic_query or "").split()).strip()
-        if semantic_query and semantic_query.lower() != query_variants[0][1].lower():
+        if (
+            not simple_lexical_query
+            and semantic_query
+            and semantic_query.lower() != query_variants[0][1].lower()
+        ):
             query_variants.append(("semantic", semantic_query))
-        for rewritten in list(query_understanding.rewritten_queries)[:1]:
-            normalized = " ".join(str(rewritten or "").split()).strip()
-            if normalized and normalized.lower() not in {item[1].lower() for item in query_variants}:
-                query_variants.append(("rewrite", normalized))
+        if not simple_lexical_query:
+            for rewritten in list(query_understanding.rewritten_queries)[:1]:
+                normalized = " ".join(str(rewritten or "").split()).strip()
+                if normalized and normalized.lower() not in {item[1].lower() for item in query_variants}:
+                    query_variants.append(("rewrite", normalized))
         if query_class == "comparison":
             for subquery in list(query_understanding.decomposition_subqueries)[:2]:
                 normalized = " ".join(str(subquery or "").split()).strip()
@@ -888,9 +962,17 @@ def _execute_agentic_round(
 
     for tool_name in tool_names:
         family = _tool_family(tool_name)
+        if family == "vector" and not bool(
+            config.get("_vector_runtime_available", config.get("vector_enabled", True))
+        ):
+            continue
         index_role = _tool_index_role(tool_name)
         family_bucket_labels: set[str] = set()
         for query_kind, query_text in query_variants:
+            if family == "vector" and not bool(
+                config.get("_vector_runtime_available", config.get("vector_enabled", True))
+            ):
+                break
             current_tool_label = tool_name
             seeded_chunks = None
             if round_index == 1 and query_kind == "original":
@@ -934,6 +1016,10 @@ def _execute_agentic_round(
                         )
                         keyword_latency_ms += (time.perf_counter() - started_at) * 1000
                 except Exception as exc:
+                    if family == "vector":
+                        config["_vector_runtime_available"] = False
+                        logger.warning("RAG %s retrieval failed for %s query: %s", tool_name, query_kind, exc)
+                        continue
                     if family not in {"bm25", "fts"}:
                         logger.warning("RAG %s retrieval failed for %s query: %s", tool_name, query_kind, exc)
                         continue
@@ -1009,14 +1095,15 @@ def _execute_agentic_round(
             limit=int(config.get("rerank_top_n") or len(retrieved_chunks) or 1),
             query=message,
         ) or reranked_chunks or retrieved_chunks
-        rerank_started_at = time.perf_counter()
-        reranked_chunks = _rerank_chunks(
-            message,
-            reranked_chunks,
-            config,
-            limit=int(config.get("rerank_top_n") or len(reranked_chunks) or 1),
-        ) or reranked_chunks
-        rerank_latency_ms += (time.perf_counter() - rerank_started_at) * 1000
+        if bool(config.get("_rerank_runtime_available", config.get("rerank_enabled", True))):
+            rerank_started_at = time.perf_counter()
+            reranked_chunks = _rerank_chunks(
+                message,
+                reranked_chunks,
+                config,
+                limit=int(config.get("rerank_top_n") or len(reranked_chunks) or 1),
+            ) or reranked_chunks
+            rerank_latency_ms += (time.perf_counter() - rerank_started_at) * 1000
 
     final_shadow_cap = int(config.get("agent_final_shadow_cap") or 1)
     recovery_shadow_cap = int(config.get("agent_recovery_shadow_cap") or 2)
@@ -1646,6 +1733,25 @@ def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
     raw_table = (os.getenv("PGVECTOR_TABLE") or DEFAULT_PGVECTOR_TABLE).strip() or DEFAULT_PGVECTOR_TABLE
     table_name = raw_table if "." in raw_table else f"{schema}.{raw_table}"
     context_window = _safe_int_env("RAG_CONTEXT_WINDOW_TOKENS", model_context_window(answer_profile.model))
+    embedding_provider = embedding_provider_name()
+    embedding_model = embedding_model_id()
+    rerank_provider = (os.getenv("RAG_RERANK_PROVIDER") or "siliconflow").strip() or "siliconflow"
+    rerank_model = (os.getenv("RAG_RERANK_MODEL") or "BAAI/bge-reranker-v2-m3").strip() or "BAAI/bge-reranker-v2-m3"
+    rerank_api_key = (
+        (os.getenv("RAG_RERANK_API_KEY") or "").strip()
+        or _siliconflow_api_key()
+    )
+    rerank_base_url = (
+        (os.getenv("RAG_RERANK_BASE_URL") or "").strip()
+        or (os.getenv("SILICONFLOW_BASE_URL") or "https://api.siliconflow.cn/v1").strip()
+    )
+    vector_enabled = _embedding_capability_enabled(embedding_provider)
+    rerank_enabled = _rerank_capability_enabled(
+        provider=rerank_provider,
+        api_key=rerank_api_key,
+        base_url=rerank_base_url,
+        model=rerank_model,
+    )
     return {
         "dsn": dsn,
         "app_schema": schema,
@@ -1671,22 +1777,14 @@ def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
         "context_compression_enabled": _feature_flag_enabled("RAG_CONTEXT_COMPRESSION_ENABLED", True),
         "context_compression_model": compression_profile.model,
         "context_compression_reasoning_effort": compression_profile.reasoning_effort,
-        "embedding_provider": embedding_provider_name(),
-        "embedding_model": embedding_model_id(),
-        "rerank_provider": (os.getenv("RAG_RERANK_PROVIDER") or "siliconflow").strip() or "siliconflow",
-        "rerank_model": (os.getenv("RAG_RERANK_MODEL") or "BAAI/bge-reranker-v2-m3").strip() or "BAAI/bge-reranker-v2-m3",
-        "rerank_api_key": (
-            (os.getenv("RAG_RERANK_API_KEY") or "").strip()
-            or (os.getenv("SILICONFLOW_API_KEY") or "").strip()
-            or (os.getenv("SILICONFLOW_KEY") or "").strip()
-            or (os.getenv("SILLICONFLOW_KEY") or "").strip()
-            or (os.getenv("siliconflow_key") or "").strip()
-            or (os.getenv("silliconflow_key") or "").strip()
-        ),
-        "rerank_base_url": (
-            (os.getenv("RAG_RERANK_BASE_URL") or "").strip()
-            or (os.getenv("SILICONFLOW_BASE_URL") or "https://api.siliconflow.cn/v1").strip()
-        ),
+        "embedding_provider": embedding_provider,
+        "embedding_model": embedding_model,
+        "vector_enabled": vector_enabled,
+        "rerank_provider": rerank_provider,
+        "rerank_model": rerank_model,
+        "rerank_api_key": rerank_api_key,
+        "rerank_base_url": rerank_base_url,
+        "rerank_enabled": rerank_enabled,
         "rerank_timeout_seconds": _safe_float_env("RAG_RERANK_TIMEOUT_SECONDS", 10.0),
         "rerank_max_retries": _safe_int_env("RAG_RERANK_MAX_RETRIES", 1),
         "request_timeout_seconds": answer_profile.timeout_seconds,
@@ -2964,6 +3062,7 @@ def _rerank_chunks(
             logger.warning("RAG rerank request failed attempt=%s error=%s", attempt + 1, exc)
             raw_payload = None
     if raw_payload is None:
+        config["_rerank_runtime_available"] = False
         return chunks
 
     results = raw_payload.get("results") if isinstance(raw_payload, dict) else None
@@ -3471,13 +3570,19 @@ def _run_rag_query_legacy(message: str, top_k: int | None = None) -> RagQueryRes
             final_chunks = packed_chunks
     allowed_chunk_ids = {chunk.chunk_id for chunk in final_chunks}
     grounded_overlap = _has_grounded_keyword_overlap(message, final_chunks)
+    generation_config = dict(config)
+    generation_config["reasoning_effort"] = _effective_answer_reasoning_effort(
+        base_effort=str(config.get("reasoning_effort") or ""),
+        query_class=_classify_agentic_query(message, query_understanding),
+        query_type=query_type,
+    )
     payload: dict[str, Any] | None = None
     try:
         generation_started_at = time.perf_counter()
         payload, prompt_tokens, completion_tokens, model_name = _invoke_llm_payload_with_trace(
             message,
             final_chunks,
-            config,
+            generation_config,
             strict_retry=False,
             packed_evidence=packed_evidence,
         )
@@ -3491,7 +3596,7 @@ def _run_rag_query_legacy(message: str, top_k: int | None = None) -> RagQueryRes
             retry_payload, retry_prompt_tokens, retry_completion_tokens, retry_model_name = _invoke_llm_payload_with_trace(
                 message,
                 final_chunks,
-                config,
+                generation_config,
                 strict_retry=True,
                 packed_evidence=packed_evidence,
             )
@@ -3749,15 +3854,29 @@ def _run_rag_query_agentic(
     _ = ticket_id
     _ = customer_id
     config = _get_rag_config(top_k=top_k)
+    config["_vector_runtime_available"] = bool(config.get("vector_enabled", True))
+    config["_rerank_runtime_available"] = bool(config.get("rerank_enabled", True))
     resolved_table = _resolve_active_vector_table(config)
     if resolved_table:
         config["table"] = resolved_table
     if not config["dsn"] or not config["api_key"]:
         return None
 
-    provider = get_embedding_provider()
-    embedding_dimensions = getattr(provider, "vector_dim", None)
+    provider: Any | None = None
+    embedding_dimensions = None
+    if bool(config.get("vector_enabled")):
+        try:
+            provider = get_embedding_provider()
+            embedding_dimensions = getattr(provider, "vector_dim", None)
+        except Exception as exc:
+            logger.warning("RAG vector retrieval disabled for this query: %s", exc)
+            config["vector_enabled"] = False
+            config["_vector_runtime_available"] = False
     query_type = _infer_query_type(message)
+    preliminary_query_class = _classify_agentic_query(message, None)
+    warm_vector_enabled = bool(config.get("vector_enabled")) and not (
+        preliminary_query_class == "lexical_exact" and _is_simple_lexical_query(message)
+    )
     query_understanding_enabled = _feature_flag_enabled("RAG_QUERY_UNDERSTANDING_ENABLED", True)
     query_rewrite_enabled = _feature_flag_enabled("RAG_QUERY_REWRITE_ENABLED", True)
     query_decomposition_enabled = _feature_flag_enabled("RAG_QUERY_DECOMPOSITION_ENABLED", True)
@@ -3820,18 +3939,19 @@ def _run_rag_query_agentic(
         return list(chunks or []), round((time.perf_counter() - started_at) * 1000, 2)
 
     if query_understanding_enabled:
-        query_understanding_executor = ThreadPoolExecutor(max_workers=3)
+        query_understanding_executor = ThreadPoolExecutor(max_workers=3 if warm_vector_enabled else 2)
         warm_retrieval_config = dict(config)
         warm_retrieval_config["_retrieval_plan"] = RetrievalPlan(semantic_query=str(message or "").strip())
         query_understanding_future = query_understanding_executor.submit(understand_rag_query, message)
-        warm_original_vector_future = query_understanding_executor.submit(
-            _timed_retrieve,
-            _retrieve_chunks,
-            message,
-            warm_retrieval_config,
-            limit=int(config.get("vector_candidate_k") or config.get("top_k") or 5),
-            index_role="primary",
-        )
+        if warm_vector_enabled:
+            warm_original_vector_future = query_understanding_executor.submit(
+                _timed_retrieve,
+                _retrieve_chunks,
+                message,
+                warm_retrieval_config,
+                limit=int(config.get("vector_candidate_k") or config.get("top_k") or 5),
+                index_role="primary",
+            )
         warm_original_bm25_future = query_understanding_executor.submit(
             _timed_retrieve,
             _retrieve_bm25_chunks,
@@ -3849,6 +3969,7 @@ def _run_rag_query_agentic(
             try:
                 warm_original_vector_chunks, warm_original_vector_latency_ms = warm_original_vector_future.result()
             except Exception as exc:
+                config["_vector_runtime_available"] = False
                 logger.warning("Agentic warm vector retrieval failed: %s", exc)
         if warm_original_bm25_future is not None:
             try:
@@ -4112,6 +4233,12 @@ def _run_rag_query_agentic(
 
     allowed_chunk_ids = {chunk.chunk_id for chunk in final_chunks if chunk.chunk_id}
     grounded_overlap = _has_grounded_keyword_overlap(message, final_chunks)
+    generation_config = dict(config)
+    generation_config["reasoning_effort"] = _effective_answer_reasoning_effort(
+        base_effort=str(config.get("reasoning_effort") or ""),
+        query_class=plan.query_class,
+        query_type=query_type,
+    )
     if final_chunks and bool(config.get("context_budget_enabled")):
         compression_defaults = resolve_model_profile(RAG_CONTEXT_COMPRESSION_SCENARIO)
         compression_profile = ModelProfile(
@@ -4156,7 +4283,7 @@ def _run_rag_query_agentic(
     payload, prompt_tokens, completion_tokens, model_name = _invoke_llm_payload_with_trace(
         message,
         final_chunks,
-        config,
+        generation_config,
         strict_retry=False,
         packed_evidence=packed_evidence,
     )
@@ -4170,7 +4297,7 @@ def _run_rag_query_agentic(
         retry_payload, retry_prompt_tokens, retry_completion_tokens, retry_model_name = _invoke_llm_payload_with_trace(
             message,
             final_chunks,
-            config,
+            generation_config,
             strict_retry=True,
             packed_evidence=packed_evidence,
         )

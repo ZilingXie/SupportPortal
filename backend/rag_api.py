@@ -218,9 +218,9 @@ def _record_rag_query_run_best_effort(
     ticket_id: str | None,
     run: dict[str, Any],
     candidates: list[dict[str, Any]],
-) -> None:
+) -> dict[str, Any] | None:
     if not knowledge_repository.is_enabled():
-        return
+        return None
     try:
         knowledge_repository.record_rag_query_run(run=run, candidates=candidates)
     except Exception as exc:
@@ -232,6 +232,26 @@ def _record_rag_query_run_best_effort(
             exc.__class__.__name__,
             exc,
         )
+        return {
+            "telemetry_persist_failed": True,
+            "telemetry_error_type": exc.__class__.__name__,
+            "telemetry_error_message": str(exc),
+        }
+    return None
+
+
+def _attach_telemetry_diagnostics(
+    evidence_summary: dict[str, Any],
+    telemetry_diagnostics: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not telemetry_diagnostics:
+        return evidence_summary
+    diagnostics = dict(evidence_summary.get("diagnostics") or {})
+    diagnostics.update(telemetry_diagnostics)
+    return {
+        **evidence_summary,
+        "diagnostics": diagnostics,
+    }
 
 class RagQueryRequest(BaseModel):
     question: str = Field(min_length=1, max_length=20000)
@@ -585,7 +605,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
         )
         usage_ledger: list[dict[str, Any]] = []
         usage_summary = _empty_usage_summary()
-        _record_rag_query_run_best_effort(
+        telemetry_diagnostics = _record_rag_query_run_best_effort(
             request_id=request.request_id,
             ticket_id=request.ticket_id,
             run={
@@ -661,6 +681,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             cited_chunk_ids=set(),
             query_understanding={},
         )
+        evidence_summary = _attach_telemetry_diagnostics(evidence_summary, telemetry_diagnostics)
         return {
             "decision": "escalate",
             "answer": "",
@@ -676,7 +697,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
     if result is None:
         usage_ledger: list[dict[str, Any]] = []
         usage_summary = _empty_usage_summary()
-        _record_rag_query_run_best_effort(
+        telemetry_diagnostics = _record_rag_query_run_best_effort(
             request_id=request.request_id,
             ticket_id=request.ticket_id,
             run={
@@ -764,6 +785,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             cited_chunk_ids=set(),
             query_understanding={},
         )
+        evidence_summary = _attach_telemetry_diagnostics(evidence_summary, telemetry_diagnostics)
         return {
             "decision": "escalate",
             "answer": "",
@@ -809,7 +831,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
         cited_chunk_ids=set(trace.cited_chunk_ids or []),
         query_understanding=query_understanding_meta,
     )
-    _record_rag_query_run_best_effort(
+    telemetry_diagnostics = _record_rag_query_run_best_effort(
         request_id=request.request_id,
         ticket_id=request.ticket_id,
         run={
@@ -872,6 +894,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
         },
         candidates=candidates,
     )
+    evidence_summary = _attach_telemetry_diagnostics(evidence_summary, telemetry_diagnostics)
 
     if rag_answer.answer.strip() == INSUFFICIENT_EVIDENCE_REPLY:
         return {

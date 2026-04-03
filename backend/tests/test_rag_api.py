@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 os.environ.setdefault("PGVECTOR_DSN", "postgresql://example.invalid/supportportal")
 os.environ.setdefault("PGVECTOR_DIM", "1024")
+os.environ.setdefault("TICKET_DB_DSN", "postgresql://example.invalid/supportportal")
 os.environ.setdefault("RAG_SERVICE_SHARED_TOKEN", "test-token")
 
 import backend.rag_api as rag_api
@@ -161,6 +162,14 @@ class RagApiTests(unittest.TestCase):
             payload["answer"],
             "Call joinChannel with the same channel name and token on each client.",
         )
+        self.assertEqual(
+            payload["evidence_summary"]["diagnostics"]["telemetry_persist_failed"],
+            True,
+        )
+        self.assertEqual(
+            payload["evidence_summary"]["diagnostics"]["telemetry_error_type"],
+            "RuntimeError",
+        )
         self.assertEqual(len(repository.recorded_runs), 1)
         self.assertTrue(
             any("RAG telemetry persistence failed" in message for message in logs.output),
@@ -190,6 +199,10 @@ class RagApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["decision"], "escalate")
         self.assertEqual(payload["reason"], "rag_service_error")
+        self.assertEqual(
+            payload["evidence_summary"]["diagnostics"]["telemetry_persist_failed"],
+            True,
+        )
         self.assertEqual(len(repository.recorded_runs), 1)
         self.assertTrue(
             any("operation=record_rag_query_run" in message for message in logs.output),

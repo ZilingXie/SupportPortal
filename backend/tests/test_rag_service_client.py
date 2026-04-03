@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import unittest
 import urllib.error
 import urllib.parse
@@ -237,6 +238,42 @@ class RagServiceClientTests(unittest.TestCase):
             ticket_context=[{"role": "customer", "content": "We only see this on iOS 4.6.0"}],
             top_k=None,
         )
+
+    def test_query_prefers_client_timeout_over_shared_service_timeout(self) -> None:
+        captured: dict[str, object] = {}
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"decision":"answer","answer":"ok","confidence":0.8,"sources":[],"citations":[]}'
+
+        def _fake_urlopen(request, timeout):
+            captured["timeout"] = timeout
+            return _FakeResponse()
+
+        with patch.dict(
+            os.environ,
+            {
+                "CLIENT_RAG_SERVICE_TIMEOUT_SECONDS": "25",
+                "RAG_SERVICE_TIMEOUT_SECONDS": "180",
+            },
+            clear=False,
+        ):
+            client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+            with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+                client.query(
+                    question="How do I join a channel?",
+                    request_id="rag-timeout-1",
+                    ticket_id="T-001",
+                    customer_id="C-001",
+                )
+
+        self.assertEqual(captured["timeout"], 25.0)
 
     def test_get_ingestion_report_uses_report_endpoint(self) -> None:
         client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
