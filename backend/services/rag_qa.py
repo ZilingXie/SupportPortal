@@ -3728,12 +3728,18 @@ def _run_rag_query_agentic(
     query_understanding_enabled = _feature_flag_enabled("RAG_QUERY_UNDERSTANDING_ENABLED", True)
     query_rewrite_enabled = _feature_flag_enabled("RAG_QUERY_REWRITE_ENABLED", True)
     query_decomposition_enabled = _feature_flag_enabled("RAG_QUERY_DECOMPOSITION_ENABLED", True)
+    query_expansion_enabled = _feature_flag_enabled("RAG_QUERY_EXPANSION_ENABLED", True)
     query_understanding: QueryUnderstandingResult | None = None
     effective_hard_filters: dict[str, str] = {}
     effective_soft_signals: dict[str, list[str]] = {}
+    effective_rule_expansions: list[str] = []
+    effective_llm_expansions: list[str] = []
+    effective_prf_expansions: list[str] = []
     effective_rewrites: list[str] = []
     effective_decomposition_subqueries: list[str] = []
     effective_query_understanding: QueryUnderstandingResult | None = None
+    first_pass_candidate_count = 0
+    second_pass_candidate_count = 0
     total_started_at = time.perf_counter()
     vector_latency_ms = 0.0
     bm25_latency_ms = 0.0
@@ -3771,7 +3777,13 @@ def _run_rag_query_agentic(
     if query_understanding is not None:
         effective_hard_filters = dict(query_understanding.retrieval_plan.hard_filters)
         effective_soft_signals = dict(query_understanding.retrieval_plan.soft_signals)
-        effective_rewrites = list(query_understanding.rewritten_queries) if query_rewrite_enabled else []
+        effective_rule_expansions = list(query_understanding.retrieval_plan.rule_expansions) if query_expansion_enabled else []
+        effective_llm_expansions = (
+            list(query_understanding.retrieval_plan.llm_expansions or query_understanding.rewritten_queries)
+            if query_rewrite_enabled
+            else []
+        )
+        effective_rewrites = list(effective_llm_expansions)
         effective_decomposition_subqueries = (
             list(query_understanding.decomposition_subqueries) if query_decomposition_enabled else []
         )
@@ -3782,6 +3794,13 @@ def _run_rag_query_agentic(
             rewritten_queries=list(effective_rewrites),
             decomposition_subqueries=list(effective_decomposition_subqueries),
             fallback_mode=query_understanding.fallback_mode,
+            rule_expansions=list(effective_rule_expansions),
+            llm_expansions=list(effective_llm_expansions),
+            prf_expansions=list(effective_prf_expansions),
+            hard_filter_sources=dict(query_understanding.retrieval_plan.hard_filter_sources),
+            soft_signal_sources=dict(query_understanding.retrieval_plan.soft_signal_sources),
+            cache_hit=bool(query_understanding.cache_hit),
+            prf_used=bool(query_understanding.retrieval_plan.prf_used),
         )
         effective_query_understanding = replace(
             query_understanding,
@@ -3822,12 +3841,16 @@ def _run_rag_query_agentic(
         final_rerank_info = dict(round_result.rerank_info)
         final_judge = round_result.judge
         agent_iterations.append(_iteration_trace_payload(round_result.iteration_trace))
+        if round_index == 1:
+            first_pass_candidate_count = len(round_result.retrieved_chunks)
+        second_pass_candidate_count = len(round_result.retrieved_chunks)
         if round_result.judge.decision == "recover_once" and round_index == 1:
             recovery_action = round_result.judge.recovery_action
             continue
         break
 
     retrieved_chunks = list(retrieved_chunk_map.values())
+    packed_evidence: PackedEvidence | None = None
 
     def _trace_for(
         answer: RagAnswer,
@@ -3900,7 +3923,11 @@ def _run_rag_query_agentic(
                 reranked_chunks,
                 selected_chunk_ids=unique_selected_chunk_ids,
             ),
-            selected_contexts=_selected_contexts(final_chunks),
+            selected_contexts=(
+                list(packed_evidence.selected_contexts)
+                if packed_evidence is not None and packed_evidence.selected_contexts
+                else _selected_contexts(final_chunks)
+            ),
             metadata_hints=final_rerank_info.get("hints") if isinstance(final_rerank_info.get("hints"), dict) else {},
             metadata_filter_applied=bool(final_rerank_info.get("applied_filter")),
             metadata_filter_type=(
@@ -3919,6 +3946,17 @@ def _run_rag_query_agentic(
             glossary_hit_terms=list(query_meta["glossary_hit_terms"]),
             applied_hard_filters=dict(query_meta["applied_hard_filters"]),
             applied_soft_signals=dict(query_meta["applied_soft_signals"]),
+            dictionary_hits=list(query_meta["dictionary_hits"]),
+            rule_expansions=list(query_meta["rule_expansions"]),
+            llm_expansions=list(query_meta["llm_expansions"]),
+            prf_expansions=list(query_meta["prf_expansions"]),
+            hard_filter_sources=dict(query_meta["hard_filter_sources"]),
+            cache_hit=bool(query_meta["cache_hit"]),
+            prf_used=bool(query_meta["prf_used"]),
+            query_expansion_enabled=query_expansion_enabled,
+            query_expansion_model=resolve_model_profile(QUERY_EXPANSION_SCENARIO).model if query_expansion_enabled else None,
+            first_pass_candidate_count=first_pass_candidate_count,
+            second_pass_candidate_count=second_pass_candidate_count,
             rewritten_queries=list(effective_rewrites),
             decomposition_subqueries=list(effective_decomposition_subqueries),
             agent_enabled=True,
@@ -3928,6 +3966,26 @@ def _run_rag_query_agentic(
             agent_recovery_action=recovery_action,
             ticket_context_used=bool(ticket_context),
             primary_shadow_mix=primary_shadow_mix,
+            context_budget_enabled=bool(config.get("context_budget_enabled")),
+            context_window=int(config.get("context_window") or 0),
+            reserved_output_tokens=int(config.get("reserved_output_tokens") or 0),
+            buffer_tokens=int(config.get("buffer_tokens") or 0),
+            raw_context_token_estimate=(
+                int(packed_evidence.raw_context_token_estimate)
+                if packed_evidence is not None
+                else estimate_text_tokens(_format_context(final_chunks))
+            ),
+            packed_context_token_estimate=(
+                int(packed_evidence.packed_context_token_estimate)
+                if packed_evidence is not None
+                else estimate_text_tokens(_format_context(final_chunks))
+            ),
+            compression_triggered=bool(packed_evidence.compression_triggered) if packed_evidence is not None else False,
+            compression_trigger_reason=packed_evidence.compression_trigger_reason if packed_evidence is not None else None,
+            compression_mode=packed_evidence.compression_mode if packed_evidence is not None else "raw",
+            compression_model=packed_evidence.compression_model if packed_evidence is not None else None,
+            extractive_segment_count=int(packed_evidence.extractive_segment_count) if packed_evidence is not None else 0,
+            packed_evidence_count=int(packed_evidence.packed_evidence_count) if packed_evidence is not None else len(final_chunks),
         )
 
     if not final_chunks or final_judge is None or final_judge.decision == "escalate":
@@ -3951,6 +4009,45 @@ def _run_rag_query_agentic(
 
     allowed_chunk_ids = {chunk.chunk_id for chunk in final_chunks if chunk.chunk_id}
     grounded_overlap = _has_grounded_keyword_overlap(message, final_chunks)
+    if final_chunks and bool(config.get("context_budget_enabled")):
+        compression_defaults = resolve_model_profile(RAG_CONTEXT_COMPRESSION_SCENARIO)
+        compression_profile = ModelProfile(
+            scenario=RAG_CONTEXT_COMPRESSION_SCENARIO,
+            provider="openai",
+            model=str(config.get("context_compression_model") or "").strip() or compression_defaults.model,
+            api_mode="openai_responses",
+            api_key=str(config.get("api_key") or "").strip() or compression_defaults.api_key,
+            reasoning_effort=str(config.get("context_compression_reasoning_effort") or "").strip()
+            or compression_defaults.reasoning_effort,
+            temperature=0.0,
+            timeout_seconds=compression_defaults.timeout_seconds,
+            max_retries=compression_defaults.max_retries,
+            fallback_models=tuple(compression_defaults.fallback_models),
+        )
+        packed_evidence = build_packed_evidence(
+            question=message,
+            chunks=list(final_chunks),
+            system_prompt_text=SYSTEM_PROMPT,
+            user_prompt_text=_build_answer_prompt_for_mode(message, "", repair_mode=False),
+            tool_schema_text="",
+            context_window=int(config.get("context_window") or model_context_window(str(config.get("chat_model") or ""))),
+            reserved_output_tokens=int(config.get("reserved_output_tokens") or 0),
+            buffer_tokens=int(config.get("buffer_tokens") or 0),
+            compression_enabled=bool(config.get("context_compression_enabled")),
+            compression_profile=compression_profile,
+            history_text=" ".join(
+                " ".join(str(item.get("content") or "").split()).strip()
+                for item in list(ticket_context or [])
+                if str(item.get("content") or "").strip()
+            ),
+            top_k=int(config.get("top_k") or 1),
+        )
+        packed_chunk_map = _chunk_map_by_id(final_chunks)
+        packed_chunks = [packed_chunk_map[chunk_id] for chunk_id in packed_evidence.chunk_ids if chunk_id in packed_chunk_map]
+        if packed_chunks:
+            final_chunks = packed_chunks
+            allowed_chunk_ids = {chunk.chunk_id for chunk in final_chunks if chunk.chunk_id}
+            grounded_overlap = _has_grounded_keyword_overlap(message, final_chunks)
     payload: dict[str, Any] | None = None
     generation_started_at = time.perf_counter()
     payload, prompt_tokens, completion_tokens, model_name = _invoke_llm_payload_with_trace(
@@ -3958,6 +4055,7 @@ def _run_rag_query_agentic(
         final_chunks,
         config,
         strict_retry=False,
+        packed_evidence=packed_evidence,
     )
     retry_required = (
         payload is None
@@ -3971,6 +4069,7 @@ def _run_rag_query_agentic(
             final_chunks,
             config,
             strict_retry=True,
+            packed_evidence=packed_evidence,
         )
         prompt_tokens += retry_prompt_tokens
         completion_tokens += retry_completion_tokens

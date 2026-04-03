@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from backend.services.llm_factory import LlmTextResult
+from backend.services.rag_context_budget import ContextBudget, PackedEvidence
 from backend.services.rag_qa import (
     INSUFFICIENT_EVIDENCE_REPLY,
     RetrievedChunk,
@@ -1810,9 +1811,19 @@ class RagQaHybridTests(unittest.TestCase):
         captured_prompts: list[str] = []
 
         def _capture_answer_call(*, profile, system_prompt: str, user_prompt: str, extra_payload=None):
-            _ = profile
             _ = system_prompt
             _ = extra_payload
+            if getattr(profile, "scenario", "") == "rag_agent_planner":
+                return LlmTextResult(
+                    text=(
+                        '{"query_class":"configuration","first_pass_tools":["p_bm25","p_fts","p_vec"],'
+                        '"decomposition_targets":[],"evidence_goal":"join channel flow",'
+                        '"recovery_bias":"lexical_recovery","ticket_context_used":false}'
+                    ),
+                    model_name="gpt-5.4-mini",
+                    prompt_tokens=10,
+                    completion_tokens=5,
+                )
             captured_prompts.append(user_prompt)
             return LlmTextResult(
                 text=(
@@ -1867,13 +1878,49 @@ class RagQaHybridTests(unittest.TestCase):
                         ):
                             with patch("backend.services.rag_qa._rerank_chunks", return_value=[long_chunk]):
                                 with patch(
-                                    "backend.services.rag_context_budget.invoke_responses_text",
-                                    return_value=LlmTextResult(
-                                        text=(
-                                            '{"evidence":[{"chunk_id":"chunk-1",'
-                                            '"packed_text":"Use joinChannel with the same channel name to join the same channel."}]}'
+                                    "backend.services.rag_qa.build_packed_evidence",
+                                    return_value=PackedEvidence(
+                                        budget=ContextBudget(
+                                            context_window=900,
+                                            system_prompt_tokens=120,
+                                            history_tokens=0,
+                                            prompt_tokens=90,
+                                            tool_tokens=0,
+                                            reserved_output_tokens=120,
+                                            buffer_tokens=80,
+                                            available_context_tokens=490,
                                         ),
-                                        model_name="gpt-5.4-mini",
+                                        chunk_ids=["chunk-1"],
+                                        prompt_context=(
+                                            "[chunk-1] official/channel.md | Channel > Join a channel\n"
+                                            "Use joinChannel with the same channel name to join the same channel."
+                                        ),
+                                        selected_contexts=[
+                                            {
+                                                "chunk_id": "chunk-1",
+                                                "doc_id": None,
+                                                "source_path": "official/channel.md",
+                                                "heading": "Channel > Join a channel",
+                                                "source_url": None,
+                                                "source_type": None,
+                                                "chunk_strategy": None,
+                                                "similarity": 0.97,
+                                                "metadata": {"product": "video-calling"},
+                                                "rerank_score": None,
+                                                "rerank_reasons": [],
+                                                "text": "Use joinChannel with the same channel name to join the same channel.",
+                                                "text_excerpt": "Use joinChannel with the same channel name to join the same channel.",
+                                                "packing_mode": "compressive",
+                                            }
+                                        ],
+                                        raw_context_token_estimate=480,
+                                        packed_context_token_estimate=120,
+                                        compression_triggered=True,
+                                        compression_trigger_reason="token_budget",
+                                        compression_mode="compressive",
+                                        compression_model="gpt-5.4-mini",
+                                        extractive_segment_count=1,
+                                        packed_evidence_count=1,
                                     ),
                                 ):
                                     with patch(
