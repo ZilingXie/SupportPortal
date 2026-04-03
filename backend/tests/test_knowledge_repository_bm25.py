@@ -187,7 +187,7 @@ class KnowledgeRepositoryBm25HookTests(unittest.TestCase):
         bm25_mock.assert_called_once()
         ensure_bm25_mock.assert_not_called()
 
-    def test_replace_document_chunks_does_not_update_bm25_index_for_shadow_rows(self) -> None:
+    def test_replace_document_chunks_updates_bm25_index_for_shadow_rows(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
         rows = [
             {
@@ -211,7 +211,7 @@ class KnowledgeRepositoryBm25HookTests(unittest.TestCase):
                             rows=rows,
                         )
 
-        bm25_mock.assert_not_called()
+        bm25_mock.assert_called_once()
         ensure_bm25_mock.assert_not_called()
 
     def test_replace_bm25_document_index_acquires_write_lock(self) -> None:
@@ -259,6 +259,37 @@ class KnowledgeRepositoryBm25HookTests(unittest.TestCase):
         self.assertEqual(rebuilt, 0)
         lock_mock.assert_called_once_with(cur=cursor, index_role="primary")
         self.assertEqual(order[:2], ["lock", "ensure"])
+
+    def test_rebuild_bm25_index_supports_shadow_rows(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        cursor = _SequenceCursor()
+
+        with patch(
+            "backend.repositories.knowledge_repository.build_bm25_index_payload",
+            return_value={"docs": [], "postings": [], "terms": [], "stats": {"doc_count": 0, "avg_doc_length": 0.0}},
+        ):
+            rebuilt = repository._rebuild_bm25_index_from_vector_table(cur=cursor, index_role="shadow")
+
+        self.assertEqual(rebuilt, 0)
+
+    def test_replace_bm25_document_index_supports_shadow_rows(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        cursor = _FakeCursor()
+
+        with patch.object(repository, "_ensure_bm25_tables"):
+            with patch.object(repository, "_acquire_bm25_write_lock") as lock_mock:
+                with patch(
+                    "backend.repositories.knowledge_repository.build_bm25_index_payload",
+                    return_value={"docs": [], "postings": [], "terms": [], "stats": {"doc_count": 0, "avg_doc_length": 0.0}},
+                ):
+                    repository._replace_bm25_document_index(
+                        cur=cursor,
+                        document_id="doc-1",
+                        index_role="shadow",
+                        rows=[],
+                    )
+
+        lock_mock.assert_called_once_with(cur=cursor, index_role="shadow")
 
 
 if __name__ == "__main__":

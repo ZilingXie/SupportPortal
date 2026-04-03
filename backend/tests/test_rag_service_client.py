@@ -165,6 +165,79 @@ class RagServiceClientTests(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 500)
         self.assertEqual(ctx.exception.payload, {"detail": "boom"})
 
+    def test_query_includes_ticket_context_in_json_payload(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+        captured: dict[str, object] = {}
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"decision":"answer","answer":"ok","confidence":0.8,"sources":[],"citations":[]}'
+
+        def _fake_urlopen(request, timeout):
+            captured["timeout"] = timeout
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return _FakeResponse()
+
+        with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            payload = client.query(
+                question="What does error 109 mean?",
+                request_id="rag-ctx-1",
+                ticket_id="T-001",
+                customer_id="C-001",
+                ticket_context=[
+                    {"role": "customer", "content": "We only see this on iOS 4.6.0"},
+                    {"role": "assistant", "content": "Investigating."},
+                ],
+            )
+
+        self.assertEqual(payload["decision"], "answer")
+        self.assertEqual(
+            captured["body"],
+            {
+                "question": "What does error 109 mean?",
+                "request_id": "rag-ctx-1",
+                "ticket_id": "T-001",
+                "customer_id": "C-001",
+                "ticket_context": [
+                    {"role": "customer", "content": "We only see this on iOS 4.6.0"},
+                    {"role": "assistant", "content": "Investigating."},
+                ],
+            },
+        )
+
+    def test_query_answer_with_recovery_detail_forwards_ticket_context(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+
+        with patch.object(
+            client,
+            "query",
+            return_value={"decision": "answer", "answer": "ok", "confidence": 0.8, "sources": [], "citations": []},
+        ) as query_mock:
+            detail = client.query_answer_with_recovery_detail(
+                question="What does error 109 mean?",
+                request_id="rag-ctx-2",
+                ticket_id="T-001",
+                customer_id="C-001",
+                ticket_context=[{"role": "customer", "content": "We only see this on iOS 4.6.0"}],
+                insufficient_reply="INSUFFICIENT",
+            )
+
+        self.assertEqual(detail.answer, "ok")
+        query_mock.assert_called_once_with(
+            question="What does error 109 mean?",
+            request_id="rag-ctx-2",
+            ticket_id="T-001",
+            customer_id="C-001",
+            ticket_context=[{"role": "customer", "content": "We only see this on iOS 4.6.0"}],
+            top_k=None,
+        )
+
     def test_get_ingestion_report_uses_report_endpoint(self) -> None:
         client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
         captured = {}

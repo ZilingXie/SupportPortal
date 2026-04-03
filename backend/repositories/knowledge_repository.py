@@ -3041,8 +3041,6 @@ class PostgresKnowledgeRepository:
         index_role: str = "primary",
     ) -> int:
         normalized_index_role = _clean_text(index_role) or "primary"
-        if normalized_index_role != "primary":
-            return 0
 
         self._acquire_bm25_write_lock(cur=cur, index_role=normalized_index_role)
         self._ensure_bm25_tables(cur=cur)
@@ -3318,8 +3316,6 @@ class PostgresKnowledgeRepository:
         rows: list[dict[str, Any]],
     ) -> None:
         normalized_index_role = _clean_text(index_role) or "primary"
-        if normalized_index_role != "primary":
-            return
 
         self._acquire_bm25_write_lock(cur=cur, index_role=normalized_index_role)
         self._ensure_bm25_tables(cur=cur)
@@ -5099,13 +5095,12 @@ class PostgresKnowledgeRepository:
                         sql.SQL("DELETE FROM {} WHERE doc_id = %s AND index_role = %s").format(self._vector_table()),
                         (document_id, normalized_index_role),
                     )
-                    if normalized_index_role == "primary":
-                        self._replace_bm25_document_index(
-                            cur=cur,
-                            document_id=document_id,
-                            index_role=normalized_index_role,
-                            rows=[],
-                        )
+                    self._replace_bm25_document_index(
+                        cur=cur,
+                        document_id=document_id,
+                        index_role=normalized_index_role,
+                        rows=[],
+                    )
                 conn.commit()
             return 0
 
@@ -5204,13 +5199,12 @@ class PostgresKnowledgeRepository:
                     (document_id, normalized_index_role),
                 )
                 cur.executemany(insert_query, payload)
-                if normalized_index_role == "primary":
-                    self._replace_bm25_document_index(
-                        cur=cur,
-                        document_id=document_id,
-                        index_role=normalized_index_role,
-                        rows=rows,
-                    )
+                self._replace_bm25_document_index(
+                    cur=cur,
+                    document_id=document_id,
+                    index_role=normalized_index_role,
+                    rows=rows,
+                )
             conn.commit()
         return len(rows)
 

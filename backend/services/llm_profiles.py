@@ -13,6 +13,7 @@ WEB_SEARCH_SCENARIO = "web_search_non_technical"
 RAG_ANSWER_SCENARIO = "rag_answer"
 RAG_SUFFICIENCY_SCENARIO = "rag_sufficiency_judge"
 QUERY_EXPANSION_SCENARIO = "query_expansion"
+RAG_AGENT_PLANNER_SCENARIO = "rag_agent_planner"
 ENGINEER_HELPER_SCENARIO = "engineer_helper"
 KNOWLEDGE_INGESTION_SCENARIO = "knowledge_ingestion_metadata"
 BENCHMARK_JUDGE_SCENARIO = "benchmark_judge"
@@ -185,6 +186,19 @@ def resolve_model_profile(
             timeout_seconds=_safe_positive_float_env("RAG_QUERY_EXPANSION_TIMEOUT_SECONDS", 8.0),
             max_retries=1,
             fallback_models=("gpt-5.4-nano",),
+        )
+    if scenario == RAG_AGENT_PLANNER_SCENARIO:
+        return ModelProfile(
+            scenario=scenario,
+            provider="openai",
+            model=_clean_text(os.getenv("RAG_AGENT_PLANNER_MODEL")) or "gpt-5.4-mini",
+            api_mode=OPENAI_RESPONSES_API,
+            api_key=_openai_api_key(),
+            reasoning_effort=_clean_text(os.getenv("RAG_AGENT_PLANNER_REASONING_EFFORT")) or "low",
+            temperature=_safe_float_env("RAG_AGENT_PLANNER_TEMPERATURE", 0.0),
+            timeout_seconds=_safe_positive_float_env("RAG_AGENT_PLANNER_TIMEOUT_SECONDS", 6.0),
+            max_retries=1,
+            fallback_models=("gpt-4.1-mini",),
         )
     if scenario == ENGINEER_HELPER_SCENARIO:
         return ModelProfile(

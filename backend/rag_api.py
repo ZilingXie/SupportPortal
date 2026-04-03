@@ -109,6 +109,13 @@ def _trace_query_understanding_meta(trace: Any) -> dict[str, Any]:
         "query_expansion_model": getattr(trace, "query_expansion_model", None),
         "first_pass_candidate_count": int(getattr(trace, "first_pass_candidate_count", 0) or 0),
         "second_pass_candidate_count": int(getattr(trace, "second_pass_candidate_count", 0) or 0),
+        "agent_enabled": bool(getattr(trace, "agent_enabled", False)),
+        "agent_plan_version": getattr(trace, "agent_plan_version", None),
+        "query_class": getattr(trace, "query_class", None),
+        "agent_iterations": list(getattr(trace, "agent_iterations", []) or []),
+        "agent_recovery_action": getattr(trace, "agent_recovery_action", None),
+        "ticket_context_used": bool(getattr(trace, "ticket_context_used", False)),
+        "primary_shadow_mix": dict(getattr(trace, "primary_shadow_mix", {}) or {}),
     }
 
 class RagQueryRequest(BaseModel):
@@ -116,6 +123,7 @@ class RagQueryRequest(BaseModel):
     request_id: str = Field(min_length=1, max_length=128)
     ticket_id: str | None = Field(default=None, max_length=128)
     customer_id: str | None = Field(default=None, max_length=128)
+    ticket_context: list[dict[str, str]] | None = None
     top_k: int | None = Field(default=None, ge=1, le=12)
 
 
@@ -461,7 +469,13 @@ def health() -> dict[str, Any]:
 @app.post("/internal/rag/query")
 def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_internal_auth)) -> dict[str, Any]:
     try:
-        result = run_rag_query(request.question, top_k=request.top_k or 6)
+        result = run_rag_query(
+            request.question,
+            top_k=request.top_k or 6,
+            ticket_context=request.ticket_context,
+            ticket_id=request.ticket_id,
+            customer_id=request.customer_id,
+        )
     except Exception as exc:
         LOGGER.warning(
             "RAG query failed request_id=%s ticket_id=%s error=%s",
@@ -477,7 +491,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
                     "user_query": request.question,
                     "intent": "knowledge_qa",
                     "query_type": "unclear_query",
-                    "retrieval_strategy": "hybrid_rrf_bm25",
+                    "retrieval_strategy": "agentic_multi_tool_v1",
                     "top_k": request.top_k or 6,
                     "vector_candidates_count": 0,
                     "bm25_candidates_count": 0,
@@ -562,7 +576,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
                     "user_query": request.question,
                     "intent": "knowledge_qa",
                     "query_type": "unclear_query",
-                    "retrieval_strategy": "hybrid_rrf_bm25",
+                    "retrieval_strategy": "agentic_multi_tool_v1",
                     "top_k": request.top_k or 6,
                     "vector_candidates_count": 0,
                     "bm25_candidates_count": 0,
@@ -728,7 +742,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             "confidence": round(rag_answer.confidence, 2),
             "sources": [],
             "citations": [],
-            "reason": "insufficient_evidence",
+            "reason": trace.handoff_reason or "insufficient_evidence",
             "evidence_summary": evidence_summary,
             "query_understanding": query_understanding_meta,
         }

@@ -315,6 +315,7 @@ class RagServiceClient:
         request_id: str,
         ticket_id: str | None,
         customer_id: str | None,
+        ticket_context: list[dict[str, str]] | None = None,
         top_k: int | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -323,6 +324,17 @@ class RagServiceClient:
             "ticket_id": ticket_id,
             "customer_id": customer_id,
         }
+        if ticket_context is not None:
+            payload["ticket_context"] = [
+                {
+                    "role": str(item.get("role") or "").strip(),
+                    "content": str(item.get("content") or "").strip(),
+                }
+                for item in list(ticket_context or [])[-6:]
+                if isinstance(item, dict)
+                and str(item.get("role") or "").strip()
+                and str(item.get("content") or "").strip()
+            ]
         if top_k is not None:
             payload["top_k"] = int(top_k)
         return self._request("POST", "/internal/rag/query", json_body=payload)
@@ -334,6 +346,7 @@ class RagServiceClient:
         request_id: str,
         ticket_id: str | None,
         customer_id: str | None,
+        ticket_context: list[dict[str, str]] | None = None,
         insufficient_reply: str,
         top_k: int | None = None,
         recovery_attempts: int = 3,
@@ -344,6 +357,7 @@ class RagServiceClient:
             request_id=request_id,
             ticket_id=ticket_id,
             customer_id=customer_id,
+            ticket_context=ticket_context,
             insufficient_reply=insufficient_reply,
             top_k=top_k,
             recovery_attempts=recovery_attempts,
@@ -358,6 +372,7 @@ class RagServiceClient:
         request_id: str,
         ticket_id: str | None,
         customer_id: str | None,
+        ticket_context: list[dict[str, str]] | None = None,
         insufficient_reply: str,
         top_k: int | None = None,
         recovery_attempts: int = 3,
@@ -369,6 +384,7 @@ class RagServiceClient:
                 request_id=request_id,
                 ticket_id=ticket_id,
                 customer_id=customer_id,
+                ticket_context=ticket_context,
                 top_k=top_k,
             )
         except RagServiceError as exc:

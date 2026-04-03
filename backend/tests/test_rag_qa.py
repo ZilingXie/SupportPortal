@@ -282,9 +282,10 @@ class RagQaHybridTests(unittest.TestCase):
 
         self.assertEqual([chunk.chunk_id for chunk in selected], ["wildcard-precautions-a", "wildcard-main"])
 
-    def test_retrieval_queries_filter_primary_index_role(self) -> None:
+    def test_retrieval_queries_parameterize_index_role(self) -> None:
         source = Path("backend/services/rag_qa.py").read_text(encoding="utf-8")
-        self.assertGreaterEqual(source.count("index_role = 'primary'"), 3)
+        self.assertGreaterEqual(source.count('index_role: str = "primary"'), 4)
+        self.assertGreaterEqual(source.count("index_role = %s"), 3)
 
     def test_bm25_query_uses_double_precision_score_constants(self) -> None:
         source = Path("backend/services/rag_qa.py").read_text(encoding="utf-8")
@@ -538,7 +539,7 @@ class RagQaHybridTests(unittest.TestCase):
         self.assertIn("intent:decision_logic", info["candidate_reasons"]["decision"])
         self.assertGreaterEqual(info["post_rerank_count"], 1)
 
-    def test_run_rag_query_uses_bm25_pipeline_and_skips_fts(self) -> None:
+    def test_run_rag_query_uses_agentic_hybrid_pipeline(self) -> None:
         vector_chunk = RetrievedChunk(
             chunk_id="vector-1",
             text="Vector chunk",
@@ -580,7 +581,7 @@ class RagQaHybridTests(unittest.TestCase):
             with patch("backend.services.rag_qa.get_embedding_provider", return_value=self._FakeProvider()):
                 with patch("backend.services.rag_qa._retrieve_chunks", return_value=[vector_chunk]):
                     with patch("backend.services.rag_qa._retrieve_bm25_chunks", return_value=[bm25_chunk]):
-                        with patch("backend.services.rag_qa._retrieve_fts_chunks", side_effect=AssertionError("fts should not run")):
+                        with patch("backend.services.rag_qa._retrieve_fts_chunks", return_value=[]):
                             with patch("backend.services.rag_qa._metadata_rerank", return_value=([vector_chunk, bm25_chunk], {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None})):
                                 with patch("backend.services.rag_qa._rerank_chunks", return_value=[bm25_chunk, vector_chunk]):
                                     with patch("backend.services.rag_qa._invoke_llm_payload_with_trace", return_value=({"answer": "Use the BM25 chunk.", "key_steps": [], "citations": ["bm25-1"], "insufficient_evidence": False}, 10, 5, "gpt-4.1")):
@@ -588,9 +589,10 @@ class RagQaHybridTests(unittest.TestCase):
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(result.trace.retrieval_strategy, "hybrid_rrf_bm25")
-        self.assertEqual(result.trace.bm25_candidates_count, 1)
+        self.assertEqual(result.trace.retrieval_strategy, "agentic_multi_tool_v1")
+        self.assertGreaterEqual(result.trace.bm25_candidates_count, 1)
         self.assertEqual(result.trace.selected_chunk_ids[0], "bm25-1")
+        self.assertTrue(result.trace.agent_enabled)
         self.assertEqual(result.trace.reranker_provider, "siliconflow")
         self.assertEqual(result.trace.reranker_model, "BAAI/bge-reranker-v2-m3")
         self.assertTrue(result.trace.retrieval_candidates)
@@ -600,15 +602,14 @@ class RagQaHybridTests(unittest.TestCase):
                 for candidate in result.trace.retrieval_candidates
             )
         )
-        self.assertIn(
-            ["bm25"],
-            [
-                candidate["candidate_trace"].get("retrieval_sources")
+        self.assertTrue(
+            any(
+                "p_bm25" in (candidate["candidate_trace"].get("retrieval_sources") or [])
                 for candidate in result.trace.retrieval_candidates
-            ],
+            )
         )
 
-    def test_run_rag_query_keeps_keyword_fallback_out_of_bm25_telemetry(self) -> None:
+    def test_run_rag_query_records_keyword_fallback_as_agentic_tool(self) -> None:
         vector_chunk = RetrievedChunk(
             chunk_id="vector-1",
             text="Vector chunk",
@@ -661,11 +662,13 @@ class RagQaHybridTests(unittest.TestCase):
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(result.trace.retrieval_strategy, "vector_keyword_fallback")
-        self.assertEqual(result.trace.bm25_candidates_count, 0)
-        self.assertEqual(
-            result.trace.retrieval_candidates[1]["candidate_trace"].get("retrieval_sources"),
-            ["keyword_fallback"],
+        self.assertEqual(result.trace.retrieval_strategy, "agentic_multi_tool_v1")
+        self.assertTrue(result.trace.agent_enabled)
+        self.assertTrue(
+            any(
+                "p_keyword" in (candidate["candidate_trace"].get("retrieval_sources") or [])
+                for candidate in result.trace.retrieval_candidates
+            )
         )
 
     def test_run_rag_query_diversifies_final_chunks_before_generation(self) -> None:
@@ -1381,21 +1384,55 @@ class RagQaHybridTests(unittest.TestCase):
     def test_run_rag_query_uses_resolved_vector_table_for_all_retrieval_paths(self) -> None:
         captured_tables: list[str] = []
 
-        def _capture_vector(message: str, config: dict[str, object], *, limit: int | None = None) -> list[RetrievedChunk]:
+        def _capture_vector(
+            message: str,
+            config: dict[str, object],
+            *,
+            limit: int | None = None,
+            index_role: str = "primary",
+        ) -> list[RetrievedChunk]:
             _ = message
             _ = limit
+            _ = index_role
             captured_tables.append(str(config["table"]))
             return []
 
-        def _capture_bm25(message: str, config: dict[str, object], *, limit: int | None = None) -> list[RetrievedChunk]:
+        def _capture_bm25(
+            message: str,
+            config: dict[str, object],
+            *,
+            limit: int | None = None,
+            index_role: str = "primary",
+        ) -> list[RetrievedChunk]:
             _ = message
             _ = limit
+            _ = index_role
             captured_tables.append(str(config["table"]))
             return []
 
-        def _capture_keyword(message: str, config: dict[str, object], *, limit: int | None = None) -> list[RetrievedChunk]:
+        def _capture_fts(
+            message: str,
+            config: dict[str, object],
+            *,
+            limit: int | None = None,
+            index_role: str = "primary",
+        ) -> list[RetrievedChunk]:
             _ = message
             _ = limit
+            _ = index_role
+            captured_tables.append(str(config["table"]))
+            return []
+
+        def _capture_keyword(
+            message: str,
+            config: dict[str, object],
+            *,
+            limit: int | None = None,
+            index_role: str = "primary",
+        ) -> list[RetrievedChunk]:
+            _ = message
+            _ = limit
+            _ = index_role
             captured_tables.append(str(config["table"]))
             return []
 
@@ -1429,8 +1466,9 @@ class RagQaHybridTests(unittest.TestCase):
                 with patch("backend.services.rag_qa.get_embedding_provider", return_value=self._FakeProvider()):
                     with patch("backend.services.rag_qa._retrieve_chunks", side_effect=_capture_vector):
                         with patch("backend.services.rag_qa._retrieve_bm25_chunks", side_effect=_capture_bm25):
-                            with patch("backend.services.rag_qa._retrieve_keyword_chunks", side_effect=_capture_keyword):
-                                result = run_rag_query("how to join channel")
+                            with patch("backend.services.rag_qa._retrieve_fts_chunks", side_effect=_capture_fts):
+                                with patch("backend.services.rag_qa._retrieve_keyword_chunks", side_effect=_capture_keyword):
+                                    result = run_rag_query("how to join channel")
 
         self.assertIsNotNone(result)
         assert result is not None
@@ -1650,8 +1688,15 @@ class RagQaHybridTests(unittest.TestCase):
         captured_queries: list[str] = []
         captured_downpush: list[dict[str, str]] = []
 
-        def _capture_vector(query: str, config: dict[str, object], *, limit: int | None = None):
+        def _capture_vector(
+            query: str,
+            config: dict[str, object],
+            *,
+            limit: int | None = None,
+            index_role: str = "primary",
+        ):
             _ = limit
+            _ = index_role
             captured_queries.append(query)
             plan = config.get("_retrieval_plan")
             captured_downpush.append(downpush_hard_filters(plan) if isinstance(plan, RetrievalPlan) else {})
@@ -1730,7 +1775,8 @@ class RagQaHybridTests(unittest.TestCase):
                                             "gpt-5.4",
                                         ),
                                     ):
-                                        result = run_rag_query("How do I join a channel in Node.js?")
+                                        with patch.dict(os.environ, {"RAG_AGENT_ENABLED": "0"}, clear=False):
+                                            result = run_rag_query("How do I join a channel in Node.js?")
 
         self.assertGreaterEqual(len(captured_queries), 2)
         self.assertEqual(captured_queries[0], "How do I join a channel in Node.js?")
