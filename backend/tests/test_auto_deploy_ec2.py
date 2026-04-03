@@ -273,6 +273,11 @@ class AutoDeployEc2Tests(unittest.TestCase):
 
 
 class AutoDeployAssetTests(unittest.TestCase):
+    def test_gitignore_ignores_deploy_lock_file(self) -> None:
+        gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
+
+        self.assertIn(".deploy_ec2.lock", gitignore)
+
     def test_systemd_assets_define_expected_contract(self) -> None:
         service = (SYSTEMD_DIR / "supportportal-auto-deploy.service").read_text(encoding="utf-8")
         timer = (SYSTEMD_DIR / "supportportal-auto-deploy.timer").read_text(encoding="utf-8")

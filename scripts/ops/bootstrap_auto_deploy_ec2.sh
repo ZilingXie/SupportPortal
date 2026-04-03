@@ -121,7 +121,7 @@ ensure_base_packages() {
   CURRENT_STEP="install base packages"
   log "Installing base packages required for bootstrap."
   run_privileged apt-get update
-  run_privileged apt-get install -y curl unzip ca-certificates git
+  run_privileged apt-get install -y curl unzip ca-certificates git python3
 }
 
 ensure_aws_cli() {
@@ -276,11 +276,10 @@ install_systemd_units() {
 
 main() {
   log "Bootstrapping EC2 auto deploy from ${PROJECT_ROOT}"
+  ensure_base_packages
   require_cmd git
   require_cmd curl
-  require_cmd unzip
   require_cmd python3
-  ensure_base_packages
   ensure_aws_cli
   sync_main_checkout
   load_bootstrap_config
