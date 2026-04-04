@@ -5,7 +5,7 @@ const AUTH_KEY = "helpdesk_auth_user";
 const TICKETS_KEY = "helpdesk_tickets";
 const COUNTER_KEY = "helpdesk_ticket_counter";
 const MAX_RECENT = 5;
-const DEFAULT_CLIENT_ACK_FALLBACK_TIMEOUT_MS = 2000;
+const DEFAULT_CLIENT_ACK_FALLBACK_TIMEOUT_MS = 3000;
 const STATUS_FOLLOWUP_MARKERS = [
   "any update",
   "status update",
