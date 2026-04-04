@@ -69,6 +69,21 @@ class QueryUnderstandingTests(unittest.TestCase):
         self.assertIn("channel name", " ".join(result.retrieval_plan.rule_expansions).lower())
         self.assertIn("rule", result.retrieval_plan.soft_signal_sources.get("chunk_type", []))
 
+    def test_understand_rag_query_skips_llm_for_simple_lexical_query(self) -> None:
+        with patch("backend.services.query_understanding._load_cached_llm_outputs", return_value=(None, False)), patch(
+            "backend.services.query_understanding.invoke_responses_text",
+            side_effect=AssertionError("LLM should not run for simple lexical query"),
+        ):
+            result = understand_rag_query("how to join channel")
+
+        self.assertEqual(result.fallback_mode, "light_path")
+        self.assertEqual(result.retrieval_plan.semantic_query, "how to join channel")
+        self.assertEqual(result.rewritten_queries, [])
+        self.assertEqual(result.decomposition_subqueries, [])
+        self.assertEqual(result.retrieval_plan.llm_expansions, [])
+        self.assertEqual(result.retrieval_plan.decomposition_subqueries, [])
+        self.assertEqual(result.rewrite_latency_ms, 0.0)
+
     def test_validate_retrieval_plan_drops_unsupported_or_invalid_filter_values(self) -> None:
         plan = validate_retrieval_plan(
             {
@@ -134,7 +149,10 @@ class QueryUnderstandingTests(unittest.TestCase):
             ),
         ]
 
-        with patch("backend.services.query_understanding.invoke_responses_text", side_effect=llm_outputs):
+        with patch("backend.services.query_understanding._load_cached_llm_outputs", return_value=(None, False)), patch(
+            "backend.services.query_understanding.invoke_responses_text",
+            side_effect=llm_outputs,
+        ):
             result = understand_rag_query("How do I join a channel in Node.js?")
 
         self.assertEqual(result.retrieval_plan.hard_filter_sources["language"], "rule+llm")

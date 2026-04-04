@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from backend.services.llm_profiles import (
     AUTO_DEPLOY_REPORT_SCENARIO,
+    CLIENT_ACK_SCENARIO,
     BENCHMARK_JUDGE_SCENARIO,
     ENGINEER_HELPER_SCENARIO,
     KNOWLEDGE_INGESTION_SCENARIO,
@@ -24,6 +25,7 @@ class LlmProfileTests(unittest.TestCase):
     def test_default_profiles_match_client_ai_model_strategy(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             web_search = resolve_model_profile(WEB_SEARCH_SCENARIO)
+            client_ack = resolve_model_profile(CLIENT_ACK_SCENARIO)
             rag_answer = resolve_model_profile(RAG_ANSWER_SCENARIO)
             sufficiency = resolve_model_profile(RAG_SUFFICIENCY_SCENARIO)
             query_expansion = resolve_model_profile(QUERY_EXPANSION_SCENARIO)
@@ -36,6 +38,12 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(web_search.provider, "openai")
         self.assertEqual(web_search.api_mode, "openai_responses")
         self.assertEqual(web_search.model, "gpt-5.4")
+
+        self.assertEqual(client_ack.provider, "openai")
+        self.assertEqual(client_ack.api_mode, "openai_responses")
+        self.assertEqual(client_ack.model, "gpt-5.4-nano")
+        self.assertEqual(client_ack.reasoning_effort, "none")
+        self.assertEqual(client_ack.timeout_seconds, 1.25)
 
         self.assertEqual(rag_answer.provider, "openai")
         self.assertEqual(rag_answer.api_mode, "openai_responses")
@@ -93,6 +101,22 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(profile.timeout_seconds, 33.0)
         self.assertEqual(profile.max_retries, 4)
 
+    def test_client_ack_profile_honors_env_overrides(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "CLIENT_ACK_MODEL": "gpt-5.4-nano-preview",
+                "CLIENT_ACK_REASONING_EFFORT": "none",
+                "CLIENT_ACK_TIMEOUT_SECONDS": "2.5",
+            },
+            clear=True,
+        ):
+            profile = resolve_model_profile(CLIENT_ACK_SCENARIO)
+
+        self.assertEqual(profile.model, "gpt-5.4-nano-preview")
+        self.assertEqual(profile.reasoning_effort, "none")
+        self.assertEqual(profile.timeout_seconds, 2.5)
+
     def test_parse_provider_model_reference_defaults_unqualified_models_to_openai(self) -> None:
         self.assertEqual(
             parse_provider_model_reference("gpt-5.4", default_provider="openai"),
@@ -121,6 +145,7 @@ class LlmProfileTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             profiles = [
                 resolve_model_profile(WEB_SEARCH_SCENARIO),
+                resolve_model_profile(CLIENT_ACK_SCENARIO),
                 resolve_model_profile(RAG_ANSWER_SCENARIO),
                 resolve_model_profile(RAG_SUFFICIENCY_SCENARIO),
                 resolve_model_profile(QUERY_EXPANSION_SCENARIO),
@@ -131,7 +156,7 @@ class LlmProfileTests(unittest.TestCase):
                 resolve_model_profile(AUTO_DEPLOY_REPORT_SCENARIO),
             ]
 
-        allowed_models = {"gpt-5.4", "gpt-5.4-mini"}
+        allowed_models = {"gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"}
         for profile in profiles:
             self.assertTrue(
                 set(profile.candidate_models()).issubset(allowed_models),

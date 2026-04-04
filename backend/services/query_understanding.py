@@ -636,6 +636,20 @@ def _should_attempt_decomposition(query: str) -> bool:
     )
 
 
+def _is_simple_lexical_query(query: str) -> bool:
+    normalized = _normalize_space(query)
+    if not normalized:
+        return False
+    if re.search(r"\b\d{3,5}\b", normalized.lower()):
+        return False
+    keywords = [
+        token
+        for token in re.findall(r"[a-z0-9][a-z0-9_.-]{1,}", normalized.lower())
+        if token not in _STOPWORDS
+    ]
+    return len(normalized.split()) <= 6 and len(keywords) <= 4
+
+
 def _invoke_query_expansion_llm(
     *,
     stage: str,
@@ -959,6 +973,42 @@ def understand_rag_query(
 
     seed_plan = _seed_retrieval_plan(normalized_query, dictionary_hits)
     intent_latency_ms = round((time.perf_counter() - started_at) * 1000, 2)
+
+    if _is_simple_lexical_query(normalized_query):
+        rule_expansions = _build_rule_expansions(normalized_query, dictionary_hits, canonical_terms)
+        finalized_plan = RetrievalPlan(
+            semantic_query=seed_plan.get("semantic_query") or normalized_query,
+            hard_filters=dict(seed_plan.get("hard_filters") or {}),
+            soft_signals=dict(seed_plan.get("soft_signals") or {}),
+            rewritten_queries=[],
+            decomposition_subqueries=[],
+            fallback_mode="light_path",
+            rule_expansions=list(rule_expansions),
+            llm_expansions=[],
+            prf_expansions=[],
+            hard_filter_sources=dict(seed_plan.get("hard_filter_sources") or {}),
+            soft_signal_sources=dict(seed_plan.get("soft_signal_sources") or {}),
+            cache_hit=False,
+            prf_used=False,
+        )
+        return QueryUnderstandingResult(
+            query_profile=profile.profile_id,
+            query_understanding_version=QUERY_UNDERSTANDING_VERSION,
+            glossary_version=profile.glossary_version,
+            self_query_version=SELF_QUERY_VERSION,
+            normalized_query=normalized_query,
+            canonical_terms=canonical_terms,
+            glossary_hits=glossary_hits,
+            dictionary_hits=dictionary_hits,
+            retrieval_plan=finalized_plan,
+            rewritten_queries=[],
+            decomposition_subqueries=[],
+            fallback_mode="light_path",
+            intent_latency_ms=intent_latency_ms,
+            rewrite_latency_ms=0.0,
+            cache_hit=False,
+            llm_usage_ledger=[],
+        )
 
     rewrite_started_at = time.perf_counter()
     fallback_mode = "none"

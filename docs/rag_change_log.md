@@ -1972,6 +1972,89 @@ For each new entry, record:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/rag_api.py backend/main.py backend/repositories/knowledge_repository.py backend/services/ticket_orchestrator.py backend/services/investigation_flow.py backend/services/engineer_agent.py`
   - `git diff --check`
 
+## 2026-04-04 - Simple FAQ light path and answer-first client recovery
+
+- Summary:
+  - Added a support-router fast path for obvious `join channel` technical FAQ queries so both the ticket-create path and the async worker skip the intent-router LLM before they hand the request to RAG.
+  - Added a deterministic light path for `lexical_exact` short FAQ queries so `how to join channel` skips query-understanding LLM calls, skips the agent planner, limits first-pass retrieval to `p_bm25` and `p_fts`, and never waits on vector retrieval or external rerank.
+  - Added process-wide fail-fast cooldowns for embedding and rerank providers so quota/auth/network failures stop triggering repeated per-request retries and instead degrade immediately to BM25/FTS/keyword retrieval.
+  - Switched client-side RAG recovery from a fixed three-attempt loop to deadline-based live-detail polling, raised the client timeout budget to `40s`, and exposed `CLIENT_RAG_RECOVERY_WINDOW_SECONDS` plus `CLIENT_RAG_RECOVERY_POLL_INTERVAL_SECONDS` in runtime config.
+  - Updated ticket orchestration so a transient post-RAG sufficiency-check exception no longer forces an engineer handoff for generic, grounded FAQ answers that already meet the high-confidence evidence threshold.
+  - Skipped the post-RAG sufficiency judge entirely for generic, high-confidence grounded FAQ answers so the async client path does not spend a second LLM call on `how to join channel` after the main RAG answer is already complete.
+- Reason:
+  - Client tickets were still opening engineer follow-ups for queries like `how to join channel` even though `rag_api` had already produced a grounded answer. The common path remained too heavy for short FAQs and the caller stopped waiting before recovery could observe the completed live-detail answer.
+- Affected files/config:
+  - `backend/services/support_router.py`
+  - `backend/services/query_understanding.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/tests/test_support_router.py`
+  - `backend/tests/test_query_understanding.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `backend/tests/test_single_host_compose.py`
+  - `backend/tests/test_ticket_orchestrator.py`
+  - `deployment/docker-compose.single-host.yml`
+  - `.env.example`
+  - `docs/rag_change_log.md`
+  - `docs/prompt_change_log.md`
+- Data impact:
+  - No corpus, chunking, embedding table, or benchmark truth data was rewritten.
+  - Obvious `join channel` FAQ prompts now bypass the intent-router LLM entirely, which removes duplicated route-classification latency on both the synchronous ticket-create path and the async worker path.
+  - Runtime retrieval behavior for simple lexical FAQs now avoids vector and rerank dependencies entirely unless later recovery requires a lexical fallback round.
+  - Known-bad embedding or rerank providers now enter timed cooldowns in-process, so later requests degrade immediately instead of waiting through repeated upstream failures.
+  - Client callers now wait up to `40s` for the main RAG call and keep polling live detail for up to `15s`, which allows already-computed grounded answers to surface instead of defaulting to engineer-ticket fallbacks.
+  - Generic grounded FAQ answers are now allowed to survive transient sufficiency-judge outages if the existing evidence summary already shows structured generation, citations, and high similarity, while Android/version/error-specific troubleshooting queries still escalate on post-check failures.
+  - Generic grounded FAQ answers now also skip the post-RAG sufficiency judge on the happy path, reducing live async latency without changing escalation behavior for troubleshooting or low-confidence answers.
+- Verification:
+  - `/Users/xieziling/.config/superpowers/venvs/SupportPortal-rag-join-channel-fix-min/bin/python -m unittest backend.tests.test_support_router`
+  - `/Users/xieziling/.config/superpowers/venvs/SupportPortal-rag-join-channel-fix-min/bin/python -m unittest backend.tests.test_rag_service_client backend.tests.test_query_understanding backend.tests.test_rag_agentic backend.tests.test_rag_qa backend.tests.test_single_host_compose backend.tests.test_ticket_orchestrator`
+  - `/Users/xieziling/.config/superpowers/venvs/SupportPortal-rag-join-channel-fix-min/bin/python -m py_compile backend/services/query_understanding.py backend/services/rag_qa.py backend/services/rag_service_client.py backend/services/ticket_orchestrator.py`
+  - `/Users/xieziling/.config/superpowers/venvs/SupportPortal-rag-join-channel-fix-min/bin/python - <<'PY' ... ticket_repository.get_ticket('T-1E51CE') ... PY` showed `engineer_case_count=0` and a grounded assistant answer for `how to join channel`
+  - `/Users/xieziling/.config/superpowers/venvs/SupportPortal-rag-join-channel-fix-min/bin/python - <<'PY' ... support_rag_query_runs WHERE ticket_id='T-1E51CE' ... PY` showed the request stayed on the light path with `p_bm25/p_fts` only and `needs_human=false`
+  - `git diff --check`
+
+## 2026-04-04 - Optimistic parallel route/RAG and client-generated transient ack
+
+- Summary:
+  - Moved the initial client ack off the server-side ticket query path by adding a short-lived client ack session endpoint and a browser-side transient ack flow with static fallback.
+  - Changed `/api/tickets/query` so async-eligible support questions persist the customer message, emit processing events, schedule background work, and return immediately without a server-authored assistant ack or synchronous route analysis.
+  - Updated the worker to start route analysis and RAG in parallel, treat route as authoritative, cancel in-flight RAG best-effort when the route flips to a non-RAG action, and keep fail-open behavior to RAG when route analysis fails or times out.
+  - Added in-flight RAG request cancellation support to `rag_api` and stage-aware cancellation checks inside `rag_qa`, so route flips no longer surface as `rag_unavailable` and late RAG answers can be ignored safely.
+  - Added latency diagnostics for API persist/return timing plus route/RAG timing and cancellation metadata on async ticket events.
+- Reason:
+  - The client first response was still blocked on backend-side work, and route analysis still serialized before RAG in the worker. That kept the first visible response too slow and wasted time on questions that should have gone straight into RAG while routing ran in parallel.
+
+- Affected files/config:
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `backend/rag_api.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/rag_service_client.py`
+  - `ui/client-ui/app.js`
+  - `backend/tests/test_client_ui_contract.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_rag_api.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `backend/tests/test_single_host_compose.py`
+  - `backend/tests/test_worker.py`
+  - `deployment/docker-compose.single-host.yml`
+  - `.env.example`
+  - `docs/rag_change_log.md`
+  - `docs/prompt_change_log.md`
+- Data impact:
+  - No knowledge corpus or vector data changed.
+  - Async ticket events now carry route/RAG latency and cancellation diagnostics for later debugging.
+  - Route flips can now cancel in-flight RAG requests best-effort instead of waiting for the full query to finish and then discarding the result.
+  - Client-visible initial ack handling is now transient UI state and is no longer persisted into ticket history on the optimistic async path.
+- Verification:
+  - `python3 -m py_compile backend/main.py backend/worker.py backend/rag_api.py backend/services/rag_qa.py backend/services/rag_service_client.py`
+  - `python3 -m unittest backend.tests.test_client_ui_contract backend.tests.test_single_host_compose backend.tests.test_rag_service_client`
+  - Container-backed backend verification pending after compose rebuild in this task.
+
 ## 2026-04-04 - Session product scope is persisted and forwarded through live RAG
 
 - Summary:

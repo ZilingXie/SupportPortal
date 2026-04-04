@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 import re
 from typing import Any, Callable
 
@@ -35,6 +36,7 @@ _TROUBLESHOOTING_SIGNAL_RE = re.compile(
     r"crash|issue|problem|bug|fail|failing|failed|timeout|renew|renewal|callback|debug|troubleshoot)\b",
     re.IGNORECASE,
 )
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -275,14 +277,11 @@ def _quality_signal_int(value: Any) -> int:
         return 0
 
 
-def _should_keep_generic_grounded_rag_answer(
+def _is_generic_grounded_rag_answer_candidate(
     *,
     message: str,
     skill_result: SkillExecutionResult,
-    sufficiency: SufficiencyAssessment,
 ) -> bool:
-    if str(sufficiency.decision).strip().lower() != "investigate":
-        return False
     normalized_message = " ".join(str(message or "").split()).strip()
     if not normalized_message or not _GENERIC_HOW_TO_RE.search(normalized_message):
         return False
@@ -304,6 +303,31 @@ def _should_keep_generic_grounded_rag_answer(
     if _quality_signal_int(quality_signals.get("selected_doc_count")) < 1:
         return False
     return bool(skill_result.citations)
+
+
+def _should_keep_generic_grounded_rag_answer(
+    *,
+    message: str,
+    skill_result: SkillExecutionResult,
+    sufficiency: SufficiencyAssessment,
+) -> bool:
+    if str(sufficiency.decision).strip().lower() != "investigate":
+        return False
+    return _is_generic_grounded_rag_answer_candidate(
+        message=message,
+        skill_result=skill_result,
+    )
+
+
+def _should_skip_rag_sufficiency_assessment(
+    *,
+    message: str,
+    skill_result: SkillExecutionResult,
+) -> bool:
+    return _is_generic_grounded_rag_answer_candidate(
+        message=message,
+        skill_result=skill_result,
+    )
 
 
 def orchestrate_ticket_execution(
@@ -396,27 +420,50 @@ def orchestrate_ticket_execution(
             else:
                 workflow_action = WORKFLOW_ACTION_OPEN_ENGINEER_TICKET
     elif execution_plan.requires_sufficiency_assessment:
-        try:
-            sufficiency = assess_rag_answer_sufficiency(
-                message=message,
-                ticket_subject=ticket_subject,
-                ticket_context=ticket_context,
-                route_decision=route_decision,
-                skill_result=skill_result,
+        if _should_skip_rag_sufficiency_assessment(
+            message=message,
+            skill_result=skill_result,
+        ):
+            LOGGER.info(
+                "Skipping RAG post-check for generic grounded FAQ message=%r route_reason=%s",
+                message,
+                skill_result.route_reason,
             )
-        except Exception:
-            needs_investigating = True
-            investigation_reason = RAG_POST_CHECK_ERROR_REASON
-            workflow_action = WORKFLOW_ACTION_OPEN_ENGINEER_TICKET
         else:
-            if sufficiency.decision == "investigate":
-                if not _should_keep_generic_grounded_rag_answer(
+            try:
+                sufficiency = assess_rag_answer_sufficiency(
+                    message=message,
+                    ticket_subject=ticket_subject,
+                    ticket_context=ticket_context,
+                    route_decision=route_decision,
+                    skill_result=skill_result,
+                )
+            except Exception as exc:
+                LOGGER.warning(
+                    "RAG post-check failed message=%r route_reason=%s error=%s",
+                    message,
+                    skill_result.route_reason,
+                    exc,
+                )
+                if _is_generic_grounded_rag_answer_candidate(
                     message=message,
                     skill_result=skill_result,
-                    sufficiency=sufficiency,
                 ):
+                    needs_investigating = False
+                    investigation_reason = None
+                else:
                     needs_investigating = True
-                    investigation_reason = RAG_POST_CHECK_INSUFFICIENT_REASON
+                    investigation_reason = RAG_POST_CHECK_ERROR_REASON
+                    workflow_action = WORKFLOW_ACTION_OPEN_ENGINEER_TICKET
+            else:
+                if sufficiency.decision == "investigate":
+                    if not _should_keep_generic_grounded_rag_answer(
+                        message=message,
+                        skill_result=skill_result,
+                        sufficiency=sufficiency,
+                    ):
+                        needs_investigating = True
+                        investigation_reason = RAG_POST_CHECK_INSUFFICIENT_REASON
                     workflow_action = WORKFLOW_ACTION_OPEN_ENGINEER_TICKET
     elif needs_investigating:
         workflow_action = WORKFLOW_ACTION_OPEN_ENGINEER_TICKET

@@ -5,6 +5,7 @@ import hashlib
 import logging
 import os
 import re
+import threading
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -41,7 +42,7 @@ from backend.services.rag_benchmark_session import build_local_benchmark_session
 from backend.services.rag_evidence_summary import build_rag_evidence_summary
 from backend.services.local_source_sync import ingest_source_document, stage_source_document
 from backend.services.local_benchmark_sync import sync_default_local_benchmarks
-from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, run_rag_query
+from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, RagExecutionCancelled, run_rag_query
 from backend.services.task_queue import AsyncRedisTaskQueue
 from backend.services.token_usage import aggregate_usage_ledger, build_usage_ledger_entry
 
@@ -62,6 +63,59 @@ PRIMARY_RAG_WORKBENCH_PAGES = (
     "review",
 )
 RAG_PROMPT_VERSION = "rag-v5-product-troubleshooting-intake"
+_INFLIGHT_RAG_REQUESTS: dict[str, dict[str, Any]] = {}
+_INFLIGHT_RAG_REQUESTS_LOCK = threading.Lock()
+
+
+def _register_inflight_rag_request(request_id: str) -> dict[str, Any]:
+    state = {
+        "cancel_event": threading.Event(),
+        "last_stage": None,
+        "registered_at": now_iso(),
+    }
+    normalized_request_id = str(request_id or "").strip()
+    if not normalized_request_id:
+        return state
+    with _INFLIGHT_RAG_REQUESTS_LOCK:
+        _INFLIGHT_RAG_REQUESTS[normalized_request_id] = state
+    return state
+
+
+def _cleanup_inflight_rag_request(request_id: str) -> None:
+    normalized_request_id = str(request_id or "").strip()
+    if not normalized_request_id:
+        return
+    with _INFLIGHT_RAG_REQUESTS_LOCK:
+        _INFLIGHT_RAG_REQUESTS.pop(normalized_request_id, None)
+
+
+def _update_inflight_rag_stage(request_id: str, stage: str) -> None:
+    normalized_request_id = str(request_id or "").strip()
+    if not normalized_request_id:
+        return
+    with _INFLIGHT_RAG_REQUESTS_LOCK:
+        state = _INFLIGHT_RAG_REQUESTS.get(normalized_request_id)
+        if state is not None:
+            state["last_stage"] = str(stage or "").strip() or None
+
+
+def _cancel_inflight_rag_request(request_id: str) -> dict[str, Any]:
+    normalized_request_id = str(request_id or "").strip()
+    if not normalized_request_id:
+        return {"request_id": normalized_request_id, "cancelled": False, "found": False, "stage": None}
+    with _INFLIGHT_RAG_REQUESTS_LOCK:
+        state = _INFLIGHT_RAG_REQUESTS.get(normalized_request_id)
+        if state is None:
+            return {"request_id": normalized_request_id, "cancelled": False, "found": False, "stage": None}
+        cancel_event = state.get("cancel_event")
+        if isinstance(cancel_event, threading.Event):
+            cancel_event.set()
+        return {
+            "request_id": normalized_request_id,
+            "cancelled": True,
+            "found": True,
+            "stage": state.get("last_stage"),
+        }
 
 
 def _build_quality_signals(
@@ -589,15 +643,36 @@ def health() -> dict[str, Any]:
 
 @app.post("/internal/rag/query")
 def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_internal_auth)) -> dict[str, Any]:
+    inflight_state = _register_inflight_rag_request(request.request_id)
     try:
-        result = run_rag_query(
-            request.question,
-            top_k=request.top_k or 6,
-            ticket_context=request.ticket_context,
-            ticket_id=request.ticket_id,
-            customer_id=request.customer_id,
-            product=request.product,
+        try:
+            result = run_rag_query(
+                request.question,
+                top_k=request.top_k or 6,
+                ticket_context=request.ticket_context,
+                ticket_id=request.ticket_id,
+                customer_id=request.customer_id,
+                product=request.product,
+                should_cancel=lambda: bool(inflight_state["cancel_event"].is_set()),
+                record_cancel_stage=lambda stage: _update_inflight_rag_stage(request.request_id, stage),
+            )
+        finally:
+            _cleanup_inflight_rag_request(request.request_id)
+    except RagExecutionCancelled as exc:
+        LOGGER.info(
+            "RAG query cancelled request_id=%s ticket_id=%s stage=%s",
+            request.request_id,
+            request.ticket_id,
+            exc.stage,
         )
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "reason": "cancelled_by_route_flip",
+                "stage": exc.stage,
+                "request_id": request.request_id,
+            },
+        ) from exc
     except Exception as exc:
         LOGGER.warning(
             "RAG query failed request_id=%s ticket_id=%s error=%s",
@@ -922,6 +997,14 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
         "packed_evidence": packed_evidence,
         "query_understanding": query_understanding_meta,
     }
+
+
+@app.post("/internal/rag/requests/{request_id}/cancel")
+def internal_cancel_rag_request(
+    request_id: str,
+    _: None = Depends(_require_internal_auth),
+) -> dict[str, Any]:
+    return _cancel_inflight_rag_request(request_id)
 
 
 @app.get("/internal/rag/ticket-families/{ticket_id}/token-usage")
