@@ -210,10 +210,13 @@ chmod +x deployment/deploy_ec2.sh
 
 脚本会执行：
 1. 拉取最新代码（`git fetch/pull`，默认当前分支）。
-2. 重启容器（`docker compose down` + `up -d --build`）。
-3. 健康检查（`http://127.0.0.1:<NGINX_HOST_PORT>/health`）。
-4. 外网检查（默认 `https://support.stellarix.space/health`）。
-5. 使用仓库根目录下的 `.deploy_ec2.lock` 避免并发部署。
+2. 先执行 `docker compose build`，只有构建成功后才会继续切换服务。
+3. 重启容器（`docker compose down` + `up -d`）。
+4. 健康检查（`http://127.0.0.1:<NGINX_HOST_PORT>/health`）。
+5. 外网检查（默认 `https://support.stellarix.space/health`）。
+6. 使用仓库根目录下的 `.deploy_ec2.lock` 避免并发部署。
+
+这样即使镜像构建阶段失败，也不会先把线上容器停掉。
 
 常用参数：
 
