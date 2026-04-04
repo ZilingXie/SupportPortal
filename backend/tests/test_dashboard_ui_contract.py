@@ -10,6 +10,8 @@ class DashboardUiContractTests(unittest.TestCase):
         source = Path("ui/dashboard-ui/index.html").read_text(encoding="utf-8")
         css = Path("ui/dashboard-ui/styles.css").read_text(encoding="utf-8")
 
+        self.assertIn('<html lang="en" class="material-symbols-pending">', source)
+
         for required_id in [
             'id="ticket-volume"',
             'id="resolution-rate"',
@@ -41,6 +43,29 @@ class DashboardUiContractTests(unittest.TestCase):
             "Bad Sentiment",
         ]:
             self.assertIn(required_copy, source)
+
+        self.assertIn(
+            'href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600;700&display=swap"',
+            source,
+        )
+        self.assertIn(
+            'href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@300;400;500;700&display=block"',
+            source,
+        )
+        self.assertIn('id="material-symbols-font-stylesheet"', source)
+        self.assertNotIn(
+            'family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600;700&family=Material+Symbols+Outlined:wght@300;400;500;700&display=swap',
+            source,
+        )
+        self.assertIn(
+            "document.documentElement.classList.remove(\"material-symbols-pending\")",
+            source,
+        )
+        self.assertIn('getElementById("material-symbols-font-stylesheet")', source)
+        self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', source)
+        self.assertIn('load(\'24px "Material Symbols Outlined"\')', source)
+        self.assertIn("if (iconFontStylesheet?.sheet) {", source)
+        self.assertIn("./styles.css?v=20260404-icon-font-guard-1", source)
 
         self.assertRegex(
             source,
@@ -78,6 +103,9 @@ class DashboardUiContractTests(unittest.TestCase):
         self.assertIn(".ticket-board", css)
         self.assertIn(".ticket-detail-modal", css)
         self.assertNotIn(".feed-card", css)
+        self.assertIn('font-family: "Material Symbols Outlined";', css)
+        self.assertIn("html.material-symbols-pending .material-symbols-outlined", css)
+        self.assertIn("visibility: hidden;", css)
 
     def test_root_dashboard_app_defaults_to_ticket_ops_and_uses_engineer_ticket_endpoints(self) -> None:
         source = Path("ui/dashboard-ui/app.js").read_text(encoding="utf-8")
