@@ -519,7 +519,7 @@ For each new entry, record:
   - `uv run --with pytest --with fastapi --with pydantic --with python-dotenv --with python-multipart --with redis --with httpx --with 'psycopg[binary]' python -m pytest -q backend/tests/test_prompt_modules.py backend/tests/test_ticket_orchestrator.py backend/tests/test_troubleshooting_intake.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py backend/tests/test_llm_profiles.py backend/tests/test_rag_qa.py backend/tests/test_rag_api.py`
   - `python3 scripts/verify_feature_list.py`
   - `python3 -m py_compile backend/rag_api.py backend/services/llm_profiles.py backend/services/prompts/rag_agent_planner.py backend/services/prompts/rag_answer.py backend/services/prompts/troubleshooting_intake.py backend/services/rag_qa.py backend/services/support_products.py backend/services/ticket_orchestrator.py backend/services/troubleshooting_intake.py`
-  - `git diff --check`
+- `git diff --check`
 
 - Date: 2026-04-04
 - Area or subsystem: Client acknowledgement experiment routing and benchmark instrumentation
@@ -566,3 +566,21 @@ For each new entry, record:
   - `python3 -m py_compile backend/main.py backend/services/llm_profiles.py`
   - `node --check ui/client-ui/app.js`
   - `git diff --check`
+
+- Date: 2026-04-04
+- Area or subsystem: RAG answer generation for light-path lexical FAQ queries
+- Prompt or model version: `rag-v5-light-path-fast-answer`
+- Summary: Added a light-path answer-model fast lane so agentic lexical FAQ queries that already pass the round-one judge try `gpt-5.4-mini` with `low` reasoning first, then automatically fall back to the existing primary `rag_answer` model if the mini response is ungrounded, lacks valid citations, or returns invalid JSON.
+- Reason: The simple lexical FAQ path already has tight evidence constraints and does not need the full latency cost of the default answer model on every request, but it still needs the same grounded-answer JSON contract and safe fallback behavior when the lighter model underperforms.
+- Affected files or config:
+  - `backend/services/rag_qa.py`
+  - `backend/rag_api.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_rag_api.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - `lexical_exact` light-path queries that reach `judge=answer_now` now attempt answer generation with `gpt-5.4-mini` and `reasoning_effort=low`.
+  - If that mini response has invalid JSON, invalid citations, or `insufficient_evidence=true` despite grounded overlap, the same request automatically retries on the main `rag_answer` model before any extractive fallback or escalation decision is exposed.
+  - RAG diagnostics now record which answer profile actually served the response and whether the fast-answer fallback path was used.
+- Verification:
+  - `/Users/xieziling/.config/superpowers/worktrees/SupportPortal/rag-latency-opt/.venv/bin/python -m unittest backend.tests.test_rag_qa backend.tests.test_rag_api backend.tests.test_knowledge_repository_bm25`

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import logging
 import os
@@ -25,6 +27,7 @@ from backend.services.embedding_provider import (
     DEFAULT_PGVECTOR_TABLE,
     embedding_model_id,
     embedding_provider_name,
+    get_embedding_provider,
 )
 from backend.services.event_bus import AsyncRedisEventBus
 from backend.services.knowledge_ingestion import process_knowledge_ingestion
@@ -65,6 +68,10 @@ PRIMARY_RAG_WORKBENCH_PAGES = (
 RAG_PROMPT_VERSION = "rag-v5-product-troubleshooting-intake"
 _INFLIGHT_RAG_REQUESTS: dict[str, dict[str, Any]] = {}
 _INFLIGHT_RAG_REQUESTS_LOCK = threading.Lock()
+_RAG_QUERY_TELEMETRY_MAX_PENDING = 64
+_RAG_QUERY_TELEMETRY_EXECUTOR: ThreadPoolExecutor | None = None
+_RAG_QUERY_TELEMETRY_SEMAPHORE = threading.Semaphore(_RAG_QUERY_TELEMETRY_MAX_PENDING)
+_RAG_QUERY_TELEMETRY_LOCK = threading.Lock()
 
 
 def _register_inflight_rag_request(request_id: str) -> dict[str, Any]:
@@ -116,6 +123,37 @@ def _cancel_inflight_rag_request(request_id: str) -> dict[str, Any]:
             "found": True,
             "stage": state.get("last_stage"),
         }
+
+
+def _ensure_rag_query_telemetry_runtime() -> tuple[ThreadPoolExecutor, threading.Semaphore]:
+    global _RAG_QUERY_TELEMETRY_EXECUTOR, _RAG_QUERY_TELEMETRY_SEMAPHORE
+    with _RAG_QUERY_TELEMETRY_LOCK:
+        executor = _RAG_QUERY_TELEMETRY_EXECUTOR
+        if executor is None or bool(getattr(executor, "_shutdown", False)):
+            executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rag-telemetry")
+            _RAG_QUERY_TELEMETRY_EXECUTOR = executor
+        semaphore = _RAG_QUERY_TELEMETRY_SEMAPHORE
+        if semaphore is None:
+            semaphore = threading.Semaphore(_RAG_QUERY_TELEMETRY_MAX_PENDING)
+            _RAG_QUERY_TELEMETRY_SEMAPHORE = semaphore
+        return executor, semaphore
+
+
+def _shutdown_rag_query_telemetry_runtime() -> None:
+    global _RAG_QUERY_TELEMETRY_EXECUTOR
+    with _RAG_QUERY_TELEMETRY_LOCK:
+        executor = _RAG_QUERY_TELEMETRY_EXECUTOR
+        _RAG_QUERY_TELEMETRY_EXECUTOR = None
+    if executor is not None:
+        executor.shutdown(wait=True, cancel_futures=False)
+
+
+def _prewarm_embedding_provider_best_effort() -> None:
+    try:
+        get_embedding_provider()
+        LOGGER.info("RAG embedding provider prewarm completed: %s/%s", embedding_provider_name(), embedding_model_id())
+    except Exception as exc:
+        LOGGER.warning("RAG embedding provider prewarm skipped: %s", exc)
 
 
 def _build_quality_signals(
@@ -195,6 +233,11 @@ def _trace_query_understanding_meta(trace: Any) -> dict[str, Any]:
         "execution_mode": getattr(trace, "execution_mode", None),
         "agent_fallback_used": bool(getattr(trace, "agent_fallback_used", False)),
         "agent_fallback_reason": getattr(trace, "agent_fallback_reason", None),
+        "preflight_probe_latency_ms": float(getattr(trace, "preflight_probe_latency_ms", 0.0) or 0.0),
+        "vector_setup_skipped": bool(getattr(trace, "vector_setup_skipped", False)),
+        "light_path_used": bool(getattr(trace, "light_path_used", False)),
+        "answer_profile_used": getattr(trace, "answer_profile_used", None),
+        "answer_profile_fallback_used": bool(getattr(trace, "answer_profile_fallback_used", False)),
         "ticket_context_used": bool(getattr(trace, "ticket_context_used", False)),
         "primary_shadow_mix": dict(getattr(trace, "primary_shadow_mix", {}) or {}),
         "context_budget_enabled": bool(getattr(trace, "context_budget_enabled", False)),
@@ -273,25 +316,66 @@ def _record_rag_query_run_best_effort(
     run: dict[str, Any],
     candidates: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
+    diagnostics: dict[str, Any] = {"telemetry_mode": "async_best_effort"}
     if not knowledge_repository.is_enabled():
-        return None
+        return diagnostics
+    executor = _RAG_QUERY_TELEMETRY_EXECUTOR
+    semaphore = _RAG_QUERY_TELEMETRY_SEMAPHORE
+    if executor is None:
+        executor, semaphore = _ensure_rag_query_telemetry_runtime()
     try:
-        knowledge_repository.record_rag_query_run(run=run, candidates=candidates)
-    except Exception as exc:
+        acquired = bool(semaphore.acquire(blocking=False))
+    except Exception:
+        acquired = False
+    if not acquired:
         LOGGER.warning(
-            "RAG telemetry persistence failed request_id=%s ticket_id=%s operation=record_rag_query_run "
-            "error_type=%s error=%s",
+            "RAG telemetry enqueue skipped request_id=%s ticket_id=%s reason=queue_full",
+            request_id,
+            ticket_id,
+        )
+        diagnostics["telemetry_enqueue_failed"] = True
+        return diagnostics
+
+    run_payload = copy.deepcopy(run)
+    candidate_payload = copy.deepcopy(candidates)
+    repository = knowledge_repository
+
+    def _persist() -> None:
+        try:
+            repository.record_rag_query_run(run=run_payload, candidates=candidate_payload)
+        except Exception as exc:
+            LOGGER.warning(
+                "RAG telemetry persistence failed request_id=%s ticket_id=%s operation=record_rag_query_run "
+                "error_type=%s error=%s",
+                request_id,
+                ticket_id,
+                exc.__class__.__name__,
+                exc,
+            )
+        finally:
+            try:
+                semaphore.release()
+            except Exception:
+                pass
+
+    try:
+        executor.submit(_persist)
+    except Exception as exc:
+        try:
+            semaphore.release()
+        except Exception:
+            pass
+        LOGGER.warning(
+            "RAG telemetry enqueue failed request_id=%s ticket_id=%s error_type=%s error=%s",
             request_id,
             ticket_id,
             exc.__class__.__name__,
             exc,
         )
-        return {
-            "telemetry_persist_failed": True,
-            "telemetry_error_type": exc.__class__.__name__,
-            "telemetry_error_message": str(exc),
-        }
-    return None
+        diagnostics["telemetry_enqueue_failed"] = True
+        diagnostics["telemetry_enqueue_error_type"] = exc.__class__.__name__
+        return diagnostics
+    return diagnostics
 
 
 def _attach_telemetry_diagnostics(
@@ -605,6 +689,7 @@ async def _run_knowledge_ingestion_or_enqueue(ingestion_id: str) -> tuple[dict[s
 @app.on_event("startup")
 def startup_event() -> None:
     global event_repository
+    _ensure_rag_query_telemetry_runtime()
     try:
         event_repository.initialize()
         LOGGER.info("RAG event repository initialized: %s", event_repository.storage_mode())
@@ -620,12 +705,14 @@ def startup_event() -> None:
     except Exception as exc:
         LOGGER.error("RAG knowledge repository initialization failed: %s", exc)
         raise
+    _prewarm_embedding_provider_best_effort()
 
 
 @app.on_event("shutdown")
 async def shutdown_event() -> None:
     await event_bus.close()
     await task_queue.close()
+    _shutdown_rag_query_telemetry_runtime()
 
 
 @app.get("/health")
