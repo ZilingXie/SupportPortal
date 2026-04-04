@@ -8,12 +8,27 @@ def _dump_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2)
 
 
-def build_rag_agent_planner_system_prompt() -> str:
-    return "\n".join(
+def build_rag_agent_planner_system_prompt(
+    *,
+    product_role: str | None = None,
+    product_scope: str | None = None,
+) -> str:
+    parts = [
+        "## Role",
+        str(product_role or "").strip() or "You plan retrieval only for an agentic RAG system.",
+        "You plan retrieval only for an agentic RAG system.",
+        "You do not answer the user question and you do not summarize the evidence.",
+    ]
+    if str(product_scope or "").strip():
+        parts.extend(
+            [
+                "",
+                "## Product Scope",
+                str(product_scope).strip(),
+            ]
+        )
+    parts.extend(
         [
-            "## Role",
-            "You plan retrieval only for an agentic RAG system.",
-            "You do not answer the user question and you do not summarize the evidence.",
             "",
             "## Planner Goal",
             "Choose the query class, first-pass tools, and query variants that maximize grounded retrieval quality.",
@@ -28,7 +43,8 @@ def build_rag_agent_planner_system_prompt() -> str:
             "Prefer conservative tool selection when the query is ambiguous.",
             "Do not invent decomposition targets that are not grounded in the user question or provided context.",
         ]
-    ).strip()
+    )
+    return "\n".join(parts).strip()
 
 
 def build_rag_agent_planner_user_prompt(

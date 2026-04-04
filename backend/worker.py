@@ -259,6 +259,7 @@ def _orchestrate_worker_support_message(
     ticket_subject: str | None,
     ticket_context: list[dict[str, str]],
     product: str | None = None,
+    client_intake_state: dict[str, object] | None = None,
 ) -> TicketExecutionResult:
     return orchestrate_ticket_execution(
         customer_message,
@@ -267,6 +268,7 @@ def _orchestrate_worker_support_message(
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
         product=product,
+        client_intake_state=client_intake_state,
         resolution_builder=resolve_support_message,
     )
 
@@ -556,6 +558,11 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         ticket_subject=str(ticket.get("subject") or "").strip() or None,
         ticket_context=route_context[-6:],
         product=str(ticket.get("product") or "").strip() or None,
+        client_intake_state=(
+            dict(ticket.get("client_intake_state"))
+            if isinstance(ticket.get("client_intake_state"), dict)
+            else None
+        ),
     )
     answer = execution.answer
     sources = list(execution.sources)
@@ -599,7 +606,14 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         )
     else:
         initial_message_count = len(ticket.get("messages", []))
+        execution_client_intake_state = (
+            dict(getattr(execution, "client_intake_state"))
+            if isinstance(getattr(execution, "client_intake_state", None), dict)
+            else None
+        )
+        execution_workflow_action = str(getattr(execution, "workflow_action", "") or "").strip()
         if execution.needs_investigating:
+            ticket["client_intake_state"] = execution_client_intake_state
             engineer_case, engineer_case_created = _prepare_engineer_case_for_ticket(
                 ticket,
                 case_status=INVESTIGATING_STATUS,
@@ -645,8 +659,10 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
             needs_engineer_input = True
             ticket["status"] = INVESTIGATING_STATUS
             ticket["active_engineer_case_id"] = str(engineer_case.get("engineer_case_id") or "").strip() or None
+            ticket["client_intake_state"] = None
         else:
             ticket["status"] = resolve_next_ticket_status(ticket.get("status"), execution.next_status)
+            ticket["client_intake_state"] = execution_client_intake_state
 
         assistant_message: dict[str, Any] = {
             "role": "assistant",
@@ -662,6 +678,15 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         assistant_message["route_confidence"] = round(float(execution.route_confidence), 4)
         assistant_message["search_used"] = bool(execution.search_used)
         assistant_message["matched_signals"] = list(execution.matched_signals)
+        assistant_message["workflow_action"] = execution_workflow_action
+        if isinstance(execution_client_intake_state, dict):
+            assistant_message["client_intake_phase"] = str(execution_client_intake_state.get("phase") or "").strip()
+            assistant_message["client_intake_ready_for_engineer_ticket"] = bool(
+                execution_client_intake_state.get("ready_for_engineer_ticket")
+            )
+            assistant_message["client_intake_missing_information"] = list(
+                execution_client_intake_state.get("missing_information") or []
+            )
         if sources:
             assistant_message["sources"] = sources
         if citations:
@@ -707,7 +732,21 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         "route_confidence": round(float(execution.route_confidence), 4),
         "search_used": bool(execution.search_used),
         "matched_signals": list(execution.matched_signals),
+        "workflow_action": str(getattr(execution, "workflow_action", "") or "").strip(),
     }
+    execution_client_intake_state = (
+        dict(getattr(execution, "client_intake_state"))
+        if isinstance(getattr(execution, "client_intake_state", None), dict)
+        else None
+    )
+    if isinstance(execution_client_intake_state, dict):
+        event["client_intake_phase"] = str(execution_client_intake_state.get("phase") or "").strip()
+        event["client_intake_ready_for_engineer_ticket"] = bool(
+            execution_client_intake_state.get("ready_for_engineer_ticket")
+        )
+        event["client_intake_missing_information"] = list(
+            execution_client_intake_state.get("missing_information") or []
+        )
     _call_ticket_repository(
         "record_event",
         lambda: ticket_repository.record_event(ticket_id, event["event"], event),

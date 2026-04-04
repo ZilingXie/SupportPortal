@@ -2007,3 +2007,42 @@ For each new entry, record:
   - `python3 -m py_compile backend/main.py backend/rag_api.py backend/repositories/ticket_repository.py backend/services/rag_qa.py backend/services/rag_service_client.py backend/services/support_products.py backend/services/support_router.py backend/services/support_router_prompt.py backend/services/ticket_orchestrator.py backend/worker.py`
   - `node --check ui/client-ui/app.js`
   - `git diff --check`
+
+## 2026-04-04 - Product-scoped troubleshooting intake gates engineer escalation
+
+- Summary:
+  - Added a ticket-side troubleshooting intake step that runs only after `rag_insufficient_evidence`, classifies the request as answer vs investigation, and collects required troubleshooting fields before opening an engineer case.
+  - Persisted `client_intake_state` on `support_tickets` so both sync and async ticket flows can keep collecting product-specific inputs without introducing a new public ticket status.
+  - Included collected intake fields in engineer handoff/opening context so engineer tickets start with the gathered customer metadata instead of losing the pre-ticket clarification work.
+- Reason:
+  - Troubleshooting issues like black screen or Cloud Recording failures should not open engineer tickets until the customer has supplied the minimum investigation identifiers for the selected product.
+- Affected files/config:
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `backend/rag_api.py`
+  - `backend/repositories/ticket_repository.py`
+  - `backend/services/engineer_agent.py`
+  - `backend/services/engineer_cases.py`
+  - `backend/services/investigation_flow.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/services/prompts/rag_agent_planner.py`
+  - `backend/services/prompts/rag_answer.py`
+  - `backend/services/prompts/troubleshooting_intake.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/support_products.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/services/troubleshooting_intake.py`
+  - `backend/sql/ticket_storage.sql`
+  - `docs/feature_list.md`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Ticket storage now includes nullable `support_tickets.client_intake_state` for in-progress customer troubleshooting intake.
+  - `audio_video_calling` now requires `channel_name`, `problematic_uid`, `issue_timestamp`, and `issue_symptom` before direct engineer escalation from the intake path.
+  - `cloud_recording` now requires `sid`, `issue_timestamp`, and `issue_symptom` before direct engineer escalation from the intake path.
+  - Live RAG prompt version advanced to `rag-v5-product-troubleshooting-intake`; retrieval indexes, embeddings, and benchmark datasets did not change.
+- Verification:
+  - `uv run --with pytest --with fastapi --with pydantic --with python-dotenv --with python-multipart --with redis --with httpx --with 'psycopg[binary]' python -m pytest -q backend/tests/test_prompt_modules.py backend/tests/test_repository_configuration.py backend/tests/test_ticket_orchestrator.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py backend/tests/test_troubleshooting_intake.py backend/tests/test_client_ui_contract.py backend/tests/test_rag_api.py backend/tests/test_rag_service_client.py backend/tests/test_support_router.py backend/tests/test_llm_profiles.py backend/tests/test_rag_qa.py`
+  - `python3 scripts/verify_feature_list.py`
+  - `python3 -m py_compile backend/main.py backend/worker.py backend/rag_api.py backend/repositories/ticket_repository.py backend/services/engineer_agent.py backend/services/engineer_cases.py backend/services/investigation_flow.py backend/services/llm_profiles.py backend/services/prompts/rag_agent_planner.py backend/services/prompts/rag_answer.py backend/services/prompts/troubleshooting_intake.py backend/services/rag_qa.py backend/services/support_products.py backend/services/ticket_orchestrator.py backend/services/troubleshooting_intake.py`
+  - `git diff --check`

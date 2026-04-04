@@ -316,6 +316,11 @@ def ensure_ticket_defaults(ticket: dict[str, Any]) -> None:
     except (TypeError, ValueError):
         ticket["engineer_case_count"] = 0
     ticket["product"] = normalize_support_product(ticket.get("product"))
+    ticket["client_intake_state"] = (
+        dict(ticket.get("client_intake_state"))
+        if isinstance(ticket.get("client_intake_state"), dict)
+        else None
+    )
     ensure_ticket_investigation_defaults(ticket)
     surface_legacy_pending_question(ticket)
 
@@ -1606,6 +1611,7 @@ async def create_or_update_ticket(
         needs_engineer_input = True
         ticket["status"] = normalize_ticket_status(engineer_case.get("status"))
         ticket["active_engineer_case_id"] = str(engineer_case.get("engineer_case_id") or "").strip() or None
+        ticket["client_intake_state"] = None
     else:
         route_decision = analyze_ticket_message(
             customer_message,
@@ -1643,6 +1649,7 @@ async def create_or_update_ticket(
                     ticket_subject=str(ticket.get("subject") or "").strip() or None,
                     ticket_context=route_context,
                     product=ticket.get("product"),
+                    client_intake_state=ticket.get("client_intake_state"),
                     decision=route_decision,
                     resolution_builder=resolve_support_message,
                 )
@@ -1654,6 +1661,7 @@ async def create_or_update_ticket(
                 ticket_subject=str(ticket.get("subject") or "").strip() or None,
                 ticket_context=route_context,
                 product=ticket.get("product"),
+                client_intake_state=ticket.get("client_intake_state"),
                 decision=route_decision,
                 resolution_builder=resolve_support_message,
             )
@@ -1663,7 +1671,13 @@ async def create_or_update_ticket(
             follow_up_answer = execution.answer
             follow_up_sources = list(execution.sources)
             follow_up_citations = [dict(item) for item in execution.citations]
+            execution_client_intake_state = (
+                dict(getattr(execution, "client_intake_state"))
+                if isinstance(getattr(execution, "client_intake_state", None), dict)
+                else None
+            )
             if execution.needs_investigating:
+                ticket["client_intake_state"] = execution_client_intake_state
                 engineer_case, engineer_case_created = _prepare_engineer_case_for_ticket(
                     ticket,
                     case_status=INVESTIGATING_STATUS,
@@ -1708,8 +1722,10 @@ async def create_or_update_ticket(
                 needs_engineer_input = True
                 ticket["status"] = INVESTIGATING_STATUS
                 ticket["active_engineer_case_id"] = str(engineer_case.get("engineer_case_id") or "").strip() or None
+                ticket["client_intake_state"] = None
             else:
                 ticket["status"] = resolve_next_ticket_status(ticket.get("status"), execution.next_status)
+                ticket["client_intake_state"] = execution_client_intake_state
         else:
             ticket["status"] = resolve_next_ticket_status(ticket.get("status"), COMMUNICATING_STATUS)
 
@@ -1729,6 +1745,16 @@ async def create_or_update_ticket(
             assistant_message["route_confidence"] = route_payload.get("route_confidence")
             assistant_message["search_used"] = bool(route_payload.get("search_used"))
             assistant_message["matched_signals"] = list(route_payload.get("matched_signals") or [])
+            if route_payload.get("workflow_action"):
+                assistant_message["workflow_action"] = route_payload.get("workflow_action")
+            if route_payload.get("client_intake_phase"):
+                assistant_message["client_intake_phase"] = route_payload.get("client_intake_phase")
+                assistant_message["client_intake_ready_for_engineer_ticket"] = bool(
+                    route_payload.get("client_intake_ready_for_engineer_ticket")
+                )
+                assistant_message["client_intake_missing_information"] = list(
+                    route_payload.get("client_intake_missing_information") or []
+                )
         if follow_up_sources:
             assistant_message["sources"] = follow_up_sources
         if follow_up_citations:
@@ -1773,6 +1799,16 @@ async def create_or_update_ticket(
         event["route_confidence"] = route_payload.get("route_confidence")
         event["search_used"] = bool(route_payload.get("search_used"))
         event["matched_signals"] = list(route_payload.get("matched_signals") or [])
+    if route_payload.get("workflow_action"):
+        event["workflow_action"] = route_payload.get("workflow_action")
+    if route_payload.get("client_intake_phase"):
+        event["client_intake_phase"] = route_payload.get("client_intake_phase")
+        event["client_intake_ready_for_engineer_ticket"] = bool(
+            route_payload.get("client_intake_ready_for_engineer_ticket")
+        )
+        event["client_intake_missing_information"] = list(
+            route_payload.get("client_intake_missing_information") or []
+        )
     ticket_repository.record_event(ticket_id, event["event"], event)
     await dispatch_event(["engineer", "dashboard"], event)
     await dispatch_event(

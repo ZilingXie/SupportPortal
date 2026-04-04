@@ -117,9 +117,15 @@ def build_engineer_case_context(
         "ticket_id": str(engineer_case.get("engineer_case_id") or "").strip(),
         "subject": str(engineer_case.get("title") or client_ticket.get("subject") or "Engineer case").strip(),
         "status": _normalize_status(engineer_case.get("status")),
+        "product": str(client_ticket.get("product") or "").strip() or None,
         "messages": copy.deepcopy(client_ticket.get("messages") if isinstance(client_ticket.get("messages"), list) else []),
         "active_investigation": active_investigation,
         "investigation_history": investigation_history,
+        "client_intake_state": copy.deepcopy(
+            client_ticket.get("client_intake_state")
+            if isinstance(client_ticket.get("client_intake_state"), dict)
+            else None
+        ),
         "engineer_handoff_packet": copy.deepcopy(
             engineer_case.get("engineer_handoff_packet")
             if isinstance(engineer_case.get("engineer_handoff_packet"), dict)

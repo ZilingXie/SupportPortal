@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import types
 import unittest
 from unittest.mock import patch
 
@@ -133,6 +134,86 @@ class TicketOrchestratorTests(unittest.TestCase):
         self.assertEqual(execution.execution_action, "rag")
         self.assertEqual(execution.investigation_reason, "rag_insufficient_evidence")
         sufficiency_mock.assert_not_called()
+
+    def test_rag_insufficiency_for_troubleshooting_missing_fields_clarifies_customer(self) -> None:
+        with patch(
+            "backend.services.ticket_orchestrator.evaluate_troubleshooting_intake",
+            return_value=types.SimpleNamespace(
+                issue_mode="investigation",
+                known_information={"issue_symptom": "black screen"},
+                missing_information=["channel_name", "problematic_uid", "issue_timestamp"],
+                ready_for_engineer_ticket=False,
+                customer_reply=(
+                    "Known so far: symptom is black screen. "
+                    "To investigate this Audio/Video Calling issue, please share the channel name, "
+                    "problematic uid, and issue timestamp."
+                ),
+            ),
+            create=True,
+        ), patch(
+            "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency"
+        ) as sufficiency_mock:
+            execution = orchestrate_ticket_execution(
+                "I got black screen issue.",
+                product="audio_video_calling",
+                decision=_decision("rag"),
+                resolution_builder=lambda *_args, **_kwargs: _resolution(
+                    action="rag",
+                    needs_engineer_guidance=True,
+                ),
+            )
+
+        self.assertFalse(execution.needs_investigating)
+        self.assertEqual(execution.next_status, COMMUNICATING_STATUS)
+        self.assertEqual(execution.workflow_action, "clarify_customer_for_intake")
+        self.assertEqual(
+            execution.client_intake_state["missing_information"],
+            ["channel_name", "problematic_uid", "issue_timestamp"],
+        )
+        self.assertIn("Known so far", execution.answer)
+        sufficiency_mock.assert_not_called()
+
+    def test_rag_insufficiency_for_troubleshooting_ready_inputs_opens_engineer_ticket(self) -> None:
+        with patch(
+            "backend.services.ticket_orchestrator.evaluate_troubleshooting_intake",
+            return_value=types.SimpleNamespace(
+                issue_mode="investigation",
+                known_information={
+                    "issue_symptom": "black screen",
+                    "channel_name": "demo-room",
+                    "problematic_uid": "42",
+                    "issue_timestamp": "2026-04-04T10:30:00Z",
+                },
+                missing_information=[],
+                ready_for_engineer_ticket=True,
+                customer_reply="",
+            ),
+            create=True,
+        ):
+            execution = orchestrate_ticket_execution(
+                "Channel name is demo-room. Problematic uid is 42. It happened at 2026-04-04T10:30:00Z.",
+                product="audio_video_calling",
+                client_intake_state={
+                    "phase": "gather_customer_inputs",
+                    "product": "audio_video_calling",
+                    "issue_mode": "investigation",
+                    "known_information": {"issue_symptom": "black screen"},
+                    "missing_information": ["channel_name", "problematic_uid", "issue_timestamp"],
+                    "ready_for_engineer_ticket": False,
+                    "last_updated_at": "2026-04-04T10:00:00Z",
+                },
+                decision=_decision("rag"),
+                resolution_builder=lambda *_args, **_kwargs: _resolution(
+                    action="rag",
+                    needs_engineer_guidance=True,
+                ),
+            )
+
+        self.assertTrue(execution.needs_investigating)
+        self.assertEqual(execution.next_status, INVESTIGATING_STATUS)
+        self.assertEqual(execution.workflow_action, "open_engineer_ticket")
+        self.assertEqual(execution.investigation_reason, "rag_insufficient_evidence")
+        self.assertTrue(execution.client_intake_state["ready_for_engineer_ticket"])
 
     def test_rag_service_error_keeps_service_error_reason_for_investigation(self) -> None:
         execution = orchestrate_ticket_execution(
