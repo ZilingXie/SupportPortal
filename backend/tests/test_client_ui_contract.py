@@ -112,9 +112,31 @@ class ClientUiContractTests(unittest.TestCase):
         app_source = Path("ui/client-ui/app.js").read_text(encoding="utf-8")
         css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
 
+        self.assertIn('<html lang="en" class="material-symbols-pending">', html)
         self.assertIn("Concierge AI", html)
         self.assertIn("Manrope", html)
-        self.assertIn("./styles.css?v=20260404-session-product-scope-1", html)
+        self.assertIn(
+            'href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Inter:wght@400;500;600;700&display=swap"',
+            html,
+        )
+        self.assertIn(
+            'href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@300;400;500;700&display=block"',
+            html,
+        )
+        self.assertIn('id="material-symbols-font-stylesheet"', html)
+        self.assertNotIn(
+            'family=Manrope:wght@400;600;700;800&family=Inter:wght@400;500;600;700&family=Material+Symbols+Outlined:wght@300;400;500;700&display=swap',
+            html,
+        )
+        self.assertIn(
+            "document.documentElement.classList.remove(\"material-symbols-pending\")",
+            html,
+        )
+        self.assertIn('getElementById("material-symbols-font-stylesheet")', html)
+        self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
+        self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
+        self.assertIn("if (iconFontStylesheet?.sheet) {", html)
+        self.assertIn("./styles.css?v=20260404-icon-font-guard-1", html)
         self.assertIn('./app.js?v=20260404-session-product-scope-1', html)
         self.assertIn("AI-SOLVING", app_source)
         self.assertIn("Session History", app_source)
@@ -145,6 +167,9 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn(".status-surface-escalated", css)
         self.assertIn(".status-surface-investigating", css)
         self.assertIn(".status-surface-resolved", css)
+        self.assertIn('font-family: "Material Symbols Outlined";', css)
+        self.assertIn("html.material-symbols-pending .material-symbols-outlined", css)
+        self.assertIn("visibility: hidden;", css)
 
     def test_client_shows_investigating_status_without_leaking_internal_thread(self) -> None:
         self.run_client_app_script(

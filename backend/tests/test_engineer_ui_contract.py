@@ -122,9 +122,31 @@ class EngineerUiContractTests(unittest.TestCase):
         app_source = Path("ui/engineer-ui/app.js").read_text(encoding="utf-8")
         css = Path("ui/engineer-ui/styles.css").read_text(encoding="utf-8")
 
+        self.assertIn('<html lang="en" class="material-symbols-pending">', html)
         self.assertIn("Concierge AI", html)
         self.assertIn("Manrope", html)
-        self.assertIn("./styles.css?v=20260402-engineer-case-split-1", html)
+        self.assertIn(
+            'href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Inter:wght@400;500;600;700&display=swap"',
+            html,
+        )
+        self.assertIn(
+            'href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@300;400;500;700&display=block"',
+            html,
+        )
+        self.assertIn('id="material-symbols-font-stylesheet"', html)
+        self.assertNotIn(
+            'family=Manrope:wght@400;600;700;800&family=Inter:wght@400;500;600;700&family=Material+Symbols+Outlined:wght@300;400;500;700&display=swap',
+            html,
+        )
+        self.assertIn(
+            "document.documentElement.classList.remove(\"material-symbols-pending\")",
+            html,
+        )
+        self.assertIn('getElementById("material-symbols-font-stylesheet")', html)
+        self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
+        self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
+        self.assertIn("if (iconFontStylesheet?.sheet) {", html)
+        self.assertIn("./styles.css?v=20260404-icon-font-guard-1", html)
         self.assertIn('./app.js?v=20260402-engineer-case-split-1', html)
         self.assertIn("function parseRoute()", app_source)
         self.assertIn('path.startsWith("/tickets/")', app_source)
@@ -178,6 +200,9 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn(".status-surface-escalated", css)
         self.assertIn(".status-surface-investigating", css)
         self.assertIn(".status-surface-resolved", css)
+        self.assertIn('font-family: "Material Symbols Outlined";', css)
+        self.assertIn("html.material-symbols-pending .material-symbols-outlined", css)
+        self.assertIn("visibility: hidden;", css)
         self.assertIn(".ticket-workspace", css)
         self.assertNotIn("priorityLabel(", app_source)
         self.assertNotIn(".priority-badge", css)
