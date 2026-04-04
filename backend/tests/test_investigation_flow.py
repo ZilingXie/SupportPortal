@@ -177,24 +177,6 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertGreaterEqual(float(payload_data.get("api_persist_latency_ms") or 0.0), 0.0)
         self.assertGreaterEqual(float(payload_data.get("api_return_latency_ms") or 0.0), 0.0)
 
-    def test_client_ack_session_returns_disabled_fallback_when_openai_key_is_missing(self) -> None:
-        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
-            response = self.client.post(
-                "/api/client/ack/session",
-                json={
-                    "message": "how to join channel",
-                    "ticket_id": "TK-ACK-001",
-                    "customer_id": "C-001",
-                },
-            )
-
-        self.assertEqual(response.status_code, 200, response.text)
-        payload = response.json()
-        self.assertFalse(payload["enabled"])
-        self.assertEqual(payload["provider"], "openai_realtime")
-        self.assertTrue(str(payload["model"] or "").strip())
-        self.assertTrue(str(payload["fallback_text"] or "").strip())
-
     def test_client_ack_returns_model_text_and_latency(self) -> None:
         with patch.object(
             main,
@@ -245,6 +227,19 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(payload["reasoning_effort"], "none")
         self.assertGreaterEqual(float(payload["latency_ms"] or 0.0), 0.0)
         self.assertTrue(str(payload["error"] or "").strip())
+
+    def test_removed_client_ack_experiment_routes_return_404(self) -> None:
+        for method, path in (
+            ("get", "/api/client/ack/runtime-config"),
+            ("post", "/api/client/ack/session"),
+            ("post", "/api/client/ack/benchmark"),
+            ("get", "/api/client/ack/benchmark-report"),
+        ):
+            if method == "post":
+                response = self.client.post(path, json={"message": "how to join channel"})
+            else:
+                response = self.client.get(path)
+            self.assertEqual(response.status_code, 404, response.text)
 
     def test_ticket_query_escalation_creates_linked_engineer_case_with_snapshot_title(self) -> None:
         self._seed_ticket(
