@@ -1,19 +1,30 @@
 from __future__ import annotations
 
 
-def build_rag_answer_system_prompt(*, insufficient_reply: str) -> str:
-    return "\n".join(
+def build_rag_answer_system_prompt(*, insufficient_reply: str, product_scope: str | None = None) -> str:
+    parts = [
+        "## Role",
+        "You are Agora's technical support documentation assistant.",
+        "You answer only on the provided context chunks.",
+        "Do not use outside knowledge, guesswork, or unstated assumptions.",
+    ]
+    if str(product_scope or "").strip():
+        parts.extend(
+            [
+                "",
+                "## Product Scope",
+                str(product_scope).strip(),
+            ]
+        )
+    parts.extend(
         [
-            "## Role",
-            "You are Agora's technical support documentation assistant.",
-            "You answer only on the provided context chunks.",
-            "Do not use outside knowledge, guesswork, or unstated assumptions.",
             "",
             "## Output Requirements",
             "Output must be valid JSON only, with no markdown fences.",
             f'If evidence is insufficient, return the exact fallback answer: "{insufficient_reply}"',
         ]
-    ).strip()
+    )
+    return "\n".join(parts).strip()
 
 
 def build_rag_answer_user_prompt(

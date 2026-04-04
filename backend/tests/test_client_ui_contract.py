@@ -114,8 +114,8 @@ class ClientUiContractTests(unittest.TestCase):
 
         self.assertIn("Concierge AI", html)
         self.assertIn("Manrope", html)
-        self.assertIn("./styles.css?v=20260402-client-ticket-split-1", html)
-        self.assertIn('./app.js?v=20260402-client-ticket-split-1', html)
+        self.assertIn("./styles.css?v=20260404-session-product-scope-1", html)
+        self.assertIn('./app.js?v=20260404-session-product-scope-1', html)
         self.assertIn("AI-SOLVING", app_source)
         self.assertIn("Session History", app_source)
         self.assertIn('navigate("/chat");', app_source)
@@ -345,6 +345,99 @@ class ClientUiContractTests(unittest.TestCase):
                   throw new Error(`Expected navigation to /chat/${draft.id}, got ${lastPath}.`);
                 }
                 """
+            )
+        )
+
+    def test_client_new_session_requires_product_selection_and_locks_after_first_message(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const draft = getOrCreateDraftTicket(state.user.id);
+                state.view = "chat-ticket";
+                state.activeTicketId = draft.id;
+
+                const initialHtml = renderChatTicket();
+                if (!initialHtml.includes("Select Product")) {
+                  throw new Error("Empty draft session should prompt for product selection.");
+                }
+                if (!initialHtml.includes("Audio/Video Calling")) {
+                  throw new Error("Product selector should offer Audio/Video Calling.");
+                }
+                if (!initialHtml.includes("Cloud Recording")) {
+                  throw new Error("Product selector should offer Cloud Recording.");
+                }
+                if (!/id="chat-input"[^>]*disabled/.test(initialHtml)) {
+                  throw new Error("Composer should stay disabled until a product is selected.");
+                }
+
+                updateTicketProduct(draft.id, "audio_video_calling");
+                const selectedDraft = getTicketById(draft.id);
+                if (!selectedDraft || selectedDraft.product !== "audio_video_calling") {
+                  throw new Error("Selecting a product should persist on the local draft.");
+                }
+
+                const selectedHtml = renderChatTicket();
+                if (/id="chat-input"[^>]*disabled/.test(selectedHtml)) {
+                  throw new Error("Composer should unlock once a product is selected.");
+                }
+                if (!renderContextBar().includes("Audio/Video Calling")) {
+                  throw new Error("Context bar should surface the selected product.");
+                }
+
+                saveTicketMessages(draft.id, [
+                  {
+                    id: "msg-1",
+                    role: "user",
+                    content: "How do I join a channel?",
+                    createdAt: new Date().toISOString(),
+                  },
+                ]);
+                updateTicketStatus(draft.id, "communicating");
+                updateTicketProduct(draft.id, "cloud_recording");
+
+                const lockedDraft = getTicketById(draft.id);
+                if (!lockedDraft || lockedDraft.product !== "audio_video_calling") {
+                  throw new Error("Session product should lock after the first customer message.");
+                }
+              """
+            )
+        )
+
+    def test_client_sync_preserves_local_empty_draft_product_selection_until_first_send(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const draft = getOrCreateDraftTicket(state.user.id);
+                updateTicketProduct(draft.id, "cloud_recording");
+
+                fetch = async () => ({
+                  ok: true,
+                  json: async () => ({
+                    tickets: [],
+                  }),
+                });
+
+                await syncTicketsFromBackend({ silent: true });
+
+                const syncedDraft = getTicketById(draft.id);
+                if (!syncedDraft) {
+                  throw new Error("Local empty draft should survive backend sync before first send.");
+                }
+                if (syncedDraft.product !== "cloud_recording") {
+                  throw new Error("Backend sync should preserve local draft product selection.");
+                }
+
+                const historyHtml = renderHistoryRow(syncedDraft, { compact: false });
+                if (!historyHtml.includes("Cloud Recording")) {
+                  throw new Error("Session history metadata should display the selected product.");
+                }
+              """
             )
         )
 

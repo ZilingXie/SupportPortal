@@ -37,6 +37,11 @@ const STATUS_FILTER_OPTIONS = [
   })),
 ];
 
+const PRODUCT_OPTIONS = [
+  { value: "audio_video_calling", label: "Audio/Video Calling" },
+  { value: "cloud_recording", label: "Cloud Recording" },
+];
+
 const FEATURES = [
   {
     icon: "dns",
@@ -438,17 +443,48 @@ function toTimestamp(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function normalizeTicketProduct(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return PRODUCT_OPTIONS.some((option) => option.value === normalized) ? normalized : null;
+}
+
+function getProductOption(value) {
+  const normalized = normalizeTicketProduct(value);
+  return PRODUCT_OPTIONS.find((option) => option.value === normalized) || null;
+}
+
+function getProductLabel(value) {
+  return getProductOption(value)?.label || "";
+}
+
 function pickPreferredTicket(current, candidate) {
   const currentUpdated = toTimestamp(current?.updatedAt || current?.createdAt);
   const candidateUpdated = toTimestamp(candidate?.updatedAt || candidate?.createdAt);
+  const currentProduct = normalizeTicketProduct(current?.product);
+  const candidateProduct = normalizeTicketProduct(candidate?.product);
+
+  const mergeProduct = (preferred, fallback) => {
+    if (normalizeTicketProduct(preferred?.product) || !normalizeTicketProduct(fallback?.product)) {
+      return preferred;
+    }
+    return {
+      ...preferred,
+      product: normalizeTicketProduct(fallback.product),
+    };
+  };
+
   if (candidateUpdated !== currentUpdated) {
-    return candidateUpdated > currentUpdated ? candidate : current;
+    return candidateUpdated > currentUpdated
+      ? mergeProduct(candidate, current)
+      : mergeProduct(current, candidate);
   }
 
   const currentMessageCount = Array.isArray(current?.messages) ? current.messages.length : 0;
   const candidateMessageCount = Array.isArray(candidate?.messages) ? candidate.messages.length : 0;
   if (candidateMessageCount !== currentMessageCount) {
-    return candidateMessageCount > currentMessageCount ? candidate : current;
+    return candidateMessageCount > currentMessageCount
+      ? mergeProduct(candidate, current)
+      : mergeProduct(current, candidate);
   }
 
   const currentTitle = String(current?.title || "").trim();
@@ -458,10 +494,14 @@ function pickPreferredTicket(current, candidate) {
     candidateTitle.length > 0 &&
     candidateTitle !== "New Session"
   ) {
-    return candidate;
+    return mergeProduct(candidate, current);
   }
 
-  return current;
+  if (!currentProduct && candidateProduct) {
+    return mergeProduct(candidate, current);
+  }
+
+  return mergeProduct(current, candidate);
 }
 
 function dedupeTickets(tickets) {
@@ -543,6 +583,7 @@ function normalizeBackendTicket(ticket) {
     createdAt,
     updatedAt,
     userId: String(ticket?.customer_id || ""),
+    product: normalizeTicketProduct(ticket?.product),
     messages: messages.map((message, index) => ({
       id:
         String(message?.id || "").trim() ||
@@ -578,7 +619,12 @@ async function syncTicketsFromBackend(options = {}) {
 
     const allLocal = getAllTickets();
     const otherUsersLocal = allLocal.filter((ticket) => ticket.userId !== state.user.id);
-    saveAllTickets([...otherUsersLocal, ...mapped]);
+    const preservedDrafts = allLocal.filter(
+      (ticket) =>
+        isReusableDraftTicket(ticket, state.user.id) &&
+        !mapped.some((remoteTicket) => remoteTicket.id === ticket.id)
+    );
+    saveAllTickets([...otherUsersLocal, ...mapped, ...preservedDrafts]);
   } catch (error) {
     if (!silent) {
       toast(`Failed to sync sessions from backend: ${error.message}`, "error");
@@ -648,6 +694,7 @@ function createTicket(userId) {
     createdAt: now,
     updatedAt: now,
     userId,
+    product: null,
     messages: [],
   };
   const all = getAllTickets();
@@ -714,6 +761,21 @@ function updateTicketStatus(ticketId, status) {
   all[idx].status = status;
   all[idx].updatedAt = new Date().toISOString();
   saveAllTickets(all);
+}
+
+function updateTicketProduct(ticketId, product) {
+  const all = getAllTickets();
+  const idx = all.findIndex((ticket) => ticket.id === ticketId);
+  if (idx < 0) {
+    return false;
+  }
+  if (!isTicketEmpty(all[idx])) {
+    return false;
+  }
+  all[idx].product = normalizeTicketProduct(product);
+  all[idx].updatedAt = new Date().toISOString();
+  saveAllTickets(all);
+  return true;
 }
 
 function appendTicketMessage(ticketId, message) {
@@ -822,10 +884,12 @@ function buildHistoryRowActions(ticket) {
 }
 
 function renderHistoryRowMeta(ticket) {
+  const productLabel = getProductLabel(ticket?.product);
   return `
     <div class="history-row-meta">
       <span><strong>Created</strong> ${escapeHtml(formatDate(ticket.createdAt))}</span>
       <span><strong>Updated</strong> ${escapeHtml(formatDate(ticket.updatedAt))}</span>
+      ${productLabel ? `<span><strong>Product</strong> ${escapeHtml(productLabel)}</span>` : ""}
     </div>
   `;
 }
@@ -924,6 +988,52 @@ function handleHistoryRowKeydown(event) {
 
 function getStatusFilterOption(value) {
   return STATUS_FILTER_OPTIONS.find((option) => option.value === value) || STATUS_FILTER_OPTIONS[0];
+}
+
+function renderTicketProductSelector(ticket) {
+  const selectedOption = getProductOption(ticket?.product);
+  const triggerLabel = selectedOption?.label || "Select Product";
+  return `
+    <div class="filter-select product-select" data-product-select data-ticket-id="${escapeHtml(ticket.id)}">
+      <input id="ticket-product-${escapeHtml(ticket.id)}" type="hidden" value="${escapeHtml(selectedOption?.value || "")}" />
+      <button
+        class="filter-select-trigger"
+        data-product-select-trigger
+        type="button"
+        role="combobox"
+        aria-label="Select Product"
+        aria-controls="ticket-product-listbox"
+        aria-expanded="false"
+        aria-haspopup="listbox"
+      >
+        <span class="filter-select-trigger-label">${escapeHtml(triggerLabel)}</span>
+        <span class="filter-select-trigger-icon" aria-hidden="true">
+          <span class="material-symbols-outlined">expand_more</span>
+        </span>
+      </button>
+      <div class="filter-select-panel" data-product-select-panel hidden>
+        <div class="filter-select-options" id="ticket-product-listbox" role="listbox" aria-label="Product selector">
+          ${PRODUCT_OPTIONS.map((option, index) => {
+            const isSelected = option.value === selectedOption?.value;
+            return `
+              <button
+                class="filter-select-option ${isSelected ? "is-selected" : ""}"
+                data-product-select-option
+                data-value="${escapeHtml(option.value)}"
+                id="ticket-product-option-${index}"
+                type="button"
+                role="option"
+                aria-selected="${isSelected ? "true" : "false"}"
+              >
+                <span class="filter-select-option-copy">${escapeHtml(option.label)}</span>
+                <span class="filter-select-check material-symbols-outlined" aria-hidden="true">check</span>
+              </button>
+            `;
+          }).join("")}
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function renderStatusFilter() {
@@ -1223,6 +1333,7 @@ function renderContextBar() {
   if (state.view === "chat-ticket") {
     const ticket = getTicketById(state.activeTicketId);
     if (ticket && ticket.userId === state.user.id) {
+      const productLabel = getProductLabel(ticket.product);
       const assistanceRequested = String(ticket.status || "").trim().toLowerCase() === "escalated";
       const canRequestAssistance = canRequestEngineerAssistance(ticket) && !assistanceRequested;
       const assistanceControl = assistanceRequested
@@ -1259,6 +1370,7 @@ function renderContextBar() {
             <div class="context-ticket">
               <span class="context-ticket-title">Ticket ${escapeHtml(ticket.id)}: ${escapeHtml(ticket.title)}</span>
               ${statusBadge(ticket.status)}
+              ${productLabel ? `<span class="context-product-pill">${escapeHtml(productLabel)}</span>` : ""}
             </div>
           </div>
           ${actionButtons ? `<div class="context-actions">${actionButtons}</div>` : ""}
@@ -1331,8 +1443,10 @@ function renderChatTicket() {
     return `<div class="empty-state">Session not found.</div>`;
   }
   const sending = isTicketSending(ticket.id);
-  const canCompose = !sending && ticket.status !== "resolved";
+  const requiresProductSelection = isTicketEmpty(ticket) && !normalizeTicketProduct(ticket.product);
+  const canCompose = !sending && ticket.status !== "resolved" && !requiresProductSelection;
   const isEditing = Boolean(state.editingMessageId);
+  const selectedProductLabel = getProductLabel(ticket.product);
 
   if (isEditing && !ticket.messages.some((message) => message.id === state.editingMessageId)) {
     state.editingMessageId = null;
@@ -1354,6 +1468,14 @@ function renderChatTicket() {
                   </div>
                   <h3>Concierge AI</h3>
                   <p>Describe your technical issue and Concierge AI will start with the most likely next step.</p>
+                  <div class="ticket-product-card">
+                    <div class="ticket-product-copy">
+                      <span class="ticket-product-kicker">Select Product</span>
+                      <h4>${escapeHtml(selectedProductLabel || "Choose the product for this session.")}</h4>
+                      <p>We use this product scope to load the matching support prompt before your first question.</p>
+                    </div>
+                    ${renderTicketProductSelector(ticket)}
+                  </div>
                 </div>
               `
               : ticket.messages
@@ -1408,6 +1530,8 @@ function renderChatTicket() {
             ? `<div class="composer-note">checking the knowledge base... click stop to interrupt.</div>`
             : isEditing
             ? `<div class="composer-note">Editing your last message. Press Enter to resend, Shift+Enter for newline.</div>`
+            : requiresProductSelection
+            ? `<div class="composer-note">Select Product before sending the first message in this session.</div>`
             : ""
         }
         <form id="chat-input-form" class="chat-input-inner">
@@ -1707,6 +1831,11 @@ async function handleSendMessage(text, options = {}) {
   if (!ticket || ticket.status === "resolved") {
     return;
   }
+  const normalizedProduct = normalizeTicketProduct(ticket.product);
+  if (isTicketEmpty(ticket) && !normalizedProduct) {
+    toast("Select a product before sending your first message.", "error");
+    return;
+  }
   if (state.isSending && String(state.pendingTicketId || "").trim() !== String(ticketId || "").trim()) {
     toast("Another session is still processing. Wait or stop it first.", "error");
     return;
@@ -1770,6 +1899,7 @@ async function handleSendMessage(text, options = {}) {
       body: JSON.stringify({
         ticket_id: ticketId,
         customer_id: state.user.id,
+        product: normalizedProduct,
         message: text,
       }),
     });
@@ -1922,6 +2052,7 @@ function bindAuthedEvents() {
   appRoot.querySelectorAll("[data-action='go-chat']").forEach((element) => {
     element.addEventListener("click", () => navigate("/chat"));
   });
+  bindTicketProductSelect();
   bindStatusFilter();
 
   const form = document.getElementById("chat-input-form");
@@ -2146,6 +2277,207 @@ function bindStatusFilter() {
       if (event.key === "Tab") {
         closePanel();
       }
+    });
+  });
+}
+
+function bindTicketProductSelect() {
+  appRoot.querySelectorAll("[data-product-select]").forEach((root) => {
+    const ticketId = String(root.getAttribute("data-ticket-id") || "").trim();
+    if (!ticketId) {
+      return;
+    }
+
+    const trigger = root.querySelector("[data-product-select-trigger]");
+    const panel = root.querySelector("[data-product-select-panel]");
+    const hiddenInput = root.querySelector("input[type='hidden']");
+    const options = Array.from(root.querySelectorAll("[data-product-select-option]"));
+
+    if (!trigger || !panel || options.length === 0) {
+      return;
+    }
+
+    let closeTimer = null;
+
+    const clearCloseTimer = () => {
+      if (closeTimer !== null) {
+        clearTimeout(closeTimer);
+        closeTimer = null;
+      }
+    };
+
+    const isOpen = () => root.classList.contains("is-open");
+
+    const selectedValue = () => normalizeTicketProduct(getTicketById(ticketId)?.product);
+
+    const setActiveDescendant = (option) => {
+      if (option?.id) {
+        trigger.setAttribute("aria-activedescendant", option.id);
+        return;
+      }
+      trigger.removeAttribute("aria-activedescendant");
+    };
+
+    const getSelectedOption = () =>
+      options.find((option) => option.getAttribute("data-value") === selectedValue()) || options[0];
+
+    const openPanel = (focusTarget = "selected") => {
+      clearCloseTimer();
+      root.classList.add("is-open");
+      panel.hidden = false;
+      trigger.setAttribute("aria-expanded", "true");
+
+      if (focusTarget === "trigger") {
+        setActiveDescendant(getSelectedOption());
+        return;
+      }
+
+      const target =
+        focusTarget === "first"
+          ? options[0]
+          : focusTarget === "last"
+          ? options[options.length - 1]
+          : getSelectedOption();
+
+      if (target) {
+        setActiveDescendant(target);
+        target.focus();
+      }
+    };
+
+    const closePanel = ({ restoreFocus = false } = {}) => {
+      clearCloseTimer();
+      root.classList.remove("is-open");
+      panel.hidden = true;
+      trigger.setAttribute("aria-expanded", "false");
+      setActiveDescendant(null);
+      if (restoreFocus) {
+        trigger.focus();
+      }
+    };
+
+    const moveFocus = (currentOption, direction) => {
+      const currentIndex = options.indexOf(currentOption);
+      const nextIndex =
+        currentIndex === -1
+          ? direction > 0
+            ? 0
+            : options.length - 1
+          : (currentIndex + direction + options.length) % options.length;
+      const nextOption = options[nextIndex];
+      if (!nextOption) {
+        return;
+      }
+      setActiveDescendant(nextOption);
+      nextOption.focus();
+    };
+
+    const selectOption = (value) => {
+      const nextValue = normalizeTicketProduct(value);
+      if (!updateTicketProduct(ticketId, nextValue)) {
+        closePanel({ restoreFocus: true });
+        return;
+      }
+      if (hiddenInput) {
+        hiddenInput.value = nextValue || "";
+      }
+      closePanel({ restoreFocus: true });
+      render();
+    };
+
+    trigger.addEventListener("click", () => {
+      if (isOpen()) {
+        closePanel();
+        return;
+      }
+      openPanel("trigger");
+    });
+
+    trigger.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        openPanel("selected");
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        openPanel("last");
+        return;
+      }
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        if (isOpen()) {
+          closePanel();
+        } else {
+          openPanel("selected");
+        }
+        return;
+      }
+      if (event.key === "Escape" && isOpen()) {
+        event.preventDefault();
+        closePanel();
+      }
+    });
+
+    root.addEventListener("focusin", () => {
+      clearCloseTimer();
+    });
+
+    root.addEventListener("focusout", (event) => {
+      const nextTarget = event.relatedTarget;
+      if (nextTarget instanceof Node && root.contains(nextTarget)) {
+        return;
+      }
+      clearCloseTimer();
+      closeTimer = setTimeout(() => {
+        closePanel();
+      }, 120);
+    });
+
+    options.forEach((option) => {
+      option.addEventListener("focus", () => {
+        setActiveDescendant(option);
+      });
+
+      option.addEventListener("click", () => {
+        selectOption(option.getAttribute("data-value") || "");
+      });
+
+      option.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          moveFocus(option, 1);
+          return;
+        }
+        if (event.key === "ArrowUp") {
+          event.preventDefault();
+          moveFocus(option, -1);
+          return;
+        }
+        if (event.key === "Home") {
+          event.preventDefault();
+          moveFocus(options[options.length - 1], 1);
+          return;
+        }
+        if (event.key === "End") {
+          event.preventDefault();
+          moveFocus(options[0], -1);
+          return;
+        }
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          selectOption(option.getAttribute("data-value") || "");
+          return;
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closePanel({ restoreFocus: true });
+          return;
+        }
+        if (event.key === "Tab") {
+          closePanel();
+        }
+      });
     });
   });
 }

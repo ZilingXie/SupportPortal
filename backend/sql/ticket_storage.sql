@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS support_tickets (
     last_engineer_action JSONB,
     active_engineer_case_id TEXT,
     engineer_case_count INTEGER NOT NULL DEFAULT 0,
+    product TEXT,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );

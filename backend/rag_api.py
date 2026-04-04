@@ -61,7 +61,7 @@ PRIMARY_RAG_WORKBENCH_PAGES = (
     "diagnosis",
     "review",
 )
-RAG_PROMPT_VERSION = "rag-v3-context-budget-compression"
+RAG_PROMPT_VERSION = "rag-v4-product-scope"
 
 
 def _build_quality_signals(
@@ -258,6 +258,7 @@ class RagQueryRequest(BaseModel):
     request_id: str = Field(min_length=1, max_length=128)
     ticket_id: str | None = Field(default=None, max_length=128)
     customer_id: str | None = Field(default=None, max_length=128)
+    product: str | None = Field(default=None, max_length=64)
     ticket_context: list[dict[str, str]] | None = None
     top_k: int | None = Field(default=None, ge=1, le=12)
 
@@ -595,6 +596,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             ticket_context=request.ticket_context,
             ticket_id=request.ticket_id,
             customer_id=request.customer_id,
+            product=request.product,
         )
     except Exception as exc:
         LOGGER.warning(

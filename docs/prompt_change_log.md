@@ -346,3 +346,35 @@ For each new entry, record:
   - `bash -n scripts/ops/auto_deploy_ec2.sh scripts/ops/bootstrap_auto_deploy_ec2.sh deployment/deploy_ec2.sh`
   - `python3 -m py_compile backend/services/auto_deploy_report.py scripts/ops/build_auto_deploy_report.py backend/services/llm_profiles.py`
   - `git diff --check`
+
+- Date: 2026-04-04
+- Area or subsystem: Client session product selection, router prompt, and RAG answer prompt
+- Prompt or model version: `rag-v4-product-scope`
+- Summary: Added product-scoped prompt context for new client sessions so the router and RAG answer prompt both receive the same persisted product selection (`Audio/Video Calling` or `Cloud Recording`) at request time, while legacy sessions without a product stay on the generic prompt path.
+- Reason: The client now requires users to choose the product before the first message, and that selection needs to steer prompt behavior consistently across synchronous answers, async worker execution, and internal `/internal/rag/query` calls.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/rag_api.py`
+  - `backend/services/prompts/rag_answer.py`
+  - `backend/services/prompts/router.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/services/support_products.py`
+  - `backend/services/support_router.py`
+  - `backend/services/support_router_prompt.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/worker.py`
+  - `ui/client-ui/app.js`
+  - `ui/client-ui/index.html`
+  - `docs/feature_list.md`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - New and empty client sessions must select a product before the first send, and that product is reused as prompt context for route classification and docs-grounded answer generation.
+  - `Audio/Video Calling` questions bias prompt scope toward RTC/channel/join/publish/subscribe support language, while `Cloud Recording` questions bias prompt scope toward recording lifecycle and recording API language.
+  - Legacy non-empty sessions without a stored product still use the generic Agora technical prompt path and are not blocked.
+- Verification:
+  - `uv run --with pytest --with fastapi --with pydantic --with python-dotenv --with python-multipart --with redis --with httpx --with 'psycopg[binary]' python -m pytest -q backend/tests/test_client_ui_contract.py backend/tests/test_investigation_flow.py backend/tests/test_repository_configuration.py backend/tests/test_rag_service_client.py backend/tests/test_support_router.py backend/tests/test_rag_api.py backend/tests/test_ticket_orchestrator.py backend/tests/test_worker.py backend/tests/test_prompt_modules.py`
+  - `python3 scripts/verify_feature_list.py`
+  - `python3 -m py_compile backend/main.py backend/rag_api.py backend/services/prompts/rag_answer.py backend/services/prompts/router.py backend/services/rag_qa.py backend/services/rag_service_client.py backend/services/support_products.py backend/services/support_router.py backend/services/support_router_prompt.py backend/services/ticket_orchestrator.py backend/worker.py`
+  - `node --check ui/client-ui/app.js`
+  - `git diff --check`

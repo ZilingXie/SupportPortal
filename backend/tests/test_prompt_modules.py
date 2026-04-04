@@ -105,6 +105,15 @@ class PromptModuleTests(unittest.TestCase):
         self.assertIn(insufficient_reply, user_prompt)
         self.assertIn("## Repair Requirements", user_prompt)
 
+    def test_rag_answer_system_prompt_includes_selected_product_scope(self) -> None:
+        system_prompt = build_rag_answer_system_prompt(
+            insufficient_reply="INSUFFICIENT",
+            product_scope="Selected support product: Cloud Recording.",
+        )
+
+        self.assertIn("## Product Scope", system_prompt)
+        self.assertIn("Cloud Recording", system_prompt)
+
     def test_rag_sufficiency_prompt_v2_is_sectioned_and_conservative(self) -> None:
         system_prompt = build_rag_sufficiency_system_prompt()
         user_prompt = build_rag_sufficiency_user_prompt(
