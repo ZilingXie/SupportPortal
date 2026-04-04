@@ -229,7 +229,7 @@ resolve_positive_integer() {
 }
 
 show_compose_diagnostics() {
-  log "Service status after failed health check:"
+  log "Service status after failed deploy step:"
   docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps || true
   log "Recent service logs:"
   docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" logs --tail=80 api nginx rag_api ws_gateway worker rag_worker || true
@@ -316,10 +316,16 @@ main() {
   health_timeout_seconds="$(resolve_positive_integer DEPLOY_HEALTH_TIMEOUT_SECONDS 90)"
   health_retry_interval_seconds="$(resolve_positive_integer DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS 2)"
 
+  log "Pre-building services before restart..."
+  if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" build; then
+    show_compose_diagnostics
+    fail "docker compose build failed"
+  fi
+
   log "Stopping services..."
   docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" down
-  log "Starting services (build + detached)..."
-  if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --build; then
+  log "Starting services (detached)..."
+  if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d; then
     show_compose_diagnostics
     fail "docker compose up failed"
   fi
