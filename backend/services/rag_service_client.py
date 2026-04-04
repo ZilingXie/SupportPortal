@@ -336,6 +336,7 @@ class RagServiceClient:
         ticket_id: str | None,
         customer_id: str | None,
         ticket_context: list[dict[str, str]] | None = None,
+        product: str | None = None,
         top_k: int | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -344,6 +345,8 @@ class RagServiceClient:
             "ticket_id": ticket_id,
             "customer_id": customer_id,
         }
+        if str(product or "").strip():
+            payload["product"] = str(product).strip()
         if ticket_context is not None:
             payload["ticket_context"] = [
                 {
@@ -376,6 +379,7 @@ class RagServiceClient:
         ticket_id: str | None,
         customer_id: str | None,
         ticket_context: list[dict[str, str]] | None = None,
+        product: str | None = None,
         insufficient_reply: str,
         top_k: int | None = None,
         recovery_attempts: int | None = None,
@@ -391,6 +395,7 @@ class RagServiceClient:
             top_k=top_k,
             recovery_attempts=recovery_attempts,
             recovery_delay_seconds=recovery_delay_seconds,
+            **({"product": product} if str(product or "").strip() else {}),
         )
         return detail.as_answer_tuple()
 
@@ -402,19 +407,25 @@ class RagServiceClient:
         ticket_id: str | None,
         customer_id: str | None,
         ticket_context: list[dict[str, str]] | None = None,
+        product: str | None = None,
         insufficient_reply: str,
         top_k: int | None = None,
         recovery_attempts: int | None = None,
         recovery_delay_seconds: float | None = None,
     ) -> RagTicketAnswerDetail:
         try:
+            query_kwargs: dict[str, Any] = {
+                "question": question,
+                "request_id": request_id,
+                "ticket_id": ticket_id,
+                "customer_id": customer_id,
+                "ticket_context": ticket_context,
+                "top_k": top_k,
+            }
+            if str(product or "").strip():
+                query_kwargs["product"] = str(product).strip()
             payload = self.query(
-                question=question,
-                request_id=request_id,
-                ticket_id=ticket_id,
-                customer_id=customer_id,
-                ticket_context=ticket_context,
-                top_k=top_k,
+                **query_kwargs,
             )
         except RagServiceError as exc:
             payload = exc.payload if isinstance(exc.payload, dict) else {}

@@ -979,11 +979,14 @@ class RagQaHybridTests(unittest.TestCase):
             *,
             strict_retry: bool = False,
             packed_evidence=None,
+            product: str | None = None,
+            **_: object,
         ) -> tuple[dict[str, object], int, int, str]:
             _ = message
             _ = config
             _ = strict_retry
             _ = packed_evidence
+            _ = product
             captured_final_chunk_ids.append([chunk.chunk_id for chunk in chunks])
             return (
                 {
@@ -1212,11 +1215,14 @@ class RagQaHybridTests(unittest.TestCase):
             *,
             strict_retry: bool = False,
             packed_evidence=None,
+            product: str | None = None,
+            **_: object,
         ) -> tuple[dict[str, object], int, int, str]:
             _ = message
             _ = config
             _ = strict_retry
             _ = packed_evidence
+            _ = product
             captured_final_chunk_ids.append([chunk.chunk_id for chunk in chunks])
             return (
                 {

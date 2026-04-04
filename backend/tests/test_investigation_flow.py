@@ -64,11 +64,13 @@ class InvestigationFlowTests(unittest.TestCase):
         ticket_id: str = "TK-INV-001",
         subject: str = "Token renew callback missing",
         status: str = "open",
+        product: str | None = None,
         messages: list[dict[str, object]] | None = None,
         active_investigation: dict[str, object] | None = None,
         investigation_history: list[dict[str, object]] | None = None,
         engineer_handoff_packet: dict[str, object] | None = None,
         engineer_agent_state: dict[str, object] | None = None,
+        client_intake_state: dict[str, object] | None = None,
     ) -> dict[str, object]:
         ticket = {
             "ticket_id": ticket_id,
@@ -76,6 +78,7 @@ class InvestigationFlowTests(unittest.TestCase):
             "requester": "Customer",
             "subject": subject,
             "status": status,
+            "product": product,
             "last_engineer_action": None,
             "created_at": "2026-03-29T09:00:00+00:00",
             "updated_at": "2026-03-29T09:00:00+00:00",
@@ -91,6 +94,7 @@ class InvestigationFlowTests(unittest.TestCase):
             "investigation_history": investigation_history or [],
             "engineer_handoff_packet": engineer_handoff_packet,
             "engineer_agent_state": engineer_agent_state,
+            "client_intake_state": client_intake_state,
         }
         self.repository.save_ticket(ticket, new_messages=ticket["messages"])
         return ticket
@@ -128,6 +132,7 @@ class InvestigationFlowTests(unittest.TestCase):
                 json={
                     "ticket_id": "TK-OPT-001",
                     "customer_id": "C-001",
+                    "product": "audio_video_calling",
                     "message": "how to join channel",
                 },
             )
@@ -330,6 +335,180 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(ticket["active_engineer_case_id"], "TK-040-1")
         self.assertEqual(ticket["engineer_case_count"], 1)
 
+    def test_ticket_query_requires_product_for_new_session_first_message(self) -> None:
+        response = self.client.post(
+            "/api/tickets/query",
+            json={
+                "ticket_id": "TK-PROD-001",
+                "customer_id": "C-001",
+                "message": "How do I join a channel?",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["detail"], "product is required for a new session")
+
+    def test_ticket_query_persists_product_for_first_customer_message(self) -> None:
+        with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="收到，我先帮你看一下。",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main,
+            "analyze_ticket_message",
+            return_value=_rag_route_decision(),
+        ), patch.object(
+            main,
+            "orchestrate_ticket_execution",
+            return_value=types.SimpleNamespace(
+                answer="先使用 quickstart 初始化 SDK。",
+                confidence=0.88,
+                sources=["official/quickstart.md"],
+                citations=[],
+                needs_investigating=False,
+                next_status="communicating",
+                answer_route="rag",
+                scope_label="agora_technical",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+                route_reason="grounded_answer",
+                route_confidence=0.93,
+                search_used=False,
+                matched_signals=["join channel"],
+                investigation_reason=None,
+                evidence_summary=None,
+                packed_evidence=None,
+                workflow_action="answer_customer",
+                client_intake_state=None,
+            ),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-PROD-002",
+                    "customer_id": "C-001",
+                    "message": "How do I join a channel?",
+                    "product": "audio_video_calling",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        stored = self.repository.get_ticket("TK-PROD-002")
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["product"], "audio_video_calling")
+
+        list_response = self.client.get("/api/tickets?customer_id=C-001&status=all")
+        self.assertEqual(list_response.status_code, 200, list_response.text)
+        ticket = next(item for item in list_response.json()["tickets"] if item["ticket_id"] == "TK-PROD-002")
+        self.assertEqual(ticket["product"], "audio_video_calling")
+
+    def test_existing_non_empty_session_keeps_locked_product_and_ignores_override(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-PROD-003",
+            subject="RTC setup issue",
+            status="communicating",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "How do I initialize the SDK?",
+                    "created_at": "2026-03-29T09:00:00+00:00",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Use the quickstart first.",
+                    "created_at": "2026-03-29T09:01:00+00:00",
+                },
+            ],
+        )
+        seeded = self.repository.get_ticket("TK-PROD-003")
+        self.assertIsNotNone(seeded)
+        seeded["product"] = "audio_video_calling"
+        self.repository.save_ticket(seeded, new_messages=[])
+
+        with patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="收到，我先帮你看一下。",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main,
+            "resolve_support_message",
+            return_value=_resolution(needs_engineer_guidance=False),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-PROD-003",
+                    "customer_id": "C-001",
+                    "message": "Still not working.",
+                    "product": "cloud_recording",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        stored = self.repository.get_ticket("TK-PROD-003")
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["product"], "audio_video_calling")
+
+    def test_legacy_non_empty_session_without_product_stays_generic(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-PROD-004",
+            subject="Existing legacy session",
+            status="communicating",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "My existing session has no product.",
+                    "created_at": "2026-03-29T09:00:00+00:00",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Tell me more.",
+                    "created_at": "2026-03-29T09:01:00+00:00",
+                },
+            ],
+        )
+
+        with patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="收到，我先帮你看一下。",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main,
+            "resolve_support_message",
+            return_value=_resolution(needs_engineer_guidance=False),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-PROD-004",
+                    "customer_id": "C-001",
+                    "message": "Can I keep asking follow-up questions?",
+                    "product": "cloud_recording",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        stored = self.repository.get_ticket("TK-PROD-004")
+        self.assertIsNotNone(stored)
+        self.assertIsNone(stored.get("product"))
+
     def test_engineer_ticket_detail_includes_canonical_ticket_family_token_summary(self) -> None:
         self._seed_ticket(
             ticket_id="TK-040",
@@ -392,14 +571,53 @@ class InvestigationFlowTests(unittest.TestCase):
             ),
         ), patch.object(
             main,
-            "resolve_support_message",
-            return_value=_resolution(needs_engineer_guidance=True),
+            "analyze_ticket_message",
+            return_value=_rag_route_decision(reason="technical_troubleshooting_symptom"),
+        ), patch.object(
+            main,
+            "orchestrate_ticket_execution",
+            return_value=types.SimpleNamespace(
+                answer=main.INSUFFICIENT_EVIDENCE_REPLY,
+                confidence=0.0,
+                sources=[],
+                citations=[],
+                needs_investigating=True,
+                next_status="investigating",
+                answer_route="rag",
+                scope_label="agora_technical",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+                route_reason="rag_insufficient_evidence",
+                route_confidence=0.91,
+                search_used=False,
+                matched_signals=["token renew", "callback"],
+                investigation_reason="rag_insufficient_evidence",
+                evidence_summary=None,
+                packed_evidence=None,
+                workflow_action="open_engineer_ticket",
+                client_intake_state={
+                    "phase": "ready_for_engineer_ticket",
+                    "product": "audio_video_calling",
+                    "issue_mode": "investigation",
+                    "known_information": {
+                        "issue_symptom": "token renew callback never fires",
+                        "channel_name": "demo-room",
+                        "problematic_uid": "42",
+                        "issue_timestamp": "2026-04-04T10:30:00Z",
+                    },
+                    "missing_information": [],
+                    "ready_for_engineer_ticket": True,
+                    "last_updated_at": "2026-04-04T10:30:00Z",
+                },
+            ),
         ), patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
                 "/api/tickets/query",
                 json={
                     "ticket_id": "TK-INV-100",
                     "customer_id": "C-001",
+                    "product": "audio_video_calling",
                     "message": "为什么 token renew callback 一直没有回调？",
                 },
             )
@@ -541,6 +759,7 @@ class InvestigationFlowTests(unittest.TestCase):
                 json={
                     "ticket_id": "TK-INV-HANDOFF-100",
                     "customer_id": "C-001",
+                    "product": "audio_video_calling",
                     "message": "Android 14 token renewal still fails after I upgraded the SDK.",
                 },
             )
@@ -752,6 +971,7 @@ class InvestigationFlowTests(unittest.TestCase):
                 json={
                     "ticket_id": "TK-ACK-NEG-100",
                     "customer_id": "C-001",
+                    "product": "audio_video_calling",
                     "message": "My service is down and this is so frustrated!",
                 },
             )
@@ -779,7 +999,7 @@ class InvestigationFlowTests(unittest.TestCase):
         task = enqueue_mock.await_args_list[0].args[0]
         self.assertEqual(task["task_type"], "ticket_message_sentiment")
 
-    def test_black_screen_query_defaults_to_rag_and_investigates_when_rag_is_insufficient(self) -> None:
+    def test_black_screen_query_clarifies_customer_before_opening_engineer_ticket(self) -> None:
         with patch.object(
             main,
             "ASYNC_QUERY_ENABLED",
@@ -793,46 +1013,196 @@ class InvestigationFlowTests(unittest.TestCase):
                 intent="question",
             ),
         ), patch.object(
-            main.rag_service_client,
-            "query_answer_with_recovery_detail",
-            return_value=RagTicketAnswerDetail(
-                answer=main.INSUFFICIENT_EVIDENCE_REPLY,
+            main,
+            "analyze_ticket_message",
+            return_value=_rag_route_decision(reason="technical_troubleshooting_symptom"),
+        ), patch.object(
+            main,
+            "orchestrate_ticket_execution",
+            return_value=types.SimpleNamespace(
+                answer=(
+                    "Known so far: the issue symptom is black screen. "
+                    "To investigate this Audio/Video Calling issue, please share the channel name, "
+                    "problematic uid, and issue timestamp."
+                ),
                 confidence=0.0,
                 sources=[],
                 citations=[],
-                needs_engineer_guidance=True,
-                reason="rag_insufficient_evidence",
+                needs_investigating=False,
+                next_status="communicating",
+                answer_route="rag",
+                scope_label="agora_technical",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+                route_reason="rag_insufficient_evidence",
+                route_confidence=0.86,
+                search_used=False,
+                matched_signals=["black screen"],
+                investigation_reason=None,
                 evidence_summary=None,
+                packed_evidence=None,
+                workflow_action="clarify_customer_for_intake",
+                client_intake_state={
+                    "phase": "gather_customer_inputs",
+                    "product": "audio_video_calling",
+                    "issue_mode": "investigation",
+                    "known_information": {"issue_symptom": "black screen"},
+                    "missing_information": ["channel_name", "problematic_uid", "issue_timestamp"],
+                    "ready_for_engineer_ticket": False,
+                    "last_updated_at": "2026-04-04T10:00:00Z",
+                },
             ),
-        ), patch.object(
-            main,
-            "analyze_ticket_message",
-            return_value=_rag_route_decision(reason="conservative_agora_technical_fallback"),
-        ), patch.object(
-            main,
-            "generate_investigation_ai_turn",
-            return_value={
-                "state": "active",
-                "message": "Please confirm whether the black screen affects local preview or remote video only.",
-                "draft_customer_reply": None,
-            },
         ), patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
                 "/api/tickets/query",
                 json={
                     "ticket_id": "TK-INV-110",
                     "customer_id": "C-001",
+                    "product": "audio_video_calling",
                     "message": "i got black screen issue, what should i do?",
                 },
             )
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["status"], "investigating")
+        self.assertEqual(payload["status"], "communicating")
         self.assertEqual(payload["answer_route"], "rag")
         self.assertEqual(payload["scope_label"], "agora_technical")
         self.assertEqual(payload["route_reason"], "rag_insufficient_evidence")
         self.assertEqual(payload["answer"], "Got it, let me check this for you.")
+        stored = self.repository.get_ticket("TK-INV-110")
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["status"], "communicating")
+        self.assertEqual(
+            stored["client_intake_state"]["missing_information"],
+            ["channel_name", "problematic_uid", "issue_timestamp"],
+        )
+        self.assertEqual(
+            stored["messages"][-1]["content"],
+            "Known so far: the issue symptom is black screen. To investigate this Audio/Video Calling issue, please share the channel name, problematic uid, and issue timestamp.",
+        )
+        self.assertIsNone(stored.get("active_engineer_case_id"))
+        self.assertEqual(stored.get("engineer_case_count"), 0)
+
+    def test_follow_up_with_required_inputs_opens_engineer_ticket_and_clears_client_intake_state(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-INV-READY-201",
+            subject="black screen issue",
+            status="communicating",
+            product="audio_video_calling",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "i got black screen issue",
+                    "created_at": "2026-03-29T09:00:00+00:00",
+                },
+                {
+                    "role": "assistant",
+                    "content": (
+                        "Known so far: the issue symptom is black screen. "
+                        "To investigate this Audio/Video Calling issue, please share the channel name, "
+                        "problematic uid, and issue timestamp."
+                    ),
+                    "created_at": "2026-03-29T09:01:00+00:00",
+                },
+            ],
+            client_intake_state={
+                "phase": "gather_customer_inputs",
+                "product": "audio_video_calling",
+                "issue_mode": "investigation",
+                "known_information": {"issue_symptom": "black screen"},
+                "missing_information": ["channel_name", "problematic_uid", "issue_timestamp"],
+                "ready_for_engineer_ticket": False,
+                "last_updated_at": "2026-03-29T09:01:00+00:00",
+            },
+        )
+
+        with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="Got it, let me check this for you.",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main,
+            "analyze_ticket_message",
+            return_value=_rag_route_decision(reason="technical_troubleshooting_symptom"),
+        ), patch.object(
+            main,
+            "orchestrate_ticket_execution",
+            return_value=types.SimpleNamespace(
+                answer=main.INSUFFICIENT_EVIDENCE_REPLY,
+                confidence=0.0,
+                sources=[],
+                citations=[],
+                needs_investigating=True,
+                next_status="investigating",
+                answer_route="rag",
+                scope_label="agora_technical",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+                route_reason="rag_insufficient_evidence",
+                route_confidence=0.88,
+                search_used=False,
+                matched_signals=["black screen", "uid"],
+                investigation_reason="rag_insufficient_evidence",
+                evidence_summary=None,
+                packed_evidence=None,
+                workflow_action="open_engineer_ticket",
+                client_intake_state={
+                    "phase": "ready_for_engineer_ticket",
+                    "product": "audio_video_calling",
+                    "issue_mode": "investigation",
+                    "known_information": {
+                        "issue_symptom": "black screen",
+                        "channel_name": "demo-room",
+                        "problematic_uid": "42",
+                        "issue_timestamp": "2026-04-04T10:30:00Z",
+                    },
+                    "missing_information": [],
+                    "ready_for_engineer_ticket": True,
+                    "last_updated_at": "2026-04-04T10:30:00Z",
+                },
+            ),
+        ), patch.object(
+            main,
+            "generate_investigation_ai_turn",
+            return_value={
+                "state": "active",
+                "message": "Engineer intake received the collected customer details.",
+                "draft_customer_reply": None,
+            },
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-INV-READY-201",
+                    "customer_id": "C-001",
+                    "message": "channel name is demo-room, problematic uid is 42, timestamp is 2026-04-04T10:30:00Z",
+                    "product": "audio_video_calling",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "investigating")
+        stored = self.repository.get_ticket("TK-INV-READY-201")
+        self.assertIsNotNone(stored)
+        self.assertIsNone(stored.get("client_intake_state"))
+        detail = self.client.get("/api/engineer/tickets/TK-INV-READY-201-1")
+        self.assertEqual(detail.status_code, 200, detail.text)
+        handoff = detail.json()["ticket"]["engineer_handoff_packet"]
+        self.assertEqual(
+            handoff["client_intake_state"]["known_information"]["channel_name"],
+            "demo-room",
+        )
 
     def test_rag_http_500_keeps_service_error_reason_in_ticket_and_handoff(self) -> None:
         with patch.object(
@@ -865,6 +1235,7 @@ class InvestigationFlowTests(unittest.TestCase):
                 json={
                     "ticket_id": "TK-RAG-SVCERR-100",
                     "customer_id": "C-001",
+                    "product": "audio_video_calling",
                     "message": "how to join channel",
                 },
             )
@@ -940,6 +1311,7 @@ class InvestigationFlowTests(unittest.TestCase):
                 json={
                     "ticket_id": "TK-ACK-FALLBACK-100",
                     "customer_id": "C-001",
+                    "product": "audio_video_calling",
                     "message": "How can I debug token renewal on Android?",
                 },
             )
@@ -1028,6 +1400,7 @@ class InvestigationFlowTests(unittest.TestCase):
                 json={
                     "ticket_id": "TK-INV-POSTCHECK-100",
                     "customer_id": "C-001",
+                    "product": "audio_video_calling",
                     "message": "Android 14 token renewal still fails after I upgraded the SDK.",
                 },
             )
@@ -1125,6 +1498,7 @@ class InvestigationFlowTests(unittest.TestCase):
                 json={
                     "ticket_id": "TK-INV-POSTCHECK-ERR-100",
                     "customer_id": "C-001",
+                    "product": "audio_video_calling",
                     "message": "Android 14 token renewal still fails after I upgraded the SDK.",
                 },
             )

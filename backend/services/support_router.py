@@ -298,6 +298,7 @@ def _llm_route_decision(
     ticket_subject: str | None,
     ticket_context: list[dict[str, str]] | None,
     response_language: str,
+    product: str | None,
 ) -> SupportRouteDecision | None:
     profile = resolve_model_profile(INTENT_ROUTER_SCENARIO)
     if not profile.api_key:
@@ -308,6 +309,7 @@ def _llm_route_decision(
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
         response_language=response_language,
+        product=product,
     )
     try:
         response = invoke_responses_text(
@@ -346,6 +348,7 @@ def decide_support_route(
     *,
     ticket_subject: str | None = None,
     ticket_context: list[dict[str, str]] | None = None,
+    product: str | None = None,
 ) -> SupportRouteDecision:
     text = _normalize_text(message)
     response_language = _response_language(text)
@@ -371,6 +374,7 @@ def decide_support_route(
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
         response_language=response_language,
+        product=product,
     )
     threshold = _safe_float_env(
         "INTENT_ROUTER_CONFIDENCE_THRESHOLD",
@@ -576,6 +580,7 @@ def resolve_support_message(
     *,
     ticket_subject: str | None = None,
     ticket_context: list[dict[str, str]] | None = None,
+    product: str | None = None,
     rag_answerer: Callable[[str], tuple[str, float, list[str], list[dict[str, str]], bool]] | None = None,
     decision: SupportRouteDecision | None = None,
 ) -> SupportResolution:
@@ -583,6 +588,7 @@ def resolve_support_message(
         message,
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
+        product=product,
     )
     if decision.execution_action == "refuse":
         answer = build_refusal_answer(decision)

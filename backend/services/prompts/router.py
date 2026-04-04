@@ -67,6 +67,7 @@ def build_router_user_prompt(*, payload: dict[str, Any]) -> str:
     message = str(payload.get("message") or "").strip() or "(empty)"
     ticket_subject = str(payload.get("ticket_subject") or "").strip() or "(none)"
     response_language = str(payload.get("response_language") or "").strip() or "en"
+    selected_product = str(payload.get("selected_product") or "").strip() or "(generic Agora support)"
     ticket_context = list(payload.get("ticket_context") or [])
     hints = dict(payload.get("hints") or {})
     return "\n".join(
@@ -78,6 +79,9 @@ def build_router_user_prompt(*, payload: dict[str, Any]) -> str:
             "",
             "## Ticket Subject",
             ticket_subject,
+            "",
+            "## Selected Product",
+            selected_product,
             "",
             "## Recent Ticket Context",
             _dump_json(ticket_context),

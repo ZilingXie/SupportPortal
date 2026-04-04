@@ -92,6 +92,7 @@ def _build_ticket(
     ticket_id: str = "T-RETRY",
     customer_message: str = "Need help with token generation",
     message_created_at: str = "2026-03-22T00:00:00+00:00",
+    client_intake_state: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         "ticket_id": ticket_id,
@@ -113,6 +114,7 @@ def _build_ticket(
                 "created_at": "2026-03-22T00:00:01+00:00",
             },
         ],
+        "client_intake_state": client_intake_state,
     }
 
 
@@ -267,6 +269,137 @@ class WorkerResilienceTests(unittest.TestCase):
             "rag",
         )
 
+    def test_process_ticket_query_forwards_ticket_product_to_orchestrator(self) -> None:
+        ticket = _build_ticket()
+        ticket["product"] = "cloud_recording"
+        repository = Mock()
+        repository.get_ticket.side_effect = [
+            copy.deepcopy(ticket),
+            copy.deepcopy(ticket),
+        ]
+        repository.list_ticket_events.return_value = []
+        repository.save_ticket.return_value = None
+        repository.record_event.return_value = None
+        bus = Mock()
+        execution = types.SimpleNamespace(
+            answer="Use the Cloud Recording REST API start endpoint.",
+            confidence=0.91,
+            sources=["official/cloud-recording-start.md"],
+            citations=[{"source": "official/cloud-recording-start.md", "label": "Start recording"}],
+            needs_engineer_guidance=False,
+            answer_route="rag",
+            scope_label="agora_technical",
+            route_reason="docs_match",
+            route_confidence=0.91,
+            search_used=False,
+            matched_signals=["cloud recording"],
+            route_family="agora_docs_rag",
+            execution_action="rag",
+            tooling_profile="agora_docs_only",
+            needs_investigating=False,
+            next_status="communicating",
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "_orchestrate_worker_support_message",
+            return_value=execution,
+        ) as orchestrate_mock, patch.object(
+            worker,
+            "build_client_sync_event",
+            return_value={"event": "ticket_ai_response_ready"},
+        ), patch.object(
+            worker,
+            "ensure_ticket_defaults",
+            side_effect=lambda ticket: None,
+        ), patch.object(
+            worker,
+            "now_iso",
+            return_value="2026-03-22T00:01:00+00:00",
+        ):
+            worker._process_ticket_query(bus, dict(self.task))
+
+        self.assertEqual(orchestrate_mock.call_args.kwargs["product"], "cloud_recording")
+
+    def test_process_ticket_query_clarifies_customer_and_keeps_ticket_communicating(self) -> None:
+        ticket = _build_ticket(
+            ticket_id="T-INTAKE",
+            customer_message="I got black screen issue.",
+        )
+        ticket["product"] = "audio_video_calling"
+        repository = Mock()
+        repository.get_ticket.side_effect = [
+            copy.deepcopy(ticket),
+            copy.deepcopy(ticket),
+        ]
+        repository.list_ticket_events.return_value = []
+        repository.save_ticket.return_value = None
+        repository.record_event.return_value = None
+        repository.save_engineer_case.return_value = None
+        bus = Mock()
+        execution = types.SimpleNamespace(
+            answer=(
+                "Known so far: the issue symptom is black screen. "
+                "To investigate this Audio/Video Calling issue, please share the channel name, "
+                "problematic uid, and issue timestamp."
+            ),
+            confidence=0.0,
+            sources=[],
+            citations=[],
+            needs_engineer_guidance=False,
+            answer_route="rag",
+            scope_label="agora_technical",
+            route_reason="rag_insufficient_evidence",
+            route_confidence=0.87,
+            search_used=False,
+            matched_signals=["black screen"],
+            route_family="agora_docs_rag",
+            execution_action="rag",
+            tooling_profile="agora_docs_only",
+            needs_investigating=False,
+            next_status="communicating",
+            workflow_action="clarify_customer_for_intake",
+            client_intake_state={
+                "phase": "gather_customer_inputs",
+                "product": "audio_video_calling",
+                "issue_mode": "investigation",
+                "known_information": {"issue_symptom": "black screen"},
+                "missing_information": ["channel_name", "problematic_uid", "issue_timestamp"],
+                "ready_for_engineer_ticket": False,
+                "last_updated_at": "2026-04-04T10:00:00Z",
+            },
+            evidence_summary=None,
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "_orchestrate_worker_support_message",
+            return_value=execution,
+        ), patch.object(
+            worker,
+            "build_client_sync_event",
+            return_value={"event": "ticket_ai_response_ready"},
+        ), patch.object(
+            worker,
+            "ensure_ticket_defaults",
+            side_effect=lambda ticket: None,
+        ), patch.object(
+            worker,
+            "now_iso",
+            return_value="2026-03-22T00:01:00+00:00",
+        ):
+            worker._process_ticket_query(bus, dict(self.task, ticket_id="T-INTAKE", customer_message="I got black screen issue."))
+
+        saved_ticket = repository.save_ticket.call_args_list[0].args[0]
+        self.assertEqual(saved_ticket["status"], "communicating")
+        self.assertEqual(saved_ticket["client_intake_state"]["phase"], "gather_customer_inputs")
+        self.assertEqual(
+            saved_ticket["messages"][-1]["content"],
+            "Known so far: the issue symptom is black screen. To investigate this Audio/Video Calling issue, please share the channel name, problematic uid, and issue timestamp.",
+        )
+        self.assertFalse(repository.save_engineer_case.called)
+        event_payload = repository.record_event.call_args_list[0].args[2]
+        self.assertEqual(event_payload["workflow_action"], "clarify_customer_for_intake")
     def test_process_ticket_query_retries_transient_save_ticket_failure(self) -> None:
         initial_ticket = _build_ticket()
         repository = Mock()

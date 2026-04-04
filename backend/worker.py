@@ -356,6 +356,7 @@ def _fetch_rag_answer_detail_for_worker(
     ticket_id: str,
     customer_id: str | None,
     ticket_context: list[dict[str, str]],
+    product: str | None = None,
 ) -> RagTicketAnswerDetail:
     try:
         return rag_service_client.query_answer_with_recovery_detail(
@@ -364,6 +365,7 @@ def _fetch_rag_answer_detail_for_worker(
             ticket_id=ticket_id,
             customer_id=customer_id,
             ticket_context=ticket_context,
+            product=product,
             insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
         )
     except RagServiceError as exc:
@@ -390,6 +392,8 @@ def _execute_parallel_ticket_query(
     ticket_subject: str | None,
     ticket_context: list[dict[str, str]],
     message_created_at: str,
+    product: str | None = None,
+    client_intake_state: dict[str, object] | None = None,
 ) -> tuple[TicketExecutionResult, dict[str, Any]]:
     request_id = f"rag-{uuid4().hex[:12]}"
     diagnostics: dict[str, Any] = {
@@ -410,6 +414,7 @@ def _execute_parallel_ticket_query(
             customer_message,
             ticket_subject=ticket_subject,
             ticket_context=ticket_context,
+            product=product,
         )
 
     def _run_rag() -> RagTicketAnswerDetail:
@@ -421,6 +426,7 @@ def _execute_parallel_ticket_query(
                 ticket_id=ticket_id,
                 customer_id=customer_id,
                 ticket_context=ticket_context,
+                product=product,
             )
         finally:
             diagnostics["rag_finished_at"] = now_iso()
@@ -470,6 +476,7 @@ def _execute_parallel_ticket_query(
                 ticket_subject=ticket_subject,
                 ticket_context=ticket_context,
                 decision=route_decision,
+                product=product,
             )
             execution = orchestrate_ticket_execution(
                 customer_message,
@@ -477,6 +484,8 @@ def _execute_parallel_ticket_query(
                 customer_id=customer_id,
                 ticket_subject=ticket_subject,
                 ticket_context=ticket_context,
+                product=product,
+                client_intake_state=client_intake_state,
                 decision=route_decision,
                 resolution_builder=lambda *_args, **_kwargs: resolution,
             )
@@ -502,6 +511,8 @@ def _execute_parallel_ticket_query(
             customer_id=customer_id,
             ticket_subject=ticket_subject,
             ticket_context=ticket_context,
+            product=product,
+            client_intake_state=client_intake_state,
             decision=effective_route_decision,
             resolution_builder=lambda *_args, **_kwargs: resolution,
         )
@@ -518,6 +529,8 @@ def _orchestrate_worker_support_message(
     ticket_subject: str | None,
     ticket_context: list[dict[str, str]],
     message_created_at: str = "",
+    product: str | None = None,
+    client_intake_state: dict[str, object] | None = None,
 ) -> tuple[TicketExecutionResult, dict[str, Any]]:
     if OPTIMISTIC_PARALLEL_ROUTE_ENABLED:
         return _execute_parallel_ticket_query(
@@ -527,6 +540,8 @@ def _orchestrate_worker_support_message(
             ticket_subject=ticket_subject,
             ticket_context=ticket_context,
             message_created_at=message_created_at,
+            product=product,
+            client_intake_state=client_intake_state,
         )
     return orchestrate_ticket_execution(
         customer_message,
@@ -534,6 +549,8 @@ def _orchestrate_worker_support_message(
         customer_id=customer_id,
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
+        product=product,
+        client_intake_state=client_intake_state,
         resolution_builder=resolve_support_message,
     ), {
         "parallel_mode": "disabled",
@@ -832,6 +849,12 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         ticket_subject=str(ticket.get("subject") or "").strip() or None,
         ticket_context=route_context[-6:],
         message_created_at=message_created_at,
+        product=str(ticket.get("product") or "").strip() or None,
+        client_intake_state=(
+            dict(ticket.get("client_intake_state"))
+            if isinstance(ticket.get("client_intake_state"), dict)
+            else None
+        ),
     )
     if (
         isinstance(orchestration_result, tuple)
@@ -893,7 +916,14 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         )
     else:
         initial_message_count = len(ticket.get("messages", []))
+        execution_client_intake_state = (
+            dict(getattr(execution, "client_intake_state"))
+            if isinstance(getattr(execution, "client_intake_state", None), dict)
+            else None
+        )
+        execution_workflow_action = str(getattr(execution, "workflow_action", "") or "").strip()
         if execution.needs_investigating:
+            ticket["client_intake_state"] = execution_client_intake_state
             engineer_case, engineer_case_created = _prepare_engineer_case_for_ticket(
                 ticket,
                 case_status=INVESTIGATING_STATUS,
@@ -939,8 +969,10 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
             needs_engineer_input = True
             ticket["status"] = INVESTIGATING_STATUS
             ticket["active_engineer_case_id"] = str(engineer_case.get("engineer_case_id") or "").strip() or None
+            ticket["client_intake_state"] = None
         else:
             ticket["status"] = resolve_next_ticket_status(ticket.get("status"), execution.next_status)
+            ticket["client_intake_state"] = execution_client_intake_state
 
         assistant_message: dict[str, Any] = {
             "role": "assistant",
@@ -956,6 +988,15 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         assistant_message["route_confidence"] = round(float(execution.route_confidence), 4)
         assistant_message["search_used"] = bool(execution.search_used)
         assistant_message["matched_signals"] = list(execution.matched_signals)
+        assistant_message["workflow_action"] = execution_workflow_action
+        if isinstance(execution_client_intake_state, dict):
+            assistant_message["client_intake_phase"] = str(execution_client_intake_state.get("phase") or "").strip()
+            assistant_message["client_intake_ready_for_engineer_ticket"] = bool(
+                execution_client_intake_state.get("ready_for_engineer_ticket")
+            )
+            assistant_message["client_intake_missing_information"] = list(
+                execution_client_intake_state.get("missing_information") or []
+            )
         if sources:
             assistant_message["sources"] = sources
         if citations:
@@ -1011,7 +1052,32 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         "rag_finished_at": execution_diagnostics.get("rag_finished_at"),
         "rag_cancelled": bool(execution_diagnostics.get("rag_cancelled")),
         "rag_cancel_stage": execution_diagnostics.get("rag_cancel_stage"),
+        "workflow_action": str(getattr(execution, "workflow_action", "") or "").strip(),
+        "parallel_mode": execution_diagnostics.get("parallel_mode"),
+        "api_persist_latency_ms": task.get("api_persist_latency_ms"),
+        "api_return_latency_ms": task.get("api_return_latency_ms"),
+        "route_latency_ms": execution_diagnostics.get("route_latency_ms"),
+        "route_final_action": execution_diagnostics.get("route_final_action") or execution.execution_action,
+        "route_result_source": execution_diagnostics.get("route_result_source"),
+        "rag_started_at": execution_diagnostics.get("rag_started_at"),
+        "rag_finished_at": execution_diagnostics.get("rag_finished_at"),
+        "rag_cancelled": bool(execution_diagnostics.get("rag_cancelled")),
+        "rag_cancel_stage": execution_diagnostics.get("rag_cancel_stage"),
+        "workflow_action": str(getattr(execution, "workflow_action", "") or "").strip(),
     }
+    execution_client_intake_state = (
+        dict(getattr(execution, "client_intake_state"))
+        if isinstance(getattr(execution, "client_intake_state", None), dict)
+        else None
+    )
+    if isinstance(execution_client_intake_state, dict):
+        event["client_intake_phase"] = str(execution_client_intake_state.get("phase") or "").strip()
+        event["client_intake_ready_for_engineer_ticket"] = bool(
+            execution_client_intake_state.get("ready_for_engineer_ticket")
+        )
+        event["client_intake_missing_information"] = list(
+            execution_client_intake_state.get("missing_information") or []
+        )
     _call_ticket_repository(
         "record_event",
         lambda: ticket_repository.record_event(ticket_id, event["event"], event),

@@ -45,6 +45,10 @@ from backend.services.query_understanding import (
     understand_rag_query,
 )
 from backend.services.rag_tokenizer import is_bm25_query_stopword, tokenize_bm25_query
+from backend.services.support_products import (
+    build_support_product_prompt_scope,
+    build_support_product_rag_role,
+)
 
 logger = logging.getLogger(__name__)
 _QUERY_STOPWORDS = {
@@ -83,11 +87,18 @@ INSUFFICIENT_EVIDENCE_REPLY = (
     "I couldn't find enough information in the available support knowledge base to answer that question."
 )
 
-SYSTEM_PROMPT = build_rag_answer_system_prompt(insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY)
 AGENT_PLAN_VERSION = "v1"
 _RUNTIME_CAPABILITY_UNAVAILABLE_UNTIL: dict[str, float] = {}
 _RUNTIME_QUOTA_COOLDOWN_SECONDS = 600.0
 _RUNTIME_NETWORK_COOLDOWN_SECONDS = 120.0
+
+
+def _build_answer_system_prompt(product: str | None = None) -> str:
+    return build_rag_answer_system_prompt(
+        insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
+        product_role=build_support_product_rag_role(product),
+        product_scope=build_support_product_prompt_scope(product),
+    )
 
 
 @dataclass
@@ -589,6 +600,7 @@ def _invoke_agentic_planner(
     query_understanding: QueryUnderstandingResult | None,
     top_k: int,
     round_index: int,
+    product: str | None,
 ) -> dict[str, Any] | None:
     profile = resolve_model_profile(RAG_AGENT_PLANNER_SCENARIO)
     if not profile.api_key:
@@ -604,7 +616,10 @@ def _invoke_agentic_planner(
     try:
         response = invoke_responses_text(
             profile=profile,
-            system_prompt=build_rag_agent_planner_system_prompt(),
+            system_prompt=build_rag_agent_planner_system_prompt(
+                product_role=build_support_product_rag_role(product),
+                product_scope=build_support_product_prompt_scope(product),
+            ),
             user_prompt=build_rag_agent_planner_user_prompt(
                 message=message,
                 ticket_context=ticket_context,
@@ -628,6 +643,7 @@ def _build_agentic_retrieval_plan(
     top_k: int,
     query_understanding: QueryUnderstandingResult | None,
     ticket_context: list[dict[str, str]] | None,
+    product: str | None = None,
     should_cancel: Callable[[], bool] | None = None,
     record_cancel_stage: Callable[[str], None] | None = None,
 ) -> AgenticRetrievalPlan:
@@ -657,6 +673,7 @@ def _build_agentic_retrieval_plan(
         query_understanding=query_understanding,
         top_k=top_k,
         round_index=1,
+        product=product,
     )
     if isinstance(planner_payload, dict):
         query_class = str(planner_payload.get("query_class") or "").strip().lower()
@@ -2840,6 +2857,7 @@ def _invoke_llm_payload(
     strict_retry: bool = False,
     *,
     packed_evidence: PackedEvidence | None = None,
+    product: str | None = None,
 ) -> dict[str, Any] | None:
     context_block = packed_evidence.prompt_context if packed_evidence is not None else _format_context(chunks)
     prompt = _build_answer_prompt_for_mode(message, context_block, repair_mode=strict_retry)
@@ -2858,7 +2876,7 @@ def _invoke_llm_payload(
     try:
         response = invoke_responses_text(
             profile=profile,
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=_build_answer_system_prompt(product),
             user_prompt=prompt,
         )
     except LlmInvocationError:
@@ -2873,6 +2891,7 @@ def _invoke_llm_payload_with_trace(
     strict_retry: bool = False,
     *,
     packed_evidence: PackedEvidence | None = None,
+    product: str | None = None,
 ) -> tuple[dict[str, Any] | None, int, int, str | None]:
     context_block = packed_evidence.prompt_context if packed_evidence is not None else _format_context(chunks)
     prompt = _build_answer_prompt_for_mode(message, context_block, repair_mode=strict_retry)
@@ -2891,7 +2910,7 @@ def _invoke_llm_payload_with_trace(
     try:
         response = invoke_responses_text(
             profile=profile,
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=_build_answer_system_prompt(product),
             user_prompt=prompt,
         )
     except LlmInvocationError:
@@ -3253,6 +3272,7 @@ def _run_rag_query_legacy(
     message: str,
     top_k: int | None = None,
     *,
+    product: str | None = None,
     should_cancel: Callable[[], bool] | None = None,
     record_cancel_stage: Callable[[str], None] | None = None,
 ) -> RagQueryResult | None:
@@ -3734,7 +3754,7 @@ def _run_rag_query_legacy(
         packed_evidence = build_packed_evidence(
             question=message,
             chunks=packing_candidates,
-            system_prompt_text=SYSTEM_PROMPT,
+            system_prompt_text=_build_answer_system_prompt(product),
             user_prompt_text=_build_answer_prompt_for_mode(message, "", repair_mode=False),
             tool_schema_text="",
             context_window=int(config.get("context_window") or model_context_window(str(config.get("chat_model") or ""))),
@@ -4035,6 +4055,7 @@ def _run_rag_query_agentic(
     ticket_context: list[dict[str, str]] | None = None,
     ticket_id: str | None = None,
     customer_id: str | None = None,
+    product: str | None = None,
     should_cancel: Callable[[], bool] | None = None,
     record_cancel_stage: Callable[[str], None] | None = None,
 ) -> RagQueryResult | None:
@@ -4217,6 +4238,7 @@ def _run_rag_query_agentic(
         top_k=int(config["top_k"]),
         query_understanding=effective_query_understanding or query_understanding,
         ticket_context=ticket_context,
+        product=product,
         should_cancel=should_cancel,
         record_cancel_stage=record_cancel_stage,
     )
@@ -4469,7 +4491,7 @@ def _run_rag_query_agentic(
         packed_evidence = build_packed_evidence(
             question=message,
             chunks=list(final_chunks),
-            system_prompt_text=SYSTEM_PROMPT,
+            system_prompt_text=_build_answer_system_prompt(product),
             user_prompt_text=_build_answer_prompt_for_mode(message, "", repair_mode=False),
             tool_schema_text="",
             context_window=int(config.get("context_window") or model_context_window(str(config.get("chat_model") or ""))),
@@ -4503,6 +4525,7 @@ def _run_rag_query_agentic(
         generation_config,
         strict_retry=False,
         packed_evidence=packed_evidence,
+        product=product,
     )
     retry_required = (
         payload is None
@@ -4522,6 +4545,7 @@ def _run_rag_query_agentic(
             generation_config,
             strict_retry=True,
             packed_evidence=packed_evidence,
+            product=product,
         )
         prompt_tokens += retry_prompt_tokens
         completion_tokens += retry_completion_tokens
@@ -4605,6 +4629,7 @@ def run_rag_query(
     ticket_context: list[dict[str, str]] | None = None,
     ticket_id: str | None = None,
     customer_id: str | None = None,
+    product: str | None = None,
     should_cancel: Callable[[], bool] | None = None,
     record_cancel_stage: Callable[[str], None] | None = None,
 ) -> RagQueryResult | None:
@@ -4612,6 +4637,7 @@ def run_rag_query(
         result = _run_rag_query_legacy(
             message,
             top_k=top_k,
+            product=product,
             should_cancel=should_cancel,
             record_cancel_stage=record_cancel_stage,
         )
@@ -4628,6 +4654,7 @@ def run_rag_query(
             ticket_context=ticket_context,
             ticket_id=ticket_id,
             customer_id=customer_id,
+            product=product,
             should_cancel=should_cancel,
             record_cancel_stage=record_cancel_stage,
         )
@@ -4643,6 +4670,7 @@ def run_rag_query(
         result = _run_rag_query_legacy(
             message,
             top_k=top_k,
+            product=product,
             should_cancel=should_cancel,
             record_cancel_stage=record_cancel_stage,
         )

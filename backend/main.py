@@ -85,6 +85,7 @@ from backend.services.rag_service_client import (
     async_to_thread,
 )
 from backend.services.support_router import SupportResolution, SupportRouteDecision, resolve_support_message as resolve_support_route_message
+from backend.services.support_products import normalize_support_product
 from backend.services.task_queue import AsyncRedisTaskQueue
 from backend.services.ticket_message_sentiment import (
     build_ticket_message_sentiment_event,
@@ -327,6 +328,7 @@ class TicketQueryRequest(BaseModel):
     customer_id: str = Field(default="C-001")
     requester: str | None = None
     subject: str | None = None
+    product: str | None = Field(default=None, max_length=64)
     message: str = Field(min_length=1)
 
 
@@ -485,8 +487,24 @@ def ensure_ticket_defaults(ticket: dict[str, Any]) -> None:
         ticket["engineer_case_count"] = max(int(ticket.get("engineer_case_count") or 0), 0)
     except (TypeError, ValueError):
         ticket["engineer_case_count"] = 0
+    ticket["product"] = normalize_support_product(ticket.get("product"))
+    ticket["client_intake_state"] = (
+        dict(ticket.get("client_intake_state"))
+        if isinstance(ticket.get("client_intake_state"), dict)
+        else None
+    )
     ensure_ticket_investigation_defaults(ticket)
     surface_legacy_pending_question(ticket)
+
+
+def _validated_new_session_product(value: Any) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    normalized = normalize_support_product(raw)
+    if normalized is None:
+        raise HTTPException(status_code=400, detail="invalid product")
+    return normalized
 
 
 def _active_investigation_from_case_payload(engineer_case: dict[str, Any]) -> dict[str, Any] | None:
@@ -1035,6 +1053,7 @@ def _build_rag_answer_detail(
     ticket_id: str | None = None,
     customer_id: str | None = None,
     ticket_context: list[dict[str, str]] | None = None,
+    product: str | None = None,
 ) -> RagTicketAnswerDetail:
     def _rag_failure_reason(error: RagServiceError) -> str:
         if error.status_code is not None:
@@ -1057,6 +1076,7 @@ def _build_rag_answer_detail(
             ticket_id=ticket_id,
             customer_id=customer_id,
             ticket_context=ticket_context,
+            product=product,
             insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
         )
     except RagServiceError as exc:
@@ -1096,12 +1116,14 @@ def _build_rag_answer(
     ticket_id: str | None = None,
     customer_id: str | None = None,
     ticket_context: list[dict[str, str]] | None = None,
+    product: str | None = None,
 ) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
     return _build_rag_answer_detail(
         message,
         ticket_id=ticket_id,
         customer_id=customer_id,
         ticket_context=ticket_context,
+        product=product,
     ).as_answer_tuple()
 
 
@@ -1112,12 +1134,14 @@ def resolve_support_message(
     customer_id: str | None = None,
     ticket_subject: str | None = None,
     ticket_context: list[dict[str, str]] | None = None,
+    product: str | None = None,
     decision: SupportRouteDecision | None = None,
 ) -> SupportResolution:
     active_decision = decision or analyze_ticket_message(
         message,
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
+        product=product,
     )
     if active_decision.execution_action == "rag":
         rag_answer = _build_rag_answer_detail(
@@ -1125,6 +1149,7 @@ def resolve_support_message(
             ticket_id=ticket_id,
             customer_id=customer_id,
             ticket_context=ticket_context,
+            product=product,
         )
         return SupportResolution(
             answer=rag_answer.answer,
@@ -1148,11 +1173,13 @@ def resolve_support_message(
         message,
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
+        product=product,
         rag_answerer=lambda query: _build_rag_answer(
             query,
             ticket_id=ticket_id,
             customer_id=customer_id,
             ticket_context=ticket_context,
+            product=product,
         ),
         decision=active_decision,
     )
@@ -1163,11 +1190,13 @@ def build_answer(
     *,
     ticket_id: str | None = None,
     customer_id: str | None = None,
+    product: str | None = None,
 ) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
     resolution = resolve_support_message(
         message,
         ticket_id=ticket_id,
         customer_id=customer_id,
+        product=product,
     )
     return resolution.as_answer_tuple()
 
@@ -1723,6 +1752,16 @@ async def create_or_update_ticket(
     elif is_new_ticket or not existing_subject or existing_subject == "General support request":
         ticket["subject"] = derive_subject(request.message)
 
+    if initial_message_count == 0:
+        selected_product = _validated_new_session_product(request.product) or normalize_support_product(
+            ticket.get("product")
+        )
+        if selected_product is None:
+            raise HTTPException(status_code=400, detail="product is required for a new session")
+        ticket["product"] = selected_product
+    else:
+        ticket["product"] = normalize_support_product(ticket.get("product"))
+
     if normalize_ticket_status(ticket.get("status")) == RESOLVED_STATUS:
         ticket["status"] = COMMUNICATING_STATUS
 
@@ -1795,6 +1834,7 @@ async def create_or_update_ticket(
         needs_engineer_input = True
         ticket["status"] = normalize_ticket_status(engineer_case.get("status"))
         ticket["active_engineer_case_id"] = str(engineer_case.get("engineer_case_id") or "").strip() or None
+        ticket["client_intake_state"] = None
         processing_mode = "active_investigation_followup"
     else:
         if optimistic_parallel_eligible:
@@ -1804,6 +1844,7 @@ async def create_or_update_ticket(
                 customer_message,
                 ticket_subject=str(ticket.get("subject") or "").strip() or None,
                 ticket_context=route_context,
+                product=ticket.get("product"),
             )
             route_payload.update(
                 {
@@ -1837,64 +1878,74 @@ async def create_or_update_ticket(
                     customer_id=request.customer_id,
                     ticket_subject=str(ticket.get("subject") or "").strip() or None,
                     ticket_context=route_context,
+                    product=ticket.get("product"),
+                    client_intake_state=ticket.get("client_intake_state"),
                     decision=route_decision,
                     resolution_builder=resolve_support_message,
                 )
-            if execution is not None:
-                execution_route_payload = build_execution_route_payload(execution)
-                route_payload.update(execution_route_payload)
-                follow_up_answer = execution.answer
-                follow_up_sources = list(execution.sources)
-                follow_up_citations = [dict(item) for item in execution.citations]
-                if execution.needs_investigating:
-                    engineer_case, engineer_case_created = _prepare_engineer_case_for_ticket(
+        if execution is not None:
+            execution_route_payload = build_execution_route_payload(execution)
+            route_payload.update(execution_route_payload)
+            follow_up_answer = execution.answer
+            follow_up_sources = list(execution.sources)
+            follow_up_citations = [dict(item) for item in execution.citations]
+            execution_client_intake_state = (
+                dict(getattr(execution, "client_intake_state"))
+                if isinstance(getattr(execution, "client_intake_state", None), dict)
+                else None
+            )
+            if execution.needs_investigating:
+                ticket["client_intake_state"] = execution_client_intake_state
+                engineer_case, engineer_case_created = _prepare_engineer_case_for_ticket(
+                    ticket,
+                    case_status=INVESTIGATING_STATUS,
+                    trigger_source="support_query",
+                    trigger_reason=str(execution.investigation_reason or "rag_insufficient_evidence"),
+                    now_value=now_iso(),
+                )
+                case_context = build_engineer_case_context(ticket, engineer_case)
+                opening_context = build_investigation_opening_context(
+                    case_context,
+                    trigger_reason=str(execution.investigation_reason or "rag_insufficient_evidence"),
+                    rag_answer=execution.answer,
+                    sources=list(execution.sources),
+                    citations=[dict(item) for item in execution.citations],
+                )
+                investigation_result = start_or_refresh_investigation(
+                    case_context,
+                    trigger_reason=str(execution.investigation_reason or "rag_insufficient_evidence"),
+                    trigger_source="support_query",
+                    now_value=now_iso(),
+                    next_status=INVESTIGATING_STATUS,
+                    opening_context=opening_context,
+                    ai_turn_builder=generate_investigation_ai_turn,
+                    execution_context={
+                        **execution_route_payload,
+                        "answer": execution.answer,
+                        "sources": list(execution.sources),
+                        "citations": [dict(item) for item in execution.citations],
+                        "evidence_summary": dict(execution.evidence_summary or {}) or {},
+                    },
+                )
+                engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
+                if engineer_case_created:
+                    engineer_case["title"] = derive_engineer_case_title(
                         ticket,
-                        case_status=INVESTIGATING_STATUS,
-                        trigger_source="support_query",
-                        trigger_reason=str(execution.investigation_reason or "rag_insufficient_evidence"),
-                        now_value=now_iso(),
+                        handoff_packet=case_context.get("engineer_handoff_packet"),
+                        engineer_agent_state=case_context.get("engineer_agent_state"),
                     )
-                    case_context = build_engineer_case_context(ticket, engineer_case)
-                    opening_context = build_investigation_opening_context(
-                        case_context,
-                        trigger_reason=str(execution.investigation_reason or "rag_insufficient_evidence"),
-                        rag_answer=execution.answer,
-                        sources=list(execution.sources),
-                        citations=[dict(item) for item in execution.citations],
-                    )
-                    investigation_result = start_or_refresh_investigation(
-                        case_context,
-                        trigger_reason=str(execution.investigation_reason or "rag_insufficient_evidence"),
-                        trigger_source="support_query",
-                        now_value=now_iso(),
-                        next_status=INVESTIGATING_STATUS,
-                        opening_context=opening_context,
-                        ai_turn_builder=generate_investigation_ai_turn,
-                        execution_context={
-                            **execution_route_payload,
-                            "answer": execution.answer,
-                            "sources": list(execution.sources),
-                            "citations": [dict(item) for item in execution.citations],
-                            "evidence_summary": dict(execution.evidence_summary or {}) or {},
-                        },
-                    )
-                    engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
-                    if engineer_case_created:
-                        engineer_case["title"] = derive_engineer_case_title(
-                            ticket,
-                            handoff_packet=case_context.get("engineer_handoff_packet"),
-                            engineer_agent_state=case_context.get("engineer_agent_state"),
-                        )
-                    follow_up_answer = str(investigation_result.get("public_reply") or "").strip()
-                    follow_up_sources = []
-                    follow_up_citations = []
-                    needs_engineer_input = True
-                    ticket["status"] = INVESTIGATING_STATUS
-                    ticket["active_engineer_case_id"] = str(engineer_case.get("engineer_case_id") or "").strip() or None
-                else:
-                    ticket["status"] = resolve_next_ticket_status(ticket.get("status"), execution.next_status)
+                follow_up_answer = str(investigation_result.get("public_reply") or "").strip()
+                follow_up_sources = []
+                follow_up_citations = []
+                needs_engineer_input = True
+                ticket["status"] = INVESTIGATING_STATUS
+                ticket["active_engineer_case_id"] = str(engineer_case.get("engineer_case_id") or "").strip() or None
+                ticket["client_intake_state"] = None
             else:
-                ticket["status"] = resolve_next_ticket_status(ticket.get("status"), COMMUNICATING_STATUS)
+                ticket["status"] = resolve_next_ticket_status(ticket.get("status"), execution.next_status)
+                ticket["client_intake_state"] = execution_client_intake_state
+        elif not optimistic_parallel_eligible:
+            ticket["status"] = resolve_next_ticket_status(ticket.get("status"), COMMUNICATING_STATUS)
 
     if str(follow_up_answer).strip():
         assistant_message: dict[str, Any] = {
@@ -1912,6 +1963,16 @@ async def create_or_update_ticket(
             assistant_message["route_confidence"] = route_payload.get("route_confidence")
             assistant_message["search_used"] = bool(route_payload.get("search_used"))
             assistant_message["matched_signals"] = list(route_payload.get("matched_signals") or [])
+            if route_payload.get("workflow_action"):
+                assistant_message["workflow_action"] = route_payload.get("workflow_action")
+            if route_payload.get("client_intake_phase"):
+                assistant_message["client_intake_phase"] = route_payload.get("client_intake_phase")
+                assistant_message["client_intake_ready_for_engineer_ticket"] = bool(
+                    route_payload.get("client_intake_ready_for_engineer_ticket")
+                )
+                assistant_message["client_intake_missing_information"] = list(
+                    route_payload.get("client_intake_missing_information") or []
+                )
         if follow_up_sources:
             assistant_message["sources"] = follow_up_sources
         if follow_up_citations:
@@ -1971,6 +2032,16 @@ async def create_or_update_ticket(
         event["route_confidence"] = route_payload.get("route_confidence")
         event["search_used"] = bool(route_payload.get("search_used"))
         event["matched_signals"] = list(route_payload.get("matched_signals") or [])
+    if route_payload.get("workflow_action"):
+        event["workflow_action"] = route_payload.get("workflow_action")
+    if route_payload.get("client_intake_phase"):
+        event["client_intake_phase"] = route_payload.get("client_intake_phase")
+        event["client_intake_ready_for_engineer_ticket"] = bool(
+            route_payload.get("client_intake_ready_for_engineer_ticket")
+        )
+        event["client_intake_missing_information"] = list(
+            route_payload.get("client_intake_missing_information") or []
+        )
     ticket_repository.record_event(ticket_id, event["event"], event)
     await dispatch_event(["engineer", "dashboard"], event)
     await dispatch_event(

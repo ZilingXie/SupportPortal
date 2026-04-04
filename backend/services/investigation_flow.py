@@ -87,6 +87,22 @@ def _limited_citations(raw_citations: Any) -> list[dict[str, Any]]:
     return items
 
 
+def _client_intake_summary(ticket: dict[str, Any]) -> str:
+    state = ticket.get("client_intake_state")
+    if not isinstance(state, dict):
+        return ""
+    known_information = state.get("known_information")
+    if not isinstance(known_information, dict):
+        return ""
+    segments: list[str] = []
+    for key in ("issue_symptom", "channel_name", "problematic_uid", "issue_timestamp", "sid"):
+        value = _compact_text(known_information.get(key))
+        if not value:
+            continue
+        segments.append(f"{key.replace('_', ' ')}={value}")
+    return "; ".join(segments)
+
+
 def _latest_rag_assistant_message(ticket: dict[str, Any]) -> dict[str, Any] | None:
     messages = ticket.get("messages", [])
     if not isinstance(messages, list):
@@ -114,6 +130,12 @@ def build_investigation_opening_context(
         latest_customer_message(ticket) or ticket.get("subject") or "Unknown customer issue",
         _MAX_OPENING_CONTEXT_ISSUE_CHARS,
     )
+    intake_summary = _client_intake_summary(ticket)
+    if intake_summary:
+        latest_customer = _truncate_text(
+            f"{latest_customer}. Collected customer intake: {intake_summary}",
+            _MAX_OPENING_CONTEXT_ISSUE_CHARS,
+        )
 
     normalized_answer = _compact_text(rag_answer)
     normalized_sources = _limited_sources(sources)
@@ -144,8 +166,9 @@ def build_investigation_opening_context(
     elif normalized_reason == "rag_insufficient_evidence":
         rag_summary = "AI could not find enough grounded doc evidence to answer safely."
         action_needed = (
-            "Reproduce the issue, confirm the affected platform, SDK version, and configuration, collect logs or "
-            "error traces, and provide a workaround or the missing doc path if available."
+            "Use the collected customer intake details to reproduce the issue, confirm the affected platform, "
+            "SDK version, and configuration, collect logs or error traces, and provide a workaround or the missing "
+            "doc path if available."
         )
     elif normalized_reason in {"rag_post_check_insufficient", "rag_post_check_error"}:
         rag_summary = "AI found a tentative docs-backed answer but could not safely send it without engineer review."

@@ -2026,6 +2026,7 @@ For each new entry, record:
   - Added latency diagnostics for API persist/return timing plus route/RAG timing and cancellation metadata on async ticket events.
 - Reason:
   - The client first response was still blocked on backend-side work, and route analysis still serialized before RAG in the worker. That kept the first visible response too slow and wasted time on questions that should have gone straight into RAG while routing ran in parallel.
+
 - Affected files/config:
   - `backend/main.py`
   - `backend/worker.py`
@@ -2053,3 +2054,78 @@ For each new entry, record:
   - `python3 -m py_compile backend/main.py backend/worker.py backend/rag_api.py backend/services/rag_qa.py backend/services/rag_service_client.py`
   - `python3 -m unittest backend.tests.test_client_ui_contract backend.tests.test_single_host_compose backend.tests.test_rag_service_client`
   - Container-backed backend verification pending after compose rebuild in this task.
+
+## 2026-04-04 - Session product scope is persisted and forwarded through live RAG
+
+- Summary:
+  - Added session-level `product` persistence on `support_tickets`, exposed it through `/api/tickets`, and required a product on the first message of a new or empty client session.
+  - Wired the persisted product through client query routing, async worker orchestration, `/internal/rag/query`, and `run_rag_query(...)` so live RAG can choose request-time product-scoped prompts without changing retrieval filters.
+  - Preserved local empty drafts on client sync so an unsent product selection is not overwritten before the first backend write.
+- Reason:
+  - New client sessions must carry explicit product context before the first technical question, and that context has to survive ticket persistence plus the full live RAG path so later prompt tuning can stay product-scoped without reopening ticket/session plumbing.
+- Affected files/config:
+  - `backend/main.py`
+  - `backend/rag_api.py`
+  - `backend/repositories/ticket_repository.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/services/support_products.py`
+  - `backend/services/support_router.py`
+  - `backend/services/support_router_prompt.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/worker.py`
+  - `backend/sql/ticket_storage.sql`
+  - `ui/client-ui/app.js`
+  - `ui/client-ui/styles.css`
+  - `ui/client-ui/index.html`
+  - `docs/feature_list.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Ticket storage now includes nullable `support_tickets.product`, and new/empty-session first messages persist either `audio_video_calling` or `cloud_recording`.
+  - Legacy non-empty sessions without a stored product continue to use the generic path and are not backfilled.
+  - Live RAG prompt version advanced to `rag-v4-product-scope`; retrieval, vector tables, embeddings, rerankers, and benchmark truth did not change.
+- Verification:
+  - `uv run --with pytest --with fastapi --with pydantic --with python-dotenv --with python-multipart --with redis --with httpx --with 'psycopg[binary]' python -m pytest -q backend/tests/test_client_ui_contract.py backend/tests/test_investigation_flow.py backend/tests/test_repository_configuration.py backend/tests/test_rag_service_client.py backend/tests/test_support_router.py backend/tests/test_rag_api.py backend/tests/test_ticket_orchestrator.py backend/tests/test_worker.py backend/tests/test_prompt_modules.py`
+  - `python3 scripts/verify_feature_list.py`
+  - `python3 -m py_compile backend/main.py backend/rag_api.py backend/repositories/ticket_repository.py backend/services/rag_qa.py backend/services/rag_service_client.py backend/services/support_products.py backend/services/support_router.py backend/services/support_router_prompt.py backend/services/ticket_orchestrator.py backend/worker.py`
+  - `node --check ui/client-ui/app.js`
+  - `git diff --check`
+
+## 2026-04-04 - Product-scoped troubleshooting intake gates engineer escalation
+
+- Summary:
+  - Added a ticket-side troubleshooting intake step that runs only after `rag_insufficient_evidence`, classifies the request as answer vs investigation, and collects required troubleshooting fields before opening an engineer case.
+  - Persisted `client_intake_state` on `support_tickets` so both sync and async ticket flows can keep collecting product-specific inputs without introducing a new public ticket status.
+  - Included collected intake fields in engineer handoff/opening context so engineer tickets start with the gathered customer metadata instead of losing the pre-ticket clarification work.
+- Reason:
+  - Troubleshooting issues like black screen or Cloud Recording failures should not open engineer tickets until the customer has supplied the minimum investigation identifiers for the selected product.
+- Affected files/config:
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `backend/rag_api.py`
+  - `backend/repositories/ticket_repository.py`
+  - `backend/services/engineer_agent.py`
+  - `backend/services/engineer_cases.py`
+  - `backend/services/investigation_flow.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/services/prompts/rag_agent_planner.py`
+  - `backend/services/prompts/rag_answer.py`
+  - `backend/services/prompts/troubleshooting_intake.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/support_products.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/services/troubleshooting_intake.py`
+  - `backend/sql/ticket_storage.sql`
+  - `docs/feature_list.md`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Ticket storage now includes nullable `support_tickets.client_intake_state` for in-progress customer troubleshooting intake.
+  - `audio_video_calling` now requires `channel_name`, `problematic_uid`, `issue_timestamp`, and `issue_symptom` before direct engineer escalation from the intake path.
+  - `cloud_recording` now requires `sid`, `issue_timestamp`, and `issue_symptom` before direct engineer escalation from the intake path.
+  - Live RAG prompt version advanced to `rag-v5-product-troubleshooting-intake`; retrieval indexes, embeddings, and benchmark datasets did not change.
+- Verification:
+  - `uv run --with pytest --with fastapi --with pydantic --with python-dotenv --with python-multipart --with redis --with httpx --with 'psycopg[binary]' python -m pytest -q backend/tests/test_prompt_modules.py backend/tests/test_repository_configuration.py backend/tests/test_ticket_orchestrator.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py backend/tests/test_troubleshooting_intake.py backend/tests/test_client_ui_contract.py backend/tests/test_rag_api.py backend/tests/test_rag_service_client.py backend/tests/test_support_router.py backend/tests/test_llm_profiles.py backend/tests/test_rag_qa.py`
+  - `python3 scripts/verify_feature_list.py`
+  - `python3 -m py_compile backend/main.py backend/worker.py backend/rag_api.py backend/repositories/ticket_repository.py backend/services/engineer_agent.py backend/services/engineer_cases.py backend/services/investigation_flow.py backend/services/llm_profiles.py backend/services/prompts/rag_agent_planner.py backend/services/prompts/rag_answer.py backend/services/prompts/troubleshooting_intake.py backend/services/rag_qa.py backend/services/support_products.py backend/services/ticket_orchestrator.py backend/services/troubleshooting_intake.py`
+  - `git diff --check`

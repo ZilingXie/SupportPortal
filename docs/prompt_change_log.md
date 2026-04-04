@@ -461,3 +461,62 @@ For each new entry, record:
   - The legacy Realtime session endpoint remains available, but the real client send flow no longer opens a Realtime websocket for transient ack generation.
 - Verification:
   - `/Users/xieziling/.config/superpowers/venvs/SupportPortal-rag-join-channel-fix-min/bin/python -m unittest backend.tests.test_llm_profiles backend.tests.test_investigation_flow backend.tests.test_client_ui_contract backend.tests.test_single_host_compose`
+
+- Date: 2026-04-04
+- Area or subsystem: Client session product selection, router prompt, and RAG answer prompt
+- Prompt or model version: `rag-v4-product-scope`
+- Summary: Added product-scoped prompt context for new client sessions so the router and RAG answer prompt both receive the same persisted product selection (`Audio/Video Calling` or `Cloud Recording`) at request time, while legacy sessions without a product stay on the generic prompt path.
+- Reason: The client now requires users to choose the product before the first message, and that selection needs to steer prompt behavior consistently across synchronous answers, async worker execution, and internal `/internal/rag/query` calls.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/rag_api.py`
+  - `backend/services/prompts/rag_answer.py`
+  - `backend/services/prompts/router.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/services/support_products.py`
+  - `backend/services/support_router.py`
+  - `backend/services/support_router_prompt.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/worker.py`
+  - `ui/client-ui/app.js`
+  - `ui/client-ui/index.html`
+  - `docs/feature_list.md`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - New and empty client sessions must select a product before the first send, and that product is reused as prompt context for route classification and docs-grounded answer generation.
+  - `Audio/Video Calling` questions bias prompt scope toward RTC/channel/join/publish/subscribe support language, while `Cloud Recording` questions bias prompt scope toward recording lifecycle and recording API language.
+  - Legacy non-empty sessions without a stored product still use the generic Agora technical prompt path and are not blocked.
+- Verification:
+  - `uv run --with pytest --with fastapi --with pydantic --with python-dotenv --with python-multipart --with redis --with httpx --with 'psycopg[binary]' python -m pytest -q backend/tests/test_client_ui_contract.py backend/tests/test_investigation_flow.py backend/tests/test_repository_configuration.py backend/tests/test_rag_service_client.py backend/tests/test_support_router.py backend/tests/test_rag_api.py backend/tests/test_ticket_orchestrator.py backend/tests/test_worker.py backend/tests/test_prompt_modules.py`
+  - `python3 scripts/verify_feature_list.py`
+  - `python3 -m py_compile backend/main.py backend/rag_api.py backend/services/prompts/rag_answer.py backend/services/prompts/router.py backend/services/rag_qa.py backend/services/rag_service_client.py backend/services/support_products.py backend/services/support_router.py backend/services/support_router_prompt.py backend/services/ticket_orchestrator.py backend/worker.py`
+  - `node --check ui/client-ui/app.js`
+  - `git diff --check`
+
+- Date: 2026-04-04
+- Area or subsystem: Product-scoped RAG planner, RAG answer, and troubleshooting intake prompts
+- Prompt or model version: `rag-v5-product-troubleshooting-intake`
+- Summary: Upgraded product-scoped prompt wiring so Audio/Video Calling and Cloud Recording now inject explicit product role text into the RAG planner and answer prompts, and added a dedicated troubleshooting intake prompt/model path that asks customers for missing investigation identifiers before opening engineer tickets.
+- Reason: Product selection should not only bias answer phrasing; it also needs to steer retrieval planning and troubleshooting intake so symptom-style issues collect the minimum product-specific investigation data instead of escalating too early.
+- Affected files or config:
+  - `backend/rag_api.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/services/prompts/rag_agent_planner.py`
+  - `backend/services/prompts/rag_answer.py`
+  - `backend/services/prompts/troubleshooting_intake.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/support_products.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/services/troubleshooting_intake.py`
+  - `docs/feature_list.md`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Product-scoped RAG planner prompts now plan retrieval as Agora support for the selected product instead of using a generic retrieval role.
+  - Product-scoped RAG answer prompts now answer as Agora support for the selected product instead of only receiving a generic product scope section.
+  - When RAG returns `rag_insufficient_evidence`, troubleshooting-style issues now use a dedicated intake prompt/model path to decide whether to ask for `channel_name` / `problematic_uid` / `issue_timestamp` or `sid` / `issue_timestamp` before engineer escalation.
+- Verification:
+  - `uv run --with pytest --with fastapi --with pydantic --with python-dotenv --with python-multipart --with redis --with httpx --with 'psycopg[binary]' python -m pytest -q backend/tests/test_prompt_modules.py backend/tests/test_ticket_orchestrator.py backend/tests/test_troubleshooting_intake.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py backend/tests/test_llm_profiles.py backend/tests/test_rag_qa.py backend/tests/test_rag_api.py`
+  - `python3 scripts/verify_feature_list.py`
+  - `python3 -m py_compile backend/rag_api.py backend/services/llm_profiles.py backend/services/prompts/rag_agent_planner.py backend/services/prompts/rag_answer.py backend/services/prompts/troubleshooting_intake.py backend/services/rag_qa.py backend/services/support_products.py backend/services/ticket_orchestrator.py backend/services/troubleshooting_intake.py`
+  - `git diff --check`

@@ -226,6 +226,38 @@ class RagApiTests(unittest.TestCase):
         self.assertTrue(payload["cancelled"])
         self.assertEqual(payload["request_id"], "rag-cancel-api-1")
 
+    def test_internal_rag_query_forwards_selected_product_to_rag_engine(self) -> None:
+        repository = _TrackingKnowledgeRepository()
+
+        with self._client(repository) as client, patch.object(
+            rag_api,
+            "run_rag_query",
+            return_value=_answer_result(),
+        ) as run_mock:
+            response = client.post(
+                "/internal/rag/query",
+                headers={"Authorization": "Bearer test-token"},
+                json={
+                    "question": "how to join channel",
+                    "request_id": "rag-api-product-1",
+                    "ticket_id": "TK-003",
+                    "customer_id": "C-003",
+                    "product": "cloud_recording",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        run_mock.assert_called_once()
+        args, kwargs = run_mock.call_args
+        self.assertEqual(args, ("how to join channel",))
+        self.assertEqual(kwargs["top_k"], 6)
+        self.assertIsNone(kwargs["ticket_context"])
+        self.assertEqual(kwargs["ticket_id"], "TK-003")
+        self.assertEqual(kwargs["customer_id"], "C-003")
+        self.assertEqual(kwargs["product"], "cloud_recording")
+        self.assertTrue(callable(kwargs["should_cancel"]))
+        self.assertTrue(callable(kwargs["record_cancel_stage"]))
+
 
 if __name__ == "__main__":
     unittest.main()
