@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 import backend.main as main
 from backend.repositories.ticket_repository import InMemoryTicketRepository
+from backend.services.llm_factory import LlmInvocationError, LlmTextResult
 from backend.services.rag_service_client import RagTicketAnswerDetail
 from backend.services.support_router import SupportResolution
 from backend.services.ticket_orchestrator import SufficiencyAssessment
@@ -98,6 +99,153 @@ class InvestigationFlowTests(unittest.TestCase):
         self.repository.save_ticket(ticket, new_messages=ticket["messages"])
         return ticket
 
+    def test_async_ticket_query_returns_immediately_without_server_ack_or_sync_route(self) -> None:
+        enqueue_mock = AsyncMock(return_value=True)
+        with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            True,
+        ), patch.object(
+            main,
+            "OPTIMISTIC_PARALLEL_ROUTE_ENABLED",
+            True,
+            create=True,
+        ), patch.object(
+            main,
+            "build_initial_ack",
+            side_effect=AssertionError("server-side ack should be skipped for optimistic parallel queries"),
+        ), patch.object(
+            main,
+            "analyze_ticket_message",
+            side_effect=AssertionError("sync route analysis should be skipped for optimistic parallel queries"),
+        ), patch.object(
+            main.task_queue,
+            "enqueue",
+            enqueue_mock,
+        ), patch.object(
+            main,
+            "_enqueue_or_defer_message_sentiment_tag",
+            AsyncMock(return_value=False),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-OPT-001",
+                    "customer_id": "C-001",
+                    "product": "audio_video_calling",
+                    "message": "how to join channel",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["ticket_id"], "TK-OPT-001")
+        self.assertEqual(payload["answer"], "")
+        self.assertFalse(payload["ai_replied"])
+        self.assertTrue(payload["queued_for_ai"])
+        self.assertEqual(payload["ack_source"], "client_model")
+        self.assertEqual(payload["processing_mode"], "optimistic_parallel")
+        self.assertEqual(payload["status"], "communicating")
+        self.assertTrue(str(payload["queued_message_created_at"] or "").strip())
+        self.assertGreaterEqual(float(payload["api_persist_latency_ms"]), 0.0)
+        self.assertGreaterEqual(float(payload["api_return_latency_ms"]), 0.0)
+        enqueue_mock.assert_awaited_once()
+
+        saved_ticket = self.repository.get_ticket("TK-OPT-001")
+        self.assertIsNotNone(saved_ticket)
+        assert saved_ticket is not None
+        self.assertEqual(
+            [
+                {
+                    "role": message["role"],
+                    "content": message["content"],
+                }
+                for message in saved_ticket["messages"]
+            ],
+            [{"role": "customer", "content": "how to join channel"}],
+        )
+
+        events = self.repository.list_ticket_events("TK-OPT-001")
+        event_names = [str(item.get("event_type") or item.get("event") or "").strip() for item in events]
+        self.assertIn("ticket_created", event_names)
+        self.assertIn("ticket_ai_processing", event_names)
+        processing_event = next(
+            item for item in events if str(item.get("event_type") or item.get("event") or "").strip() == "ticket_ai_processing"
+        )
+        payload_data = processing_event.get("payload") if isinstance(processing_event.get("payload"), dict) else processing_event
+        self.assertEqual(payload_data.get("parallel_mode"), "optimistic_parallel")
+        self.assertGreaterEqual(float(payload_data.get("api_persist_latency_ms") or 0.0), 0.0)
+        self.assertGreaterEqual(float(payload_data.get("api_return_latency_ms") or 0.0), 0.0)
+
+    def test_client_ack_session_returns_disabled_fallback_when_openai_key_is_missing(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
+            response = self.client.post(
+                "/api/client/ack/session",
+                json={
+                    "message": "how to join channel",
+                    "ticket_id": "TK-ACK-001",
+                    "customer_id": "C-001",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertFalse(payload["enabled"])
+        self.assertEqual(payload["provider"], "openai_realtime")
+        self.assertTrue(str(payload["model"] or "").strip())
+        self.assertTrue(str(payload["fallback_text"] or "").strip())
+
+    def test_client_ack_returns_model_text_and_latency(self) -> None:
+        with patch.object(
+            main,
+            "invoke_responses_text",
+            return_value=LlmTextResult(
+                text="  Got it,\nI will check this now.  ",
+                model_name="gpt-5.4-nano",
+            ),
+        ):
+            response = self.client.post(
+                "/api/client/ack",
+                json={
+                    "message": "how to join channel",
+                    "ticket_id": "TK-ACK-OK",
+                    "customer_id": "C-001",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["ack_text"], "Got it, I will check this now.")
+        self.assertEqual(payload["source"], "client_model")
+        self.assertEqual(payload["model"], "gpt-5.4-nano")
+        self.assertEqual(payload["reasoning_effort"], "none")
+        self.assertGreaterEqual(float(payload["latency_ms"] or 0.0), 0.0)
+        self.assertIsNone(payload["error"])
+
+    def test_client_ack_returns_failure_payload_when_model_call_fails(self) -> None:
+        with patch.object(
+            main,
+            "invoke_responses_text",
+            side_effect=LlmInvocationError("client_ack_request_failed"),
+        ):
+            response = self.client.post(
+                "/api/client/ack",
+                json={
+                    "message": "how to join channel",
+                    "ticket_id": "TK-ACK-ERR",
+                    "customer_id": "C-001",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["ack_text"], "")
+        self.assertEqual(payload["source"], "client_model")
+        self.assertTrue(str(payload["model"] or "").strip())
+        self.assertEqual(payload["reasoning_effort"], "none")
+        self.assertGreaterEqual(float(payload["latency_ms"] or 0.0), 0.0)
+        self.assertTrue(str(payload["error"] or "").strip())
+
     def test_ticket_query_escalation_creates_linked_engineer_case_with_snapshot_title(self) -> None:
         self._seed_ticket(
             ticket_id="TK-040",
@@ -113,6 +261,15 @@ class InvestigationFlowTests(unittest.TestCase):
         )
 
         with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
+            "OPTIMISTIC_PARALLEL_ROUTE_ENABLED",
+            False,
+            create=True,
+        ), patch.object(
             main,
             "build_initial_ack",
             return_value=types.SimpleNamespace(
@@ -401,6 +558,11 @@ class InvestigationFlowTests(unittest.TestCase):
             False,
         ), patch.object(
             main,
+            "OPTIMISTIC_PARALLEL_ROUTE_ENABLED",
+            False,
+            create=True,
+        ), patch.object(
+            main,
             "build_initial_ack",
             return_value=types.SimpleNamespace(
                 text="收到，我先帮你看一下。",
@@ -533,6 +695,15 @@ class InvestigationFlowTests(unittest.TestCase):
             },
         )
         with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
+            "OPTIMISTIC_PARALLEL_ROUTE_ENABLED",
+            False,
+            create=True,
+        ), patch.object(
             main,
             "build_initial_ack",
             return_value=types.SimpleNamespace(
@@ -763,6 +934,15 @@ class InvestigationFlowTests(unittest.TestCase):
         )
         enqueue_mock = AsyncMock(return_value=True)
         with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
+            "OPTIMISTIC_PARALLEL_ROUTE_ENABLED",
+            False,
+            create=True,
+        ), patch.object(
             main,
             "build_initial_ack",
             return_value=types.SimpleNamespace(
@@ -1098,6 +1278,15 @@ class InvestigationFlowTests(unittest.TestCase):
         fallback_mock = AsyncMock()
         with patch.object(
             main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
+            "OPTIMISTIC_PARALLEL_ROUTE_ENABLED",
+            False,
+            create=True,
+        ), patch.object(
+            main,
             "build_initial_ack",
             return_value=types.SimpleNamespace(
                 text="Got it, let me check this for you.",
@@ -1174,6 +1363,15 @@ class InvestigationFlowTests(unittest.TestCase):
             },
         )
         with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
+            "OPTIMISTIC_PARALLEL_ROUTE_ENABLED",
+            False,
+            create=True,
+        ), patch.object(
             main,
             "build_initial_ack",
             return_value=types.SimpleNamespace(
@@ -1267,6 +1465,15 @@ class InvestigationFlowTests(unittest.TestCase):
             },
         )
         with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
+            "OPTIMISTIC_PARALLEL_ROUTE_ENABLED",
+            False,
+            create=True,
+        ), patch.object(
             main,
             "build_initial_ack",
             return_value=types.SimpleNamespace(

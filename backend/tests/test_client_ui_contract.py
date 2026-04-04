@@ -136,8 +136,8 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260404-icon-font-guard-1", html)
-        self.assertIn('./app.js?v=20260404-session-product-scope-1', html)
+        self.assertIn("./styles.css?v=20260404-client-ack-product-scope-2", html)
+        self.assertIn('./app.js?v=20260404-client-ack-product-scope-2', html)
         self.assertIn("AI-SOLVING", app_source)
         self.assertIn("Session History", app_source)
         self.assertIn('navigate("/chat");', app_source)
@@ -603,6 +603,243 @@ class ClientUiContractTests(unittest.TestCase):
                   )
                 ) {
                   throw new Error("Escalation request should not append a fake escalation notice into the chat transcript.");
+                }
+              """
+            )
+        )
+
+    def test_client_send_message_waits_for_model_ack_before_showing_transient_ack(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+                render = () => {};
+                syncTicketsFromBackend = async () => {};
+                requestChatScrollToBottom = () => {};
+                ensurePendingStatusPolling = () => {};
+                AbortController = class AbortController {
+                  constructor() {
+                    this.signal = { aborted: false };
+                  }
+                  abort() {
+                    this.signal.aborted = true;
+                  }
+                };
+
+                const ticket = createTicket(state.user.id);
+                updateTicketProduct(ticket.id, "audio_video_calling");
+                state.view = "chat-ticket";
+                state.activeTicketId = ticket.id;
+
+                const calls = [];
+                const scheduledTimeouts = [];
+                setTimeout = (fn, delay) => {
+                  const id = `timeout-${scheduledTimeouts.length + 1}`;
+                  scheduledTimeouts.push({ id, fn, delay });
+                  return id;
+                };
+                clearTimeout = (id) => {
+                  const match = scheduledTimeouts.find((entry) => entry.id === id);
+                  if (match) {
+                    match.cleared = true;
+                  }
+                };
+                let resolveAck = null;
+                let ackSignal = null;
+                fetch = (url, options = undefined) => {
+                  calls.push({ url, options });
+                  if (url === "/api/client/ack") {
+                    ackSignal = options?.signal || null;
+                    return new Promise((resolve) => {
+                      resolveAck = resolve;
+                    });
+                  }
+                  if (url === "/api/tickets/query") {
+                    return Promise.resolve({
+                      ok: true,
+                      json: async () => ({
+                        ticket_id: ticket.id,
+                        answer: "",
+                        ai_replied: false,
+                        queued_for_ai: true,
+                        queued_message_created_at: "2026-04-04T09:00:00.000Z",
+                        ack_source: "client_model",
+                        processing_mode: "optimistic_parallel",
+                        status: "communicating",
+                      }),
+                    });
+                  }
+                  throw new Error(`Unexpected fetch call to ${url}`);
+                };
+
+                await handleSendMessage("how to join channel");
+
+                const updated = getTicketById(ticket.id);
+                if (!updated) {
+                  throw new Error("Expected ticket to remain available after sending a message.");
+                }
+                if (updated.messages.length !== 1) {
+                  throw new Error(`Expected only the durable user message to be saved, got ${updated.messages.length}.`);
+                }
+                if (updated.messages[0].role !== "user") {
+                  throw new Error("Expected the durable transcript to contain only the user message.");
+                }
+                if (!calls.some((entry) => entry.url === "/api/client/ack")) {
+                  throw new Error("Expected client ack endpoint to be called.");
+                }
+                if (!calls.some((entry) => entry.url === "/api/tickets/query")) {
+                  throw new Error("Expected ticket query endpoint to be called.");
+                }
+                if (!scheduledTimeouts.some((entry) => entry.delay === 1500)) {
+                  throw new Error("Expected client ack fallback timeout to be scheduled.");
+                }
+
+                const pendingHtml = renderChatTicket();
+                if (pendingHtml.includes("Got it, let me check this for you.")) {
+                  throw new Error("Static fallback ack should not render before the timeout fires.");
+                }
+                if (!state.isSending || state.pendingAsyncTicketId !== ticket.id) {
+                  throw new Error("Queued async ticket should keep the client waiting state active.");
+                }
+                if (!resolveAck) {
+                  throw new Error("Expected ack request promise to remain pending.");
+                }
+                if (ackSignal?.aborted) {
+                  throw new Error("Ack request should stay active before the fallback timer fires.");
+                }
+
+                resolveAck({
+                  ok: true,
+                  json: async () => ({
+                    ack_text: "I got your message and I am checking it now.",
+                    source: "client_model",
+                    model: "gpt-5.4-nano",
+                    reasoning_effort: "none",
+                    latency_ms: 321,
+                    error: null,
+                  }),
+                });
+                await Promise.resolve();
+                await Promise.resolve();
+
+                const html = renderChatTicket();
+                if (!html.includes("I got your message and I am checking it now.")) {
+                  throw new Error("Expected transient client model ack to render after the ack request resolves.");
+                }
+                if (html.includes("Got it, let me check this for you.")) {
+                  throw new Error("Static fallback text should not render when model ack arrives first.");
+                }
+              """
+            )
+        )
+
+    def test_client_send_message_falls_back_after_ack_timeout_and_ignores_late_model_ack(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+                render = () => {};
+                syncTicketsFromBackend = async () => {};
+                requestChatScrollToBottom = () => {};
+                ensurePendingStatusPolling = () => {};
+                AbortController = class AbortController {
+                  constructor() {
+                    this.signal = { aborted: false };
+                  }
+                  abort() {
+                    this.signal.aborted = true;
+                  }
+                };
+
+                const ticket = createTicket(state.user.id);
+                updateTicketProduct(ticket.id, "audio_video_calling");
+                state.view = "chat-ticket";
+                state.activeTicketId = ticket.id;
+
+                const scheduledTimeouts = [];
+                setTimeout = (fn, delay) => {
+                  const id = `timeout-${scheduledTimeouts.length + 1}`;
+                  scheduledTimeouts.push({ id, fn, delay });
+                  return id;
+                };
+                clearTimeout = (id) => {
+                  const match = scheduledTimeouts.find((entry) => entry.id === id);
+                  if (match) {
+                    match.cleared = true;
+                  }
+                };
+                let resolveAck = null;
+                let ackSignal = null;
+                fetch = (url, options = undefined) => {
+                  if (url === "/api/client/ack") {
+                    ackSignal = options?.signal || null;
+                    return new Promise((resolve) => {
+                      resolveAck = resolve;
+                    });
+                  }
+                  if (url === "/api/tickets/query") {
+                    return Promise.resolve({
+                      ok: true,
+                      json: async () => ({
+                        ticket_id: ticket.id,
+                        answer: "",
+                        ai_replied: false,
+                        queued_for_ai: true,
+                        queued_message_created_at: "2026-04-04T09:00:00.000Z",
+                        ack_source: "client_model",
+                        processing_mode: "optimistic_parallel",
+                        status: "communicating",
+                      }),
+                    });
+                  }
+                  throw new Error(`Unexpected fetch call to ${url}`);
+                };
+
+                await handleSendMessage("这个问题怎么加入频道？");
+
+                const beforeTimeoutHtml = renderChatTicket();
+                if (beforeTimeoutHtml.includes("收到，我先帮你看一下。")) {
+                  throw new Error("Localized fallback should not render before the timeout fires.");
+                }
+
+                const fallbackTimer = scheduledTimeouts.find((entry) => entry.delay === 1500);
+                if (!fallbackTimer) {
+                  throw new Error("Expected fallback timer to be scheduled.");
+                }
+                fallbackTimer.fn();
+                await Promise.resolve();
+                await Promise.resolve();
+
+                if (!ackSignal?.aborted) {
+                  throw new Error("Fallback timer should abort the in-flight ack request.");
+                }
+                const fallbackHtml = renderChatTicket();
+                if (!fallbackHtml.includes("收到，我先帮你看一下。")) {
+                  throw new Error("Expected localized fallback text after ack timeout.");
+                }
+
+                resolveAck({
+                  ok: true,
+                  json: async () => ({
+                    ack_text: "收到，我来查看。",
+                    source: "client_model",
+                    model: "gpt-5.4-nano",
+                    reasoning_effort: "none",
+                    latency_ms: 4200,
+                    error: null,
+                  }),
+                });
+                await Promise.resolve();
+                await Promise.resolve();
+
+                const lateAckHtml = renderChatTicket();
+                if (!lateAckHtml.includes("收到，我先帮你看一下。")) {
+                  throw new Error("Fallback text should remain after a late model ack arrives.");
+                }
+                if (lateAckHtml.includes("收到，我来查看。")) {
+                  throw new Error("Late model ack should not overwrite the already rendered fallback text.");
                 }
               """
             )

@@ -4,6 +4,7 @@ import copy
 import importlib.util
 from pathlib import Path
 import sys
+import time
 import types
 import unittest
 from unittest.mock import Mock, patch
@@ -126,6 +127,147 @@ class WorkerResilienceTests(unittest.TestCase):
             "message_created_at": "2026-03-22T00:00:00+00:00",
             "created_at": "2026-03-22T00:00:01+00:00",
         }
+
+    def test_execute_parallel_ticket_query_cancels_rag_when_route_flips_non_rag(self) -> None:
+        rag_detail = types.SimpleNamespace(
+            answer="Use joinChannel with a valid token.",
+            confidence=0.91,
+            sources=["https://docs.agora.io/en/video-calling/get-started"],
+            citations=[{"chunk_id": "chunk-1"}],
+            needs_engineer_guidance=False,
+            reason="grounded_answer",
+            evidence_summary={},
+            packed_evidence=None,
+        )
+        execution = types.SimpleNamespace(
+            answer="Agora's latest investor information is on the official site.",
+            confidence=0.82,
+            sources=["https://investor.agora.io"],
+            citations=[],
+            needs_investigating=False,
+            next_status="communicating",
+            answer_route="web_search",
+            scope_label="agora_non_technical",
+            route_reason="company_info",
+            route_confidence=0.88,
+            search_used=True,
+            matched_signals=["ceo"],
+            route_family="web_company_info",
+            execution_action="web_search",
+            tooling_profile="official_web_search",
+            evidence_summary=None,
+            packed_evidence=None,
+        )
+
+        def _slow_rag(*_args, **_kwargs):
+            time.sleep(0.05)
+            return rag_detail
+
+        with patch.object(
+            worker,
+            "analyze_ticket_message",
+            return_value=_route_decision(
+                action="web_search",
+                scope_label="agora_non_technical",
+                reason="company_info",
+            ),
+        ), patch.object(
+            worker,
+            "_fetch_rag_answer_detail_for_worker",
+            side_effect=_slow_rag,
+        ), patch.object(
+            worker.rag_service_client,
+            "cancel_request",
+            return_value={"cancelled": True, "stage": "round_1_retrieval"},
+        ) as cancel_mock, patch.object(
+            worker,
+            "orchestrate_ticket_execution",
+            return_value=execution,
+        ) as orchestrate_mock:
+            result, diagnostics = worker._execute_parallel_ticket_query(
+                "Who is Agora's CEO?",
+                ticket_id="T-WEB-1",
+                customer_id="C-123",
+                ticket_subject="Investor question",
+                ticket_context=[{"role": "customer", "content": "Who is Agora's CEO?"}],
+                message_created_at="2026-03-22T00:00:00+00:00",
+            )
+
+        self.assertEqual(result.execution_action, "web_search")
+        self.assertTrue(diagnostics["rag_cancelled"])
+        self.assertEqual(diagnostics["rag_cancel_stage"], "round_1_retrieval")
+        self.assertEqual(diagnostics["route_final_action"], "web_search")
+        self.assertEqual(diagnostics["route_result_source"], "parallel_route")
+        cancel_mock.assert_called_once()
+        self.assertEqual(
+            orchestrate_mock.call_args.kwargs["decision"].execution_action,
+            "web_search",
+        )
+
+    def test_execute_parallel_ticket_query_fails_open_to_rag_when_route_raises(self) -> None:
+        rag_detail = types.SimpleNamespace(
+            answer="Use joinChannel with the same channel name and token.",
+            confidence=0.91,
+            sources=["https://docs.agora.io/en/video-calling/get-started"],
+            citations=[{"chunk_id": "chunk-1"}],
+            needs_engineer_guidance=False,
+            reason="grounded_answer",
+            evidence_summary={},
+            packed_evidence=None,
+        )
+        execution = types.SimpleNamespace(
+            answer="Use joinChannel with the same channel name and token.",
+            confidence=0.91,
+            sources=["https://docs.agora.io/en/video-calling/get-started"],
+            citations=[{"chunk_id": "chunk-1"}],
+            needs_investigating=False,
+            next_status="communicating",
+            answer_route="rag",
+            scope_label="agora_technical",
+            route_reason="grounded_answer",
+            route_confidence=0.0,
+            search_used=False,
+            matched_signals=["optimistic_default"],
+            route_family="agora_docs_rag",
+            execution_action="rag",
+            tooling_profile="agora_docs_only",
+            evidence_summary=None,
+            packed_evidence=None,
+        )
+
+        with patch.object(
+            worker,
+            "analyze_ticket_message",
+            side_effect=RuntimeError("route timeout"),
+        ), patch.object(
+            worker,
+            "_fetch_rag_answer_detail_for_worker",
+            return_value=rag_detail,
+        ), patch.object(
+            worker,
+            "orchestrate_ticket_execution",
+            return_value=execution,
+        ) as orchestrate_mock:
+            result, diagnostics = worker._execute_parallel_ticket_query(
+                "how to join channel",
+                ticket_id="T-RAG-1",
+                customer_id="C-123",
+                ticket_subject="Join question",
+                ticket_context=[{"role": "customer", "content": "how to join channel"}],
+                message_created_at="2026-03-22T00:00:00+00:00",
+            )
+
+        self.assertEqual(result.execution_action, "rag")
+        self.assertFalse(diagnostics["rag_cancelled"])
+        self.assertEqual(diagnostics["route_final_action"], "rag")
+        self.assertEqual(diagnostics["route_result_source"], "route_fail_open")
+        self.assertGreaterEqual(float(diagnostics["route_latency_ms"]), 0.0)
+        self.assertTrue(str(diagnostics["rag_started_at"] or "").strip())
+        self.assertTrue(str(diagnostics["rag_finished_at"] or "").strip())
+        self.assertEqual(
+            orchestrate_mock.call_args.kwargs["decision"].execution_action,
+            "rag",
+        )
 
     def test_process_ticket_query_forwards_ticket_product_to_orchestrator(self) -> None:
         ticket = _build_ticket()
@@ -258,7 +400,6 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertFalse(repository.save_engineer_case.called)
         event_payload = repository.record_event.call_args_list[0].args[2]
         self.assertEqual(event_payload["workflow_action"], "clarify_customer_for_intake")
-
     def test_process_ticket_query_retries_transient_save_ticket_failure(self) -> None:
         initial_ticket = _build_ticket()
         repository = Mock()

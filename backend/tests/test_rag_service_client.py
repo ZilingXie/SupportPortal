@@ -6,7 +6,7 @@ import os
 import unittest
 import urllib.error
 import urllib.parse
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from backend.services.rag_service_client import (
     RagServiceClient,
@@ -331,6 +331,67 @@ class RagServiceClientTests(unittest.TestCase):
 
         self.assertEqual(captured["timeout"], 25.0)
 
+    def test_query_uses_40_second_default_timeout_when_env_timeout_is_unset(self) -> None:
+        captured: dict[str, object] = {}
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"decision":"answer","answer":"ok","confidence":0.8,"sources":[],"citations":[]}'
+
+        def _fake_urlopen(request, timeout):
+            captured["timeout"] = timeout
+            return _FakeResponse()
+
+        with patch.dict(os.environ, {}, clear=True):
+            client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+            with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+                client.query(
+                    question="How do I join a channel?",
+                    request_id="rag-timeout-default",
+                    ticket_id="T-001",
+                    customer_id="C-001",
+                )
+
+        self.assertEqual(captured["timeout"], 40.0)
+
+    def test_cancel_request_posts_internal_cancel_endpoint(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+        captured: dict[str, object] = {}
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"request_id":"rag-cancel-1","cancelled":true,"stage":"round_1_retrieval"}'
+
+        def _fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["method"] = request.get_method()
+            captured["headers"] = dict(request.headers)
+            captured["timeout"] = timeout
+            return _FakeResponse()
+
+        with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            payload = client.cancel_request("rag-cancel-1")
+
+        self.assertEqual(payload["cancelled"], True)
+        self.assertEqual(captured["method"], "POST")
+        self.assertEqual(
+            captured["url"],
+            "http://rag-api.internal/internal/rag/requests/rag-cancel-1/cancel",
+        )
+        self.assertEqual(captured["timeout"], 40.0)
+
     def test_get_ingestion_report_uses_report_endpoint(self) -> None:
         client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
         captured = {}
@@ -606,6 +667,74 @@ class RagServiceClientTests(unittest.TestCase):
         self.assertFalse(needs_engineer)
         self.assertEqual(live_detail_mock.call_count, 2)
         sleep_mock.assert_called_once_with(0.25)
+
+    def test_query_answer_with_recovery_uses_deadline_window_for_late_live_detail(self) -> None:
+        live_detail = {
+            "primary": {
+                "request_id": "rag-join-3",
+                "needs_human": False,
+                "answer": "Join the channel with the same channel name on each client.",
+                "confidence_score": 0.93,
+                "answer_sources": ["https://docs.agora.io/en/video-calling/get-started/get-started-sdk"],
+                "answer_citations": [
+                    {
+                        "chunk_id": "chunk-3",
+                        "source_path": "official/get-started-sdk.md",
+                        "heading": "Join a channel",
+                        "source_url": "https://docs.agora.io/en/video-calling/get-started/get-started-sdk",
+                    }
+                ],
+            }
+        }
+        fake_clock = {"now": 100.0}
+
+        def _fake_sleep(seconds: float) -> None:
+            fake_clock["now"] += float(seconds)
+
+        with patch.dict(
+            os.environ,
+            {
+                "CLIENT_RAG_RECOVERY_WINDOW_SECONDS": "4.0",
+                "CLIENT_RAG_RECOVERY_POLL_INTERVAL_SECONDS": "1.0",
+            },
+            clear=False,
+        ):
+            client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+            with patch.object(
+                client,
+                "query",
+                side_effect=RagServiceError("RAG service request failed"),
+            ), patch.object(
+                client,
+                "rag_dashboard_live_case_detail",
+                side_effect=[
+                    RagServiceError("RAG service returned HTTP 404", status_code=404, payload={"detail": "missing-1"}),
+                    RagServiceError("RAG service returned HTTP 404", status_code=404, payload={"detail": "missing-2"}),
+                    RagServiceError("RAG service returned HTTP 404", status_code=404, payload={"detail": "missing-3"}),
+                    live_detail,
+                ],
+            ) as live_detail_mock, patch(
+                "backend.services.rag_service_client.time.monotonic",
+                side_effect=lambda: fake_clock["now"],
+            ), patch(
+                "backend.services.rag_service_client.time.sleep",
+                side_effect=_fake_sleep,
+            ) as sleep_mock:
+                answer, confidence, sources, citations, needs_engineer = client.query_answer_with_recovery(
+                    question="how to join channel",
+                    request_id="rag-join-3",
+                    ticket_id="TK-021",
+                    customer_id="C-001",
+                    insufficient_reply="INSUFFICIENT",
+                )
+
+        self.assertEqual(answer, "Join the channel with the same channel name on each client.")
+        self.assertEqual(confidence, 0.93)
+        self.assertEqual(sources, ["https://docs.agora.io/en/video-calling/get-started/get-started-sdk"])
+        self.assertEqual(citations[0]["chunk_id"], "chunk-3")
+        self.assertFalse(needs_engineer)
+        self.assertEqual(live_detail_mock.call_count, 4)
+        self.assertEqual(sleep_mock.call_args_list, [call(1.0), call(1.0), call(1.0)])
 
     def test_update_review_sample_uses_internal_review_endpoint(self) -> None:
         client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")

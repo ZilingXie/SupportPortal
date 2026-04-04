@@ -5,6 +5,9 @@ import json
 import logging
 import os
 import re
+import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -71,7 +74,7 @@ from backend.services.dashboard_ticket_ops import (
     normalize_ticket_dashboard_events,
 )
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
-from backend.services.llm_profiles import ENGINEER_HELPER_SCENARIO, resolve_model_profile
+from backend.services.llm_profiles import CLIENT_ACK_SCENARIO, ENGINEER_HELPER_SCENARIO, resolve_model_profile
 from backend.services.event_bus import AsyncRedisEventBus
 from backend.services.knowledge_monitoring import build_empty_knowledge_metrics
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
@@ -149,12 +152,175 @@ def _safe_float_env(name: str, default: float) -> float:
 
 
 ASYNC_QUERY_ENABLED = _env_flag("ASYNC_QUERY_ENABLED", default=False)
+OPTIMISTIC_PARALLEL_ROUTE_ENABLED = _env_flag("OPTIMISTIC_PARALLEL_ROUTE_ENABLED", default=True)
 KNOWLEDGE_OFFICIAL_MAX_BYTES = _safe_int_env("KNOWLEDGE_OFFICIAL_MAX_BYTES", 5 * 1024 * 1024)
 KNOWLEDGE_ARTICLE_MAX_CHARS = _safe_int_env("KNOWLEDGE_ARTICLE_MAX_CHARS", 120000)
+CLIENT_ACK_MAX_OUTPUT_TOKENS = _safe_int_env("CLIENT_ACK_MAX_OUTPUT_TOKENS", 32)
+CLIENT_ACK_SESSION_MODEL = (os.getenv("CLIENT_ACK_SESSION_MODEL") or "gpt-realtime-mini").strip() or "gpt-realtime-mini"
+CLIENT_ACK_SESSION_MAX_OUTPUT_TOKENS = _safe_int_env("CLIENT_ACK_SESSION_MAX_OUTPUT_TOKENS", 48)
+CLIENT_ACK_SESSION_TTL_SECONDS = _safe_int_env("CLIENT_ACK_SESSION_TTL_SECONDS", 60)
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _optimistic_parallel_enabled() -> bool:
+    return bool(ASYNC_QUERY_ENABLED and OPTIMISTIC_PARALLEL_ROUTE_ENABLED)
+
+
+def _client_ack_fallback_text(message: str) -> str:
+    return build_initial_ack(message).text
+
+
+def _build_client_ack_instructions() -> str:
+    return (
+        "Write exactly one short acknowledgement sentence for a support chat. "
+        "Only confirm that the request was received and will be checked. "
+        "Do not provide technical guidance. Do not promise engineer escalation. "
+        "Do not cite sources. Match the user's language."
+    )
+
+
+def _build_client_ack_user_prompt(message: str) -> str:
+    return (
+        "Customer message:\n"
+        f"{' '.join(str(message or '').split()).strip()}\n\n"
+        "Reply with exactly one acknowledgement sentence."
+    )
+
+
+def _normalize_client_ack_text(value: Any) -> str:
+    return " ".join(str(value or "").split()).strip()
+
+
+def _create_client_ack_session_payload(message: str) -> dict[str, Any]:
+    _ = message
+    return {
+        "session": {
+            "type": "realtime",
+            "model": CLIENT_ACK_SESSION_MODEL,
+            "instructions": _build_client_ack_instructions(),
+            "output_modalities": ["text"],
+            "max_output_tokens": CLIENT_ACK_SESSION_MAX_OUTPUT_TOKENS,
+        }
+    }
+
+
+def _json_loads_bytes(raw: bytes) -> Any:
+    text = raw.decode("utf-8", errors="replace").strip()
+    if not text:
+        return {}
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return {"message": text}
+
+
+def _create_client_ack_session(message: str) -> dict[str, Any]:
+    fallback_text = _client_ack_fallback_text(message)
+    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    response_payload: dict[str, Any] = {
+        "enabled": False,
+        "provider": "openai_realtime",
+        "model": CLIENT_ACK_SESSION_MODEL,
+        "fallback_text": fallback_text,
+        "max_output_tokens": CLIENT_ACK_SESSION_MAX_OUTPUT_TOKENS,
+        "session_ttl_seconds": CLIENT_ACK_SESSION_TTL_SECONDS,
+        "instructions": _build_client_ack_instructions(),
+        "reasoning_effort": "none",
+        "expires_at": None,
+        "client_secret": None,
+    }
+    if not api_key:
+        response_payload["disabled_reason"] = "missing_openai_api_key"
+        return response_payload
+
+    request = urllib.request.Request(
+        "https://api.openai.com/v1/realtime/client_secrets",
+        data=json.dumps(_create_client_ack_session_payload(message), ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10.0) as response:
+            payload = _json_loads_bytes(response.read())
+    except urllib.error.HTTPError as exc:
+        LOGGER.warning("Client ack session request failed with HTTP %s", exc.code)
+        payload = _json_loads_bytes(exc.read())
+        response_payload["disabled_reason"] = f"http_{exc.code}"
+        response_payload["error"] = payload
+        return response_payload
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        LOGGER.warning("Client ack session request failed: %s", exc)
+        response_payload["disabled_reason"] = "request_failed"
+        return response_payload
+
+    if not isinstance(payload, dict):
+        response_payload["disabled_reason"] = "invalid_payload"
+        return response_payload
+
+    client_secret = payload.get("client_secret")
+    secret_value = (
+        str(client_secret.get("value") or "").strip()
+        if isinstance(client_secret, dict)
+        else str(payload.get("value") or payload.get("client_secret") or "").strip()
+    )
+    expires_at = (
+        str(client_secret.get("expires_at") or "").strip()
+        if isinstance(client_secret, dict)
+        else str(payload.get("expires_at") or "").strip()
+    )
+    if not secret_value:
+        response_payload["disabled_reason"] = "missing_client_secret"
+        response_payload["error"] = payload
+        return response_payload
+
+    response_payload.update(
+        {
+            "enabled": True,
+            "client_secret": secret_value,
+            "expires_at": expires_at or None,
+        }
+    )
+    return response_payload
+
+
+def _create_client_ack(message: str) -> dict[str, Any]:
+    started_at = time.perf_counter()
+    profile = resolve_model_profile(CLIENT_ACK_SCENARIO)
+    response_payload: dict[str, Any] = {
+        "ack_text": "",
+        "source": "client_model",
+        "model": profile.model,
+        "reasoning_effort": profile.reasoning_effort,
+        "latency_ms": 0.0,
+        "error": None,
+    }
+    try:
+        response = invoke_responses_text(
+            profile=profile,
+            system_prompt=_build_client_ack_instructions(),
+            user_prompt=_build_client_ack_user_prompt(message),
+            extra_payload={"max_output_tokens": CLIENT_ACK_MAX_OUTPUT_TOKENS},
+        )
+        ack_text = _normalize_client_ack_text(response.text)
+        response_payload["model"] = str(response.model_name or profile.model).strip() or profile.model
+        if ack_text:
+            response_payload["ack_text"] = ack_text
+        else:
+            response_payload["error"] = "empty_ack_text"
+    except LlmInvocationError as exc:
+        LOGGER.warning("Client ack request failed: %s", exc)
+        response_payload["error"] = str(exc)
+    except Exception as exc:
+        LOGGER.warning("Client ack request failed unexpectedly: %s", exc)
+        response_payload["error"] = str(exc.__class__.__name__ or "client_ack_error")
+    response_payload["latency_ms"] = round((time.perf_counter() - started_at) * 1000, 2)
+    return response_payload
 
 
 class TicketQueryRequest(BaseModel):
@@ -164,6 +330,12 @@ class TicketQueryRequest(BaseModel):
     subject: str | None = None
     product: str | None = Field(default=None, max_length=64)
     message: str = Field(min_length=1)
+
+
+class ClientAckSessionRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    ticket_id: str | None = Field(default=None, max_length=128)
+    customer_id: str | None = Field(default=None, max_length=128)
 
 
 class TicketActionRequest(BaseModel):
@@ -1067,14 +1239,47 @@ async def dispatch_event(channels: list[str], payload: dict[str, Any]) -> None:
         await event_bus.publish(bus_payload)
 
 
-def build_query_task(ticket_id: str, customer_message: str, message_created_at: str) -> dict[str, str]:
-    return {
+def build_query_task(
+    ticket_id: str,
+    customer_message: str,
+    message_created_at: str,
+    *,
+    api_persist_latency_ms: float | None = None,
+    api_return_latency_ms: float | None = None,
+    processing_mode: str | None = None,
+) -> dict[str, Any]:
+    task: dict[str, Any] = {
         "task_type": "ticket_query",
         "ticket_id": ticket_id,
         "customer_message": customer_message,
         "message_created_at": message_created_at,
         "created_at": now_iso(),
     }
+    if api_persist_latency_ms is not None:
+        task["api_persist_latency_ms"] = round(float(api_persist_latency_ms), 2)
+    if api_return_latency_ms is not None:
+        task["api_return_latency_ms"] = round(float(api_return_latency_ms), 2)
+    if processing_mode:
+        task["processing_mode"] = str(processing_mode).strip()
+    return task
+
+
+async def _run_ticket_query_task_background(task: dict[str, Any]) -> None:
+    from backend import worker as ticket_worker
+
+    await async_to_thread(ticket_worker.process_ticket_query_task, dict(task))
+
+
+async def _schedule_ticket_query_processing(
+    background_tasks: BackgroundTasks,
+    *,
+    task: dict[str, Any],
+) -> bool:
+    queued = await task_queue.enqueue(dict(task))
+    if queued:
+        return True
+    background_tasks.add_task(_run_ticket_query_task_background, dict(task))
+    return True
 
 
 def build_message_sentiment_task(
@@ -1505,12 +1710,22 @@ def get_knowledge_ingestion(ingestion_id: str) -> dict[str, Any]:
     except RagServiceError as exc:
         _raise_rag_service_http_error(exc)
 
+@app.post("/api/client/ack/session")
+def create_client_ack_session(request: ClientAckSessionRequest) -> dict[str, Any]:
+    return _create_client_ack_session(request.message)
+
+
+@app.post("/api/client/ack")
+def create_client_ack(request: ClientAckSessionRequest) -> dict[str, Any]:
+    return _create_client_ack(request.message)
+
 
 @app.post("/api/tickets/query")
 async def create_or_update_ticket(
     request: TicketQueryRequest,
     background_tasks: BackgroundTasks,
 ) -> dict[str, Any]:
+    api_started_at = time.perf_counter()
     ticket_id = request.ticket_id or f"T-{uuid4().hex[:6].upper()}"
     existing_ticket = ticket_repository.get_ticket(ticket_id)
     is_new_ticket = existing_ticket is None
@@ -1552,7 +1767,6 @@ async def create_or_update_ticket(
 
     timestamp = now_iso()
     customer_message = request.message.strip()
-    initial_ack = build_initial_ack(customer_message)
     ticket["messages"].append(
         {
             "role": "customer",
@@ -1561,13 +1775,16 @@ async def create_or_update_ticket(
         }
     )
 
-    response_answer = initial_ack.text
+    initial_ack = None
+    response_answer = ""
     follow_up_answer = ""
     follow_up_sources: list[str] = []
     follow_up_citations: list[dict[str, str]] = []
     needs_engineer_input = False
-    ai_replied = bool(str(response_answer).strip())
+    ai_replied = False
     task_enqueued = False
+    ack_source = "client_model"
+    processing_mode = "optimistic_parallel"
     route_payload: dict[str, Any] = {
         "answer_route": None,
         "scope_label": None,
@@ -1585,16 +1802,22 @@ async def create_or_update_ticket(
     engineer_case_created = False
     execution: TicketExecutionResult | None = None
 
-    if ai_replied:
-        ticket["messages"].append(
-            {
-                "role": "assistant",
-                "content": response_answer,
-                "created_at": now_iso(),
-            }
-        )
-
     active_engineer_case_payload = _active_engineer_case_payload(ticket)
+    optimistic_parallel_eligible = active_engineer_case_payload is None and _optimistic_parallel_enabled()
+    if not optimistic_parallel_eligible:
+        initial_ack = build_initial_ack(customer_message)
+        response_answer = initial_ack.text
+        ai_replied = bool(str(response_answer).strip())
+        ack_source = str(getattr(initial_ack, "source", "") or "server_ack").strip() or "server_ack"
+        processing_mode = "sync_route"
+        if ai_replied:
+            ticket["messages"].append(
+                {
+                    "role": "assistant",
+                    "content": response_answer,
+                    "created_at": now_iso(),
+                }
+            )
     if isinstance(active_engineer_case_payload, dict):
         engineer_case = _engineer_case_payload_to_record(active_engineer_case_payload)
         case_context = build_engineer_case_context(ticket, engineer_case)
@@ -1612,36 +1835,43 @@ async def create_or_update_ticket(
         ticket["status"] = normalize_ticket_status(engineer_case.get("status"))
         ticket["active_engineer_case_id"] = str(engineer_case.get("engineer_case_id") or "").strip() or None
         ticket["client_intake_state"] = None
+        processing_mode = "active_investigation_followup"
     else:
-        route_decision = analyze_ticket_message(
-            customer_message,
-            ticket_subject=str(ticket.get("subject") or "").strip() or None,
-            ticket_context=route_context,
-            product=ticket.get("product"),
-        )
-        route_payload.update(
-            {
-                "answer_route": "rag" if route_decision.execution_action == "rag" else route_decision.execution_action,
-                "scope_label": route_decision.scope_label,
-                "route_family": route_decision.route_family,
-                "execution_action": route_decision.execution_action,
-                "tooling_profile": route_decision.tooling_profile,
-                "route_reason": route_decision.reason,
-                "route_confidence": round(float(route_decision.confidence), 4),
-                "search_used": False,
-                "matched_signals": list(route_decision.matched_signals),
-            }
-        )
-        if route_decision.execution_action == "rag" and ASYNC_QUERY_ENABLED:
+        if optimistic_parallel_eligible:
             ticket["status"] = resolve_next_ticket_status(ticket.get("status"), COMMUNICATING_STATUS)
-            task_enqueued = await task_queue.enqueue(
-                build_query_task(
-                    ticket_id=ticket_id,
-                    customer_message=customer_message,
-                    message_created_at=timestamp,
-                )
+        else:
+            route_decision = analyze_ticket_message(
+                customer_message,
+                ticket_subject=str(ticket.get("subject") or "").strip() or None,
+                ticket_context=route_context,
+                product=ticket.get("product"),
             )
-            if not task_enqueued:
+            route_payload.update(
+                {
+                    "answer_route": "rag" if route_decision.execution_action == "rag" else route_decision.execution_action,
+                    "scope_label": route_decision.scope_label,
+                    "route_family": route_decision.route_family,
+                    "execution_action": route_decision.execution_action,
+                    "tooling_profile": route_decision.tooling_profile,
+                    "route_reason": route_decision.reason,
+                    "route_confidence": round(float(route_decision.confidence), 4),
+                    "search_used": False,
+                    "matched_signals": list(route_decision.matched_signals),
+                }
+            )
+            if route_decision.execution_action == "rag" and ASYNC_QUERY_ENABLED:
+                ticket["status"] = resolve_next_ticket_status(ticket.get("status"), COMMUNICATING_STATUS)
+                processing_mode = "legacy_async_rag"
+                task_enqueued = await _schedule_ticket_query_processing(
+                    background_tasks,
+                    task=build_query_task(
+                        ticket_id=ticket_id,
+                        customer_message=customer_message,
+                        message_created_at=timestamp,
+                        processing_mode="legacy_async_rag",
+                    ),
+                )
+            else:
                 execution = orchestrate_ticket_execution(
                     customer_message,
                     ticket_id=ticket_id,
@@ -1653,18 +1883,6 @@ async def create_or_update_ticket(
                     decision=route_decision,
                     resolution_builder=resolve_support_message,
                 )
-        else:
-            execution = orchestrate_ticket_execution(
-                customer_message,
-                ticket_id=ticket_id,
-                customer_id=request.customer_id,
-                ticket_subject=str(ticket.get("subject") or "").strip() or None,
-                ticket_context=route_context,
-                product=ticket.get("product"),
-                client_intake_state=ticket.get("client_intake_state"),
-                decision=route_decision,
-                resolution_builder=resolve_support_message,
-            )
         if execution is not None:
             execution_route_payload = build_execution_route_payload(execution)
             route_payload.update(execution_route_payload)
@@ -1726,7 +1944,7 @@ async def create_or_update_ticket(
             else:
                 ticket["status"] = resolve_next_ticket_status(ticket.get("status"), execution.next_status)
                 ticket["client_intake_state"] = execution_client_intake_state
-        else:
+        elif not optimistic_parallel_eligible:
             ticket["status"] = resolve_next_ticket_status(ticket.get("status"), COMMUNICATING_STATUS)
 
     if str(follow_up_answer).strip():
@@ -1775,6 +1993,19 @@ async def create_or_update_ticket(
             new_messages=investigation_result.get("new_internal_messages") if investigation_result else [],
         )
 
+    api_persist_latency_ms = round((time.perf_counter() - api_started_at) * 1000, 2)
+    if optimistic_parallel_eligible:
+        task_enqueued = await _schedule_ticket_query_processing(
+            background_tasks,
+            task=build_query_task(
+                ticket_id=ticket_id,
+                customer_message=customer_message,
+                message_created_at=timestamp,
+                api_persist_latency_ms=api_persist_latency_ms,
+                processing_mode="optimistic_parallel",
+            ),
+        )
+
     await _enqueue_or_defer_message_sentiment_tag(
         background_tasks,
         ticket_id=ticket_id,
@@ -1788,6 +2019,8 @@ async def create_or_update_ticket(
         "status": ticket["status"],
         "message": customer_message,
         "created_at": now_iso(),
+        "parallel_mode": processing_mode,
+        "api_persist_latency_ms": api_persist_latency_ms,
     }
     if route_payload.get("answer_route"):
         event["answer_route"] = route_payload.get("answer_route")
@@ -1822,6 +2055,7 @@ async def create_or_update_ticket(
             created=bool(engineer_case_created or investigation_result.get("created")),
         )
 
+    api_return_latency_ms = round((time.perf_counter() - api_started_at) * 1000, 2)
     if task_enqueued:
         processing_event = {
             "event": "ticket_ai_processing",
@@ -1829,6 +2063,9 @@ async def create_or_update_ticket(
             "status": ticket["status"],
             "message": "AI is processing this request asynchronously.",
             "created_at": now_iso(),
+            "parallel_mode": processing_mode,
+            "api_persist_latency_ms": api_persist_latency_ms,
+            "api_return_latency_ms": api_return_latency_ms,
         }
         ticket_repository.record_event(ticket_id, processing_event["event"], processing_event)
         await dispatch_event(["engineer", "dashboard"], processing_event)
@@ -1871,7 +2108,7 @@ async def create_or_update_ticket(
             "score": None,
             "is_alert": False,
             "provider": "deferred",
-            "intent": initial_ack.intent,
+            "intent": getattr(initial_ack, "intent", None) if initial_ack is not None else None,
         },
         "status": ticket["status"],
         "ai_replied": ai_replied,
@@ -1883,6 +2120,10 @@ async def create_or_update_ticket(
         "route_reason": route_payload.get("route_reason"),
         "route_confidence": route_payload.get("route_confidence"),
         "search_used": bool(route_payload.get("search_used")),
+        "ack_source": ack_source,
+        "processing_mode": processing_mode,
+        "api_persist_latency_ms": api_persist_latency_ms,
+        "api_return_latency_ms": api_return_latency_ms,
     }
 
 

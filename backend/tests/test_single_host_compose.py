@@ -41,6 +41,58 @@ class SingleHostComposeTests(unittest.TestCase):
             worker_block,
         )
 
+    def test_client_rag_recovery_defaults_are_present(self) -> None:
+        content = COMPOSE_PATH.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "CLIENT_RAG_SERVICE_TIMEOUT_SECONDS: ${CLIENT_RAG_SERVICE_TIMEOUT_SECONDS:-40.0}",
+            content,
+        )
+        self.assertIn(
+            "CLIENT_RAG_RECOVERY_WINDOW_SECONDS: ${CLIENT_RAG_RECOVERY_WINDOW_SECONDS:-15.0}",
+            content,
+        )
+        self.assertIn(
+            "CLIENT_RAG_RECOVERY_POLL_INTERVAL_SECONDS: ${CLIENT_RAG_RECOVERY_POLL_INTERVAL_SECONDS:-1.0}",
+            content,
+        )
+
+    def test_client_ack_and_parallel_route_defaults_are_present(self) -> None:
+        content = COMPOSE_PATH.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "CLIENT_ACK_MODEL: ${CLIENT_ACK_MODEL:-gpt-5.4-nano}",
+            content,
+        )
+        self.assertIn(
+            "CLIENT_ACK_REASONING_EFFORT: ${CLIENT_ACK_REASONING_EFFORT:-none}",
+            content,
+        )
+        self.assertIn(
+            "CLIENT_ACK_TIMEOUT_SECONDS: ${CLIENT_ACK_TIMEOUT_SECONDS:-1.25}",
+            content,
+        )
+        self.assertIn(
+            "CLIENT_ACK_MAX_OUTPUT_TOKENS: ${CLIENT_ACK_MAX_OUTPUT_TOKENS:-32}",
+            content,
+        )
+        self.assertIn(
+            "CLIENT_ACK_SESSION_MODEL: ${CLIENT_ACK_SESSION_MODEL:-gpt-realtime-mini}",
+            content,
+        )
+        self.assertIn(
+            "CLIENT_ACK_SESSION_MAX_OUTPUT_TOKENS: ${CLIENT_ACK_SESSION_MAX_OUTPUT_TOKENS:-48}",
+            content,
+        )
+        self.assertIn(
+            "CLIENT_ACK_SESSION_TTL_SECONDS: ${CLIENT_ACK_SESSION_TTL_SECONDS:-60}",
+            content,
+        )
+        self.assertIn(
+            "OPTIMISTIC_PARALLEL_ROUTE_ENABLED: ${OPTIMISTIC_PARALLEL_ROUTE_ENABLED:-true}",
+            content,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

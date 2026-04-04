@@ -281,6 +281,21 @@ class TicketOrchestratorTests(unittest.TestCase):
         self.assertEqual(execution.next_status, COMMUNICATING_STATUS)
         self.assertIsNone(execution.investigation_reason)
 
+    def test_generic_grounded_how_to_question_skips_post_check_entirely(self) -> None:
+        with patch(
+            "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency"
+        ) as sufficiency_mock:
+            execution = orchestrate_ticket_execution(
+                "how to join channel",
+                decision=_decision("rag"),
+                resolution_builder=lambda *_args, **_kwargs: _resolution(action="rag"),
+            )
+
+        self.assertFalse(execution.needs_investigating)
+        self.assertEqual(execution.next_status, COMMUNICATING_STATUS)
+        self.assertIsNone(execution.investigation_reason)
+        sufficiency_mock.assert_not_called()
+
     def test_rag_answer_runs_post_check_and_investigates_when_rejected(self) -> None:
         with patch(
             "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency",
@@ -315,6 +330,21 @@ class TicketOrchestratorTests(unittest.TestCase):
         self.assertTrue(execution.needs_investigating)
         self.assertEqual(execution.next_status, INVESTIGATING_STATUS)
         self.assertEqual(execution.investigation_reason, "rag_post_check_error")
+
+    def test_generic_grounded_how_to_question_keeps_answer_when_post_check_errors(self) -> None:
+        with patch(
+            "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency",
+            side_effect=RuntimeError("judge unavailable"),
+        ):
+            execution = orchestrate_ticket_execution(
+                "how to join channel",
+                decision=_decision("rag"),
+                resolution_builder=lambda *_args, **_kwargs: _resolution(action="rag"),
+            )
+
+        self.assertFalse(execution.needs_investigating)
+        self.assertEqual(execution.next_status, COMMUNICATING_STATUS)
+        self.assertIsNone(execution.investigation_reason)
 
     def test_non_rag_action_skips_post_check(self) -> None:
         with patch(

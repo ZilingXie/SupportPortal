@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+import backend.services.rag_qa as rag_qa
 from backend.services.query_understanding import QueryUnderstandingResult, RetrievalPlan
 from backend.services.rag_qa import (
     AgenticIterationTrace,
@@ -106,7 +107,7 @@ class RagAgenticTests(unittest.TestCase):
         )
 
         self.assertEqual(plan.query_class, "lexical_exact")
-        self.assertEqual(plan.first_pass_tools, ["p_bm25", "p_fts", "p_vec"])
+        self.assertEqual(plan.first_pass_tools, ["p_bm25", "p_fts"])
         self.assertEqual(plan.query_variants, [("original", "how to join channel")])
 
     def test_merge_agentic_tool_results_caps_shadow_share_and_records_fusion_trace(self) -> None:
@@ -382,3 +383,78 @@ class RagAgenticTests(unittest.TestCase):
 
         self.assertEqual(vector_mock.call_count, 1)
         self.assertEqual(result.final_chunks[0].chunk_id, "chunk-1")
+
+    def test_execute_agentic_round_uses_process_cooldown_after_embedding_quota_failure(self) -> None:
+        plan = AgenticRetrievalPlan(
+            query_class="configuration",
+            first_pass_tools=["p_vec", "p_bm25"],
+            query_variants=[("original", "How do I enable dual stream in Node.js?")],
+            decomposition_targets=[],
+            evidence_goal="configuration_support",
+            recovery_bias="lexical",
+            ticket_context_used=False,
+            exact_terms=["dual", "stream"],
+        )
+        chunk = RetrievedChunk(
+            chunk_id="chunk-2",
+            text="Enable dual stream before joining the channel.",
+            source_path="official/dual-stream.md",
+            similarity=0.92,
+            index_role="primary",
+        )
+        base_config = {
+            "top_k": 5,
+            "vector_candidate_k": 10,
+            "bm25_candidate_k": 10,
+            "keyword_candidate_k": 10,
+            "fusion_candidate_k": 10,
+            "rerank_top_n": 5,
+            "agent_shadow_ratio_cap": 0.4,
+            "agent_final_shadow_cap": 1,
+            "agent_recovery_shadow_cap": 2,
+            "vector_enabled": True,
+            "rerank_enabled": False,
+        }
+        rerank_info = {
+            "post_rerank_count": 1,
+            "hints": {},
+            "applied_filter": False,
+            "filter_type": None,
+            "candidate_reasons": {},
+        }
+
+        with patch.dict(rag_qa.__dict__, {"_RUNTIME_CAPABILITY_UNAVAILABLE_UNTIL": {}}, clear=False), patch(
+            "backend.services.rag_qa.time.time",
+            return_value=100.0,
+        ), patch(
+            "backend.services.rag_qa._retrieve_chunks",
+            side_effect=RuntimeError("SiliconFlow embedding request failed: Sorry, your account balance is insufficient"),
+        ) as vector_mock, patch(
+            "backend.services.rag_qa._retrieve_bm25_chunks",
+            return_value=[chunk],
+        ), patch(
+            "backend.services.rag_qa._metadata_rerank",
+            return_value=([chunk], rerank_info),
+        ):
+            first = _execute_agentic_round(
+                message="How do I enable dual stream in Node.js?",
+                config=dict(base_config),
+                plan=plan,
+                round_index=1,
+                retrieval_plan=RetrievalPlan(semantic_query="How do I enable dual stream in Node.js?"),
+                query_understanding=None,
+                ticket_context=None,
+            )
+            second = _execute_agentic_round(
+                message="How do I enable dual stream in Node.js?",
+                config=dict(base_config),
+                plan=plan,
+                round_index=1,
+                retrieval_plan=RetrievalPlan(semantic_query="How do I enable dual stream in Node.js?"),
+                query_understanding=None,
+                ticket_context=None,
+            )
+
+        self.assertEqual(vector_mock.call_count, 1)
+        self.assertEqual(first.final_chunks[0].chunk_id, "chunk-2")
+        self.assertEqual(second.final_chunks[0].chunk_id, "chunk-2")

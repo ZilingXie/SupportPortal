@@ -138,6 +138,7 @@ For each new entry, record:
   - `backend/services/rag_sufficiency_judge.py`
   - `backend/services/support_router.py`
   - `backend/tests/test_emotion_reply.py`
+
   - `backend/tests/test_knowledge_ingestion.py`
   - `backend/tests/test_llm_profiles.py`
   - `backend/tests/test_next_prototype_model_contract.py`
@@ -346,6 +347,120 @@ For each new entry, record:
   - `bash -n scripts/ops/auto_deploy_ec2.sh scripts/ops/bootstrap_auto_deploy_ec2.sh deployment/deploy_ec2.sh`
   - `python3 -m py_compile backend/services/auto_deploy_report.py scripts/ops/build_auto_deploy_report.py backend/services/llm_profiles.py`
   - `git diff --check`
+
+## 2026-04-04 - Simple FAQ prompt bypass for answer-first RAG
+
+- Area or subsystem: Client AI technical RAG query-understanding, intent routing, and agentic retrieval planning
+- Prompt or model version: `rag-simple-faq-light-path-v1`
+- Summary: Added a simple lexical FAQ bypass so short `lexical_exact` questions such as `how to join channel` no longer invoke the query-understanding LLM stages or the agent planner. These requests now stay on a deterministic BM25/FTS-first path and rely on existing answer generation only after grounded evidence is already selected. The same query family now also bypasses the intent-router LLM when the route is an obvious `join channel` technical FAQ.
+- Reason: The old prompt-driven planning path was spending too much latency budget on rewrites, decomposition, planner calls, vector retrieval, and rerank for very small FAQ-style requests. That made answerable questions miss the client timeout window and fall into engineer-ticket recovery even when grounded evidence already existed. In the live async path, transient sufficiency-judge failures could also override a valid grounded answer and even successful sufficiency-judge calls were adding another avoidable LLM hop after RAG had already finished.
+- Affected files or config:
+  - `backend/services/query_understanding.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/tests/test_query_understanding.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_ticket_orchestrator.py`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Expected behavior change:
+  - Obvious `join channel` FAQ prompts no longer call the intent-router prompt before being routed to Agora technical RAG.
+  - Short `lexical_exact` FAQ queries bypass the query-understanding LLM rewrite/decomposition stages and return `fallback_mode="light_path"` with zero rewrite latency.
+  - The agent planner prompt is no longer called for those same simple FAQ queries.
+  - Generic grounded FAQ answers that already meet the evidence-quality keep rules now skip the sufficiency-judge prompt entirely instead of paying for a second LLM pass after answer generation.
+  - Transient sufficiency-judge errors no longer force a handoff for generic grounded FAQ answers that already meet the evidence-quality keep rules.
+  - Prompt/model selection for answer generation is unchanged; only the decision to invoke retrieval-planning prompts is narrowed to harder queries that benefit from them, and post-check failures on generic FAQ answers now degrade to answer-first behavior instead of investigation-first behavior.
+- Verification:
+  - `/Users/xieziling/.config/superpowers/venvs/SupportPortal-rag-join-channel-fix-min/bin/python -m unittest backend.tests.test_query_understanding backend.tests.test_rag_agentic backend.tests.test_rag_qa backend.tests.test_ticket_orchestrator`
+  - `/Users/xieziling/.config/superpowers/venvs/SupportPortal-rag-join-channel-fix-min/bin/python -m py_compile backend/services/query_understanding.py backend/services/rag_qa.py backend/services/ticket_orchestrator.py`
+  - `/Users/xieziling/.config/superpowers/venvs/SupportPortal-rag-join-channel-fix-min/bin/python - <<'PY' ... support_rag_query_runs WHERE ticket_id='T-1E51CE' ... PY` showed `query_understanding_meta.agent_iterations[0].tool_names == ['p_bm25', 'p_fts']`
+
+## 2026-04-04 - Client-side ack model session and optimistic async ticket query
+
+- Area or subsystem: Client AI initial acknowledgement, optimistic ticket query path, and async route/RAG cancellation behavior
+- Prompt or model version: `client-ack-realtime-v1`
+- Summary: Added a browser-side transient ack flow backed by a short-lived OpenAI Realtime client secret. The ack instructions are now isolated to a one-sentence acknowledgement prompt with no technical guidance, no engineer handoff promises, and no citations. On the backend, async-eligible `/api/tickets/query` requests no longer generate a server-side ack or run synchronous route analysis before returning; they now return immediately and let the worker resolve route and RAG in parallel.
+- Reason: The initial client-visible response was being delayed by backend persistence plus routing work, even though the ack itself did not require server-side grounding. Splitting the ack into a client-side transient model call and removing synchronous route work from the first HTTP response reduces first-response latency while preserving server authority for the final grounded answer.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/rag_api.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/worker.py`
+  - `ui/client-ui/app.js`
+  - `deployment/docker-compose.single-host.yml`
+  - `.env.example`
+  - `backend/tests/test_client_ui_contract.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_rag_api.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `backend/tests/test_single_host_compose.py`
+  - `backend/tests/test_worker.py`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Expected behavior change:
+  - The first visible client ack is now transient UI state generated client-side, with a static fallback if the short-lived session is unavailable.
+  - Async-eligible support queries no longer return a server-authored ack in `/api/tickets/query`.
+  - Async-eligible support queries no longer run synchronous route analysis before the first HTTP response returns.
+  - Worker-side route analysis can now cancel in-flight RAG best-effort, and cancelled RAG work is no longer surfaced as a normal `rag_unavailable` failure.
+  - Route-analysis failure now defaults to the optimistic Agora technical RAG path instead of blocking the final answer.
+- Verification:
+  - `python3 -m py_compile backend/main.py backend/worker.py backend/rag_api.py backend/services/rag_qa.py backend/services/rag_service_client.py`
+  - `python3 -m unittest backend.tests.test_client_ui_contract backend.tests.test_single_host_compose backend.tests.test_rag_service_client`
+  - Container-backed backend verification pending after compose rebuild in this task.
+
+## 2026-04-04 - Realtime ack session schema fix and realtime-capable default model
+
+- Area or subsystem: Client AI transient acknowledgement session bootstrap
+- Prompt or model version: `client-ack-realtime-v2`
+- Summary: Updated the OpenAI Realtime client-secret request payload to the current session schema by switching the session fields from `modalities` / `max_response_output_tokens` to `output_modalities` / `max_output_tokens`, and changed the default transient ack model from `gpt-5-nano` to the Realtime-capable `gpt-realtime-mini`. The browser-side `response.create` event now uses `output_modalities` as well.
+- Reason: The previous payload shape was rejected by OpenAI with HTTP 400, which forced every client ack request onto the static fallback path even when an API key was configured. The previous default model name was also not a Realtime default, so keeping it as the out-of-the-box value made the direct-browser ack flow brittle.
+- Affected files or config:
+  - `backend/main.py`
+  - `ui/client-ui/app.js`
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `backend/tests/test_client_ui_contract.py`
+  - `backend/tests/test_single_host_compose.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - OpenAI client-secret bootstrap for transient client ack now follows the current Realtime session schema.
+  - New environments default to a Realtime-capable ack model instead of a non-Realtime text model name.
+  - Browser-side `response.create` requests ask for text output using `output_modalities`.
+  - Teams can still override `CLIENT_ACK_MODEL` if they have another browser-safe Realtime alias.
+- Verification:
+  - `python3 -m py_compile backend/main.py`
+  - `/Users/xieziling/.config/superpowers/venvs/SupportPortal-rag-join-channel-fix-min/bin/python -m unittest backend.tests.test_client_ui_contract backend.tests.test_single_host_compose`
+  - `/Users/xieziling/.config/superpowers/venvs/SupportPortal-rag-join-channel-fix-min/bin/python - <<'PY' ... /api/client/ack/session smoke ... PY`
+
+## 2026-04-04 - Client ack moved from Realtime session bootstrap to `gpt-5.4-nano`
+
+- Area or subsystem: Client AI transient acknowledgement
+- Prompt or model version: `client-ack-text-v1`
+- Summary: Replaced the browser-side Realtime transient ack flow with a frontend-triggered, backend-issued text ack endpoint. The new endpoint calls `gpt-5.4-nano` through the Responses API with `reasoning_effort=none`, a short one-sentence acknowledgement prompt, and a small output cap. The client now gives the model a 1500 ms window before falling back to localized static copy.
+- Reason: The Realtime flow still depended on browser-safe session bootstrap plus websocket delivery, and in practice it frequently failed to produce text before the user-visible fallback. The new text ack path keeps the ack model-generated while avoiding client-side Realtime transport complexity and preserving a bounded first-response budget.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/services/llm_profiles.py`
+  - `ui/client-ui/app.js`
+  - `ui/client-ui/index.html`
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `backend/tests/test_client_ui_contract.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_single_host_compose.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Client send flow now calls `/api/client/ack` instead of `/api/client/ack/session`.
+  - The first transient ack is model-generated when the `gpt-5.4-nano` request returns within 1500 ms.
+  - If the ack request times out, fails, or returns empty text, the client shows localized static fallback copy after the 1500 ms window.
+  - Late model ack responses no longer overwrite fallback copy that is already visible.
+  - The legacy Realtime session endpoint remains available, but the real client send flow no longer opens a Realtime websocket for transient ack generation.
+- Verification:
+  - `/Users/xieziling/.config/superpowers/venvs/SupportPortal-rag-join-channel-fix-min/bin/python -m unittest backend.tests.test_llm_profiles backend.tests.test_investigation_flow backend.tests.test_client_ui_contract backend.tests.test_single_host_compose`
 
 - Date: 2026-04-04
 - Area or subsystem: Client session product selection, router prompt, and RAG answer prompt
