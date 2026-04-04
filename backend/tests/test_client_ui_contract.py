@@ -691,7 +691,7 @@ class ClientUiContractTests(unittest.TestCase):
                 if (!calls.some((entry) => entry.url === "/api/tickets/query")) {
                   throw new Error("Expected ticket query endpoint to be called.");
                 }
-                if (!scheduledTimeouts.some((entry) => entry.delay === 2000)) {
+                if (!scheduledTimeouts.some((entry) => entry.delay === 3000)) {
                   throw new Error("Expected client ack fallback timeout to be scheduled.");
                 }
 
@@ -806,7 +806,7 @@ class ClientUiContractTests(unittest.TestCase):
                   throw new Error("Localized fallback should not render before the timeout fires.");
                 }
 
-                const fallbackTimer = scheduledTimeouts.find((entry) => entry.delay === 2000);
+                const fallbackTimer = scheduledTimeouts.find((entry) => entry.delay === 3000);
                 if (!fallbackTimer) {
                   throw new Error("Expected fallback timer to be scheduled.");
                 }

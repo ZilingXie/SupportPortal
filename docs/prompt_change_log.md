@@ -568,6 +568,25 @@ For each new entry, record:
   - `git diff --check`
 
 - Date: 2026-04-04
+- Area or subsystem: Client acknowledgement fallback behavior
+- Prompt or model version: `client-ack-proxy-only-v3`
+- Summary: Increased the client-side fallback threshold for transient `gpt-5.4-nano` acknowledgements from `2000ms` to `3000ms` while keeping the proxy-text path and model configuration unchanged.
+- Reason: Live ack requests are landing slightly above two seconds, so the UI needs a longer wait budget before falling back to static acknowledgement copy.
+- Affected files or config:
+  - `ui/client-ui/app.js`
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `docs/prompt_change_log.md`
+  - `CLIENT_ACK_FALLBACK_TIMEOUT_MS`
+- Expected behavior change:
+  - The client now waits up to `3000ms` before rendering localized static fallback acknowledgement text.
+  - Successful `gpt-5.4-nano` acknowledgements between `2000ms` and `3000ms` can now render as transient model ack messages instead of being preempted by fallback.
+- Verification:
+  - `source /tmp/supportportal-finalize-venv/bin/activate && python -m unittest backend.tests.test_client_ui_contract backend.tests.test_single_host_compose`
+  - `node --check ui/client-ui/app.js`
+  - `git diff --check`
+
+- Date: 2026-04-04
 - Area or subsystem: RAG answer generation for light-path lexical FAQ queries
 - Prompt or model version: `rag-v5-light-path-fast-answer`
 - Summary: Added a light-path answer-model fast lane so agentic lexical FAQ queries that already pass the round-one judge try `gpt-5.4-mini` with `low` reasoning first, then automatically fall back to the existing primary `rag_answer` model if the mini response is ungrounded, lacks valid citations, or returns invalid JSON.
