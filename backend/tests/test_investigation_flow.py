@@ -194,6 +194,10 @@ class InvestigationFlowTests(unittest.TestCase):
     def test_ticket_query_persists_product_for_first_customer_message(self) -> None:
         with patch.object(
             main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
             "build_initial_ack",
             return_value=types.SimpleNamespace(
                 text="收到，我先帮你看一下。",
@@ -202,8 +206,33 @@ class InvestigationFlowTests(unittest.TestCase):
             ),
         ), patch.object(
             main,
-            "resolve_support_message",
-            return_value=_resolution(needs_engineer_guidance=False),
+            "analyze_ticket_message",
+            return_value=_rag_route_decision(),
+        ), patch.object(
+            main,
+            "orchestrate_ticket_execution",
+            return_value=types.SimpleNamespace(
+                answer="先使用 quickstart 初始化 SDK。",
+                confidence=0.88,
+                sources=["official/quickstart.md"],
+                citations=[],
+                needs_investigating=False,
+                next_status="communicating",
+                answer_route="rag",
+                scope_label="agora_technical",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+                route_reason="grounded_answer",
+                route_confidence=0.93,
+                search_used=False,
+                matched_signals=["join channel"],
+                investigation_reason=None,
+                evidence_summary=None,
+                packed_evidence=None,
+                workflow_action="answer_customer",
+                client_intake_state=None,
+            ),
         ), patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
                 "/api/tickets/query",
