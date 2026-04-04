@@ -160,10 +160,15 @@ def _shared_token() -> str:
 
 
 def _timeout_seconds() -> float:
-    return _safe_float_env(
-        "CLIENT_RAG_SERVICE_TIMEOUT_SECONDS",
-        _safe_float_env("RAG_SERVICE_TIMEOUT_SECONDS", 25.0),
-    )
+    return _safe_float_env("CLIENT_RAG_SERVICE_TIMEOUT_SECONDS", 40.0)
+
+
+def _recovery_window_seconds() -> float:
+    return _safe_float_env("CLIENT_RAG_RECOVERY_WINDOW_SECONDS", 15.0)
+
+
+def _recovery_poll_interval_seconds() -> float:
+    return _safe_float_env("CLIENT_RAG_RECOVERY_POLL_INTERVAL_SECONDS", 1.0)
 
 
 def _json_loads(raw: bytes) -> Any:
@@ -354,6 +359,15 @@ class RagServiceClient:
             payload["top_k"] = int(top_k)
         return self._request("POST", "/internal/rag/query", json_body=payload)
 
+    def cancel_request(self, request_id: str) -> dict[str, Any]:
+        normalized_request_id = urllib.parse.quote(str(request_id or "").strip(), safe="")
+        if not normalized_request_id:
+            raise RagServiceError("request_id is required")
+        return self._request(
+            "POST",
+            f"/internal/rag/requests/{normalized_request_id}/cancel",
+        )
+
     def query_answer_with_recovery(
         self,
         *,
@@ -364,8 +378,8 @@ class RagServiceClient:
         ticket_context: list[dict[str, str]] | None = None,
         insufficient_reply: str,
         top_k: int | None = None,
-        recovery_attempts: int = 3,
-        recovery_delay_seconds: float = 0.5,
+        recovery_attempts: int | None = None,
+        recovery_delay_seconds: float | None = None,
     ) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
         detail = self.query_answer_with_recovery_detail(
             question=question,
@@ -390,8 +404,8 @@ class RagServiceClient:
         ticket_context: list[dict[str, str]] | None = None,
         insufficient_reply: str,
         top_k: int | None = None,
-        recovery_attempts: int = 3,
-        recovery_delay_seconds: float = 0.5,
+        recovery_attempts: int | None = None,
+        recovery_delay_seconds: float | None = None,
     ) -> RagTicketAnswerDetail:
         try:
             payload = self.query(
@@ -403,6 +417,10 @@ class RagServiceClient:
                 top_k=top_k,
             )
         except RagServiceError as exc:
+            payload = exc.payload if isinstance(exc.payload, dict) else {}
+            if exc.status_code == 409 and str(payload.get("reason") or "").strip() == "cancelled_by_route_flip":
+                raise
+            recovery_started_at = time.monotonic()
             recovered = self._recover_ticket_answer_detail(
                 request_id=request_id,
                 recovery_attempts=recovery_attempts,
@@ -410,8 +428,10 @@ class RagServiceClient:
             )
             if recovered is not None:
                 LOGGER.warning(
-                    "Recovered RAG answer from live detail after query failure request_id=%s error=%s",
+                    "Recovered RAG answer from live detail after query failure request_id=%s "
+                    "recovery_source=live_detail recovery_elapsed_ms=%.1f error=%s",
                     request_id,
+                    (time.monotonic() - recovery_started_at) * 1000,
                     exc,
                 )
                 return recovered
@@ -436,15 +456,30 @@ class RagServiceClient:
         self,
         *,
         request_id: str,
-        recovery_attempts: int,
-        recovery_delay_seconds: float,
+        recovery_attempts: int | None,
+        recovery_delay_seconds: float | None,
+    ) -> RagTicketAnswerDetail | None:
+        if recovery_attempts is None and recovery_delay_seconds is None:
+            return self._recover_ticket_answer_detail_until_deadline(request_id=request_id)
+        return self._recover_ticket_answer_detail_with_attempts(
+            request_id=request_id,
+            recovery_attempts=recovery_attempts,
+            recovery_delay_seconds=recovery_delay_seconds,
+        )
+
+    def _recover_ticket_answer_detail_with_attempts(
+        self,
+        *,
+        request_id: str,
+        recovery_attempts: int | None,
+        recovery_delay_seconds: float | None,
     ) -> RagTicketAnswerDetail | None:
         try:
-            attempts = max(1, int(recovery_attempts))
+            attempts = max(1, int(recovery_attempts if recovery_attempts is not None else 3))
         except (TypeError, ValueError):
             attempts = 1
         try:
-            delay_seconds = max(0.0, float(recovery_delay_seconds))
+            delay_seconds = max(0.0, float(recovery_delay_seconds if recovery_delay_seconds is not None else 0.5))
         except (TypeError, ValueError):
             delay_seconds = 0.0
 
@@ -468,6 +503,39 @@ class RagServiceClient:
                 return recovered
             if attempt < attempts and delay_seconds > 0:
                 time.sleep(delay_seconds)
+        return None
+
+    def _recover_ticket_answer_detail_until_deadline(
+        self,
+        *,
+        request_id: str,
+    ) -> RagTicketAnswerDetail | None:
+        deadline = time.monotonic() + _recovery_window_seconds()
+        poll_interval_seconds = _recovery_poll_interval_seconds()
+
+        while True:
+            try:
+                payload = self.rag_dashboard_live_case_detail(request_id)
+            except RagServiceError as exc:
+                should_retry = (
+                    exc.status_code is None
+                    or exc.status_code == 404
+                    or exc.status_code >= 500
+                )
+                now = time.monotonic()
+                if not should_retry or now >= deadline:
+                    return None
+                time.sleep(min(poll_interval_seconds, max(0.0, deadline - now)))
+                continue
+
+            recovered = map_live_detail_payload_to_ticket_answer_detail(payload)
+            if recovered is not None:
+                return recovered
+
+            now = time.monotonic()
+            if now >= deadline:
+                return None
+            time.sleep(min(poll_interval_seconds, max(0.0, deadline - now)))
         return None
 
     def upload_official_document(self, *, file_name: str, content: bytes) -> dict[str, Any]:

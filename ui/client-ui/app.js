@@ -5,6 +5,23 @@ const AUTH_KEY = "helpdesk_auth_user";
 const TICKETS_KEY = "helpdesk_tickets";
 const COUNTER_KEY = "helpdesk_ticket_counter";
 const MAX_RECENT = 5;
+const CLIENT_ACK_FALLBACK_TIMEOUT_MS = 1500;
+const STATUS_FOLLOWUP_MARKERS = [
+  "any update",
+  "status update",
+  "status?",
+  "follow up",
+  "follow-up",
+  "eta",
+  "when will",
+  "有进展",
+  "有更新",
+  "跟进",
+  "进度",
+  "状态",
+  "最新情况",
+];
+const CJK_RE = /[\u4e00-\u9fff]/;
 
 const DEMO_USERS = [{ id: "user-1", name: "Admin", email: "admin", password: "admin" }];
 const ENGINEER_ASSISTANCE_WAIT_TEXT = "Estimate waiting time: 3 hours";
@@ -75,6 +92,10 @@ const state = {
   pendingUserMessageId: null,
   pendingAsyncTicketId: null,
   pendingAsyncMessageCreatedAt: null,
+  pendingClientAck: null,
+  pendingAckAbortController: null,
+  pendingAckFallbackTimerId: null,
+  pendingAckSocket: null,
 };
 let clientSocket = null;
 let clientReconnectTimer = null;
@@ -248,6 +269,109 @@ function closeClientRealtimeConnection() {
   }
 }
 
+function createAbortController() {
+  if (typeof AbortController === "function") {
+    return new AbortController();
+  }
+  return {
+    signal: undefined,
+    abort() {},
+  };
+}
+
+function containsCjk(text) {
+  return CJK_RE.test(String(text || ""));
+}
+
+function isStatusFollowup(message) {
+  const normalized = String(message || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return STATUS_FOLLOWUP_MARKERS.some((marker) => normalized.includes(marker));
+}
+
+function buildStaticClientAck(message) {
+  if (containsCjk(message)) {
+    return isStatusFollowup(message) ? "收到，我继续帮你跟进。" : "收到，我先帮你看一下。";
+  }
+  return isStatusFollowup(message)
+    ? "Got it, I'm checking the latest status."
+    : "Got it, let me check this for you.";
+}
+
+function getTransientClientAck(ticketId) {
+  const pending = state.pendingClientAck;
+  if (!pending) {
+    return null;
+  }
+  return String(pending.ticketId || "").trim() === String(ticketId || "").trim() ? pending : null;
+}
+
+function setTransientClientAck(ticketId, content, options = {}) {
+  const normalizedTicketId = String(ticketId || "").trim();
+  const normalizedContent = String(content || "").trim();
+  if (!normalizedTicketId || !normalizedContent) {
+    return;
+  }
+  const existing = getTransientClientAck(normalizedTicketId);
+  state.pendingClientAck = {
+    id: existing?.id || `client-ack-${crypto.randomUUID()}`,
+    ticketId: normalizedTicketId,
+    role: "assistant",
+    content: normalizedContent,
+    createdAt: existing?.createdAt || new Date().toISOString(),
+    citations: [],
+    transient: true,
+    source: options.source || existing?.source || "fallback",
+  };
+}
+
+function clearTransientClientAck(ticketId = null) {
+  if (!state.pendingClientAck) {
+    return;
+  }
+  if (ticketId && String(state.pendingClientAck.ticketId || "").trim() !== String(ticketId || "").trim()) {
+    return;
+  }
+  state.pendingClientAck = null;
+}
+
+function closePendingAckTransport() {
+  if (state.pendingAckFallbackTimerId) {
+    clearTimeout(state.pendingAckFallbackTimerId);
+    state.pendingAckFallbackTimerId = null;
+  }
+  if (state.pendingAckAbortController && typeof state.pendingAckAbortController.abort === "function") {
+    state.pendingAckAbortController.abort();
+  }
+  state.pendingAckAbortController = null;
+  if (state.pendingAckSocket) {
+    state.pendingAckSocket.onopen = null;
+    state.pendingAckSocket.onmessage = null;
+    state.pendingAckSocket.onerror = null;
+    state.pendingAckSocket.onclose = null;
+    try {
+      state.pendingAckSocket.close();
+    } catch {
+      // Ignore transport close errors during cleanup.
+    }
+    state.pendingAckSocket = null;
+  }
+}
+
+function getRenderableMessages(ticket) {
+  const durable = Array.isArray(ticket?.messages) ? [...ticket.messages] : [];
+  const transientAck = getTransientClientAck(ticket?.id);
+  if (transientAck) {
+    durable.push(transientAck);
+  }
+  return durable;
+}
+
 function stopPendingStatusPolling() {
   if (!pendingStatusPollTimer) {
     return;
@@ -263,6 +387,8 @@ function clearPendingRequestState() {
   state.pendingUserMessageId = null;
   state.pendingAsyncTicketId = null;
   state.pendingAsyncMessageCreatedAt = null;
+  closePendingAckTransport();
+  clearTransientClientAck();
   stopPendingStatusPolling();
 }
 
@@ -1330,11 +1456,12 @@ function renderChatTicket() {
   if (!ticket || ticket.userId !== state.user.id) {
     return `<div class="empty-state">Session not found.</div>`;
   }
+  const renderableMessages = getRenderableMessages(ticket);
   const sending = isTicketSending(ticket.id);
   const canCompose = !sending && ticket.status !== "resolved";
   const isEditing = Boolean(state.editingMessageId);
 
-  if (isEditing && !ticket.messages.some((message) => message.id === state.editingMessageId)) {
+  if (isEditing && !renderableMessages.some((message) => message.id === state.editingMessageId)) {
     state.editingMessageId = null;
     if (!sending) {
       state.inputDraft = "";
@@ -1346,7 +1473,7 @@ function renderChatTicket() {
       <main class="chat-main">
         <div class="message-list">
           ${
-            ticket.messages.length === 0
+            renderableMessages.length === 0
               ? `
                 <div class="empty-chat">
                   <div class="bot-mark">
@@ -1356,7 +1483,7 @@ function renderChatTicket() {
                   <p>Describe your technical issue and Concierge AI will start with the most likely next step.</p>
                 </div>
               `
-              : ticket.messages
+              : renderableMessages
                   .map(
                     (message) => {
                       const role = String(message.role || "assistant");
@@ -1701,6 +1828,74 @@ async function stopGeneration() {
   state.pendingAbortController.abort();
 }
 
+async function startClientAck(ticketId, message) {
+  const normalizedTicketId = String(ticketId || "").trim();
+  const fallbackText = buildStaticClientAck(message);
+  closePendingAckTransport();
+  clearTransientClientAck(normalizedTicketId);
+
+  const controller = createAbortController();
+  state.pendingAckAbortController = controller;
+  const fallbackTimerId = setTimeout(() => {
+    if (state.pendingAckAbortController !== controller) {
+      return;
+    }
+    state.pendingAckAbortController = null;
+    if (state.pendingAckFallbackTimerId === fallbackTimerId) {
+      state.pendingAckFallbackTimerId = null;
+    }
+    if (typeof controller.abort === "function") {
+      controller.abort();
+    }
+    setTransientClientAck(normalizedTicketId, fallbackText, { source: "fallback" });
+    render();
+  }, CLIENT_ACK_FALLBACK_TIMEOUT_MS);
+  state.pendingAckFallbackTimerId = fallbackTimerId;
+
+  let payload = null;
+  try {
+    const response = await fetch("/api/client/ack", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        ticket_id: normalizedTicketId,
+        customer_id: state.user?.id || "",
+        message,
+      }),
+    });
+    if (!response.ok) {
+      return;
+    }
+    payload = await response.json();
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      return;
+    }
+    return;
+  }
+
+  if (state.pendingAckAbortController !== controller) {
+    return;
+  }
+
+  const ackText = String(payload?.ack_text || "").trim();
+  if (!ackText) {
+    return;
+  }
+  clearTimeout(fallbackTimerId);
+  if (state.pendingAckFallbackTimerId === fallbackTimerId) {
+    state.pendingAckFallbackTimerId = null;
+  }
+  if (state.pendingAckAbortController === controller) {
+    state.pendingAckAbortController = null;
+  }
+  setTransientClientAck(normalizedTicketId, ackText, {
+    source: String(payload?.source || "client_model").trim() || "client_model",
+  });
+  render();
+}
+
 async function handleSendMessage(text, options = {}) {
   const ticketId = state.activeTicketId;
   const ticket = getTicketById(ticketId);
@@ -1757,10 +1952,13 @@ async function handleSendMessage(text, options = {}) {
   state.isSending = true;
   state.pendingTicketId = ticketId;
   state.pendingUserMessageId = userMessageId;
-  state.pendingAbortController = new AbortController();
+  state.pendingAbortController = createAbortController();
   stopPendingStatusPolling();
   requestChatScrollToBottom(ticketId);
   render();
+  startClientAck(ticketId, text).catch(() => {
+    // Keep the static fallback ack when client-side model generation fails.
+  });
 
   try {
     const response = await fetch("/api/tickets/query", {

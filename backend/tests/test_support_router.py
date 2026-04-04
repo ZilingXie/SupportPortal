@@ -119,6 +119,19 @@ class SupportRouterTests(unittest.TestCase):
         self.assertEqual(decision.route, "rag")
         self.assertEqual(decision.reason, "few_shot_product_fit")
 
+    def test_decide_support_route_fast_paths_channel_join_question_without_llm(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen"
+        ) as urlopen_mock:
+            decision = decide_support_route("how to join channel")
+
+        self.assertEqual(decision.scope_label, "agora_technical")
+        self.assertEqual(decision.route_family, "agora_docs_rag")
+        self.assertEqual(decision.execution_action, "rag")
+        self.assertEqual(decision.reason, "channel_joining_support")
+        self.assertEqual(decision.matched_signals, ["join channel", "channel", "looks_like_question"])
+        urlopen_mock.assert_not_called()
+
     def test_decide_support_route_uses_llm_classification_for_public_info(self) -> None:
         payload = {
             "output_text": json.dumps(

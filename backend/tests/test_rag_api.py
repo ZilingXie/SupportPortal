@@ -209,6 +209,23 @@ class RagApiTests(unittest.TestCase):
             logs.output,
         )
 
+    def test_internal_rag_cancel_marks_inflight_request_cancelled(self) -> None:
+        repository = _TrackingKnowledgeRepository()
+        with self._client(repository) as client:
+            rag_api._register_inflight_rag_request("rag-cancel-api-1")
+            try:
+                response = client.post(
+                    "/internal/rag/requests/rag-cancel-api-1/cancel",
+                    headers={"Authorization": "Bearer test-token"},
+                )
+            finally:
+                rag_api._cleanup_inflight_rag_request("rag-cancel-api-1")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload["cancelled"])
+        self.assertEqual(payload["request_id"], "rag-cancel-api-1")
+
 
 if __name__ == "__main__":
     unittest.main()

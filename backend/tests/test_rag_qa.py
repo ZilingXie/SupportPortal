@@ -1,24 +1,30 @@
 from __future__ import annotations
 
+import io
 import os
 import threading
+import urllib.error
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import backend.services.rag_qa as rag_qa
 import psycopg
 
 from backend.services.llm_factory import LlmTextResult
 from backend.services.rag_context_budget import ContextBudget, PackedEvidence
 from backend.services.rag_qa import (
     INSUFFICIENT_EVIDENCE_REPLY,
+    RagExecutionCancelled,
     RetrievedChunk,
     _chunk_family_key,
     _extract_metadata_hints,
     _get_rag_config,
+    _raise_if_cancelled,
     _metadata_rerank,
     _retrieve_bm25_chunks,
+    _rerank_chunks,
     _resolve_active_vector_table,
     _rrf_merge,
     _select_diverse_chunks,
@@ -40,6 +46,24 @@ class RagQaHybridTests(unittest.TestCase):
 
         def drain_request_log(self) -> list[dict[str, object]]:
             return []
+
+    def setUp(self) -> None:
+        rag_qa._RUNTIME_CAPABILITY_UNAVAILABLE_UNTIL.clear()
+        self._env_backup = {
+            "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY"),
+            "SILICONFLOW_API_KEY": os.environ.get("SILICONFLOW_API_KEY"),
+            "SILLICONFLOW_KEY": os.environ.get("SILLICONFLOW_KEY"),
+            "RAG_RERANK_API_KEY": os.environ.get("RAG_RERANK_API_KEY"),
+        }
+        for name in self._env_backup:
+            os.environ.pop(name, None)
+
+    def tearDown(self) -> None:
+        for name, value in self._env_backup.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
     def test_split_table_name_supports_schema_prefix(self) -> None:
         self.assertEqual(_split_table_name("public.docagent"), ("public", "docagent"))
@@ -84,6 +108,27 @@ class RagQaHybridTests(unittest.TestCase):
 
         self.assertFalse(config["vector_enabled"])
         self.assertFalse(config["rerank_enabled"])
+
+    def test_raise_if_cancelled_uses_stage_name(self) -> None:
+        with self.assertRaises(RagExecutionCancelled) as ctx:
+            _raise_if_cancelled("answer_generation", should_cancel=lambda: True)
+
+        self.assertEqual(ctx.exception.stage, "answer_generation")
+
+    def test_run_rag_query_propagates_agentic_cancellation_without_legacy_fallback(self) -> None:
+        with patch.object(
+            rag_qa,
+            "_run_rag_query_agentic",
+            side_effect=RagExecutionCancelled("answer_generation"),
+        ), patch.object(
+            rag_qa,
+            "_run_rag_query_legacy",
+            side_effect=AssertionError("legacy fallback should not run for cancellations"),
+        ):
+            with self.assertRaises(RagExecutionCancelled) as ctx:
+                run_rag_query("how to join channel")
+
+        self.assertEqual(ctx.exception.stage, "answer_generation")
 
     def test_select_bm25_query_terms_filters_overly_common_terms(self) -> None:
         selected = _select_bm25_query_terms(
@@ -676,7 +721,7 @@ class RagQaHybridTests(unittest.TestCase):
                             with patch("backend.services.rag_qa._metadata_rerank", return_value=([vector_chunk, bm25_chunk], {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None})):
                                 with patch("backend.services.rag_qa._rerank_chunks", return_value=[bm25_chunk, vector_chunk]):
                                     with patch("backend.services.rag_qa._invoke_llm_payload_with_trace", return_value=({"answer": "Use the BM25 chunk.", "key_steps": [], "citations": ["bm25-1"], "insufficient_evidence": False}, 10, 5, "gpt-4.1")):
-                                        result = run_rag_query("how do I use BM25?")
+                                        result = run_rag_query("How do I use BM25 for channel join retrieval?")
 
         self.assertIsNotNone(result)
         assert result is not None
@@ -699,6 +744,132 @@ class RagQaHybridTests(unittest.TestCase):
                 for candidate in result.trace.retrieval_candidates
             )
         )
+
+    def test_run_rag_query_simple_lexical_light_path_skips_query_understanding_vector_and_rerank(self) -> None:
+        bm25_chunk = RetrievedChunk(
+            chunk_id="bm25-join",
+            text="Call joinChannel with the same channel name on each client.",
+            source_path="official/get-started.md",
+            similarity=0.95,
+        )
+        fts_chunk = RetrievedChunk(
+            chunk_id="fts-join",
+            text="You can join a channel after initializing the engine.",
+            source_path="official/quickstart.md",
+            similarity=0.78,
+        )
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "app_schema": "supportportal",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 2,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-5.4",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "vector_enabled": True,
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_enabled": True,
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+            }
+            with patch("backend.services.rag_qa._resolve_active_vector_table", return_value=None):
+                with patch("backend.services.rag_qa.get_embedding_provider", return_value=self._FakeProvider()):
+                    with patch(
+                        "backend.services.rag_qa.understand_rag_query",
+                        side_effect=AssertionError("query understanding should be skipped for simple lexical queries"),
+                    ), patch(
+                        "backend.services.rag_qa._invoke_agentic_planner",
+                        side_effect=AssertionError("agent planner should be skipped for simple lexical queries"),
+                    ), patch(
+                        "backend.services.rag_qa._retrieve_chunks",
+                        side_effect=AssertionError("vector retrieval should be skipped for simple lexical queries"),
+                    ), patch(
+                        "backend.services.rag_qa._retrieve_bm25_chunks",
+                        return_value=[bm25_chunk],
+                    ), patch(
+                        "backend.services.rag_qa._retrieve_fts_chunks",
+                        return_value=[fts_chunk],
+                    ), patch(
+                        "backend.services.rag_qa._metadata_rerank",
+                        return_value=([bm25_chunk, fts_chunk], {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None}),
+                    ), patch(
+                        "backend.services.rag_qa._rerank_chunks",
+                        side_effect=AssertionError("external rerank should be skipped for simple lexical queries"),
+                    ), patch(
+                        "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                        return_value=(
+                            {
+                                "answer": "Call joinChannel with the same channel name on each client.",
+                                "key_steps": [],
+                                "citations": ["bm25-join"],
+                                "insufficient_evidence": False,
+                            },
+                            10,
+                            5,
+                            "gpt-5.4",
+                        ),
+                    ):
+                        result = run_rag_query("how to join channel")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.answer.answer, "Call joinChannel with the same channel name on each client.")
+        self.assertEqual(result.trace.selected_chunk_ids[0], "bm25-join")
+
+    def test_rerank_quota_failure_enters_process_cooldown(self) -> None:
+        chunk = RetrievedChunk(
+            chunk_id="chunk-rerank",
+            text="Call joinChannel with a token.",
+            source_path="official/get-started.md",
+            similarity=0.91,
+        )
+        config = {
+            "rerank_provider": "siliconflow",
+            "rerank_api_key": "test-rerank-key",
+            "rerank_base_url": "https://api.siliconflow.cn/v1",
+            "rerank_model": "BAAI/bge-reranker-v2-m3",
+            "rerank_timeout_seconds": 10.0,
+            "rerank_max_retries": 0,
+            "rerank_top_n": 1,
+        }
+
+        def _http_403() -> urllib.error.HTTPError:
+            return urllib.error.HTTPError(
+                url="https://api.siliconflow.cn/v1/rerank",
+                code=403,
+                msg="Forbidden",
+                hdrs=None,
+                fp=io.BytesIO(b'{"message":"insufficient balance"}'),
+            )
+
+        with patch.dict(rag_qa.__dict__, {"_RUNTIME_CAPABILITY_UNAVAILABLE_UNTIL": {}}, clear=False), patch(
+            "backend.services.rag_qa.time.time",
+            return_value=100.0,
+        ), patch(
+            "urllib.request.urlopen",
+            side_effect=[_http_403(), _http_403()],
+        ) as urlopen_mock:
+            first = _rerank_chunks("how to join channel", [chunk], dict(config), limit=1)
+            second = _rerank_chunks("how to join channel", [chunk], dict(config), limit=1)
+
+        self.assertEqual(urlopen_mock.call_count, 1)
+        self.assertEqual([item.chunk_id for item in first], ["chunk-rerank"])
+        self.assertEqual([item.chunk_id for item in second], ["chunk-rerank"])
 
     def test_run_rag_query_records_keyword_fallback_as_agentic_tool(self) -> None:
         vector_chunk = RetrievedChunk(
@@ -763,6 +934,7 @@ class RagQaHybridTests(unittest.TestCase):
         )
 
     def test_run_rag_query_diversifies_final_chunks_before_generation(self) -> None:
+        query = "how do I handle token authentication errors?"
         auth_android = RetrievedChunk(
             chunk_id="auth-android",
             text="Android authentication workflow",
@@ -785,6 +957,20 @@ class RagQaHybridTests(unittest.TestCase):
             metadata={"product": "video-calling"},
         )
         captured_final_chunk_ids: list[list[str]] = []
+        understanding = QueryUnderstandingResult(
+            query_profile="test-hybrid",
+            query_understanding_version="query-understanding-test",
+            glossary_version="glossary-test",
+            self_query_version="self-query-test",
+            normalized_query=query,
+            canonical_terms=[],
+            glossary_hits=[],
+            dictionary_hits=[],
+            rewritten_queries=[],
+            decomposition_subqueries=[],
+            retrieval_plan=RetrievalPlan(semantic_query=query),
+            fallback_mode="none",
+        )
 
         def _capture_payload(
             message: str,
@@ -844,8 +1030,9 @@ class RagQaHybridTests(unittest.TestCase):
                             return_value=([auth_android, auth_ios, error_codes], {"post_rerank_count": 3, "hints": {}, "applied_filter": False, "filter_type": None}),
                         ):
                             with patch("backend.services.rag_qa._rerank_chunks", return_value=[auth_android, auth_ios, error_codes]):
-                                with patch("backend.services.rag_qa._invoke_llm_payload_with_trace", side_effect=_capture_payload):
-                                    result = run_rag_query("how do I handle token authentication errors?")
+                                with patch("backend.services.rag_qa.understand_rag_query", return_value=understanding):
+                                    with patch("backend.services.rag_qa._invoke_llm_payload_with_trace", side_effect=_capture_payload):
+                                        result = run_rag_query(query)
 
         self.assertIsNotNone(result)
         assert result is not None
@@ -853,6 +1040,7 @@ class RagQaHybridTests(unittest.TestCase):
         self.assertEqual(result.trace.selected_chunk_ids, ["auth-android", "error-codes"])
 
     def test_run_rag_query_diversifies_rerank_candidates_before_external_rerank(self) -> None:
+        query = "how do I handle token authentication errors?"
         auth_android = RetrievedChunk(
             chunk_id="auth-android",
             text="Android authentication workflow",
@@ -884,6 +1072,20 @@ class RagQaHybridTests(unittest.TestCase):
             },
         )
         captured_rerank_inputs: list[list[str]] = []
+        understanding = QueryUnderstandingResult(
+            query_profile="test-hybrid",
+            query_understanding_version="query-understanding-test",
+            glossary_version="glossary-test",
+            self_query_version="self-query-test",
+            normalized_query=query,
+            canonical_terms=[],
+            glossary_hits=[],
+            dictionary_hits=[],
+            rewritten_queries=[],
+            decomposition_subqueries=[],
+            retrieval_plan=RetrievalPlan(semantic_query=query),
+            fallback_mode="none",
+        )
 
         def _capture_rerank(
             query: str,
@@ -934,21 +1136,22 @@ class RagQaHybridTests(unittest.TestCase):
                             ),
                         ):
                             with patch("backend.services.rag_qa._rerank_chunks", side_effect=_capture_rerank):
-                                with patch(
-                                    "backend.services.rag_qa._invoke_llm_payload_with_trace",
-                                    return_value=(
-                                        {
-                                            "answer": "Use the selected chunks.",
-                                            "key_steps": [],
-                                            "citations": ["auth-android"],
-                                            "insufficient_evidence": False,
-                                        },
-                                        10,
-                                        5,
-                                        "gpt-4.1",
-                                    ),
-                                ):
-                                    result = run_rag_query("how do I handle token authentication errors?")
+                                with patch("backend.services.rag_qa.understand_rag_query", return_value=understanding):
+                                    with patch(
+                                        "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                                        return_value=(
+                                            {
+                                                "answer": "Use the selected chunks.",
+                                                "key_steps": [],
+                                                "citations": ["auth-android"],
+                                                "insufficient_evidence": False,
+                                            },
+                                            10,
+                                            5,
+                                            "gpt-4.1",
+                                        ),
+                                    ):
+                                        result = run_rag_query(query)
 
         self.assertIsNotNone(result)
         assert result is not None
@@ -1436,7 +1639,7 @@ class RagQaHybridTests(unittest.TestCase):
                                         (None, 11, 5, "gpt-4.1"),
                                     ],
                                 ):
-                                    result = run_rag_query("How do I generate a token?")
+                                    result = run_rag_query("How do I generate a token for users joining a channel?")
 
         self.assertIsNotNone(result)
         assert result is not None
@@ -2016,7 +2219,7 @@ class RagQaHybridTests(unittest.TestCase):
                                         "backend.services.rag_qa.invoke_responses_text",
                                         side_effect=_capture_answer_call,
                                     ):
-                                        result = run_rag_query("How do I join a channel?")
+                                        result = run_rag_query("How do I join a channel in Node.js with a token?")
 
         self.assertIsNotNone(result)
         assert result is not None
@@ -2047,13 +2250,13 @@ class RagQaHybridTests(unittest.TestCase):
             query_understanding_version="query-understanding-v1",
             glossary_version="glossary-v1",
             self_query_version="self-query-v1",
-            normalized_query="How do I join a channel?",
+            normalized_query="How do I join a channel in Node.js with a token?",
             canonical_terms=[],
             glossary_hits=[],
             dictionary_hits=[],
             rewritten_queries=[],
             decomposition_subqueries=[],
-            retrieval_plan=RetrievalPlan(semantic_query="How do I join a channel?"),
+            retrieval_plan=RetrievalPlan(semantic_query="How do I join a channel in Node.js with a token?"),
             fallback_mode="none",
         )
         retrieval_started = threading.Event()
@@ -2124,7 +2327,7 @@ class RagQaHybridTests(unittest.TestCase):
                                             ),
                                         ):
                                             with patch.dict(os.environ, {"RAG_AGENT_ENABLED": "1"}, clear=False):
-                                                run_rag_query("How do I join a channel?")
+                                                run_rag_query("How do I join a channel in Node.js with a token?")
 
         self.assertEqual(understanding_observed_parallel_retrieval, [True])
 

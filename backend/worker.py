@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import logging
 import os
+import re
 import signal
 import sys
 import time
 from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
 import psycopg
 
@@ -34,11 +37,15 @@ from backend.services.investigation_flow import (
 )
 from backend.services.ticket_orchestrator import (
     TicketExecutionResult,
+    analyze_ticket_message,
     build_execution_route_payload,
     orchestrate_ticket_execution,
     resolve_next_ticket_status,
 )
+from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
+from backend.services.rag_service_client import RagServiceClient, RagServiceError, RagTicketAnswerDetail
 from backend.services.sentiment_classifier import classify_sentiment
+from backend.services.support_router import SupportResolution, SupportRouteDecision
 from backend.services.task_queue import SyncRedisTaskQueue
 from backend.services.ticket_message_sentiment import (
     build_ticket_message_sentiment_event,
@@ -92,6 +99,17 @@ TICKET_TASK_RETRY_BASE_DELAY_SECONDS = _safe_positive_float(
     os.getenv("TICKET_WORKER_TASK_RETRY_BASE_DELAY_SECONDS"),
     1.0,
 )
+OPTIMISTIC_PARALLEL_ROUTE_ENABLED = str(os.getenv("OPTIMISTIC_PARALLEL_ROUTE_ENABLED") or "true").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
+OPTIMISTIC_ROUTE_TIMEOUT_SECONDS = _safe_positive_float(
+    os.getenv("OPTIMISTIC_ROUTE_TIMEOUT_SECONDS"),
+    3.0,
+)
+rag_service_client = RagServiceClient()
 
 
 def _install_signal_handlers() -> None:
@@ -251,6 +269,247 @@ def _build_worker_investigation_event(
     }
 
 
+class _WorkerRagCancelled(RuntimeError):
+    def __init__(self, stage: str | None = None) -> None:
+        super().__init__("Worker RAG execution cancelled")
+        self.stage = str(stage or "").strip() or None
+
+
+def _response_language_for_worker(message: str) -> str:
+    return "zh" if re.search(r"[\u3400-\u9fff]", str(message or "")) else "en"
+
+
+def _default_rag_route_decision(message: str) -> SupportRouteDecision:
+    matched_signals = ["optimistic_default"]
+    if "join channel" in str(message or "").lower():
+        matched_signals.append("join channel")
+    return SupportRouteDecision(
+        scope_label="agora_technical",
+        route="rag",
+        confidence=0.0,
+        reason="optimistic_parallel_default_rag",
+        matched_signals=matched_signals,
+        response_language=_response_language_for_worker(message),
+        route_family="agora_docs_rag",
+        execution_action="rag",
+        tooling_profile="agora_docs_only",
+    )
+
+
+def _rag_failure_reason(error: RagServiceError) -> str:
+    if error.status_code is not None:
+        return "rag_service_error"
+    normalized_message = str(error).strip().lower()
+    if (
+        "not configured" in normalized_message
+        or "request failed" in normalized_message
+        or "timeout" in normalized_message
+        or "timed out" in normalized_message
+    ):
+        return "rag_unavailable"
+    return "rag_service_error"
+
+
+def _fallback_rag_answer_detail(reason: str) -> RagTicketAnswerDetail:
+    fallback_reason = str(reason or "").strip() or "rag_service_error"
+    return RagTicketAnswerDetail(
+        answer=INSUFFICIENT_EVIDENCE_REPLY,
+        confidence=0.0,
+        sources=[],
+        citations=[],
+        needs_engineer_guidance=True,
+        reason=fallback_reason,
+        evidence_summary=None,
+        packed_evidence=None,
+    )
+
+
+def _rag_resolution_from_detail(
+    *,
+    route_decision: SupportRouteDecision,
+    rag_detail: RagTicketAnswerDetail,
+) -> SupportResolution:
+    return SupportResolution(
+        answer=rag_detail.answer,
+        confidence=float(rag_detail.confidence),
+        sources=list(rag_detail.sources),
+        citations=[dict(item) for item in rag_detail.citations],
+        needs_engineer_guidance=bool(rag_detail.needs_engineer_guidance),
+        answer_route="rag",
+        scope_label=route_decision.scope_label,
+        route_family=route_decision.route_family,
+        execution_action=route_decision.execution_action,
+        tooling_profile=route_decision.tooling_profile,
+        route_reason=str(rag_detail.reason or route_decision.reason),
+        route_confidence=float(route_decision.confidence),
+        search_used=False,
+        matched_signals=list(route_decision.matched_signals),
+        evidence_summary=dict(rag_detail.evidence_summary or {}) or None,
+        packed_evidence=dict(rag_detail.packed_evidence or {}) or None,
+    )
+
+
+def _fetch_rag_answer_detail_for_worker(
+    *,
+    request_id: str,
+    customer_message: str,
+    ticket_id: str,
+    customer_id: str | None,
+    ticket_context: list[dict[str, str]],
+) -> RagTicketAnswerDetail:
+    try:
+        return rag_service_client.query_answer_with_recovery_detail(
+            question=customer_message,
+            request_id=request_id,
+            ticket_id=ticket_id,
+            customer_id=customer_id,
+            ticket_context=ticket_context,
+            insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
+        )
+    except RagServiceError as exc:
+        payload = exc.payload if isinstance(exc.payload, dict) else {}
+        if exc.status_code == 409 and str(payload.get("reason") or "").strip() == "cancelled_by_route_flip":
+            raise _WorkerRagCancelled(stage=str(payload.get("stage") or "").strip() or None) from exc
+        reason = _rag_failure_reason(exc)
+        LOGGER.warning(
+            "Worker RAG service call failed request_id=%s ticket_id=%s reason=%s status_code=%s error=%s",
+            request_id,
+            ticket_id,
+            reason,
+            exc.status_code,
+            exc,
+        )
+        return _fallback_rag_answer_detail(reason)
+
+
+def _execute_parallel_ticket_query(
+    customer_message: str,
+    *,
+    ticket_id: str,
+    customer_id: str | None,
+    ticket_subject: str | None,
+    ticket_context: list[dict[str, str]],
+    message_created_at: str,
+) -> tuple[TicketExecutionResult, dict[str, Any]]:
+    request_id = f"rag-{uuid4().hex[:12]}"
+    diagnostics: dict[str, Any] = {
+        "parallel_mode": "optimistic_parallel",
+        "api_persist_latency_ms": None,
+        "api_return_latency_ms": None,
+        "route_latency_ms": 0.0,
+        "route_final_action": "rag",
+        "route_result_source": "parallel_route",
+        "rag_started_at": None,
+        "rag_finished_at": None,
+        "rag_cancelled": False,
+        "rag_cancel_stage": None,
+    }
+
+    def _run_route() -> SupportRouteDecision:
+        return analyze_ticket_message(
+            customer_message,
+            ticket_subject=ticket_subject,
+            ticket_context=ticket_context,
+        )
+
+    def _run_rag() -> RagTicketAnswerDetail:
+        diagnostics["rag_started_at"] = now_iso()
+        try:
+            return _fetch_rag_answer_detail_for_worker(
+                request_id=request_id,
+                customer_message=customer_message,
+                ticket_id=ticket_id,
+                customer_id=customer_id,
+                ticket_context=ticket_context,
+            )
+        finally:
+            diagnostics["rag_finished_at"] = now_iso()
+
+    executor = ThreadPoolExecutor(max_workers=2)
+    route_started_at = time.perf_counter()
+    route_future = executor.submit(_run_route)
+    rag_future = executor.submit(_run_rag)
+    route_decision: SupportRouteDecision | None = None
+    try:
+        try:
+            route_decision = route_future.result(timeout=OPTIMISTIC_ROUTE_TIMEOUT_SECONDS)
+            diagnostics["route_latency_ms"] = round((time.perf_counter() - route_started_at) * 1000, 2)
+        except FutureTimeoutError:
+            diagnostics["route_latency_ms"] = round((time.perf_counter() - route_started_at) * 1000, 2)
+            diagnostics["route_result_source"] = "route_fail_open"
+        except Exception as exc:
+            diagnostics["route_latency_ms"] = round((time.perf_counter() - route_started_at) * 1000, 2)
+            diagnostics["route_result_source"] = "route_fail_open"
+            LOGGER.warning(
+                "Worker route analysis failed, defaulting to optimistic RAG ticket_id=%s error=%s",
+                ticket_id,
+                exc,
+            )
+
+        if route_decision is not None and str(route_decision.execution_action or "").strip() != "rag":
+            diagnostics["route_final_action"] = str(route_decision.execution_action or "").strip() or "refuse"
+            diagnostics["route_result_source"] = "parallel_route"
+            cancel_result: dict[str, Any] | None = None
+            try:
+                cancel_result = rag_service_client.cancel_request(request_id)
+            except RagServiceError as exc:
+                LOGGER.warning(
+                    "Worker failed to cancel optimistic RAG request_id=%s ticket_id=%s error=%s",
+                    request_id,
+                    ticket_id,
+                    exc,
+                )
+            diagnostics["rag_cancelled"] = True
+            diagnostics["rag_cancel_stage"] = (
+                str((cancel_result or {}).get("stage") or "").strip() or None
+            )
+            resolution = resolve_support_message(
+                customer_message,
+                ticket_id=ticket_id,
+                customer_id=customer_id,
+                ticket_subject=ticket_subject,
+                ticket_context=ticket_context,
+                decision=route_decision,
+            )
+            execution = orchestrate_ticket_execution(
+                customer_message,
+                ticket_id=ticket_id,
+                customer_id=customer_id,
+                ticket_subject=ticket_subject,
+                ticket_context=ticket_context,
+                decision=route_decision,
+                resolution_builder=lambda *_args, **_kwargs: resolution,
+            )
+            return execution, diagnostics
+
+        effective_route_decision = route_decision or _default_rag_route_decision(customer_message)
+        diagnostics["route_final_action"] = str(effective_route_decision.execution_action or "rag").strip() or "rag"
+        if route_decision is None:
+            diagnostics["route_result_source"] = "route_fail_open"
+        try:
+            rag_detail = rag_future.result()
+        except _WorkerRagCancelled as exc:
+            diagnostics["rag_cancelled"] = True
+            diagnostics["rag_cancel_stage"] = exc.stage
+            rag_detail = _fallback_rag_answer_detail("cancelled_by_route_flip")
+        resolution = _rag_resolution_from_detail(
+            route_decision=effective_route_decision,
+            rag_detail=rag_detail,
+        )
+        execution = orchestrate_ticket_execution(
+            customer_message,
+            ticket_id=ticket_id,
+            customer_id=customer_id,
+            ticket_subject=ticket_subject,
+            ticket_context=ticket_context,
+            decision=effective_route_decision,
+            resolution_builder=lambda *_args, **_kwargs: resolution,
+        )
+        return execution, diagnostics
+    finally:
+        executor.shutdown(wait=False, cancel_futures=False)
+
+
 def _orchestrate_worker_support_message(
     customer_message: str,
     *,
@@ -258,7 +517,17 @@ def _orchestrate_worker_support_message(
     customer_id: str | None,
     ticket_subject: str | None,
     ticket_context: list[dict[str, str]],
-) -> TicketExecutionResult:
+    message_created_at: str = "",
+) -> tuple[TicketExecutionResult, dict[str, Any]]:
+    if OPTIMISTIC_PARALLEL_ROUTE_ENABLED:
+        return _execute_parallel_ticket_query(
+            customer_message,
+            ticket_id=ticket_id,
+            customer_id=customer_id,
+            ticket_subject=ticket_subject,
+            ticket_context=ticket_context,
+            message_created_at=message_created_at,
+        )
     return orchestrate_ticket_execution(
         customer_message,
         ticket_id=ticket_id,
@@ -266,7 +535,16 @@ def _orchestrate_worker_support_message(
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
         resolution_builder=resolve_support_message,
-    )
+    ), {
+        "parallel_mode": "disabled",
+        "route_latency_ms": 0.0,
+        "route_final_action": None,
+        "route_result_source": "sequential",
+        "rag_started_at": None,
+        "rag_finished_at": None,
+        "rag_cancelled": False,
+        "rag_cancel_stage": None,
+    }
 
 
 def _is_retryable_ticket_storage_error(exc: BaseException) -> bool:
@@ -547,13 +825,32 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         for item in ticket.get("messages", [])
         if " ".join(str(item.get("content", "")).split()).strip()
     ]
-    execution = _orchestrate_worker_support_message(
+    orchestration_result = _orchestrate_worker_support_message(
         customer_message,
         ticket_id=ticket_id,
         customer_id=str(ticket.get("customer_id") or "").strip() or None,
         ticket_subject=str(ticket.get("subject") or "").strip() or None,
         ticket_context=route_context[-6:],
+        message_created_at=message_created_at,
     )
+    if (
+        isinstance(orchestration_result, tuple)
+        and len(orchestration_result) == 2
+        and isinstance(orchestration_result[1], dict)
+    ):
+        execution, execution_diagnostics = orchestration_result
+    else:
+        execution = orchestration_result
+        execution_diagnostics = {
+            "parallel_mode": "legacy_stub",
+            "route_latency_ms": 0.0,
+            "route_final_action": None,
+            "route_result_source": "legacy_stub",
+            "rag_started_at": None,
+            "rag_finished_at": None,
+            "rag_cancelled": False,
+            "rag_cancel_stage": None,
+        }
     answer = execution.answer
     sources = list(execution.sources)
     citations = [dict(item) for item in execution.citations]
@@ -704,6 +1001,16 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         "route_confidence": round(float(execution.route_confidence), 4),
         "search_used": bool(execution.search_used),
         "matched_signals": list(execution.matched_signals),
+        "parallel_mode": execution_diagnostics.get("parallel_mode"),
+        "api_persist_latency_ms": task.get("api_persist_latency_ms"),
+        "api_return_latency_ms": task.get("api_return_latency_ms"),
+        "route_latency_ms": execution_diagnostics.get("route_latency_ms"),
+        "route_final_action": execution_diagnostics.get("route_final_action") or execution.execution_action,
+        "route_result_source": execution_diagnostics.get("route_result_source"),
+        "rag_started_at": execution_diagnostics.get("rag_started_at"),
+        "rag_finished_at": execution_diagnostics.get("rag_finished_at"),
+        "rag_cancelled": bool(execution_diagnostics.get("rag_cancelled")),
+        "rag_cancel_stage": execution_diagnostics.get("rag_cancel_stage"),
     }
     _call_ticket_repository(
         "record_event",
@@ -831,6 +1138,14 @@ def _process_ticket_message_sentiment(bus: SyncRedisEventBus, task: dict[str, An
         lambda: ticket_repository.record_event(ticket_id, event["event"], event),
     )
     _publish(bus, ["engineer", "dashboard"], event)
+
+
+def process_ticket_query_task(task: dict[str, Any]) -> None:
+    bus = SyncRedisEventBus()
+    try:
+        _process_ticket_query(bus, dict(task))
+    finally:
+        bus.close()
 
 
 def run_worker() -> int:

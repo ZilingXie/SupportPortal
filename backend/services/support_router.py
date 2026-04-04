@@ -48,6 +48,8 @@ _CJK_RE = re.compile(r"[\u3400-\u9fff]")
 _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+[^)]*)\)", re.IGNORECASE)
 _BARE_URL_RE = re.compile(r"https?://[^\s)]+", re.IGNORECASE)
 _URLISH_LABEL_RE = re.compile(r"^(?:https?://)?(?:[\w-]+\.)+[a-z]{2,}(?:/[^\s]*)?$", re.IGNORECASE)
+_QUESTION_PREFIX_RE = re.compile(r"^\s*(how|what|why|when|where|can|could|do|does|is|are|should)\b", re.IGNORECASE)
+_JOIN_CHANNEL_RE = re.compile(r"\bjoin(?:ing)?\s+(?:a\s+|the\s+)?channel\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -231,6 +233,38 @@ def _response_language(message: str) -> str:
     return "zh" if _CJK_RE.search(str(message or "")) else "en"
 
 
+def _looks_like_question(message: str) -> bool:
+    text = _normalize_text(message)
+    if not text:
+        return False
+    return bool(_QUESTION_PREFIX_RE.search(text) or text.endswith("?"))
+
+
+def _heuristic_route_decision(
+    message: str,
+    *,
+    response_language: str,
+) -> SupportRouteDecision | None:
+    text = _normalize_text(message)
+    if not text:
+        return None
+
+    if _JOIN_CHANNEL_RE.search(text):
+        matched_signals = ["join channel", "channel"]
+        if _looks_like_question(text):
+            matched_signals.append("looks_like_question")
+        return _build_route_decision(
+            scope_label="agora_technical",
+            action="rag",
+            confidence=0.98,
+            reason="channel_joining_support",
+            matched_signals=matched_signals,
+            response_language=response_language,
+        )
+
+    return None
+
+
 def _normalized_domain(value: str) -> str:
     parsed = urllib.parse.urlparse(value if "://" in value else f"https://{value}")
     return parsed.netloc.lower().strip()
@@ -324,6 +358,13 @@ def decide_support_route(
             matched_signals=[],
             response_language=response_language,
         )
+
+    heuristic_decision = _heuristic_route_decision(
+        text,
+        response_language=response_language,
+    )
+    if heuristic_decision is not None:
+        return heuristic_decision
 
     llm_decision = _llm_route_decision(
         text,

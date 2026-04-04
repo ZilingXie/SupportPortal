@@ -9,7 +9,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, Callable
 
 from backend.services.embedding_provider import (
     DEFAULT_PGVECTOR_TABLE,
@@ -85,6 +85,9 @@ INSUFFICIENT_EVIDENCE_REPLY = (
 
 SYSTEM_PROMPT = build_rag_answer_system_prompt(insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY)
 AGENT_PLAN_VERSION = "v1"
+_RUNTIME_CAPABILITY_UNAVAILABLE_UNTIL: dict[str, float] = {}
+_RUNTIME_QUOTA_COOLDOWN_SECONDS = 600.0
+_RUNTIME_NETWORK_COOLDOWN_SECONDS = 120.0
 
 
 @dataclass
@@ -230,6 +233,28 @@ class RagQueryResult:
     trace: RagQueryTrace
 
 
+class RagExecutionCancelled(RuntimeError):
+    def __init__(self, stage: str) -> None:
+        super().__init__(f"RAG execution cancelled during {stage}")
+        self.stage = str(stage or "").strip() or "unknown"
+
+
+def _raise_if_cancelled(
+    stage: str,
+    *,
+    should_cancel: Callable[[], bool] | None,
+    record_stage: Callable[[str], None] | None = None,
+) -> None:
+    normalized_stage = str(stage or "").strip() or "unknown"
+    if callable(record_stage):
+        try:
+            record_stage(normalized_stage)
+        except Exception:
+            pass
+    if callable(should_cancel) and should_cancel():
+        raise RagExecutionCancelled(normalized_stage)
+
+
 @dataclass(frozen=True)
 class AgenticRetrievalPlan:
     query_class: str
@@ -240,6 +265,7 @@ class AgenticRetrievalPlan:
     recovery_bias: str
     ticket_context_used: bool = False
     exact_terms: list[str] = field(default_factory=list)
+    light_path: bool = False
 
 
 @dataclass(frozen=True)
@@ -290,6 +316,45 @@ def _feature_flag_enabled(name: str, default: bool = True) -> bool:
 
 def _clean_env_text(name: str) -> str:
     return (os.getenv(name) or "").strip()
+
+
+def _runtime_capability_key(capability: str, provider: str | None = None) -> str:
+    normalized_capability = str(capability or "").strip().lower() or "unknown"
+    normalized_provider = str(provider or "").strip().lower()
+    return f"{normalized_capability}:{normalized_provider}" if normalized_provider else normalized_capability
+
+
+def _runtime_cooldown_seconds(error: Any) -> float:
+    message = str(error or "").strip().lower()
+    if any(marker in message for marker in ["401", "403", "429", "insufficient", "balance", "quota"]):
+        return _RUNTIME_QUOTA_COOLDOWN_SECONDS
+    if any(marker in message for marker in ["timeout", "timed out", "ssl", "temporary failure", "connection reset"]):
+        return _RUNTIME_NETWORK_COOLDOWN_SECONDS
+    return 0.0
+
+
+def _runtime_capability_available(capability: str, *, provider: str | None = None) -> bool:
+    key = _runtime_capability_key(capability, provider=provider)
+    unavailable_until = _RUNTIME_CAPABILITY_UNAVAILABLE_UNTIL.get(key)
+    if unavailable_until is None:
+        return True
+    if time.time() >= float(unavailable_until):
+        _RUNTIME_CAPABILITY_UNAVAILABLE_UNTIL.pop(key, None)
+        return True
+    return False
+
+
+def _record_runtime_capability_failure(
+    capability: str,
+    *,
+    provider: str | None = None,
+    error: Any,
+) -> None:
+    cooldown_seconds = _runtime_cooldown_seconds(error)
+    if cooldown_seconds <= 0:
+        return
+    key = _runtime_capability_key(capability, provider=provider)
+    _RUNTIME_CAPABILITY_UNAVAILABLE_UNTIL[key] = time.time() + cooldown_seconds
 
 
 def _openai_api_key() -> str:
@@ -563,7 +628,29 @@ def _build_agentic_retrieval_plan(
     top_k: int,
     query_understanding: QueryUnderstandingResult | None,
     ticket_context: list[dict[str, str]] | None,
+    should_cancel: Callable[[], bool] | None = None,
+    record_cancel_stage: Callable[[str], None] | None = None,
 ) -> AgenticRetrievalPlan:
+    query_class = _classify_agentic_query(message, query_understanding)
+    normalized_message = " ".join(str(message or "").split()).strip()
+    if query_class == "lexical_exact" and _is_simple_lexical_query(message):
+        return AgenticRetrievalPlan(
+            query_class=query_class,
+            first_pass_tools=["p_bm25", "p_fts"],
+            query_variants=[("original", normalized_message)],
+            decomposition_targets=[],
+            evidence_goal="exact_match",
+            recovery_bias="lexical",
+            ticket_context_used=bool(ticket_context),
+            exact_terms=_extract_query_terms(message, max_terms=6),
+            light_path=True,
+        )
+
+    _raise_if_cancelled(
+        "planner",
+        should_cancel=should_cancel,
+        record_stage=record_cancel_stage,
+    )
     planner_payload = _invoke_agentic_planner(
         message=message,
         ticket_context=ticket_context,
@@ -598,11 +685,11 @@ def _build_agentic_retrieval_plan(
                     recovery_bias=str(planner_payload.get("recovery_bias") or _tool_order_for_query_class(query_class)[2]).strip(),
                     ticket_context_used=bool(ticket_context),
                     exact_terms=_extract_query_terms(message, max_terms=6),
+                    light_path=False,
                 )
 
-    query_class = _classify_agentic_query(message, query_understanding)
     tool_order, evidence_goal, recovery_bias = _tool_order_for_query_class(query_class)
-    query_variants = [("original", " ".join(str(message or "").split()).strip())]
+    query_variants = [("original", normalized_message)]
     simple_lexical_query = query_class == "lexical_exact" and _is_simple_lexical_query(message)
     if query_understanding is not None:
         semantic_query = " ".join(str(query_understanding.semantic_query or "").split()).strip()
@@ -632,6 +719,7 @@ def _build_agentic_retrieval_plan(
         recovery_bias=recovery_bias,
         ticket_context_used=bool(ticket_context),
         exact_terms=_extract_query_terms(message, max_terms=6),
+        light_path=False,
     )
 
 
@@ -847,6 +935,12 @@ def _agentic_round_tools(
     round_index: int,
     recovery_action: str | None,
 ) -> list[str]:
+    if plan.light_path:
+        if round_index <= 1:
+            return ["p_bm25", "p_fts"]
+        if recovery_action == "lexical_recovery":
+            return ["p_bm25", "p_fts", "p_keyword"]
+        return ["p_bm25", "p_fts"]
     if round_index <= 1:
         return list(dict.fromkeys(plan.first_pass_tools))
     if recovery_action == "lexical_recovery":
@@ -869,6 +963,8 @@ def _agentic_round_variants(
     variants = list(plan.query_variants)
     if not variants:
         variants = [("original", " ".join(str(message or "").split()).strip())]
+    if plan.light_path:
+        return _dedupe_agentic_variants(variants)
     existing = {query.lower() for _, query in variants}
 
     if plan.query_class == "comparison":
@@ -940,7 +1036,19 @@ def _execute_agentic_round(
     ticket_context: list[dict[str, str]] | None,
     recovery_action: str | None = None,
     seed_tool_results: dict[str, list[RetrievedChunk]] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+    record_cancel_stage: Callable[[str], None] | None = None,
 ) -> AgenticRoundResult:
+    _raise_if_cancelled(
+        f"round_{round_index}_retrieval",
+        should_cancel=should_cancel,
+        record_stage=record_cancel_stage,
+    )
+    if not _runtime_capability_available("vector", provider=str(config.get("embedding_provider") or "")):
+        config["_vector_runtime_available"] = False
+    if not _runtime_capability_available("rerank", provider=str(config.get("rerank_provider") or "")):
+        config["_rerank_runtime_available"] = False
+
     tool_names = _agentic_round_tools(plan, round_index=round_index, recovery_action=recovery_action)
     query_variants = _agentic_round_variants(
         message=message,
@@ -969,6 +1077,12 @@ def _execute_agentic_round(
         index_role = _tool_index_role(tool_name)
         family_bucket_labels: set[str] = set()
         for query_kind, query_text in query_variants:
+            stage_name = "vector_embedding" if family == "vector" else f"round_{round_index}_retrieval"
+            _raise_if_cancelled(
+                stage_name,
+                should_cancel=should_cancel,
+                record_stage=record_cancel_stage,
+            )
             if family == "vector" and not bool(
                 config.get("_vector_runtime_available", config.get("vector_enabled", True))
             ):
@@ -1018,6 +1132,11 @@ def _execute_agentic_round(
                 except Exception as exc:
                     if family == "vector":
                         config["_vector_runtime_available"] = False
+                        _record_runtime_capability_failure(
+                            "vector",
+                            provider=str(config.get("embedding_provider") or ""),
+                            error=exc,
+                        )
                         logger.warning("RAG %s retrieval failed for %s query: %s", tool_name, query_kind, exc)
                         continue
                     if family not in {"bm25", "fts"}:
@@ -1081,6 +1200,11 @@ def _execute_agentic_round(
     }
     rerank_latency_ms = 0.0
     if reranked_chunks:
+        _raise_if_cancelled(
+            "rerank",
+            should_cancel=should_cancel,
+            record_stage=record_cancel_stage,
+        )
         rerank_started_at = time.perf_counter()
         reranked_chunks, rerank_info = _metadata_rerank(
             query=message,
@@ -1095,7 +1219,15 @@ def _execute_agentic_round(
             limit=int(config.get("rerank_top_n") or len(retrieved_chunks) or 1),
             query=message,
         ) or reranked_chunks or retrieved_chunks
-        if bool(config.get("_rerank_runtime_available", config.get("rerank_enabled", True))):
+        if (
+            not plan.light_path
+            and bool(config.get("_rerank_runtime_available", config.get("rerank_enabled", True)))
+        ):
+            _raise_if_cancelled(
+                "rerank",
+                should_cancel=should_cancel,
+                record_stage=record_cancel_stage,
+            )
             rerank_started_at = time.perf_counter()
             reranked_chunks = _rerank_chunks(
                 message,
@@ -3027,6 +3159,9 @@ def _rerank_chunks(
     model = str(config.get("rerank_model") or "").strip()
     if not api_key or not base_url or not model:
         return chunks
+    if not _runtime_capability_available("rerank", provider=provider):
+        config["_rerank_runtime_available"] = False
+        return chunks
 
     rerank_limit = min(len(chunks), max(1, int(limit or config.get("rerank_top_n") or len(chunks))))
     rerank_candidates = list(chunks[:rerank_limit])
@@ -3053,6 +3188,7 @@ def _rerank_chunks(
     )
     max_retries = max(0, int(config.get("rerank_max_retries") or 0))
     raw_payload: dict[str, Any] | None = None
+    last_error: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
             with urllib.request.urlopen(request, timeout=float(config.get("rerank_timeout_seconds") or 10.0)) as response:
@@ -3060,9 +3196,12 @@ def _rerank_chunks(
             break
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError) as exc:
             logger.warning("RAG rerank request failed attempt=%s error=%s", attempt + 1, exc)
+            last_error = exc
             raw_payload = None
     if raw_payload is None:
         config["_rerank_runtime_available"] = False
+        if last_error is not None:
+            _record_runtime_capability_failure("rerank", provider=provider, error=last_error)
         return chunks
 
     results = raw_payload.get("results") if isinstance(raw_payload, dict) else None
@@ -3110,7 +3249,13 @@ def _estimate_embedding_tokens(message: str) -> int:
         return max(1, len(raw.split()), (len(raw) + 3) // 4)
 
 
-def _run_rag_query_legacy(message: str, top_k: int | None = None) -> RagQueryResult | None:
+def _run_rag_query_legacy(
+    message: str,
+    top_k: int | None = None,
+    *,
+    should_cancel: Callable[[], bool] | None = None,
+    record_cancel_stage: Callable[[str], None] | None = None,
+) -> RagQueryResult | None:
     config = _get_rag_config(top_k=top_k)
     resolved_table = _resolve_active_vector_table(config)
     if resolved_table:
@@ -3169,6 +3314,11 @@ def _run_rag_query_legacy(message: str, top_k: int | None = None) -> RagQueryRes
     query_understanding_executor: ThreadPoolExecutor | None = None
     query_understanding_future: Future[QueryUnderstandingResult] | None = None
     if query_understanding_enabled:
+        _raise_if_cancelled(
+            "query_understanding",
+            should_cancel=should_cancel,
+            record_stage=record_cancel_stage,
+        )
         query_understanding_executor = ThreadPoolExecutor(max_workers=1)
         query_understanding_future = query_understanding_executor.submit(understand_rag_query, message)
     effective_plan = RetrievalPlan(semantic_query=original_query)
@@ -3188,6 +3338,11 @@ def _run_rag_query_legacy(message: str, top_k: int | None = None) -> RagQueryRes
         nonlocal vector_latency_ms
         variant_config = _retrieval_config_for(plan)
         for query_kind, variant_query in variants:
+            _raise_if_cancelled(
+                "vector_embedding",
+                should_cancel=should_cancel,
+                record_stage=record_cancel_stage,
+            )
             try:
                 vector_started_at = time.perf_counter()
                 variant_vector_chunks = _retrieve_chunks(
@@ -3208,6 +3363,11 @@ def _run_rag_query_legacy(message: str, top_k: int | None = None) -> RagQueryRes
             finally:
                 embedding_request_meta.extend(_drain_embedding_request_meta(provider))
 
+            _raise_if_cancelled(
+                "round_1_retrieval",
+                should_cancel=should_cancel,
+                record_stage=record_cancel_stage,
+            )
             try:
                 bm25_started_at = time.perf_counter()
                 variant_bm25_chunks = _retrieve_bm25_chunks(
@@ -3274,6 +3434,11 @@ def _run_rag_query_legacy(message: str, top_k: int | None = None) -> RagQueryRes
             )
         return []
 
+    _raise_if_cancelled(
+        "query_understanding",
+        should_cancel=should_cancel,
+        record_stage=record_cancel_stage,
+    )
     _collect_variants([("original", original_query)], effective_plan, keyword_limit=int(config["bm25_candidate_k"]))
 
     if query_understanding_future is not None:
@@ -3328,6 +3493,11 @@ def _run_rag_query_legacy(message: str, top_k: int | None = None) -> RagQueryRes
             _collect_variants(supplemental_variants, effective_plan, keyword_limit=int(config["bm25_candidate_k"]))
 
     if not vector_chunks and not bm25_chunks:
+        _raise_if_cancelled(
+            "round_2_recovery",
+            should_cancel=should_cancel,
+            record_stage=record_cancel_stage,
+        )
         keyword_only_config = _retrieval_config_for(effective_plan)
         for query_kind, variant_query in query_variants:
             try:
@@ -3365,6 +3535,11 @@ def _run_rag_query_legacy(message: str, top_k: int | None = None) -> RagQueryRes
         len(chunks) < min(2, int(config["top_k"]))
     )
     if query_prf_enabled and query_understanding is not None and weak_first_pass:
+        _raise_if_cancelled(
+            "round_2_recovery",
+            should_cancel=should_cancel,
+            record_stage=record_cancel_stage,
+        )
         prf_expansion_terms = build_prf_expansions(
             message,
             chunks,
@@ -3508,6 +3683,11 @@ def _run_rag_query_legacy(message: str, top_k: int | None = None) -> RagQueryRes
 
     retrieved_chunks = list(chunks)
     if chunks:
+        _raise_if_cancelled(
+            "rerank",
+            should_cancel=should_cancel,
+            record_stage=record_cancel_stage,
+        )
         rerank_started_at = time.perf_counter()
         reranked_chunks, rerank_info = _metadata_rerank(
             query=message,
@@ -3578,6 +3758,11 @@ def _run_rag_query_legacy(message: str, top_k: int | None = None) -> RagQueryRes
     )
     payload: dict[str, Any] | None = None
     try:
+        _raise_if_cancelled(
+            "answer_generation",
+            should_cancel=should_cancel,
+            record_stage=record_cancel_stage,
+        )
         generation_started_at = time.perf_counter()
         payload, prompt_tokens, completion_tokens, model_name = _invoke_llm_payload_with_trace(
             message,
@@ -3850,12 +4035,20 @@ def _run_rag_query_agentic(
     ticket_context: list[dict[str, str]] | None = None,
     ticket_id: str | None = None,
     customer_id: str | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+    record_cancel_stage: Callable[[str], None] | None = None,
 ) -> RagQueryResult | None:
     _ = ticket_id
     _ = customer_id
     config = _get_rag_config(top_k=top_k)
-    config["_vector_runtime_available"] = bool(config.get("vector_enabled", True))
-    config["_rerank_runtime_available"] = bool(config.get("rerank_enabled", True))
+    config["_vector_runtime_available"] = bool(config.get("vector_enabled", True)) and _runtime_capability_available(
+        "vector",
+        provider=str(config.get("embedding_provider") or ""),
+    )
+    config["_rerank_runtime_available"] = bool(config.get("rerank_enabled", True)) and _runtime_capability_available(
+        "rerank",
+        provider=str(config.get("rerank_provider") or ""),
+    )
     resolved_table = _resolve_active_vector_table(config)
     if resolved_table:
         config["table"] = resolved_table
@@ -3874,10 +4067,9 @@ def _run_rag_query_agentic(
             config["_vector_runtime_available"] = False
     query_type = _infer_query_type(message)
     preliminary_query_class = _classify_agentic_query(message, None)
-    warm_vector_enabled = bool(config.get("vector_enabled")) and not (
-        preliminary_query_class == "lexical_exact" and _is_simple_lexical_query(message)
-    )
-    query_understanding_enabled = _feature_flag_enabled("RAG_QUERY_UNDERSTANDING_ENABLED", True)
+    simple_lexical_query = preliminary_query_class == "lexical_exact" and _is_simple_lexical_query(message)
+    warm_vector_enabled = bool(config.get("vector_enabled")) and not simple_lexical_query
+    query_understanding_enabled = _feature_flag_enabled("RAG_QUERY_UNDERSTANDING_ENABLED", True) and not simple_lexical_query
     query_rewrite_enabled = _feature_flag_enabled("RAG_QUERY_REWRITE_ENABLED", True)
     query_decomposition_enabled = _feature_flag_enabled("RAG_QUERY_DECOMPOSITION_ENABLED", True)
     query_expansion_enabled = _feature_flag_enabled("RAG_QUERY_EXPANSION_ENABLED", True)
@@ -3939,6 +4131,11 @@ def _run_rag_query_agentic(
         return list(chunks or []), round((time.perf_counter() - started_at) * 1000, 2)
 
     if query_understanding_enabled:
+        _raise_if_cancelled(
+            "query_understanding",
+            should_cancel=should_cancel,
+            record_stage=record_cancel_stage,
+        )
         query_understanding_executor = ThreadPoolExecutor(max_workers=3 if warm_vector_enabled else 2)
         warm_retrieval_config = dict(config)
         warm_retrieval_config["_retrieval_plan"] = RetrievalPlan(semantic_query=str(message or "").strip())
@@ -4020,6 +4217,8 @@ def _run_rag_query_agentic(
         top_k=int(config["top_k"]),
         query_understanding=effective_query_understanding or query_understanding,
         ticket_context=ticket_context,
+        should_cancel=should_cancel,
+        record_cancel_stage=record_cancel_stage,
     )
     warm_seed_tool_results = {
         tool_name: chunks
@@ -4031,6 +4230,12 @@ def _run_rag_query_agentic(
     }
 
     for round_index in [1, 2]:
+        if round_index == 2:
+            _raise_if_cancelled(
+                "round_2_recovery",
+                should_cancel=should_cancel,
+                record_stage=record_cancel_stage,
+            )
         round_result = _execute_agentic_round(
             message=message,
             config=config,
@@ -4041,6 +4246,8 @@ def _run_rag_query_agentic(
             ticket_context=ticket_context,
             recovery_action=recovery_action,
             seed_tool_results=warm_seed_tool_results if round_index == 1 else None,
+            should_cancel=should_cancel,
+            record_cancel_stage=record_cancel_stage,
         )
         if round_index == 1 and "p_vec" in round_result.used_seed_tools:
             vector_latency_ms += warm_original_vector_latency_ms
@@ -4240,6 +4447,11 @@ def _run_rag_query_agentic(
         query_type=query_type,
     )
     if final_chunks and bool(config.get("context_budget_enabled")):
+        _raise_if_cancelled(
+            "answer_generation",
+            should_cancel=should_cancel,
+            record_stage=record_cancel_stage,
+        )
         compression_defaults = resolve_model_profile(RAG_CONTEXT_COMPRESSION_SCENARIO)
         compression_profile = ModelProfile(
             scenario=RAG_CONTEXT_COMPRESSION_SCENARIO,
@@ -4280,6 +4492,11 @@ def _run_rag_query_agentic(
             grounded_overlap = _has_grounded_keyword_overlap(message, final_chunks)
     payload: dict[str, Any] | None = None
     generation_started_at = time.perf_counter()
+    _raise_if_cancelled(
+        "answer_generation",
+        should_cancel=should_cancel,
+        record_stage=record_cancel_stage,
+    )
     payload, prompt_tokens, completion_tokens, model_name = _invoke_llm_payload_with_trace(
         message,
         final_chunks,
@@ -4294,6 +4511,11 @@ def _run_rag_query_agentic(
     )
     if retry_required:
         structured_retry_used = True
+        _raise_if_cancelled(
+            "answer_generation",
+            should_cancel=should_cancel,
+            record_stage=record_cancel_stage,
+        )
         retry_payload, retry_prompt_tokens, retry_completion_tokens, retry_model_name = _invoke_llm_payload_with_trace(
             message,
             final_chunks,
@@ -4383,9 +4605,16 @@ def run_rag_query(
     ticket_context: list[dict[str, str]] | None = None,
     ticket_id: str | None = None,
     customer_id: str | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+    record_cancel_stage: Callable[[str], None] | None = None,
 ) -> RagQueryResult | None:
     if not _feature_flag_enabled("RAG_AGENT_ENABLED", True):
-        result = _run_rag_query_legacy(message, top_k=top_k)
+        result = _run_rag_query_legacy(
+            message,
+            top_k=top_k,
+            should_cancel=should_cancel,
+            record_cancel_stage=record_cancel_stage,
+        )
         if result is None:
             return None
         result.trace.execution_mode = "legacy"
@@ -4399,15 +4628,24 @@ def run_rag_query(
             ticket_context=ticket_context,
             ticket_id=ticket_id,
             customer_id=customer_id,
+            should_cancel=should_cancel,
+            record_cancel_stage=record_cancel_stage,
         )
         if result is not None:
             result.trace.execution_mode = "agentic"
             result.trace.agent_fallback_used = False
             result.trace.agent_fallback_reason = None
         return result
+    except RagExecutionCancelled:
+        raise
     except Exception as exc:
         logger.warning("Agentic RAG failed, falling back to legacy flow: %s", exc)
-        result = _run_rag_query_legacy(message, top_k=top_k)
+        result = _run_rag_query_legacy(
+            message,
+            top_k=top_k,
+            should_cancel=should_cancel,
+            record_cancel_stage=record_cancel_stage,
+        )
         if result is None:
             return None
         result.trace.execution_mode = "legacy"
