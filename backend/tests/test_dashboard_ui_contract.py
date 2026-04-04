@@ -6,6 +6,44 @@ from pathlib import Path
 
 
 class DashboardUiContractTests(unittest.TestCase):
+    def _extract_js_function_block(self, source: str, signature: str) -> str:
+        start = source.index(signature)
+        remainder = source[start + len(signature) :]
+        next_match = re.search(r"\nfunction [A-Za-z0-9_]+\(", remainder)
+        end = start + len(signature) + (next_match.start() if next_match else len(remainder))
+        return source[start:end]
+
+    def _extract_js_const_object_block(self, source: str, signature: str) -> str:
+        start = source.index(signature)
+        brace_start = source.index("{", start)
+        depth = 0
+        for index in range(brace_start, len(source)):
+            char = source[index]
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return source[brace_start : index + 1]
+        raise AssertionError(f"Failed to extract object block for {signature!r}")
+
+    def _extract_summary_metric_keys(self, repository_source: str) -> dict[str, list[str]]:
+        patterns = {
+            "scorecard": r'def _scorecard_workbench_page[\s\S]*?"summary": \{[\s\S]*?"cards": \{([\s\S]*?)\}\s*,\s*\},\s*"overview_usage_summary"',
+            "routing": r'def _routing_workbench_page[\s\S]*?"summary": \{[\s\S]*?"cards": \{([\s\S]*?)\}\s*,\s*\},\s*"category_pass_rate"',
+            "retrieval": r'def _retrieval_workbench_page[\s\S]*?"summary": \{[\s\S]*?"cards": \{([\s\S]*?)\}\s*,\s*\},\s*"retrieval_cases"',
+            "generation": r'def _generation_workbench_page[\s\S]*?"summary": \{[\s\S]*?"cards": \{([\s\S]*?)\}\s*,\s*\},\s*"generation_cases"',
+            "data-supply": r'def _data_supply_workbench_page[\s\S]*?"summary": \{[\s\S]*?"cards": \{([\s\S]*?)\}\s*,\s*\},\s*"benchmark_supply"',
+            "performance": r'def _performance_workbench_page[\s\S]*?"summary": \{[\s\S]*?"cards": \{([\s\S]*?)\}\s*,\s*\},\s*"segment_breakdown"',
+            "review": r'def _review_workbench_page[\s\S]*?"summary": \{[\s\S]*?"cards": \{([\s\S]*?)\}\s*,\s*\},\s*"review_queue"',
+        }
+        keys_by_page: dict[str, list[str]] = {}
+        for page_name, pattern in patterns.items():
+            match = re.search(pattern, repository_source)
+            self.assertIsNotNone(match, page_name)
+            keys_by_page[page_name] = re.findall(r'"([a-z0-9_@]+)"\s*:', match.group(1))
+        return keys_by_page
+
     def test_root_dashboard_is_ticket_operations_admin_surface(self) -> None:
         source = Path("ui/dashboard-ui/index.html").read_text(encoding="utf-8")
         css = Path("ui/dashboard-ui/styles.css").read_text(encoding="utf-8")
@@ -482,17 +520,117 @@ class DashboardUiContractTests(unittest.TestCase):
         ]:
             self.assertNotIn(marker, js_source)
 
-    def test_benchmark_session_panel_is_rendered_for_benchmark_pages(self) -> None:
+    def test_rag_summary_metric_cards_expose_inline_help_tooltips_only_for_summary_tiles(self) -> None:
         js_source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
+        css_source = Path("ui/dashboard-ui/rag/styles.css").read_text(encoding="utf-8")
+
+        for marker in [
+            "SUMMARY_METRIC_EXPLANATIONS",
+            "SUMMARY_METRIC_EXPLANATION_OVERRIDES",
+            "resolveSummaryMetricExplanation",
+            "data-metric-help",
+            "data-metric-help-trigger",
+            'role="tooltip"',
+            "aria-describedby",
+            "aria-expanded",
+            "openMetricHelp",
+            "closeMetricHelp",
+            "handleDocumentFocusIn",
+        ]:
+            self.assertIn(marker, js_source)
+
+        for marker in [
+            "metric-help-trigger",
+            "metric-help-tooltip",
+        ]:
+            self.assertIn(marker, css_source)
+
+        for page_name in [
+            "scorecard",
+            "routing",
+            "retrieval",
+            "generation",
+            "data-supply",
+            "performance",
+            "review",
+        ]:
+            self.assertIn(f'summaryTooltipPage: "{page_name}"', js_source)
+
+        usage_panel_block = self._extract_js_function_block(js_source, "function buildUsageSummaryPanel(title, usageSummary, options = {}) {")
+        self.assertNotIn("summaryTooltipPage", usage_panel_block)
+
+        for marker in [
+            ".metric-label-row",
+            ".metric-help",
+            ".metric-help-trigger",
+            ".metric-help-tooltip",
+            '.metric-help[data-open="true"] .metric-help-tooltip',
+        ]:
+            self.assertIn(marker, css_source)
+
+    def test_rag_metric_help_trigger_uses_high_contrast_question_mark_color(self) -> None:
+        css_source = Path("ui/dashboard-ui/rag/styles.css").read_text(encoding="utf-8")
+        trigger_match = re.search(r"\.metric-help-trigger\s*\{(?P<body>.*?)\n\}", css_source, re.S)
+
+        self.assertIsNotNone(trigger_match)
+        self.assertIn("color: var(--ink);", trigger_match.group("body"))
+
+    def test_rag_metric_help_trigger_elevates_question_mark_above_circle_background(self) -> None:
+        js_source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
+        css_source = Path("ui/dashboard-ui/rag/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn('class="metric-help-trigger-label"', js_source)
+        self.assertIn(".metric-help-trigger-label", css_source)
+        self.assertIn("z-index: 1;", css_source)
+
+    def test_rag_summary_metric_explanations_cover_all_summary_card_keys(self) -> None:
+        repository_source = Path("backend/repositories/knowledge_repository.py").read_text(encoding="utf-8")
+        js_source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
+
+        explanation_block = self._extract_js_const_object_block(js_source, "const SUMMARY_METRIC_EXPLANATIONS =")
+        explanation_keys = set(re.findall(r'"([a-z0-9_@-]+)"\s*:', explanation_block))
+        expected_keys = {
+            key
+            for keys in self._extract_summary_metric_keys(repository_source).values()
+            for key in keys
+        }
+
+        self.assertEqual(explanation_keys, expected_keys)
+
+    def test_benchmark_session_panel_is_overview_only(self) -> None:
+        js_source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")
+        panel_markup = "${buildBenchmarkSessionPanel(payload.benchmark_session)}"
 
         for marker in [
             "buildBenchmarkSessionPanel",
-            "payload.benchmark_session",
             "Improvements Since Previous Benchmark Session",
             "Session Runs",
             "No changelog entries linked",
         ]:
             self.assertIn(marker, js_source)
+
+        self.assertEqual(js_source.count(panel_markup), 1)
+
+        scorecard_block = self._extract_js_function_block(
+            js_source,
+            "function renderScorecardPage(payload) {",
+        )
+        self.assertIn(panel_markup, scorecard_block)
+
+        for function_name in [
+            "renderRoutingPage",
+            "renderRetrievalDashboardPage",
+            "renderGenerationDashboardPage",
+            "renderDataSupplyPage",
+            "renderDiagnosisPage",
+            "renderPerformancePage",
+            "renderReviewPage",
+        ]:
+            function_block = self._extract_js_function_block(
+                js_source,
+                f"function {function_name}(payload) {{",
+            )
+            self.assertNotIn(panel_markup, function_block)
 
     def test_benchmark_session_panel_exposes_run_history_comparison_and_distributions(self) -> None:
         js_source = Path("ui/dashboard-ui/rag/app.js").read_text(encoding="utf-8")

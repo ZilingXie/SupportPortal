@@ -2046,3 +2046,81 @@ For each new entry, record:
   - `python3 scripts/verify_feature_list.py`
   - `python3 -m py_compile backend/main.py backend/worker.py backend/rag_api.py backend/repositories/ticket_repository.py backend/services/engineer_agent.py backend/services/engineer_cases.py backend/services/investigation_flow.py backend/services/llm_profiles.py backend/services/prompts/rag_agent_planner.py backend/services/prompts/rag_answer.py backend/services/prompts/troubleshooting_intake.py backend/services/rag_qa.py backend/services/support_products.py backend/services/ticket_orchestrator.py backend/services/troubleshooting_intake.py`
   - `git diff --check`
+
+## 2026-04-04 - RAG dashboard keeps benchmark session panel on overview only
+
+- Summary:
+  - Restricted the benchmark session summary, run history, run comparison, and changelog panel to the `Scorecard` overview page.
+  - Non-overview benchmark pages now rely only on the shared top-bar `Current Benchmark Run` selector for current-run context.
+  - Added a dashboard UI contract test that locks this overview-only visibility rule in place.
+- Reason:
+  - Benchmark session-level context was repeating on every page and crowding task-specific views that only need the currently selected benchmark run.
+- Affected files/config:
+  - `design.md`
+  - `ui/dashboard-ui/rag/app.js`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No database, benchmark dataset, or evaluation result changes.
+  - RAG dashboard rendering now hides session-level benchmark panels outside `Scorecard`.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_dashboard_ui_contract.py`
+  - `git diff --check`
+
+## 2026-04-04 - RAG dashboard summary metric cards gain inline tooltip explanations
+
+- Summary:
+  - Added inline `?` help triggers to the top summary metric cards on the RAG dashboard pages.
+  - Tooltip copy is configured in the RAG dashboard frontend by metric key, with optional page-specific overrides for summary tiles that need different wording.
+  - Added contract coverage so every current `sections.summary.cards` metric key must have an explanation definition.
+- Reason:
+  - Operators need quick metric definitions and interpretation guidance directly in the dashboard without leaving the current benchmark view.
+- Affected files/config:
+  - `design.md`
+  - `ui/dashboard-ui/rag/app.js`
+  - `ui/dashboard-ui/rag/styles.css`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No database, benchmark run, or API payload changes.
+  - RAG dashboard summary tiles now render inline help tooltips on the client side only.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_dashboard_ui_contract.py`
+
+## 2026-04-04 - RAG dashboard metric-help trigger contrast increased
+
+- Summary:
+  - Increased the visual contrast of the summary-card `?` help trigger so the icon remains readable on pale metric-card backgrounds.
+  - Kept the tooltip layout, hit area, and interaction model unchanged.
+- Reason:
+  - Operators could see the tooltip affordance, but the `?` glyph itself was too faint to scan comfortably in the live dashboard.
+- Affected files/config:
+  - `ui/dashboard-ui/rag/styles.css`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No database, benchmark, or API changes.
+  - Client-side presentation only.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_dashboard_ui_contract.py -k high_contrast_question_mark_color`
+
+## 2026-04-04 - RAG metric-help glyph layered above tooltip trigger circle
+
+- Summary:
+  - Wrapped the summary-card `?` glyph in a dedicated label element and layered it above the circular trigger background.
+  - Updated the RAG dashboard asset version query string so browsers fetch the refreshed tooltip trigger markup and styles on reload.
+- Reason:
+  - The darker color change alone did not materially improve readability because the `?` text was still being visually washed out by the semi-opaque circle background.
+- Affected files/config:
+  - `ui/dashboard-ui/rag/app.js`
+  - `ui/dashboard-ui/rag/styles.css`
+  - `ui/dashboard-ui/rag/index.html`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No database, benchmark, or API changes.
+  - Client-side rendering and asset cache-busting only.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_dashboard_ui_contract.py -k elevates_question_mark_above_circle_background`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_dashboard_ui_contract.py`
+  - `git diff --check`
