@@ -397,6 +397,10 @@ class InvestigationFlowTests(unittest.TestCase):
     def test_ticket_query_escalation_starts_active_investigation_and_public_reply(self) -> None:
         with patch.object(
             main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
             "build_initial_ack",
             return_value=types.SimpleNamespace(
                 text="收到，我先帮你看一下。",
@@ -405,8 +409,46 @@ class InvestigationFlowTests(unittest.TestCase):
             ),
         ), patch.object(
             main,
-            "resolve_support_message",
-            return_value=_resolution(needs_engineer_guidance=True),
+            "analyze_ticket_message",
+            return_value=_rag_route_decision(reason="technical_troubleshooting_symptom"),
+        ), patch.object(
+            main,
+            "orchestrate_ticket_execution",
+            return_value=types.SimpleNamespace(
+                answer=main.INSUFFICIENT_EVIDENCE_REPLY,
+                confidence=0.0,
+                sources=[],
+                citations=[],
+                needs_investigating=True,
+                next_status="investigating",
+                answer_route="rag",
+                scope_label="agora_technical",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+                route_reason="rag_insufficient_evidence",
+                route_confidence=0.91,
+                search_used=False,
+                matched_signals=["token renew", "callback"],
+                investigation_reason="rag_insufficient_evidence",
+                evidence_summary=None,
+                packed_evidence=None,
+                workflow_action="open_engineer_ticket",
+                client_intake_state={
+                    "phase": "ready_for_engineer_ticket",
+                    "product": "audio_video_calling",
+                    "issue_mode": "investigation",
+                    "known_information": {
+                        "issue_symptom": "token renew callback never fires",
+                        "channel_name": "demo-room",
+                        "problematic_uid": "42",
+                        "issue_timestamp": "2026-04-04T10:30:00Z",
+                    },
+                    "missing_information": [],
+                    "ready_for_engineer_ticket": True,
+                    "last_updated_at": "2026-04-04T10:30:00Z",
+                },
+            ),
         ), patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
                 "/api/tickets/query",
