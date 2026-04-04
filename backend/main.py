@@ -82,6 +82,7 @@ from backend.services.rag_service_client import (
     async_to_thread,
 )
 from backend.services.support_router import SupportResolution, SupportRouteDecision, resolve_support_message as resolve_support_route_message
+from backend.services.support_products import normalize_support_product
 from backend.services.task_queue import AsyncRedisTaskQueue
 from backend.services.ticket_message_sentiment import (
     build_ticket_message_sentiment_event,
@@ -161,6 +162,7 @@ class TicketQueryRequest(BaseModel):
     customer_id: str = Field(default="C-001")
     requester: str | None = None
     subject: str | None = None
+    product: str | None = Field(default=None, max_length=64)
     message: str = Field(min_length=1)
 
 
@@ -313,8 +315,19 @@ def ensure_ticket_defaults(ticket: dict[str, Any]) -> None:
         ticket["engineer_case_count"] = max(int(ticket.get("engineer_case_count") or 0), 0)
     except (TypeError, ValueError):
         ticket["engineer_case_count"] = 0
+    ticket["product"] = normalize_support_product(ticket.get("product"))
     ensure_ticket_investigation_defaults(ticket)
     surface_legacy_pending_question(ticket)
+
+
+def _validated_new_session_product(value: Any) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    normalized = normalize_support_product(raw)
+    if normalized is None:
+        raise HTTPException(status_code=400, detail="invalid product")
+    return normalized
 
 
 def _active_investigation_from_case_payload(engineer_case: dict[str, Any]) -> dict[str, Any] | None:
@@ -863,6 +876,7 @@ def _build_rag_answer_detail(
     ticket_id: str | None = None,
     customer_id: str | None = None,
     ticket_context: list[dict[str, str]] | None = None,
+    product: str | None = None,
 ) -> RagTicketAnswerDetail:
     def _rag_failure_reason(error: RagServiceError) -> str:
         if error.status_code is not None:
@@ -885,6 +899,7 @@ def _build_rag_answer_detail(
             ticket_id=ticket_id,
             customer_id=customer_id,
             ticket_context=ticket_context,
+            product=product,
             insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
         )
     except RagServiceError as exc:
@@ -924,12 +939,14 @@ def _build_rag_answer(
     ticket_id: str | None = None,
     customer_id: str | None = None,
     ticket_context: list[dict[str, str]] | None = None,
+    product: str | None = None,
 ) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
     return _build_rag_answer_detail(
         message,
         ticket_id=ticket_id,
         customer_id=customer_id,
         ticket_context=ticket_context,
+        product=product,
     ).as_answer_tuple()
 
 
@@ -940,12 +957,14 @@ def resolve_support_message(
     customer_id: str | None = None,
     ticket_subject: str | None = None,
     ticket_context: list[dict[str, str]] | None = None,
+    product: str | None = None,
     decision: SupportRouteDecision | None = None,
 ) -> SupportResolution:
     active_decision = decision or analyze_ticket_message(
         message,
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
+        product=product,
     )
     if active_decision.execution_action == "rag":
         rag_answer = _build_rag_answer_detail(
@@ -953,6 +972,7 @@ def resolve_support_message(
             ticket_id=ticket_id,
             customer_id=customer_id,
             ticket_context=ticket_context,
+            product=product,
         )
         return SupportResolution(
             answer=rag_answer.answer,
@@ -976,11 +996,13 @@ def resolve_support_message(
         message,
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
+        product=product,
         rag_answerer=lambda query: _build_rag_answer(
             query,
             ticket_id=ticket_id,
             customer_id=customer_id,
             ticket_context=ticket_context,
+            product=product,
         ),
         decision=active_decision,
     )
@@ -991,11 +1013,13 @@ def build_answer(
     *,
     ticket_id: str | None = None,
     customer_id: str | None = None,
+    product: str | None = None,
 ) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
     resolution = resolve_support_message(
         message,
         ticket_id=ticket_id,
         customer_id=customer_id,
+        product=product,
     )
     return resolution.as_answer_tuple()
 
@@ -1508,6 +1532,16 @@ async def create_or_update_ticket(
     elif is_new_ticket or not existing_subject or existing_subject == "General support request":
         ticket["subject"] = derive_subject(request.message)
 
+    if initial_message_count == 0:
+        selected_product = _validated_new_session_product(request.product) or normalize_support_product(
+            ticket.get("product")
+        )
+        if selected_product is None:
+            raise HTTPException(status_code=400, detail="product is required for a new session")
+        ticket["product"] = selected_product
+    else:
+        ticket["product"] = normalize_support_product(ticket.get("product"))
+
     if normalize_ticket_status(ticket.get("status")) == RESOLVED_STATUS:
         ticket["status"] = COMMUNICATING_STATUS
 
@@ -1577,6 +1611,7 @@ async def create_or_update_ticket(
             customer_message,
             ticket_subject=str(ticket.get("subject") or "").strip() or None,
             ticket_context=route_context,
+            product=ticket.get("product"),
         )
         route_payload.update(
             {
@@ -1607,6 +1642,7 @@ async def create_or_update_ticket(
                     customer_id=request.customer_id,
                     ticket_subject=str(ticket.get("subject") or "").strip() or None,
                     ticket_context=route_context,
+                    product=ticket.get("product"),
                     decision=route_decision,
                     resolution_builder=resolve_support_message,
                 )
@@ -1617,6 +1653,7 @@ async def create_or_update_ticket(
                 customer_id=request.customer_id,
                 ticket_subject=str(ticket.get("subject") or "").strip() or None,
                 ticket_context=route_context,
+                product=ticket.get("product"),
                 decision=route_decision,
                 resolution_builder=resolve_support_message,
             )

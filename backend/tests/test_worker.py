@@ -125,6 +125,58 @@ class WorkerResilienceTests(unittest.TestCase):
             "created_at": "2026-03-22T00:00:01+00:00",
         }
 
+    def test_process_ticket_query_forwards_ticket_product_to_orchestrator(self) -> None:
+        ticket = _build_ticket()
+        ticket["product"] = "cloud_recording"
+        repository = Mock()
+        repository.get_ticket.side_effect = [
+            copy.deepcopy(ticket),
+            copy.deepcopy(ticket),
+        ]
+        repository.list_ticket_events.return_value = []
+        repository.save_ticket.return_value = None
+        repository.record_event.return_value = None
+        bus = Mock()
+        execution = types.SimpleNamespace(
+            answer="Use the Cloud Recording REST API start endpoint.",
+            confidence=0.91,
+            sources=["official/cloud-recording-start.md"],
+            citations=[{"source": "official/cloud-recording-start.md", "label": "Start recording"}],
+            needs_engineer_guidance=False,
+            answer_route="rag",
+            scope_label="agora_technical",
+            route_reason="docs_match",
+            route_confidence=0.91,
+            search_used=False,
+            matched_signals=["cloud recording"],
+            route_family="agora_docs_rag",
+            execution_action="rag",
+            tooling_profile="agora_docs_only",
+            needs_investigating=False,
+            next_status="communicating",
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "_orchestrate_worker_support_message",
+            return_value=execution,
+        ) as orchestrate_mock, patch.object(
+            worker,
+            "build_client_sync_event",
+            return_value={"event": "ticket_ai_response_ready"},
+        ), patch.object(
+            worker,
+            "ensure_ticket_defaults",
+            side_effect=lambda ticket: None,
+        ), patch.object(
+            worker,
+            "now_iso",
+            return_value="2026-03-22T00:01:00+00:00",
+        ):
+            worker._process_ticket_query(bus, dict(self.task))
+
+        self.assertEqual(orchestrate_mock.call_args.kwargs["product"], "cloud_recording")
+
     def test_process_ticket_query_retries_transient_save_ticket_failure(self) -> None:
         initial_ticket = _build_ticket()
         repository = Mock()

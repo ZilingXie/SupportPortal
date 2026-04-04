@@ -141,11 +141,13 @@ def analyze_ticket_message(
     *,
     ticket_subject: str | None = None,
     ticket_context: list[dict[str, str]] | None = None,
+    product: str | None = None,
 ) -> SupportRouteDecision:
     return decide_support_route(
         message,
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
+        product=product,
     )
 
 
@@ -284,6 +286,7 @@ def orchestrate_ticket_execution(
     customer_id: str | None = None,
     ticket_subject: str | None = None,
     ticket_context: list[dict[str, str]] | None = None,
+    product: str | None = None,
     decision: SupportRouteDecision | None = None,
     resolution_builder: Callable[..., SupportResolution],
 ) -> TicketExecutionResult:
@@ -291,6 +294,7 @@ def orchestrate_ticket_execution(
         message,
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
+        product=product,
     )
     execution_plan = _choose_execution_plan(route_decision)
     resolution = resolution_builder(
@@ -299,6 +303,7 @@ def orchestrate_ticket_execution(
         customer_id=customer_id,
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
+        product=product,
         decision=route_decision,
     )
     skill_result = _build_skill_execution_result(

@@ -7,6 +7,7 @@ from backend.services.prompts.router import (
     build_router_system_prompt as build_router_system_prompt_v2,
     build_router_user_prompt as build_router_user_prompt_v2,
 )
+from backend.services.support_products import get_support_product_label
 
 SYSTEM_TERMS = (
     "windows",
@@ -350,10 +351,13 @@ def build_route_user_payload(
     ticket_subject: str | None,
     ticket_context: list[dict[str, str]] | None,
     response_language: str,
+    product: str | None = None,
 ) -> str:
+    selected_product = get_support_product_label(product)
     payload = {
         "message": _normalize_text(message),
         "ticket_subject": _normalize_text(ticket_subject),
+        "selected_product": selected_product or "Generic Agora Support",
         "ticket_context": list(ticket_context or [])[-6:],
         "response_language": response_language,
         "hints": build_route_prompt_hints(

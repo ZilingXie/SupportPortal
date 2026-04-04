@@ -171,6 +171,36 @@ class SupportRouterTests(unittest.TestCase):
         self.assertEqual(decision.execution_action, "rag")
         self.assertEqual(decision.reason, "few_shot_follow_up")
 
+    def test_decide_support_route_includes_selected_product_in_llm_prompt(self) -> None:
+        captured_request: dict[str, object] = {}
+        payload = {
+            "output_text": json.dumps(
+                {
+                    "scope_label": "agora_technical",
+                    "confidence": 0.9,
+                    "reason": "product_scoped_route",
+                    "matched_signals": ["cloud recording"],
+                }
+            )
+        }
+
+        def _capture(request, timeout=None):
+            captured_request["body"] = json.loads(request.data.decode("utf-8"))
+            return _FakeResponse(payload)
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen",
+            side_effect=_capture,
+        ):
+            decision = decide_support_route(
+                "How do I start recording?",
+                product="cloud_recording",
+            )
+
+        serialized_input = json.dumps(captured_request["body"]["input"], ensure_ascii=False)
+        self.assertIn("Cloud Recording", serialized_input)
+        self.assertEqual(decision.reason, "product_scoped_route")
+
     def test_decide_support_route_falls_back_to_agora_technical_for_ambiguous_messages(self) -> None:
         payload = {
             "output_text": json.dumps(

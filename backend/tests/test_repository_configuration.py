@@ -175,6 +175,14 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("def list_engineer_cases", repo_source)
         self.assertIn("def save_engineer_case", repo_source)
 
+    def test_ticket_storage_contract_includes_session_product_field(self) -> None:
+        sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
+        repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+
+        self.assertIn("product TEXT", sql_source)
+        self.assertIn("ALTER TABLE {} ADD COLUMN IF NOT EXISTS product TEXT", repo_source)
+        self.assertIn('"product"', repo_source)
+
     def test_ticket_repository_requires_ticket_db_dsn(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(RuntimeError):
@@ -451,6 +459,60 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertEqual(connect_mock.call_count, 2)
         self.assertEqual(first_connection.close_count, 1)
         self.assertEqual(second_connection.commit_count, 1)
+
+    def test_ticket_repository_save_ticket_persists_product_field(self) -> None:
+        repository = PostgresTicketRepository(dsn="postgresql://example")
+        cursor = _ReusableCursor()
+        connection = _ReusableConnection(cursor)
+        ticket = {
+            "ticket_id": "T-1",
+            "customer_id": "C-1",
+            "requester": "Requester",
+            "subject": "Subject",
+            "status": "communicating",
+            "product": "cloud_recording",
+            "last_engineer_action": None,
+            "created_at": "2026-03-31T00:00:00+00:00",
+            "updated_at": "2026-03-31T00:00:00+00:00",
+        }
+
+        with patch("backend.repositories.ticket_repository.psycopg.connect", return_value=connection):
+            repository.save_ticket(ticket, new_messages=[])
+
+        insert_args = cursor.executed[0][0]
+        self.assertIn("product", str(insert_args[0]).lower())
+        self.assertIn("cloud_recording", insert_args[1])
+
+    def test_ticket_repository_get_ticket_round_trips_product_field(self) -> None:
+        repository = PostgresTicketRepository(dsn="postgresql://example")
+        connection = _ReusableConnection(
+            _ReusableCursor(
+                fetchall_results=[
+                    [
+                        (
+                            "T-1",
+                            "C-1",
+                            "Requester",
+                            "Subject",
+                            "open",
+                            None,
+                            None,
+                            0,
+                            "audio_video_calling",
+                            "2026-03-31T00:00:00+00:00",
+                            "2026-03-31T00:00:00+00:00",
+                        )
+                    ]
+                ]
+            )
+        )
+
+        with patch("backend.repositories.ticket_repository.psycopg.connect", return_value=connection):
+            with patch.object(repository, "_fetch_messages", return_value={"T-1": []}):
+                ticket = repository.get_ticket("T-1")
+
+        self.assertIsNotNone(ticket)
+        self.assertEqual(ticket["product"], "audio_video_calling")
 
     def test_ticket_repository_retries_save_investigation_after_retryable_query_disconnect(self) -> None:
         repository = PostgresTicketRepository(dsn="postgresql://example")

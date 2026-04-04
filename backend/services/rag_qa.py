@@ -45,6 +45,7 @@ from backend.services.query_understanding import (
     understand_rag_query,
 )
 from backend.services.rag_tokenizer import is_bm25_query_stopword, tokenize_bm25_query
+from backend.services.support_products import build_support_product_prompt_scope
 
 logger = logging.getLogger(__name__)
 _QUERY_STOPWORDS = {
@@ -83,8 +84,14 @@ INSUFFICIENT_EVIDENCE_REPLY = (
     "I couldn't find enough information in the available support knowledge base to answer that question."
 )
 
-SYSTEM_PROMPT = build_rag_answer_system_prompt(insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY)
 AGENT_PLAN_VERSION = "v1"
+
+
+def _build_answer_system_prompt(product: str | None = None) -> str:
+    return build_rag_answer_system_prompt(
+        insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
+        product_scope=build_support_product_prompt_scope(product),
+    )
 
 
 @dataclass
@@ -2708,6 +2715,7 @@ def _invoke_llm_payload(
     strict_retry: bool = False,
     *,
     packed_evidence: PackedEvidence | None = None,
+    product: str | None = None,
 ) -> dict[str, Any] | None:
     context_block = packed_evidence.prompt_context if packed_evidence is not None else _format_context(chunks)
     prompt = _build_answer_prompt_for_mode(message, context_block, repair_mode=strict_retry)
@@ -2726,7 +2734,7 @@ def _invoke_llm_payload(
     try:
         response = invoke_responses_text(
             profile=profile,
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=_build_answer_system_prompt(product),
             user_prompt=prompt,
         )
     except LlmInvocationError:
@@ -2741,6 +2749,7 @@ def _invoke_llm_payload_with_trace(
     strict_retry: bool = False,
     *,
     packed_evidence: PackedEvidence | None = None,
+    product: str | None = None,
 ) -> tuple[dict[str, Any] | None, int, int, str | None]:
     context_block = packed_evidence.prompt_context if packed_evidence is not None else _format_context(chunks)
     prompt = _build_answer_prompt_for_mode(message, context_block, repair_mode=strict_retry)
@@ -2759,7 +2768,7 @@ def _invoke_llm_payload_with_trace(
     try:
         response = invoke_responses_text(
             profile=profile,
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=_build_answer_system_prompt(product),
             user_prompt=prompt,
         )
     except LlmInvocationError:
@@ -3110,7 +3119,12 @@ def _estimate_embedding_tokens(message: str) -> int:
         return max(1, len(raw.split()), (len(raw) + 3) // 4)
 
 
-def _run_rag_query_legacy(message: str, top_k: int | None = None) -> RagQueryResult | None:
+def _run_rag_query_legacy(
+    message: str,
+    top_k: int | None = None,
+    *,
+    product: str | None = None,
+) -> RagQueryResult | None:
     config = _get_rag_config(top_k=top_k)
     resolved_table = _resolve_active_vector_table(config)
     if resolved_table:
@@ -3554,7 +3568,7 @@ def _run_rag_query_legacy(message: str, top_k: int | None = None) -> RagQueryRes
         packed_evidence = build_packed_evidence(
             question=message,
             chunks=packing_candidates,
-            system_prompt_text=SYSTEM_PROMPT,
+            system_prompt_text=_build_answer_system_prompt(product),
             user_prompt_text=_build_answer_prompt_for_mode(message, "", repair_mode=False),
             tool_schema_text="",
             context_window=int(config.get("context_window") or model_context_window(str(config.get("chat_model") or ""))),
@@ -3850,6 +3864,7 @@ def _run_rag_query_agentic(
     ticket_context: list[dict[str, str]] | None = None,
     ticket_id: str | None = None,
     customer_id: str | None = None,
+    product: str | None = None,
 ) -> RagQueryResult | None:
     _ = ticket_id
     _ = customer_id
@@ -4257,7 +4272,7 @@ def _run_rag_query_agentic(
         packed_evidence = build_packed_evidence(
             question=message,
             chunks=list(final_chunks),
-            system_prompt_text=SYSTEM_PROMPT,
+            system_prompt_text=_build_answer_system_prompt(product),
             user_prompt_text=_build_answer_prompt_for_mode(message, "", repair_mode=False),
             tool_schema_text="",
             context_window=int(config.get("context_window") or model_context_window(str(config.get("chat_model") or ""))),
@@ -4286,6 +4301,7 @@ def _run_rag_query_agentic(
         generation_config,
         strict_retry=False,
         packed_evidence=packed_evidence,
+        product=product,
     )
     retry_required = (
         payload is None
@@ -4300,6 +4316,7 @@ def _run_rag_query_agentic(
             generation_config,
             strict_retry=True,
             packed_evidence=packed_evidence,
+            product=product,
         )
         prompt_tokens += retry_prompt_tokens
         completion_tokens += retry_completion_tokens
@@ -4383,9 +4400,10 @@ def run_rag_query(
     ticket_context: list[dict[str, str]] | None = None,
     ticket_id: str | None = None,
     customer_id: str | None = None,
+    product: str | None = None,
 ) -> RagQueryResult | None:
     if not _feature_flag_enabled("RAG_AGENT_ENABLED", True):
-        result = _run_rag_query_legacy(message, top_k=top_k)
+        result = _run_rag_query_legacy(message, top_k=top_k, product=product)
         if result is None:
             return None
         result.trace.execution_mode = "legacy"
@@ -4399,6 +4417,7 @@ def run_rag_query(
             ticket_context=ticket_context,
             ticket_id=ticket_id,
             customer_id=customer_id,
+            product=product,
         )
         if result is not None:
             result.trace.execution_mode = "agentic"
@@ -4407,7 +4426,7 @@ def run_rag_query(
         return result
     except Exception as exc:
         logger.warning("Agentic RAG failed, falling back to legacy flow: %s", exc)
-        result = _run_rag_query_legacy(message, top_k=top_k)
+        result = _run_rag_query_legacy(message, top_k=top_k, product=product)
         if result is None:
             return None
         result.trace.execution_mode = "legacy"

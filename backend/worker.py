@@ -258,6 +258,7 @@ def _orchestrate_worker_support_message(
     customer_id: str | None,
     ticket_subject: str | None,
     ticket_context: list[dict[str, str]],
+    product: str | None = None,
 ) -> TicketExecutionResult:
     return orchestrate_ticket_execution(
         customer_message,
@@ -265,6 +266,7 @@ def _orchestrate_worker_support_message(
         customer_id=customer_id,
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
+        product=product,
         resolution_builder=resolve_support_message,
     )
 
@@ -553,6 +555,7 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         customer_id=str(ticket.get("customer_id") or "").strip() or None,
         ticket_subject=str(ticket.get("subject") or "").strip() or None,
         ticket_context=route_context[-6:],
+        product=str(ticket.get("product") or "").strip() or None,
     )
     answer = execution.answer
     sources = list(execution.sources)

@@ -209,6 +209,36 @@ class RagApiTests(unittest.TestCase):
             logs.output,
         )
 
+    def test_internal_rag_query_forwards_selected_product_to_rag_engine(self) -> None:
+        repository = _TrackingKnowledgeRepository()
+
+        with self._client(repository) as client, patch.object(
+            rag_api,
+            "run_rag_query",
+            return_value=_answer_result(),
+        ) as run_mock:
+            response = client.post(
+                "/internal/rag/query",
+                headers={"Authorization": "Bearer test-token"},
+                json={
+                    "question": "how to join channel",
+                    "request_id": "rag-api-product-1",
+                    "ticket_id": "TK-003",
+                    "customer_id": "C-003",
+                    "product": "cloud_recording",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        run_mock.assert_called_once_with(
+            "how to join channel",
+            top_k=6,
+            ticket_context=None,
+            ticket_id="TK-003",
+            customer_id="C-003",
+            product="cloud_recording",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

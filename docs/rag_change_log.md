@@ -1971,3 +1971,39 @@ For each new entry, record:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_rag_api.py backend/tests/test_ticket_orchestrator.py backend/tests/test_investigation_flow.py backend/tests/test_knowledge_repository_bm25.py -q`
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/rag_api.py backend/main.py backend/repositories/knowledge_repository.py backend/services/ticket_orchestrator.py backend/services/investigation_flow.py backend/services/engineer_agent.py`
   - `git diff --check`
+
+## 2026-04-04 - Session product scope is persisted and forwarded through live RAG
+
+- Summary:
+  - Added session-level `product` persistence on `support_tickets`, exposed it through `/api/tickets`, and required a product on the first message of a new or empty client session.
+  - Wired the persisted product through client query routing, async worker orchestration, `/internal/rag/query`, and `run_rag_query(...)` so live RAG can choose request-time product-scoped prompts without changing retrieval filters.
+  - Preserved local empty drafts on client sync so an unsent product selection is not overwritten before the first backend write.
+- Reason:
+  - New client sessions must carry explicit product context before the first technical question, and that context has to survive ticket persistence plus the full live RAG path so later prompt tuning can stay product-scoped without reopening ticket/session plumbing.
+- Affected files/config:
+  - `backend/main.py`
+  - `backend/rag_api.py`
+  - `backend/repositories/ticket_repository.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/services/support_products.py`
+  - `backend/services/support_router.py`
+  - `backend/services/support_router_prompt.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/worker.py`
+  - `backend/sql/ticket_storage.sql`
+  - `ui/client-ui/app.js`
+  - `ui/client-ui/styles.css`
+  - `ui/client-ui/index.html`
+  - `docs/feature_list.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Ticket storage now includes nullable `support_tickets.product`, and new/empty-session first messages persist either `audio_video_calling` or `cloud_recording`.
+  - Legacy non-empty sessions without a stored product continue to use the generic path and are not backfilled.
+  - Live RAG prompt version advanced to `rag-v4-product-scope`; retrieval, vector tables, embeddings, rerankers, and benchmark truth did not change.
+- Verification:
+  - `uv run --with pytest --with fastapi --with pydantic --with python-dotenv --with python-multipart --with redis --with httpx --with 'psycopg[binary]' python -m pytest -q backend/tests/test_client_ui_contract.py backend/tests/test_investigation_flow.py backend/tests/test_repository_configuration.py backend/tests/test_rag_service_client.py backend/tests/test_support_router.py backend/tests/test_rag_api.py backend/tests/test_ticket_orchestrator.py backend/tests/test_worker.py backend/tests/test_prompt_modules.py`
+  - `python3 scripts/verify_feature_list.py`
+  - `python3 -m py_compile backend/main.py backend/rag_api.py backend/repositories/ticket_repository.py backend/services/rag_qa.py backend/services/rag_service_client.py backend/services/support_products.py backend/services/support_router.py backend/services/support_router_prompt.py backend/services/ticket_orchestrator.py backend/worker.py`
+  - `node --check ui/client-ui/app.js`
+  - `git diff --check`

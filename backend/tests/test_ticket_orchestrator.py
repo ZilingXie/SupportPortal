@@ -78,6 +78,43 @@ def _resolution(
 
 
 class TicketOrchestratorTests(unittest.TestCase):
+    def test_orchestrator_forwards_selected_product_to_router_and_resolution_builder(self) -> None:
+        captured_resolution_kwargs: dict[str, object] = {}
+
+        def _resolution_builder(message: str, **kwargs) -> SupportResolution:
+            _ = message
+            captured_resolution_kwargs.update(kwargs)
+            return _resolution(action="rag")
+
+        with patch(
+            "backend.services.ticket_orchestrator.analyze_ticket_message",
+            return_value=_decision("rag"),
+        ) as analyze_mock, patch(
+            "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency",
+            return_value=SufficiencyAssessment(
+                decision="answer",
+                reason="sufficient_grounded_answer",
+                confidence=0.9,
+            ),
+        ):
+            orchestrate_ticket_execution(
+                "How do I join a channel?",
+                ticket_id="TK-ORCH-1",
+                customer_id="C-001",
+                ticket_subject="Join a channel",
+                ticket_context=[{"role": "customer", "content": "Need a Cloud Recording answer."}],
+                product="cloud_recording",
+                resolution_builder=_resolution_builder,
+            )
+
+        analyze_mock.assert_called_once_with(
+            "How do I join a channel?",
+            ticket_subject="Join a channel",
+            ticket_context=[{"role": "customer", "content": "Need a Cloud Recording answer."}],
+            product="cloud_recording",
+        )
+        self.assertEqual(captured_resolution_kwargs["product"], "cloud_recording")
+
     def test_rag_insufficiency_skips_post_check_and_marks_investigating(self) -> None:
         with patch(
             "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency"

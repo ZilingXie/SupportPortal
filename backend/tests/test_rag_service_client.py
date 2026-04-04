@@ -239,6 +239,62 @@ class RagServiceClientTests(unittest.TestCase):
             top_k=None,
         )
 
+    def test_query_includes_selected_product_in_json_payload(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+        captured: dict[str, object] = {}
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"decision":"answer","answer":"ok","confidence":0.8,"sources":[],"citations":[]}'
+
+        def _fake_urlopen(request, timeout):
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return _FakeResponse()
+
+        with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            client.query(
+                question="How do I join a channel?",
+                request_id="rag-product-1",
+                ticket_id="T-001",
+                customer_id="C-001",
+                product="cloud_recording",
+            )
+
+        self.assertEqual(captured["body"]["product"], "cloud_recording")
+
+    def test_query_answer_with_recovery_detail_forwards_selected_product(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+
+        with patch.object(
+            client,
+            "query",
+            return_value={"decision": "answer", "answer": "ok", "confidence": 0.8, "sources": [], "citations": []},
+        ) as query_mock:
+            client.query_answer_with_recovery_detail(
+                question="What does error 109 mean?",
+                request_id="rag-product-2",
+                ticket_id="T-001",
+                customer_id="C-001",
+                product="audio_video_calling",
+                insufficient_reply="INSUFFICIENT",
+            )
+
+        query_mock.assert_called_once_with(
+            question="What does error 109 mean?",
+            request_id="rag-product-2",
+            ticket_id="T-001",
+            customer_id="C-001",
+            ticket_context=None,
+            product="audio_video_calling",
+            top_k=None,
+        )
+
     def test_query_prefers_client_timeout_over_shared_service_timeout(self) -> None:
         captured: dict[str, object] = {}
 
