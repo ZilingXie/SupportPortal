@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
 
@@ -34,6 +36,18 @@ class _TrackingKnowledgeRepository:
 
     def record_rag_query_run(self, *, run: dict[str, object], candidates: list[dict[str, object]]) -> None:
         self.recorded_runs.append({"run": dict(run), "candidates": [dict(item) for item in candidates]})
+        if self.telemetry_error is not None:
+            raise self.telemetry_error
+
+
+class _BlockingKnowledgeRepository(_TrackingKnowledgeRepository):
+    def __init__(self, gate: threading.Event, *, telemetry_error: BaseException | None = None) -> None:
+        super().__init__(telemetry_error=telemetry_error)
+        self.gate = gate
+
+    def record_rag_query_run(self, *, run: dict[str, object], candidates: list[dict[str, object]]) -> None:
+        self.recorded_runs.append({"run": dict(run), "candidates": [dict(item) for item in candidates]})
+        self.gate.wait(timeout=0.5)
         if self.telemetry_error is not None:
             raise self.telemetry_error
 
@@ -136,78 +150,73 @@ class RagApiTests(unittest.TestCase):
         rag_api.event_repository = event_repository
         return TestClient(rag_api.app)
 
-    def test_internal_rag_query_returns_answer_when_telemetry_persistence_fails(self) -> None:
-        repository = _TrackingKnowledgeRepository(telemetry_error=RuntimeError("missing usage_ledger column"))
+    def test_internal_rag_query_returns_answer_without_waiting_for_async_telemetry_persistence(self) -> None:
+        gate = threading.Event()
+        repository = _BlockingKnowledgeRepository(gate)
 
         with self._client(repository) as client, patch.object(
             rag_api,
             "run_rag_query",
             return_value=_answer_result(),
-        ), self.assertLogs("backend.rag_api", level="WARNING") as logs:
-            response = client.post(
-                "/internal/rag/query",
-                headers={"Authorization": "Bearer test-token"},
-                json={
-                    "question": "how to join channel",
-                    "request_id": "rag-api-telemetry-1",
-                    "ticket_id": "TK-001",
-                    "customer_id": "C-001",
-                },
-            )
+        ):
+            started_at = time.perf_counter()
+            try:
+                response = client.post(
+                    "/internal/rag/query",
+                    headers={"Authorization": "Bearer test-token"},
+                    json={
+                        "question": "how to join channel",
+                        "request_id": "rag-api-telemetry-1",
+                        "ticket_id": "TK-001",
+                        "customer_id": "C-001",
+                    },
+                )
+            finally:
+                gate.set()
+            elapsed_ms = (time.perf_counter() - started_at) * 1000
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["decision"], "answer")
         self.assertEqual(
-            payload["answer"],
-            "Call joinChannel with the same channel name and token on each client.",
+            payload["evidence_summary"]["diagnostics"]["telemetry_mode"],
+            "async_best_effort",
         )
-        self.assertEqual(
-            payload["evidence_summary"]["diagnostics"]["telemetry_persist_failed"],
-            True,
-        )
-        self.assertEqual(
-            payload["evidence_summary"]["diagnostics"]["telemetry_error_type"],
-            "RuntimeError",
-        )
-        self.assertEqual(len(repository.recorded_runs), 1)
-        self.assertTrue(
-            any("RAG telemetry persistence failed" in message for message in logs.output),
-            logs.output,
-        )
+        self.assertLess(elapsed_ms, 250.0, elapsed_ms)
 
-    def test_internal_rag_query_returns_service_error_when_rag_execution_and_telemetry_both_fail(self) -> None:
-        repository = _TrackingKnowledgeRepository(telemetry_error=RuntimeError("missing usage_summary column"))
+    def test_record_rag_query_run_best_effort_returns_enqueue_failure_diagnostics_when_queue_full(self) -> None:
+        repository = _TrackingKnowledgeRepository()
 
-        with self._client(repository) as client, patch.object(
+        with patch.object(rag_api, "knowledge_repository", repository), patch.object(
             rag_api,
-            "run_rag_query",
-            side_effect=RuntimeError("rag engine crashed"),
-        ), self.assertLogs("backend.rag_api", level="WARNING") as logs:
-            response = client.post(
-                "/internal/rag/query",
-                headers={"Authorization": "Bearer test-token"},
-                json={
-                    "question": "how to join channel",
-                    "request_id": "rag-api-telemetry-2",
+            "_RAG_QUERY_TELEMETRY_SEMAPHORE",
+            Mock(acquire=Mock(return_value=False)),
+            create=True,
+        ), patch.object(
+            rag_api,
+            "_RAG_QUERY_TELEMETRY_EXECUTOR",
+            Mock(),
+            create=True,
+        ):
+            diagnostics = rag_api._record_rag_query_run_best_effort(
+                request_id="rag-api-telemetry-queue-full",
+                ticket_id="TK-002",
+                run={
+                    "request_id": "rag-api-telemetry-queue-full",
                     "ticket_id": "TK-002",
-                    "customer_id": "C-002",
+                    "created_at": "2026-04-04T00:00:00Z",
                 },
+                candidates=[],
             )
 
-        self.assertEqual(response.status_code, 200, response.text)
-        payload = response.json()
-        self.assertEqual(payload["decision"], "escalate")
-        self.assertEqual(payload["reason"], "rag_service_error")
         self.assertEqual(
-            payload["evidence_summary"]["diagnostics"]["telemetry_persist_failed"],
-            True,
+            diagnostics,
+            {
+                "telemetry_mode": "async_best_effort",
+                "telemetry_enqueue_failed": True,
+            },
         )
-        self.assertEqual(len(repository.recorded_runs), 1)
-        self.assertTrue(
-            any("operation=record_rag_query_run" in message for message in logs.output),
-            logs.output,
-        )
+        self.assertEqual(repository.recorded_runs, [])
 
     def test_internal_rag_cancel_marks_inflight_request_cancelled(self) -> None:
         repository = _TrackingKnowledgeRepository()

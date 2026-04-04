@@ -49,6 +49,7 @@ class RagQaHybridTests(unittest.TestCase):
 
     def setUp(self) -> None:
         rag_qa._RUNTIME_CAPABILITY_UNAVAILABLE_UNTIL.clear()
+        rag_qa.clear_active_vector_table_cache()
         self._env_backup = {
             "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY"),
             "SILICONFLOW_API_KEY": os.environ.get("SILICONFLOW_API_KEY"),
@@ -59,6 +60,7 @@ class RagQaHybridTests(unittest.TestCase):
             os.environ.pop(name, None)
 
     def tearDown(self) -> None:
+        rag_qa.clear_active_vector_table_cache()
         for name, value in self._env_backup.items():
             if value is None:
                 os.environ.pop(name, None)
@@ -774,6 +776,7 @@ class RagQaHybridTests(unittest.TestCase):
                 "bm25_k1": 1.2,
                 "bm25_b": 0.75,
                 "chat_model": "gpt-5.4",
+                "reasoning_effort": "high",
                 "embedding_provider": "siliconflow",
                 "embedding_model": "BAAI/bge-m3",
                 "vector_enabled": True,
@@ -786,50 +789,154 @@ class RagQaHybridTests(unittest.TestCase):
                 "rerank_max_retries": 1,
                 "request_timeout_seconds": 20.0,
                 "max_retries": 1,
+                "context_budget_enabled": False,
+                "reserved_output_tokens": 1200,
+                "buffer_tokens": 1200,
             }
-            with patch("backend.services.rag_qa._resolve_active_vector_table", return_value=None):
-                with patch("backend.services.rag_qa.get_embedding_provider", return_value=self._FakeProvider()):
-                    with patch(
-                        "backend.services.rag_qa.understand_rag_query",
-                        side_effect=AssertionError("query understanding should be skipped for simple lexical queries"),
-                    ), patch(
-                        "backend.services.rag_qa._invoke_agentic_planner",
-                        side_effect=AssertionError("agent planner should be skipped for simple lexical queries"),
-                    ), patch(
-                        "backend.services.rag_qa._retrieve_chunks",
-                        side_effect=AssertionError("vector retrieval should be skipped for simple lexical queries"),
-                    ), patch(
-                        "backend.services.rag_qa._retrieve_bm25_chunks",
-                        return_value=[bm25_chunk],
-                    ), patch(
-                        "backend.services.rag_qa._retrieve_fts_chunks",
-                        return_value=[fts_chunk],
-                    ), patch(
-                        "backend.services.rag_qa._metadata_rerank",
-                        return_value=([bm25_chunk, fts_chunk], {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None}),
-                    ), patch(
-                        "backend.services.rag_qa._rerank_chunks",
-                        side_effect=AssertionError("external rerank should be skipped for simple lexical queries"),
-                    ), patch(
-                        "backend.services.rag_qa._invoke_llm_payload_with_trace",
-                        return_value=(
-                            {
-                                "answer": "Call joinChannel with the same channel name on each client.",
-                                "key_steps": [],
-                                "citations": ["bm25-join"],
-                                "insufficient_evidence": False,
-                            },
-                            10,
-                            5,
-                            "gpt-5.4",
-                        ),
-                    ):
-                        result = run_rag_query("how to join channel")
+            with patch(
+                "backend.services.rag_qa._resolve_active_vector_table",
+                side_effect=AssertionError("vector table resolution should be skipped for simple lexical queries"),
+            ), patch(
+                "backend.services.rag_qa.get_embedding_provider",
+                side_effect=AssertionError("embedding provider should be skipped for simple lexical queries"),
+            ), patch(
+                "backend.services.rag_qa.understand_rag_query",
+                side_effect=AssertionError("query understanding should be skipped for simple lexical queries"),
+            ), patch(
+                "backend.services.rag_qa._invoke_agentic_planner",
+                side_effect=AssertionError("agent planner should be skipped for simple lexical queries"),
+            ), patch(
+                "backend.services.rag_qa._retrieve_chunks",
+                side_effect=AssertionError("vector retrieval should be skipped for simple lexical queries"),
+            ), patch(
+                "backend.services.rag_qa._retrieve_bm25_chunks",
+                return_value=[bm25_chunk],
+            ), patch(
+                "backend.services.rag_qa._retrieve_fts_chunks",
+                return_value=[fts_chunk],
+            ), patch(
+                "backend.services.rag_qa._metadata_rerank",
+                return_value=([bm25_chunk, fts_chunk], {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None}),
+            ), patch(
+                "backend.services.rag_qa._rerank_chunks",
+                side_effect=AssertionError("external rerank should be skipped for simple lexical queries"),
+            ), patch(
+                "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                return_value=(
+                    {
+                        "answer": "Call joinChannel with the same channel name on each client.",
+                        "key_steps": [],
+                        "citations": ["bm25-join"],
+                        "insufficient_evidence": False,
+                    },
+                    10,
+                    5,
+                    "gpt-5.4",
+                ),
+            ):
+                result = run_rag_query("how to join channel")
 
         self.assertIsNotNone(result)
         assert result is not None
         self.assertEqual(result.answer.answer, "Call joinChannel with the same channel name on each client.")
         self.assertEqual(result.trace.selected_chunk_ids[0], "bm25-join")
+        self.assertTrue(result.trace.light_path_used)
+        self.assertTrue(result.trace.vector_setup_skipped)
+
+    def test_run_rag_query_light_path_uses_fast_answer_profile_then_falls_back_to_main_model(self) -> None:
+        bm25_chunk = RetrievedChunk(
+            chunk_id="bm25-join",
+            text="Call joinChannel with the same channel name on each client.",
+            source_path="official/get-started.md",
+            similarity=0.95,
+        )
+        captured_models: list[tuple[str, str]] = []
+
+        def _capture_answer_call(*, profile, system_prompt: str, user_prompt: str, extra_payload=None):
+            _ = system_prompt
+            _ = user_prompt
+            _ = extra_payload
+            captured_models.append((str(profile.model), str(profile.reasoning_effort)))
+            if len(captured_models) == 1:
+                return LlmTextResult(
+                    text=(
+                        '{"answer":"Call joinChannel with the same channel name on each client.",'
+                        '"key_steps":[],"citations":[],"insufficient_evidence":false}'
+                    ),
+                    model_name=str(profile.model),
+                    prompt_tokens=10,
+                    completion_tokens=5,
+                )
+            return LlmTextResult(
+                text=(
+                    '{"answer":"Call joinChannel with the same channel name on each client.",'
+                    '"key_steps":[],"citations":["bm25-join"],"insufficient_evidence":false}'
+                ),
+                model_name=str(profile.model),
+                prompt_tokens=12,
+                completion_tokens=6,
+            )
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "app_schema": "supportportal",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 2,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-5.4",
+                "reasoning_effort": "high",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "vector_enabled": True,
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_enabled": True,
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+                "context_budget_enabled": False,
+                "reserved_output_tokens": 1200,
+                "buffer_tokens": 1200,
+            }
+            with patch("backend.services.rag_qa._resolve_active_vector_table", return_value=None):
+                with patch("backend.services.rag_qa.get_embedding_provider", return_value=self._FakeProvider()):
+                    with patch(
+                        "backend.services.rag_qa._retrieve_bm25_chunks",
+                        return_value=[bm25_chunk],
+                    ), patch(
+                        "backend.services.rag_qa._retrieve_fts_chunks",
+                        return_value=[],
+                    ), patch(
+                        "backend.services.rag_qa._metadata_rerank",
+                        return_value=([bm25_chunk], {"post_rerank_count": 1, "hints": {}, "applied_filter": False, "filter_type": None}),
+                    ), patch(
+                        "backend.services.rag_qa._rerank_chunks",
+                        side_effect=AssertionError("external rerank should be skipped for simple lexical queries"),
+                    ), patch(
+                        "backend.services.rag_qa.invoke_responses_text",
+                        side_effect=_capture_answer_call,
+                    ):
+                        result = run_rag_query("how to join channel")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(
+            captured_models,
+            [("gpt-5.4-mini", "low"), ("gpt-5.4", "high")],
+        )
+        self.assertEqual(result.trace.answer_profile_used, "gpt-5.4")
+        self.assertTrue(result.trace.answer_profile_fallback_used)
 
     def test_rerank_quota_failure_enters_process_cooldown(self) -> None:
         chunk = RetrievedChunk(
@@ -1685,6 +1792,31 @@ class RagQaHybridTests(unittest.TestCase):
         self.assertEqual(resolved, "supportportal.docagent_chunks_bge_m3_1024")
         list_mock.assert_not_called()
 
+    def test_resolve_active_vector_table_uses_ttl_cache_until_expiry(self) -> None:
+        config = {
+            "dsn": "postgresql://example",
+            "table": "supportportal.docagent_chunks_bge_m3_1024",
+        }
+
+        rag_qa.clear_active_vector_table_cache()
+        with patch("backend.services.rag_qa._count_primary_rows_in_table", return_value=0) as count_mock:
+            with patch("backend.services.rag_qa._list_vector_tables_with_primary_counts") as list_mock:
+                list_mock.return_value = [
+                    ("supportportal.docagent_chunks_bge_m3_1024", 0),
+                    ("supportportal.docagent_chunks_ag_docs_test_1024", 1907),
+                ]
+                with patch("backend.services.rag_qa.time.time", return_value=100.0):
+                    first = _resolve_active_vector_table(config)
+                    second = _resolve_active_vector_table(config)
+                with patch("backend.services.rag_qa.time.time", return_value=161.0):
+                    third = _resolve_active_vector_table(config)
+
+        self.assertEqual(first, "supportportal.docagent_chunks_ag_docs_test_1024")
+        self.assertEqual(second, "supportportal.docagent_chunks_ag_docs_test_1024")
+        self.assertEqual(third, "supportportal.docagent_chunks_ag_docs_test_1024")
+        self.assertEqual(count_mock.call_count, 2)
+        self.assertEqual(list_mock.call_count, 2)
+
     def test_run_rag_query_uses_resolved_vector_table_for_all_retrieval_paths(self) -> None:
         captured_tables: list[str] = []
 
@@ -1772,7 +1904,7 @@ class RagQaHybridTests(unittest.TestCase):
                         with patch("backend.services.rag_qa._retrieve_bm25_chunks", side_effect=_capture_bm25):
                             with patch("backend.services.rag_qa._retrieve_fts_chunks", side_effect=_capture_fts):
                                 with patch("backend.services.rag_qa._retrieve_keyword_chunks", side_effect=_capture_keyword):
-                                    result = run_rag_query("how to join channel")
+                                    result = run_rag_query("why does audio fail when joining a channel")
 
         self.assertIsNotNone(result)
         assert result is not None

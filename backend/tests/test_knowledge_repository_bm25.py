@@ -268,6 +268,35 @@ class KnowledgeRepositoryBm25HookTests(unittest.TestCase):
         bm25_mock.assert_called_once()
         ensure_bm25_mock.assert_not_called()
 
+    def test_replace_document_chunks_invalidates_active_vector_table_cache(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        rows = [
+            {
+                "id": "chunk-1",
+                "doc_id": "doc-1",
+                "source_path": "official/doc.md",
+                "content": "Token generation details",
+                "metadata": {},
+                "embedding": [0.1, 0.2, 0.3],
+            }
+        ]
+
+        with patch.object(repository, "_connect", return_value=_FakeConnection()):
+            with patch.object(repository, "_ensure_vector_table"):
+                with patch.object(repository, "_replace_bm25_document_index"):
+                    with patch(
+                        "backend.services.rag_qa.clear_active_vector_table_cache",
+                        create=True,
+                    ) as clear_cache_mock:
+                        repository.replace_document_chunks(
+                            document_id="doc-1",
+                            index_role="primary",
+                            vector_dim=3,
+                            rows=rows,
+                        )
+
+        clear_cache_mock.assert_called_once()
+
     def test_replace_bm25_document_index_acquires_write_lock(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
         cursor = _FakeCursor()

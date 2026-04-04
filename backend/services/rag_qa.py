@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -91,6 +92,16 @@ AGENT_PLAN_VERSION = "v1"
 _RUNTIME_CAPABILITY_UNAVAILABLE_UNTIL: dict[str, float] = {}
 _RUNTIME_QUOTA_COOLDOWN_SECONDS = 600.0
 _RUNTIME_NETWORK_COOLDOWN_SECONDS = 120.0
+_ACTIVE_VECTOR_TABLE_CACHE_TTL_SECONDS = 60.0
+_ACTIVE_VECTOR_TABLE_CACHE: dict[tuple[str, str], tuple[float, str]] = {}
+_ACTIVE_VECTOR_TABLE_CACHE_LOCK = threading.Lock()
+_LIGHT_PATH_BM25_CANDIDATE_K = 12
+_LIGHT_PATH_FTS_CANDIDATE_K = 12
+_LIGHT_PATH_FUSION_CANDIDATE_K = 12
+_LIGHT_PATH_RERANK_TOP_N = 8
+_LIGHT_PATH_CONTEXT_CHUNK_LIMIT = 3
+_LIGHT_PATH_FAST_ANSWER_MODEL = "gpt-5.4-mini"
+_LIGHT_PATH_FAST_ANSWER_REASONING_EFFORT = "low"
 
 
 def _build_answer_system_prompt(product: str | None = None) -> str:
@@ -236,6 +247,11 @@ class RagQueryTrace:
     execution_mode: str = "legacy"
     agent_fallback_used: bool = False
     agent_fallback_reason: str | None = None
+    preflight_probe_latency_ms: float = 0.0
+    vector_setup_skipped: bool = False
+    light_path_used: bool = False
+    answer_profile_used: str | None = None
+    answer_profile_fallback_used: bool = False
 
 
 @dataclass
@@ -327,6 +343,46 @@ def _feature_flag_enabled(name: str, default: bool = True) -> bool:
 
 def _clean_env_text(name: str) -> str:
     return (os.getenv(name) or "").strip()
+
+
+def clear_active_vector_table_cache() -> None:
+    with _ACTIVE_VECTOR_TABLE_CACHE_LOCK:
+        _ACTIVE_VECTOR_TABLE_CACHE.clear()
+
+
+def _active_vector_table_cache_key(config: dict[str, Any]) -> tuple[str, str] | None:
+    configured_dsn = str(config.get("dsn") or "").strip()
+    configured_table = str(config.get("table") or "").strip()
+    if not configured_dsn or not configured_table:
+        return None
+    return configured_dsn, configured_table
+
+
+def _cached_active_vector_table(config: dict[str, Any]) -> str | None:
+    cache_key = _active_vector_table_cache_key(config)
+    if cache_key is None:
+        return None
+    now = time.time()
+    with _ACTIVE_VECTOR_TABLE_CACHE_LOCK:
+        cached = _ACTIVE_VECTOR_TABLE_CACHE.get(cache_key)
+        if cached is None:
+            return None
+        expires_at, table_name = cached
+        if expires_at <= now:
+            _ACTIVE_VECTOR_TABLE_CACHE.pop(cache_key, None)
+            return None
+        return table_name
+
+
+def _store_active_vector_table_cache(config: dict[str, Any], table_name: str) -> None:
+    cache_key = _active_vector_table_cache_key(config)
+    if cache_key is None:
+        return
+    with _ACTIVE_VECTOR_TABLE_CACHE_LOCK:
+        _ACTIVE_VECTOR_TABLE_CACHE[cache_key] = (
+            time.time() + _ACTIVE_VECTOR_TABLE_CACHE_TTL_SECONDS,
+            str(table_name or "").strip(),
+        )
 
 
 def _runtime_capability_key(capability: str, provider: str | None = None) -> str:
@@ -1042,6 +1098,114 @@ def _select_agentic_final_chunks(
     return results
 
 
+def _retrieve_agentic_tool_variant(
+    *,
+    tool_name: str,
+    query_kind: str,
+    query_text: str,
+    config: dict[str, Any],
+    index_role: str,
+    round_index: int,
+    seeded_chunks: list[RetrievedChunk] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+    record_cancel_stage: Callable[[str], None] | None = None,
+) -> tuple[str, list[RetrievedChunk], float, float, float, bool]:
+    family = _tool_family(tool_name)
+    current_tool_label = tool_name
+    vector_latency_ms = 0.0
+    bm25_latency_ms = 0.0
+    keyword_latency_ms = 0.0
+    used_seed_tool = False
+
+    stage_name = "vector_embedding" if family == "vector" else f"round_{round_index}_retrieval"
+    _raise_if_cancelled(
+        stage_name,
+        should_cancel=should_cancel,
+        record_stage=record_cancel_stage,
+    )
+    if family == "vector" and not bool(
+        config.get("_vector_runtime_available", config.get("vector_enabled", True))
+    ):
+        return current_tool_label, [], 0.0, 0.0, 0.0, False
+
+    if seeded_chunks:
+        raw_chunks = [_copy_chunk(chunk) for chunk in seeded_chunks]
+        used_seed_tool = True
+    else:
+        started_at = time.perf_counter()
+        try:
+            if family == "vector":
+                raw_chunks = _retrieve_chunks(
+                    query_text,
+                    config,
+                    limit=int(config.get("vector_candidate_k") or config.get("top_k") or 5),
+                    index_role=index_role,
+                )
+                vector_latency_ms += (time.perf_counter() - started_at) * 1000
+            elif family == "bm25":
+                raw_chunks = _retrieve_bm25_chunks(
+                    query_text,
+                    config,
+                    limit=int(config.get("bm25_candidate_k") or config.get("top_k") or 5),
+                    index_role=index_role,
+                )
+                bm25_latency_ms += (time.perf_counter() - started_at) * 1000
+            elif family == "fts":
+                raw_chunks = _retrieve_fts_chunks(
+                    query_text,
+                    config,
+                    limit=int(config.get("fts_candidate_k") or config.get("keyword_candidate_k") or config.get("top_k") or 5),
+                    index_role=index_role,
+                )
+                bm25_latency_ms += (time.perf_counter() - started_at) * 1000
+            else:
+                raw_chunks = _retrieve_keyword_chunks(
+                    query_text,
+                    config,
+                    limit=int(config.get("keyword_candidate_k") or config.get("top_k") or 5),
+                    index_role=index_role,
+                )
+                keyword_latency_ms += (time.perf_counter() - started_at) * 1000
+        except Exception as exc:
+            if family == "vector":
+                config["_vector_runtime_available"] = False
+                _record_runtime_capability_failure(
+                    "vector",
+                    provider=str(config.get("embedding_provider") or ""),
+                    error=exc,
+                )
+                logger.warning("RAG %s retrieval failed for %s query: %s", tool_name, query_kind, exc)
+                return current_tool_label, [], vector_latency_ms, bm25_latency_ms, keyword_latency_ms, used_seed_tool
+            if family not in {"bm25", "fts"}:
+                logger.warning("RAG %s retrieval failed for %s query: %s", tool_name, query_kind, exc)
+                return current_tool_label, [], vector_latency_ms, bm25_latency_ms, keyword_latency_ms, used_seed_tool
+            logger.warning("RAG %s retrieval failed for %s query, trying keyword fallback: %s", tool_name, query_kind, exc)
+            started_at = time.perf_counter()
+            try:
+                raw_chunks = _retrieve_keyword_chunks(
+                    query_text,
+                    config,
+                    limit=int(config.get("keyword_candidate_k") or config.get("top_k") or 5),
+                    index_role=index_role,
+                )
+                keyword_latency_ms += (time.perf_counter() - started_at) * 1000
+                current_tool_label = f"{'s' if index_role == 'shadow' else 'p'}_keyword"
+            except Exception as keyword_exc:
+                logger.warning("RAG keyword retrieval failed for %s query: %s", query_kind, keyword_exc)
+                return current_tool_label, [], vector_latency_ms, bm25_latency_ms, keyword_latency_ms, used_seed_tool
+
+    for chunk in raw_chunks:
+        chunk.index_role = index_role
+        chunk.retrieval_sources = list(dict.fromkeys([*chunk.retrieval_sources, current_tool_label]))
+        chunk.candidate_trace["tool_name"] = current_tool_label
+        chunk.candidate_trace["query_kind"] = query_kind
+        chunk.candidate_trace["query_round"] = round_index
+        chunk.candidate_trace["raw_score"] = _score_from_candidate_trace(chunk)
+        chunk.candidate_trace["index_role"] = index_role
+
+    return current_tool_label, raw_chunks, vector_latency_ms, bm25_latency_ms, keyword_latency_ms, used_seed_tool
+
+
 def _execute_agentic_round(
     *,
     message: str,
@@ -1085,120 +1249,99 @@ def _execute_agentic_round(
     variant_config["_retrieval_plan"] = retrieval_plan
     used_seed_tools: list[str] = []
 
-    for tool_name in tool_names:
-        family = _tool_family(tool_name)
-        if family == "vector" and not bool(
-            config.get("_vector_runtime_available", config.get("vector_enabled", True))
-        ):
-            continue
-        index_role = _tool_index_role(tool_name)
-        family_bucket_labels: set[str] = set()
-        for query_kind, query_text in query_variants:
-            stage_name = "vector_embedding" if family == "vector" else f"round_{round_index}_retrieval"
-            _raise_if_cancelled(
-                stage_name,
-                should_cancel=should_cancel,
-                record_stage=record_cancel_stage,
-            )
-            if family == "vector" and not bool(
-                config.get("_vector_runtime_available", config.get("vector_enabled", True))
-            ):
-                break
-            current_tool_label = tool_name
-            seeded_chunks = None
-            if round_index == 1 and query_kind == "original":
-                seeded_chunks = list((seed_tool_results or {}).get(tool_name) or [])
-            if seeded_chunks:
-                raw_chunks = [_copy_chunk(chunk) for chunk in seeded_chunks]
-                used_seed_tools.append(tool_name)
-            else:
-                started_at = time.perf_counter()
-                try:
-                    if family == "vector":
-                        raw_chunks = _retrieve_chunks(
-                            query_text,
-                            variant_config,
-                            limit=int(config.get("vector_candidate_k") or config.get("top_k") or 5),
-                            index_role=index_role,
-                        )
-                        vector_latency_ms += (time.perf_counter() - started_at) * 1000
-                    elif family == "bm25":
-                        raw_chunks = _retrieve_bm25_chunks(
-                            query_text,
-                            variant_config,
-                            limit=int(config.get("bm25_candidate_k") or config.get("top_k") or 5),
-                            index_role=index_role,
-                        )
-                        bm25_latency_ms += (time.perf_counter() - started_at) * 1000
-                    elif family == "fts":
-                        raw_chunks = _retrieve_fts_chunks(
-                            query_text,
-                            variant_config,
-                            limit=int(config.get("keyword_candidate_k") or config.get("top_k") or 5),
-                            index_role=index_role,
-                        )
-                        bm25_latency_ms += (time.perf_counter() - started_at) * 1000
-                    else:
-                        raw_chunks = _retrieve_keyword_chunks(
-                            query_text,
-                            variant_config,
-                            limit=int(config.get("keyword_candidate_k") or config.get("top_k") or 5),
-                            index_role=index_role,
-                        )
-                        keyword_latency_ms += (time.perf_counter() - started_at) * 1000
-                except Exception as exc:
-                    if family == "vector":
-                        config["_vector_runtime_available"] = False
-                        _record_runtime_capability_failure(
-                            "vector",
-                            provider=str(config.get("embedding_provider") or ""),
-                            error=exc,
-                        )
-                        logger.warning("RAG %s retrieval failed for %s query: %s", tool_name, query_kind, exc)
-                        continue
-                    if family not in {"bm25", "fts"}:
-                        logger.warning("RAG %s retrieval failed for %s query: %s", tool_name, query_kind, exc)
-                        continue
-                    logger.warning("RAG %s retrieval failed for %s query, trying keyword fallback: %s", tool_name, query_kind, exc)
-                    started_at = time.perf_counter()
-                    try:
-                        raw_chunks = _retrieve_keyword_chunks(
-                            query_text,
-                            variant_config,
-                            limit=int(config.get("keyword_candidate_k") or config.get("top_k") or 5),
-                            index_role=index_role,
-                        )
-                        keyword_latency_ms += (time.perf_counter() - started_at) * 1000
-                        current_tool_label = f"{'s' if index_role == 'shadow' else 'p'}_keyword"
-                    except Exception as keyword_exc:
-                        logger.warning("RAG keyword retrieval failed for %s query: %s", query_kind, keyword_exc)
-                        continue
-
-            for chunk in raw_chunks:
-                chunk.index_role = index_role
-                chunk.retrieval_sources = list(dict.fromkeys([*chunk.retrieval_sources, current_tool_label]))
-                chunk.candidate_trace["tool_name"] = current_tool_label
-                chunk.candidate_trace["query_kind"] = query_kind
-                chunk.candidate_trace["query_round"] = round_index
-                chunk.candidate_trace["raw_score"] = _score_from_candidate_trace(chunk)
-                chunk.candidate_trace["index_role"] = index_role
-
-            merged_tool_chunks = _merge_variant_chunks(
-                tool_results.get(current_tool_label, []),
-                raw_chunks,
-                source_label=current_tool_label,
-                query_variant=query_text,
-                query_kind=query_kind,
-            )
-            tool_results[current_tool_label] = merged_tool_chunks
-            family_bucket_labels.add(current_tool_label)
+    def _consume_tool_result(
+        *,
+        family: str,
+        tool_name: str,
+        query_kind: str,
+        query_text: str,
+        result: tuple[str, list[RetrievedChunk], float, float, float, bool],
+    ) -> None:
+        nonlocal vector_latency_ms, bm25_latency_ms, keyword_latency_ms
+        current_tool_label, raw_chunks, vector_ms, bm25_ms, keyword_ms, used_seed_tool = result
+        vector_latency_ms += vector_ms
+        bm25_latency_ms += bm25_ms
+        keyword_latency_ms += keyword_ms
+        if used_seed_tool:
+            used_seed_tools.append(tool_name)
+        if not raw_chunks:
+            return
+        merged_tool_chunks = _merge_variant_chunks(
+            tool_results.get(current_tool_label, []),
+            raw_chunks,
+            source_label=current_tool_label,
+            query_variant=query_text,
+            query_kind=query_kind,
+        )
+        tool_results[current_tool_label] = merged_tool_chunks
         target_set = vector_candidate_ids if family == "vector" else bm25_candidate_ids
-        for label in family_bucket_labels:
-            candidate_group = tool_results.get(label, [])
-            for chunk in candidate_group:
-                dedupe_key = _chunk_dedupe_key(chunk)
-                if dedupe_key:
-                    target_set.add(dedupe_key)
+        for chunk in merged_tool_chunks:
+            dedupe_key = _chunk_dedupe_key(chunk)
+            if dedupe_key:
+                target_set.add(dedupe_key)
+
+    if plan.light_path and round_index == 1 and len(query_variants) == 1 and set(tool_names) == {"p_bm25", "p_fts"}:
+        query_kind, query_text = query_variants[0]
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_map: dict[Future[tuple[str, list[RetrievedChunk], float, float, float, bool]], tuple[str, str]] = {}
+            for tool_name in tool_names:
+                family = _tool_family(tool_name)
+                future_map[
+                    executor.submit(
+                        _retrieve_agentic_tool_variant,
+                        tool_name=tool_name,
+                        query_kind=query_kind,
+                        query_text=query_text,
+                        config=variant_config,
+                        index_role=_tool_index_role(tool_name),
+                        round_index=round_index,
+                        seeded_chunks=None,
+                        should_cancel=should_cancel,
+                        record_cancel_stage=record_cancel_stage,
+                    )
+                ] = (tool_name, family)
+            for future, (tool_name, family) in future_map.items():
+                _consume_tool_result(
+                    family=family,
+                    tool_name=tool_name,
+                    query_kind=query_kind,
+                    query_text=query_text,
+                    result=future.result(),
+                )
+    else:
+        for tool_name in tool_names:
+            family = _tool_family(tool_name)
+            if family == "vector" and not bool(
+                variant_config.get("_vector_runtime_available", variant_config.get("vector_enabled", True))
+            ):
+                continue
+            index_role = _tool_index_role(tool_name)
+            for query_kind, query_text in query_variants:
+                if family == "vector" and not bool(
+                    variant_config.get("_vector_runtime_available", variant_config.get("vector_enabled", True))
+                ):
+                    break
+                seeded_chunks = None
+                if round_index == 1 and query_kind == "original":
+                    seeded_chunks = list((seed_tool_results or {}).get(tool_name) or [])
+                result = _retrieve_agentic_tool_variant(
+                    tool_name=tool_name,
+                    query_kind=query_kind,
+                    query_text=query_text,
+                    config=variant_config,
+                    index_role=index_role,
+                    round_index=round_index,
+                    seeded_chunks=seeded_chunks,
+                    should_cancel=should_cancel,
+                    record_cancel_stage=record_cancel_stage,
+                )
+                _consume_tool_result(
+                    family=family,
+                    tool_name=tool_name,
+                    query_kind=query_kind,
+                    query_text=query_text,
+                    result=result,
+                )
 
     retrieved_chunks = _merge_agentic_tool_results(
         tool_results=tool_results,
@@ -1908,6 +2051,7 @@ def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
         "top_k": final_top_k,
         "vector_candidate_k": vector_candidate_k,
         "bm25_candidate_k": bm25_candidate_k,
+        "fts_candidate_k": bm25_candidate_k,
         "keyword_candidate_k": bm25_candidate_k,
         "fusion_candidate_k": fusion_candidate_k,
         "rerank_top_n": rerank_top_n,
@@ -1939,6 +2083,31 @@ def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
         "request_timeout_seconds": answer_profile.timeout_seconds,
         "max_retries": answer_profile.max_retries,
     }
+
+
+def _apply_light_path_latency_budget(config: dict[str, Any]) -> dict[str, Any]:
+    adjusted = dict(config)
+    adjusted["bm25_candidate_k"] = min(
+        max(1, int(adjusted.get("bm25_candidate_k") or _LIGHT_PATH_BM25_CANDIDATE_K)),
+        _LIGHT_PATH_BM25_CANDIDATE_K,
+    )
+    adjusted["fts_candidate_k"] = min(
+        max(1, int(adjusted.get("fts_candidate_k") or adjusted.get("keyword_candidate_k") or _LIGHT_PATH_FTS_CANDIDATE_K)),
+        _LIGHT_PATH_FTS_CANDIDATE_K,
+    )
+    adjusted["fusion_candidate_k"] = min(
+        max(1, int(adjusted.get("fusion_candidate_k") or _LIGHT_PATH_FUSION_CANDIDATE_K)),
+        _LIGHT_PATH_FUSION_CANDIDATE_K,
+    )
+    adjusted["rerank_top_n"] = min(
+        max(1, int(adjusted.get("rerank_top_n") or _LIGHT_PATH_RERANK_TOP_N)),
+        _LIGHT_PATH_RERANK_TOP_N,
+    )
+    adjusted["light_path_generation_chunk_limit"] = min(
+        max(1, int(adjusted.get("top_k") or 1)),
+        _LIGHT_PATH_CONTEXT_CHUNK_LIMIT,
+    )
+    return adjusted
 
 
 def _list_vector_tables_with_primary_counts(dsn: str, schema: str) -> list[tuple[str, int]]:
@@ -2013,6 +2182,10 @@ def _count_primary_rows_in_table(dsn: str, raw_table: str) -> int | None:
 
 
 def _resolve_active_vector_table(config: dict[str, Any]) -> str:
+    cached_table = _cached_active_vector_table(config)
+    if cached_table is not None:
+        return cached_table
+
     configured_table = str(config.get("table") or "").strip()
     configured_dsn = str(config.get("dsn") or "").strip()
     schema, _ = _split_table_name(configured_table)
@@ -2029,6 +2202,7 @@ def _resolve_active_vector_table(config: dict[str, Any]) -> str:
         )
         configured_count = None
     if configured_count is not None and configured_count > 0:
+        _store_active_vector_table_cache(config, configured_table)
         return configured_table
 
     try:
@@ -2046,6 +2220,7 @@ def _resolve_active_vector_table(config: dict[str, Any]) -> str:
         None,
     )
     if configured_count is not None and configured_count > 0:
+        _store_active_vector_table_cache(config, configured_table)
         return configured_table
 
     fallback_table = next(
@@ -2058,8 +2233,10 @@ def _resolve_active_vector_table(config: dict[str, Any]) -> str:
             configured_table,
             fallback_table,
         )
+        _store_active_vector_table_cache(config, fallback_table)
         return fallback_table
 
+    _store_active_vector_table_cache(config, configured_table)
     return configured_table
 
 
@@ -2850,6 +3027,33 @@ def _build_extractive_rag_answer(chunks: list[RetrievedChunk]) -> RagAnswer:
     )
 
 
+def _build_answer_profile(
+    config: dict[str, Any],
+    *,
+    use_light_path_fast_model: bool = False,
+) -> ModelProfile:
+    defaults = resolve_model_profile(RAG_ANSWER_SCENARIO)
+    model_name = str(config.get("chat_model") or "").strip() or defaults.model
+    reasoning_effort = str(config.get("reasoning_effort") or "").strip() or defaults.reasoning_effort or "high"
+    fallback_models = tuple(config.get("fallback_models") or defaults.fallback_models)
+    if use_light_path_fast_model:
+        model_name = _LIGHT_PATH_FAST_ANSWER_MODEL
+        reasoning_effort = _LIGHT_PATH_FAST_ANSWER_REASONING_EFFORT
+        fallback_models = ()
+    return ModelProfile(
+        scenario=RAG_ANSWER_SCENARIO,
+        provider="openai",
+        model=model_name,
+        api_mode="openai_responses",
+        api_key=str(config.get("api_key") or "").strip() or defaults.api_key,
+        reasoning_effort=reasoning_effort,
+        temperature=0.0,
+        timeout_seconds=float(config.get("request_timeout_seconds") or defaults.timeout_seconds),
+        max_retries=int(config.get("max_retries") or defaults.max_retries),
+        fallback_models=fallback_models,
+    )
+
+
 def _invoke_llm_payload(
     message: str,
     chunks: list[RetrievedChunk],
@@ -2858,21 +3062,11 @@ def _invoke_llm_payload(
     *,
     packed_evidence: PackedEvidence | None = None,
     product: str | None = None,
+    profile_override: ModelProfile | None = None,
 ) -> dict[str, Any] | None:
     context_block = packed_evidence.prompt_context if packed_evidence is not None else _format_context(chunks)
     prompt = _build_answer_prompt_for_mode(message, context_block, repair_mode=strict_retry)
-    profile = ModelProfile(
-        scenario=RAG_ANSWER_SCENARIO,
-        provider="openai",
-        model=str(config.get("chat_model") or "").strip() or resolve_model_profile(RAG_ANSWER_SCENARIO).model,
-        api_mode="openai_responses",
-        api_key=str(config.get("api_key") or "").strip(),
-        reasoning_effort=str(config.get("reasoning_effort") or "").strip() or "high",
-        temperature=0.0,
-        timeout_seconds=float(config.get("request_timeout_seconds") or 20.0),
-        max_retries=int(config.get("max_retries") or 1),
-        fallback_models=tuple(config.get("fallback_models") or ("gpt-5.4-mini",)),
-    )
+    profile = profile_override or _build_answer_profile(config)
     try:
         response = invoke_responses_text(
             profile=profile,
@@ -2892,21 +3086,11 @@ def _invoke_llm_payload_with_trace(
     *,
     packed_evidence: PackedEvidence | None = None,
     product: str | None = None,
+    profile_override: ModelProfile | None = None,
 ) -> tuple[dict[str, Any] | None, int, int, str | None]:
     context_block = packed_evidence.prompt_context if packed_evidence is not None else _format_context(chunks)
     prompt = _build_answer_prompt_for_mode(message, context_block, repair_mode=strict_retry)
-    profile = ModelProfile(
-        scenario=RAG_ANSWER_SCENARIO,
-        provider="openai",
-        model=str(config.get("chat_model") or "").strip() or resolve_model_profile(RAG_ANSWER_SCENARIO).model,
-        api_mode="openai_responses",
-        api_key=str(config.get("api_key") or "").strip(),
-        reasoning_effort=str(config.get("reasoning_effort") or "").strip() or "high",
-        temperature=0.0,
-        timeout_seconds=float(config.get("request_timeout_seconds") or 20.0),
-        max_retries=int(config.get("max_retries") or 1),
-        fallback_models=tuple(config.get("fallback_models") or ("gpt-5.4-mini",)),
-    )
+    profile = profile_override or _build_answer_profile(config)
     try:
         response = invoke_responses_text(
             profile=profile,
@@ -4061,24 +4245,39 @@ def _run_rag_query_agentic(
 ) -> RagQueryResult | None:
     _ = ticket_id
     _ = customer_id
+    request_started_at = time.perf_counter()
     config = _get_rag_config(top_k=top_k)
-    config["_vector_runtime_available"] = bool(config.get("vector_enabled", True)) and _runtime_capability_available(
-        "vector",
-        provider=str(config.get("embedding_provider") or ""),
+    if not config["dsn"] or not config["api_key"]:
+        return None
+
+    query_type = _infer_query_type(message)
+    preliminary_query_class = _classify_agentic_query(message, None)
+    simple_lexical_query = preliminary_query_class == "lexical_exact" and _is_simple_lexical_query(message)
+    vector_setup_skipped = simple_lexical_query
+    light_path_used = simple_lexical_query
+    preflight_probe_latency_ms = 0.0
+
+    config["_vector_runtime_available"] = (
+        False
+        if vector_setup_skipped
+        else bool(config.get("vector_enabled", True))
+        and _runtime_capability_available(
+            "vector",
+            provider=str(config.get("embedding_provider") or ""),
+        )
     )
     config["_rerank_runtime_available"] = bool(config.get("rerank_enabled", True)) and _runtime_capability_available(
         "rerank",
         provider=str(config.get("rerank_provider") or ""),
     )
-    resolved_table = _resolve_active_vector_table(config)
-    if resolved_table:
-        config["table"] = resolved_table
-    if not config["dsn"] or not config["api_key"]:
-        return None
 
     provider: Any | None = None
     embedding_dimensions = None
-    if bool(config.get("vector_enabled")):
+    if not vector_setup_skipped:
+        resolved_table = _resolve_active_vector_table(config)
+        if resolved_table:
+            config["table"] = resolved_table
+    if bool(config.get("vector_enabled")) and not vector_setup_skipped:
         try:
             provider = get_embedding_provider()
             embedding_dimensions = getattr(provider, "vector_dim", None)
@@ -4086,9 +4285,7 @@ def _run_rag_query_agentic(
             logger.warning("RAG vector retrieval disabled for this query: %s", exc)
             config["vector_enabled"] = False
             config["_vector_runtime_available"] = False
-    query_type = _infer_query_type(message)
-    preliminary_query_class = _classify_agentic_query(message, None)
-    simple_lexical_query = preliminary_query_class == "lexical_exact" and _is_simple_lexical_query(message)
+    preflight_probe_latency_ms = round((time.perf_counter() - request_started_at) * 1000, 2)
     warm_vector_enabled = bool(config.get("vector_enabled")) and not simple_lexical_query
     query_understanding_enabled = _feature_flag_enabled("RAG_QUERY_UNDERSTANDING_ENABLED", True) and not simple_lexical_query
     query_rewrite_enabled = _feature_flag_enabled("RAG_QUERY_REWRITE_ENABLED", True)
@@ -4105,7 +4302,7 @@ def _run_rag_query_agentic(
     effective_query_understanding: QueryUnderstandingResult | None = None
     first_pass_candidate_count = 0
     second_pass_candidate_count = 0
-    total_started_at = time.perf_counter()
+    total_started_at = request_started_at
     vector_latency_ms = 0.0
     bm25_latency_ms = 0.0
     keyword_fallback_latency_ms = 0.0
@@ -4117,6 +4314,8 @@ def _run_rag_query_agentic(
     structured_retry_used = False
     generation_mode = "structured_answer"
     extractive_fallback_used = False
+    answer_profile_used: str | None = None
+    answer_profile_fallback_used = False
     retrieved_chunk_map: dict[str, RetrievedChunk] = {}
     reranked_chunks: list[RetrievedChunk] = []
     final_chunks: list[RetrievedChunk] = []
@@ -4242,6 +4441,9 @@ def _run_rag_query_agentic(
         should_cancel=should_cancel,
         record_cancel_stage=record_cancel_stage,
     )
+    if plan.light_path:
+        config = _apply_light_path_latency_budget(config)
+        light_path_used = True
     warm_seed_tool_results = {
         tool_name: chunks
         for tool_name, chunks in {
@@ -4439,6 +4641,11 @@ def _run_rag_query_agentic(
             execution_mode="agentic",
             agent_fallback_used=False,
             agent_fallback_reason=None,
+            preflight_probe_latency_ms=preflight_probe_latency_ms,
+            vector_setup_skipped=vector_setup_skipped,
+            light_path_used=light_path_used,
+            answer_profile_used=answer_profile_used,
+            answer_profile_fallback_used=answer_profile_fallback_used,
         )
 
     if not final_chunks or final_judge is None or final_judge.decision == "escalate":
@@ -4468,6 +4675,13 @@ def _run_rag_query_agentic(
         query_class=plan.query_class,
         query_type=query_type,
     )
+    if plan.light_path:
+        generation_chunk_limit = int(
+            generation_config.get("light_path_generation_chunk_limit") or _LIGHT_PATH_CONTEXT_CHUNK_LIMIT
+        )
+        final_chunks = list(final_chunks[:generation_chunk_limit])
+        allowed_chunk_ids = {chunk.chunk_id for chunk in final_chunks if chunk.chunk_id}
+        grounded_overlap = _has_grounded_keyword_overlap(message, final_chunks)
     if final_chunks and bool(config.get("context_budget_enabled")):
         _raise_if_cancelled(
             "answer_generation",
@@ -4514,11 +4728,18 @@ def _run_rag_query_agentic(
             grounded_overlap = _has_grounded_keyword_overlap(message, final_chunks)
     payload: dict[str, Any] | None = None
     generation_started_at = time.perf_counter()
+    fast_answer_profile = (
+        _build_answer_profile(generation_config, use_light_path_fast_model=True)
+        if plan.light_path and final_judge.decision == "answer_now"
+        else None
+    )
+    primary_answer_profile = _build_answer_profile(generation_config)
     _raise_if_cancelled(
         "answer_generation",
         should_cancel=should_cancel,
         record_stage=record_cancel_stage,
     )
+    initial_profile = fast_answer_profile or primary_answer_profile
     payload, prompt_tokens, completion_tokens, model_name = _invoke_llm_payload_with_trace(
         message,
         final_chunks,
@@ -4526,12 +4747,40 @@ def _run_rag_query_agentic(
         strict_retry=False,
         packed_evidence=packed_evidence,
         product=product,
+        profile_override=initial_profile,
     )
+    answer_profile_used = model_name or initial_profile.model
     retry_required = (
         payload is None
         or not _is_valid_response(payload, allowed_chunk_ids)
         or (payload.get("insufficient_evidence") is True and grounded_overlap)
     )
+    if retry_required and fast_answer_profile is not None:
+        answer_profile_fallback_used = True
+        _raise_if_cancelled(
+            "answer_generation",
+            should_cancel=should_cancel,
+            record_stage=record_cancel_stage,
+        )
+        retry_payload, retry_prompt_tokens, retry_completion_tokens, retry_model_name = _invoke_llm_payload_with_trace(
+            message,
+            final_chunks,
+            generation_config,
+            strict_retry=False,
+            packed_evidence=packed_evidence,
+            product=product,
+            profile_override=primary_answer_profile,
+        )
+        prompt_tokens += retry_prompt_tokens
+        completion_tokens += retry_completion_tokens
+        model_name = retry_model_name or model_name
+        answer_profile_used = model_name or primary_answer_profile.model
+        payload = retry_payload
+        retry_required = (
+            payload is None
+            or not _is_valid_response(payload, allowed_chunk_ids)
+            or (payload.get("insufficient_evidence") is True and grounded_overlap)
+        )
     if retry_required:
         structured_retry_used = True
         _raise_if_cancelled(
@@ -4546,10 +4795,12 @@ def _run_rag_query_agentic(
             strict_retry=True,
             packed_evidence=packed_evidence,
             product=product,
+            profile_override=primary_answer_profile,
         )
         prompt_tokens += retry_prompt_tokens
         completion_tokens += retry_completion_tokens
         model_name = retry_model_name or model_name
+        answer_profile_used = model_name or primary_answer_profile.model
         payload = retry_payload
     generation_latency_ms = (time.perf_counter() - generation_started_at) * 1000
 

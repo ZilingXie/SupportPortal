@@ -105,6 +105,17 @@ _SOURCE_TYPE_TO_ENTRY_TYPE = {
 }
 
 
+def _invalidate_active_vector_table_cache_best_effort() -> None:
+    try:
+        from backend.services.rag_qa import clear_active_vector_table_cache
+    except Exception:
+        return
+    try:
+        clear_active_vector_table_cache()
+    except Exception as exc:
+        LOGGER.warning("Failed to invalidate RAG active vector table cache: %s", exc)
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -2008,6 +2019,7 @@ class PostgresKnowledgeRepository:
 
     def initialize(self) -> None:
         with self._connect() as conn:
+            backfilled_bm25_rows = 0
             with conn.cursor() as cur:
                 # Serialize repository bootstrap across multi-worker processes.
                 # `CREATE EXTENSION IF NOT EXISTS vector` is not concurrency-safe
@@ -3172,9 +3184,11 @@ class PostgresKnowledgeRepository:
                     )
                 )
                 if self._bm25_backfill_on_init or self._bootstrap_bm25_on_startup:
-                    self._backfill_bm25_index_if_needed(cur=cur)
+                    backfilled_bm25_rows = self._backfill_bm25_index_if_needed(cur=cur)
                 self._record_bootstrap_version(cur=cur)
             conn.commit()
+        if backfilled_bm25_rows > 0:
+            _invalidate_active_vector_table_cache_best_effort()
 
     def _ensure_bm25_tables(self, *, cur: psycopg.Cursor[Any]) -> None:
         cur.execute(
@@ -5420,6 +5434,7 @@ class PostgresKnowledgeRepository:
                         rows=[],
                     )
                 conn.commit()
+            _invalidate_active_vector_table_cache_best_effort()
             return 0
 
         columns = [
@@ -5524,6 +5539,7 @@ class PostgresKnowledgeRepository:
                     rows=rows,
                 )
             conn.commit()
+        _invalidate_active_vector_table_cache_best_effort()
         return len(rows)
 
     def record_rag_query_run(

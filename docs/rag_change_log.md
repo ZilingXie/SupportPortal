@@ -2207,3 +2207,27 @@ For each new entry, record:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_dashboard_ui_contract.py -k elevates_question_mark_above_circle_background`
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_dashboard_ui_contract.py`
   - `git diff --check`
+
+## 2026-04-04 - Agentic RAG light path skips vector preflight and writes telemetry asynchronously
+
+- Summary:
+  - Reordered the agentic RAG entry path so simple lexical FAQ queries classify light-path intent before any vector-table probing or embedding-provider initialization.
+  - Added a 60-second in-process cache for active vector-table resolution, plus cache invalidation after chunk replacement and BM25 backfill.
+  - Parallelized light-path `p_bm25 + p_fts` retrieval, reduced light-path candidate budgets, capped answer-generation context to three primary chunks, and moved RAG query telemetry persistence off the request thread with async best-effort enqueueing.
+  - Extended RAG traces and diagnostics with preflight latency, vector-setup skip, light-path usage, answer profile, answer-profile fallback, and async telemetry mode markers.
+- Reason:
+  - Local measurement showed three avoidable latency buckets for `how to join channel`: vector preflight before lexical-only retrieval, synchronous telemetry persistence after answer generation, and oversized light-path retrieval/generation budgets.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/rag_api.py`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_rag_api.py`
+  - `backend/tests/test_knowledge_repository_bm25.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema changes.
+  - Active vector-table resolution now reuses a process-local TTL cache and is explicitly invalidated after chunk replacement/backfill paths complete.
+  - RAG query telemetry is now eventually consistent because request threads enqueue persistence work instead of waiting for synchronous DB writes to finish.
+- Verification:
+  - `/Users/xieziling/.config/superpowers/worktrees/SupportPortal/rag-latency-opt/.venv/bin/python -m unittest backend.tests.test_rag_qa backend.tests.test_rag_api backend.tests.test_knowledge_repository_bm25`
