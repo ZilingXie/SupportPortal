@@ -519,6 +519,52 @@ For each new entry, record:
   - `uv run --with pytest --with fastapi --with pydantic --with python-dotenv --with python-multipart --with redis --with httpx --with 'psycopg[binary]' python -m pytest -q backend/tests/test_prompt_modules.py backend/tests/test_ticket_orchestrator.py backend/tests/test_troubleshooting_intake.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py backend/tests/test_llm_profiles.py backend/tests/test_rag_qa.py backend/tests/test_rag_api.py`
   - `python3 scripts/verify_feature_list.py`
   - `python3 -m py_compile backend/rag_api.py backend/services/llm_profiles.py backend/services/prompts/rag_agent_planner.py backend/services/prompts/rag_answer.py backend/services/prompts/troubleshooting_intake.py backend/services/rag_qa.py backend/services/support_products.py backend/services/ticket_orchestrator.py backend/services/troubleshooting_intake.py`
+- `git diff --check`
+
+- Date: 2026-04-04
+- Area or subsystem: Client acknowledgement experiment routing and benchmark instrumentation
+- Prompt or model version: `client-ack-experiment-v1`
+- Summary: Added runtime-selectable client acknowledgement experiment modes so the UI can compare the existing `gpt-5.4-nano` proxy-text acknowledgement against a browser Realtime WebRTC acknowledgement path (`gpt-realtime-mini`) and optionally shadow-run the non-visible path for latency benchmarking.
+- Reason: We need measurable evidence before changing the default acknowledgement path, including comparable latency, fallback-hit rate, and empty/error rate across the safe proxy-text and browser-Realtime implementations.
+- Affected files or config:
+  - `backend/main.py`
+  - `ui/client-ui/app.js`
+  - `ui/client-ui/index.html`
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `CLIENT_ACK_EXPERIMENT_MODE`
+  - `CLIENT_ACK_FALLBACK_TIMEOUT_MS`
+  - `CLIENT_ACK_BENCHMARK_ENABLED`
+- Expected behavior change:
+  - The default client acknowledgement path remains `proxy_text`, still using `gpt-5.4-nano` with `reasoning_effort=none`.
+  - Runtime config can switch the visible path to `browser_realtime` or enable `dual_shadow`, where the UI keeps rendering the primary path while recording benchmark metrics for the hidden Realtime path.
+  - The client now records normalized acknowledgement timing metrics and can post benchmark samples plus aggregate reports without changing durable ticket history.
+- Verification:
+  - `source /tmp/supportportal-finalize-venv/bin/activate && python -m unittest backend.tests.test_client_ui_contract backend.tests.test_investigation_flow backend.tests.test_single_host_compose backend.tests.test_llm_profiles`
+  - `node --check ui/client-ui/app.js`
+
+- Date: 2026-04-04
+- Area or subsystem: Client acknowledgement prompt delivery
+- Prompt or model version: `client-ack-proxy-only-v2`
+- Summary: Removed the client acknowledgement experiment modes and reverted the UI to a single proxy-text acknowledgement path that always calls `/api/client/ack` with `gpt-5.4-nano`, while increasing the proxy timeout and UI fallback budget from `1.25s/1500ms` to `2.0s/2000ms`.
+- Reason: The experiment modes added dead paths and extra runtime/config surface area without improving the acknowledgement SLA, so the client needs one predictable proxy-only path with a slightly larger budget before falling back to static copy.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/services/llm_profiles.py`
+  - `ui/client-ui/app.js`
+  - `ui/client-ui/index.html`
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `CLIENT_ACK_TIMEOUT_SECONDS`
+  - `CLIENT_ACK_FALLBACK_TIMEOUT_MS`
+- Expected behavior change:
+  - Client send flows no longer fetch runtime ack config, request Realtime sessions, or post benchmark samples.
+  - The only transient model ack path is `/api/client/ack`, using `gpt-5.4-nano` with `reasoning_effort=none`.
+  - The UI now waits up to `2000ms` for the proxy model ack before rendering localized static fallback copy.
+- Verification:
+  - `source /tmp/supportportal-finalize-venv/bin/activate && python -m unittest backend.tests.test_llm_profiles backend.tests.test_single_host_compose backend.tests.test_investigation_flow backend.tests.test_client_ui_contract`
+  - `python3 -m py_compile backend/main.py backend/services/llm_profiles.py`
+  - `node --check ui/client-ui/app.js`
   - `git diff --check`
 
 - Date: 2026-04-04

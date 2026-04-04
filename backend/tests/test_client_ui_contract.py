@@ -136,8 +136,8 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260404-client-ack-product-scope-2", html)
-        self.assertIn('./app.js?v=20260404-client-ack-product-scope-2', html)
+        self.assertIn("./styles.css?v=20260404-client-ack-proxy-only-1", html)
+        self.assertIn('./app.js?v=20260404-client-ack-proxy-only-1', html)
         self.assertIn("AI-SOLVING", app_source)
         self.assertIn("Session History", app_source)
         self.assertIn('navigate("/chat");', app_source)
@@ -691,7 +691,7 @@ class ClientUiContractTests(unittest.TestCase):
                 if (!calls.some((entry) => entry.url === "/api/tickets/query")) {
                   throw new Error("Expected ticket query endpoint to be called.");
                 }
-                if (!scheduledTimeouts.some((entry) => entry.delay === 1500)) {
+                if (!scheduledTimeouts.some((entry) => entry.delay === 2000)) {
                   throw new Error("Expected client ack fallback timeout to be scheduled.");
                 }
 
@@ -720,6 +720,8 @@ class ClientUiContractTests(unittest.TestCase):
                     error: null,
                   }),
                 });
+                await Promise.resolve();
+                await Promise.resolve();
                 await Promise.resolve();
                 await Promise.resolve();
 
@@ -804,7 +806,7 @@ class ClientUiContractTests(unittest.TestCase):
                   throw new Error("Localized fallback should not render before the timeout fires.");
                 }
 
-                const fallbackTimer = scheduledTimeouts.find((entry) => entry.delay === 1500);
+                const fallbackTimer = scheduledTimeouts.find((entry) => entry.delay === 2000);
                 if (!fallbackTimer) {
                   throw new Error("Expected fallback timer to be scheduled.");
                 }

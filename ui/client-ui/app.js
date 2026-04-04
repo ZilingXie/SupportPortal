@@ -5,7 +5,7 @@ const AUTH_KEY = "helpdesk_auth_user";
 const TICKETS_KEY = "helpdesk_tickets";
 const COUNTER_KEY = "helpdesk_ticket_counter";
 const MAX_RECENT = 5;
-const CLIENT_ACK_FALLBACK_TIMEOUT_MS = 1500;
+const DEFAULT_CLIENT_ACK_FALLBACK_TIMEOUT_MS = 2000;
 const STATUS_FOLLOWUP_MARKERS = [
   "any update",
   "status update",
@@ -100,7 +100,6 @@ const state = {
   pendingClientAck: null,
   pendingAckAbortController: null,
   pendingAckFallbackTimerId: null,
-  pendingAckSocket: null,
 };
 let clientSocket = null;
 let clientReconnectTimer = null;
@@ -354,18 +353,6 @@ function closePendingAckTransport() {
     state.pendingAckAbortController.abort();
   }
   state.pendingAckAbortController = null;
-  if (state.pendingAckSocket) {
-    state.pendingAckSocket.onopen = null;
-    state.pendingAckSocket.onmessage = null;
-    state.pendingAckSocket.onerror = null;
-    state.pendingAckSocket.onclose = null;
-    try {
-      state.pendingAckSocket.close();
-    } catch {
-      // Ignore transport close errors during cleanup.
-    }
-    state.pendingAckSocket = null;
-  }
 }
 
 function getRenderableMessages(ticket) {
@@ -1952,6 +1939,32 @@ async function stopGeneration() {
   state.pendingAbortController.abort();
 }
 
+async function requestProxyTextAck(ticketId, message, controller) {
+  try {
+    const response = await fetch("/api/client/ack", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller?.signal,
+      body: JSON.stringify({
+        ticket_id: ticketId,
+        customer_id: state.user?.id || "",
+        message,
+      }),
+    });
+    if (!response.ok) {
+      return { ackText: "", source: "client_model" };
+    }
+    const payload = await response.json();
+    const ackText = String(payload?.ack_text || "").trim();
+    return {
+      ackText,
+      source: String(payload?.source || "client_model").trim() || "client_model",
+    };
+  } catch (error) {
+    return { ackText: "", source: "client_model" };
+  }
+}
+
 async function startClientAck(ticketId, message) {
   const normalizedTicketId = String(ticketId || "").trim();
   const fallbackText = buildStaticClientAck(message);
@@ -1964,58 +1977,26 @@ async function startClientAck(ticketId, message) {
     if (state.pendingAckAbortController !== controller) {
       return;
     }
-    state.pendingAckAbortController = null;
-    if (state.pendingAckFallbackTimerId === fallbackTimerId) {
-      state.pendingAckFallbackTimerId = null;
-    }
-    if (typeof controller.abort === "function") {
-      controller.abort();
-    }
+    closePendingAckTransport();
     setTransientClientAck(normalizedTicketId, fallbackText, { source: "fallback" });
     render();
-  }, CLIENT_ACK_FALLBACK_TIMEOUT_MS);
+  }, DEFAULT_CLIENT_ACK_FALLBACK_TIMEOUT_MS);
   state.pendingAckFallbackTimerId = fallbackTimerId;
 
-  let payload = null;
-  try {
-    const response = await fetch("/api/client/ack", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-      body: JSON.stringify({
-        ticket_id: normalizedTicketId,
-        customer_id: state.user?.id || "",
-        message,
-      }),
-    });
-    if (!response.ok) {
-      return;
-    }
-    payload = await response.json();
-  } catch (error) {
-    if (error?.name === "AbortError") {
-      return;
-    }
-    return;
-  }
+  const result = await requestProxyTextAck(normalizedTicketId, message, controller);
 
   if (state.pendingAckAbortController !== controller) {
     return;
   }
 
-  const ackText = String(payload?.ack_text || "").trim();
+  const ackText = String(result?.ackText || "").trim();
   if (!ackText) {
     return;
   }
-  clearTimeout(fallbackTimerId);
-  if (state.pendingAckFallbackTimerId === fallbackTimerId) {
-    state.pendingAckFallbackTimerId = null;
-  }
-  if (state.pendingAckAbortController === controller) {
-    state.pendingAckAbortController = null;
-  }
+
+  closePendingAckTransport();
   setTransientClientAck(normalizedTicketId, ackText, {
-    source: String(payload?.source || "client_model").trim() || "client_model",
+    source: String(result?.source || "client_model").trim() || "client_model",
   });
   render();
 }

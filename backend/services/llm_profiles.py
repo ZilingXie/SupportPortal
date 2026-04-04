@@ -161,7 +161,7 @@ def resolve_model_profile(
             api_key=_openai_api_key(),
             reasoning_effort=_clean_text(os.getenv("CLIENT_ACK_REASONING_EFFORT")) or "none",
             temperature=0.0,
-            timeout_seconds=_safe_positive_float_env("CLIENT_ACK_TIMEOUT_SECONDS", 1.25),
+            timeout_seconds=_safe_positive_float_env("CLIENT_ACK_TIMEOUT_SECONDS", 2.0),
             max_retries=1,
             fallback_models=(),
         )

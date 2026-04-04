@@ -6,8 +6,6 @@ import logging
 import os
 import re
 import time
-import urllib.error
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -156,9 +154,6 @@ OPTIMISTIC_PARALLEL_ROUTE_ENABLED = _env_flag("OPTIMISTIC_PARALLEL_ROUTE_ENABLED
 KNOWLEDGE_OFFICIAL_MAX_BYTES = _safe_int_env("KNOWLEDGE_OFFICIAL_MAX_BYTES", 5 * 1024 * 1024)
 KNOWLEDGE_ARTICLE_MAX_CHARS = _safe_int_env("KNOWLEDGE_ARTICLE_MAX_CHARS", 120000)
 CLIENT_ACK_MAX_OUTPUT_TOKENS = _safe_int_env("CLIENT_ACK_MAX_OUTPUT_TOKENS", 32)
-CLIENT_ACK_SESSION_MODEL = (os.getenv("CLIENT_ACK_SESSION_MODEL") or "gpt-realtime-mini").strip() or "gpt-realtime-mini"
-CLIENT_ACK_SESSION_MAX_OUTPUT_TOKENS = _safe_int_env("CLIENT_ACK_SESSION_MAX_OUTPUT_TOKENS", 48)
-CLIENT_ACK_SESSION_TTL_SECONDS = _safe_int_env("CLIENT_ACK_SESSION_TTL_SECONDS", 60)
 
 
 def now_iso() -> str:
@@ -167,10 +162,6 @@ def now_iso() -> str:
 
 def _optimistic_parallel_enabled() -> bool:
     return bool(ASYNC_QUERY_ENABLED and OPTIMISTIC_PARALLEL_ROUTE_ENABLED)
-
-
-def _client_ack_fallback_text(message: str) -> str:
-    return build_initial_ack(message).text
 
 
 def _build_client_ack_instructions() -> str:
@@ -192,101 +183,6 @@ def _build_client_ack_user_prompt(message: str) -> str:
 
 def _normalize_client_ack_text(value: Any) -> str:
     return " ".join(str(value or "").split()).strip()
-
-
-def _create_client_ack_session_payload(message: str) -> dict[str, Any]:
-    _ = message
-    return {
-        "session": {
-            "type": "realtime",
-            "model": CLIENT_ACK_SESSION_MODEL,
-            "instructions": _build_client_ack_instructions(),
-            "output_modalities": ["text"],
-            "max_output_tokens": CLIENT_ACK_SESSION_MAX_OUTPUT_TOKENS,
-        }
-    }
-
-
-def _json_loads_bytes(raw: bytes) -> Any:
-    text = raw.decode("utf-8", errors="replace").strip()
-    if not text:
-        return {}
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return {"message": text}
-
-
-def _create_client_ack_session(message: str) -> dict[str, Any]:
-    fallback_text = _client_ack_fallback_text(message)
-    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
-    response_payload: dict[str, Any] = {
-        "enabled": False,
-        "provider": "openai_realtime",
-        "model": CLIENT_ACK_SESSION_MODEL,
-        "fallback_text": fallback_text,
-        "max_output_tokens": CLIENT_ACK_SESSION_MAX_OUTPUT_TOKENS,
-        "session_ttl_seconds": CLIENT_ACK_SESSION_TTL_SECONDS,
-        "instructions": _build_client_ack_instructions(),
-        "reasoning_effort": "none",
-        "expires_at": None,
-        "client_secret": None,
-    }
-    if not api_key:
-        response_payload["disabled_reason"] = "missing_openai_api_key"
-        return response_payload
-
-    request = urllib.request.Request(
-        "https://api.openai.com/v1/realtime/client_secrets",
-        data=json.dumps(_create_client_ack_session_payload(message), ensure_ascii=False).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=10.0) as response:
-            payload = _json_loads_bytes(response.read())
-    except urllib.error.HTTPError as exc:
-        LOGGER.warning("Client ack session request failed with HTTP %s", exc.code)
-        payload = _json_loads_bytes(exc.read())
-        response_payload["disabled_reason"] = f"http_{exc.code}"
-        response_payload["error"] = payload
-        return response_payload
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        LOGGER.warning("Client ack session request failed: %s", exc)
-        response_payload["disabled_reason"] = "request_failed"
-        return response_payload
-
-    if not isinstance(payload, dict):
-        response_payload["disabled_reason"] = "invalid_payload"
-        return response_payload
-
-    client_secret = payload.get("client_secret")
-    secret_value = (
-        str(client_secret.get("value") or "").strip()
-        if isinstance(client_secret, dict)
-        else str(payload.get("value") or payload.get("client_secret") or "").strip()
-    )
-    expires_at = (
-        str(client_secret.get("expires_at") or "").strip()
-        if isinstance(client_secret, dict)
-        else str(payload.get("expires_at") or "").strip()
-    )
-    if not secret_value:
-        response_payload["disabled_reason"] = "missing_client_secret"
-        response_payload["error"] = payload
-        return response_payload
-
-    response_payload.update(
-        {
-            "enabled": True,
-            "client_secret": secret_value,
-            "expires_at": expires_at or None,
-        }
-    )
-    return response_payload
 
 
 def _create_client_ack(message: str) -> dict[str, Any]:
@@ -332,7 +228,7 @@ class TicketQueryRequest(BaseModel):
     message: str = Field(min_length=1)
 
 
-class ClientAckSessionRequest(BaseModel):
+class ClientAckRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     ticket_id: str | None = Field(default=None, max_length=128)
     customer_id: str | None = Field(default=None, max_length=128)
@@ -1710,13 +1606,8 @@ def get_knowledge_ingestion(ingestion_id: str) -> dict[str, Any]:
     except RagServiceError as exc:
         _raise_rag_service_http_error(exc)
 
-@app.post("/api/client/ack/session")
-def create_client_ack_session(request: ClientAckSessionRequest) -> dict[str, Any]:
-    return _create_client_ack_session(request.message)
-
-
 @app.post("/api/client/ack")
-def create_client_ack(request: ClientAckSessionRequest) -> dict[str, Any]:
+def create_client_ack(request: ClientAckRequest) -> dict[str, Any]:
     return _create_client_ack(request.message)
 
 

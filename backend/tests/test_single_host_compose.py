@@ -69,7 +69,7 @@ class SingleHostComposeTests(unittest.TestCase):
             content,
         )
         self.assertIn(
-            "CLIENT_ACK_TIMEOUT_SECONDS: ${CLIENT_ACK_TIMEOUT_SECONDS:-1.25}",
+            "CLIENT_ACK_TIMEOUT_SECONDS: ${CLIENT_ACK_TIMEOUT_SECONDS:-2.0}",
             content,
         )
         self.assertIn(
@@ -77,19 +77,11 @@ class SingleHostComposeTests(unittest.TestCase):
             content,
         )
         self.assertIn(
-            "CLIENT_ACK_SESSION_MODEL: ${CLIENT_ACK_SESSION_MODEL:-gpt-realtime-mini}",
-            content,
-        )
-        self.assertIn(
-            "CLIENT_ACK_SESSION_MAX_OUTPUT_TOKENS: ${CLIENT_ACK_SESSION_MAX_OUTPUT_TOKENS:-48}",
-            content,
-        )
-        self.assertIn(
-            "CLIENT_ACK_SESSION_TTL_SECONDS: ${CLIENT_ACK_SESSION_TTL_SECONDS:-60}",
-            content,
-        )
-        self.assertIn(
             "OPTIMISTIC_PARALLEL_ROUTE_ENABLED: ${OPTIMISTIC_PARALLEL_ROUTE_ENABLED:-true}",
+            content,
+        )
+        self.assertIn(
+            "CLIENT_ACK_FALLBACK_TIMEOUT_MS: ${CLIENT_ACK_FALLBACK_TIMEOUT_MS:-2000}",
             content,
         )
 
