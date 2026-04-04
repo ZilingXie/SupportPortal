@@ -15,6 +15,7 @@ RAG_SUFFICIENCY_SCENARIO = "rag_sufficiency_judge"
 QUERY_EXPANSION_SCENARIO = "query_expansion"
 RAG_AGENT_PLANNER_SCENARIO = "rag_agent_planner"
 RAG_CONTEXT_COMPRESSION_SCENARIO = "rag_context_compression"
+TROUBLESHOOTING_INTAKE_SCENARIO = "troubleshooting_intake"
 ENGINEER_HELPER_SCENARIO = "engineer_helper"
 KNOWLEDGE_INGESTION_SCENARIO = "knowledge_ingestion_metadata"
 BENCHMARK_JUDGE_SCENARIO = "benchmark_judge"
@@ -212,6 +213,19 @@ def resolve_model_profile(
             reasoning_effort=_clean_text(os.getenv("RAG_CONTEXT_COMPRESSION_REASONING_EFFORT")) or "low",
             temperature=0.0,
             timeout_seconds=_safe_positive_float_env("RAG_CONTEXT_COMPRESSION_TIMEOUT_SECONDS", 8.0),
+            max_retries=1,
+            fallback_models=(),
+        )
+    if scenario == TROUBLESHOOTING_INTAKE_SCENARIO:
+        return ModelProfile(
+            scenario=scenario,
+            provider="openai",
+            model=_clean_text(os.getenv("TROUBLESHOOTING_INTAKE_MODEL")) or "gpt-5.4-mini",
+            api_mode=OPENAI_RESPONSES_API,
+            api_key=_openai_api_key(),
+            reasoning_effort=_clean_text(os.getenv("TROUBLESHOOTING_INTAKE_REASONING_EFFORT")) or "low",
+            temperature=_safe_float_env("TROUBLESHOOTING_INTAKE_TEMPERATURE", 0.0),
+            timeout_seconds=_safe_positive_float_env("TROUBLESHOOTING_INTAKE_TIMEOUT_SECONDS", 8.0),
             max_retries=1,
             fallback_models=(),
         )

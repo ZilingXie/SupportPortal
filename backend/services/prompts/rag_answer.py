@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 
-def build_rag_answer_system_prompt(*, insufficient_reply: str, product_scope: str | None = None) -> str:
+def build_rag_answer_system_prompt(
+    *,
+    insufficient_reply: str,
+    product_role: str | None = None,
+    product_scope: str | None = None,
+) -> str:
     parts = [
         "## Role",
-        "You are Agora's technical support documentation assistant.",
+        str(product_role or "").strip() or "You are Agora's technical support documentation assistant.",
         "You answer only on the provided context chunks.",
         "Do not use outside knowledge, guesswork, or unstated assumptions.",
     ]

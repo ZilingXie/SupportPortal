@@ -45,7 +45,10 @@ from backend.services.query_understanding import (
     understand_rag_query,
 )
 from backend.services.rag_tokenizer import is_bm25_query_stopword, tokenize_bm25_query
-from backend.services.support_products import build_support_product_prompt_scope
+from backend.services.support_products import (
+    build_support_product_prompt_scope,
+    build_support_product_rag_role,
+)
 
 logger = logging.getLogger(__name__)
 _QUERY_STOPWORDS = {
@@ -90,6 +93,7 @@ AGENT_PLAN_VERSION = "v1"
 def _build_answer_system_prompt(product: str | None = None) -> str:
     return build_rag_answer_system_prompt(
         insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
+        product_role=build_support_product_rag_role(product),
         product_scope=build_support_product_prompt_scope(product),
     )
 
@@ -531,6 +535,7 @@ def _invoke_agentic_planner(
     query_understanding: QueryUnderstandingResult | None,
     top_k: int,
     round_index: int,
+    product: str | None,
 ) -> dict[str, Any] | None:
     profile = resolve_model_profile(RAG_AGENT_PLANNER_SCENARIO)
     if not profile.api_key:
@@ -546,7 +551,10 @@ def _invoke_agentic_planner(
     try:
         response = invoke_responses_text(
             profile=profile,
-            system_prompt=build_rag_agent_planner_system_prompt(),
+            system_prompt=build_rag_agent_planner_system_prompt(
+                product_role=build_support_product_rag_role(product),
+                product_scope=build_support_product_prompt_scope(product),
+            ),
             user_prompt=build_rag_agent_planner_user_prompt(
                 message=message,
                 ticket_context=ticket_context,
@@ -570,6 +578,7 @@ def _build_agentic_retrieval_plan(
     top_k: int,
     query_understanding: QueryUnderstandingResult | None,
     ticket_context: list[dict[str, str]] | None,
+    product: str | None,
 ) -> AgenticRetrievalPlan:
     planner_payload = _invoke_agentic_planner(
         message=message,
@@ -577,6 +586,7 @@ def _build_agentic_retrieval_plan(
         query_understanding=query_understanding,
         top_k=top_k,
         round_index=1,
+        product=product,
     )
     if isinstance(planner_payload, dict):
         query_class = str(planner_payload.get("query_class") or "").strip().lower()
@@ -4035,6 +4045,7 @@ def _run_rag_query_agentic(
         top_k=int(config["top_k"]),
         query_understanding=effective_query_understanding or query_understanding,
         ticket_context=ticket_context,
+        product=product,
     )
     warm_seed_tool_results = {
         tool_name: chunks

@@ -30,12 +30,13 @@ _RETRYABLE_STORAGE_ERROR_SNIPPETS = (
 _ResultT = TypeVar("_ResultT")
 _VALID_MESSAGE_SENTIMENTS = {"good", "bad", "neutral"}
 _TICKET_SCHEMA_VERSION_KEY = "ticket_flow_schema_version"
-_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v5"
+_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v6"
 _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
     "2026-single-ai-managed-v2",
     "2026-single-ai-managed-v3",
     "2026-single-ai-managed-v4",
     "2026-single-ai-managed-v5",
+    "2026-single-ai-managed-v6",
 }
 
 
@@ -81,6 +82,40 @@ def _normalize_message_sentiment_label(value: Any) -> str | None:
 def _normalize_product(value: Any) -> str | None:
     normalized = str(value or "").strip().lower()
     return normalized or None
+
+
+def _normalize_client_intake_state(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    normalized: dict[str, Any] = copy.deepcopy(value)
+    normalized["phase"] = str(normalized.get("phase") or "").strip() or None
+    normalized["product"] = _normalize_product(normalized.get("product"))
+    normalized["issue_mode"] = str(normalized.get("issue_mode") or "").strip().lower() or None
+    known_information = normalized.get("known_information")
+    if isinstance(known_information, dict):
+        normalized["known_information"] = {
+            str(key or "").strip().lower(): " ".join(str(item or "").split()).strip()
+            for key, item in known_information.items()
+            if str(key or "").strip() and " ".join(str(item or "").split()).strip()
+        }
+    else:
+        normalized["known_information"] = {}
+    missing_information = normalized.get("missing_information")
+    if isinstance(missing_information, list):
+        normalized["missing_information"] = [
+            str(item or "").strip().lower()
+            for item in missing_information
+            if str(item or "").strip()
+        ]
+    else:
+        normalized["missing_information"] = []
+    normalized["ready_for_engineer_ticket"] = bool(normalized.get("ready_for_engineer_ticket"))
+    normalized["last_updated_at"] = (
+        _to_iso(normalized.get("last_updated_at"))
+        if normalized.get("last_updated_at") is not None
+        else None
+    )
+    return normalized
 
 
 def _safe_positive_int(value: Any, default_value: int) -> int:
@@ -378,6 +413,7 @@ class InMemoryTicketRepository:
         item["active_engineer_case_id"] = str(item.get("active_engineer_case_id") or "").strip() or None
         item["engineer_case_count"] = _safe_non_negative_int(item.get("engineer_case_count"), 0)
         item["product"] = _normalize_product(item.get("product"))
+        item["client_intake_state"] = _normalize_client_intake_state(item.get("client_intake_state"))
         if not isinstance(item.get("messages"), list):
             item["messages"] = []
         return item
@@ -410,6 +446,7 @@ class InMemoryTicketRepository:
             0,
         )
         saved_ticket["product"] = _normalize_product(saved_ticket.get("product"))
+        saved_ticket["client_intake_state"] = _normalize_client_intake_state(saved_ticket.get("client_intake_state"))
         if not isinstance(saved_ticket.get("messages"), list):
             saved_ticket["messages"] = []
         self._tickets[ticket_id] = saved_ticket
@@ -962,6 +999,7 @@ class PostgresTicketRepository:
                             active_engineer_case_id TEXT,
                             engineer_case_count INTEGER NOT NULL DEFAULT 0,
                             product TEXT,
+                            client_intake_state JSONB,
                             created_at TIMESTAMPTZ NOT NULL,
                             updated_at TIMESTAMPTZ NOT NULL
                         )
@@ -982,6 +1020,11 @@ class PostgresTicketRepository:
                     sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS product TEXT").format(
                         self._table("support_tickets")
                     )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS client_intake_state JSONB"
+                    ).format(self._table("support_tickets"))
                 )
                 cur.execute(
                     sql.SQL(
@@ -1607,9 +1650,15 @@ class PostgresTicketRepository:
         messages: list[dict[str, Any]],
     ) -> dict[str, Any]:
         has_product_column = len(row) >= 11
+        has_client_intake_state_column = len(row) >= 12
         product = _normalize_product(row[8]) if has_product_column else None
-        created_at = _to_iso(row[9] if has_product_column else row[8])
-        updated_at = _to_iso(row[10] if has_product_column else row[9])
+        client_intake_state = (
+            _normalize_client_intake_state(row[9]) if has_client_intake_state_column else None
+        )
+        created_at_index = 10 if has_client_intake_state_column else 9 if has_product_column else 8
+        updated_at_index = 11 if has_client_intake_state_column else 10 if has_product_column else 9
+        created_at = _to_iso(row[created_at_index])
+        updated_at = _to_iso(row[updated_at_index])
         return {
             "ticket_id": str(row[0]),
             "customer_id": str(row[1]),
@@ -1620,6 +1669,7 @@ class PostgresTicketRepository:
             "active_engineer_case_id": str(row[6]).strip() if row[6] is not None and str(row[6]).strip() else None,
             "engineer_case_count": _safe_non_negative_int(row[7], 0),
             "product": product,
+            "client_intake_state": client_intake_state,
             "created_at": created_at,
             "updated_at": updated_at,
             "messages": messages,
@@ -1643,6 +1693,7 @@ class PostgresTicketRepository:
                 active_engineer_case_id,
                 engineer_case_count,
                 product,
+                client_intake_state,
                 created_at,
                 updated_at
             FROM {}
@@ -1722,6 +1773,7 @@ class PostgresTicketRepository:
         active_engineer_case_id = str(ticket.get("active_engineer_case_id") or "").strip() or None
         engineer_case_count = _safe_non_negative_int(ticket.get("engineer_case_count"), 0)
         product = _normalize_product(ticket.get("product"))
+        client_intake_state = _normalize_client_intake_state(ticket.get("client_intake_state"))
 
         def _operation(conn: psycopg.Connection[Any]) -> None:
             with conn.transaction():
@@ -1739,10 +1791,11 @@ class PostgresTicketRepository:
                                 active_engineer_case_id,
                                 engineer_case_count,
                                 product,
+                                client_intake_state,
                                 created_at,
                                 updated_at
                             )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             ON CONFLICT (ticket_id) DO UPDATE SET
                                 customer_id = EXCLUDED.customer_id,
                                 requester = EXCLUDED.requester,
@@ -1752,6 +1805,7 @@ class PostgresTicketRepository:
                                 active_engineer_case_id = EXCLUDED.active_engineer_case_id,
                                 engineer_case_count = EXCLUDED.engineer_case_count,
                                 product = EXCLUDED.product,
+                                client_intake_state = EXCLUDED.client_intake_state,
                                 updated_at = EXCLUDED.updated_at
                             """
                         ).format(self._table("support_tickets")),
@@ -1765,6 +1819,7 @@ class PostgresTicketRepository:
                             active_engineer_case_id,
                             engineer_case_count,
                             product,
+                            Json(client_intake_state) if client_intake_state else None,
                             created_at,
                             updated_at,
                         ),

@@ -16,12 +16,19 @@ from backend.services.support_router import (
     SupportRouteDecision,
     decide_support_route,
 )
+from backend.services.troubleshooting_intake import (
+    build_client_intake_state,
+    evaluate_troubleshooting_intake,
+)
 
 RAG_INSUFFICIENT_EVIDENCE_REASON = "rag_insufficient_evidence"
 RAG_SERVICE_ERROR_REASON = "rag_service_error"
 RAG_UNAVAILABLE_REASON = "rag_unavailable"
 RAG_POST_CHECK_INSUFFICIENT_REASON = "rag_post_check_insufficient"
 RAG_POST_CHECK_ERROR_REASON = "rag_post_check_error"
+WORKFLOW_ACTION_ANSWER_CUSTOMER = "answer_customer"
+WORKFLOW_ACTION_CLARIFY_CUSTOMER_FOR_INTAKE = "clarify_customer_for_intake"
+WORKFLOW_ACTION_OPEN_ENGINEER_TICKET = "open_engineer_ticket"
 _GENERIC_HOW_TO_RE = re.compile(r"^\s*(how\s+(?:do\s+i\s+)?(?:to|can\s+i)|what\s+is|what\s+are)\b", re.IGNORECASE)
 _TROUBLESHOOTING_SIGNAL_RE = re.compile(
     r"\b(android|ios|macos|windows|linux|flutter|react native|unity|electron|sdk|version|error|"
@@ -86,9 +93,11 @@ class TicketExecutionResult:
     search_used: bool
     matched_signals: list[str] = field(default_factory=list)
     investigation_reason: str | None = None
+    workflow_action: str = WORKFLOW_ACTION_ANSWER_CUSTOMER
+    client_intake_state: dict[str, Any] | None = None
 
     def route_payload(self) -> dict[str, Any]:
-        return {
+        payload = {
             "answer_route": self.answer_route,
             "scope_label": self.scope_label,
             "route_family": self.route_family,
@@ -98,7 +107,17 @@ class TicketExecutionResult:
             "route_confidence": round(float(self.route_confidence), 4),
             "search_used": bool(self.search_used),
             "matched_signals": list(self.matched_signals),
+            "workflow_action": self.workflow_action,
         }
+        if isinstance(self.client_intake_state, dict):
+            payload["client_intake_phase"] = str(self.client_intake_state.get("phase") or "").strip()
+            payload["client_intake_ready_for_engineer_ticket"] = bool(
+                self.client_intake_state.get("ready_for_engineer_ticket")
+            )
+            payload["client_intake_missing_information"] = list(
+                self.client_intake_state.get("missing_information") or []
+            )
+        return payload
 
 
 def build_execution_route_payload(execution: Any) -> dict[str, Any]:
@@ -116,6 +135,7 @@ def build_execution_route_payload(execution: Any) -> dict[str, Any]:
         "execution_action",
         "tooling_profile",
         "route_reason",
+        "workflow_action",
     ):
         value = getattr(execution, field_name, None)
         normalized = str(value or "").strip()
@@ -133,6 +153,13 @@ def build_execution_route_payload(execution: Any) -> dict[str, Any]:
     matched_signals = getattr(execution, "matched_signals", None)
     if isinstance(matched_signals, list):
         payload["matched_signals"] = list(matched_signals)
+    client_intake_state = getattr(execution, "client_intake_state", None)
+    if isinstance(client_intake_state, dict):
+        payload["client_intake_phase"] = str(client_intake_state.get("phase") or "").strip()
+        payload["client_intake_ready_for_engineer_ticket"] = bool(
+            client_intake_state.get("ready_for_engineer_ticket")
+        )
+        payload["client_intake_missing_information"] = list(client_intake_state.get("missing_information") or [])
     return payload
 
 
@@ -287,6 +314,7 @@ def orchestrate_ticket_execution(
     ticket_subject: str | None = None,
     ticket_context: list[dict[str, str]] | None = None,
     product: str | None = None,
+    client_intake_state: dict[str, Any] | None = None,
     decision: SupportRouteDecision | None = None,
     resolution_builder: Callable[..., SupportResolution],
 ) -> TicketExecutionResult:
@@ -314,12 +342,59 @@ def orchestrate_ticket_execution(
 
     needs_investigating = bool(skill_result.needs_investigating)
     investigation_reason: str | None = None
+    workflow_action = WORKFLOW_ACTION_ANSWER_CUSTOMER
+    next_client_intake_state: dict[str, Any] | None = None
     if needs_investigating and execution_plan.execution_action == "rag":
         normalized_route_reason = str(skill_result.route_reason or "").strip().lower()
         if normalized_route_reason in {RAG_SERVICE_ERROR_REASON, RAG_UNAVAILABLE_REASON}:
             investigation_reason = normalized_route_reason
+            workflow_action = WORKFLOW_ACTION_OPEN_ENGINEER_TICKET
         else:
             investigation_reason = RAG_INSUFFICIENT_EVIDENCE_REASON
+            intake_result = evaluate_troubleshooting_intake(
+                message=message,
+                product=product,
+                ticket_subject=ticket_subject,
+                ticket_context=ticket_context,
+                current_state=client_intake_state,
+                rag_result={
+                    "reason": investigation_reason,
+                    "answer": skill_result.answer,
+                    "evidence_summary": dict(skill_result.evidence_summary or {}) or {},
+                    "packed_evidence": dict(skill_result.packed_evidence or {}) or {},
+                },
+            )
+            if intake_result.issue_mode == "investigation":
+                next_client_intake_state = build_client_intake_state(
+                    intake_result,
+                    product=product,
+                )
+                if intake_result.ready_for_engineer_ticket:
+                    workflow_action = WORKFLOW_ACTION_OPEN_ENGINEER_TICKET
+                else:
+                    needs_investigating = False
+                    investigation_reason = None
+                    workflow_action = WORKFLOW_ACTION_CLARIFY_CUSTOMER_FOR_INTAKE
+                    skill_result = SkillExecutionResult(
+                        answer=intake_result.customer_reply,
+                        confidence=skill_result.confidence,
+                        sources=[],
+                        citations=[],
+                        needs_investigating=False,
+                        answer_route=skill_result.answer_route,
+                        scope_label=skill_result.scope_label,
+                        route_family=skill_result.route_family,
+                        execution_action=skill_result.execution_action,
+                        tooling_profile=skill_result.tooling_profile,
+                        route_reason=RAG_INSUFFICIENT_EVIDENCE_REASON,
+                        route_confidence=skill_result.route_confidence,
+                        search_used=skill_result.search_used,
+                        matched_signals=list(skill_result.matched_signals),
+                        evidence_summary=dict(skill_result.evidence_summary or {}) or None,
+                        packed_evidence=dict(skill_result.packed_evidence or {}) or None,
+                    )
+            else:
+                workflow_action = WORKFLOW_ACTION_OPEN_ENGINEER_TICKET
     elif execution_plan.requires_sufficiency_assessment:
         try:
             sufficiency = assess_rag_answer_sufficiency(
@@ -332,6 +407,7 @@ def orchestrate_ticket_execution(
         except Exception:
             needs_investigating = True
             investigation_reason = RAG_POST_CHECK_ERROR_REASON
+            workflow_action = WORKFLOW_ACTION_OPEN_ENGINEER_TICKET
         else:
             if sufficiency.decision == "investigate":
                 if not _should_keep_generic_grounded_rag_answer(
@@ -341,6 +417,9 @@ def orchestrate_ticket_execution(
                 ):
                     needs_investigating = True
                     investigation_reason = RAG_POST_CHECK_INSUFFICIENT_REASON
+                    workflow_action = WORKFLOW_ACTION_OPEN_ENGINEER_TICKET
+    elif needs_investigating:
+        workflow_action = WORKFLOW_ACTION_OPEN_ENGINEER_TICKET
 
     next_status = INVESTIGATING_STATUS if needs_investigating else COMMUNICATING_STATUS
     return TicketExecutionResult(
@@ -362,6 +441,8 @@ def orchestrate_ticket_execution(
         search_used=skill_result.search_used,
         matched_signals=list(skill_result.matched_signals),
         investigation_reason=investigation_reason,
+        workflow_action=workflow_action,
+        client_intake_state=next_client_intake_state,
     )
 
 

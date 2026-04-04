@@ -378,3 +378,30 @@ For each new entry, record:
   - `python3 -m py_compile backend/main.py backend/rag_api.py backend/services/prompts/rag_answer.py backend/services/prompts/router.py backend/services/rag_qa.py backend/services/rag_service_client.py backend/services/support_products.py backend/services/support_router.py backend/services/support_router_prompt.py backend/services/ticket_orchestrator.py backend/worker.py`
   - `node --check ui/client-ui/app.js`
   - `git diff --check`
+
+- Date: 2026-04-04
+- Area or subsystem: Product-scoped RAG planner, RAG answer, and troubleshooting intake prompts
+- Prompt or model version: `rag-v5-product-troubleshooting-intake`
+- Summary: Upgraded product-scoped prompt wiring so Audio/Video Calling and Cloud Recording now inject explicit product role text into the RAG planner and answer prompts, and added a dedicated troubleshooting intake prompt/model path that asks customers for missing investigation identifiers before opening engineer tickets.
+- Reason: Product selection should not only bias answer phrasing; it also needs to steer retrieval planning and troubleshooting intake so symptom-style issues collect the minimum product-specific investigation data instead of escalating too early.
+- Affected files or config:
+  - `backend/rag_api.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/services/prompts/rag_agent_planner.py`
+  - `backend/services/prompts/rag_answer.py`
+  - `backend/services/prompts/troubleshooting_intake.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/support_products.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/services/troubleshooting_intake.py`
+  - `docs/feature_list.md`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Product-scoped RAG planner prompts now plan retrieval as Agora support for the selected product instead of using a generic retrieval role.
+  - Product-scoped RAG answer prompts now answer as Agora support for the selected product instead of only receiving a generic product scope section.
+  - When RAG returns `rag_insufficient_evidence`, troubleshooting-style issues now use a dedicated intake prompt/model path to decide whether to ask for `channel_name` / `problematic_uid` / `issue_timestamp` or `sid` / `issue_timestamp` before engineer escalation.
+- Verification:
+  - `uv run --with pytest --with fastapi --with pydantic --with python-dotenv --with python-multipart --with redis --with httpx --with 'psycopg[binary]' python -m pytest -q backend/tests/test_prompt_modules.py backend/tests/test_ticket_orchestrator.py backend/tests/test_troubleshooting_intake.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py backend/tests/test_llm_profiles.py backend/tests/test_rag_qa.py backend/tests/test_rag_api.py`
+  - `python3 scripts/verify_feature_list.py`
+  - `python3 -m py_compile backend/rag_api.py backend/services/llm_profiles.py backend/services/prompts/rag_agent_planner.py backend/services/prompts/rag_answer.py backend/services/prompts/troubleshooting_intake.py backend/services/rag_qa.py backend/services/support_products.py backend/services/ticket_orchestrator.py backend/services/troubleshooting_intake.py`
+  - `git diff --check`

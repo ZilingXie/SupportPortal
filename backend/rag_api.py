@@ -61,7 +61,7 @@ PRIMARY_RAG_WORKBENCH_PAGES = (
     "diagnosis",
     "review",
 )
-RAG_PROMPT_VERSION = "rag-v4-product-scope"
+RAG_PROMPT_VERSION = "rag-v5-product-troubleshooting-intake"
 
 
 def _build_quality_signals(

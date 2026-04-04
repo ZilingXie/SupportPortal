@@ -183,6 +183,14 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("ALTER TABLE {} ADD COLUMN IF NOT EXISTS product TEXT", repo_source)
         self.assertIn('"product"', repo_source)
 
+    def test_ticket_storage_contract_includes_client_intake_state_field(self) -> None:
+        sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
+        repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+
+        self.assertIn("client_intake_state JSONB", sql_source)
+        self.assertIn("ALTER TABLE {} ADD COLUMN IF NOT EXISTS client_intake_state JSONB", repo_source)
+        self.assertIn('"client_intake_state"', repo_source)
+
     def test_ticket_repository_requires_ticket_db_dsn(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(RuntimeError):
@@ -513,6 +521,82 @@ class RepositoryConfigurationTests(unittest.TestCase):
 
         self.assertIsNotNone(ticket)
         self.assertEqual(ticket["product"], "audio_video_calling")
+
+    def test_ticket_repository_save_ticket_persists_client_intake_state(self) -> None:
+        repository = PostgresTicketRepository(dsn="postgresql://example")
+        cursor = _ReusableCursor()
+        connection = _ReusableConnection(cursor)
+        ticket = {
+            "ticket_id": "T-1",
+            "customer_id": "C-1",
+            "requester": "Requester",
+            "subject": "Subject",
+            "status": "communicating",
+            "product": "audio_video_calling",
+            "client_intake_state": {
+                "phase": "gather_customer_inputs",
+                "product": "audio_video_calling",
+                "issue_mode": "investigation",
+                "known_information": {"issue_symptom": "black screen"},
+                "missing_information": ["channel_name", "problematic_uid", "issue_timestamp"],
+                "ready_for_engineer_ticket": False,
+                "last_updated_at": "2026-04-04T00:00:00+00:00",
+            },
+            "last_engineer_action": None,
+            "created_at": "2026-03-31T00:00:00+00:00",
+            "updated_at": "2026-03-31T00:00:00+00:00",
+        }
+
+        with patch("backend.repositories.ticket_repository.psycopg.connect", return_value=connection):
+            repository.save_ticket(ticket, new_messages=[])
+
+        insert_args = cursor.executed[0][0]
+        self.assertIn("client_intake_state", str(insert_args[0]).lower())
+        self.assertIn("gather_customer_inputs", str(insert_args[1]))
+
+    def test_ticket_repository_get_ticket_round_trips_client_intake_state(self) -> None:
+        repository = PostgresTicketRepository(dsn="postgresql://example")
+        connection = _ReusableConnection(
+            _ReusableCursor(
+                fetchall_results=[
+                    [
+                        (
+                            "T-1",
+                            "C-1",
+                            "Requester",
+                            "Subject",
+                            "communicating",
+                            None,
+                            None,
+                            0,
+                            "audio_video_calling",
+                            {
+                                "phase": "gather_customer_inputs",
+                                "product": "audio_video_calling",
+                                "issue_mode": "investigation",
+                                "known_information": {"issue_symptom": "black screen"},
+                                "missing_information": ["channel_name", "problematic_uid", "issue_timestamp"],
+                                "ready_for_engineer_ticket": False,
+                                "last_updated_at": "2026-04-04T00:00:00+00:00",
+                            },
+                            "2026-03-31T00:00:00+00:00",
+                            "2026-03-31T00:00:00+00:00",
+                        )
+                    ]
+                ]
+            )
+        )
+
+        with patch("backend.repositories.ticket_repository.psycopg.connect", return_value=connection):
+            with patch.object(repository, "_fetch_messages", return_value={"T-1": []}):
+                ticket = repository.get_ticket("T-1")
+
+        self.assertIsNotNone(ticket)
+        self.assertEqual(ticket["client_intake_state"]["phase"], "gather_customer_inputs")
+        self.assertEqual(
+            ticket["client_intake_state"]["missing_information"],
+            ["channel_name", "problematic_uid", "issue_timestamp"],
+        )
 
     def test_ticket_repository_retries_save_investigation_after_retryable_query_disconnect(self) -> None:
         repository = PostgresTicketRepository(dsn="postgresql://example")

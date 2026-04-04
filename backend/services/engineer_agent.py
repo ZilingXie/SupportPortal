@@ -127,6 +127,11 @@ def build_engineer_handoff_packet(
         if isinstance(existing.get("rag_result"), dict)
         else {}
     )
+    existing_client_intake_state = (
+        existing.get("client_intake_state")
+        if isinstance(existing.get("client_intake_state"), dict)
+        else None
+    )
     normalized_route_summary = dict(existing_route_summary)
     if isinstance(route_summary, dict):
         for key in (
@@ -172,14 +177,33 @@ def build_engineer_handoff_packet(
             normalized_rag_result["evidence_summary"] = evidence_summary
     if not normalized_rag_result:
         normalized_rag_result = _latest_rag_result_from_messages(ticket)
+    normalized_client_intake_state = (
+        {
+            "phase": _clean_text(ticket["client_intake_state"].get("phase")),
+            "product": _clean_text(ticket["client_intake_state"].get("product")),
+            "issue_mode": _clean_text(ticket["client_intake_state"].get("issue_mode")),
+            "known_information": (
+                dict(ticket["client_intake_state"].get("known_information"))
+                if isinstance(ticket["client_intake_state"].get("known_information"), dict)
+                else {}
+            ),
+            "missing_information": _clean_list(ticket["client_intake_state"].get("missing_information")),
+            "ready_for_engineer_ticket": bool(ticket["client_intake_state"].get("ready_for_engineer_ticket")),
+            "last_updated_at": _clean_text(ticket["client_intake_state"].get("last_updated_at")),
+        }
+        if isinstance(ticket.get("client_intake_state"), dict)
+        else existing_client_intake_state
+    )
 
     return {
         "source": _clean_text(source) or _clean_text(existing.get("source")) or "support_query",
+        "product": _clean_text(ticket.get("product")) or _clean_text(existing.get("product")),
         "conversation_summary": _build_conversation_summary(ticket),
         "latest_customer_message": latest_customer_message(ticket),
         "latest_client_ai_reply": latest_public_assistant_message(ticket),
         "route_summary": normalized_route_summary,
         "rag_result": normalized_rag_result,
+        "client_intake_state": normalized_client_intake_state,
         "unresolved_reason": _clean_text(trigger_reason)
         or _clean_text(existing.get("unresolved_reason"))
         or _clean_text(normalized_route_summary.get("route_reason"))

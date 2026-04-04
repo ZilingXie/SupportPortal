@@ -108,9 +108,11 @@ class PromptModuleTests(unittest.TestCase):
     def test_rag_answer_system_prompt_includes_selected_product_scope(self) -> None:
         system_prompt = build_rag_answer_system_prompt(
             insufficient_reply="INSUFFICIENT",
+            product_role="You are Agora tech support handling a Cloud Recording issue.",
             product_scope="Selected support product: Cloud Recording.",
         )
 
+        self.assertIn("Cloud Recording issue", system_prompt)
         self.assertIn("## Product Scope", system_prompt)
         self.assertIn("Cloud Recording", system_prompt)
 
@@ -180,7 +182,10 @@ class PromptModuleTests(unittest.TestCase):
         self.assertIn("nodejs", decomposition_user)
 
     def test_rag_agent_planner_prompt_is_sectioned_and_ticket_context_aware(self) -> None:
-        system_prompt = build_rag_agent_planner_system_prompt()
+        system_prompt = build_rag_agent_planner_system_prompt(
+            product_role="You are Agora tech support handling an Audio/Video Calling issue.",
+            product_scope="Selected support product: Audio/Video Calling.",
+        )
         user_prompt = build_rag_agent_planner_user_prompt(
             message="What does error 109 mean?",
             ticket_context=[{"role": "customer", "content": "We only see this on iOS 4.6.0"}],
@@ -196,6 +201,8 @@ class PromptModuleTests(unittest.TestCase):
 
         self.assertIn("## Role", system_prompt)
         self.assertIn("You plan retrieval only", system_prompt)
+        self.assertIn("Audio/Video Calling issue", system_prompt)
+        self.assertIn("## Product Scope", system_prompt)
         self.assertIn("## Output Requirements", system_prompt)
         self.assertIn("## Latest User Question", user_prompt)
         self.assertIn("## Ticket Context", user_prompt)
