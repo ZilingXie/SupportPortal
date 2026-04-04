@@ -54,6 +54,106 @@ const ROUTING_SUMMARY_PERCENT_KEYS = new Set([
   "false_positive_to_agora_rag",
   "false_negative_for_true_agora_tech",
 ]);
+const SUMMARY_METRIC_EXPLANATIONS = {
+  "answer_relevance_score":
+    "Measures how well the final answer addresses the user question. Higher is better because answers stay closer to the requested intent and are less likely to drift.",
+  "avg_chunk_tokens":
+    "Measures the average chunk length in tokens across the indexed knowledge base. The best result is a balanced value because chunks that are too short lose context and chunks that are too long add noise.",
+  "benchmark_p95_total_latency_ms":
+    "Measures the 95th percentile end-to-end latency across benchmark cases in the selected run. Lower is better because fewer benchmark cases experience slow outlier latency.",
+  "benchmark_review_sample_count":
+    "Measures how many benchmark samples are currently in the review queue. Lower is better when quality is stable because fewer benchmark disagreements still need manual inspection.",
+  "benchmark_throughput_cases_per_sec":
+    "Measures how many benchmark cases the system processes per second during the selected run. Higher is better because benchmark execution finishes faster at the same workload.",
+  "case_execution_error_rate":
+    "Measures how often benchmark cases fail to complete because of execution errors instead of quality misses. Lower is better because fewer cases are blocked by runtime failures.",
+  "citation_correctness_score":
+    "Measures whether the answer cites the right evidence for its claims. Higher is better because answers are more defensible and less likely to point to the wrong source.",
+  "context_relevance_score":
+    "Measures how well the retrieved context matches what the answer actually needs. Higher is better because the model is working from evidence that is more on-topic.",
+  "coverage_row_count":
+    "Measures how many benchmark supply coverage rows are available for the current mirrored catalog. Higher is better because more benchmark slices are represented in the audit view.",
+  "dataset_review_sample_count":
+    "Measures how many dataset candidate samples are waiting in the review queue. Lower is better when operations are healthy because fewer dataset promotions still need manual decisions.",
+  "dataset_version_count":
+    "Measures how many mirrored dataset versions exist in the current benchmark supply inventory. Higher is better only when expected because it indicates the catalog has been mirrored and versioned.",
+  "document_ndcg_at_5":
+    "Measures ranking quality for supporting documents in the top five results, giving more credit when the best documents appear earlier. Higher is better because useful documents are surfaced near the top.",
+  "document_precision_at_5":
+    "Measures the share of top five retrieved documents that are actually relevant. Higher is better because fewer irrelevant documents are taking up top result slots.",
+  "document_recall_at_5":
+    "Measures how much of the relevant document set is recovered within the top five documents. Higher is better because retrieval is missing fewer useful documents.",
+  "error_rate":
+    "Measures the share of live requests that ended in an error. Lower is better because fewer user requests fail before a usable answer is returned.",
+  "evidence_coverage":
+    "Measures how much of the expected gold evidence is covered by the retrieved context. Higher is better because more of the needed evidence is actually present for answer generation.",
+  "evidence_ndcg_at_5":
+    "Measures ranking quality for gold evidence chunks in the top five results, weighting earlier hits more heavily. Higher is better because the right evidence shows up sooner.",
+  "evidence_precision_at_5":
+    "Measures the share of top five retrieved chunks that belong to the expected evidence set. Higher is better because less irrelevant evidence is crowding the answer context.",
+  "evidence_recall_at_5":
+    "Measures how much of the expected evidence set appears within the top five retrieved chunks. Higher is better because retrieval is bringing back more of the evidence the answer needs.",
+  "execution_action_accuracy":
+    "Measures how often the chosen execution action matches the expected action for the case. Higher is better because the workflow is selecting the right downstream handling path more consistently.",
+  "faithfulness_score":
+    "Measures whether the answer stays grounded in the supplied evidence instead of inventing unsupported claims. Higher is better because answers are less likely to hallucinate.",
+  "false_negative_for_true_agora_tech":
+    "Measures how often cases that should route into Agora technology handling are sent somewhere else. Lower is better because fewer true tech cases are being missed by the router.",
+  "false_positive_to_agora_rag":
+    "Measures how often non-RAG cases are incorrectly routed into the Agora RAG path. Lower is better because fewer requests are being over-routed into the wrong pipeline.",
+  "gold_item_count":
+    "Measures how many gold benchmark items are present in the mirrored dataset inventory. Higher is better because more reviewed benchmark cases are available as trusted reference data.",
+  "hallucination_rate":
+    "Measures how often the generated answer contains unsupported or invented content. Lower is better because fewer answers are fabricating facts beyond the retrieved evidence.",
+  "index_freshness_minutes":
+    "Measures how old the indexed knowledge is in minutes relative to the latest source state. Lower is better because fresher indexes reduce stale-answer risk.",
+  "ingestion_job_count_24h":
+    "Measures how many ingestion jobs ran in the last 24 hours. Higher is better only when expected because it shows the supply pipeline is actively processing updates.",
+  "judge_error_rate":
+    "Measures how often the evaluation judge layer failed or returned unusable scoring output. Lower is better because benchmark quality signals are more complete and reliable.",
+  "live_review_sample_count":
+    "Measures how many live-query samples are waiting in the review queue. Lower is better when operations are healthy because risky live traffic is being reviewed promptly.",
+  "mrr":
+    "Measures the reciprocal rank of the first relevant retrieval hit, averaged across cases. Higher is better because the first useful result tends to appear earlier.",
+  "ndcg_at_5":
+    "Measures ranking quality for the top five retrieved results, with earlier relevant hits weighted more heavily. Higher is better because the result list is ordered more usefully.",
+  "noise_rate":
+    "Measures how much irrelevant retrieval content appears in the selected evidence set. Lower is better because the answer model sees less distracting context.",
+  "p50_generation_latency_ms":
+    "Measures the median generation latency for live traffic. Lower is better because a typical user receives the generated answer faster.",
+  "p95_retrieval_latency_ms":
+    "Measures the 95th percentile retrieval latency for live traffic. Lower is better because fewer live requests suffer from slow retrieval outliers.",
+  "p95_total_latency_ms":
+    "Measures the 95th percentile end-to-end latency for live traffic. Lower is better because tail latency is under better control for real users.",
+  "pending_review_count":
+    "Measures how many total review items are still pending across benchmark, live, and dataset queues. Lower is better because the human feedback loop is keeping up with incoming work.",
+  "precision_at_5":
+    "Measures the share of top five retrieved results that are relevant to the case. Higher is better because more of the top-ranked results are useful.",
+  "recall_at_5":
+    "Measures how much of the relevant result set is recovered within the top five retrieval slots. Higher is better because fewer relevant results are missed.",
+  "requests_per_minute":
+    "Measures the live traffic rate in requests per minute. Higher is not automatically good or bad because it mainly describes current load on the system.",
+  "response_completeness_score":
+    "Measures whether the answer covers the important parts of the expected response. Higher is better because answers are less likely to omit needed details.",
+  "response_policy_followed_rate":
+    "Measures how often answers follow the expected response policy for the benchmark case. Higher is better because policy behavior is more consistent and compliant.",
+  "reviewed_throughput":
+    "Measures how many review items have already been marked reviewed in the current queue snapshot. Higher is better because the team is clearing manual review work faster.",
+  "route_family_accuracy":
+    "Measures how often the system chose the correct top-level route family for the case. Higher is better because fewer requests are sent down the wrong pipeline before retrieval or answer generation starts.",
+  "timeout_rate":
+    "Measures the share of live requests that timed out before finishing. Lower is better because fewer users are waiting past the system time limit.",
+  "tooling_profile_accuracy":
+    "Measures how often the selected tooling profile matches the expected tooling setup for the case. Higher is better because the system is invoking the right tool posture more consistently.",
+};
+const SUMMARY_METRIC_EXPLANATION_OVERRIDES = {
+  "scorecard": {
+    "route_family_accuracy":
+      "This overview tile summarizes how often the selected benchmark run chose the correct route family. Higher is better because routing mistakes cascade into retrieval and answer-quality failures later in the flow.",
+    "benchmark_p95_total_latency_ms":
+      "This overview tile shows the slow-tail end-to-end latency snapshot for the selected benchmark run at the 95th percentile. Lower is better because fewer benchmark cases are experiencing slow outlier latency.",
+  },
+};
 
 const LOCAL_BENCHMARK_CATALOG = [
   {
@@ -82,6 +182,7 @@ let caseDetailLoadToken = 0;
 let diagnosisDetailLoadToken = 0;
 let lastCaseDetailFocusEl = null;
 let activeCaseDetailState = null;
+let activeMetricHelpEl = null;
 
 const DEFAULT_RAG_FILTERS = {
   range: "7d",
@@ -225,6 +326,49 @@ function buildChipList(values, tone = "neutral") {
   return items.map((item) => `<span class="chip chip-${tone}">${escapeHtml(item)}</span>`).join("");
 }
 
+function buildMetricHelpId(pageName, metricKey) {
+  const normalizedPage = normalizeString(pageName).toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+  const normalizedMetricKey = normalizeString(metricKey).toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+  return `metric-help-${normalizedPage}-${normalizedMetricKey}`;
+}
+
+function resolveSummaryMetricExplanation(pageName, metricKey) {
+  const normalizedPage = normalizeString(pageName);
+  const normalizedMetricKey = normalizeString(metricKey);
+  if (!normalizedPage || !normalizedMetricKey) {
+    return "";
+  }
+  const pageOverrides = SUMMARY_METRIC_EXPLANATION_OVERRIDES[normalizedPage] || {};
+  return pageOverrides[normalizedMetricKey] || SUMMARY_METRIC_EXPLANATIONS[normalizedMetricKey] || "";
+}
+
+function buildMetricLabel(label, key, options = {}) {
+  const explanationPage = normalizeString(options.summaryTooltipPage);
+  const explanation = explanationPage ? resolveSummaryMetricExplanation(explanationPage, key) : "";
+  if (!explanation) {
+    return `<span class="metric-label">${escapeHtml(label)}</span>`;
+  }
+  const tooltipId = buildMetricHelpId(explanationPage, key);
+  return `
+    <div class="metric-label-row">
+      <span class="metric-label">${escapeHtml(label)}</span>
+      <span class="metric-help" data-metric-help data-open="false">
+        <button
+          type="button"
+          class="metric-help-trigger"
+          data-metric-help-trigger
+          aria-describedby="${escapeHtml(tooltipId)}"
+          aria-expanded="false"
+          aria-label="${escapeHtml(`Explain ${label}`)}"
+        >
+          <span class="metric-help-trigger-label" aria-hidden="true">?</span>
+        </button>
+        <span id="${escapeHtml(tooltipId)}" class="metric-help-tooltip" role="tooltip">${escapeHtml(explanation)}</span>
+      </span>
+    </div>
+  `;
+}
+
 function buildMetricCards(cards, options = {}) {
   const formatters = options.formatters || {};
   const entries = Object.entries(cards || {}).filter(([, value]) => value !== null && value !== undefined && value !== "");
@@ -238,9 +382,10 @@ function buildMetricCards(cards, options = {}) {
           ([key, value]) => {
             const formatter = formatters[key];
             const displayValue = formatter ? formatter(value, key) : formatMetricValue(value, key);
+            const label = humanizeLabel(key);
             return `
             <article class="metric-card">
-              <span class="metric-label">${escapeHtml(humanizeLabel(key))}</span>
+              ${buildMetricLabel(label, key, options)}
               <strong class="metric-value">${displayValue}</strong>
             </article>
           `;
@@ -1974,7 +2119,7 @@ function renderScorecardPage(payload) {
         <p>${escapeHtml(summary.subtitle || "Read routing, retrieval, generation, and business outcomes together.")}</p>
       </div>
       ${buildExperimentComparisonControls(summary, payload.benchmark_selector)}
-      ${buildMetricCards(summary.cards || {})}
+      ${buildMetricCards(summary.cards || {}, { summaryTooltipPage: "scorecard" })}
     </section>
     ${buildBenchmarkSessionPanel(payload.benchmark_session)}
     ${buildUsageSummaryPanel(overviewUsageSummary.title || "Token Summary", overviewUsageSummary.cards || {}, {
@@ -2050,9 +2195,9 @@ function renderRoutingPage(payload) {
       </div>
       ${buildMetricCards(summary.cards || {}, {
         formatters: buildRoutingSummaryCardFormatters(summary.cards || {}),
+        summaryTooltipPage: "routing",
       })}
     </section>
-    ${buildBenchmarkSessionPanel(payload.benchmark_session)}
     ${buildTableSection("Per Category Route Health", categoryPassRate, {
       columns: ["category", "case_count", "pass_rate"],
       emptyLabel: "No routing slices available yet.",
@@ -2103,9 +2248,8 @@ function renderRetrievalDashboardPage(payload) {
         <h2>${escapeHtml(summary.title || "Retrieval")}</h2>
         <p>${escapeHtml(summary.subtitle || "Check whether the right chunks arrived before blaming synthesis.")}</p>
       </div>
-      ${buildMetricCards(summary.cards || {})}
+      ${buildMetricCards(summary.cards || {}, { summaryTooltipPage: "retrieval" })}
     </section>
-    ${buildBenchmarkSessionPanel(payload.benchmark_session)}
     ${buildCaseExplorerSection("Retrieval Errors", incorrectRows, {
       subtitle: "Every retrieval-eligible case where the miss was attributed to retrieval.",
       tone: "danger",
@@ -2154,9 +2298,8 @@ function renderGenerationDashboardPage(payload) {
         <h2>${escapeHtml(summary.title || "Generation")}</h2>
         <p>${escapeHtml(summary.subtitle || "Track correctness, relevance, faithfulness, and policy adherence.")}</p>
       </div>
-      ${buildMetricCards(summary.cards || {})}
+      ${buildMetricCards(summary.cards || {}, { summaryTooltipPage: "generation" })}
     </section>
-    ${buildBenchmarkSessionPanel(payload.benchmark_session)}
     ${buildCaseExplorerSection("Generation Errors", incorrectRows, {
       subtitle: "Cases where answer quality or policy behavior failed after routing.",
       tone: "danger",
@@ -2214,9 +2357,8 @@ function renderDataSupplyPage(payload) {
         <h2>${escapeHtml(summary.title || "Data Supply")}</h2>
         <p>${escapeHtml(summary.subtitle || "Keep benchmark quality and knowledge-base health separate.")}</p>
       </div>
-      ${buildMetricCards(summary.cards || {})}
+      ${buildMetricCards(summary.cards || {}, { summaryTooltipPage: "data-supply" })}
     </section>
-    ${buildBenchmarkSessionPanel(payload.benchmark_session)}
     <section class="panel-card">
       <div class="panel-header">
         <div>
@@ -2354,7 +2496,6 @@ function renderDiagnosisPage(payload) {
   const selectedListKey = summary.selected_list_key || "top_regressions";
 
   root.innerHTML = `
-    ${buildBenchmarkSessionPanel(payload.benchmark_session)}
     <div class="diagnosis-layout">
       <div class="diagnosis-chooser-stack">
         ${buildDiagnosisChooserSection("Top Regressions", sampleList.top_regressions || [], "danger", {
@@ -2577,9 +2718,8 @@ function renderPerformancePage(payload) {
         <h2>${escapeHtml(summary.title || "Performance")}</h2>
         <p>${escapeHtml(summary.subtitle || "Read benchmark execution health together with live proxy latency and reliability.")}</p>
       </div>
-      ${buildMetricCards(summary.cards || {})}
+      ${buildMetricCards(summary.cards || {}, { summaryTooltipPage: "performance" })}
     </section>
-    ${buildBenchmarkSessionPanel(payload.benchmark_session)}
     ${groups.map(buildGroupBlock).join("")}
     <div class="two-column-grid">
       ${buildSampleList("Recent Risky Cases", sampleList.risky_cases || [], "danger")}
@@ -2739,9 +2879,8 @@ function renderReviewPage(payload) {
         <h2>${escapeHtml(summary.title || "Review Queue")}</h2>
         <p>${escapeHtml(summary.subtitle || "Review high-risk live traffic and disputed benchmark samples directly from this queue.")}</p>
       </div>
-      ${buildMetricCards(summary.cards || {})}
+      ${buildMetricCards(summary.cards || {}, { summaryTooltipPage: "review" })}
     </section>
-    ${buildBenchmarkSessionPanel(payload.benchmark_session)}
     ${buildReviewQueue(reviewQueue.pending_rows || [], "Pending First")}
     <div class="two-column-grid">
       ${buildReviewQueue(reviewQueue.benchmark_rows || [], "Benchmark Samples")}
@@ -2888,7 +3027,51 @@ function clearBenchmarkCaseSelection() {
   ragFilters.test_case_id = "";
 }
 
+function closeMetricHelp(container, options = {}) {
+  if (!container) {
+    return;
+  }
+  const trigger = container.querySelector("[data-metric-help-trigger]");
+  container.dataset.open = "false";
+  if (trigger) {
+    trigger.setAttribute("aria-expanded", "false");
+    if (options.restoreFocus && trigger instanceof HTMLElement) {
+      trigger.focus();
+    }
+  }
+  if (activeMetricHelpEl === container) {
+    activeMetricHelpEl = null;
+  }
+}
+
+function openMetricHelp(container) {
+  if (!container) {
+    return;
+  }
+  if (activeMetricHelpEl && activeMetricHelpEl !== container) {
+    closeMetricHelp(activeMetricHelpEl);
+  }
+  const trigger = container.querySelector("[data-metric-help-trigger]");
+  container.dataset.open = "true";
+  if (trigger) {
+    trigger.setAttribute("aria-expanded", "true");
+  }
+  activeMetricHelpEl = container;
+}
+
+function toggleMetricHelp(container) {
+  if (!container) {
+    return;
+  }
+  if (container.dataset.open === "true") {
+    closeMetricHelp(container);
+    return;
+  }
+  openMetricHelp(container);
+}
+
 function applyPagePayload(pageName, payload) {
+  closeMetricHelp(activeMetricHelpEl);
   pageRenderers[pageName]?.render(payload);
   renderBenchmarkRunSelector(payload?.benchmark_selector);
   updateScopeLabel();
@@ -3220,7 +3403,42 @@ function openDatasetsPage() {
   });
 }
 
+function handleDocumentFocusIn(event) {
+  if (!activeMetricHelpEl) {
+    return;
+  }
+  if (activeMetricHelpEl.contains(event.target)) {
+    return;
+  }
+  closeMetricHelp(activeMetricHelpEl);
+}
+
+function handleMetricHelpMouseOut(event) {
+  if (!activeMetricHelpEl) {
+    return;
+  }
+  const helpContainer = event.target instanceof Element ? event.target.closest("[data-metric-help]") : null;
+  if (helpContainer !== activeMetricHelpEl) {
+    return;
+  }
+  if (event.relatedTarget instanceof Node && activeMetricHelpEl.contains(event.relatedTarget)) {
+    return;
+  }
+  if (document.activeElement instanceof Node && activeMetricHelpEl.contains(document.activeElement)) {
+    return;
+  }
+  closeMetricHelp(activeMetricHelpEl);
+}
+
 function handleDocumentClick(event) {
+  const metricHelpTrigger = event.target.closest("[data-metric-help-trigger]");
+  if (metricHelpTrigger) {
+    toggleMetricHelp(metricHelpTrigger.closest("[data-metric-help]"));
+    return;
+  }
+  if (activeMetricHelpEl && !event.target.closest("[data-metric-help]")) {
+    closeMetricHelp(activeMetricHelpEl);
+  }
   const tabButton = event.target.closest("[data-dashboard-tab]");
   if (tabButton) {
     setActiveDashboardTab(tabButton.dataset.dashboardTab);
@@ -3373,6 +3591,11 @@ function bindFilters() {
 }
 
 function handleDocumentKeydown(event) {
+  if (event.key === "Escape" && activeMetricHelpEl) {
+    event.preventDefault();
+    closeMetricHelp(activeMetricHelpEl, { restoreFocus: true });
+    return;
+  }
   if (caseDetailModalEl.hidden) {
     return;
   }
@@ -3389,7 +3612,9 @@ async function initializeDashboard() {
   bindFilters();
   document.addEventListener("click", handleDocumentClick);
   document.addEventListener("change", handleDocumentChange);
+  document.addEventListener("focusin", handleDocumentFocusIn);
   document.addEventListener("keydown", handleDocumentKeydown);
+  document.addEventListener("mouseout", handleMetricHelpMouseOut);
   refreshButtonEl.addEventListener("click", () => {
     refreshDashboardPages().catch((error) => {
       setStatus(`Failed to refresh page: ${error.message}`);

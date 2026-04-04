@@ -261,6 +261,8 @@
 12. `/dashboard/rag/` 允许并鼓励使用两种可复用工作台模式：
    - `Collapsible Case Explorer`
    - `Centered Case Detail Modal`
+13. benchmark session 级别的 `Session Runs / Run History / Run Comparison / changelog` 面板只允许出现在 `Scorecard`。除 `Scorecard` 外，其余 benchmark 页面只保留顶部 `Current Benchmark Run` selector 作为当前 run 语境，不再重复渲染 session 级摘要或跨-run 对比。
+14. 只有各页面顶部 `sections.summary.cards` 渲染出的 summary metric card 允许在指标名右侧放 inline help `?`；tooltip 必须使用自定义气泡而不是浏览器原生 `title`，支持 hover / focus / tap，并保持明显 focus ring 和不少于 `44x44px` 的可点击目标。
 
 ### 6.5 RAG Explorer Patterns
 1. `Collapsible Case Explorer`
