@@ -846,7 +846,14 @@ def execute_client_ticket_agent_runtime(
 
         if rag_detail.needs_engineer_guidance:
             normalized_reason = _normalize_investigation_reason(rag_detail.reason)
-            if normalized_reason in {RAG_SERVICE_ERROR_REASON, RAG_UNAVAILABLE_REASON}:
+            should_skip_review_for_rag_failure = (
+                normalized_reason in {RAG_SERVICE_ERROR_REASON, RAG_UNAVAILABLE_REASON}
+                and not _is_troubleshooting_intake_candidate(
+                    message=message,
+                    client_intake_state=client_intake_state,
+                )
+            )
+            if should_skip_review_for_rag_failure:
                 _mark_agent_summary(
                     review_summary,
                     phase="skipped",

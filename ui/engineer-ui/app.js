@@ -25,6 +25,8 @@ let detailLoading = false;
 let tellAiDraft = "";
 let investigationReviseMode = false;
 let tellAiSubmitting = false;
+let localInvestigationThreadState = null;
+let localInvestigationMessageSequence = 0;
 let socket = null;
 let heartbeatTimer = null;
 let reconnectTimer = null;
@@ -63,6 +65,139 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function nextLocalInvestigationMessageId(prefix = "message") {
+  localInvestigationMessageSequence += 1;
+  return `local-${prefix}-${localInvestigationMessageSequence}`;
+}
+
+function normalizeDetailTicketId(value) {
+  return String(value || "").trim();
+}
+
+function getLocalInvestigationThreadState(ticketId) {
+  const normalizedTicketId = normalizeDetailTicketId(ticketId);
+  if (!normalizedTicketId || !localInvestigationThreadState) {
+    return null;
+  }
+  return normalizeDetailTicketId(localInvestigationThreadState.ticketId) === normalizedTicketId
+    ? localInvestigationThreadState
+    : null;
+}
+
+function clearLocalInvestigationThreadState(ticketId = null) {
+  if (!localInvestigationThreadState) {
+    return;
+  }
+  if (ticketId && normalizeDetailTicketId(localInvestigationThreadState.ticketId) !== normalizeDetailTicketId(ticketId)) {
+    return;
+  }
+  localInvestigationThreadState = null;
+}
+
+function mergeInvestigationMessagesWithLocalState(ticketId, durableMessages) {
+  const baseMessages = Array.isArray(durableMessages) ? durableMessages : [];
+  const localState = getLocalInvestigationThreadState(ticketId);
+  if (!localState || !Array.isArray(localState.messages) || localState.messages.length === 0) {
+    return baseMessages;
+  }
+  return [...baseMessages, ...localState.messages];
+}
+
+function hasPendingLocalInvestigationReply(ticketId) {
+  const localState = getLocalInvestigationThreadState(ticketId);
+  return Boolean(localState?.pendingAi);
+}
+
+function startLocalInvestigationOptimisticSend(ticketId, engineerMessage) {
+  const normalizedTicketId = normalizeDetailTicketId(ticketId);
+  const cleaned = String(engineerMessage || "").trim();
+  if (!normalizedTicketId || !cleaned) {
+    return;
+  }
+  const existingMessages = Array.isArray(getLocalInvestigationThreadState(normalizedTicketId)?.messages)
+    ? getLocalInvestigationThreadState(normalizedTicketId).messages.filter((message) => message?.is_pending_ai !== true)
+    : [];
+  const createdAt = new Date().toISOString();
+  localInvestigationThreadState = {
+    ticketId: normalizedTicketId,
+    pendingAi: true,
+    messages: [
+      ...existingMessages,
+      {
+        id: nextLocalInvestigationMessageId("engineer"),
+        role: "engineer",
+        content: cleaned,
+        created_at: createdAt,
+        is_optimistic_local: true,
+      },
+      {
+        id: nextLocalInvestigationMessageId("engineer-ai"),
+        role: "engineer_ai",
+        content: "Engineer AI is reviewing your update...",
+        created_at: createdAt,
+        is_pending_ai: true,
+      },
+    ],
+  };
+}
+
+function failLocalInvestigationOptimisticSend(ticketId, errorMessage) {
+  const normalizedTicketId = normalizeDetailTicketId(ticketId);
+  const localState = getLocalInvestigationThreadState(normalizedTicketId);
+  if (!localState) {
+    return;
+  }
+  const cleanedError = String(errorMessage || "").trim() || "Unknown error";
+  localInvestigationThreadState = {
+    ticketId: normalizedTicketId,
+    pendingAi: false,
+    messages: [
+      ...localState.messages.filter((message) => message?.is_pending_ai !== true),
+      {
+        id: nextLocalInvestigationMessageId("system"),
+        role: "system",
+        content: `Engineer AI update failed: ${cleanedError}`,
+        created_at: new Date().toISOString(),
+        is_local_error: true,
+      },
+    ],
+  };
+}
+
+function applyInvestigationResponseToSelectedTicket(ticketId, payload) {
+  const normalizedTicketId = normalizeDetailTicketId(ticketId);
+  if (!selectedTicket || normalizeDetailTicketId(selectedTicket.ticket_id || selectedTicketId) !== normalizedTicketId) {
+    clearLocalInvestigationThreadState(normalizedTicketId);
+    return;
+  }
+
+  if (payload && typeof payload === "object") {
+    selectedTicket = {
+      ...selectedTicket,
+      status: payload.status ?? selectedTicket.status,
+      updated_at: payload.updated_at ?? selectedTicket.updated_at,
+      active_investigation:
+        payload.active_investigation === undefined
+          ? selectedTicket.active_investigation
+          : payload.active_investigation,
+    };
+
+    const ticketIndex = tickets.findIndex(
+      (ticket) => normalizeDetailTicketId(ticket?.ticket_id) === normalizedTicketId
+    );
+    if (ticketIndex >= 0) {
+      tickets[ticketIndex] = {
+        ...tickets[ticketIndex],
+        status: selectedTicket.status,
+        updated_at: selectedTicket.updated_at,
+        active_investigation: selectedTicket.active_investigation,
+      };
+    }
+  }
+
+  clearLocalInvestigationThreadState(normalizedTicketId);
 }
 
 function userInitial(username) {
@@ -621,7 +756,7 @@ function findLatestApprovalRequestMessageIndex(messages) {
   return -1;
 }
 
-function getInvestigationApprovalUiState(ticket, activeInvestigation, investigationMessages) {
+function getInvestigationApprovalUiState(ticket, activeInvestigation, investigationMessages, options = {}) {
   if (!activeInvestigation) {
     return { showApprovalBlock: false, decisionIndex: -1 };
   }
@@ -633,11 +768,13 @@ function getInvestigationApprovalUiState(ticket, activeInvestigation, investigat
   const readyToReply = agentState?.ready_to_reply === true;
   const latestApprovalIndex = findLatestApprovalRequestMessageIndex(investigationMessages);
   const fallbackEngineerAiIndex = findLatestEngineerAiMessageIndex(investigationMessages);
+  const suppressApprovalBlock = options?.suppressApprovalBlock === true;
   const showApprovalBlock =
-    normalizedState === "awaiting_confirmation" ||
-    agentPhase === "awaiting_confirmation" ||
-    readyToReply ||
-    (Boolean(draftCustomerReply) && latestApprovalIndex >= 0);
+    !suppressApprovalBlock &&
+    (normalizedState === "awaiting_confirmation" ||
+      agentPhase === "awaiting_confirmation" ||
+      readyToReply ||
+      (Boolean(draftCustomerReply) && latestApprovalIndex >= 0));
 
   return {
     showApprovalBlock,
@@ -1597,6 +1734,7 @@ function renderTicketPoolView() {
 
 function resetDetailWorkspaceState() {
   clearStatusComboboxBlurTimer();
+  clearLocalInvestigationThreadState();
   selectedTicketId = null;
   selectedTicket = null;
   selectedTicketSummary = "";
@@ -1729,12 +1867,14 @@ function renderConversationHtml(messages, options = {}) {
         .map((message, index) => {
           const role = String(message.role || "system").toLowerCase();
           const createdAt = formatDateTime(message.created_at);
+          const isPendingAi = compactThread && message?.is_pending_ai === true;
+          const isLocalError = compactThread && message?.is_local_error === true;
           const sentimentLabel =
             role === "customer" ? normalizeMessageSentimentLabel(message.sentiment_label) : "";
           const shouldRenderDecision =
             showInlineConfirmation && inlineDecisionIndex === index && role === "engineer_ai";
           return `
-            <article class="message-item ${roleClass(role)}">
+            <article class="message-item ${roleClass(role)}${isPendingAi ? " message-item-pending-ai" : ""}${isLocalError ? " message-item-local-error" : ""}">
               <header>
                 <div class="message-header-primary">
                   <span class="message-role">${escapeHtml(roleLabel(role))}</span>
@@ -1746,7 +1886,18 @@ function renderConversationHtml(messages, options = {}) {
                 </div>
                 <span class="message-time">${escapeHtml(createdAt)}</span>
               </header>
-              <div class="message-content">${formatMultiline(String(message.content || ""))}</div>
+              <div class="message-content${isPendingAi ? " message-content-pending-ai" : ""}">
+                ${
+                  isPendingAi
+                    ? `
+                      <span class="detail-thinking-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+                      <span class="detail-thinking-label">${escapeHtml(
+                        String(message.content || "Engineer AI is reviewing your update...")
+                      )}</span>
+                    `
+                    : formatMultiline(String(message.content || ""))
+                }
+              </div>
               ${
                 shouldRenderDecision
                   ? renderInvestigationDecisionHtml({
@@ -1834,7 +1985,7 @@ function renderTicketDetailView() {
   const displayInvestigation = getDisplayInvestigation(ticket);
   const investigationState = String(displayInvestigation?.state || "active").toLowerCase();
   const investigationPreview = latestInvestigationUpdate(ticket);
-  const investigationMessages = Array.isArray(displayInvestigation?.messages)
+  const durableInvestigationMessages = Array.isArray(displayInvestigation?.messages)
     ? displayInvestigation.messages
     : investigationPreview
     ? [
@@ -1845,7 +1996,10 @@ function renderTicketDetailView() {
         },
       ]
     : [];
-  const approvalUiState = getInvestigationApprovalUiState(ticket, activeInvestigation, investigationMessages);
+  const investigationMessages = mergeInvestigationMessagesWithLocalState(ticketId, durableInvestigationMessages);
+  const approvalUiState = getInvestigationApprovalUiState(ticket, activeInvestigation, investigationMessages, {
+    suppressApprovalBlock: hasPendingLocalInvestigationReply(ticketId),
+  });
   const showInlineConfirmation = approvalUiState.showApprovalBlock;
   const showInvestigationComposer = Boolean(activeInvestigation);
   const draftCustomerReply = String(displayInvestigation?.draft_customer_reply || "").trim();
@@ -2210,7 +2364,7 @@ async function submitInvestigationMessage(ticketId, messageText) {
     window.alert("Please enter the next technical detail for Engineer AI.");
     return;
   }
-  await fetchJson(`/api/engineer/tickets/${encodeURIComponent(ticketId)}/investigation/messages`, {
+  return await fetchJson(`/api/engineer/tickets/${encodeURIComponent(ticketId)}/investigation/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message: cleaned, engineer_id: ENGINEER_ID }),
@@ -2219,7 +2373,7 @@ async function submitInvestigationMessage(ticketId, messageText) {
 }
 
 async function submitInvestigationConfirmation(ticketId, decision, note = "") {
-  await fetchJson(`/api/engineer/tickets/${encodeURIComponent(ticketId)}/investigation/confirmation`, {
+  return await fetchJson(`/api/engineer/tickets/${encodeURIComponent(ticketId)}/investigation/confirmation`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -2390,7 +2544,10 @@ async function handleDetailClick(event) {
       window.alert("Please enter the next message for Engineer AI.");
       return;
     }
+    const requestTicketId = selectedTicketId;
     button.disabled = true;
+    startLocalInvestigationOptimisticSend(requestTicketId, cleaned);
+    tellAiDraft = "";
     tellAiSubmitting = true;
     renderTicketDetail();
     try {
@@ -2400,20 +2557,26 @@ async function handleDetailClick(event) {
         activeInvestigation,
         Array.isArray(activeInvestigation?.messages) ? activeInvestigation.messages : []
       );
+      let responsePayload = null;
       if (activeInvestigation) {
         if (investigationReviseMode || approvalUiState.showApprovalBlock) {
-          await submitInvestigationConfirmation(selectedTicketId, "revise", cleaned);
+          responsePayload = await submitInvestigationConfirmation(requestTicketId, "revise", cleaned);
           investigationReviseMode = false;
         } else {
-          await submitInvestigationMessage(selectedTicketId, cleaned);
+          responsePayload = await submitInvestigationMessage(requestTicketId, cleaned);
         }
       }
-      tellAiDraft = "";
-      await loadTickets({ refreshDetail: false });
-      await refreshSelectedTicket({ silent: true });
+      applyInvestigationResponseToSelectedTicket(requestTicketId, responsePayload);
+      renderTicketDetail();
+      try {
+        await loadTickets({ refreshDetail: false });
+        await refreshSelectedTicket({ silent: true });
+      } catch {
+        // Keep the immediate optimistic replacement even if the background refresh fails.
+      }
     } catch (error) {
-      window.alert(`Engineer AI update failed: ${error.message}`);
-      await refreshSelectedTicket({ silent: true });
+      failLocalInvestigationOptimisticSend(requestTicketId, error.message);
+      tellAiDraft = cleaned;
     } finally {
       tellAiSubmitting = false;
       renderTicketDetail();

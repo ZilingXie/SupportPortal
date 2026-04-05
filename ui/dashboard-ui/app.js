@@ -81,6 +81,12 @@ let selectedTicketId = "";
 let selectedTicketDetail = null;
 let ticketDetailLoading = false;
 let ticketDetailError = "";
+let ticketDetailSummary = "";
+let ticketDetailNextAction = "";
+let ticketDetailSummaryLoading = false;
+let ticketDetailSummaryFailed = false;
+let ticketDetailSummaryModel = "";
+let ticketDetailRuntimeExpanded = false;
 let lastTicketDetailFocusEl = null;
 
 const ticketBoardStore = Object.fromEntries(TICKET_DETAIL_STATUSES.map((status) => [status, []]));
@@ -440,6 +446,21 @@ function buildLocalSummaryFallback(ticket) {
   };
 }
 
+function resetTicketDetailState({ clearSelection = true } = {}) {
+  if (clearSelection) {
+    selectedTicketId = "";
+  }
+  selectedTicketDetail = null;
+  ticketDetailLoading = false;
+  ticketDetailError = "";
+  ticketDetailSummary = "";
+  ticketDetailNextAction = "";
+  ticketDetailSummaryLoading = false;
+  ticketDetailSummaryFailed = false;
+  ticketDetailSummaryModel = "";
+  ticketDetailRuntimeExpanded = false;
+}
+
 function buildDefinitionGrid(items) {
   const safeItems = (Array.isArray(items) ? items : []).filter(
     (item) => normalizeString(item?.value) && normalizeString(item?.value) !== "-"
@@ -489,20 +510,17 @@ function buildClientAgentRuntimeSummaryCard(agentLabel, agentSummary) {
   const decision = normalizeString(summary.decision);
   const reason = normalizeString(summary.reason);
   return `
-    <article class="ticket-detail-message">
-      <header class="ticket-detail-message-header">
-        <span class="ticket-detail-message-role">${escapeHtml(agentLabel)}</span>
-        <div class="ticket-detail-message-meta">
-          <span class="ticket-detail-message-time">${escapeHtml(formatDateTime(summary.updated_at))}</span>
-        </div>
-      </header>
-      ${buildDefinitionGrid([
-        { label: "Phase", value: humanizeToken(summary.phase || "queued") },
-        { label: "Status", value: humanizeToken(summary.status || "queued") },
-        { label: "Decision", value: decision ? humanizeToken(decision) : "-" },
-        { label: "Completed", value: formatDateTime(summary.completed_at) },
-      ])}
-      ${reason ? `<p class="detail-note">Reason: ${escapeHtml(reason)}</p>` : ""}
+    <article class="ticket-detail-runtime-agent-row">
+      <div class="ticket-detail-runtime-agent-copy">
+        <strong>${escapeHtml(agentLabel)}</strong>
+        ${reason ? `<p>${escapeHtml(reason)}</p>` : ""}
+      </div>
+      <div class="ticket-detail-runtime-agent-meta">
+        <span>${escapeHtml(humanizeToken(summary.phase || "queued"))}</span>
+        <span>${escapeHtml(humanizeToken(summary.status || "queued"))}</span>
+        ${decision ? `<span>${escapeHtml(humanizeToken(decision))}</span>` : ""}
+        <span>${escapeHtml(formatDateTime(summary.updated_at))}</span>
+      </div>
     </article>
   `;
 }
@@ -525,7 +543,7 @@ function buildClientAgentRuntimePanel(ticket) {
       { label: "Updated", value: formatDateTime(runtimeState.updated_at) },
       { label: "Completed", value: formatDateTime(runtimeState.completed_at) },
     ])}
-    <div class="ticket-detail-message-list">
+    <div class="ticket-detail-runtime-agent-list">
       ${buildClientAgentRuntimeSummaryCard("Main Agent", runtimeState.main_agent)}
       ${buildClientAgentRuntimeSummaryCard("Route Agent", runtimeState.route_agent)}
       ${buildClientAgentRuntimeSummaryCard("RAG Agent", runtimeState.rag_agent)}
@@ -562,6 +580,128 @@ function buildClientAgentEventsPanel(ticket) {
     return '<div class="detail-empty-state">No agent events have been recorded for this ticket yet.</div>';
   }
   return `<div class="ticket-detail-message-list">${agentEvents.map(buildClientAgentEventCard).join("")}</div>`;
+}
+
+function buildTicketSummaryPanel(fallbackSummary) {
+  const canonicalSummary = normalizeString(ticketDetailSummary);
+  const canonicalNextAction = normalizeString(ticketDetailNextAction);
+  const summaryText = canonicalSummary || fallbackSummary.summary;
+  const nextActionText = canonicalNextAction || fallbackSummary.nextAction;
+  const summarySourceLabel = ticketDetailSummaryLoading
+    ? "Loading summary"
+    : canonicalSummary
+      ? "Canonical summary"
+      : "Dashboard fallback";
+  const sourceToneClass = ticketDetailSummaryLoading
+    ? "is-loading"
+    : canonicalSummary
+      ? "is-canonical"
+      : "is-fallback";
+
+  let bodyHtml = "";
+  if (ticketDetailSummaryLoading && !canonicalSummary) {
+    bodyHtml = `
+      <div class="detail-summary-state" role="status" aria-live="polite" aria-busy="true">
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <p>Generating the latest engineer-aligned summary for this ticket.</p>
+      </div>
+    `;
+  } else {
+    bodyHtml = `
+      <p class="detail-summary-copy detail-summary-copy-strong">${escapeHtml(summaryText || "-")}</p>
+      <div class="detail-summary-next-block">
+        <p class="detail-summary-next-label">Next Action Needed</p>
+        <p class="detail-note">${escapeHtml(nextActionText || "-")}</p>
+      </div>
+    `;
+  }
+
+  return `
+    <section class="panel-card detail-panel detail-summary-panel">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Ticket Summary</p>
+          <h3>Ticket Summary</h3>
+          <p>${
+            canonicalSummary
+              ? "Canonical engineer summary from the shared summary endpoint."
+              : ticketDetailSummaryFailed
+                ? "Canonical summary is unavailable, so this section falls back to the dashboard summary."
+                : "The summary loads independently so the rest of the detail view stays available."
+          }</p>
+        </div>
+        <span class="detail-summary-chip ${sourceToneClass}">${escapeHtml(summarySourceLabel)}</span>
+      </div>
+      ${bodyHtml}
+      ${
+        canonicalSummary && normalizeString(ticketDetailSummaryModel)
+          ? `<p class="detail-note">Model: ${escapeHtml(ticketDetailSummaryModel)}</p>`
+          : ""
+      }
+    </section>
+  `;
+}
+
+function buildTicketRuntimeDisclosure(ticket) {
+  const runtimeState = ticket?.client_agent_runtime_state && typeof ticket.client_agent_runtime_state === "object"
+    ? ticket.client_agent_runtime_state
+    : null;
+  const agentEvents = Array.isArray(ticket?.client_agent_events) ? ticket.client_agent_events : [];
+  const runtimeMeta = runtimeState
+    ? [
+        humanizeToken(runtimeState.status || "queued"),
+        humanizeToken(runtimeState.workflow_action || "pending"),
+        formatDateTime(runtimeState.updated_at),
+      ]
+    : [
+        agentEvents.length ? `${formatNumber(agentEvents.length)} events` : "No runtime snapshot",
+      ];
+
+  return `
+    <section class="panel-card detail-panel ticket-detail-runtime-disclosure ${
+      ticketDetailRuntimeExpanded ? "is-expanded" : ""
+    }">
+      <button
+        type="button"
+        class="ticket-detail-runtime-toggle"
+        data-ticket-detail-runtime-toggle
+        aria-expanded="${ticketDetailRuntimeExpanded ? "true" : "false"}"
+      >
+        <div class="ticket-detail-runtime-toggle-copy">
+          <p class="eyebrow">Client Agent Runtime</p>
+          <h3>Client Agent Runtime</h3>
+          <p>Collapsed by default. Expand only when you need the runtime snapshot and recent agent events.</p>
+        </div>
+        <div class="ticket-detail-runtime-toggle-meta">
+          ${runtimeMeta
+            .filter((value) => normalizeString(value) && normalizeString(value) !== "-")
+            .map((value) => `<span class="ticket-detail-runtime-toggle-item">${escapeHtml(value)}</span>`)
+            .join("")}
+          <span class="material-symbols-outlined ticket-detail-runtime-icon" aria-hidden="true">expand_more</span>
+        </div>
+      </button>
+      <div class="ticket-detail-runtime-body" ${ticketDetailRuntimeExpanded ? "" : "hidden"}>
+        <div class="ticket-detail-runtime-section">
+          <div class="panel-header">
+            <div>
+              <h3>Runtime Snapshot</h3>
+              <p>Lean view of the current run, workflow action, and per-agent phase.</p>
+            </div>
+          </div>
+          ${buildClientAgentRuntimePanel(ticket)}
+        </div>
+        <div class="ticket-detail-runtime-section">
+          <div class="panel-header">
+            <div>
+              <h3>Recent Agent Events</h3>
+              <p>Latest append-only runtime events captured for route, RAG, review, and main-agent decisions.</p>
+            </div>
+          </div>
+          ${buildClientAgentEventsPanel(ticket)}
+        </div>
+      </div>
+    </section>
+  `;
 }
 
 function renderBreakdownList(element, items) {
@@ -1001,20 +1141,19 @@ function renderTicketDetail() {
   const ticketId = String(ticket.ticket_id || selectedTicketId || "-");
   const status = normalizeStatusValue(ticket.status || "open");
   const displayInvestigation = getDisplayInvestigation(ticket);
-  const latestCustomer = latestTicketMessage(ticket, ["customer"]);
-  const latestAssistant = latestTicketMessage(ticket, ["assistant"]);
   const fallbackSummary = buildLocalSummaryFallback(ticket);
-  const latestInternal = latestInvestigationUpdate(ticket);
+  const latestAssistant = latestTicketMessage(ticket, ["assistant"]);
   const detailMessages = Array.isArray(ticket.messages) ? ticket.messages.slice(-4) : [];
   const requester = ticketRequester(ticket);
 
   ticketDetailTitleEl.textContent = `${ticketId} detail`;
   ticketDetailBodyEl.innerHTML = `
     <div class="detail-panel-stack">
-      <section class="panel-card detail-panel">
+      <section class="panel-card detail-panel ticket-detail-hero">
         <div class="panel-header">
           <div>
-            <h3>${escapeHtml(ticketSubject(ticket))}</h3>
+            <p class="eyebrow">Ticket Detail</p>
+            <h3 class="ticket-detail-hero-title">${escapeHtml(ticketSubject(ticket))}</h3>
             <p>Read-only ticket context from the dashboard. Switch to the engineer workspace if you need to change the workflow.</p>
           </div>
           <span class="status-badge ${statusClass(status)}">${escapeHtml(statusLabel(status))}</span>
@@ -1029,70 +1168,9 @@ function renderTicketDetail() {
             value: displayInvestigation ? investigationStateLabel(displayInvestigation.state) : "None",
           },
         ])}
-        <p class="detail-summary-copy">${escapeHtml(fallbackSummary.summary)}</p>
-        <p class="detail-note">${escapeHtml(fallbackSummary.nextAction)}</p>
       </section>
 
-      <section class="panel-card detail-panel">
-        <div class="panel-header">
-          <div>
-            <h3>Latest Customer Message</h3>
-            <p>The newest customer-visible request in this ticket.</p>
-          </div>
-        </div>
-        ${
-          latestCustomer?.content
-            ? `
-              ${buildDefinitionGrid([
-                { label: "Sentiment", value: humanizeToken(normalizeSentimentLabel(latestCustomer.sentiment_label) || "unclassified") },
-                { label: "Created", value: formatDateTime(latestCustomer.created_at) },
-              ])}
-              <p class="detail-summary-copy">${escapeHtml(normalizeString(latestCustomer.content))}</p>
-            `
-            : '<div class="detail-empty-state">No customer message is available yet.</div>'
-        }
-      </section>
-
-      <section class="panel-card detail-panel">
-        <div class="panel-header">
-          <div>
-            <h3>Engineer Ticket Snapshot</h3>
-            <p>Latest internal investigation state, trigger details, and summary notes.</p>
-          </div>
-        </div>
-        ${
-          displayInvestigation
-            ? `
-              ${buildDefinitionGrid([
-                { label: "State", value: investigationStateLabel(displayInvestigation.state) },
-                { label: "Trigger Reason", value: normalizeString(displayInvestigation.trigger_reason) || "-" },
-                { label: "Trigger Source", value: normalizeString(displayInvestigation.trigger_source) || "-" },
-                { label: "Opened", value: formatDateTime(displayInvestigation.opened_at) },
-                {
-                  label: "Updated",
-                  value: formatDateTime(
-                    displayInvestigation.updated_at
-                      || displayInvestigation.closed_at
-                      || displayInvestigation.opened_at
-                  ),
-                },
-              ])}
-              ${
-                latestInternal
-                  ? `<p class="detail-summary-copy">${escapeHtml(latestInternal)}</p>`
-                  : '<div class="detail-empty-state compact">No engineer-ticket update has been recorded yet.</div>'
-              }
-              ${
-                normalizeString(displayInvestigation.draft_customer_reply)
-                  ? `<p class="detail-note">Draft customer reply: ${escapeHtml(
-                      truncateText(displayInvestigation.draft_customer_reply, 320)
-                    )}</p>`
-                  : ""
-              }
-            `
-            : '<div class="detail-empty-state">No engineer ticket has been opened for this case.</div>'
-        }
-      </section>
+      ${buildTicketSummaryPanel(fallbackSummary)}
 
       <section class="panel-card detail-panel">
         <div class="panel-header">
@@ -1102,26 +1180,6 @@ function renderTicketDetail() {
           </div>
         </div>
         ${buildTokenUsagePanel(ticket.token_usage)}
-      </section>
-
-      <section class="panel-card detail-panel">
-        <div class="panel-header">
-          <div>
-            <h3>Client Agent Runtime</h3>
-            <p>Current main-agent snapshot, workflow action, and the latest phase for each subagent.</p>
-          </div>
-        </div>
-        ${buildClientAgentRuntimePanel(ticket)}
-      </section>
-
-      <section class="panel-card detail-panel">
-        <div class="panel-header">
-          <div>
-            <h3>Recent Agent Events</h3>
-            <p>Latest append-only runtime events captured for route, RAG, review, and main-agent decisions.</p>
-          </div>
-        </div>
-        ${buildClientAgentEventsPanel(ticket)}
       </section>
 
       <section class="panel-card detail-panel">
@@ -1144,6 +1202,8 @@ function renderTicketDetail() {
             : ""
         }
       </section>
+
+      ${buildTicketRuntimeDisclosure(ticket)}
     </div>
   `;
 }
@@ -1169,10 +1229,7 @@ function closeTicketDetailModal({ restoreFocus = true } = {}) {
   ticketDetailModalEl.setAttribute("aria-hidden", "true");
   document.body.classList.remove("modal-open");
   ticketDetailBodyEl.innerHTML = "";
-  selectedTicketId = "";
-  selectedTicketDetail = null;
-  ticketDetailLoading = false;
-  ticketDetailError = "";
+  resetTicketDetailState();
   if (restoreFocus && lastTicketDetailFocusEl) {
     lastTicketDetailFocusEl.focus();
   }
@@ -1316,6 +1373,60 @@ async function loadTicketDetail(ticketId, { silent = false } = {}) {
   }
 }
 
+async function loadTicketDetailSummary(ticketId, { silent = false } = {}) {
+  const requestedTicketId = normalizeString(ticketId);
+  if (!requestedTicketId) {
+    return;
+  }
+
+  if (!silent || !normalizeString(ticketDetailSummary)) {
+    ticketDetailSummaryLoading = true;
+    ticketDetailSummaryFailed = false;
+    if (!ticketDetailLoading) {
+      renderTicketDetail();
+    }
+  }
+
+  try {
+    const payload = await fetchJson(
+      `/api/engineer/tickets/${encodeURIComponent(requestedTicketId)}/summary`
+    );
+    if (selectedTicketId !== requestedTicketId) {
+      return;
+    }
+
+    const fallbackSummary = selectedTicketDetail ? buildLocalSummaryFallback(selectedTicketDetail) : { nextAction: "" };
+    const summary = normalizeString(payload?.summary);
+    if (!summary) {
+      ticketDetailSummary = "";
+      ticketDetailNextAction = "";
+      ticketDetailSummaryModel = "";
+      ticketDetailSummaryFailed = true;
+      return;
+    }
+
+    ticketDetailSummary = summary;
+    ticketDetailNextAction = normalizeString(payload?.next_action_needed) || fallbackSummary.nextAction;
+    ticketDetailSummaryModel = normalizeString(payload?.model);
+    ticketDetailSummaryFailed = false;
+  } catch {
+    if (selectedTicketId !== requestedTicketId) {
+      return;
+    }
+    ticketDetailSummary = "";
+    ticketDetailNextAction = "";
+    ticketDetailSummaryModel = "";
+    ticketDetailSummaryFailed = true;
+  } finally {
+    if (selectedTicketId === requestedTicketId) {
+      ticketDetailSummaryLoading = false;
+      if (!ticketDetailLoading) {
+        renderTicketDetail();
+      }
+    }
+  }
+}
+
 function isTicketEvent(payload) {
   return (
     !normalizeString(payload?.ingestion_id)
@@ -1432,13 +1543,14 @@ function openTicketDetail(ticketId, triggerElement = null) {
   }
 
   lastTicketDetailFocusEl = triggerElement instanceof HTMLElement ? triggerElement : null;
+  resetTicketDetailState({ clearSelection: false });
   selectedTicketId = requestedTicketId;
-  selectedTicketDetail = null;
-  ticketDetailError = "";
   ticketDetailLoading = true;
+  ticketDetailSummaryLoading = true;
   openTicketDetailModalShell(requestedTicketId);
   renderTicketDetail();
   void loadTicketDetail(requestedTicketId);
+  void loadTicketDetailSummary(requestedTicketId);
 }
 
 async function refreshDashboard({ showLoading = true } = {}) {
@@ -1458,7 +1570,10 @@ async function refreshDashboard({ showLoading = true } = {}) {
       await loadTicketBoard(currentDashboardView);
     }
     if (selectedTicketId && !ticketDetailModalEl.hidden) {
-      await loadTicketDetail(selectedTicketId, { silent: true });
+      await Promise.all([
+        loadTicketDetail(selectedTicketId, { silent: true }),
+        loadTicketDetailSummary(selectedTicketId, { silent: true }),
+      ]);
     }
   } finally {
     setRefreshLoading(false);
@@ -1494,6 +1609,13 @@ function handleDocumentClick(event) {
   const boardViewButton = event.target.closest("[data-ticket-board-view-option]");
   if (boardViewButton) {
     applyTicketBoardViewMode(String(boardViewButton.dataset.ticketBoardViewOption || "grid"));
+    return;
+  }
+
+  const runtimeToggleButton = event.target.closest("[data-ticket-detail-runtime-toggle]");
+  if (runtimeToggleButton) {
+    ticketDetailRuntimeExpanded = !ticketDetailRuntimeExpanded;
+    renderTicketDetail();
     return;
   }
 
