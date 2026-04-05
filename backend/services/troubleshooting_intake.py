@@ -391,12 +391,26 @@ def _fallback_result(
     )
 
 
-def _parse_llm_result(payload: Any, *, fallback: TroubleshootingIntakeResult) -> TroubleshootingIntakeResult:
+def _parse_llm_result(
+    payload: Any,
+    *,
+    fallback: TroubleshootingIntakeResult,
+    product: str | None,
+) -> TroubleshootingIntakeResult:
     if not isinstance(payload, dict):
         return fallback
-    issue_mode = str(payload.get("issue_mode") or "").strip().lower()
-    if issue_mode not in {"answer", "investigation"}:
+    payload_issue_mode = str(payload.get("issue_mode") or "").strip().lower()
+    if payload_issue_mode not in {"answer", "investigation"}:
         return fallback
+    issue_mode = (
+        "investigation"
+        if fallback.issue_mode == "investigation"
+        or (
+            payload_issue_mode == "investigation"
+            and get_support_product_profile(product) is not None
+        )
+        else "answer"
+    )
     known_information = dict(fallback.known_information)
     known_information.update(_normalize_known_information(payload.get("known_information")))
 
@@ -408,18 +422,20 @@ def _parse_llm_result(payload: Any, *, fallback: TroubleshootingIntakeResult) ->
         ]
         ready_for_engineer_ticket = not missing_information and bool(known_information)
     else:
-        required_fields = [
-            field_name
-            for field_name in list(fallback.known_information.keys()) + list(fallback.missing_information)
-            if field_name != "issue_mode"
-        ]
-        normalized_required_fields: list[str] = []
-        for field_name in required_fields:
-            clean_field_name = str(field_name or "").strip().lower()
-            if clean_field_name and clean_field_name not in normalized_required_fields:
-                normalized_required_fields.append(clean_field_name)
+        normalized_required_fields = list(_required_fields_for(product))
         if not normalized_required_fields:
-            normalized_required_fields = _normalize_missing_information(fallback.missing_information)
+            required_fields = [
+                field_name
+                for field_name in list(fallback.known_information.keys()) + list(fallback.missing_information)
+                if field_name != "issue_mode"
+            ]
+            normalized_required_fields = []
+            for field_name in required_fields:
+                clean_field_name = str(field_name or "").strip().lower()
+                if clean_field_name and clean_field_name not in normalized_required_fields:
+                    normalized_required_fields.append(clean_field_name)
+            if not normalized_required_fields:
+                normalized_required_fields = _normalize_missing_information(fallback.missing_information)
         missing_information = [
             field_name
             for field_name in normalized_required_fields
@@ -430,7 +446,7 @@ def _parse_llm_result(payload: Any, *, fallback: TroubleshootingIntakeResult) ->
     customer_reply = _clean_text(payload.get("customer_reply"))
     if ready_for_engineer_ticket:
         customer_reply = ""
-    elif not customer_reply:
+    elif not customer_reply or payload_issue_mode != issue_mode:
         customer_reply = _clean_text(fallback.customer_reply)
 
     return TroubleshootingIntakeResult(
@@ -481,7 +497,7 @@ def _evaluate_with_llm(
     except json.JSONDecodeError:
         LOGGER.warning("Troubleshooting intake returned invalid JSON: %s", response.text)
         return fallback
-    return _parse_llm_result(payload, fallback=fallback)
+    return _parse_llm_result(payload, fallback=fallback, product=product)
 
 
 def evaluate_troubleshooting_intake(

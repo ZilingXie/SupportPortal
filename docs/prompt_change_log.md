@@ -769,6 +769,35 @@ For each new entry, record:
   - `git diff --check`
 
 - Date: 2026-04-05
+- Area or subsystem: Engineer investigation reply drafting
+- Prompt or model version: `engineer-investigation-reply-v1`
+- Summary: Added a dedicated post-engineer investigation reply prompt and model scene so engineer follow-up turns now use structured Responses output from `gpt-5.4` with `reasoning_effort=medium`, instead of copying raw engineer notes into the customer draft.
+- Reason: Engineer AI follow-up drafts were too literal and reused the broader engineer-helper profile, which led to stiff customer wording and the wrong reasoning profile for investigation reply turns.
+- Affected files or config:
+  - `backend/services/prompts/engineer_investigation_reply.py`
+  - `backend/services/prompts/__init__.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/services/engineer_agent.py`
+  - `backend/services/investigation_flow.py`
+  - `backend/main.py`
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_single_host_compose.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - After an engineer message or revise note, Engineer AI now calls a dedicated investigation-reply scene with full ticket, handoff, investigation-thread, and agent-state context.
+  - The model can either keep the investigation `active` with another internal engineer-facing request or move to `awaiting_confirmation` with a customer-safe draft reply.
+  - Invalid, empty, or malformed model output now fails closed with no synthetic customer draft, and the investigation approval path requires an existing generated draft before sending.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_profiles.py backend/tests/test_prompt_modules.py backend/tests/test_investigation_flow.py backend/tests/test_engineer_ui_contract.py backend/tests/test_single_host_compose.py backend/tests/test_worker.py -q`
+  - `python3 -m py_compile backend/main.py backend/services/engineer_agent.py backend/services/investigation_flow.py backend/services/llm_profiles.py backend/services/prompts/__init__.py backend/services/prompts/engineer_investigation_reply.py backend/tests/test_llm_profiles.py backend/tests/test_prompt_modules.py backend/tests/test_investigation_flow.py backend/tests/test_engineer_ui_contract.py backend/tests/test_single_host_compose.py`
+  - `node --check ui/engineer-ui/app.js`
+  - `podman exec -i engineerreplymanual_api python - <<'PY' ... /api/engineer/tickets/{ticket_id}/investigation/messages smoke for both channel-name follow-up and direct-fix reply paths ... PY`
+
+- Date: 2026-04-05
 - Area or subsystem: Troubleshooting intake prompt contract
 - Prompt or model version: `troubleshooting-intake-v2`
 - Summary: Tightened the troubleshooting intake system prompt so investigation-mode responses may only mark `ready_for_engineer_ticket=true` when every required field is present, must enumerate all missing investigation fields, and must return a non-empty customer reply whenever intake is still incomplete.

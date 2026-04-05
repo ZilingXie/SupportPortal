@@ -743,35 +743,10 @@ function latestInvestigationUpdate(ticket) {
   return "";
 }
 
-function isApprovalRequestMessage(value) {
-  const content = String(value || "").trim().toLowerCase();
-  if (!content) {
-    return false;
-  }
-  return (
-    content.includes("please confirm this draft before i reply to the customer") ||
-    content.includes("please confirm whether this version is ready to send") ||
-    (content.includes("please confirm") && (content.includes("draft") || content.includes("reply")))
-  );
-}
-
 function findLatestEngineerAiMessageIndex(messages) {
   const items = Array.isArray(messages) ? messages : [];
   for (let index = items.length - 1; index >= 0; index -= 1) {
     if (String(items[index]?.role || "").trim().toLowerCase() === "engineer_ai") {
-      return index;
-    }
-  }
-  return -1;
-}
-
-function findLatestApprovalRequestMessageIndex(messages) {
-  const items = Array.isArray(messages) ? messages : [];
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    if (String(items[index]?.role || "").trim().toLowerCase() !== "engineer_ai") {
-      continue;
-    }
-    if (isApprovalRequestMessage(items[index]?.content)) {
       return index;
     }
   }
@@ -788,7 +763,6 @@ function getInvestigationApprovalUiState(ticket, activeInvestigation, investigat
   const agentState = getEngineerAgentState(ticket);
   const agentPhase = String(agentState?.phase || "").trim().toLowerCase();
   const readyToReply = agentState?.ready_to_reply === true;
-  const latestApprovalIndex = findLatestApprovalRequestMessageIndex(investigationMessages);
   const fallbackEngineerAiIndex = findLatestEngineerAiMessageIndex(investigationMessages);
   const suppressApprovalBlock = options?.suppressApprovalBlock === true;
   const showApprovalBlock =
@@ -796,11 +770,11 @@ function getInvestigationApprovalUiState(ticket, activeInvestigation, investigat
     (normalizedState === "awaiting_confirmation" ||
       agentPhase === "awaiting_confirmation" ||
       readyToReply ||
-      (Boolean(draftCustomerReply) && latestApprovalIndex >= 0));
+      Boolean(draftCustomerReply));
 
   return {
     showApprovalBlock,
-    decisionIndex: latestApprovalIndex >= 0 ? latestApprovalIndex : fallbackEngineerAiIndex,
+    decisionIndex: showApprovalBlock ? fallbackEngineerAiIndex : -1,
   };
 }
 

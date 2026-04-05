@@ -765,7 +765,7 @@ class EngineerUiContractTests(unittest.TestCase):
                       {
                         id: "INV-DETAIL-1-m3",
                         role: "engineer_ai",
-                        content: "I have enough information now. Please confirm this draft before I reply to the customer.",
+                        content: "I drafted a customer follow-up asking whether the issue is limited to Android 14. Please confirm whether it is ready to send.",
                         created_at: "2026-03-24T09:05:00+00:00",
                       },
                     ],
@@ -879,7 +879,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (summarySection.includes("Resolve Ticket")) {{
                   throw new Error("AI Summary should no longer render the resolve button.");
                 }}
-                const decisionIndex = engineerThreadSection.indexOf("I have enough information now. Please confirm this draft before I reply to the customer.");
+                const decisionIndex = engineerThreadSection.indexOf("I drafted a customer follow-up asking whether the issue is limited to Android 14. Please confirm whether it is ready to send.");
                 const inlineActionsIndex = engineerThreadSection.indexOf("detail-investigation-inline-actions");
                 if (decisionIndex === -1 || inlineActionsIndex === -1 || inlineActionsIndex < decisionIndex) {{
                   throw new Error("Inline confirmation actions should appear after the final Engineer AI message.");
@@ -976,6 +976,58 @@ class EngineerUiContractTests(unittest.TestCase):
                 }}
                 if (!html.includes('id="detail-investigation-input"')) {{
                   throw new Error("Approval-derived states should keep the composer visible for direct revision notes.");
+                }}
+              """
+            )
+        )
+
+    def test_engineer_detail_uses_draft_presence_for_approval_block_without_fixed_confirmation_copy(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                selectedTicketId = "TK-DETAIL-DRAFT-ONLY";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-DRAFT-ONLY",
+                  subject: "Black screen after join",
+                  requester: "user-9",
+                  status: "investigating",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [
+                    {
+                      role: "customer",
+                      content: "I got black screen after joining the call.",
+                      created_at: "2026-03-24T08:00:00+00:00",
+                    },
+                  ],
+                  active_investigation: {
+                    id: "INV-DETAIL-DRAFT-ONLY",
+                    state: "active",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "Could you please share the channel name with us for further investigation?",
+                    final_confirmation_requested_at: null,
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-DRAFT-ONLY-m1",
+                        role: "engineer_ai",
+                        content: "I drafted a customer follow-up asking for the missing channel name.",
+                        created_at: "2026-03-24T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                };
+                selectedTicketSummary = "A customer-safe follow-up draft is prepared.";
+                selectedTicketNextAction = "Approve the prepared reply if it is safe.";
+
+                const html = renderTicketDetailView();
+                if (!html.includes("Approve Reply")) {{
+                  throw new Error("Engineer thread should derive the approval block from draft presence even when the confirmation copy changes.");
+                }}
+                if (!html.includes("Could you please share the channel name with us for further investigation?")) {{
+                  throw new Error("Engineer thread should still render the prepared customer draft.");
                 }}
               """
             )

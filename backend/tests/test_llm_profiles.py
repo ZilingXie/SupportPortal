@@ -9,6 +9,7 @@ from backend.services.llm_profiles import (
     CLIENT_ACK_SCENARIO,
     BENCHMARK_JUDGE_SCENARIO,
     ENGINEER_HELPER_SCENARIO,
+    ENGINEER_INVESTIGATION_REPLY_SCENARIO,
     KNOWLEDGE_INGESTION_SCENARIO,
     RAG_AGENT_PLANNER_SCENARIO,
     QUERY_EXPANSION_SCENARIO,
@@ -37,6 +38,7 @@ class LlmProfileTests(unittest.TestCase):
             planner = resolve_model_profile(RAG_AGENT_PLANNER_SCENARIO)
             compression = resolve_model_profile(RAG_CONTEXT_COMPRESSION_SCENARIO)
             engineer = resolve_model_profile(ENGINEER_HELPER_SCENARIO)
+            engineer_investigation_reply = resolve_model_profile(ENGINEER_INVESTIGATION_REPLY_SCENARIO)
             ingestion = resolve_model_profile(KNOWLEDGE_INGESTION_SCENARIO)
             auto_deploy_report = resolve_model_profile(AUTO_DEPLOY_REPORT_SCENARIO)
 
@@ -78,6 +80,12 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(engineer.api_mode, "openai_responses")
         self.assertEqual(engineer.model, "gpt-5.4")
         self.assertEqual(engineer.reasoning_effort, "high")
+
+        self.assertEqual(engineer_investigation_reply.provider, "openai")
+        self.assertEqual(engineer_investigation_reply.api_mode, "openai_responses")
+        self.assertEqual(engineer_investigation_reply.model, "gpt-5.4")
+        self.assertEqual(engineer_investigation_reply.reasoning_effort, "medium")
+        self.assertEqual(engineer_investigation_reply.fallback_models, ())
 
         self.assertEqual(ingestion.provider, "openai")
         self.assertEqual(ingestion.api_mode, "openai_chat")
@@ -209,6 +217,7 @@ class LlmProfileTests(unittest.TestCase):
                 resolve_model_profile(RAG_AGENT_PLANNER_SCENARIO),
                 resolve_model_profile(RAG_CONTEXT_COMPRESSION_SCENARIO),
                 resolve_model_profile(ENGINEER_HELPER_SCENARIO),
+                resolve_model_profile(ENGINEER_INVESTIGATION_REPLY_SCENARIO),
                 resolve_model_profile(KNOWLEDGE_INGESTION_SCENARIO),
                 resolve_model_profile(AUTO_DEPLOY_REPORT_SCENARIO),
             ]

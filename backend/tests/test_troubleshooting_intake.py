@@ -199,6 +199,42 @@ class TroubleshootingIntakeTests(unittest.TestCase):
         self.assertIn("problematic uid", result.customer_reply.lower())
         self.assertIn("issue timestamp", result.customer_reply.lower())
 
+    def test_llm_cannot_downgrade_black_screen_issue_to_answer_mode(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "backend.services.troubleshooting_intake.invoke_responses_text",
+            return_value=types.SimpleNamespace(
+                text=(
+                    '{"issue_mode":"answer","known_information":{"symptom":"black screen"},'
+                    '"missing_information":["desired_outcome","blocked_step_or_error"],'
+                    '"ready_for_engineer_ticket":false,'
+                    '"customer_reply":"What are you trying to achieve? What error or blocker are you seeing?"}'
+                )
+            ),
+        ):
+            result = evaluate_troubleshooting_intake(
+                message="i got black screen, what should i do?",
+                product="audio_video_calling",
+                ticket_subject="Black screen issue",
+                ticket_context=[{"role": "customer", "content": "i got black screen, what should i do?"}],
+                current_state=None,
+                rag_result={
+                    "reason": "rag_unavailable",
+                    "answer": "",
+                    "evidence_summary": {},
+                },
+            )
+
+        self.assertEqual(result.issue_mode, "investigation")
+        self.assertEqual(result.known_information["issue_symptom"], "black screen issue")
+        self.assertEqual(
+            result.missing_information,
+            ["channel_name", "problematic_uid", "issue_timestamp"],
+        )
+        self.assertFalse(result.ready_for_engineer_ticket)
+        self.assertIn("channel name", result.customer_reply.lower())
+        self.assertIn("problematic uid", result.customer_reply.lower())
+        self.assertIn("issue timestamp", result.customer_reply.lower())
+
 
 if __name__ == "__main__":
     unittest.main()
