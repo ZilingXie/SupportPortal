@@ -712,6 +712,9 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn("justify-content: flex-start;", list_block)
         self.assertIn("max-height: none;", list_block)
         self.assertIn(".message-list-compact-thread .message-item", css)
+        self.assertIn(".message-item-pending-ai", css)
+        self.assertIn(".detail-thinking-dots", css)
+        self.assertIn(".detail-thinking-label", css)
 
     def test_engineer_detail_prioritizes_internal_investigation_workspace_and_confirmation(self) -> None:
         self.run_engineer_app_script(
@@ -1323,6 +1326,338 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (parsedBody.note !== "Add a cache-clear step before asking the customer to retry.") {{
                   throw new Error("Approval-state composer should send the engineer revision note.");
                 }}
+              """
+            )
+        )
+
+    def test_engineer_detail_send_shows_optimistic_engineer_message_and_ai_placeholder(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                routeState.view = "detail";
+                selectedTicketId = "TK-DETAIL-OPT";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-OPT",
+                  subject: "Android 14 token renew regression",
+                  requester: "user-7",
+                  status: "investigating",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: {
+                    id: "INV-DETAIL-OPT",
+                    state: "active",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "",
+                    final_confirmation_requested_at: null,
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-OPT-m1",
+                        role: "engineer_ai",
+                        content: "Please share the Android version and latest logcat excerpt.",
+                        created_at: "2026-03-24T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+                selectedTicketSummary = "Engineer AI needs one more technical detail.";
+                selectedTicketNextAction = "Share the latest Android logcat excerpt.";
+
+                let resolveFetch = null;
+                let capturedUrl = null;
+                fetchJson = async (url, options = undefined) => {
+                  capturedUrl = url;
+                  return await new Promise((resolve) => {
+                    resolveFetch = resolve;
+                  });
+                };
+                loadTickets = async () => {};
+                refreshSelectedTicket = async () => {};
+
+                tellAiDraft = "Reproduces on Android 14 with SDK 4.2.1. Logcat shows token expired.";
+                const sendButton = {
+                  dataset: { detailAction: "send-tell-ai" },
+                  disabled: false,
+                };
+                const sendTarget = {
+                  closest(selector) {
+                    if (selector === "button[data-detail-action]") {
+                      return sendButton;
+                    }
+                    return null;
+                  },
+                };
+
+                const sendPromise = handleDetailClick({ target: sendTarget });
+                const optimisticHtml = workspaceRegionEl.innerHTML;
+                if (!optimisticHtml.includes("Reproduces on Android 14 with SDK 4.2.1. Logcat shows token expired.")) {
+                  throw new Error("Engineer thread should immediately show the optimistic engineer message.");
+                }
+                if (!optimisticHtml.includes("message-item-pending-ai")) {
+                  throw new Error("Engineer thread should render an Engineer AI placeholder bubble while waiting.");
+                }
+                if (!optimisticHtml.includes("detail-thinking-dots")) {
+                  throw new Error("Engineer AI placeholder bubble should show the loading-dot animation.");
+                }
+                if (!optimisticHtml.includes("Engineer AI is reviewing your update")) {
+                  throw new Error("Engineer AI placeholder bubble should explain that a reply is pending.");
+                }
+                if (tellAiDraft !== "") {
+                  throw new Error("Composer draft should clear immediately after optimistic send.");
+                }
+                if (capturedUrl !== "/api/engineer/tickets/TK-DETAIL-OPT/investigation/messages") {
+                  throw new Error("Optimistic engineer sends should still call the investigation messages endpoint.");
+                }
+
+                resolveFetch({
+                  ticket_id: "TK-DETAIL-OPT",
+                  status: "investigating",
+                  updated_at: "2026-03-24T09:11:00+00:00",
+                  active_investigation: {
+                    id: "INV-DETAIL-OPT",
+                    state: "active",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "",
+                    final_confirmation_requested_at: null,
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:11:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-OPT-m1",
+                        role: "engineer_ai",
+                        content: "Please share the Android version and latest logcat excerpt.",
+                        created_at: "2026-03-24T09:05:00+00:00",
+                      },
+                      {
+                        id: "INV-DETAIL-OPT-m2",
+                        role: "engineer",
+                        content: "Reproduces on Android 14 with SDK 4.2.1. Logcat shows token expired.",
+                        created_at: "2026-03-24T09:10:30+00:00",
+                      },
+                      {
+                        id: "INV-DETAIL-OPT-m3",
+                        role: "engineer_ai",
+                        content: "Thanks. Please also confirm whether clearing the cached token changes the behavior.",
+                        created_at: "2026-03-24T09:11:00+00:00",
+                      },
+                    ],
+                  },
+                });
+                await sendPromise;
+
+                const settledHtml = workspaceRegionEl.innerHTML;
+                if (settledHtml.includes("message-item-pending-ai")) {
+                  throw new Error("Engineer AI placeholder bubble should disappear once the durable reply arrives.");
+                }
+                if (!settledHtml.includes("Thanks. Please also confirm whether clearing the cached token changes the behavior.")) {
+                  throw new Error("Engineer thread should replace the placeholder with the durable Engineer AI reply.");
+                }
+              """
+            )
+        )
+
+    def test_engineer_detail_approval_revision_send_uses_same_optimistic_thread_flow(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                routeState.view = "detail";
+                selectedTicketId = "TK-DETAIL-REV-OPT";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-REV-OPT",
+                  subject: "Android 14 token renew regression",
+                  requester: "user-7",
+                  status: "investigating",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: {
+                    id: "INV-DETAIL-REV-OPT",
+                    state: "awaiting_confirmation",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                    final_confirmation_requested_at: "2026-03-24T09:05:00+00:00",
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-REV-OPT-m1",
+                        role: "engineer_ai",
+                        content: "I have enough information now. Please confirm this draft before I reply to the customer.",
+                        created_at: "2026-03-24T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+                selectedTicketSummary = "Customer-facing answer is drafted and waiting for engineer confirmation.";
+                selectedTicketNextAction = "Approve the prepared reply or send a revision note.";
+
+                let resolveFetch = null;
+                let capturedUrl = null;
+                let capturedOptions = null;
+                fetchJson = async (url, options = undefined) => {
+                  capturedUrl = url;
+                  capturedOptions = options;
+                  return await new Promise((resolve) => {
+                    resolveFetch = resolve;
+                  });
+                };
+                loadTickets = async () => {};
+                refreshSelectedTicket = async () => {};
+
+                tellAiDraft = "Mention clearing cached auth data before retrying.";
+                const sendButton = {
+                  dataset: { detailAction: "send-tell-ai" },
+                  disabled: false,
+                };
+                const sendTarget = {
+                  closest(selector) {
+                    if (selector === "button[data-detail-action]") {
+                      return sendButton;
+                    }
+                    return null;
+                  },
+                };
+
+                const sendPromise = handleDetailClick({ target: sendTarget });
+                const optimisticHtml = workspaceRegionEl.innerHTML;
+                if (!optimisticHtml.includes("Mention clearing cached auth data before retrying.")) {
+                  throw new Error("Approval-state revision notes should also render optimistically in the thread.");
+                }
+                if (!optimisticHtml.includes("message-item-pending-ai")) {
+                  throw new Error("Approval-state revision sends should show the Engineer AI placeholder bubble.");
+                }
+                if (capturedUrl !== "/api/engineer/tickets/TK-DETAIL-REV-OPT/investigation/confirmation") {
+                  throw new Error("Approval-state optimistic sends should still target the confirmation endpoint.");
+                }
+                const parsedBody = JSON.parse(capturedOptions.body);
+                if (parsedBody.decision !== "revise") {
+                  throw new Error("Approval-state optimistic sends should still submit decision=revise.");
+                }
+
+                resolveFetch({
+                  ticket_id: "TK-DETAIL-REV-OPT",
+                  status: "investigating",
+                  updated_at: "2026-03-24T09:11:00+00:00",
+                  active_investigation: {
+                    id: "INV-DETAIL-REV-OPT",
+                    state: "active",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "",
+                    final_confirmation_requested_at: null,
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:11:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-REV-OPT-m1",
+                        role: "engineer_ai",
+                        content: "I have enough information now. Please confirm this draft before I reply to the customer.",
+                        created_at: "2026-03-24T09:05:00+00:00",
+                      },
+                      {
+                        id: "INV-DETAIL-REV-OPT-m2",
+                        role: "engineer",
+                        content: "Mention clearing cached auth data before retrying.",
+                        created_at: "2026-03-24T09:10:30+00:00",
+                      },
+                      {
+                        id: "INV-DETAIL-REV-OPT-m3",
+                        role: "engineer_ai",
+                        content: "Understood. I will revise the customer reply to include the cache-clear step.",
+                        created_at: "2026-03-24T09:11:00+00:00",
+                      },
+                    ],
+                  },
+                });
+                await sendPromise;
+              """
+            )
+        )
+
+    def test_engineer_detail_send_failure_keeps_engineer_message_and_restores_input(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                routeState.view = "detail";
+                selectedTicketId = "TK-DETAIL-FAIL";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-FAIL",
+                  subject: "Android 14 token renew regression",
+                  requester: "user-7",
+                  status: "investigating",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: {
+                    id: "INV-DETAIL-FAIL",
+                    state: "active",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "",
+                    final_confirmation_requested_at: null,
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-FAIL-m1",
+                        role: "engineer_ai",
+                        content: "Please share the Android version and latest logcat excerpt.",
+                        created_at: "2026-03-24T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+                selectedTicketSummary = "Engineer AI needs one more technical detail.";
+                selectedTicketNextAction = "Share the latest Android logcat excerpt.";
+
+                fetchJson = async () => {
+                  throw new Error("Request failed with status 500");
+                };
+                loadTickets = async () => {};
+                refreshSelectedTicket = async () => {};
+
+                tellAiDraft = "Logcat now shows auth timeout before channel join.";
+                const sendButton = {
+                  dataset: { detailAction: "send-tell-ai" },
+                  disabled: false,
+                };
+                const sendTarget = {
+                  closest(selector) {
+                    if (selector === "button[data-detail-action]") {
+                      return sendButton;
+                    }
+                    return null;
+                  },
+                };
+
+                await handleDetailClick({ target: sendTarget });
+                const failedHtml = workspaceRegionEl.innerHTML;
+                if (!failedHtml.includes("Logcat now shows auth timeout before channel join.")) {
+                  throw new Error("Failed sends should keep the optimistic engineer message in the thread.");
+                }
+                if (failedHtml.includes("message-item-pending-ai")) {
+                  throw new Error("Failed sends should remove the pending Engineer AI placeholder bubble.");
+                }
+                if (!failedHtml.includes("Engineer AI update failed: Request failed with status 500")) {
+                  throw new Error("Failed sends should append an inline system error message to the thread.");
+                }
+                if (tellAiDraft !== "Logcat now shows auth timeout before channel join.") {
+                  throw new Error("Failed sends should restore the original draft to the composer.");
+                }
+                if (!failedHtml.includes(">Logcat now shows auth timeout before channel join.<")) {
+                  throw new Error("Failed sends should re-render the composer with the restored draft.");
+                }
               """
             )
         )
