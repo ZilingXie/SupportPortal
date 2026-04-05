@@ -2538,6 +2538,7 @@ function bindTicketProductSelect() {
     const panel = root.querySelector("[data-product-select-panel]");
     const hiddenInput = root.querySelector("input[type='hidden']");
     const options = Array.from(root.querySelectorAll("[data-product-select-option]"));
+    const chatRoot = typeof root.closest === "function" ? root.closest(".chat-root") : null;
 
     if (!trigger || !panel || options.length === 0) {
       return;
@@ -2570,6 +2571,7 @@ function bindTicketProductSelect() {
     const openPanel = (focusTarget = "selected") => {
       clearCloseTimer();
       root.classList.add("is-open");
+      chatRoot?.classList?.add("has-open-product-select");
       panel.hidden = false;
       trigger.setAttribute("aria-expanded", "true");
 
@@ -2594,6 +2596,7 @@ function bindTicketProductSelect() {
     const closePanel = ({ restoreFocus = false } = {}) => {
       clearCloseTimer();
       root.classList.remove("is-open");
+      chatRoot?.classList?.remove("has-open-product-select");
       panel.hidden = true;
       trigger.setAttribute("aria-expanded", "false");
       setActiveDescendant(null);
