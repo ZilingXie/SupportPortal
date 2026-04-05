@@ -179,6 +179,8 @@ def _main_agent_async_enabled() -> bool:
 def _build_client_ack_instructions() -> str:
     return (
         "Write exactly one short acknowledgement sentence for a support chat. "
+        "Use a concierge-style voice. "
+        "Use a calm, warm, and polished tone. "
         "Only confirm that the request was received and will be checked. "
         "Do not provide technical guidance. Do not promise engineer escalation. "
         "Do not cite sources. Match the user's language."

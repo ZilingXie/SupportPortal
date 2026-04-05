@@ -729,3 +729,21 @@ For each new entry, record:
   - `./.venv/bin/python -m unittest backend.tests.test_client_ticket_agent_runtime backend.tests.test_ticket_orchestrator backend.tests.test_ticket_routing backend.tests.test_trace_client_ticket_route_cli backend.tests.test_llm_profiles backend.tests.test_rag_benchmark_runner backend.tests.test_investigation_flow backend.tests.test_worker -q`
   - `./.venv/bin/python -m py_compile backend/services/client_ticket_agent_runtime.py backend/services/ticket_orchestrator.py backend/services/rag_benchmark_runner.py backend/services/llm_profiles.py backend/main.py backend/worker.py scripts/trace_client_ticket_route.py`
   - `git diff --check`
+
+- Date: 2026-04-05
+- Area or subsystem: Client acknowledgement prompt tone
+- Prompt or model version: `client-ack-concierge-v1`
+- Summary: Tightened the client ack system prompt so the `gpt-5.4-nano` acknowledgement is explicitly generated in a concierge-style voice while preserving the existing one-sentence, non-technical, no-escalation constraints.
+- Reason: The previous prompt produced acknowledgements that were correct but too generic and operational; the client-facing first touch should feel more polished and concierge-like without changing routing or fallback behavior.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Client ack generations should sound warmer and more polished by default instead of purely transactional.
+  - The model is still constrained to exactly one acknowledgement sentence in the user's language.
+  - The client ack still avoids technical guidance, source citations, and engineer-escalation promises.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_investigation_flow.InvestigationFlowTests.test_client_ack_prompt_instructions_require_concierge_style backend.tests.test_investigation_flow.InvestigationFlowTests.test_client_ack_returns_model_text_and_latency -q`
+  - `python3 -m py_compile backend/main.py backend/tests/test_investigation_flow.py`
+  - `git diff --check`
