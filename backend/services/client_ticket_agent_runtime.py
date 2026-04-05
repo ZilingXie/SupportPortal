@@ -425,19 +425,66 @@ def _normalize_grounded_review_result(value: Any) -> tuple[str, str, float]:
     return decision, reason, confidence
 
 
+def _is_troubleshooting_intake_candidate(
+    *,
+    message: str,
+    client_intake_state: dict[str, Any] | None,
+) -> bool:
+    if isinstance(client_intake_state, dict) and str(client_intake_state.get("issue_mode") or "").strip().lower() == "investigation":
+        return True
+    return bool(_TROUBLESHOOTING_SIGNAL_RE.search(_clean_text(message).lower()))
+
+
+def _resolve_pending_investigation_reason(
+    *,
+    current_state: dict[str, Any] | None,
+    investigation_reason: str | None,
+) -> str:
+    pending_reason = _clean_text((current_state or {}).get("pending_investigation_reason"))
+    if pending_reason:
+        return pending_reason
+    normalized_reason = _clean_text(investigation_reason)
+    if normalized_reason:
+        return normalized_reason
+    return RAG_INSUFFICIENT_EVIDENCE_REASON
+
+
+def _normalize_investigation_reason(value: Any) -> str:
+    normalized = _clean_text(value).lower()
+    if normalized in {
+        RAG_INSUFFICIENT_EVIDENCE_REASON,
+        RAG_SERVICE_ERROR_REASON,
+        RAG_UNAVAILABLE_REASON,
+        RAG_POST_CHECK_INSUFFICIENT_REASON,
+        RAG_POST_CHECK_ERROR_REASON,
+    }:
+        return normalized
+    return RAG_INSUFFICIENT_EVIDENCE_REASON
+
+
 def _handle_insufficient_review(
     *,
     review_result: TroubleshootingIntakeResult,
     resolution: SupportResolution,
     product: str | None,
+    investigation_reason: str,
+    current_state: dict[str, Any] | None = None,
 ) -> TicketExecutionResult:
-    next_client_intake_state = build_client_intake_state(review_result, product=product)
+    pending_investigation_reason = _resolve_pending_investigation_reason(
+        current_state=current_state,
+        investigation_reason=investigation_reason,
+    )
+    next_client_intake_state = build_client_intake_state(
+        review_result,
+        product=product,
+        pending_investigation_reason=pending_investigation_reason,
+    )
     if review_result.ready_for_engineer_ticket:
         return _build_ticket_execution_result(
             resolution=resolution,
             needs_investigating=True,
             workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
-            investigation_reason=RAG_INSUFFICIENT_EVIDENCE_REASON,
+            investigation_reason=pending_investigation_reason,
             client_intake_state=next_client_intake_state,
         )
     if _clean_text(review_result.customer_reply):
@@ -449,7 +496,7 @@ def _handle_insufficient_review(
             needs_engineer_guidance=False,
             answer_route=resolution.answer_route,
             scope_label=resolution.scope_label,
-            route_reason=RAG_INSUFFICIENT_EVIDENCE_REASON,
+            route_reason=pending_investigation_reason,
             route_confidence=resolution.route_confidence,
             search_used=resolution.search_used,
             matched_signals=list(resolution.matched_signals),
@@ -469,7 +516,7 @@ def _handle_insufficient_review(
         resolution=resolution,
         needs_investigating=True,
         workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
-        investigation_reason=RAG_INSUFFICIENT_EVIDENCE_REASON,
+        investigation_reason=pending_investigation_reason,
         client_intake_state=next_client_intake_state,
     )
 
@@ -798,7 +845,7 @@ def execute_client_ticket_agent_runtime(
         )
 
         if rag_detail.needs_engineer_guidance:
-            normalized_reason = str(rag_detail.reason or "").strip().lower() or RAG_INSUFFICIENT_EVIDENCE_REASON
+            normalized_reason = _normalize_investigation_reason(rag_detail.reason)
             if normalized_reason in {RAG_SERVICE_ERROR_REASON, RAG_UNAVAILABLE_REASON}:
                 _mark_agent_summary(
                     review_summary,
@@ -863,6 +910,8 @@ def execute_client_ticket_agent_runtime(
                     review_result=review_result,
                     resolution=rag_resolution,
                     product=product,
+                    investigation_reason=normalized_reason,
+                    current_state=client_intake_state,
                 )
                 _mark_agent_summary(
                     review_summary,
@@ -939,18 +988,71 @@ def execute_client_ticket_agent_runtime(
                         if reason == "review_error"
                         else RAG_POST_CHECK_INSUFFICIENT_REASON
                     )
-                    result = _build_ticket_execution_result(
-                        resolution=rag_resolution,
-                        needs_investigating=True,
-                        workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
-                        investigation_reason=investigation_reason,
-                    )
+                    if _is_troubleshooting_intake_candidate(
+                        message=message,
+                        client_intake_state=client_intake_state,
+                    ):
+                        _mark_agent_summary(
+                            review_summary,
+                            phase="running",
+                            status="running",
+                            decision="pre_engineer_intake",
+                            reason=investigation_reason,
+                        )
+                        _append_event(
+                            agent_events,
+                            ticket_id=ticket_id,
+                            message_id=message_id,
+                            run_id=run_id,
+                            agent_name=AGENT_NAME_REVIEW,
+                            phase="running",
+                            event_type="started",
+                            payload={"mode": "pre_engineer_intake", "investigation_reason": investigation_reason},
+                        )
+                        review_result = review_agent(
+                            mode="pre_engineer_intake",
+                            message=message,
+                            product=product,
+                            ticket_subject=ticket_subject,
+                            ticket_context=ticket_context,
+                            current_state=client_intake_state,
+                            route_decision=effective_route_decision,
+                            resolution=rag_resolution,
+                            rag_result={
+                                "reason": investigation_reason,
+                                "answer": rag_resolution.answer,
+                                "evidence_summary": dict(rag_resolution.evidence_summary or {}) or {},
+                                "packed_evidence": dict(rag_resolution.packed_evidence or {}) or {},
+                            },
+                        ) if callable(review_agent) else TroubleshootingIntakeResult(
+                            issue_mode="answer",
+                            known_information={},
+                            missing_information=[],
+                            ready_for_engineer_ticket=False,
+                            customer_reply="",
+                        )
+                        if not isinstance(review_result, TroubleshootingIntakeResult):
+                            raise TypeError("review agent must return TroubleshootingIntakeResult for pre_engineer_intake")
+                        result = _handle_insufficient_review(
+                            review_result=review_result,
+                            resolution=rag_resolution,
+                            product=product,
+                            investigation_reason=investigation_reason,
+                            current_state=client_intake_state,
+                        )
+                    else:
+                        result = _build_ticket_execution_result(
+                            resolution=rag_resolution,
+                            needs_investigating=True,
+                            workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
+                            investigation_reason=investigation_reason,
+                        )
                 _mark_agent_summary(
                     review_summary,
                     phase="completed",
                     status="completed",
-                    decision=decision,
-                    reason=reason,
+                    decision=result.workflow_action if decision != "approve_answer" else decision,
+                    reason=investigation_reason if decision != "approve_answer" else reason,
                     extra={"confidence": confidence},
                 )
                 _append_event(
@@ -961,7 +1063,11 @@ def execute_client_ticket_agent_runtime(
                     agent_name=AGENT_NAME_REVIEW,
                     phase="completed",
                     event_type="completed",
-                    payload={"decision": decision, "reason": reason, "confidence": confidence},
+                    payload={
+                        "decision": result.workflow_action if decision != "approve_answer" else decision,
+                        "reason": investigation_reason if decision != "approve_answer" else reason,
+                        "confidence": confidence,
+                    },
                 )
             else:
                 _mark_agent_summary(review_summary, phase="skipped", status="skipped", decision="skipped", reason="low_risk_grounded_answer")

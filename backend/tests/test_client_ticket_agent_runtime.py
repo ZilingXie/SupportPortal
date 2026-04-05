@@ -273,6 +273,160 @@ class ClientTicketAgentRuntimeContractTests(unittest.TestCase):
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "completed")
         self.assertEqual(execution.runtime_state.review_agent.get("decision"), "open_engineer_ticket")
 
+    def test_troubleshooting_postcheck_rejection_routes_into_intake_clarification(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        review_modes: list[str] = []
+
+        def _review_agent(**kwargs: object) -> object:
+            mode = str(kwargs.get("mode") or "")
+            review_modes.append(mode)
+            if mode == "grounded_postcheck":
+                return {"decision": "open_engineer_ticket", "reason": "review_insufficient", "confidence": 0.62}
+            if mode == "pre_engineer_intake":
+                return TroubleshootingIntakeResult(
+                    issue_mode="investigation",
+                    known_information={"issue_symptom": "black screen issue"},
+                    missing_information=["channel_name", "problematic_uid", "issue_timestamp"],
+                    ready_for_engineer_ticket=False,
+                    customer_reply=(
+                        "Known so far: the issue symptom is black screen issue. "
+                        "To investigate this Audio/Video Calling issue, please share the channel name, "
+                        "problematic uid, and issue timestamp."
+                    ),
+                )
+            self.fail(f"unexpected review mode {mode!r}")
+
+        execution = execute_client_ticket_agent_runtime(
+            message="i got black screen!!! what should i do",
+            ticket_id="TK-RISK-TRBL-1",
+            customer_id="C-001",
+            ticket_subject="Black screen",
+            ticket_context=[{"role": "customer", "content": "i got black screen!!! what should i do"}],
+            product="audio_video_calling",
+            message_id="2026-04-04T00:00:00+00:00",
+            route_agent=lambda **_kwargs: SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                confidence=0.94,
+                reason="technical_question",
+                matched_signals=["black screen"],
+                response_language="en",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+            ),
+            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                answer="Check whether the remote user is publishing video and the local render view is bound correctly.",
+                confidence=0.88,
+                sources=["https://docs.agora.io/en/video-calling/troubleshooting/black-screen"],
+                citations=[{"chunk_id": "chunk-black-screen"}],
+                needs_engineer_guidance=False,
+                reason="grounded_answer",
+                evidence_summary={
+                    "quality_signals": {
+                        "generation_mode": "structured_answer",
+                        "selected_doc_count": 1,
+                        "top1_similarity_score": 0.91,
+                    }
+                },
+                packed_evidence=None,
+            ),
+            review_agent=_review_agent,
+            rag_canceler=None,
+        )
+
+        self.assertEqual(review_modes, ["grounded_postcheck", "pre_engineer_intake"])
+        self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
+        self.assertFalse(execution.result.needs_investigating)
+        self.assertEqual(execution.result.investigation_reason, None)
+        self.assertEqual(
+            execution.result.client_intake_state["missing_information"],
+            ["channel_name", "problematic_uid", "issue_timestamp"],
+        )
+        self.assertEqual(
+            execution.result.client_intake_state["pending_investigation_reason"],
+            "rag_post_check_insufficient",
+        )
+        self.assertEqual(execution.runtime_state.review_agent.get("decision"), "clarify_customer_for_intake")
+
+    def test_ready_intake_follow_up_reuses_pending_investigation_reason(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        execution = execute_client_ticket_agent_runtime(
+            message="channel name is demo-room, problematic uid is 42, timestamp is 2026-04-04T10:30:00Z",
+            ticket_id="TK-RISK-TRBL-2",
+            customer_id="C-001",
+            ticket_subject="Black screen",
+            ticket_context=[
+                {"role": "customer", "content": "i got black screen issue"},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "Known so far: the issue symptom is black screen issue. "
+                        "To investigate this Audio/Video Calling issue, please share the channel name, "
+                        "problematic uid, and issue timestamp."
+                    ),
+                },
+            ],
+            product="audio_video_calling",
+            message_id="2026-04-04T10:30:00+00:00",
+            client_intake_state={
+                "phase": "gather_customer_inputs",
+                "product": "audio_video_calling",
+                "issue_mode": "investigation",
+                "known_information": {"issue_symptom": "black screen issue"},
+                "missing_information": ["channel_name", "problematic_uid", "issue_timestamp"],
+                "ready_for_engineer_ticket": False,
+                "pending_investigation_reason": "rag_post_check_insufficient",
+                "last_updated_at": "2026-04-04T10:00:00Z",
+            },
+            route_agent=lambda **_kwargs: SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                confidence=0.94,
+                reason="technical_question",
+                matched_signals=["black screen", "uid"],
+                response_language="en",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+            ),
+            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                answer="I couldn't find enough information in the docs alone.",
+                confidence=0.43,
+                sources=[],
+                citations=[],
+                needs_engineer_guidance=True,
+                reason="rag_insufficient_evidence",
+                evidence_summary={"quality_signals": {"needs_human": True}},
+                packed_evidence=None,
+            ),
+            review_agent=lambda **_kwargs: TroubleshootingIntakeResult(
+                issue_mode="investigation",
+                known_information={
+                    "issue_symptom": "black screen issue",
+                    "channel_name": "demo-room",
+                    "problematic_uid": "42",
+                    "issue_timestamp": "2026-04-04T10:30:00Z",
+                },
+                missing_information=[],
+                ready_for_engineer_ticket=True,
+                customer_reply="",
+            ),
+            rag_canceler=None,
+        )
+
+        self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
+        self.assertTrue(execution.result.needs_investigating)
+        self.assertEqual(execution.result.investigation_reason, "rag_post_check_insufficient")
+        self.assertEqual(
+            execution.result.client_intake_state["pending_investigation_reason"],
+            "rag_post_check_insufficient",
+        )
+
     def test_rag_unavailable_from_knowledge_index_guard_skips_review_and_surfaces_diagnostics(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
 

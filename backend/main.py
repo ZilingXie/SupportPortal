@@ -455,7 +455,7 @@ def _run_client_ticket_review_agent(
     resolution: SupportResolution,
     rag_result: dict[str, Any] | None,
 ) -> Any:
-    if mode == "rag_insufficient_evidence":
+    if mode in {"rag_insufficient_evidence", "pre_engineer_intake"}:
         return evaluate_troubleshooting_intake(
             message=message,
             product=product,

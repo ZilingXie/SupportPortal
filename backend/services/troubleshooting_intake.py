@@ -94,6 +94,15 @@ def _normalize_known_information(value: Any) -> dict[str, str]:
     return normalized
 
 
+def _normalize_missing_information(value: Any) -> list[str]:
+    normalized: list[str] = []
+    for item in list(value or []):
+        clean_item = str(item or "").strip().lower()
+        if clean_item and clean_item not in normalized:
+            normalized.append(clean_item)
+    return normalized
+
+
 def _required_fields_for(product: str | None) -> tuple[str, ...]:
     return tuple(get_support_product_required_fields(product))
 
@@ -388,26 +397,48 @@ def _parse_llm_result(payload: Any, *, fallback: TroubleshootingIntakeResult) ->
     issue_mode = str(payload.get("issue_mode") or "").strip().lower()
     if issue_mode not in {"answer", "investigation"}:
         return fallback
-    known_information = _normalize_known_information(payload.get("known_information"))
-    missing_information = [
-        str(item or "").strip().lower()
-        for item in list(payload.get("missing_information") or [])
-        if str(item or "").strip()
-    ]
+    known_information = dict(fallback.known_information)
+    known_information.update(_normalize_known_information(payload.get("known_information")))
+
+    if issue_mode == "answer":
+        missing_information = [
+            field_name
+            for field_name in _ANSWER_MODE_REQUIRED_FIELDS
+            if not _clean_text(known_information.get(field_name))
+        ]
+        ready_for_engineer_ticket = not missing_information and bool(known_information)
+    else:
+        required_fields = [
+            field_name
+            for field_name in list(fallback.known_information.keys()) + list(fallback.missing_information)
+            if field_name != "issue_mode"
+        ]
+        normalized_required_fields: list[str] = []
+        for field_name in required_fields:
+            clean_field_name = str(field_name or "").strip().lower()
+            if clean_field_name and clean_field_name not in normalized_required_fields:
+                normalized_required_fields.append(clean_field_name)
+        if not normalized_required_fields:
+            normalized_required_fields = _normalize_missing_information(fallback.missing_information)
+        missing_information = [
+            field_name
+            for field_name in normalized_required_fields
+            if not _clean_text(known_information.get(field_name))
+        ]
+        ready_for_engineer_ticket = not missing_information
+
+    customer_reply = _clean_text(payload.get("customer_reply"))
+    if ready_for_engineer_ticket:
+        customer_reply = ""
+    elif not customer_reply:
+        customer_reply = _clean_text(fallback.customer_reply)
+
     return TroubleshootingIntakeResult(
         issue_mode=issue_mode,
-        known_information=known_information or fallback.known_information,
-        missing_information=missing_information or list(fallback.missing_information),
-        ready_for_engineer_ticket=(
-            bool(payload.get("ready_for_engineer_ticket"))
-            if "ready_for_engineer_ticket" in payload
-            else bool(fallback.ready_for_engineer_ticket)
-        ),
-        customer_reply=(
-            _clean_text(payload.get("customer_reply"))
-            if "customer_reply" in payload
-            else _clean_text(fallback.customer_reply)
-        ),
+        known_information=known_information,
+        missing_information=missing_information,
+        ready_for_engineer_ticket=ready_for_engineer_ticket,
+        customer_reply=customer_reply,
     )
 
 
@@ -484,6 +515,7 @@ def build_client_intake_state(
     *,
     product: str | None,
     now_value: str | None = None,
+    pending_investigation_reason: str | None = None,
 ) -> dict[str, Any] | None:
     if result.issue_mode not in {"answer", "investigation"}:
         return None
@@ -494,5 +526,6 @@ def build_client_intake_state(
         "known_information": dict(result.known_information),
         "missing_information": list(result.missing_information),
         "ready_for_engineer_ticket": bool(result.ready_for_engineer_ticket),
+        "pending_investigation_reason": _clean_text(pending_investigation_reason) or None,
         "last_updated_at": _clean_text(now_value) or _utc_now(),
     }

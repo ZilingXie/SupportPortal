@@ -1183,6 +1183,81 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertIsNone(stored.get("active_engineer_case_id"))
         self.assertEqual(stored.get("engineer_case_count"), 0)
 
+    def test_black_screen_postcheck_rejection_persists_intake_gate_before_opening_engineer_ticket(self) -> None:
+        with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="Got it, let me check this for you.",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main,
+            "execute_client_ticket_agent_runtime",
+            return_value=types.SimpleNamespace(
+                result=types.SimpleNamespace(
+                    answer=(
+                        "Known so far: the issue symptom is black screen issue. "
+                        "To investigate this Audio/Video Calling issue, please share the channel name, "
+                        "problematic uid, and issue timestamp."
+                    ),
+                    confidence=0.0,
+                    sources=[],
+                    citations=[],
+                    needs_investigating=False,
+                    next_status="communicating",
+                    answer_route="rag",
+                    scope_label="agora_technical",
+                    route_family="agora_docs_rag",
+                    execution_action="rag",
+                    tooling_profile="agora_docs_only",
+                    route_reason="rag_post_check_insufficient",
+                    route_confidence=0.86,
+                    search_used=False,
+                    matched_signals=["black screen"],
+                    investigation_reason=None,
+                    evidence_summary=None,
+                    packed_evidence=None,
+                    workflow_action="clarify_customer_for_intake",
+                    client_intake_state={
+                        "phase": "gather_customer_inputs",
+                        "product": "audio_video_calling",
+                        "issue_mode": "investigation",
+                        "known_information": {"issue_symptom": "black screen issue"},
+                        "missing_information": ["channel_name", "problematic_uid", "issue_timestamp"],
+                        "ready_for_engineer_ticket": False,
+                        "pending_investigation_reason": "rag_post_check_insufficient",
+                        "last_updated_at": "2026-04-04T10:00:00Z",
+                    },
+                ),
+            ),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-INV-POSTCHECK-INTAKE-1",
+                    "customer_id": "C-001",
+                    "product": "audio_video_calling",
+                    "message": "i got black screen!!! what should i do",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        stored = self.repository.get_ticket("TK-INV-POSTCHECK-INTAKE-1")
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored["status"], "communicating")
+        self.assertEqual(
+            stored["client_intake_state"]["pending_investigation_reason"],
+            "rag_post_check_insufficient",
+        )
+        self.assertIsNone(stored.get("active_engineer_case_id"))
+        self.assertEqual(stored.get("engineer_case_count"), 0)
+
     def test_follow_up_with_required_inputs_opens_engineer_ticket_and_clears_client_intake_state(self) -> None:
         self._seed_ticket(
             ticket_id="TK-INV-READY-201",
@@ -1299,6 +1374,123 @@ class InvestigationFlowTests(unittest.TestCase):
             handoff["client_intake_state"]["known_information"]["channel_name"],
             "demo-room",
         )
+
+    def test_follow_up_after_postcheck_clarification_opens_engineer_ticket_with_original_reason(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-INV-POSTCHECK-READY-1",
+            subject="black screen issue",
+            status="communicating",
+            product="audio_video_calling",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "i got black screen issue",
+                    "created_at": "2026-03-29T09:00:00+00:00",
+                },
+                {
+                    "role": "assistant",
+                    "content": (
+                        "Known so far: the issue symptom is black screen issue. "
+                        "To investigate this Audio/Video Calling issue, please share the channel name, "
+                        "problematic uid, and issue timestamp."
+                    ),
+                    "created_at": "2026-03-29T09:01:00+00:00",
+                },
+            ],
+            client_intake_state={
+                "phase": "gather_customer_inputs",
+                "product": "audio_video_calling",
+                "issue_mode": "investigation",
+                "known_information": {"issue_symptom": "black screen issue"},
+                "missing_information": ["channel_name", "problematic_uid", "issue_timestamp"],
+                "ready_for_engineer_ticket": False,
+                "pending_investigation_reason": "rag_post_check_insufficient",
+                "last_updated_at": "2026-03-29T09:01:00+00:00",
+            },
+        )
+
+        with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="Got it, let me check this for you.",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main,
+            "execute_client_ticket_agent_runtime",
+            return_value=types.SimpleNamespace(
+                result=types.SimpleNamespace(
+                    answer=main.INSUFFICIENT_EVIDENCE_REPLY,
+                    confidence=0.0,
+                    sources=[],
+                    citations=[],
+                    needs_investigating=True,
+                    next_status="investigating",
+                    answer_route="rag",
+                    scope_label="agora_technical",
+                    route_family="agora_docs_rag",
+                    execution_action="rag",
+                    tooling_profile="agora_docs_only",
+                    route_reason="rag_post_check_insufficient",
+                    route_confidence=0.88,
+                    search_used=False,
+                    matched_signals=["black screen", "uid"],
+                    investigation_reason="rag_post_check_insufficient",
+                    evidence_summary=None,
+                    packed_evidence=None,
+                    workflow_action="open_engineer_ticket",
+                    client_intake_state={
+                        "phase": "ready_for_engineer_ticket",
+                        "product": "audio_video_calling",
+                        "issue_mode": "investigation",
+                        "known_information": {
+                            "issue_symptom": "black screen issue",
+                            "channel_name": "demo-room",
+                            "problematic_uid": "42",
+                            "issue_timestamp": "2026-04-04T10:30:00Z",
+                        },
+                        "missing_information": [],
+                        "ready_for_engineer_ticket": True,
+                        "pending_investigation_reason": "rag_post_check_insufficient",
+                        "last_updated_at": "2026-04-04T10:30:00Z",
+                    },
+                ),
+            ),
+        ), patch.object(
+            main,
+            "generate_investigation_ai_turn",
+            return_value={
+                "state": "active",
+                "message": "Engineer intake received the collected customer details.",
+                "draft_customer_reply": None,
+            },
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-INV-POSTCHECK-READY-1",
+                    "customer_id": "C-001",
+                    "message": "channel name is demo-room, problematic uid is 42, timestamp is 2026-04-04T10:30:00Z",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        stored = self.repository.get_ticket("TK-INV-POSTCHECK-READY-1")
+        self.assertIsNotNone(stored)
+        assert stored is not None
+        self.assertEqual(stored["status"], "investigating")
+        detail = self.client.get("/api/engineer/tickets/TK-INV-POSTCHECK-READY-1-1")
+        self.assertEqual(detail.status_code, 200, detail.text)
+        handoff = detail.json()["ticket"]["engineer_handoff_packet"]
+        self.assertEqual(detail.json()["ticket"]["active_investigation"]["trigger_reason"], "rag_post_check_insufficient")
+        self.assertEqual(handoff["unresolved_reason"], "rag_post_check_insufficient")
+        self.assertIsNone(stored.get("client_intake_state"))
 
     def test_rag_http_500_keeps_service_error_reason_in_ticket_and_handoff(self) -> None:
         with patch.object(

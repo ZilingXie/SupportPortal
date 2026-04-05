@@ -2354,3 +2354,28 @@ For each new entry, record:
   - `./.venv/bin/python -m unittest backend.tests.test_client_ticket_agent_runtime backend.tests.test_ticket_orchestrator backend.tests.test_ticket_routing backend.tests.test_trace_client_ticket_route_cli backend.tests.test_llm_profiles backend.tests.test_rag_benchmark_runner backend.tests.test_investigation_flow backend.tests.test_worker -q`
   - `./.venv/bin/python -m py_compile backend/services/client_ticket_agent_runtime.py backend/services/ticket_orchestrator.py backend/services/rag_benchmark_runner.py backend/services/llm_profiles.py backend/main.py backend/worker.py scripts/trace_client_ticket_route.py`
   - `git diff --check`
+
+## 2026-04-05 - Unified troubleshooting intake gate before engineer escalation
+
+- Summary:
+  - Extended the ticket-side troubleshooting intake gate so new troubleshooting symptoms now collect required product fields before opening an engineer case, even when the escalation originates from `grounded_postcheck` instead of `rag_insufficient_evidence`.
+  - Preserved the original escalation cause inside `client_intake_state.pending_investigation_reason` so follow-up customer replies reopen engineer tickets with the real unresolved reason instead of collapsing back to generic insufficient-evidence.
+  - Hardened intake normalization so the backend recomputes required missing fields and readiness instead of trusting an LLM response that marks a case ready without the minimum investigation identifiers.
+- Reason:
+  - Black-screen style troubleshooting messages were still opening engineer tickets immediately when a grounded-but-insufficient answer failed post-check review, which bypassed the intended customer intake step and lost the original escalation reason on follow-up.
+- Affected files/config:
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/services/troubleshooting_intake.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/main.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_troubleshooting_intake.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - `support_tickets.client_intake_state` now carries optional `pending_investigation_reason` so clarifying turns can preserve the original unresolved cause across customer follow-up.
+  - No vector tables, embeddings, chunking, retrieval indices, or `/internal/rag/query` response fields changed.
+  - Engineer handoff still occurs only after required troubleshooting intake fields are collected for the selected product.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_client_ticket_agent_runtime.py backend/tests/test_troubleshooting_intake.py backend/tests/test_investigation_flow.py`
+  - `git diff --check`

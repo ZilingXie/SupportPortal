@@ -260,7 +260,7 @@ def _compat_review_agent(
     resolution: SupportResolution,
     rag_result: dict[str, Any] | None,
 ) -> Any:
-    if mode == "rag_insufficient_evidence":
+    if mode in {"rag_insufficient_evidence", "pre_engineer_intake"}:
         return _coerce_troubleshooting_intake_result(
             evaluate_troubleshooting_intake(
                 message=message,
