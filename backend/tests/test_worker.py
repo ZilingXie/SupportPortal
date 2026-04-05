@@ -316,9 +316,98 @@ class WorkerResilienceTests(unittest.TestCase):
             "now_iso",
             return_value="2026-03-22T00:01:00+00:00",
         ):
-            worker._process_ticket_query(bus, dict(self.task))
+            worker._process_ticket_query(bus, dict(self.task, product="cloud_recording"))
 
         self.assertEqual(orchestrate_mock.call_args.kwargs["product"], "cloud_recording")
+
+    def test_process_ticket_query_starts_main_agent_from_task_snapshot_before_ticket_refresh(self) -> None:
+        repository = Mock()
+        repository.get_ticket.return_value = _build_ticket(
+            ticket_id="T-SNAPSHOT",
+            customer_message="how to join channel",
+            message_created_at="2026-03-22T00:00:00+00:00",
+        )
+        repository.list_ticket_events.return_value = []
+        repository.save_ticket.return_value = None
+        repository.record_event.return_value = None
+        bus = Mock()
+        execution = types.SimpleNamespace(
+            answer="Use joinChannel with the same channel name and token.",
+            confidence=0.91,
+            sources=["https://docs.agora.io/en/video-calling/get-started"],
+            citations=[{"chunk_id": "chunk-1"}],
+            needs_engineer_guidance=False,
+            answer_route="rag",
+            scope_label="agora_technical",
+            route_reason="grounded_answer",
+            route_confidence=0.91,
+            search_used=False,
+            matched_signals=["join channel"],
+            route_family="agora_docs_rag",
+            execution_action="rag",
+            tooling_profile="agora_docs_only",
+            needs_investigating=False,
+            next_status="communicating",
+            workflow_action="answer_customer",
+            client_intake_state={"phase": "gather_customer_inputs"},
+            evidence_summary=None,
+            run_id="run-snapshot",
+            client_agent_runtime_state={"status": "completed"},
+        )
+
+        def _orchestrate_side_effect(*args, **kwargs):
+            self.assertEqual(repository.get_ticket.call_count, 0)
+            self.assertEqual(kwargs["customer_id"], "C-123")
+            self.assertEqual(kwargs["ticket_subject"], "Join question")
+            self.assertEqual(kwargs["product"], "audio_video_calling")
+            self.assertEqual(
+                kwargs["ticket_context"],
+                [
+                    {"role": "customer", "content": "how to join channel"},
+                    {"role": "assistant", "content": "I am checking the knowledge base for you now."},
+                ],
+            )
+            self.assertEqual(kwargs["client_intake_state"], {"phase": "gather_customer_inputs"})
+            return execution
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "_orchestrate_worker_support_message",
+            side_effect=_orchestrate_side_effect,
+        ), patch.object(
+            worker,
+            "build_client_sync_event",
+            return_value={"event": "ticket_ai_response_ready"},
+        ), patch.object(
+            worker,
+            "ensure_ticket_defaults",
+            side_effect=lambda ticket: None,
+        ), patch.object(
+            worker,
+            "now_iso",
+            return_value="2026-03-22T00:00:01+00:00",
+        ):
+            worker._process_ticket_query(
+                bus,
+                {
+                    "task_type": "ticket_query",
+                    "ticket_id": "T-SNAPSHOT",
+                    "customer_message": "how to join channel",
+                    "message_created_at": "2026-03-22T00:00:00+00:00",
+                    "created_at": "2026-03-22T00:00:00.100000+00:00",
+                    "customer_id": "C-123",
+                    "ticket_subject": "Join question",
+                    "product": "audio_video_calling",
+                    "route_context_tail": [
+                        {"role": "customer", "content": "how to join channel"},
+                        {"role": "assistant", "content": "I am checking the knowledge base for you now."},
+                    ],
+                    "client_intake_state": {"phase": "gather_customer_inputs"},
+                    "ticket_updated_at": "2026-03-22T00:00:00+00:00",
+                },
+            )
+
+        self.assertEqual(repository.get_ticket.call_count, 1)
 
     def test_process_ticket_query_clarifies_customer_and_keeps_ticket_communicating(self) -> None:
         ticket = _build_ticket(
@@ -518,6 +607,13 @@ class WorkerResilienceTests(unittest.TestCase):
         agent_event_args = repository.record_ticket_agent_event.call_args.args
         self.assertEqual(agent_event_args[2], "run-123")
         self.assertEqual(agent_event_args[3], "main_agent")
+
+        response_ready_payload = repository.record_event.call_args_list[0].args[2]
+        self.assertIn("message_to_task_dequeued_ms", response_ready_payload)
+        self.assertIn("dequeued_to_main_agent_started_ms", response_ready_payload)
+        self.assertIn("main_agent_total_ms", response_ready_payload)
+        self.assertIn("main_agent_to_answer_saved_ms", response_ready_payload)
+        self.assertIn("answer_saved_to_response_ready_ms", response_ready_payload)
 
     def test_process_ticket_query_records_queue_wait_and_main_agent_timing_fields(self) -> None:
         ticket = _build_ticket(
@@ -727,10 +823,7 @@ class WorkerResilienceTests(unittest.TestCase):
             }
         )
         repository = Mock()
-        repository.get_ticket.side_effect = [
-            copy.deepcopy(initial_ticket),
-            copy.deepcopy(refreshed_ticket),
-        ]
+        repository.get_ticket.return_value = copy.deepcopy(refreshed_ticket)
         repository.list_ticket_events.return_value = []
         repository.save_ticket.return_value = None
         repository.record_event.return_value = None

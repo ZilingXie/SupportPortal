@@ -2431,6 +2431,38 @@ For each new entry, record:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_client_ticket_agent_runtime.py::ClientTicketAgentRuntimeContractTests::test_troubleshooting_rag_unavailable_routes_into_intake_clarification backend/tests/test_investigation_flow.py::InvestigationFlowTests::test_black_screen_rag_service_error_persists_intake_gate_before_opening_engineer_ticket`
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_client_ticket_agent_runtime.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py`
 
+## 2026-04-05 - Replace stale ticket DB long connections with pooled admission/runtime access
+
+- Summary:
+  - Replaced the ticket repository's thread-local cached PostgreSQL connection pattern with runtime-configured `psycopg_pool` checkout/return semantics, while keeping direct one-connection-per-operation behavior for unit tests and non-pooled construction paths.
+  - Changed async `ticket_query` tasks to carry a minimal execution snapshot so the worker can start `main agent` without preloading the ticket from PostgreSQL.
+  - Added explicit admission and worker-stage timing fields to `ticket_ai_response_ready` and updated the route trace script to read them directly instead of reconstructing them from mixed event timestamps.
+- Reason:
+  - Real ticket `TK-074` showed >100-second end-to-end latency caused by stale SSL/EoF ticket DB connections and an extra ticket reload before `main agent` start, not by Redis queue wait or the RAG answer stage itself.
+- Affected files/config:
+  - `backend/repositories/ticket_repository.py`
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `scripts/trace_client_ticket_route.py`
+  - `requirements.txt`
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `backend/tests/test_repository_configuration.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_worker.py`
+  - `backend/tests/test_trace_client_ticket_route_cli.py`
+  - `backend/tests/test_single_host_compose.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No vector-table, retrieval, rerank, answer-model, or benchmark scoring changes.
+  - `ticket_query` task payloads now include snapshot fields for `customer_id`, `ticket_subject`, `product`, `route_context_tail`, `client_intake_state`, and `ticket_updated_at`.
+  - `ticket_ai_response_ready` now carries explicit `message_to_task_dequeued_ms`, `dequeued_to_main_agent_started_ms`, `main_agent_total_ms`, `main_agent_to_answer_saved_ms`, and `answer_saved_to_response_ready_ms` fields.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_repository_configuration backend.tests.test_investigation_flow backend.tests.test_worker backend.tests.test_trace_client_ticket_route_cli backend.tests.test_single_host_compose -q`
+  - `python3 -m py_compile backend/repositories/ticket_repository.py backend/main.py backend/worker.py scripts/trace_client_ticket_route.py backend/tests/test_repository_configuration.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py backend/tests/test_trace_client_ticket_route_cli.py backend/tests/test_single_host_compose.py`
+  - `python3 scripts/verify_feature_list.py`
+  - `git diff --check`
+
 ## 2026-04-05 - Engineer investigation follow-up replies use dedicated structured drafting
 
 - Summary:

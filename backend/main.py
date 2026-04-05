@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -1209,6 +1210,12 @@ def build_query_task(
     customer_message: str,
     message_created_at: str,
     *,
+    customer_id: str | None = None,
+    ticket_subject: str | None = None,
+    product: str | None = None,
+    route_context_tail: list[dict[str, str]] | None = None,
+    client_intake_state: dict[str, Any] | None = None,
+    ticket_updated_at: str | None = None,
     load_ticket_ms: float | None = None,
     save_ticket_ms: float | None = None,
     api_persist_latency_ms: float | None = None,
@@ -1222,6 +1229,25 @@ def build_query_task(
         "message_created_at": message_created_at,
         "created_at": now_iso(),
     }
+    if customer_id:
+        task["customer_id"] = str(customer_id).strip()
+    if ticket_subject:
+        task["ticket_subject"] = str(ticket_subject).strip()
+    if product:
+        task["product"] = str(product).strip()
+    if isinstance(route_context_tail, list):
+        task["route_context_tail"] = [
+            {
+                "role": str(item.get("role", "system")).strip().lower() or "system",
+                "content": " ".join(str(item.get("content", "")).split()).strip(),
+            }
+            for item in route_context_tail
+            if isinstance(item, dict) and " ".join(str(item.get("content", "")).split()).strip()
+        ]
+    if isinstance(client_intake_state, dict):
+        task["client_intake_state"] = copy.deepcopy(client_intake_state)
+    if ticket_updated_at:
+        task["ticket_updated_at"] = str(ticket_updated_at).strip()
     if load_ticket_ms is not None:
         task["load_ticket_ms"] = round(float(load_ticket_ms), 2)
     if save_ticket_ms is not None:
@@ -1977,6 +2003,16 @@ async def create_or_update_ticket(
                 ticket_id=ticket_id,
                 customer_message=customer_message,
                 message_created_at=timestamp,
+                customer_id=str(ticket.get("customer_id") or "").strip() or None,
+                ticket_subject=str(ticket.get("subject") or "").strip() or None,
+                product=str(ticket.get("product") or "").strip() or None,
+                route_context_tail=route_context,
+                client_intake_state=(
+                    dict(ticket.get("client_intake_state"))
+                    if isinstance(ticket.get("client_intake_state"), dict)
+                    else None
+                ),
+                ticket_updated_at=str(ticket.get("updated_at") or "").strip() or None,
                 load_ticket_ms=load_ticket_ms,
                 save_ticket_ms=save_ticket_ms,
                 api_persist_latency_ms=api_persist_latency_ms,

@@ -5,6 +5,7 @@ import logging
 import os
 import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Callable, Protocol, TypeVar
 from uuid import uuid4
@@ -12,6 +13,10 @@ from uuid import uuid4
 import psycopg
 from psycopg import sql
 from psycopg.types.json import Json
+try:
+    from psycopg_pool import ConnectionPool
+except ImportError:  # pragma: no cover - exercised in environments without pool support
+    ConnectionPool = None
 
 LOGGER = logging.getLogger(__name__)
 
@@ -954,13 +959,29 @@ class PostgresTicketRepository:
         connect_timeout: int = 10,
         connect_retries: int = 0,
         connect_retry_delay_seconds: float = 1.0,
+        *,
+        use_connection_pool: bool = False,
+        pool_min_size: int = 1,
+        pool_max_size: int = 8,
+        pool_timeout_seconds: float = 5.0,
+        pool_max_lifetime_seconds: float = 300.0,
+        pool_max_idle_seconds: float = 60.0,
     ) -> None:
         self._dsn = dsn.strip()
         self._schema = (schema or "supportportal").strip() or "supportportal"
         self._connect_timeout = _safe_positive_int(connect_timeout, 5)
         self._connect_retries = _safe_positive_int(connect_retries, 0)
         self._connect_retry_delay_seconds = _safe_positive_float(connect_retry_delay_seconds, 1.0)
-        self._connection_local = threading.local()
+        self._use_connection_pool = bool(use_connection_pool)
+        self._pool_min_size = _safe_positive_int(pool_min_size, 1)
+        self._pool_max_size = max(self._pool_min_size, _safe_positive_int(pool_max_size, 8))
+        self._pool_timeout_seconds = _safe_positive_float(pool_timeout_seconds, 5.0)
+        self._pool_max_lifetime_seconds = _safe_positive_float(pool_max_lifetime_seconds, 300.0)
+        self._pool_max_idle_seconds = _safe_positive_float(pool_max_idle_seconds, 60.0)
+        if self._use_connection_pool and ConnectionPool is None:
+            raise RuntimeError("psycopg_pool is required when TICKET_DB connection pooling is enabled")
+        self._pool: Any = None
+        self._pool_lock = threading.Lock()
 
     def storage_mode(self) -> str:
         return "postgres"
@@ -968,31 +989,14 @@ class PostgresTicketRepository:
     def _table(self, table_name: str) -> sql.Identifier:
         return sql.Identifier(self._schema, table_name)
 
-    def _reset_cached_connection(self) -> None:
-        connection = getattr(self._connection_local, "connection", None)
-        if connection is None:
-            return
-        try:
-            connection.close()
-        except Exception:
-            LOGGER.debug("Failed to close cached ticket repository connection cleanly.", exc_info=True)
-        self._connection_local.connection = None
-
-    def _cached_connection(self) -> psycopg.Connection[Any]:
-        connection = getattr(self._connection_local, "connection", None)
-        if connection is not None and not getattr(connection, "closed", False) and not getattr(connection, "broken", False):
-            return connection
-        connection = self._connect()
-        connection.autocommit = True
-        self._connection_local.connection = connection
-        return connection
-
     def _connect(self) -> psycopg.Connection[Any]:
         attempts = max(1, self._connect_retries + 1)
         last_error: Exception | None = None
         for attempt in range(1, attempts + 1):
             try:
-                return psycopg.connect(self._dsn, connect_timeout=self._connect_timeout)
+                connection = psycopg.connect(self._dsn, connect_timeout=self._connect_timeout)
+                connection.autocommit = True
+                return connection
             except (psycopg.OperationalError, psycopg.Error, OSError, TimeoutError) as exc:
                 last_error = exc
                 if attempt >= attempts:
@@ -1007,6 +1011,58 @@ class PostgresTicketRepository:
         if last_error is not None:
             raise last_error
         raise RuntimeError("Ticket repository connection failed without an exception")
+
+    def _pool_factory(self) -> Any:
+        if ConnectionPool is None:
+            raise RuntimeError("psycopg_pool is required when TICKET_DB connection pooling is enabled")
+        return ConnectionPool(
+            self._dsn,
+            kwargs={
+                "connect_timeout": self._connect_timeout,
+                "autocommit": True,
+            },
+            min_size=self._pool_min_size,
+            max_size=self._pool_max_size,
+            check=ConnectionPool.check_connection,
+            timeout=self._pool_timeout_seconds,
+            max_lifetime=self._pool_max_lifetime_seconds,
+            max_idle=self._pool_max_idle_seconds,
+            open=False,
+        )
+
+    def _connection_pool(self) -> Any:
+        if not self._use_connection_pool:
+            return None
+        if self._pool is not None:
+            return self._pool
+        with self._pool_lock:
+            if self._pool is None:
+                self._pool = self._pool_factory()
+                self._pool.open(wait=True, timeout=self._pool_timeout_seconds)
+        return self._pool
+
+    @contextmanager
+    def _borrow_connection(self) -> Any:
+        pool = self._connection_pool()
+        if pool is None:
+            connection = self._connect()
+            try:
+                yield connection
+            finally:
+                if not getattr(connection, "closed", False):
+                    try:
+                        connection.close()
+                    except Exception:
+                        LOGGER.debug("Failed to close direct ticket repository connection cleanly.", exc_info=True)
+            return
+        with pool.connection(timeout=self._pool_timeout_seconds) as connection:
+            yield connection
+
+    def _invalidate_connection(self, conn: psycopg.Connection[Any]) -> None:
+        try:
+            conn.close()
+        except Exception:
+            LOGGER.debug("Failed to invalidate ticket repository connection cleanly.", exc_info=True)
 
     def _should_retry_connection_error(
         self,
@@ -1024,21 +1080,21 @@ class PostgresTicketRepository:
     ) -> _ResultT:
         attempt = 0
         while True:
-            conn = self._cached_connection()
-            try:
-                return action(conn)
-            except Exception as exc:
-                should_retry = self._should_retry_connection_error(conn, exc)
-                if should_retry:
-                    self._reset_cached_connection()
-                if not should_retry or attempt >= 1:
-                    raise
-                attempt += 1
-                LOGGER.warning(
-                    "Ticket repository %s hit a retryable storage error; resetting cached connection and retrying once: %s",
-                    operation_name,
-                    exc,
-                )
+            with self._borrow_connection() as conn:
+                try:
+                    return action(conn)
+                except Exception as exc:
+                    should_retry = self._should_retry_connection_error(conn, exc)
+                    if should_retry:
+                        self._invalidate_connection(conn)
+                    if not should_retry or attempt >= 1:
+                        raise
+                    attempt += 1
+                    LOGGER.warning(
+                        "Ticket repository %s hit a retryable storage error; resetting connection and retrying once: %s",
+                        operation_name,
+                        exc,
+                    )
 
     def initialize(self) -> None:
         with self._connect() as conn:
@@ -2641,10 +2697,27 @@ def create_ticket_repository() -> TicketRepository:
         os.getenv("TICKET_DB_CONNECT_RETRY_DELAY_SECONDS"),
         1.0,
     )
+    pool_min_size = _safe_positive_int(os.getenv("TICKET_DB_POOL_MIN_SIZE"), 1)
+    pool_max_size = _safe_positive_int(os.getenv("TICKET_DB_POOL_MAX_SIZE"), 8)
+    pool_timeout_seconds = _safe_positive_float(os.getenv("TICKET_DB_POOL_TIMEOUT_SECONDS"), 5.0)
+    pool_max_lifetime_seconds = _safe_positive_float(
+        os.getenv("TICKET_DB_POOL_MAX_LIFETIME_SECONDS"),
+        300.0,
+    )
+    pool_max_idle_seconds = _safe_positive_float(
+        os.getenv("TICKET_DB_POOL_MAX_IDLE_SECONDS"),
+        60.0,
+    )
     return PostgresTicketRepository(
         dsn=dsn,
         schema=schema,
         connect_timeout=connect_timeout,
         connect_retries=connect_retries,
         connect_retry_delay_seconds=connect_retry_delay_seconds,
+        use_connection_pool=True,
+        pool_min_size=pool_min_size,
+        pool_max_size=pool_max_size,
+        pool_timeout_seconds=pool_timeout_seconds,
+        pool_max_lifetime_seconds=pool_max_lifetime_seconds,
+        pool_max_idle_seconds=pool_max_idle_seconds,
     )

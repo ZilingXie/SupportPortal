@@ -251,6 +251,28 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertEqual(repository._connect_retries, 2)
         self.assertAlmostEqual(repository._connect_retry_delay_seconds, 0.15)
 
+    def test_ticket_repository_reads_pool_settings(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TICKET_DB_DSN": "postgresql://example",
+                "TICKET_DB_POOL_MIN_SIZE": "2",
+                "TICKET_DB_POOL_MAX_SIZE": "9",
+                "TICKET_DB_POOL_TIMEOUT_SECONDS": "7",
+                "TICKET_DB_POOL_MAX_LIFETIME_SECONDS": "301",
+                "TICKET_DB_POOL_MAX_IDLE_SECONDS": "61",
+            },
+            clear=True,
+        ):
+            repository = create_ticket_repository()
+        self.assertIsInstance(repository, PostgresTicketRepository)
+        self.assertTrue(repository._use_connection_pool)
+        self.assertEqual(repository._pool_min_size, 2)
+        self.assertEqual(repository._pool_max_size, 9)
+        self.assertEqual(repository._pool_timeout_seconds, 7)
+        self.assertEqual(repository._pool_max_lifetime_seconds, 301)
+        self.assertEqual(repository._pool_max_idle_seconds, 61)
+
     def test_knowledge_repository_defaults_to_supportportal_vector_table(self) -> None:
         with patch.dict(
             os.environ,
@@ -329,7 +351,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
             connect_retries=1,
             connect_retry_delay_seconds=0.2,
         )
-        sentinel_connection = object()
+        sentinel_connection = _ReusableConnection(_ReusableCursor())
         with patch(
             "backend.repositories.ticket_repository.psycopg.connect",
             side_effect=[
@@ -343,24 +365,34 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertEqual(connect_mock.call_count, 2)
         sleep_mock.assert_called_once_with(0.2)
 
-    def test_ticket_repository_reuses_cached_read_connection_between_reads(self) -> None:
+    def test_ticket_repository_opens_new_connection_between_reads_without_pool(self) -> None:
         repository = PostgresTicketRepository(dsn="postgresql://example")
-        connection = _ReusableConnection(_ReusableCursor(fetchall_results=[[], []]))
-        with patch("backend.repositories.ticket_repository.psycopg.connect", return_value=connection) as connect_mock:
+        first_connection = _ReusableConnection(_ReusableCursor(fetchall_results=[[]]))
+        second_connection = _ReusableConnection(_ReusableCursor(fetchall_results=[[]]))
+        with patch(
+            "backend.repositories.ticket_repository.psycopg.connect",
+            side_effect=[first_connection, second_connection],
+        ) as connect_mock:
             repository.list_tickets(include_messages=False)
             repository.list_tickets(include_messages=False)
 
-        self.assertEqual(connect_mock.call_count, 1)
+        self.assertEqual(connect_mock.call_count, 2)
+        self.assertFalse(hasattr(repository, "_connection_local"))
 
-    def test_ticket_repository_reuses_cached_write_connection_between_event_writes(self) -> None:
+    def test_ticket_repository_opens_new_connection_between_event_writes_without_pool(self) -> None:
         repository = PostgresTicketRepository(dsn="postgresql://example")
-        connection = _ReusableConnection(_ReusableCursor())
-        with patch("backend.repositories.ticket_repository.psycopg.connect", return_value=connection) as connect_mock:
+        first_connection = _ReusableConnection(_ReusableCursor())
+        second_connection = _ReusableConnection(_ReusableCursor())
+        with patch(
+            "backend.repositories.ticket_repository.psycopg.connect",
+            side_effect=[first_connection, second_connection],
+        ) as connect_mock:
             repository.record_event("T-1", "ticket_updated", {"ticket_id": "T-1"})
             repository.record_event("T-1", "ticket_updated", {"ticket_id": "T-1"})
 
-        self.assertEqual(connect_mock.call_count, 1)
-        self.assertEqual(connection.commit_count, 2)
+        self.assertEqual(connect_mock.call_count, 2)
+        self.assertEqual(first_connection.commit_count, 1)
+        self.assertEqual(second_connection.commit_count, 1)
 
     def test_ticket_repository_retries_get_ticket_after_retryable_query_disconnect(self) -> None:
         repository = PostgresTicketRepository(dsn="postgresql://example")

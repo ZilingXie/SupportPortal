@@ -564,10 +564,21 @@ def build_trace_summary(
         },
         "worker_queue": {
             "task_dequeued_at": _format_timestamp(response_ready_payload.get("task_dequeued_at")),
+            "message_to_task_dequeued_ms": _safe_float(response_ready_payload.get("message_to_task_dequeued_ms")),
             "queue_wait_ms": _safe_float(response_ready_payload.get("queue_wait_ms")),
             "main_agent_started_at": _format_timestamp(response_ready_payload.get("main_agent_started_at")),
+            "dequeued_to_main_agent_started_ms": _safe_float(
+                response_ready_payload.get("dequeued_to_main_agent_started_ms")
+            ),
             "main_agent_completed_at": _format_timestamp(response_ready_payload.get("main_agent_completed_at")),
+            "main_agent_total_ms": _safe_float(response_ready_payload.get("main_agent_total_ms")),
+            "main_agent_to_answer_saved_ms": _safe_float(
+                response_ready_payload.get("main_agent_to_answer_saved_ms")
+            ),
             "response_ready_dispatch_ms": _safe_float(response_ready_payload.get("response_ready_dispatch_ms")),
+            "answer_saved_to_response_ready_ms": _safe_float(
+                response_ready_payload.get("answer_saved_to_response_ready_ms")
+            ),
         },
         "main_agent": {
             **main_summary,
@@ -673,10 +684,15 @@ def render_markdown_report(summary: dict[str, Any]) -> str:
         "",
         "## Queue / Dispatch",
         f"- task_dequeued_at: `{_format_value(worker_queue.get('task_dequeued_at'))}`",
+        f"- message_to_task_dequeued_ms: {_format_value(worker_queue.get('message_to_task_dequeued_ms'))}",
         f"- queue_wait_ms: {_format_value(worker_queue.get('queue_wait_ms'))}",
         f"- main_agent_started_at: `{_format_value(worker_queue.get('main_agent_started_at'))}`",
+        f"- dequeued_to_main_agent_started_ms: {_format_value(worker_queue.get('dequeued_to_main_agent_started_ms'))}",
         f"- main_agent_completed_at: `{_format_value(worker_queue.get('main_agent_completed_at'))}`",
+        f"- main_agent_total_ms: {_format_value(worker_queue.get('main_agent_total_ms'))}",
+        f"- main_agent_to_answer_saved_ms: {_format_value(worker_queue.get('main_agent_to_answer_saved_ms'))}",
         f"- response_ready_dispatch_ms: {_format_value(worker_queue.get('response_ready_dispatch_ms'))}",
+        f"- answer_saved_to_response_ready_ms: {_format_value(worker_queue.get('answer_saved_to_response_ready_ms'))}",
         "",
         "## Main Agent",
         f"- started_at: `{_format_value(main_agent.get('started_at'))}`",

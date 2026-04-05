@@ -24,6 +24,18 @@ class SingleHostComposeTests(unittest.TestCase):
             '- "${API_WORKERS:-2}"',
             api_block,
         )
+        self.assertIn(
+            "TICKET_DB_POOL_MIN_SIZE: ${TICKET_DB_POOL_MIN_SIZE:-1}",
+            api_block,
+        )
+        self.assertIn(
+            "TICKET_DB_POOL_MAX_SIZE: ${TICKET_DB_POOL_MAX_SIZE:-8}",
+            api_block,
+        )
+        self.assertIn(
+            "TICKET_DB_POOL_TIMEOUT_SECONDS: ${TICKET_DB_POOL_TIMEOUT_SECONDS:-5}",
+            api_block,
+        )
 
     def test_worker_query_service_defaults_query_concurrency_and_queue(self) -> None:
         worker_block = self._service_block("worker_query")
@@ -38,6 +50,14 @@ class SingleHostComposeTests(unittest.TestCase):
         )
         self.assertIn(
             "TICKET_QUERY_QUEUE_NAME: ${TICKET_QUERY_QUEUE_NAME:-support.ticket_queries}",
+            worker_block,
+        )
+        self.assertIn(
+            "TICKET_DB_POOL_MAX_LIFETIME_SECONDS: ${TICKET_DB_POOL_MAX_LIFETIME_SECONDS:-300}",
+            worker_block,
+        )
+        self.assertIn(
+            "TICKET_DB_POOL_MAX_IDLE_SECONDS: ${TICKET_DB_POOL_MAX_IDLE_SECONDS:-60}",
             worker_block,
         )
 

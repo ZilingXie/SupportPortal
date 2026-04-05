@@ -587,29 +587,24 @@ def _duration_between_timestamps_ms(start: str | None, end: str | None) -> float
 
 
 def _latest_admission_metrics(ticket_id: str, message_created_at: str) -> dict[str, Any]:
-    normalized_created_at = str(message_created_at or "").strip()
-    events = _call_ticket_repository(
-        "list_ticket_events",
-        lambda: ticket_repository.list_ticket_events(ticket_id=ticket_id, limit=200),
-    )
-    for event_type in ("ticket_ai_processing", "ticket_created", "ticket_updated"):
-        for row in events:
-            payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
-            if str(row.get("event_type") or payload.get("event") or "").strip() != event_type:
-                continue
-            payload_message_created_at = str(payload.get("message_created_at") or "").strip()
-            if normalized_created_at and payload_message_created_at and payload_message_created_at != normalized_created_at:
-                continue
-            return {
-                "load_ticket_ms": payload.get("load_ticket_ms"),
-                "save_ticket_ms": payload.get("save_ticket_ms"),
-                "record_ticket_created_event_ms": payload.get("record_ticket_created_event_ms"),
-                "enqueue_ticket_query_ms": payload.get("enqueue_ticket_query_ms"),
-                "enqueue_sentiment_ms": payload.get("enqueue_sentiment_ms"),
-                "api_persist_latency_ms": payload.get("api_persist_latency_ms"),
-                "api_return_latency_ms": payload.get("api_return_latency_ms"),
-            }
+    del ticket_id, message_created_at
     return {}
+
+
+def _task_route_context(task: dict[str, Any]) -> list[dict[str, str]]:
+    context = task.get("route_context_tail")
+    if not isinstance(context, list):
+        return []
+    normalized: list[dict[str, str]] = []
+    for item in context:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role", "system")).strip().lower() or "system"
+        content = " ".join(str(item.get("content", "")).split()).strip()
+        if not content:
+            continue
+        normalized.append({"role": role, "content": content})
+    return normalized
 
 
 def _is_task_cancelled(ticket_id: str, message_created_at: str) -> bool:
@@ -751,62 +746,36 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         str(task.get("created_at") or "").strip() or None,
         task_dequeued_at,
     )
-
-    ticket, lookup_attempts, latest_message_found = _load_ticket_with_retry(
-        ticket_id,
-        customer_message,
-        message_created_at,
-    )
-    if ticket is None:
-        LOGGER.warning(
-            "Worker skipped: ticket not found (%s) after %s retries",
-            ticket_id,
-            lookup_attempts,
-        )
-        return
-    if not latest_message_found:
-        LOGGER.info(
-            "Worker skipped stale task for ticket %s after %s retries",
-            ticket_id,
-            lookup_attempts,
-        )
-        return
-    if lookup_attempts > 0:
-        LOGGER.info(
-            "Worker recovered delayed ticket/message state for %s after %s retries",
-            ticket_id,
-            lookup_attempts,
-        )
-    ensure_ticket_defaults(ticket)
-
+    message_to_task_dequeued_ms = _duration_between_timestamps_ms(message_created_at, task_dequeued_at)
     if _is_task_cancelled(ticket_id, message_created_at):
         LOGGER.info("Worker skipped cancelled task for ticket %s", ticket_id)
         return
 
-    route_context = [
-        {
-            "role": str(item.get("role", "system")).strip().lower() or "system",
-            "content": " ".join(str(item.get("content", "")).split()).strip(),
-        }
-        for item in ticket.get("messages", [])
-        if " ".join(str(item.get("content", "")).split()).strip()
-    ]
+    route_context = _task_route_context(task)
     main_agent_started_at = now_iso()
+    dequeued_to_main_agent_started_ms = _duration_between_timestamps_ms(
+        task_dequeued_at,
+        main_agent_started_at,
+    )
     orchestration_result = _orchestrate_worker_support_message(
         customer_message,
         ticket_id=ticket_id,
-        customer_id=str(ticket.get("customer_id") or "").strip() or None,
-        ticket_subject=str(ticket.get("subject") or "").strip() or None,
+        customer_id=str(task.get("customer_id") or "").strip() or None,
+        ticket_subject=str(task.get("ticket_subject") or "").strip() or None,
         ticket_context=route_context[-6:],
         message_created_at=message_created_at,
-        product=str(ticket.get("product") or "").strip() or None,
+        product=str(task.get("product") or "").strip() or None,
         client_intake_state=(
-            dict(ticket.get("client_intake_state"))
-            if isinstance(ticket.get("client_intake_state"), dict)
+            dict(task.get("client_intake_state"))
+            if isinstance(task.get("client_intake_state"), dict)
             else None
         ),
     )
     main_agent_completed_at = now_iso()
+    main_agent_total_ms = _duration_between_timestamps_ms(
+        main_agent_started_at,
+        main_agent_completed_at,
+    )
     if (
         isinstance(orchestration_result, tuple)
         and len(orchestration_result) == 2
@@ -849,6 +818,7 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
     investigation_result: dict[str, Any] | None = None
     engineer_case: dict[str, Any] | None = None
     engineer_case_created = False
+    answer_saved_at: str | None = None
     if existing_response is not None:
         LOGGER.info(
             "Worker detected an existing final assistant response for ticket %s and skipped duplicate save",
@@ -861,6 +831,7 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
             if isinstance(existing_response.get("citations"), list)
             else citations
         )
+        answer_saved_at = str(existing_response.get("created_at") or "").strip() or None
         needs_engineer_input = (
             normalize_ticket_status(ticket.get("status")) == INVESTIGATING_STATUS
             or _active_engineer_case_payload(ticket) is not None
@@ -937,6 +908,7 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
             "content": answer,
             "created_at": now_iso(),
         }
+        answer_saved_at = str(assistant_message.get("created_at") or "").strip() or None
         assistant_message["answer_route"] = execution.answer_route
         assistant_message["scope_label"] = execution.scope_label
         assistant_message["route_family"] = execution.route_family
@@ -992,8 +964,15 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
                 ),
             )
 
-    admission_metrics = _latest_admission_metrics(ticket_id, message_created_at)
     response_ready_created_at = now_iso()
+    main_agent_to_answer_saved_ms = _duration_between_timestamps_ms(
+        main_agent_completed_at,
+        answer_saved_at,
+    )
+    answer_saved_to_response_ready_ms = _duration_between_timestamps_ms(
+        answer_saved_at,
+        response_ready_created_at,
+    )
     event = {
         "event": "ticket_ai_response_ready",
         "ticket_id": ticket_id,
@@ -1011,30 +990,26 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         "search_used": bool(execution.search_used),
         "matched_signals": list(execution.matched_signals),
         "parallel_mode": execution_diagnostics.get("parallel_mode"),
-        "api_persist_latency_ms": admission_metrics.get("api_persist_latency_ms", task.get("api_persist_latency_ms")),
-        "api_return_latency_ms": admission_metrics.get("api_return_latency_ms", task.get("api_return_latency_ms")),
-        "load_ticket_ms": admission_metrics.get("load_ticket_ms", task.get("load_ticket_ms")),
-        "save_ticket_ms": admission_metrics.get("save_ticket_ms", task.get("save_ticket_ms")),
-        "record_ticket_created_event_ms": admission_metrics.get(
-            "record_ticket_created_event_ms",
-            task.get("record_ticket_created_event_ms"),
-        ),
-        "enqueue_ticket_query_ms": admission_metrics.get(
-            "enqueue_ticket_query_ms",
-            task.get("enqueue_ticket_query_ms"),
-        ),
-        "enqueue_sentiment_ms": admission_metrics.get(
-            "enqueue_sentiment_ms",
-            task.get("enqueue_sentiment_ms"),
-        ),
+        "api_persist_latency_ms": task.get("api_persist_latency_ms"),
+        "api_return_latency_ms": task.get("api_return_latency_ms"),
+        "load_ticket_ms": task.get("load_ticket_ms"),
+        "save_ticket_ms": task.get("save_ticket_ms"),
+        "record_ticket_created_event_ms": task.get("record_ticket_created_event_ms"),
+        "enqueue_ticket_query_ms": task.get("enqueue_ticket_query_ms"),
+        "enqueue_sentiment_ms": task.get("enqueue_sentiment_ms"),
         "task_dequeued_at": task_dequeued_at,
+        "message_to_task_dequeued_ms": message_to_task_dequeued_ms,
         "queue_wait_ms": queue_wait_ms,
         "main_agent_started_at": main_agent_started_at,
+        "dequeued_to_main_agent_started_ms": dequeued_to_main_agent_started_ms,
         "main_agent_completed_at": main_agent_completed_at,
+        "main_agent_total_ms": main_agent_total_ms,
+        "main_agent_to_answer_saved_ms": main_agent_to_answer_saved_ms,
         "response_ready_dispatch_ms": _duration_between_timestamps_ms(
             main_agent_completed_at,
             response_ready_created_at,
         ),
+        "answer_saved_to_response_ready_ms": answer_saved_to_response_ready_ms,
         "route_latency_ms": execution_diagnostics.get("route_latency_ms"),
         "route_final_action": execution_diagnostics.get("route_final_action") or execution.execution_action,
         "route_result_source": execution_diagnostics.get("route_result_source"),
