@@ -1724,7 +1724,6 @@ async def create_or_update_ticket(
     )
 
     initial_ack = None
-    response_answer = ""
     follow_up_answer = ""
     follow_up_sources: list[str] = []
     follow_up_citations: list[dict[str, str]] = []
@@ -1754,18 +1753,8 @@ async def create_or_update_ticket(
     main_agent_async_eligible = active_engineer_case_payload is None and _main_agent_async_enabled()
     if not main_agent_async_eligible:
         initial_ack = build_initial_ack(customer_message)
-        response_answer = initial_ack.text
-        ai_replied = bool(str(response_answer).strip())
         ack_source = str(getattr(initial_ack, "source", "") or "server_ack").strip() or "server_ack"
         processing_mode = "main_agent_sync"
-        if ai_replied:
-            ticket["messages"].append(
-                {
-                    "role": "assistant",
-                    "content": response_answer,
-                    "created_at": now_iso(),
-                }
-            )
     if isinstance(active_engineer_case_payload, dict):
         engineer_case = _engineer_case_payload_to_record(active_engineer_case_payload)
         case_context = build_engineer_case_context(ticket, engineer_case)
@@ -1910,6 +1899,9 @@ async def create_or_update_ticket(
         if follow_up_citations:
             assistant_message["citations"] = follow_up_citations
         ticket["messages"].append(assistant_message)
+
+    response_answer = str(follow_up_answer or "").strip()
+    ai_replied = bool(response_answer)
 
     ticket["updated_at"] = now_iso()
     new_messages = ticket.get("messages", [])[initial_message_count:]

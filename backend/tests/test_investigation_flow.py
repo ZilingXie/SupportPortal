@@ -697,7 +697,8 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["status"], "investigating")
-        self.assertEqual(payload["answer"], "收到，我先帮你看一下。")
+        self.assertIn("我已经为这个问题创建了工程师工单", payload["answer"])
+        self.assertNotEqual(payload["answer"], "收到，我先帮你看一下。")
 
         detail = self.client.get("/api/engineer/tickets/TK-INV-100-1")
         self.assertEqual(detail.status_code, 200, detail.text)
@@ -716,7 +717,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertFalse(opening_message.get("citations"))
         self.assertEqual(ticket["messages"][-1]["role"], "assistant")
         assistant_messages = [message["content"] for message in ticket["messages"] if message["role"] == "assistant"]
-        self.assertIn("收到，我先帮你看一下。", assistant_messages)
+        self.assertNotIn("收到，我先帮你看一下。", assistant_messages)
         self.assertTrue(
             any("我已经为这个问题创建了工程师工单" in content for content in assistant_messages)
         )
@@ -1080,7 +1081,7 @@ class InvestigationFlowTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["status"], "communicating")
         self.assertFalse(payload["needs_engineer_input"])
-        self.assertEqual(payload["answer"], "Got it, let me check this for you.")
+        self.assertEqual(payload["answer"], resolution.answer)
         self.assertNotIn("engineer_mode", payload)
         self.assertNotIn("priority", payload)
         self.assertNotIn("eta_minutes", payload)
@@ -1098,6 +1099,11 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(enqueue_mock.await_count, 1)
         task = enqueue_mock.await_args_list[0].args[0]
         self.assertEqual(task["task_type"], "ticket_message_sentiment")
+        stored = self.repository.get_ticket("TK-ACK-NEG-100")
+        self.assertIsNotNone(stored)
+        assert stored is not None
+        assistant_messages = [message["content"] for message in stored["messages"] if message["role"] == "assistant"]
+        self.assertEqual(assistant_messages, [resolution.answer])
 
     def test_black_screen_query_clarifies_customer_before_opening_engineer_ticket(self) -> None:
         with patch.object(
@@ -1168,7 +1174,10 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(payload["answer_route"], "rag")
         self.assertEqual(payload["scope_label"], "agora_technical")
         self.assertEqual(payload["route_reason"], "rag_insufficient_evidence")
-        self.assertEqual(payload["answer"], "Got it, let me check this for you.")
+        self.assertEqual(
+            payload["answer"],
+            "Known so far: the issue symptom is black screen. To investigate this Audio/Video Calling issue, please share the channel name, problematic uid, and issue timestamp.",
+        )
         stored = self.repository.get_ticket("TK-INV-110")
         self.assertIsNotNone(stored)
         self.assertEqual(stored["status"], "communicating")
@@ -1179,6 +1188,9 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(
             stored["messages"][-1]["content"],
             "Known so far: the issue symptom is black screen. To investigate this Audio/Video Calling issue, please share the channel name, problematic uid, and issue timestamp.",
+        )
+        self.assertFalse(
+            any(message["content"] == "Got it, let me check this for you." for message in stored["messages"])
         )
         self.assertIsNone(stored.get("active_engineer_case_id"))
         self.assertEqual(stored.get("engineer_case_count"), 0)
