@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import time
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -1191,11 +1192,25 @@ async def dispatch_event(channels: list[str], payload: dict[str, Any]) -> None:
         await event_bus.publish(bus_payload)
 
 
+async def _async_to_thread_with_latency(method: Any, *args: Any, **kwargs: Any) -> tuple[Any, float]:
+    started_at = time.perf_counter()
+    result = await async_to_thread(method, *args, **kwargs)
+    return result, round((time.perf_counter() - started_at) * 1000, 2)
+
+
+def _round_timing(value: float | None) -> float | None:
+    if value is None:
+        return None
+    return round(float(value), 2)
+
+
 def build_query_task(
     ticket_id: str,
     customer_message: str,
     message_created_at: str,
     *,
+    load_ticket_ms: float | None = None,
+    save_ticket_ms: float | None = None,
     api_persist_latency_ms: float | None = None,
     api_return_latency_ms: float | None = None,
     processing_mode: str | None = None,
@@ -1207,6 +1222,10 @@ def build_query_task(
         "message_created_at": message_created_at,
         "created_at": now_iso(),
     }
+    if load_ticket_ms is not None:
+        task["load_ticket_ms"] = round(float(load_ticket_ms), 2)
+    if save_ticket_ms is not None:
+        task["save_ticket_ms"] = round(float(save_ticket_ms), 2)
     if api_persist_latency_ms is not None:
         task["api_persist_latency_ms"] = round(float(api_persist_latency_ms), 2)
     if api_return_latency_ms is not None:
@@ -1565,6 +1584,27 @@ async def shutdown_event() -> None:
     await task_queue.close()
 
 
+def _dsn_host_database_signature(raw_dsn: str) -> tuple[str, str] | None:
+    normalized_dsn = str(raw_dsn or "").strip()
+    if not normalized_dsn:
+        return None
+    parsed = urllib.parse.urlparse(normalized_dsn)
+    host = str(parsed.hostname or "").strip().lower()
+    database = str(parsed.path or "").strip().lstrip("/").lower()
+    if host and database:
+        return host, database
+    return None
+
+
+def _health_config_warnings() -> list[str]:
+    warnings = set(get_config_warnings())
+    ticket_signature = _dsn_host_database_signature(os.getenv("TICKET_DB_DSN") or "")
+    rag_signature = _dsn_host_database_signature(os.getenv("PGVECTOR_DSN") or "")
+    if ticket_signature is not None and ticket_signature == rag_signature:
+        warnings.add("shared_ticket_and_rag_database")
+    return sorted(warnings)
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     rag_health = rag_service_client.probe_health()
@@ -1575,7 +1615,7 @@ def health() -> dict[str, Any]:
         "knowledge_storage": rag_health.get("knowledge_storage") or "proxy",
         "rag_service": rag_health.get("status") or "unknown",
         "async_query_enabled": "true" if ASYNC_QUERY_ENABLED else "false",
-        "config_warnings": get_config_warnings(),
+        "config_warnings": _health_config_warnings(),
     }
 
 
@@ -1675,8 +1715,12 @@ async def create_or_update_ticket(
 ) -> dict[str, Any]:
     api_started_at = time.perf_counter()
     ticket_id = request.ticket_id or f"T-{uuid4().hex[:6].upper()}"
-    existing_ticket = ticket_repository.get_ticket(ticket_id)
+    existing_ticket, load_ticket_ms = await _async_to_thread_with_latency(ticket_repository.get_ticket, ticket_id)
     is_new_ticket = existing_ticket is None
+    save_ticket_ms: float | None = None
+    record_ticket_created_event_ms: float | None = None
+    enqueue_ticket_query_ms: float | None = None
+    enqueue_sentiment_ms: float | None = None
 
     ticket = existing_ticket or {
         "ticket_id": ticket_id,
@@ -1905,39 +1949,59 @@ async def create_or_update_ticket(
 
     ticket["updated_at"] = now_iso()
     new_messages = ticket.get("messages", [])[initial_message_count:]
-    ticket_repository.save_ticket(ticket, new_messages=new_messages)
+    _, save_ticket_ms = await _async_to_thread_with_latency(
+        ticket_repository.save_ticket,
+        ticket,
+        new_messages=new_messages,
+    )
     if execution is not None:
-        _record_ticket_agent_runtime_events(execution)
+        await async_to_thread(_record_ticket_agent_runtime_events, execution)
     if engineer_case is not None:
         ticket["engineer_case_count"] = max(
             int(ticket.get("engineer_case_count") or 0),
             int(engineer_case.get("case_sequence") or 0),
         )
-        ticket_repository.save_ticket(ticket, new_messages=[])
-        ticket_repository.save_engineer_case(
+        await async_to_thread(ticket_repository.save_ticket, ticket, new_messages=[])
+        await async_to_thread(
+            ticket_repository.save_engineer_case,
             engineer_case,
             new_messages=investigation_result.get("new_internal_messages") if investigation_result else [],
         )
 
     api_persist_latency_ms = round((time.perf_counter() - api_started_at) * 1000, 2)
     if main_agent_async_eligible:
+        enqueue_started_at = time.perf_counter()
         task_enqueued = await _schedule_ticket_query_processing(
             background_tasks,
             task=build_query_task(
                 ticket_id=ticket_id,
                 customer_message=customer_message,
                 message_created_at=timestamp,
+                load_ticket_ms=load_ticket_ms,
+                save_ticket_ms=save_ticket_ms,
                 api_persist_latency_ms=api_persist_latency_ms,
                 processing_mode="main_agent_async",
             ),
         )
+        enqueue_ticket_query_ms = round((time.perf_counter() - enqueue_started_at) * 1000, 2)
 
+    enqueue_sentiment_started_at = time.perf_counter()
     await _enqueue_or_defer_message_sentiment_tag(
         background_tasks,
         ticket_id=ticket_id,
         customer_message=customer_message,
         message_created_at=timestamp,
     )
+    enqueue_sentiment_ms = round((time.perf_counter() - enqueue_sentiment_started_at) * 1000, 2)
+
+    admission_timing_payload = {
+        "message_created_at": timestamp,
+        "load_ticket_ms": _round_timing(load_ticket_ms),
+        "save_ticket_ms": _round_timing(save_ticket_ms),
+        "enqueue_ticket_query_ms": _round_timing(enqueue_ticket_query_ms),
+        "enqueue_sentiment_ms": _round_timing(enqueue_sentiment_ms),
+        "api_persist_latency_ms": _round_timing(api_persist_latency_ms),
+    }
 
     event = {
         "event": "ticket_created" if is_new_ticket else "ticket_updated",
@@ -1946,7 +2010,7 @@ async def create_or_update_ticket(
         "message": customer_message,
         "created_at": now_iso(),
         "parallel_mode": processing_mode,
-        "api_persist_latency_ms": api_persist_latency_ms,
+        **admission_timing_payload,
     }
     if route_payload.get("answer_route"):
         event["answer_route"] = route_payload.get("answer_route")
@@ -1968,7 +2032,9 @@ async def create_or_update_ticket(
         event["client_intake_missing_information"] = list(
             route_payload.get("client_intake_missing_information") or []
         )
-    ticket_repository.record_event(ticket_id, event["event"], event)
+    record_ticket_created_started_at = time.perf_counter()
+    await async_to_thread(ticket_repository.record_event, ticket_id, event["event"], event)
+    record_ticket_created_event_ms = round((time.perf_counter() - record_ticket_created_started_at) * 1000, 2)
     await dispatch_event(["engineer", "dashboard"], event)
     await dispatch_event(
         ["client"],
@@ -1990,10 +2056,11 @@ async def create_or_update_ticket(
             "message": "AI is processing this request asynchronously.",
             "created_at": now_iso(),
             "parallel_mode": processing_mode,
-            "api_persist_latency_ms": api_persist_latency_ms,
+            **admission_timing_payload,
+            "record_ticket_created_event_ms": record_ticket_created_event_ms,
             "api_return_latency_ms": api_return_latency_ms,
         }
-        ticket_repository.record_event(ticket_id, processing_event["event"], processing_event)
+        await async_to_thread(ticket_repository.record_event, ticket_id, processing_event["event"], processing_event)
         await dispatch_event(["engineer", "dashboard"], processing_event)
         await dispatch_event(
             ["client"],

@@ -10,16 +10,52 @@ COMPOSE_PATH = REPO_ROOT / "deployment" / "docker-compose.single-host.yml"
 
 
 class SingleHostComposeTests(unittest.TestCase):
-    def _worker_block(self) -> str:
+    def _service_block(self, service_name: str) -> str:
         content = COMPOSE_PATH.read_text(encoding="utf-8")
-        match = re.search(r"(?ms)^  worker:\n(.*?)(?=^  redis:)", content)
-        self.assertIsNotNone(match, "worker service block should exist in single-host compose")
+        match = re.search(rf"(?ms)^  {re.escape(service_name)}:\n(.*?)(?=^  [a-zA-Z0-9_]+:|\Z)", content)
+        self.assertIsNotNone(match, f"{service_name} service block should exist in single-host compose")
         assert match is not None
         return match.group(1)
 
-    def test_worker_service_defaults_sentiment_provider_to_legacy(self) -> None:
-        worker_block = self._worker_block()
+    def test_api_service_defaults_to_two_workers(self) -> None:
+        api_block = self._service_block("api")
 
+        self.assertIn(
+            '- "${API_WORKERS:-2}"',
+            api_block,
+        )
+
+    def test_worker_query_service_defaults_query_concurrency_and_queue(self) -> None:
+        worker_block = self._service_block("worker_query")
+
+        self.assertIn(
+            "WORKER_TASK_TYPES: ${WORKER_QUERY_TASK_TYPES:-ticket_query}",
+            worker_block,
+        )
+        self.assertIn(
+            "WORKER_CONCURRENCY: ${WORKER_QUERY_CONCURRENCY:-2}",
+            worker_block,
+        )
+        self.assertIn(
+            "TICKET_QUERY_QUEUE_NAME: ${TICKET_QUERY_QUEUE_NAME:-support.ticket_queries}",
+            worker_block,
+        )
+
+    def test_worker_aux_service_defaults_sentiment_provider_and_queue(self) -> None:
+        worker_block = self._service_block("worker_aux")
+
+        self.assertIn(
+            "WORKER_TASK_TYPES: ${WORKER_AUX_TASK_TYPES:-ticket_message_sentiment}",
+            worker_block,
+        )
+        self.assertIn(
+            "WORKER_CONCURRENCY: ${WORKER_AUX_CONCURRENCY:-1}",
+            worker_block,
+        )
+        self.assertIn(
+            "TICKET_AUX_QUEUE_NAME: ${TICKET_AUX_QUEUE_NAME:-support.ticket_aux}",
+            worker_block,
+        )
         self.assertIn(
             "SENTIMENT_PROVIDER: ${WORKER_SENTIMENT_PROVIDER:-legacy}",
             worker_block,
@@ -34,12 +70,16 @@ class SingleHostComposeTests(unittest.TestCase):
         )
 
     def test_worker_service_mounts_huggingface_cache(self) -> None:
-        worker_block = self._worker_block()
+        worker_block = self._service_block("worker_query")
 
         self.assertIn(
             "volumes:\n      - huggingface_cache:/root/.cache/huggingface",
             worker_block,
         )
+
+    def test_legacy_single_worker_service_is_removed(self) -> None:
+        content = COMPOSE_PATH.read_text(encoding="utf-8")
+        self.assertNotRegex(content, r"(?m)^  worker:\n")
 
     def test_client_rag_recovery_defaults_are_present(self) -> None:
         content = COMPOSE_PATH.read_text(encoding="utf-8")

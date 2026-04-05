@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import os
 from pathlib import Path
 import sys
 import time
@@ -517,6 +518,100 @@ class WorkerResilienceTests(unittest.TestCase):
         agent_event_args = repository.record_ticket_agent_event.call_args.args
         self.assertEqual(agent_event_args[2], "run-123")
         self.assertEqual(agent_event_args[3], "main_agent")
+
+    def test_process_ticket_query_records_queue_wait_and_main_agent_timing_fields(self) -> None:
+        ticket = _build_ticket(
+            ticket_id="T-TIMING",
+            customer_message="how to join channel",
+            message_created_at="2026-03-22T00:00:00+00:00",
+        )
+        repository = Mock()
+        repository.get_ticket.side_effect = [
+            copy.deepcopy(ticket),
+            copy.deepcopy(ticket),
+        ]
+        repository.list_ticket_events.return_value = []
+        repository.save_ticket.return_value = None
+        repository.record_event.return_value = None
+        bus = Mock()
+        execution = types.SimpleNamespace(
+            answer="Use joinChannel with the same channel name and token.",
+            confidence=0.91,
+            sources=["https://docs.agora.io/en/video-calling/get-started"],
+            citations=[{"chunk_id": "chunk-1"}],
+            needs_engineer_guidance=False,
+            answer_route="rag",
+            scope_label="agora_technical",
+            route_reason="grounded_answer",
+            route_confidence=0.91,
+            search_used=False,
+            matched_signals=["join channel"],
+            route_family="agora_docs_rag",
+            execution_action="rag",
+            tooling_profile="agora_docs_only",
+            needs_investigating=False,
+            next_status="communicating",
+            workflow_action="answer_customer",
+            client_intake_state=None,
+            evidence_summary=None,
+            client_agent_runtime_state={"status": "completed"},
+        )
+
+        now_values = iter(
+            [
+                "2026-03-22T00:00:10+00:00",
+                "2026-03-22T00:00:11+00:00",
+                "2026-03-22T00:00:12+00:00",
+                "2026-03-22T00:00:13+00:00",
+                "2026-03-22T00:00:14+00:00",
+                "2026-03-22T00:00:15+00:00",
+            ]
+        )
+        task = dict(
+            self.task,
+            ticket_id="T-TIMING",
+            customer_message="how to join channel",
+            message_created_at="2026-03-22T00:00:00+00:00",
+            created_at="2026-03-22T00:00:00+00:00",
+            api_persist_latency_ms=120.5,
+            api_return_latency_ms=180.25,
+            load_ticket_ms=5.0,
+            save_ticket_ms=8.0,
+            record_ticket_created_event_ms=2.0,
+            enqueue_ticket_query_ms=3.0,
+            enqueue_sentiment_ms=1.5,
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "_orchestrate_worker_support_message",
+            return_value=execution,
+        ), patch.object(
+            worker,
+            "build_client_sync_event",
+            return_value={"event": "ticket_ai_response_ready"},
+        ), patch.object(
+            worker,
+            "ensure_ticket_defaults",
+            side_effect=lambda ticket: None,
+        ), patch.object(
+            worker,
+            "now_iso",
+            side_effect=lambda: next(now_values),
+        ):
+            worker._process_ticket_query(bus, task)
+
+        event_payload = repository.record_event.call_args.args[2]
+        self.assertEqual(event_payload["task_dequeued_at"], "2026-03-22T00:00:10+00:00")
+        self.assertEqual(event_payload["main_agent_started_at"], "2026-03-22T00:00:11+00:00")
+        self.assertEqual(event_payload["main_agent_completed_at"], "2026-03-22T00:00:12+00:00")
+        self.assertEqual(event_payload["queue_wait_ms"], 10000.0)
+        self.assertEqual(event_payload["response_ready_dispatch_ms"], 3000.0)
+        self.assertEqual(event_payload["load_ticket_ms"], 5.0)
+        self.assertEqual(event_payload["save_ticket_ms"], 8.0)
+        self.assertEqual(event_payload["record_ticket_created_event_ms"], 2.0)
+        self.assertEqual(event_payload["enqueue_ticket_query_ms"], 3.0)
+        self.assertEqual(event_payload["enqueue_sentiment_ms"], 1.5)
 
     def test_process_ticket_query_retries_transient_save_ticket_failure(self) -> None:
         initial_ticket = _build_ticket()
@@ -1127,6 +1222,24 @@ class WorkerResilienceTests(unittest.TestCase):
 
         repository.record_event.assert_not_called()
         publish_mock.assert_not_called()
+
+    def test_worker_task_types_from_env_filters_and_deduplicates_values(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"WORKER_TASK_TYPES": "ticket_query, ticket_message_sentiment, ticket_query,unknown"},
+            clear=False,
+        ):
+            self.assertEqual(
+                worker._worker_task_types_from_env(),
+                ("ticket_query", "ticket_message_sentiment"),
+            )
+
+    def test_worker_task_types_from_env_defaults_to_all_supported_types(self) -> None:
+        with patch.dict(os.environ, {"WORKER_TASK_TYPES": ""}, clear=False):
+            self.assertEqual(
+                worker._worker_task_types_from_env(),
+                ("ticket_query", "ticket_message_sentiment"),
+            )
 
 
 if __name__ == "__main__":
