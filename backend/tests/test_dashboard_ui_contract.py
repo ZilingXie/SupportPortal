@@ -103,7 +103,8 @@ class DashboardUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', source)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', source)
         self.assertIn("if (iconFontStylesheet?.sheet) {", source)
-        self.assertIn("./styles.css?v=20260404-icon-font-guard-1", source)
+        self.assertIn("./styles.css?v=20260405-ticket-detail-refresh-2", source)
+        self.assertIn('./app.js?v=20260405-ticket-detail-refresh-2', source)
 
         self.assertRegex(
             source,
@@ -158,6 +159,7 @@ class DashboardUiContractTests(unittest.TestCase):
             "/api/dashboard/metrics",
             "/api/engineer/tickets?",
             "/api/engineer/tickets/${encodeURIComponent(requestedTicketId)}",
+            "/api/engineer/tickets/${encodeURIComponent(requestedTicketId)}/summary",
             'opsHeaderEl.hidden = !isTicketOpsView;',
             "buildTicketBoardViewToggleHtml",
             'viewMode === "list" ? renderTicketBoardList(boardRows) : renderTicketBoardGrid(boardRows)',
@@ -702,14 +704,37 @@ class DashboardUiContractTests(unittest.TestCase):
 
     def test_ticket_detail_modal_exposes_client_agent_runtime_panels(self) -> None:
         js_source = Path("ui/dashboard-ui/app.js").read_text(encoding="utf-8")
+        css_source = Path("ui/dashboard-ui/styles.css").read_text(encoding="utf-8")
+        render_ticket_detail_block = self._extract_js_function_block(js_source, "function renderTicketDetail() {")
 
         for marker in [
+            "Ticket Summary",
             "Client Agent Runtime",
             "Recent Agent Events",
             "client_agent_runtime_state",
             "client_agent_events",
+            "data-ticket-detail-runtime-toggle",
+            "ticket-detail-runtime-disclosure",
         ]:
             self.assertIn(marker, js_source)
+
+        for marker in [
+            ".ticket-detail-runtime-disclosure",
+            ".ticket-detail-runtime-toggle",
+            ".ticket-detail-runtime-body",
+        ]:
+            self.assertIn(marker, css_source)
+
+        self.assertRegex(
+            css_source,
+            r"\.ticket-detail-runtime-body\[hidden\]\s*\{[^}]*display:\s*none(?:\s*!important)?;",
+        )
+
+        for removed_marker in [
+            "Latest Customer Message",
+            "Engineer Ticket Snapshot",
+        ]:
+            self.assertNotIn(removed_marker, render_ticket_detail_block)
 
 
 if __name__ == "__main__":
