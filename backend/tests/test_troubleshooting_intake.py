@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import types
 import unittest
 from unittest.mock import patch
 
@@ -163,6 +164,40 @@ class TroubleshootingIntakeTests(unittest.TestCase):
         self.assertEqual(result.missing_information, [])
         self.assertTrue(result.ready_for_engineer_ticket)
         self.assertEqual(result.customer_reply, "")
+
+    def test_llm_cannot_mark_investigation_ready_when_required_fields_are_missing(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "backend.services.troubleshooting_intake.invoke_responses_text",
+            return_value=types.SimpleNamespace(
+                text=(
+                    '{"issue_mode":"investigation","known_information":{"issue_symptom":"black screen issue"},'
+                    '"missing_information":[],"ready_for_engineer_ticket":true,"customer_reply":""}'
+                )
+            ),
+        ):
+            result = evaluate_troubleshooting_intake(
+                message="I got black screen issue.",
+                product="audio_video_calling",
+                ticket_subject="Black screen issue",
+                ticket_context=[{"role": "customer", "content": "I got black screen issue."}],
+                current_state=None,
+                rag_result={
+                    "reason": "rag_post_check_insufficient",
+                    "answer": "The current grounded answer is still not enough to prove a fix.",
+                    "evidence_summary": {},
+                },
+            )
+
+        self.assertEqual(result.issue_mode, "investigation")
+        self.assertEqual(result.known_information["issue_symptom"], "black screen issue")
+        self.assertEqual(
+            result.missing_information,
+            ["channel_name", "problematic_uid", "issue_timestamp"],
+        )
+        self.assertFalse(result.ready_for_engineer_ticket)
+        self.assertIn("channel name", result.customer_reply.lower())
+        self.assertIn("problematic uid", result.customer_reply.lower())
+        self.assertIn("issue timestamp", result.customer_reply.lower())
 
 
 if __name__ == "__main__":

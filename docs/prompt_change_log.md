@@ -769,6 +769,24 @@ For each new entry, record:
   - `git diff --check`
 
 - Date: 2026-04-05
+- Area or subsystem: Troubleshooting intake prompt contract
+- Prompt or model version: `troubleshooting-intake-v2`
+- Summary: Tightened the troubleshooting intake system prompt so investigation-mode responses may only mark `ready_for_engineer_ticket=true` when every required field is present, must enumerate all missing investigation fields, and must return a non-empty customer reply whenever intake is still incomplete.
+- Reason: The backend now treats troubleshooting intake as the shared gate for both `rag_insufficient_evidence` and `grounded_postcheck` escalations, so the prompt contract must stop the LLM from prematurely approving engineer handoff when product-specific identifiers are still missing.
+- Affected files or config:
+  - `backend/services/prompts/troubleshooting_intake.py`
+  - `backend/services/troubleshooting_intake.py`
+  - `backend/tests/test_troubleshooting_intake.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Investigation-mode intake replies should always ask for the missing product fields before engineer escalation.
+  - An LLM response can no longer force `ready_for_engineer_ticket=true` while `channel name`, `problematic uid`, `issue timestamp`, `sid`, or other required fields are still absent.
+  - Troubleshooting follow-up turns keep using deterministic field completeness as the source of truth even when the prompt/model returns malformed readiness metadata.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_troubleshooting_intake.py`
+  - `git diff --check`
+
+- Date: 2026-04-05
 - Area or subsystem: Client new-session welcome copy and product selector layout
 - Prompt or model version: `client-empty-session-welcome-v3`
 - Summary: Reworded the transient welcome bubble to explicitly request product selection and removed the separate product explainer card so the selector now sits directly beneath the greeting.
