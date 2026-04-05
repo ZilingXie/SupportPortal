@@ -136,8 +136,8 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260405-new-session-welcome-3", html)
-        self.assertIn('./app.js?v=20260405-new-session-welcome-3', html)
+        self.assertIn("./styles.css?v=20260405-product-select-overlay-1", html)
+        self.assertIn('./app.js?v=20260405-product-select-overlay-1', html)
         self.assertIn("AI-SOLVING", app_source)
         self.assertIn("Session History", app_source)
         self.assertIn('navigate("/chat");', app_source)
@@ -430,6 +430,133 @@ class ClientUiContractTests(unittest.TestCase):
               """
             )
         )
+
+    def test_client_product_select_toggles_chat_overlay_class_when_open(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const draft = getOrCreateDraftTicket(state.user.id);
+                state.view = "chat-ticket";
+                state.activeTicketId = draft.id;
+
+                const makeClassList = () => {
+                  const values = new Set();
+                  return {
+                    add(...tokens) {
+                      tokens.forEach((token) => values.add(token));
+                    },
+                    remove(...tokens) {
+                      tokens.forEach((token) => values.delete(token));
+                    },
+                    contains(token) {
+                      return values.has(token);
+                    },
+                  };
+                };
+
+                const triggerListeners = {};
+                const optionListeners = {};
+                const rootListeners = {};
+                const triggerAttrs = {};
+                const hiddenInput = { value: "" };
+                const chatRoot = { classList: makeClassList() };
+                const panel = { hidden: true };
+                const option = {
+                  id: "ticket-product-option-0",
+                  focus() {},
+                  getAttribute(name) {
+                    return name === "data-value" ? "audio_video_calling" : "";
+                  },
+                  addEventListener(type, handler) {
+                    optionListeners[type] = handler;
+                  },
+                };
+                const trigger = {
+                  focus() {},
+                  setAttribute(name, value) {
+                    triggerAttrs[name] = value;
+                  },
+                  removeAttribute(name) {
+                    delete triggerAttrs[name];
+                  },
+                  addEventListener(type, handler) {
+                    triggerListeners[type] = handler;
+                  },
+                };
+                const root = {
+                  classList: makeClassList(),
+                  getAttribute(name) {
+                    return name === "data-ticket-id" ? draft.id : "";
+                  },
+                  querySelector(selector) {
+                    if (selector === "[data-product-select-trigger]") return trigger;
+                    if (selector === "[data-product-select-panel]") return panel;
+                    if (selector === "input[type='hidden']") return hiddenInput;
+                    return null;
+                  },
+                  querySelectorAll(selector) {
+                    if (selector === "[data-product-select-option]") return [option];
+                    return [];
+                  },
+                  addEventListener(type, handler) {
+                    rootListeners[type] = handler;
+                  },
+                  closest(selector) {
+                    return selector === ".chat-root" ? chatRoot : null;
+                  },
+                  contains() {
+                    return false;
+                  },
+                };
+
+                appRoot.querySelectorAll = (selector) => {
+                  if (selector === "[data-product-select]") {
+                    return [root];
+                  }
+                  return [];
+                };
+
+                bindTicketProductSelect();
+                if (typeof triggerListeners.click !== "function") {
+                  throw new Error("Expected product-select trigger click handler to be bound.");
+                }
+
+                triggerListeners.click();
+                if (!root.classList.contains("is-open")) {
+                  throw new Error("Opening the product select should mark the root as open.");
+                }
+                if (panel.hidden) {
+                  throw new Error("Opening the product select should unhide the panel.");
+                }
+                if (!chatRoot.classList.contains("has-open-product-select")) {
+                  throw new Error("Opening the product select should raise the chat overlay class.");
+                }
+
+                triggerListeners.click();
+                if (root.classList.contains("is-open")) {
+                  throw new Error("Closing the product select should clear the open state.");
+                }
+                if (!panel.hidden) {
+                  throw new Error("Closing the product select should hide the panel.");
+                }
+                if (chatRoot.classList.contains("has-open-product-select")) {
+                  throw new Error("Closing the product select should remove the chat overlay class.");
+                }
+              """
+            )
+        )
+
+    def test_client_product_select_overlay_css_allows_dropdown_to_escape_chat_main(self) -> None:
+        css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn(".chat-root.has-open-product-select {\n  overflow: visible;", css)
+        self.assertIn(".chat-root.has-open-product-select .chat-main {\n  overflow: visible;", css)
+        self.assertIn(".filter-select.is-open {\n  z-index:", css)
+        self.assertIn(".filter-select-panel {\n  position: absolute;", css)
+        self.assertIn("z-index:", css)
 
     def test_client_new_session_renders_transient_welcome_bubble_without_mutating_ticket_messages(self) -> None:
         self.run_client_app_script(
