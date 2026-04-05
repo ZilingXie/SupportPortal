@@ -136,8 +136,8 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260405-client-pending-cleanup-1", html)
-        self.assertIn('./app.js?v=20260405-client-pending-cleanup-1', html)
+        self.assertIn("./styles.css?v=20260405-new-session-welcome-3", html)
+        self.assertIn('./app.js?v=20260405-new-session-welcome-3', html)
         self.assertIn("AI-SOLVING", app_source)
         self.assertIn("Session History", app_source)
         self.assertIn('navigate("/chat");', app_source)
@@ -426,6 +426,102 @@ class ClientUiContractTests(unittest.TestCase):
                 const lockedDraft = getTicketById(draft.id);
                 if (!lockedDraft || lockedDraft.product !== "audio_video_calling") {
                   throw new Error("Session product should lock after the first customer message.");
+                }
+              """
+            )
+        )
+
+    def test_client_new_session_renders_transient_welcome_bubble_without_mutating_ticket_messages(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const draft = getOrCreateDraftTicket(state.user.id);
+                state.view = "chat-ticket";
+                state.activeTicketId = draft.id;
+
+                const initialHtml = renderChatTicket();
+                if (!initialHtml.includes("Thank you for contacting Agora Support! We’re here to help. Before we begin, please select the product you need support with.")) {
+                  throw new Error("Empty draft session should render the fixed welcome bubble.");
+                }
+                if (initialHtml.includes('<div class="bot-mark">')) {
+                  throw new Error("Empty draft session should not render the removed hero icon.");
+                }
+                if (initialHtml.includes("<h3>Concierge AI</h3>")) {
+                  throw new Error("Empty draft session should not render the removed hero title.");
+                }
+                if (initialHtml.includes("Describe your technical issue and Concierge AI will start with the most likely next step.")) {
+                  throw new Error("Empty draft session should not render the removed hero description.");
+                }
+                if (!initialHtml.includes('class="message-author">Concierge AI</span>')) {
+                  throw new Error("Welcome bubble should still use the assistant identity.");
+                }
+                if (initialHtml.includes('<span class="ticket-product-kicker">Select Product</span>')) {
+                  throw new Error("Empty draft session should not render the removed product kicker block.");
+                }
+                if (initialHtml.includes("Choose the product for this session.")) {
+                  throw new Error("Empty draft session should not render the removed product title copy.");
+                }
+                if (initialHtml.includes("We use this product scope to load the matching support prompt before your first question.")) {
+                  throw new Error("Empty draft session should not render the removed product description copy.");
+                }
+                if (!initialHtml.includes('class="filter-select product-select"')) {
+                  throw new Error("Empty draft session should render the product selector directly below the welcome bubble.");
+                }
+
+                const draftAfterRender = getTicketById(draft.id);
+                if (!draftAfterRender || (draftAfterRender.messages || []).length !== 0) {
+                  throw new Error("Rendering the welcome bubble must not append durable ticket messages.");
+                }
+
+                fetch = async () => ({
+                  ok: true,
+                  json: async () => ({
+                    tickets: [],
+                  }),
+                });
+                await syncTicketsFromBackend({ silent: true });
+
+                const syncedHtml = renderChatTicket();
+                if (!syncedHtml.includes("Thank you for contacting Agora Support! We’re here to help. Before we begin, please select the product you need support with.")) {
+                  throw new Error("Backend sync should not remove the transient welcome bubble from an empty draft.");
+                }
+
+                const syncedDraft = getTicketById(draft.id);
+                if (!syncedDraft || (syncedDraft.messages || []).length !== 0) {
+                  throw new Error("Backend sync should not turn the welcome bubble into a durable assistant message.");
+                }
+              """
+            )
+        )
+
+    def test_client_new_session_hides_transient_welcome_bubble_after_first_user_message(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const draft = getOrCreateDraftTicket(state.user.id);
+                state.view = "chat-ticket";
+                state.activeTicketId = draft.id;
+
+                updateTicketProduct(draft.id, "audio_video_calling");
+                saveTicketMessages(draft.id, [
+                  {
+                    id: "msg-1",
+                    role: "user",
+                    content: "How do I join a channel?",
+                    createdAt: new Date().toISOString(),
+                  },
+                ]);
+                updateTicketStatus(draft.id, "communicating");
+
+                const html = renderChatTicket();
+                if (html.includes("Thank you for contacting Agora Support! How may I help you today?")) {
+                  throw new Error("Welcome bubble should disappear after the first real user message.");
                 }
               """
             )
