@@ -6,6 +6,8 @@ const TICKETS_KEY = "helpdesk_tickets";
 const COUNTER_KEY = "helpdesk_ticket_counter";
 const MAX_RECENT = 5;
 const DEFAULT_CLIENT_ACK_FALLBACK_TIMEOUT_MS = 5000;
+const NEW_SESSION_WELCOME_TEXT =
+  "Thank you for contacting Agora Support! We’re here to help. Before we begin, please select the product you need support with.";
 const STATUS_FOLLOWUP_MARKERS = [
   "any update",
   "status update",
@@ -305,6 +307,22 @@ function buildStaticClientAck(message) {
   return isStatusFollowup(message)
     ? "Got it, I'm checking the latest status."
     : "Got it, let me check this for you.";
+}
+
+function renderNewSessionWelcomeBubble() {
+  return `
+    <div class="empty-chat-welcome">
+      <article class="msg-row">
+        <div class="msg-column">
+          <div class="message-meta">
+            <span class="avatar assistant"><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span></span>
+            <span class="message-author">Concierge AI</span>
+          </div>
+          <div class="bubble assistant"><div>${escapeHtml(NEW_SESSION_WELCOME_TEXT)}</div></div>
+        </div>
+      </article>
+    </div>
+  `;
 }
 
 function getTransientClientAck(ticketId) {
@@ -1617,19 +1635,8 @@ function renderChatTicket() {
             renderableMessages.length === 0
               ? `
                 <div class="empty-chat">
-                  <div class="bot-mark">
-                    <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
-                  </div>
-                  <h3>Concierge AI</h3>
-                  <p>Describe your technical issue and Concierge AI will start with the most likely next step.</p>
-                  <div class="ticket-product-card">
-                    <div class="ticket-product-copy">
-                      <span class="ticket-product-kicker">Select Product</span>
-                      <h4>${escapeHtml(selectedProductLabel || "Choose the product for this session.")}</h4>
-                      <p>We use this product scope to load the matching support prompt before your first question.</p>
-                    </div>
-                    ${renderTicketProductSelector(ticket)}
-                  </div>
+                  ${renderNewSessionWelcomeBubble()}
+                  ${renderTicketProductSelector(ticket)}
                 </div>
               `
               : renderableMessages

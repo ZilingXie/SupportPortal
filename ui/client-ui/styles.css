@@ -1493,69 +1493,31 @@ html.material-symbols-pending .material-symbols-outlined {
 }
 
 .empty-chat {
-  padding: 72px 24px;
+  padding: 40px 24px 32px;
   border-radius: 36px;
   text-align: center;
   background: rgba(255, 255, 255, 0.76);
   box-shadow: var(--shadow-soft);
 }
 
-.empty-chat .bot-mark {
-  margin: 0 auto;
-}
-
-.empty-chat h3 {
-  margin: 20px 0 0;
-  font-family: "Manrope", "Inter", sans-serif;
-  font-size: 28px;
-  font-weight: 800;
-  line-height: 1;
-  letter-spacing: -0.03em;
-}
-
-.empty-chat p {
-  max-width: 520px;
-  margin: 14px auto 0;
-  color: var(--ink-soft);
-  font-size: 15px;
-  line-height: 1.7;
-}
-
-.ticket-product-card {
+.empty-chat-welcome {
   width: min(100%, 620px);
-  margin: 28px auto 0;
-  padding: 22px;
-  border-radius: 28px;
+  margin: 0 auto;
   text-align: left;
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 16px 30px rgba(52, 61, 150, 0.08);
 }
 
-.ticket-product-copy h4 {
-  margin: 10px 0 0;
-  font-family: "Manrope", "Inter", sans-serif;
-  font-size: 22px;
-  font-weight: 800;
-  line-height: 1.2;
+.empty-chat-welcome .msg-row {
+  justify-content: center;
 }
 
-.ticket-product-copy p {
+.empty-chat-welcome .msg-column {
+  width: 100%;
   max-width: none;
-  margin: 10px 0 0;
-}
-
-.ticket-product-kicker {
-  display: inline-flex;
-  color: var(--secondary);
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
 }
 
 .product-select {
-  width: 100%;
-  margin-top: 18px;
+  width: min(100%, 620px);
+  margin: 20px auto 0;
 }
 
 .msg-row {
