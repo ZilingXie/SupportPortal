@@ -563,6 +563,15 @@ function getDisplayInvestigation(ticket) {
   return getActiveInvestigation(ticket) || getLatestClosedInvestigation(ticket);
 }
 
+function getEngineerAgentState(ticket) {
+  if (!ticket || typeof ticket !== "object") {
+    return null;
+  }
+  return ticket.engineer_agent_state && typeof ticket.engineer_agent_state === "object"
+    ? ticket.engineer_agent_state
+    : null;
+}
+
 function latestInvestigationUpdate(ticket) {
   const activeInvestigation = getActiveInvestigation(ticket);
   if (activeInvestigation) {
@@ -575,6 +584,65 @@ function latestInvestigationUpdate(ticket) {
     }
   }
   return "";
+}
+
+function isApprovalRequestMessage(value) {
+  const content = String(value || "").trim().toLowerCase();
+  if (!content) {
+    return false;
+  }
+  return (
+    content.includes("please confirm this draft before i reply to the customer") ||
+    content.includes("please confirm whether this version is ready to send") ||
+    (content.includes("please confirm") && (content.includes("draft") || content.includes("reply")))
+  );
+}
+
+function findLatestEngineerAiMessageIndex(messages) {
+  const items = Array.isArray(messages) ? messages : [];
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    if (String(items[index]?.role || "").trim().toLowerCase() === "engineer_ai") {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function findLatestApprovalRequestMessageIndex(messages) {
+  const items = Array.isArray(messages) ? messages : [];
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    if (String(items[index]?.role || "").trim().toLowerCase() !== "engineer_ai") {
+      continue;
+    }
+    if (isApprovalRequestMessage(items[index]?.content)) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function getInvestigationApprovalUiState(ticket, activeInvestigation, investigationMessages) {
+  if (!activeInvestigation) {
+    return { showApprovalBlock: false, decisionIndex: -1 };
+  }
+
+  const draftCustomerReply = String(activeInvestigation?.draft_customer_reply || "").trim();
+  const normalizedState = String(activeInvestigation?.state || "").trim().toLowerCase();
+  const agentState = getEngineerAgentState(ticket);
+  const agentPhase = String(agentState?.phase || "").trim().toLowerCase();
+  const readyToReply = agentState?.ready_to_reply === true;
+  const latestApprovalIndex = findLatestApprovalRequestMessageIndex(investigationMessages);
+  const fallbackEngineerAiIndex = findLatestEngineerAiMessageIndex(investigationMessages);
+  const showApprovalBlock =
+    normalizedState === "awaiting_confirmation" ||
+    agentPhase === "awaiting_confirmation" ||
+    readyToReply ||
+    (Boolean(draftCustomerReply) && latestApprovalIndex >= 0);
+
+  return {
+    showApprovalBlock,
+    decisionIndex: latestApprovalIndex >= 0 ? latestApprovalIndex : fallbackEngineerAiIndex,
+  };
 }
 
 function investigationStateLabel(value) {
@@ -1539,7 +1607,10 @@ function resetDetailWorkspaceState() {
   tellAiSubmitting = false;
 }
 
-function renderInvestigationDecisionHtml({ draftCustomerReply, controlsDisabled }) {
+function renderInvestigationDecisionHtml({
+  draftCustomerReply,
+  controlsDisabled,
+}) {
   return `
     <div class="detail-investigation-draft">
       <p class="detail-investigation-draft-label">Draft Customer Reply</p>
@@ -1554,21 +1625,16 @@ function renderInvestigationDecisionHtml({ draftCustomerReply, controlsDisabled 
         data-detail-action="approve-investigation"
         ${controlsDisabled ? "disabled" : ""}
       >Approve Reply</button>
-      <button
-        type="button"
-        class="btn btn-ghost"
-        data-detail-action="revise-investigation"
-        ${controlsDisabled ? "disabled" : ""}
-      >Ask AI to Revise</button>
     </div>
   `;
 }
 
-function renderInvestigationComposerHtml({ draft, controlsDisabled, reviseMode }) {
-  const placeholder = reviseMode
-    ? "Tell Engineer AI what to revise before replying to the customer..."
+function renderInvestigationComposerHtml({ draft, controlsDisabled, reviseMode, approvalMode = false }) {
+  const revisionMode = reviseMode || approvalMode;
+  const placeholder = revisionMode
+    ? "If the draft needs changes, tell Engineer AI what to revise before replying to the customer..."
     : "Share the next technical detail for Engineer AI...";
-  const submitLabel = reviseMode ? "Send Revision Note" : "Send Update";
+  const submitLabel = revisionMode ? "Send Revision Note" : "Send Update";
 
   return `
     <div class="detail-investigation-composer">
@@ -1683,7 +1749,10 @@ function renderConversationHtml(messages, options = {}) {
               <div class="message-content">${formatMultiline(String(message.content || ""))}</div>
               ${
                 shouldRenderDecision
-                  ? renderInvestigationDecisionHtml({ draftCustomerReply, controlsDisabled })
+                  ? renderInvestigationDecisionHtml({
+                      draftCustomerReply,
+                      controlsDisabled,
+                    })
                   : ""
               }
               ${buildMessageReferences(message)}
@@ -1776,13 +1845,9 @@ function renderTicketDetailView() {
         },
       ]
     : [];
-  const showInlineConfirmation =
-    Boolean(activeInvestigation) &&
-    investigationState === "awaiting_confirmation" &&
-    !investigationReviseMode;
-  const showInvestigationComposer =
-    Boolean(activeInvestigation) &&
-    (investigationState === "active" || investigationReviseMode);
+  const approvalUiState = getInvestigationApprovalUiState(ticket, activeInvestigation, investigationMessages);
+  const showInlineConfirmation = approvalUiState.showApprovalBlock;
+  const showInvestigationComposer = Boolean(activeInvestigation);
   const draftCustomerReply = String(displayInvestigation?.draft_customer_reply || "").trim();
   const controlsDisabled = tellAiSubmitting;
   const messages = Array.isArray(ticket.messages) ? ticket.messages : [];
@@ -1845,8 +1910,8 @@ function renderTicketDetailView() {
             investigationMessages.length
               ? renderConversationHtml(investigationMessages, {
                   compactThread: true,
-                  inlineDecisionIndex: showInlineConfirmation ? investigationMessages.length - 1 : -1,
-                  showInlineConfirmation,
+                  inlineDecisionIndex: showInlineConfirmation ? approvalUiState.decisionIndex : -1,
+                  showInlineConfirmation: showInlineConfirmation && approvalUiState.decisionIndex >= 0,
                   draftCustomerReply,
                   controlsDisabled,
                 })
@@ -1858,6 +1923,7 @@ function renderTicketDetailView() {
                   draft: tellAiDraft,
                   controlsDisabled,
                   reviseMode: investigationReviseMode,
+                  approvalMode: approvalUiState.showApprovalBlock,
                 })
               : ""
           }
@@ -1886,11 +1952,6 @@ function renderTicketDetailView() {
             <p class="summary-text">${formatMultiline(
               selectedTicketNextAction || "Analyzing next action needed..."
             )}</p>
-            ${renderTicketStateActionsHtml({
-              ticketStatus: status,
-              controlsDisabled,
-              hasActiveInvestigation: Boolean(activeInvestigation),
-            })}
           </section>
         </aside>
       </div>
@@ -2333,8 +2394,14 @@ async function handleDetailClick(event) {
     tellAiSubmitting = true;
     renderTicketDetail();
     try {
-      if (getActiveInvestigation(selectedTicket)) {
-        if (investigationReviseMode) {
+      const activeInvestigation = getActiveInvestigation(selectedTicket);
+      const approvalUiState = getInvestigationApprovalUiState(
+        selectedTicket,
+        activeInvestigation,
+        Array.isArray(activeInvestigation?.messages) ? activeInvestigation.messages : []
+      );
+      if (activeInvestigation) {
+        if (investigationReviseMode || approvalUiState.showApprovalBlock) {
           await submitInvestigationConfirmation(selectedTicketId, "revise", cleaned);
           investigationReviseMode = false;
         } else {

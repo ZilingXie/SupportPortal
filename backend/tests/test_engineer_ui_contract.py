@@ -825,17 +825,8 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!html.includes("Approve Reply")) {{
                   throw new Error("Awaiting-confirmation investigations should expose the approve action.");
                 }}
-                if (!html.includes("Ask AI to Revise")) {{
-                  throw new Error("Awaiting-confirmation investigations should expose the revise action.");
-                }}
                 if (!html.includes("detail-investigation-inline-actions")) {{
                   throw new Error("Confirmation actions should render inline inside the investigation chat thread.");
-                }}
-                if (!html.includes("Back to Communicating")) {{
-                  throw new Error("Investigating tickets should surface the resume communicating action.");
-                }}
-                if (!html.includes("Resolve Ticket")) {{
-                  throw new Error("Investigating tickets should surface the resolve action.");
                 }}
                 if (!html.includes("Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.")) {{
                   throw new Error("Detail workspace should render the draft customer reply for final confirmation.");
@@ -874,13 +865,114 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (customerTimelineSection.includes('message-list message-list-compact-thread')) {{
                   throw new Error("Customer timeline should not inherit the compact engineer thread layout.");
                 }}
-                const decisionIndex = html.indexOf("I have enough information now. Please confirm this draft before I reply to the customer.");
-                const inlineActionsIndex = html.indexOf("detail-investigation-inline-actions");
+                const summaryIndex = html.indexOf("AI Summary");
+                if (summaryIndex === -1) {{
+                  throw new Error("Detail workspace should still render the AI Summary card.");
+                }}
+                const summarySection = html.slice(summaryIndex);
+                if (summarySection.includes("Back to Communicating")) {{
+                  throw new Error("AI Summary should no longer render the resume communicating button.");
+                }}
+                if (summarySection.includes("Resolve Ticket")) {{
+                  throw new Error("AI Summary should no longer render the resolve button.");
+                }}
+                const decisionIndex = engineerThreadSection.indexOf("I have enough information now. Please confirm this draft before I reply to the customer.");
+                const inlineActionsIndex = engineerThreadSection.indexOf("detail-investigation-inline-actions");
                 if (decisionIndex === -1 || inlineActionsIndex === -1 || inlineActionsIndex < decisionIndex) {{
                   throw new Error("Inline confirmation actions should appear after the final Engineer AI message.");
                 }}
-                if (html.includes('id="detail-investigation-input"')) {{
-                  throw new Error("Normal investigation composer should stay hidden while awaiting confirmation.");
+                const draftIndex = engineerThreadSection.indexOf("detail-investigation-draft");
+                const approveIndex = engineerThreadSection.indexOf("Approve Reply");
+                const composerIndex = engineerThreadSection.indexOf('id="detail-investigation-input"');
+                if (draftIndex === -1) {{
+                  throw new Error("Engineer thread should render the customer draft directly below the approval request.");
+                }}
+                if (approveIndex === -1) {{
+                  throw new Error("Engineer thread should render the approve action directly under the draft.");
+                }}
+                if (composerIndex === -1) {{
+                  throw new Error("Engineer thread should keep the composer visible so engineers can send draft revisions directly.");
+                }}
+                if (!(draftIndex < approveIndex && approveIndex < composerIndex)) {{
+                  throw new Error("Draft, approve action, and composer should appear in order inside the engineer thread.");
+                }}
+                if (engineerThreadSection.includes("Ask AI to Revise")) {{
+                  throw new Error("Approval state should not render a separate revise button anymore.");
+                }}
+                if (engineerThreadSection.includes("Back to Communicating")) {{
+                  throw new Error("Approval state should not render the resume communicating action.");
+                }}
+                if (engineerThreadSection.includes("Resolve Ticket")) {{
+                  throw new Error("Approval state should not render the resolve action.");
+                }}
+              """
+            )
+        )
+
+    def test_engineer_detail_derives_approval_block_from_agent_state_and_shows_placeholder_when_draft_is_missing(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                selectedTicketId = "TK-DETAIL-AGENT-PHASE";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-AGENT-PHASE",
+                  subject: "Android 14 token renew regression",
+                  requester: "user-7",
+                  status: "investigating",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [
+                    {
+                      role: "customer",
+                      content: "Token renew callback does not fire on Android 14.",
+                      created_at: "2026-03-24T08:00:00+00:00",
+                    },
+                  ],
+                  active_investigation: {
+                    id: "INV-DETAIL-AGENT-PHASE",
+                    state: "active",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "",
+                    final_confirmation_requested_at: null,
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-AGENT-PHASE-m1",
+                        role: "engineer_ai",
+                        content: "I have enough information now. Please confirm this draft before I reply to the customer.",
+                        created_at: "2026-03-24T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  engineer_agent_state: {
+                    phase: "awaiting_confirmation",
+                    ready_to_reply: true,
+                    issue_understanding: "Token renew callback fails on Android 14.",
+                    knowledge_summary: "Client AI found generic token-renewal guidance.",
+                    why_not_solved: "The customer-safe reply has not been approved yet.",
+                    goal: "Get engineer approval on the prepared answer.",
+                    missing_information: [],
+                    next_request_for_engineer: "Approve the prepared customer reply.",
+                    last_refreshed_at: "2026-03-24T09:05:00+00:00",
+                  },
+                };
+                selectedTicketSummary = "Customer-facing answer is ready for approval.";
+                selectedTicketNextAction = "Approve the prepared reply.";
+
+                const html = renderTicketDetailView();
+                if (!html.includes("Approve Reply")) {{
+                  throw new Error("Engineer thread should derive the approval block from engineer_agent_state when the investigation state has not caught up yet.");
+                }}
+                if (html.includes("Ask AI to Revise")) {{
+                  throw new Error("Approval-derived states should not render a separate revise button.");
+                }}
+                if (!html.includes("Draft reply is not ready yet.")) {{
+                  throw new Error("Engineer thread should render a visible placeholder instead of leaving an empty draft area.");
+                }}
+                if (!html.includes('id="detail-investigation-input"')) {{
+                  throw new Error("Approval-derived states should keep the composer visible for direct revision notes.");
                 }}
               """
             )
@@ -1139,7 +1231,7 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
-    def test_engineer_detail_revise_action_reuses_main_composer_and_submit_targets_confirmation_endpoint(self) -> None:
+    def test_engineer_detail_approval_state_keeps_composer_and_submit_targets_confirmation_endpoint(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
                 """
@@ -1177,32 +1269,18 @@ class EngineerUiContractTests(unittest.TestCase):
                 selectedTicketSummary = "Customer-facing answer is drafted and waiting for engineer confirmation.";
                 selectedTicketNextAction = "Approve the prepared reply or ask the AI to revise it.";
 
-                const reviseButton = {
-                  dataset: { detailAction: "revise-investigation" },
-                  disabled: false,
-                };
-                const reviseTarget = {
-                  closest(selector) {
-                    if (selector === "button[data-detail-action]") {
-                      return reviseButton;
-                    }
-                    return null;
-                  },
-                };
-
-                handleDetailClick({ target: reviseTarget });
-                const reviseHtml = renderTicketDetailView();
-                if (!reviseHtml.includes('id="detail-investigation-input"')) {{
-                  throw new Error("Ask AI to Revise should reopen the main investigation composer.");
+                const approvalHtml = renderTicketDetailView();
+                if (!approvalHtml.includes('id="detail-investigation-input"')) {{
+                  throw new Error("Approval state should keep the main investigation composer visible.");
                 }}
-                if (!reviseHtml.includes("Tell Engineer AI what to revise before replying to the customer")) {{
-                  throw new Error("Revise mode should update the composer placeholder.");
+                if (!approvalHtml.includes("If the draft needs changes, tell Engineer AI what to revise before replying to the customer")) {{
+                  throw new Error("Approval state should explain that the composer sends revision notes directly.");
                 }}
-                if (!reviseHtml.includes('aria-label="Send Revision Note"')) {{
-                  throw new Error("Revise mode should preserve the submit action label for the icon button.");
+                if (!approvalHtml.includes('aria-label="Send Revision Note"')) {{
+                  throw new Error("Approval state should preserve the revision-note submit label for the icon button.");
                 }}
-                if (!reviseHtml.includes(">arrow_upward<")) {{
-                  throw new Error("Revise mode should use the icon-based submit button.");
+                if (approvalHtml.includes("Ask AI to Revise")) {{
+                  throw new Error("Approval state should no longer render a separate revise button.");
                 }}
 
                 let capturedUrl = null;
@@ -1236,14 +1314,14 @@ class EngineerUiContractTests(unittest.TestCase):
 
                 handleDetailClick({ target: sendTarget });
                 if (capturedUrl !== "/api/engineer/tickets/TK-DETAIL-REV/investigation/confirmation") {{
-                  throw new Error("Revise submit should call the investigation confirmation endpoint.");
+                  throw new Error("Approval-state composer should call the investigation confirmation endpoint.");
                 }}
                 const parsedBody = JSON.parse(capturedOptions.body);
                 if (parsedBody.decision !== "revise") {{
-                  throw new Error("Revise submit should post decision=revise.");
+                  throw new Error("Approval-state composer should post decision=revise.");
                 }}
                 if (parsedBody.note !== "Add a cache-clear step before asking the customer to retry.") {{
-                  throw new Error("Revise submit should send the engineer revision note.");
+                  throw new Error("Approval-state composer should send the engineer revision note.");
                 }}
               """
             )
