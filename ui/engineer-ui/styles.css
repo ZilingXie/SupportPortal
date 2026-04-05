@@ -1553,6 +1553,15 @@ html.material-symbols-pending .material-symbols-outlined {
   align-self: stretch;
 }
 
+.message-item-pending-ai {
+  background: rgba(202, 230, 255, 0.82);
+}
+
+.message-item-local-error {
+  background: rgba(255, 233, 237, 0.9);
+  box-shadow: inset 0 0 0 1px rgba(186, 26, 26, 0.12);
+}
+
 .message-item header {
   display: flex;
   align-items: center;
@@ -1628,6 +1637,59 @@ html.material-symbols-pending .material-symbols-outlined {
   color: var(--ink);
   font-size: 14px;
   line-height: 1.65;
+}
+
+.message-content-pending-ai {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--ink-soft);
+}
+
+.detail-thinking-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.detail-thinking-dots span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--primary-container);
+  animation: detailThinkingPulse 1.15s infinite ease-in-out;
+}
+
+.detail-thinking-dots span:nth-child(2) {
+  opacity: 0.7;
+  animation-delay: 0.12s;
+}
+
+.detail-thinking-dots span:nth-child(3) {
+  opacity: 0.45;
+  animation-delay: 0.24s;
+}
+
+.detail-thinking-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+@keyframes detailThinkingPulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
+
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .detail-investigation-draft {

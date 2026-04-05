@@ -16,6 +16,7 @@ from backend.services.llm_factory import LlmInvocationError, LlmTextResult
 from backend.services.rag_service_client import RagTicketAnswerDetail
 from backend.services.support_router import SupportResolution
 from backend.services.ticket_orchestrator import SufficiencyAssessment
+from backend.services.troubleshooting_intake import TroubleshootingIntakeResult
 
 
 def _resolution(*, needs_engineer_guidance: bool) -> SupportResolution:
@@ -1560,6 +1561,79 @@ class InvestigationFlowTests(unittest.TestCase):
             "could not find enough grounded doc evidence",
             ticket["active_investigation"]["messages"][0]["content"],
         )
+
+    def test_black_screen_rag_service_error_persists_intake_gate_before_opening_engineer_ticket(self) -> None:
+        clarify_reply = (
+            "Known so far: the issue symptom is black screen issue. "
+            "To investigate this Audio/Video Calling issue, please share the channel name, "
+            "problematic uid, and issue timestamp."
+        )
+
+        with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="Got it, let me check this for you.",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main.rag_service_client,
+            "query_answer_with_recovery_detail",
+            side_effect=main.RagServiceError("RAG service request failed"),
+        ), patch.object(
+            main,
+            "decide_support_route",
+            return_value=_rag_route_decision(reason="technical_question"),
+        ), patch.object(
+            main,
+            "_run_client_ticket_review_agent",
+            return_value=TroubleshootingIntakeResult(
+                issue_mode="investigation",
+                known_information={"issue_symptom": "black screen issue"},
+                missing_information=["channel_name", "problematic_uid", "issue_timestamp"],
+                ready_for_engineer_ticket=False,
+                customer_reply=clarify_reply,
+            ),
+        ), patch.object(main, "_enqueue_or_defer_message_sentiment_tag", AsyncMock(return_value=False)), patch.object(
+            main,
+            "dispatch_event",
+            AsyncMock(),
+        ):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-RAG-UNAVAIL-BLACK-100",
+                    "customer_id": "C-001",
+                    "product": "audio_video_calling",
+                    "message": "i got black screen, what should i do?",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "communicating")
+        self.assertEqual(payload["route_reason"], "rag_unavailable")
+        self.assertEqual(payload["answer"], clarify_reply)
+        stored = self.repository.get_ticket("TK-RAG-UNAVAIL-BLACK-100")
+        self.assertIsNotNone(stored)
+        assert stored is not None
+        self.assertEqual(stored["status"], "communicating")
+        self.assertIsNone(stored.get("active_engineer_case_id"))
+        self.assertEqual(stored.get("engineer_case_count"), 0)
+        self.assertEqual(
+            stored["client_intake_state"]["missing_information"],
+            ["channel_name", "problematic_uid", "issue_timestamp"],
+        )
+        self.assertEqual(
+            stored["client_intake_state"]["pending_investigation_reason"],
+            "rag_unavailable",
+        )
+        self.assertEqual(stored["messages"][-1]["content"], clarify_reply)
 
     def test_customer_message_sentiment_falls_back_to_background_tagging_when_queue_is_unavailable(self) -> None:
         resolution = SupportResolution(

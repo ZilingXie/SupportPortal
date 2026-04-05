@@ -2379,3 +2379,24 @@ For each new entry, record:
 - Verification:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_client_ticket_agent_runtime.py backend/tests/test_troubleshooting_intake.py backend/tests/test_investigation_flow.py`
   - `git diff --check`
+
+## 2026-04-05 - Route troubleshooting RAG failures through intake before engineer handoff
+
+- Summary:
+  - Updated the client ticket runtime so troubleshooting-style tickets no longer skip customer intake when the RAG layer fails with `rag_unavailable` or `rag_service_error`.
+  - Preserved the previous direct-to-engineer behavior for non-troubleshooting RAG failures, so FAQ-style requests still fail open to engineer attention instead of asking irrelevant troubleshooting questions.
+  - Added regression coverage for both the runtime contract and the `/api/tickets/query` entrypoint to ensure black-screen style issues clarify required fields instead of opening an engineer case immediately when RAG is down.
+- Reason:
+  - In the default async deployment path, a transient RAG outage caused new troubleshooting tickets like `i got black screen, what should i do?` to bypass intake review and jump straight to the generic engineer-investigation reply.
+- Affected files/config:
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema changes.
+  - `client_intake_state.pending_investigation_reason` can now persist `rag_unavailable` and `rag_service_error` for troubleshooting clarification turns before any engineer case is opened.
+  - No changes to vector tables, embeddings, rerank configuration, or `/internal/rag/query` payload fields.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_client_ticket_agent_runtime.py::ClientTicketAgentRuntimeContractTests::test_troubleshooting_rag_unavailable_routes_into_intake_clarification backend/tests/test_investigation_flow.py::InvestigationFlowTests::test_black_screen_rag_service_error_persists_intake_gate_before_opening_engineer_ticket`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_client_ticket_agent_runtime.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py`
