@@ -482,6 +482,11 @@ def build_trace_summary(
     )
     request_id = _clean_text((rag_run or {}).get("request_id")) or rag_request_id
     response_ready_payload = _latest_ticket_event_payload(normalized_ticket_events, "ticket_ai_response_ready")
+    processing_payload = _latest_ticket_event_payload(normalized_ticket_events, "ticket_ai_processing")
+    created_payload = _latest_ticket_event_payload(normalized_ticket_events, "ticket_created") or _latest_ticket_event_payload(
+        normalized_ticket_events,
+        "ticket_updated",
+    )
     workflow_action = (
         _clean_text(final_assistant.get("workflow_action"))
         or _clean_text(runtime_state.get("workflow_action"))
@@ -529,6 +534,40 @@ def build_trace_summary(
             "queued_message_created_at": _format_timestamp(query_payload.get("queued_message_created_at")),
             "api_persist_latency_ms": _safe_float(query_payload.get("api_persist_latency_ms")),
             "api_return_latency_ms": _safe_float(query_payload.get("api_return_latency_ms")),
+        },
+        "admission": {
+            "load_ticket_ms": _safe_float(
+                response_ready_payload.get("load_ticket_ms")
+                or processing_payload.get("load_ticket_ms")
+                or created_payload.get("load_ticket_ms")
+            ),
+            "save_ticket_ms": _safe_float(
+                response_ready_payload.get("save_ticket_ms")
+                or processing_payload.get("save_ticket_ms")
+                or created_payload.get("save_ticket_ms")
+            ),
+            "record_ticket_created_event_ms": _safe_float(
+                response_ready_payload.get("record_ticket_created_event_ms")
+                or processing_payload.get("record_ticket_created_event_ms")
+                or created_payload.get("record_ticket_created_event_ms")
+            ),
+            "enqueue_ticket_query_ms": _safe_float(
+                response_ready_payload.get("enqueue_ticket_query_ms")
+                or processing_payload.get("enqueue_ticket_query_ms")
+                or created_payload.get("enqueue_ticket_query_ms")
+            ),
+            "enqueue_sentiment_ms": _safe_float(
+                response_ready_payload.get("enqueue_sentiment_ms")
+                or processing_payload.get("enqueue_sentiment_ms")
+                or created_payload.get("enqueue_sentiment_ms")
+            ),
+        },
+        "worker_queue": {
+            "task_dequeued_at": _format_timestamp(response_ready_payload.get("task_dequeued_at")),
+            "queue_wait_ms": _safe_float(response_ready_payload.get("queue_wait_ms")),
+            "main_agent_started_at": _format_timestamp(response_ready_payload.get("main_agent_started_at")),
+            "main_agent_completed_at": _format_timestamp(response_ready_payload.get("main_agent_completed_at")),
+            "response_ready_dispatch_ms": _safe_float(response_ready_payload.get("response_ready_dispatch_ms")),
         },
         "main_agent": {
             **main_summary,
@@ -593,6 +632,8 @@ def render_markdown_report(summary: dict[str, Any]) -> str:
     request = summary.get("request") if isinstance(summary.get("request"), dict) else {}
     ack = summary.get("ack") if isinstance(summary.get("ack"), dict) else {}
     api = summary.get("api") if isinstance(summary.get("api"), dict) else {}
+    admission = summary.get("admission") if isinstance(summary.get("admission"), dict) else {}
+    worker_queue = summary.get("worker_queue") if isinstance(summary.get("worker_queue"), dict) else {}
     main_agent = summary.get("main_agent") if isinstance(summary.get("main_agent"), dict) else {}
     route_agent = summary.get("route_agent") if isinstance(summary.get("route_agent"), dict) else {}
     rag_agent = summary.get("rag_agent") if isinstance(summary.get("rag_agent"), dict) else {}
@@ -622,6 +663,20 @@ def render_markdown_report(summary: dict[str, Any]) -> str:
         f"- queued_message_created_at: `{_format_value(api.get('queued_message_created_at'))}`",
         f"- api_persist_latency_ms: {_format_value(api.get('api_persist_latency_ms'))}",
         f"- api_return_latency_ms: {_format_value(api.get('api_return_latency_ms'))}",
+        "",
+        "## Admission 分段",
+        f"- load_ticket_ms: {_format_value(admission.get('load_ticket_ms'))}",
+        f"- save_ticket_ms: {_format_value(admission.get('save_ticket_ms'))}",
+        f"- record_ticket_created_event_ms: {_format_value(admission.get('record_ticket_created_event_ms'))}",
+        f"- enqueue_ticket_query_ms: {_format_value(admission.get('enqueue_ticket_query_ms'))}",
+        f"- enqueue_sentiment_ms: {_format_value(admission.get('enqueue_sentiment_ms'))}",
+        "",
+        "## Queue / Dispatch",
+        f"- task_dequeued_at: `{_format_value(worker_queue.get('task_dequeued_at'))}`",
+        f"- queue_wait_ms: {_format_value(worker_queue.get('queue_wait_ms'))}",
+        f"- main_agent_started_at: `{_format_value(worker_queue.get('main_agent_started_at'))}`",
+        f"- main_agent_completed_at: `{_format_value(worker_queue.get('main_agent_completed_at'))}`",
+        f"- response_ready_dispatch_ms: {_format_value(worker_queue.get('response_ready_dispatch_ms'))}",
         "",
         "## Main Agent",
         f"- started_at: `{_format_value(main_agent.get('started_at'))}`",

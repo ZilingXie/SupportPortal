@@ -6,6 +6,7 @@ import os
 import re
 import signal
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -58,6 +59,7 @@ SHUTTING_DOWN = False
 TICKET_LOOKUP_RETRY_MAX = 6
 TICKET_LOOKUP_RETRY_BASE_DELAY_SECONDS = 0.12
 MESSAGE_TIMESTAMP_TOLERANCE_SECONDS = 1.0
+SUPPORTED_WORKER_TASK_TYPES = ("ticket_query", "ticket_message_sentiment")
 
 
 def _safe_positive_int(value: Any, default: int) -> int:
@@ -111,6 +113,22 @@ OPTIMISTIC_ROUTE_TIMEOUT_SECONDS = _safe_positive_float(
     3.0,
 )
 rag_service_client = RagServiceClient()
+
+
+def _worker_task_types_from_env() -> tuple[str, ...]:
+    raw = str(os.getenv("WORKER_TASK_TYPES") or "").strip().lower()
+    if not raw or raw == "all":
+        return SUPPORTED_WORKER_TASK_TYPES
+    normalized: list[str] = []
+    for token in raw.split(","):
+        value = str(token or "").strip().lower()
+        if value in SUPPORTED_WORKER_TASK_TYPES and value not in normalized:
+            normalized.append(value)
+    return tuple(normalized) if normalized else SUPPORTED_WORKER_TASK_TYPES
+
+
+def _worker_concurrency_from_env() -> int:
+    return _safe_positive_int(os.getenv("WORKER_CONCURRENCY"), 1)
 
 
 def _install_signal_handlers() -> None:
@@ -560,6 +578,40 @@ def _timestamps_match(actual: str, expected: str) -> bool:
     return actual[:19] == expected[:19]
 
 
+def _duration_between_timestamps_ms(start: str | None, end: str | None) -> float | None:
+    start_dt = _parse_iso_datetime(start or "")
+    end_dt = _parse_iso_datetime(end or "")
+    if start_dt is None or end_dt is None:
+        return None
+    return round(max((end_dt - start_dt).total_seconds() * 1000, 0.0), 2)
+
+
+def _latest_admission_metrics(ticket_id: str, message_created_at: str) -> dict[str, Any]:
+    normalized_created_at = str(message_created_at or "").strip()
+    events = _call_ticket_repository(
+        "list_ticket_events",
+        lambda: ticket_repository.list_ticket_events(ticket_id=ticket_id, limit=200),
+    )
+    for event_type in ("ticket_ai_processing", "ticket_created", "ticket_updated"):
+        for row in events:
+            payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+            if str(row.get("event_type") or payload.get("event") or "").strip() != event_type:
+                continue
+            payload_message_created_at = str(payload.get("message_created_at") or "").strip()
+            if normalized_created_at and payload_message_created_at and payload_message_created_at != normalized_created_at:
+                continue
+            return {
+                "load_ticket_ms": payload.get("load_ticket_ms"),
+                "save_ticket_ms": payload.get("save_ticket_ms"),
+                "record_ticket_created_event_ms": payload.get("record_ticket_created_event_ms"),
+                "enqueue_ticket_query_ms": payload.get("enqueue_ticket_query_ms"),
+                "enqueue_sentiment_ms": payload.get("enqueue_sentiment_ms"),
+                "api_persist_latency_ms": payload.get("api_persist_latency_ms"),
+                "api_return_latency_ms": payload.get("api_return_latency_ms"),
+            }
+    return {}
+
+
 def _is_task_cancelled(ticket_id: str, message_created_at: str) -> bool:
     expected_created_at = str(message_created_at or "").strip()
     if not expected_created_at:
@@ -694,6 +746,11 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
     message_created_at = str(task.get("message_created_at", "")).strip()
     if not ticket_id or not customer_message:
         return
+    task_dequeued_at = now_iso()
+    queue_wait_ms = _duration_between_timestamps_ms(
+        str(task.get("created_at") or "").strip() or None,
+        task_dequeued_at,
+    )
 
     ticket, lookup_attempts, latest_message_found = _load_ticket_with_retry(
         ticket_id,
@@ -734,6 +791,7 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         for item in ticket.get("messages", [])
         if " ".join(str(item.get("content", "")).split()).strip()
     ]
+    main_agent_started_at = now_iso()
     orchestration_result = _orchestrate_worker_support_message(
         customer_message,
         ticket_id=ticket_id,
@@ -748,6 +806,7 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
             else None
         ),
     )
+    main_agent_completed_at = now_iso()
     if (
         isinstance(orchestration_result, tuple)
         and len(orchestration_result) == 2
@@ -933,13 +992,15 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
                 ),
             )
 
+    admission_metrics = _latest_admission_metrics(ticket_id, message_created_at)
+    response_ready_created_at = now_iso()
     event = {
         "event": "ticket_ai_response_ready",
         "ticket_id": ticket_id,
         "status": ticket["status"],
         "message": answer[:200],
         "message_created_at": message_created_at,
-        "created_at": now_iso(),
+        "created_at": response_ready_created_at,
         "answer_route": execution.answer_route,
         "scope_label": execution.scope_label,
         "route_family": execution.route_family,
@@ -950,8 +1011,30 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         "search_used": bool(execution.search_used),
         "matched_signals": list(execution.matched_signals),
         "parallel_mode": execution_diagnostics.get("parallel_mode"),
-        "api_persist_latency_ms": task.get("api_persist_latency_ms"),
-        "api_return_latency_ms": task.get("api_return_latency_ms"),
+        "api_persist_latency_ms": admission_metrics.get("api_persist_latency_ms", task.get("api_persist_latency_ms")),
+        "api_return_latency_ms": admission_metrics.get("api_return_latency_ms", task.get("api_return_latency_ms")),
+        "load_ticket_ms": admission_metrics.get("load_ticket_ms", task.get("load_ticket_ms")),
+        "save_ticket_ms": admission_metrics.get("save_ticket_ms", task.get("save_ticket_ms")),
+        "record_ticket_created_event_ms": admission_metrics.get(
+            "record_ticket_created_event_ms",
+            task.get("record_ticket_created_event_ms"),
+        ),
+        "enqueue_ticket_query_ms": admission_metrics.get(
+            "enqueue_ticket_query_ms",
+            task.get("enqueue_ticket_query_ms"),
+        ),
+        "enqueue_sentiment_ms": admission_metrics.get(
+            "enqueue_sentiment_ms",
+            task.get("enqueue_sentiment_ms"),
+        ),
+        "task_dequeued_at": task_dequeued_at,
+        "queue_wait_ms": queue_wait_ms,
+        "main_agent_started_at": main_agent_started_at,
+        "main_agent_completed_at": main_agent_completed_at,
+        "response_ready_dispatch_ms": _duration_between_timestamps_ms(
+            main_agent_completed_at,
+            response_ready_created_at,
+        ),
         "route_latency_ms": execution_diagnostics.get("route_latency_ms"),
         "route_final_action": execution_diagnostics.get("route_final_action") or execution.execution_action,
         "route_result_source": execution_diagnostics.get("route_result_source"),
@@ -965,17 +1048,6 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
             (((getattr(execution, "client_agent_runtime_state", None) or {}) if isinstance(getattr(execution, "client_agent_runtime_state", None), dict) else {}).get("status") or "")
         ).strip()
         or None,
-        "parallel_mode": execution_diagnostics.get("parallel_mode"),
-        "api_persist_latency_ms": task.get("api_persist_latency_ms"),
-        "api_return_latency_ms": task.get("api_return_latency_ms"),
-        "route_latency_ms": execution_diagnostics.get("route_latency_ms"),
-        "route_final_action": execution_diagnostics.get("route_final_action") or execution.execution_action,
-        "route_result_source": execution_diagnostics.get("route_result_source"),
-        "rag_started_at": execution_diagnostics.get("rag_started_at"),
-        "rag_finished_at": execution_diagnostics.get("rag_finished_at"),
-        "rag_cancelled": bool(execution_diagnostics.get("rag_cancelled")),
-        "rag_cancel_stage": execution_diagnostics.get("rag_cancel_stage"),
-        "workflow_action": str(getattr(execution, "workflow_action", "") or "").strip(),
     }
     execution_client_intake_state = (
         dict(getattr(execution, "client_intake_state"))
@@ -1126,6 +1198,62 @@ def process_ticket_query_task(task: dict[str, Any]) -> None:
         bus.close()
 
 
+def _process_worker_task(
+    *,
+    queue: SyncRedisTaskQueue,
+    bus: SyncRedisEventBus,
+    task: dict[str, Any],
+) -> None:
+    task_type = str(task.get("task_type", "")).strip().lower()
+    if task_type == "ticket_query":
+        try:
+            _process_ticket_query(bus, task)
+        except Exception as exc:
+            if _schedule_ticket_task_retry(queue, task, exc):
+                return
+            LOGGER.exception("Worker failed to process ticket task: %s", exc)
+        return
+    if task_type == "ticket_message_sentiment":
+        try:
+            _process_ticket_message_sentiment(bus, task)
+        except Exception as exc:
+            if _schedule_ticket_task_retry(queue, task, exc):
+                return
+            LOGGER.exception("Worker failed to process sentiment task: %s", exc)
+        return
+    if task_type:
+        LOGGER.warning("Worker ignored unknown task type: %s", task_type)
+        return
+    LOGGER.warning("Worker ignored task without task_type")
+
+
+def _run_worker_consumer(task_types: tuple[str, ...], consumer_index: int) -> None:
+    queue = SyncRedisTaskQueue(task_types=task_types)
+    bus = SyncRedisEventBus()
+    if not queue.is_enabled():
+        LOGGER.error(
+            "Worker consumer %s requires REDIS_URL and queue configuration for task types %s.",
+            consumer_index,
+            ",".join(task_types),
+        )
+        return
+    LOGGER.info(
+        "Worker consumer %s started for task types=%s.",
+        consumer_index,
+        ",".join(task_types),
+    )
+    try:
+        while not SHUTTING_DOWN:
+            task = queue.dequeue(timeout_seconds=5)
+            if not task:
+                continue
+            _process_worker_task(queue=queue, bus=bus, task=task)
+    finally:
+        queue.close()
+        bus.close()
+        LOGGER.info("Worker consumer %s stopped.", consumer_index)
+
+
 def run_worker() -> int:
     logging.basicConfig(
         level=logging.INFO,
@@ -1139,41 +1267,39 @@ def run_worker() -> int:
         LOGGER.error("Worker failed to initialize ticket repository: %s", exc)
         return 1
 
-    queue = SyncRedisTaskQueue()
-    bus = SyncRedisEventBus()
+    task_types = _worker_task_types_from_env()
+    concurrency = _worker_concurrency_from_env()
+    queue = SyncRedisTaskQueue(task_types=task_types)
     if not queue.is_enabled():
-        LOGGER.error("Worker requires REDIS_URL and TASK_QUEUE_NAME configuration.")
+        LOGGER.error("Worker requires REDIS_URL and ticket queue configuration.")
         return 1
-
-    LOGGER.info("Worker started and waiting for tasks.")
-    while not SHUTTING_DOWN:
-        task = queue.dequeue(timeout_seconds=5)
-        if not task:
-            continue
-        task_type = str(task.get("task_type", "")).strip().lower()
-        if task_type == "ticket_query":
-            try:
-                _process_ticket_query(bus, task)
-            except Exception as exc:
-                if _schedule_ticket_task_retry(queue, task, exc):
-                    continue
-                LOGGER.exception("Worker failed to process ticket task: %s", exc)
-            continue
-        if task_type == "ticket_message_sentiment":
-            try:
-                _process_ticket_message_sentiment(bus, task)
-            except Exception as exc:
-                if _schedule_ticket_task_retry(queue, task, exc):
-                    continue
-                LOGGER.exception("Worker failed to process sentiment task: %s", exc)
-            continue
-        if task_type:
-            LOGGER.warning("Worker ignored unknown task type: %s", task_type)
-            continue
-        LOGGER.warning("Worker ignored task without task_type")
-
     queue.close()
-    bus.close()
+
+    LOGGER.info(
+        "Worker started with task types=%s concurrency=%s.",
+        ",".join(task_types),
+        concurrency,
+    )
+    if concurrency <= 1:
+        _run_worker_consumer(task_types, 1)
+        LOGGER.info("Worker stopped.")
+        return 0
+
+    threads: list[threading.Thread] = []
+    for consumer_index in range(1, concurrency + 1):
+        thread = threading.Thread(
+            target=_run_worker_consumer,
+            args=(task_types, consumer_index),
+            name=f"ticket-worker-{consumer_index}",
+            daemon=False,
+        )
+        thread.start()
+        threads.append(thread)
+
+    while any(thread.is_alive() for thread in threads):
+        for thread in threads:
+            thread.join(timeout=0.5)
+
     LOGGER.info("Worker stopped.")
     return 0
 

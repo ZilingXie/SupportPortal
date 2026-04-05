@@ -2380,6 +2380,36 @@ For each new entry, record:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_client_ticket_agent_runtime.py backend/tests/test_troubleshooting_intake.py backend/tests/test_investigation_flow.py`
   - `git diff --check`
 
+## 2026-04-05 - Reduced ticket admission blocking and split main-agent worker queues
+
+- Summary:
+  - Moved async `/api/tickets/query` admission persistence off the event loop by running ticket repository `get_ticket`, `save_ticket`, and key `record_event` calls in a threadpool.
+  - Split ticket-side Redis work into dedicated query and aux queues so `ticket_query` no longer head-of-line blocks behind `ticket_message_sentiment`, and added configurable worker roles plus in-process consumer concurrency.
+  - Extended `ticket_created`, `ticket_ai_processing`, `ticket_ai_response_ready`, and the local trace script with admission and queue timing fields so queue wait and post-main-agent dispatch gaps are reported directly instead of inferred.
+  - Added `/health.config_warnings` detection for shared `TICKET_DB_DSN` and `PGVECTOR_DSN` host/database configurations to surface the current ticket/RAG database contention risk.
+- Reason:
+  - Real traces showed the largest latency spikes before RAG execution: API admission persistence could exceed 100 seconds and `ticket_created -> main_agent.started` could wait tens of seconds because one worker loop was serializing both query and sentiment tasks while ticket and RAG ingestion shared one database.
+- Affected files/config:
+  - `backend/main.py`
+  - `backend/services/task_queue.py`
+  - `backend/worker.py`
+  - `deployment/docker-compose.single-host.yml`
+  - `scripts/trace_client_ticket_route.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_worker.py`
+  - `backend/tests/test_task_queue.py`
+  - `backend/tests/test_single_host_compose.py`
+  - `backend/tests/test_trace_client_ticket_route_cli.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No vector-table, embedding-model, retrieval, rerank, or answer-generation changes.
+  - `support_ticket_events` now records additional admission/queue timing fields for `ticket_created`, `ticket_ai_processing`, and `ticket_ai_response_ready`.
+  - Redis task traffic is now partitioned between `support.ticket_queries` and `support.ticket_aux` by default, while remaining backward compatible with legacy `TASK_QUEUE_NAME` if it is still configured.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_investigation_flow backend.tests.test_worker backend.tests.test_task_queue backend.tests.test_single_host_compose backend.tests.test_trace_client_ticket_route_cli -q`
+  - `python3 -m py_compile backend/main.py backend/services/task_queue.py backend/worker.py scripts/trace_client_ticket_route.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py backend/tests/test_task_queue.py backend/tests/test_single_host_compose.py backend/tests/test_trace_client_ticket_route_cli.py`
+  - `git diff --check`
+
 ## 2026-04-05 - Route troubleshooting RAG failures through intake before engineer handoff
 
 - Summary:

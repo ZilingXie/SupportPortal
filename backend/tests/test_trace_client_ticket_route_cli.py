@@ -92,6 +92,16 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
                         "workflow_action": "answer_customer",
                         "answer_route": "rag",
                         "route_reason": "grounded_answer",
+                        "load_ticket_ms": 11.0,
+                        "save_ticket_ms": 18.0,
+                        "record_ticket_created_event_ms": 4.0,
+                        "enqueue_ticket_query_ms": 6.0,
+                        "enqueue_sentiment_ms": 3.0,
+                        "task_dequeued_at": "2026-04-04T00:00:01.090000+00:00",
+                        "queue_wait_ms": 90.0,
+                        "main_agent_started_at": "2026-04-04T00:00:01.120000+00:00",
+                        "main_agent_completed_at": "2026-04-04T00:00:03.720000+00:00",
+                        "response_ready_dispatch_ms": 22.0,
                     },
                     "created_at": "2026-04-04T00:00:04.100000+00:00",
                 }
@@ -218,6 +228,9 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
         self.assertEqual(summary["review_agent"]["status"], "skipped")
         self.assertEqual(summary["rag_internal_telemetry"]["status"], "available")
         self.assertEqual(summary["final_result"]["answer_route"], "rag")
+        self.assertEqual(summary["admission"]["load_ticket_ms"], 11.0)
+        self.assertEqual(summary["worker_queue"]["queue_wait_ms"], 90.0)
+        self.assertEqual(summary["worker_queue"]["response_ready_dispatch_ms"], 22.0)
         self.assertIn("joinChannel", summary["final_result"]["answer"])
         self.assertGreater(summary["metrics"]["question_to_final_answer_ms"], 0)
         self.assertGreater(summary["metrics"]["ack_to_final_answer_ms"], 0)
@@ -226,6 +239,8 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
         self.assertIn("how to join channel", markdown)
         self.assertIn("RAG 内部分段", markdown)
         self.assertIn("grounded_answer", markdown)
+        self.assertIn("Admission 分段", markdown)
+        self.assertIn("Queue / Dispatch", markdown)
 
     def test_build_trace_summary_handles_missing_rag_telemetry(self) -> None:
         module = _load_script_module()

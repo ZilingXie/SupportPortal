@@ -177,6 +177,64 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(payload_data.get("parallel_mode"), "main_agent_async")
         self.assertGreaterEqual(float(payload_data.get("api_persist_latency_ms") or 0.0), 0.0)
         self.assertGreaterEqual(float(payload_data.get("api_return_latency_ms") or 0.0), 0.0)
+        ticket_created_event = next(
+            item for item in events if str(item.get("event_type") or item.get("event") or "").strip() == "ticket_created"
+        )
+        ticket_created_payload = (
+            ticket_created_event.get("payload")
+            if isinstance(ticket_created_event.get("payload"), dict)
+            else ticket_created_event
+        )
+        for field_name in (
+            "load_ticket_ms",
+            "save_ticket_ms",
+            "enqueue_ticket_query_ms",
+            "enqueue_sentiment_ms",
+        ):
+            self.assertIn(field_name, ticket_created_payload)
+            self.assertGreaterEqual(float(ticket_created_payload.get(field_name) or 0.0), 0.0)
+            self.assertIn(field_name, payload_data)
+            self.assertGreaterEqual(float(payload_data.get(field_name) or 0.0), 0.0)
+        self.assertIn("record_ticket_created_event_ms", payload_data)
+        self.assertGreaterEqual(float(payload_data.get("record_ticket_created_event_ms") or 0.0), 0.0)
+
+    def test_health_reports_shared_ticket_and_rag_database_warning_when_dsns_match(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TICKET_DB_DSN": "postgresql://user:pass@db.example:5432/supportportal",
+                "PGVECTOR_DSN": "postgresql://user:pass@db.example:5432/supportportal",
+            },
+            clear=False,
+        ), patch.object(
+            main.rag_service_client,
+            "probe_health",
+            return_value={"status": "ok", "knowledge_storage": "postgres"},
+        ):
+            response = self.client.get("/health")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertIn("shared_ticket_and_rag_database", payload["config_warnings"])
+
+    def test_health_omits_shared_ticket_and_rag_database_warning_when_dsns_differ(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TICKET_DB_DSN": "postgresql://user:pass@ticket-db.example:5432/supportportal",
+                "PGVECTOR_DSN": "postgresql://user:pass@vector-db.example:5432/supportportal",
+            },
+            clear=False,
+        ), patch.object(
+            main.rag_service_client,
+            "probe_health",
+            return_value={"status": "ok", "knowledge_storage": "postgres"},
+        ):
+            response = self.client.get("/health")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertNotIn("shared_ticket_and_rag_database", payload["config_warnings"])
 
     def test_client_ack_prompt_instructions_require_concierge_style(self) -> None:
         instructions = main._build_client_ack_instructions()
