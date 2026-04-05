@@ -146,8 +146,8 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260405-engineer-optimistic-send-runtime-1", html)
-        self.assertIn('./app.js?v=20260405-engineer-optimistic-send-runtime-1', html)
+        self.assertIn("./styles.css?v=20260405-engineer-approve-close-readonly-1", html)
+        self.assertIn('./app.js?v=20260405-engineer-approve-close-readonly-1', html)
         self.assertIn("function parseRoute()", app_source)
         self.assertIn('path.startsWith("/tickets/")', app_source)
         self.assertIn("function renderTicketPoolView()", app_source)
@@ -1754,51 +1754,45 @@ class EngineerUiContractTests(unittest.TestCase):
 
                 let capturedUrl = null;
                 let capturedOptions = null;
+                let refreshCalls = 0;
                 fetchJson = async (url, options = undefined) => {
                   capturedUrl = url;
                   capturedOptions = options;
                   return {
                     ticket_id: "TK-DETAIL-APPROVE",
-                    status: "communicating",
+                    status: "resolved",
                     active_investigation: null,
+                    closed_investigation: {
+                      id: "INV-DETAIL-APPROVE",
+                      state: "closed",
+                      trigger_reason: "rag_insufficient_evidence",
+                      trigger_source: "support_query",
+                      draft_customer_reply: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                      final_confirmation_requested_at: null,
+                      opened_at: "2026-03-24T08:01:00+00:00",
+                      updated_at: "2026-03-24T09:11:00+00:00",
+                      closed_at: "2026-03-24T09:11:00+00:00",
+                      messages: [
+                        {
+                          id: "INV-DETAIL-APPROVE-m1",
+                          role: "engineer_ai",
+                          content: "I have enough information now. Please confirm this draft before I reply to the customer.",
+                          created_at: "2026-03-24T09:05:00+00:00",
+                        },
+                        {
+                          id: "INV-DETAIL-APPROVE-m2",
+                          role: "engineer",
+                          content: "Approved final reply.",
+                          created_at: "2026-03-24T09:11:00+00:00",
+                        },
+                      ],
+                    },
                     updated_at: "2026-03-24T09:11:00+00:00",
                   };
                 };
                 loadTickets = async () => {};
                 refreshSelectedTicket = async () => {
-                  selectedTicket = {
-                    ...selectedTicket,
-                    status: "communicating",
-                    active_investigation: null,
-                    investigation_history: [
-                      {
-                        id: "INV-DETAIL-APPROVE",
-                        state: "closed",
-                        trigger_reason: "rag_insufficient_evidence",
-                        trigger_source: "support_query",
-                        draft_customer_reply: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
-                        final_confirmation_requested_at: null,
-                        opened_at: "2026-03-24T08:01:00+00:00",
-                        updated_at: "2026-03-24T09:11:00+00:00",
-                        closed_at: "2026-03-24T09:11:00+00:00",
-                        messages: [
-                          {
-                            id: "INV-DETAIL-APPROVE-m1",
-                            role: "engineer_ai",
-                            content: "I have enough information now. Please confirm this draft before I reply to the customer.",
-                            created_at: "2026-03-24T09:05:00+00:00",
-                          },
-                          {
-                            id: "INV-DETAIL-APPROVE-m2",
-                            role: "engineer",
-                            content: "Approved final reply.",
-                            created_at: "2026-03-24T09:11:00+00:00",
-                          },
-                        ],
-                      },
-                    ],
-                  };
-                  renderTicketDetail();
+                  refreshCalls += 1;
                 };
 
                 const approveButton = {
@@ -1824,13 +1818,22 @@ class EngineerUiContractTests(unittest.TestCase):
                 }}
                 const html = workspaceRegionEl.innerHTML;
                 if (!html.includes("Approved final reply.")) {{
-                  throw new Error("Approve flow should refresh into the closed investigation transcript.");
+                  throw new Error("Approve flow should immediately render the closed investigation transcript.");
                 }}
                 if (!html.includes("State: Closed")) {{
-                  throw new Error("Approve flow should render the investigation as closed after refresh.");
+                  throw new Error("Approve flow should immediately render the investigation as closed.");
+                }}
+                if (html.includes("Approve Reply")) {{
+                  throw new Error("Approve flow should remove the approve button after the engineer ticket is closed.");
                 }}
                 if (html.includes('id="detail-investigation-input"')) {{
                   throw new Error("Approve flow should hide the composer after the investigation is closed.");
+                }}
+                if (!html.includes("Resolved")) {{
+                  throw new Error("Approve flow should move the engineer case into the resolved state.");
+                }}
+                if (refreshCalls < 1) {{
+                  throw new Error("Approve flow should still trigger a background refresh.");
                 }}
               """
             )
