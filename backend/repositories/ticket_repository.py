@@ -30,13 +30,14 @@ _RETRYABLE_STORAGE_ERROR_SNIPPETS = (
 _ResultT = TypeVar("_ResultT")
 _VALID_MESSAGE_SENTIMENTS = {"good", "bad", "neutral"}
 _TICKET_SCHEMA_VERSION_KEY = "ticket_flow_schema_version"
-_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v6"
+_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v7-client-agent-runtime"
 _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
     "2026-single-ai-managed-v2",
     "2026-single-ai-managed-v3",
     "2026-single-ai-managed-v4",
     "2026-single-ai-managed-v5",
     "2026-single-ai-managed-v6",
+    "2026-single-ai-managed-v7-client-agent-runtime",
 }
 
 
@@ -115,6 +116,47 @@ def _normalize_client_intake_state(value: Any) -> dict[str, Any] | None:
         if normalized.get("last_updated_at") is not None
         else None
     )
+    return normalized
+
+
+def _normalize_client_agent_runtime_state(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    normalized = copy.deepcopy(value)
+    normalized["runtime_version"] = str(normalized.get("runtime_version") or "").strip() or None
+    normalized["active_run_id"] = str(normalized.get("active_run_id") or "").strip() or None
+    normalized["product"] = _normalize_product(normalized.get("product"))
+    normalized["message_id"] = str(normalized.get("message_id") or "").strip() or None
+    normalized["workflow_action"] = str(normalized.get("workflow_action") or "").strip() or None
+    normalized["status"] = str(normalized.get("status") or "").strip().lower() or None
+    normalized["updated_at"] = _to_iso(normalized.get("updated_at")) if normalized.get("updated_at") is not None else None
+    normalized["completed_at"] = _to_iso(normalized.get("completed_at")) if normalized.get("completed_at") is not None else None
+    for agent_key in ("main_agent", "route_agent", "rag_agent", "review_agent"):
+        agent_value = normalized.get(agent_key)
+        if isinstance(agent_value, dict):
+            normalized_agent = copy.deepcopy(agent_value)
+            normalized_agent["phase"] = str(normalized_agent.get("phase") or "").strip() or None
+            normalized_agent["status"] = str(normalized_agent.get("status") or "").strip().lower() or None
+            normalized_agent["decision"] = str(normalized_agent.get("decision") or "").strip() or None
+            normalized_agent["reason"] = str(normalized_agent.get("reason") or "").strip() or None
+            normalized_agent["started_at"] = (
+                _to_iso(normalized_agent.get("started_at"))
+                if normalized_agent.get("started_at") is not None
+                else None
+            )
+            normalized_agent["updated_at"] = (
+                _to_iso(normalized_agent.get("updated_at"))
+                if normalized_agent.get("updated_at") is not None
+                else None
+            )
+            normalized_agent["completed_at"] = (
+                _to_iso(normalized_agent.get("completed_at"))
+                if normalized_agent.get("completed_at") is not None
+                else None
+            )
+            normalized[agent_key] = normalized_agent
+        else:
+            normalized[agent_key] = {}
     return normalized
 
 
@@ -386,11 +428,27 @@ class TicketRepository(Protocol):
     def list_ticket_events(self, ticket_id: str, limit: int = 100) -> list[dict[str, Any]]:
         ...
 
+    def record_ticket_agent_event(
+        self,
+        ticket_id: str,
+        message_id: str | None,
+        run_id: str,
+        agent_name: str,
+        phase: str,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        ...
+
+    def list_ticket_agent_events(self, ticket_id: str, limit: int = 100) -> list[dict[str, Any]]:
+        ...
+
 
 class InMemoryTicketRepository:
     def __init__(self) -> None:
         self._tickets: dict[str, dict[str, Any]] = {}
         self._events: list[dict[str, Any]] = []
+        self._agent_events: list[dict[str, Any]] = []
         self._investigations: dict[str, list[dict[str, Any]]] = {}
         self._engineer_cases: dict[str, dict[str, Any]] = {}
         self._engineer_case_events: list[dict[str, Any]] = []
@@ -414,6 +472,7 @@ class InMemoryTicketRepository:
         item["engineer_case_count"] = _safe_non_negative_int(item.get("engineer_case_count"), 0)
         item["product"] = _normalize_product(item.get("product"))
         item["client_intake_state"] = _normalize_client_intake_state(item.get("client_intake_state"))
+        item["client_agent_runtime_state"] = _normalize_client_agent_runtime_state(item.get("client_agent_runtime_state"))
         if not isinstance(item.get("messages"), list):
             item["messages"] = []
         return item
@@ -447,6 +506,9 @@ class InMemoryTicketRepository:
         )
         saved_ticket["product"] = _normalize_product(saved_ticket.get("product"))
         saved_ticket["client_intake_state"] = _normalize_client_intake_state(saved_ticket.get("client_intake_state"))
+        saved_ticket["client_agent_runtime_state"] = _normalize_client_agent_runtime_state(
+            saved_ticket.get("client_agent_runtime_state")
+        )
         if not isinstance(saved_ticket.get("messages"), list):
             saved_ticket["messages"] = []
         self._tickets[ticket_id] = saved_ticket
@@ -850,6 +912,39 @@ class InMemoryTicketRepository:
         ]
         return [copy.deepcopy(item) for item in filtered[:safe_limit]]
 
+    def record_ticket_agent_event(
+        self,
+        ticket_id: str,
+        message_id: str | None,
+        run_id: str,
+        agent_name: str,
+        phase: str,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        self._agent_events.append(
+            {
+                "ticket_id": str(ticket_id).strip(),
+                "message_id": str(message_id or "").strip() or None,
+                "run_id": str(run_id).strip(),
+                "agent_name": str(agent_name).strip(),
+                "phase": str(phase).strip(),
+                "event_type": str(event_type).strip(),
+                "payload": copy.deepcopy(payload),
+                "created_at": payload.get("created_at") or _utc_now(),
+            }
+        )
+
+    def list_ticket_agent_events(self, ticket_id: str, limit: int = 100) -> list[dict[str, Any]]:
+        safe_limit = _safe_positive_int(limit, 100)
+        normalized_ticket_id = str(ticket_id).strip()
+        filtered = [
+            item
+            for item in reversed(self._agent_events)
+            if str(item.get("ticket_id") or "").strip() == normalized_ticket_id
+        ]
+        return [copy.deepcopy(item) for item in filtered[:safe_limit]]
+
 
 class PostgresTicketRepository:
     def __init__(
@@ -1000,6 +1095,7 @@ class PostgresTicketRepository:
                             engineer_case_count INTEGER NOT NULL DEFAULT 0,
                             product TEXT,
                             client_intake_state JSONB,
+                            client_agent_runtime_state JSONB,
                             created_at TIMESTAMPTZ NOT NULL,
                             updated_at TIMESTAMPTZ NOT NULL
                         )
@@ -1028,6 +1124,11 @@ class PostgresTicketRepository:
                 )
                 cur.execute(
                     sql.SQL(
+                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS client_agent_runtime_state JSONB"
+                    ).format(self._table("support_tickets"))
+                )
+                cur.execute(
+                    sql.SQL(
                         """
                         CREATE TABLE IF NOT EXISTS {} (
                             id BIGSERIAL PRIMARY KEY,
@@ -1042,6 +1143,26 @@ class PostgresTicketRepository:
                         """
                     ).format(
                         self._table("support_ticket_messages"),
+                        self._table("support_tickets"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        """
+                        CREATE TABLE IF NOT EXISTS {} (
+                            id BIGSERIAL PRIMARY KEY,
+                            ticket_id TEXT NOT NULL REFERENCES {}(ticket_id) ON DELETE CASCADE,
+                            message_id TEXT,
+                            run_id TEXT NOT NULL,
+                            agent_name TEXT NOT NULL,
+                            phase TEXT NOT NULL,
+                            event_type TEXT NOT NULL,
+                            payload JSONB NOT NULL,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    ).format(
+                        self._table("support_ticket_agent_events"),
                         self._table("support_tickets"),
                     )
                 )
@@ -1189,6 +1310,12 @@ class PostgresTicketRepository:
                     sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (ticket_id, created_at DESC)").format(
                         sql.Identifier("idx_support_ticket_events_ticket_created"),
                         self._table("support_ticket_events"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (ticket_id, created_at DESC)").format(
+                        sql.Identifier("idx_support_ticket_agent_events_ticket_created"),
+                        self._table("support_ticket_agent_events"),
                     )
                 )
                 cur.execute(
@@ -1651,12 +1778,32 @@ class PostgresTicketRepository:
     ) -> dict[str, Any]:
         has_product_column = len(row) >= 11
         has_client_intake_state_column = len(row) >= 12
+        has_client_agent_runtime_state_column = len(row) >= 13
         product = _normalize_product(row[8]) if has_product_column else None
         client_intake_state = (
             _normalize_client_intake_state(row[9]) if has_client_intake_state_column else None
         )
-        created_at_index = 10 if has_client_intake_state_column else 9 if has_product_column else 8
-        updated_at_index = 11 if has_client_intake_state_column else 10 if has_product_column else 9
+        client_agent_runtime_state = (
+            _normalize_client_agent_runtime_state(row[10]) if has_client_agent_runtime_state_column else None
+        )
+        created_at_index = (
+            11
+            if has_client_agent_runtime_state_column
+            else 10
+            if has_client_intake_state_column
+            else 9
+            if has_product_column
+            else 8
+        )
+        updated_at_index = (
+            12
+            if has_client_agent_runtime_state_column
+            else 11
+            if has_client_intake_state_column
+            else 10
+            if has_product_column
+            else 9
+        )
         created_at = _to_iso(row[created_at_index])
         updated_at = _to_iso(row[updated_at_index])
         return {
@@ -1670,6 +1817,7 @@ class PostgresTicketRepository:
             "engineer_case_count": _safe_non_negative_int(row[7], 0),
             "product": product,
             "client_intake_state": client_intake_state,
+            "client_agent_runtime_state": client_agent_runtime_state,
             "created_at": created_at,
             "updated_at": updated_at,
             "messages": messages,
@@ -1694,6 +1842,7 @@ class PostgresTicketRepository:
                 engineer_case_count,
                 product,
                 client_intake_state,
+                client_agent_runtime_state,
                 created_at,
                 updated_at
             FROM {}
@@ -1774,6 +1923,7 @@ class PostgresTicketRepository:
         engineer_case_count = _safe_non_negative_int(ticket.get("engineer_case_count"), 0)
         product = _normalize_product(ticket.get("product"))
         client_intake_state = _normalize_client_intake_state(ticket.get("client_intake_state"))
+        client_agent_runtime_state = _normalize_client_agent_runtime_state(ticket.get("client_agent_runtime_state"))
 
         def _operation(conn: psycopg.Connection[Any]) -> None:
             with conn.transaction():
@@ -1792,10 +1942,11 @@ class PostgresTicketRepository:
                                 engineer_case_count,
                                 product,
                                 client_intake_state,
+                                client_agent_runtime_state,
                                 created_at,
                                 updated_at
                             )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             ON CONFLICT (ticket_id) DO UPDATE SET
                                 customer_id = EXCLUDED.customer_id,
                                 requester = EXCLUDED.requester,
@@ -1806,6 +1957,7 @@ class PostgresTicketRepository:
                                 engineer_case_count = EXCLUDED.engineer_case_count,
                                 product = EXCLUDED.product,
                                 client_intake_state = EXCLUDED.client_intake_state,
+                                client_agent_runtime_state = EXCLUDED.client_agent_runtime_state,
                                 updated_at = EXCLUDED.updated_at
                             """
                         ).format(self._table("support_tickets")),
@@ -1820,6 +1972,7 @@ class PostgresTicketRepository:
                             engineer_case_count,
                             product,
                             Json(client_intake_state) if client_intake_state else None,
+                            Json(client_agent_runtime_state) if client_agent_runtime_state else None,
                             created_at,
                             updated_at,
                         ),
@@ -2400,6 +2553,81 @@ class PostgresTicketRepository:
             return events
 
         return self._run_with_connection_retry("list_ticket_events", _operation)
+
+    def record_ticket_agent_event(
+        self,
+        ticket_id: str,
+        message_id: str | None,
+        run_id: str,
+        agent_name: str,
+        phase: str,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        def _operation(conn: psycopg.Connection[Any]) -> None:
+            with conn.transaction():
+                with conn.cursor() as cur:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {} (
+                                ticket_id,
+                                message_id,
+                                run_id,
+                                agent_name,
+                                phase,
+                                event_type,
+                                payload
+                            )
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            """
+                        ).format(self._table("support_ticket_agent_events")),
+                        (
+                            ticket_id,
+                            str(message_id or "").strip() or None,
+                            str(run_id).strip(),
+                            str(agent_name).strip(),
+                            str(phase).strip(),
+                            str(event_type).strip(),
+                            Json(payload),
+                        ),
+                    )
+
+        self._run_with_connection_retry("record_ticket_agent_event", _operation)
+
+    def list_ticket_agent_events(self, ticket_id: str, limit: int = 100) -> list[dict[str, Any]]:
+        safe_limit = _safe_positive_int(limit, 100)
+
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        SELECT ticket_id, message_id, run_id, agent_name, phase, event_type, payload, created_at
+                        FROM {}
+                        WHERE ticket_id = %s
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT %s
+                        """
+                    ).format(self._table("support_ticket_agent_events")),
+                    (ticket_id, safe_limit),
+                )
+                rows = cur.fetchall()
+            return [
+                {
+                    "ticket_id": str(row[0]) if row[0] is not None else None,
+                    "message_id": str(row[1]) if row[1] is not None else None,
+                    "run_id": str(row[2]),
+                    "agent_name": str(row[3]),
+                    "phase": str(row[4]),
+                    "event_type": str(row[5]),
+                    "payload": row[6] if isinstance(row[6], dict) else {},
+                    "created_at": _to_iso(row[7]),
+                }
+                for row in rows
+            ]
+
+        return self._run_with_connection_retry("list_ticket_agent_events", _operation)
 
 
 def create_ticket_repository() -> TicketRepository:

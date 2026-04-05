@@ -5,7 +5,7 @@ const AUTH_KEY = "helpdesk_auth_user";
 const TICKETS_KEY = "helpdesk_tickets";
 const COUNTER_KEY = "helpdesk_ticket_counter";
 const MAX_RECENT = 5;
-const DEFAULT_CLIENT_ACK_FALLBACK_TIMEOUT_MS = 3000;
+const DEFAULT_CLIENT_ACK_FALLBACK_TIMEOUT_MS = 5000;
 const STATUS_FOLLOWUP_MARKERS = [
   "any update",
   "status update",
@@ -344,11 +344,15 @@ function clearTransientClientAck(ticketId = null) {
   state.pendingClientAck = null;
 }
 
-function closePendingAckTransport() {
+function clearPendingAckFallbackTimer() {
   if (state.pendingAckFallbackTimerId) {
     clearTimeout(state.pendingAckFallbackTimerId);
     state.pendingAckFallbackTimerId = null;
   }
+}
+
+function closePendingAckTransport() {
+  clearPendingAckFallbackTimer();
   if (state.pendingAckAbortController && typeof state.pendingAckAbortController.abort === "function") {
     state.pendingAckAbortController.abort();
   }
@@ -358,7 +362,7 @@ function closePendingAckTransport() {
 function getRenderableMessages(ticket) {
   const durable = Array.isArray(ticket?.messages) ? [...ticket.messages] : [];
   const transientAck = getTransientClientAck(ticket?.id);
-  if (transientAck) {
+  if (transientAck && !ticketHasAssistantReply(ticket)) {
     durable.push(transientAck);
   }
   return durable;
@@ -372,15 +376,75 @@ function stopPendingStatusPolling() {
   pendingStatusPollTimer = null;
 }
 
-function clearPendingRequestState() {
+function hasDurableAssistantReplyAfterMessage(ticket, messageId = null) {
+  const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
+  if (messages.length === 0) {
+    return false;
+  }
+  const hasReplyAfterIndex = (index) =>
+    index >= 0 &&
+    messages
+      .slice(index + 1)
+      .some((message) => String(message?.role || "").toLowerCase() !== "user");
+  const normalizedMessageId = String(messageId || "").trim();
+  if (normalizedMessageId) {
+    const index = messages.findIndex(
+      (message) => String(message?.id || "").trim() === normalizedMessageId
+    );
+    if (index >= 0) {
+      return hasReplyAfterIndex(index);
+    }
+  }
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (String(messages[index]?.role || "").toLowerCase() === "user") {
+      return hasReplyAfterIndex(index);
+    }
+  }
+  return false;
+}
+
+function getPendingReplyAnchorIndex(ticket) {
+  const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
+  const pendingUserId = String(state.pendingUserMessageId || "").trim();
+  if (pendingUserId) {
+    const index = messages.findIndex((message) => String(message?.id || "").trim() === pendingUserId);
+    if (index >= 0) {
+      return index;
+    }
+  }
+
+  const pendingCreatedAt = String(state.pendingAsyncMessageCreatedAt || "").trim();
+  if (pendingCreatedAt) {
+    const index = messages.findIndex(
+      (message) =>
+        String(message?.role || "").toLowerCase() === "user" &&
+        String(message?.createdAt || "").trim() === pendingCreatedAt
+    );
+    if (index >= 0) {
+      return index;
+    }
+  }
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (String(messages[index]?.role || "").toLowerCase() === "user") {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function clearPendingRequestState(options = {}) {
+  const preserveClientAck = Boolean(options?.preserveClientAck);
   state.isSending = false;
   state.pendingAbortController = null;
   state.pendingTicketId = null;
   state.pendingUserMessageId = null;
   state.pendingAsyncTicketId = null;
   state.pendingAsyncMessageCreatedAt = null;
-  closePendingAckTransport();
-  clearTransientClientAck();
+  if (!preserveClientAck) {
+    closePendingAckTransport();
+    clearTransientClientAck();
+  }
   stopPendingStatusPolling();
 }
 
@@ -396,41 +460,17 @@ function ticketHasAssistantReply(ticket) {
   if (messages.length === 0) {
     return false;
   }
-  const pendingUserId = String(state.pendingUserMessageId || "").trim();
-  if (pendingUserId) {
-    const index = messages.findIndex((message) => String(message?.id || "").trim() === pendingUserId);
-    if (index >= 0) {
-      return (
-        messages
-          .slice(index + 1)
-          .filter((message) => String(message?.role || "").toLowerCase() !== "user").length >= 2
-      );
-    }
+  const anchorIndex = getPendingReplyAnchorIndex(ticket);
+  if (anchorIndex < 0) {
+    return false;
   }
+  return messages
+    .slice(anchorIndex + 1)
+    .some((message) => String(message?.role || "").toLowerCase() !== "user");
+}
 
-  const pendingCreatedAt = String(state.pendingAsyncMessageCreatedAt || "").trim();
-  if (pendingCreatedAt) {
-    const index = messages.findIndex(
-      (message) =>
-        String(message?.role || "").toLowerCase() === "user" &&
-        String(message?.createdAt || "").trim() === pendingCreatedAt
-    );
-    if (index >= 0) {
-      return (
-        messages
-          .slice(index + 1)
-          .filter((message) => String(message?.role || "").toLowerCase() !== "user").length >= 2
-      );
-    }
-
-    const trailingMessages = messages.slice(-2);
-    return (
-      trailingMessages.length === 2 &&
-      trailingMessages.every((message) => String(message?.role || "").toLowerCase() !== "user")
-    );
-  }
-
-  return String(messages[messages.length - 1]?.role || "").toLowerCase() !== "user";
+function isTicketAwaitingDurableReply(ticket) {
+  return isTicketSending(ticket?.id) && !ticketHasAssistantReply(ticket);
 }
 
 function ensurePendingStatusPolling() {
@@ -1556,7 +1596,7 @@ function renderChatTicket() {
     return `<div class="empty-state">Session not found.</div>`;
   }
   const renderableMessages = getRenderableMessages(ticket);
-  const sending = isTicketSending(ticket.id);
+  const sending = isTicketAwaitingDurableReply(ticket);
   const requiresProductSelection = isTicketEmpty(ticket) && !normalizeTicketProduct(ticket.product);
   const canCompose = !sending && ticket.status !== "resolved" && !requiresProductSelection;
   const isEditing = Boolean(state.editingMessageId);
@@ -1977,7 +2017,13 @@ async function startClientAck(ticketId, message) {
     if (state.pendingAckAbortController !== controller) {
       return;
     }
-    closePendingAckTransport();
+    const latestTicket = getTicketById(normalizedTicketId);
+    if (latestTicket && ticketHasAssistantReply(latestTicket)) {
+      clearPendingAckFallbackTimer();
+      clearTransientClientAck(normalizedTicketId);
+      return;
+    }
+    clearPendingAckFallbackTimer();
     setTransientClientAck(normalizedTicketId, fallbackText, { source: "fallback" });
     render();
   }, DEFAULT_CLIENT_ACK_FALLBACK_TIMEOUT_MS);
@@ -1989,12 +2035,18 @@ async function startClientAck(ticketId, message) {
     return;
   }
 
+  clearPendingAckFallbackTimer();
+  state.pendingAckAbortController = null;
   const ackText = String(result?.ackText || "").trim();
   if (!ackText) {
     return;
   }
+  const latestTicket = getTicketById(normalizedTicketId);
+  if (latestTicket && ticketHasAssistantReply(latestTicket)) {
+    clearTransientClientAck(normalizedTicketId);
+    return;
+  }
 
-  closePendingAckTransport();
   setTransientClientAck(normalizedTicketId, ackText, {
     source: String(result?.source || "client_model").trim() || "client_model",
   });
@@ -2024,6 +2076,7 @@ async function handleSendMessage(text, options = {}) {
   let userMessageId = editMessageId;
   let messages = [];
   let keepWaitingForAsync = false;
+  let preserveClientAckAfterRequest = false;
 
   if (editMessageId) {
     messages = ticket.messages.map((message) => {
@@ -2093,7 +2146,10 @@ async function handleSendMessage(text, options = {}) {
       state.pendingAsyncTicketId = ticketId;
       state.pendingAsyncMessageCreatedAt = String(payload?.queued_message_created_at || "").trim();
     }
+    const suppressServerAckAnswer =
+      String(payload?.ack_source || "").trim().toLowerCase() === "server_ack";
     const allowAssistantReply =
+      !suppressServerAckAnswer &&
       payload?.ai_replied !== false && String(payload?.answer || "").trim().length > 0;
     const answerMessage = allowAssistantReply
       ? {
@@ -2122,6 +2178,10 @@ async function handleSendMessage(text, options = {}) {
         : "communicating";
     updateTicketStatus(ticketId, nextStatus);
     await syncTicketsFromBackend({ silent: true });
+    if (suppressServerAckAnswer && !queuedForAi) {
+      const latestTicket = getTicketById(ticketId);
+      preserveClientAckAfterRequest = !hasDurableAssistantReplyAfterMessage(latestTicket, userMessageId);
+    }
   } catch (error) {
     if (error.name === "AbortError") {
       const updated = getTicketById(ticketId);
@@ -2148,7 +2208,7 @@ async function handleSendMessage(text, options = {}) {
       state.isSending = true;
       ensurePendingStatusPolling();
     } else {
-      clearPendingRequestState();
+      clearPendingRequestState({ preserveClientAck: preserveClientAckAfterRequest });
     }
     render();
   }

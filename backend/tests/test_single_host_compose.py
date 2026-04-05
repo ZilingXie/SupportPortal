@@ -69,7 +69,7 @@ class SingleHostComposeTests(unittest.TestCase):
             content,
         )
         self.assertIn(
-            "CLIENT_ACK_TIMEOUT_SECONDS: ${CLIENT_ACK_TIMEOUT_SECONDS:-2.0}",
+            "CLIENT_ACK_TIMEOUT_SECONDS: ${CLIENT_ACK_TIMEOUT_SECONDS:-5.0}",
             content,
         )
         self.assertIn(
@@ -81,7 +81,7 @@ class SingleHostComposeTests(unittest.TestCase):
             content,
         )
         self.assertIn(
-            "CLIENT_ACK_FALLBACK_TIMEOUT_MS: ${CLIENT_ACK_FALLBACK_TIMEOUT_MS:-3000}",
+            "CLIENT_ACK_FALLBACK_TIMEOUT_MS: ${CLIENT_ACK_FALLBACK_TIMEOUT_MS:-5000}",
             content,
         )
 

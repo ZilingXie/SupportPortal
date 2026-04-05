@@ -23,6 +23,10 @@ from backend.services.llm_profiles import (
     parse_provider_model_reference,
     resolve_model_profile,
 )
+from backend.services.client_ticket_agent_runtime import (
+    TicketExecutionResult,
+    execute_client_ticket_agent_runtime,
+)
 from backend.services.local_benchmark_sync import benchmark_content_version
 from backend.services.rag_benchmark import (
     DEFAULT_JUDGE_MODELS,
@@ -35,6 +39,7 @@ from backend.services.rag_benchmark import (
 )
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, RagAnswer, RagQueryResult, RagQueryTrace, run_rag_query
 from backend.services.query_understanding import DEFAULT_QUERY_PROFILE, GLOSSARY_VERSION, QUERY_UNDERSTANDING_VERSION, SELF_QUERY_VERSION
+from backend.services.rag_service_client import RagTicketAnswerDetail
 from backend.services.support_router import (
     SupportResolution,
     SupportRouteDecision,
@@ -43,6 +48,7 @@ from backend.services.support_router import (
     resolve_support_message,
 )
 from backend.services.token_usage import aggregate_usage_ledger, build_usage_ledger_entry
+from backend.services.troubleshooting_intake import TroubleshootingIntakeResult
 
 if TYPE_CHECKING:
     from backend.repositories.knowledge_repository import KnowledgeRepository
@@ -190,6 +196,101 @@ def _build_synthetic_result(
         ),
         trace=trace,
     )
+
+
+def _decision_from_resolution(
+    *,
+    case: BenchmarkCase,
+    resolution: SupportResolution,
+) -> SupportRouteDecision:
+    execution_action = _clean_text(resolution.execution_action or resolution.answer_route) or "rag"
+    route_family = _clean_text(resolution.route_family) or {
+        "rag": "agora_docs_rag",
+        "web_search": "web_company_info",
+        "refuse": "general_chat",
+        "controlled_response": "fallback_or_refuse",
+    }.get(execution_action, case.expected_route_family or "fallback_or_refuse")
+    return SupportRouteDecision(
+        scope_label=_clean_text(resolution.scope_label) or _default_scope_label(case),
+        route=_clean_text(resolution.answer_route) or execution_action,
+        route_family=route_family,
+        execution_action=execution_action,
+        tooling_profile=_clean_text(resolution.tooling_profile) or None,
+        confidence=float(resolution.route_confidence or 1.0),
+        reason=_clean_text(resolution.route_reason) or "benchmark_message_resolver",
+        matched_signals=list(resolution.matched_signals),
+        response_language=case.language or "en",
+    )
+
+
+def _rag_detail_from_query_result(result: RagQueryResult) -> RagTicketAnswerDetail:
+    answer_text = _clean_text(result.answer.answer)
+    reason = (
+        _clean_text(result.trace.handoff_reason)
+        or (
+            "rag_insufficient_evidence"
+            if answer_text == _clean_text(INSUFFICIENT_EVIDENCE_REPLY) or bool(result.trace.needs_human)
+            else "grounded_answer"
+        )
+    )
+    return RagTicketAnswerDetail(
+        answer=result.answer.answer,
+        confidence=float(result.answer.confidence or 0.0),
+        sources=list(result.answer.sources),
+        citations=[dict(item) for item in result.answer.citations],
+        needs_engineer_guidance=bool(result.trace.needs_human)
+        or answer_text == _clean_text(INSUFFICIENT_EVIDENCE_REPLY),
+        reason=reason,
+        evidence_summary={
+            "quality_signals": {
+                "generation_mode": result.trace.generation_mode,
+                "selected_doc_count": result.trace.selected_doc_count,
+                "top1_similarity_score": result.trace.top1_similarity_score,
+                "avg_selected_similarity_score": result.trace.avg_selected_similarity_score,
+                "needs_human": bool(result.trace.needs_human),
+            },
+            "selected_contexts": list(result.trace.selected_contexts),
+        },
+        packed_evidence=None,
+    )
+
+
+def _resolution_from_ticket_execution_result(execution: TicketExecutionResult) -> SupportResolution:
+    return SupportResolution(
+        answer=execution.answer,
+        confidence=execution.confidence,
+        sources=list(execution.sources),
+        citations=[dict(item) for item in execution.citations],
+        needs_engineer_guidance=bool(execution.needs_investigating),
+        answer_route=execution.answer_route,
+        scope_label=execution.scope_label,
+        route_family=execution.route_family,
+        execution_action=execution.execution_action,
+        tooling_profile=execution.tooling_profile,
+        route_reason=execution.route_reason,
+        route_confidence=execution.route_confidence,
+        search_used=bool(execution.search_used),
+        matched_signals=list(execution.matched_signals),
+        evidence_summary=dict(execution.evidence_summary or {}) or None,
+        packed_evidence=dict(execution.packed_evidence or {}) or None,
+    )
+
+
+def _benchmark_review_agent(**kwargs: Any) -> Any:
+    mode = _clean_text(kwargs.get("mode"))
+    if mode == "rag_insufficient_evidence":
+        return TroubleshootingIntakeResult(
+            issue_mode="answer",
+            known_information={},
+            missing_information=[],
+            ready_for_engineer_ticket=False,
+            customer_reply="",
+        )
+    return {
+        "decision": "approve_answer",
+        "reason": "benchmark_review_bypass",
+        "confidence": 1.0,
+    }
 
 
 def resolve_judge_models(raw_value: str | None = None) -> list[str]:
@@ -434,59 +535,100 @@ def _execute_case(
     message_resolver: Callable[..., Any] | None,
     route_decider: Callable[..., SupportRouteDecision | dict[str, Any]] | None,
 ) -> BenchmarkExecutionResult:
-    if not case.route_aware:
-        result = runner(case.question, top_k=top_k)
-        if result is None:
-            raise RuntimeError("run_rag_query returned None; verify RAG configuration before running the benchmark")
-        return _wrap_rag_result(case, result)
-
-    from backend.services.support_router import resolve_support_message
-
     resolver = message_resolver or resolve_support_message
+    decider = route_decider or decide_support_route
     rag_result_holder: dict[str, RagQueryResult] = {}
-    decision = (
-        _coerce_route_decision(route_decider(case.question, ticket_subject=None, ticket_context=None))
-        if route_decider is not None
-        else None
-    )
+    resolution_holder: dict[str, SupportResolution] = {}
 
-    def _rag_answerer(message: str) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
+    def _route_agent(**_kwargs: Any) -> SupportRouteDecision:
+        if case.route_aware:
+            if route_decider is not None:
+                return _coerce_route_decision(route_decider(case.question, ticket_subject=None, ticket_context=None))
+            if message_resolver is not None:
+                resolution = resolver(
+                    case.question,
+                    ticket_subject=None,
+                    ticket_context=None,
+                    decision=None,
+                    rag_answerer=lambda _query: (
+                        INSUFFICIENT_EVIDENCE_REPLY,
+                        0.0,
+                        [],
+                        [],
+                        False,
+                    ),
+                )
+                if not isinstance(resolution, SupportResolution):
+                    raise TypeError("message_resolver must return SupportResolution")
+                resolution_holder["result"] = resolution
+                return _decision_from_resolution(case=case, resolution=resolution)
+        if case.dataset_schema_version == "legacy_rag_v1" and route_decider is None:
+            return _expected_route_decision(case)
+        return _coerce_route_decision(decider(case.question, ticket_subject=None, ticket_context=None))
+
+    def _run_rag(message: str) -> RagQueryResult:
+        cached = rag_result_holder.get(message)
+        if cached is not None:
+            return cached
         rag_result = runner(message, top_k=top_k)
         if rag_result is None:
             raise RuntimeError("run_rag_query returned None; verify RAG configuration before running the benchmark")
-        rag_result_holder["result"] = rag_result
+        rag_result_holder[message] = rag_result
+        return rag_result
+
+    def _rag_answer_tuple(message: str) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
+        rag_result = _run_rag(message)
         return (
-            rag_result.answer.answer,
+            _clean_text(rag_result.answer.answer),
             rag_result.answer.confidence,
             list(rag_result.answer.sources),
             [dict(item) for item in rag_result.answer.citations],
             bool(rag_result.trace.needs_human),
         )
 
-    resolution = resolver(
+    def _route_executor(*, decision: SupportRouteDecision, **_kwargs: Any) -> SupportResolution:
+        cached_resolution = resolution_holder.get("result")
+        if isinstance(cached_resolution, SupportResolution) and _clean_text(cached_resolution.answer_route) != "rag":
+            return cached_resolution
+        resolution = resolver(
+            case.question,
+            ticket_subject=None,
+            ticket_context=None,
+            decision=decision,
+            rag_answerer=_rag_answer_tuple,
+        )
+        if not isinstance(resolution, SupportResolution):
+            raise TypeError("message_resolver must return SupportResolution")
+        resolution_holder["result"] = resolution
+        return resolution
+
+    execution = execute_client_ticket_agent_runtime(
         case.question,
+        ticket_id=f"BENCH-{case.test_case_id}",
+        customer_id="benchmark",
         ticket_subject=None,
         ticket_context=None,
-        rag_answerer=_rag_answerer,
-        decision=decision,
+        product=None,
+        message_id=case.test_case_id,
+        client_intake_state=None,
+        route_agent=_route_agent,
+        route_executor=_route_executor,
+        rag_agent=lambda **kwargs: _rag_detail_from_query_result(_run_rag(kwargs["message"])),
+        review_agent=_benchmark_review_agent,
+        rag_canceler=None,
     )
-    rag_result = rag_result_holder.get("result")
-    if _clean_text(getattr(resolution, "answer_route", "")) == "rag" and rag_result is None:
-        rag_result = runner(case.question, top_k=top_k)
-        if rag_result is None:
-            raise RuntimeError("run_rag_query returned None; verify RAG configuration before running the benchmark")
-    return BenchmarkExecutionResult(
-        answer_text=_clean_text(getattr(resolution, "answer", "")),
-        confidence=getattr(resolution, "confidence", None),
-        sources=list(getattr(resolution, "sources", []) or []),
-        citations=[dict(item) for item in list(getattr(resolution, "citations", []) or []) if isinstance(item, dict)],
-        needs_human=bool(getattr(resolution, "needs_engineer_guidance", False)),
-        actual_route=_clean_text(getattr(resolution, "answer_route", "")) or "rag",
-        actual_scope_label=_clean_text(getattr(resolution, "scope_label", "")) or _default_scope_label(case),
-        route_reason=_clean_text(getattr(resolution, "route_reason", "")),
-        route_confidence=getattr(resolution, "route_confidence", None),
-        search_used=bool(getattr(resolution, "search_used", False)),
-        rag_result=rag_result,
+    resolution = _resolution_from_ticket_execution_result(execution.result)
+    actual_decision = _decision_from_resolution(case=case, resolution=resolution)
+    actual_rag_result = (
+        _run_rag(case.question)
+        if _clean_text(resolution.answer_route) == "rag"
+        else _build_synthetic_result(case=case, resolution=resolution)
+    )
+    return _execution_result_from_resolution(
+        case=case,
+        decision=actual_decision,
+        resolution=resolution,
+        result=actual_rag_result,
     )
 
 

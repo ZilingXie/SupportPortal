@@ -484,6 +484,86 @@ function buildTokenUsagePanel(tokenUsage) {
   `;
 }
 
+function buildClientAgentRuntimeSummaryCard(agentLabel, agentSummary) {
+  const summary = agentSummary && typeof agentSummary === "object" ? agentSummary : {};
+  const decision = normalizeString(summary.decision);
+  const reason = normalizeString(summary.reason);
+  return `
+    <article class="ticket-detail-message">
+      <header class="ticket-detail-message-header">
+        <span class="ticket-detail-message-role">${escapeHtml(agentLabel)}</span>
+        <div class="ticket-detail-message-meta">
+          <span class="ticket-detail-message-time">${escapeHtml(formatDateTime(summary.updated_at))}</span>
+        </div>
+      </header>
+      ${buildDefinitionGrid([
+        { label: "Phase", value: humanizeToken(summary.phase || "queued") },
+        { label: "Status", value: humanizeToken(summary.status || "queued") },
+        { label: "Decision", value: decision ? humanizeToken(decision) : "-" },
+        { label: "Completed", value: formatDateTime(summary.completed_at) },
+      ])}
+      ${reason ? `<p class="detail-note">Reason: ${escapeHtml(reason)}</p>` : ""}
+    </article>
+  `;
+}
+
+function buildClientAgentRuntimePanel(ticket) {
+  const runtimeState = ticket?.client_agent_runtime_state && typeof ticket.client_agent_runtime_state === "object"
+    ? ticket.client_agent_runtime_state
+    : null;
+  if (!runtimeState) {
+    return '<div class="detail-empty-state">No client agent runtime snapshot is available for this ticket yet.</div>';
+  }
+
+  return `
+    ${buildDefinitionGrid([
+      { label: "Run Id", value: normalizeString(runtimeState.active_run_id) || "-" },
+      { label: "Runtime Status", value: humanizeToken(runtimeState.status || "queued") },
+      { label: "Workflow Action", value: humanizeToken(runtimeState.workflow_action || "pending") },
+      { label: "Product", value: humanizeToken(runtimeState.product || "-") },
+      { label: "Message Id", value: normalizeString(runtimeState.message_id) || "-" },
+      { label: "Updated", value: formatDateTime(runtimeState.updated_at) },
+      { label: "Completed", value: formatDateTime(runtimeState.completed_at) },
+    ])}
+    <div class="ticket-detail-message-list">
+      ${buildClientAgentRuntimeSummaryCard("Main Agent", runtimeState.main_agent)}
+      ${buildClientAgentRuntimeSummaryCard("Route Agent", runtimeState.route_agent)}
+      ${buildClientAgentRuntimeSummaryCard("RAG Agent", runtimeState.rag_agent)}
+      ${buildClientAgentRuntimeSummaryCard("Review Agent", runtimeState.review_agent)}
+    </div>
+  `;
+}
+
+function buildClientAgentEventCard(agentEvent) {
+  const payload = agentEvent?.payload && typeof agentEvent.payload === "object" ? agentEvent.payload : {};
+  const payloadJson = JSON.stringify(payload);
+  return `
+    <article class="ticket-detail-message">
+      <header class="ticket-detail-message-header">
+        <span class="ticket-detail-message-role">${escapeHtml(humanizeToken(agentEvent?.agent_name || "agent"))}</span>
+        <div class="ticket-detail-message-meta">
+          <span class="ticket-detail-message-time">${escapeHtml(formatDateTime(agentEvent?.created_at))}</span>
+        </div>
+      </header>
+      ${buildDefinitionGrid([
+        { label: "Run Id", value: normalizeString(agentEvent?.run_id) || "-" },
+        { label: "Phase", value: humanizeToken(agentEvent?.phase || "queued") },
+        { label: "Event", value: humanizeToken(agentEvent?.event_type || "unknown") },
+        { label: "Message Id", value: normalizeString(agentEvent?.message_id) || "-" },
+      ])}
+      ${payloadJson && payloadJson !== "{}" ? `<p class="detail-note">Payload: ${escapeHtml(payloadJson)}</p>` : ""}
+    </article>
+  `;
+}
+
+function buildClientAgentEventsPanel(ticket) {
+  const agentEvents = Array.isArray(ticket?.client_agent_events) ? ticket.client_agent_events : [];
+  if (!agentEvents.length) {
+    return '<div class="detail-empty-state">No agent events have been recorded for this ticket yet.</div>';
+  }
+  return `<div class="ticket-detail-message-list">${agentEvents.map(buildClientAgentEventCard).join("")}</div>`;
+}
+
 function renderBreakdownList(element, items) {
   if (!element) {
     return;
@@ -1022,6 +1102,26 @@ function renderTicketDetail() {
           </div>
         </div>
         ${buildTokenUsagePanel(ticket.token_usage)}
+      </section>
+
+      <section class="panel-card detail-panel">
+        <div class="panel-header">
+          <div>
+            <h3>Client Agent Runtime</h3>
+            <p>Current main-agent snapshot, workflow action, and the latest phase for each subagent.</p>
+          </div>
+        </div>
+        ${buildClientAgentRuntimePanel(ticket)}
+      </section>
+
+      <section class="panel-card detail-panel">
+        <div class="panel-header">
+          <div>
+            <h3>Recent Agent Events</h3>
+            <p>Latest append-only runtime events captured for route, RAG, review, and main-agent decisions.</p>
+          </div>
+        </div>
+        ${buildClientAgentEventsPanel(ticket)}
       </section>
 
       <section class="panel-card detail-panel">

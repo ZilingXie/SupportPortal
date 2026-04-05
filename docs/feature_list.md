@@ -19,6 +19,7 @@
 - 查询扩展会用词典、LLM 和 PRF 优化技术检索。
 - 新会话会先选择产品，并按产品加载对应的 support prompt。
 - 排查型问题会先向客户补齐必要信息，再自动创建工程师工单。
+- 客户工单处理支持 main agent 调度 route、RAG 和 review 子 agent。
 
 ### 未完成
 - 对话支持上传图片和 txt/log/md 文件。
@@ -45,6 +46,7 @@
 - Dashboard 可查看工单详情与时间线。
 - Dashboard 的 ticket detail 可查看按工单 family 聚合的 token 用量摘要。
 - Dashboard 可跟踪实时事件流。
+- Dashboard 的 ticket detail 可查看 client agent runtime 摘要与最近 agent events。
 
 ### 未完成
 - 待补充。
@@ -76,6 +78,7 @@
 - 系统已具备本地 benchmark 评测链路。
 - 新会话会先选择产品，并按产品加载对应的 support prompt。
 - 排查型问题会先向客户补齐必要信息，再自动创建工程师工单。
+- 客户工单处理支持 main agent 调度 route、RAG 和 review 子 agent。
 
 ### 未完成
 - 待补充。

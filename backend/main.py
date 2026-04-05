@@ -8,6 +8,7 @@ import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
@@ -60,11 +61,10 @@ from backend.services.investigation_flow import (
     surface_legacy_pending_question,
     start_or_refresh_investigation,
 )
-from backend.services.ticket_orchestrator import (
+from backend.services.client_ticket_agent_runtime import (
     TicketExecutionResult,
-    analyze_ticket_message,
     build_execution_route_payload,
-    orchestrate_ticket_execution,
+    execute_client_ticket_agent_runtime,
     resolve_next_ticket_status,
 )
 from backend.services.dashboard_ticket_ops import (
@@ -72,23 +72,35 @@ from backend.services.dashboard_ticket_ops import (
     normalize_ticket_dashboard_events,
 )
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
-from backend.services.llm_profiles import CLIENT_ACK_SCENARIO, ENGINEER_HELPER_SCENARIO, resolve_model_profile
+from backend.services.llm_profiles import (
+    CLIENT_ACK_SCENARIO,
+    ENGINEER_HELPER_SCENARIO,
+    get_config_warnings,
+    resolve_model_profile,
+)
 from backend.services.event_bus import AsyncRedisEventBus
 from backend.services.knowledge_monitoring import build_empty_knowledge_metrics
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
+from backend.services.rag_sufficiency_judge import judge_rag_answer_sufficiency
 from backend.services.rag_service_client import (
     RagTicketAnswerDetail,
     RagServiceClient,
     RagServiceError,
     async_to_thread,
 )
-from backend.services.support_router import SupportResolution, SupportRouteDecision, resolve_support_message as resolve_support_route_message
+from backend.services.support_router import (
+    SupportResolution,
+    SupportRouteDecision,
+    decide_support_route,
+    resolve_support_message as resolve_support_route_message,
+)
 from backend.services.support_products import normalize_support_product
 from backend.services.task_queue import AsyncRedisTaskQueue
 from backend.services.ticket_message_sentiment import (
     build_ticket_message_sentiment_event,
     classify_customer_message_sentiment,
 )
+from backend.services.troubleshooting_intake import evaluate_troubleshooting_intake
 from backend.services.token_usage import aggregate_usage_ledger, resolve_ticket_family_identity
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -160,7 +172,7 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _optimistic_parallel_enabled() -> bool:
+def _main_agent_async_enabled() -> bool:
     return bool(ASYNC_QUERY_ENABLED and OPTIMISTIC_PARALLEL_ROUTE_ENABLED)
 
 
@@ -389,8 +401,108 @@ def ensure_ticket_defaults(ticket: dict[str, Any]) -> None:
         if isinstance(ticket.get("client_intake_state"), dict)
         else None
     )
+    ticket["client_agent_runtime_state"] = (
+        dict(ticket.get("client_agent_runtime_state"))
+        if isinstance(ticket.get("client_agent_runtime_state"), dict)
+        else None
+    )
     ensure_ticket_investigation_defaults(ticket)
     surface_legacy_pending_question(ticket)
+def _execution_client_agent_runtime_state(execution: Any) -> dict[str, Any] | None:
+    candidate = getattr(execution, "client_agent_runtime_state", None)
+    return dict(candidate) if isinstance(candidate, dict) else None
+
+
+def _record_ticket_agent_runtime_events(execution: Any) -> None:
+    events = getattr(execution, "client_agent_runtime_events", None)
+    if not isinstance(events, list):
+        return
+    for item in events:
+        if not isinstance(item, dict):
+            continue
+        ticket_id = str(item.get("ticket_id") or "").strip()
+        run_id = str(item.get("run_id") or "").strip()
+        agent_name = str(item.get("agent_name") or "").strip()
+        phase = str(item.get("phase") or "").strip()
+        event_type = str(item.get("event_type") or "").strip()
+        if not ticket_id or not run_id or not agent_name or not phase or not event_type:
+            continue
+        payload = dict(item.get("payload") or {}) if isinstance(item.get("payload"), dict) else {}
+        if str(item.get("created_at") or "").strip():
+            payload.setdefault("created_at", str(item.get("created_at")).strip())
+        ticket_repository.record_ticket_agent_event(
+            ticket_id,
+            str(item.get("message_id") or "").strip() or None,
+            run_id,
+            agent_name,
+            phase,
+            event_type,
+            payload,
+        )
+
+
+def _run_client_ticket_review_agent(
+    *,
+    mode: str,
+    message: str,
+    product: str | None,
+    ticket_subject: str | None,
+    ticket_context: list[dict[str, str]] | None,
+    current_state: dict[str, Any] | None,
+    route_decision: SupportRouteDecision,
+    resolution: SupportResolution,
+    rag_result: dict[str, Any] | None,
+) -> Any:
+    if mode == "rag_insufficient_evidence":
+        return evaluate_troubleshooting_intake(
+            message=message,
+            product=product,
+            ticket_subject=ticket_subject,
+            ticket_context=ticket_context,
+            current_state=current_state,
+            rag_result=rag_result,
+        )
+
+    skill_result = SimpleNamespace(
+        answer=str(resolution.answer or "").strip(),
+        sources=list(resolution.sources),
+        citations=[dict(item) for item in resolution.citations],
+        packed_evidence=dict(resolution.packed_evidence or {}) or None,
+        evidence_summary=dict(resolution.evidence_summary or {}) or None,
+    )
+    try:
+        sufficiency = judge_rag_answer_sufficiency(
+            message=message,
+            ticket_subject=ticket_subject,
+            ticket_context=ticket_context,
+            route_summary={
+                "scope_label": route_decision.scope_label,
+                "route_family": route_decision.route_family,
+                "execution_action": route_decision.execution_action,
+                "tooling_profile": route_decision.tooling_profile,
+                "reason": route_decision.reason,
+                "confidence": route_decision.confidence,
+                "matched_signals": list(route_decision.matched_signals),
+            },
+            rag_answer=skill_result.answer,
+            sources=skill_result.sources,
+            citations=skill_result.citations,
+            packed_evidence=skill_result.packed_evidence,
+            evidence_summary=skill_result.evidence_summary,
+        )
+    except Exception:
+        return {"decision": "open_engineer_ticket", "reason": "review_error", "confidence": 0.0}
+    if str(sufficiency.decision or "").strip().lower() == "investigate":
+        return {
+            "decision": "open_engineer_ticket",
+            "reason": "review_insufficient",
+            "confidence": float(sufficiency.confidence or 0.0),
+        }
+    return {
+        "decision": "approve_answer",
+        "reason": str(sufficiency.reason or "review_passed").strip() or "review_passed",
+        "confidence": float(sufficiency.confidence or 0.0),
+    }
 
 
 def _validated_new_session_product(value: Any) -> str | None:
@@ -1004,25 +1116,6 @@ def _build_rag_answer_detail(
             answer_detail.reason,
         )
     return answer_detail
-
-
-def _build_rag_answer(
-    message: str,
-    *,
-    ticket_id: str | None = None,
-    customer_id: str | None = None,
-    ticket_context: list[dict[str, str]] | None = None,
-    product: str | None = None,
-) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
-    return _build_rag_answer_detail(
-        message,
-        ticket_id=ticket_id,
-        customer_id=customer_id,
-        ticket_context=ticket_context,
-        product=product,
-    ).as_answer_tuple()
-
-
 def resolve_support_message(
     message: str,
     *,
@@ -1033,51 +1126,12 @@ def resolve_support_message(
     product: str | None = None,
     decision: SupportRouteDecision | None = None,
 ) -> SupportResolution:
-    active_decision = decision or analyze_ticket_message(
-        message,
-        ticket_subject=ticket_subject,
-        ticket_context=ticket_context,
-        product=product,
-    )
-    if active_decision.execution_action == "rag":
-        rag_answer = _build_rag_answer_detail(
-            message,
-            ticket_id=ticket_id,
-            customer_id=customer_id,
-            ticket_context=ticket_context,
-            product=product,
-        )
-        return SupportResolution(
-            answer=rag_answer.answer,
-            confidence=rag_answer.confidence,
-            sources=list(rag_answer.sources),
-            citations=[dict(item) for item in rag_answer.citations],
-            needs_engineer_guidance=rag_answer.needs_engineer_guidance,
-            answer_route="rag",
-            scope_label=active_decision.scope_label,
-            route_family=active_decision.route_family,
-            execution_action=active_decision.execution_action,
-            tooling_profile=active_decision.tooling_profile,
-            route_reason=str(rag_answer.reason or active_decision.reason),
-            route_confidence=active_decision.confidence,
-            search_used=False,
-            matched_signals=list(active_decision.matched_signals),
-            evidence_summary=dict(rag_answer.evidence_summary or {}) or None,
-            packed_evidence=dict(rag_answer.packed_evidence or {}) or None,
-        )
     return resolve_support_route_message(
         message,
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
         product=product,
-        rag_answerer=lambda query: _build_rag_answer(
-            query,
-            ticket_id=ticket_id,
-            customer_id=customer_id,
-            ticket_context=ticket_context,
-            product=product,
-        ),
-        decision=active_decision,
+        decision=decision,
     )
 
 
@@ -1519,6 +1573,7 @@ def health() -> dict[str, Any]:
         "knowledge_storage": rag_health.get("knowledge_storage") or "proxy",
         "rag_service": rag_health.get("status") or "unknown",
         "async_query_enabled": "true" if ASYNC_QUERY_ENABLED else "false",
+        "config_warnings": get_config_warnings(),
     }
 
 
@@ -1675,7 +1730,7 @@ async def create_or_update_ticket(
     ai_replied = False
     task_enqueued = False
     ack_source = "client_model"
-    processing_mode = "optimistic_parallel"
+    processing_mode = "main_agent_async"
     route_payload: dict[str, Any] = {
         "answer_route": None,
         "scope_label": None,
@@ -1694,13 +1749,13 @@ async def create_or_update_ticket(
     execution: TicketExecutionResult | None = None
 
     active_engineer_case_payload = _active_engineer_case_payload(ticket)
-    optimistic_parallel_eligible = active_engineer_case_payload is None and _optimistic_parallel_enabled()
-    if not optimistic_parallel_eligible:
+    main_agent_async_eligible = active_engineer_case_payload is None and _main_agent_async_enabled()
+    if not main_agent_async_eligible:
         initial_ack = build_initial_ack(customer_message)
         response_answer = initial_ack.text
         ai_replied = bool(str(response_answer).strip())
         ack_source = str(getattr(initial_ack, "source", "") or "server_ack").strip() or "server_ack"
-        processing_mode = "sync_route"
+        processing_mode = "main_agent_sync"
         if ai_replied:
             ticket["messages"].append(
                 {
@@ -1728,52 +1783,33 @@ async def create_or_update_ticket(
         ticket["client_intake_state"] = None
         processing_mode = "active_investigation_followup"
     else:
-        if optimistic_parallel_eligible:
+        if main_agent_async_eligible:
             ticket["status"] = resolve_next_ticket_status(ticket.get("status"), COMMUNICATING_STATUS)
+            processing_mode = "main_agent_async"
         else:
-            route_decision = analyze_ticket_message(
+            processing_mode = "main_agent_sync"
+            runtime_execution = execute_client_ticket_agent_runtime(
                 customer_message,
+                ticket_id=ticket_id,
+                customer_id=request.customer_id,
                 ticket_subject=str(ticket.get("subject") or "").strip() or None,
                 ticket_context=route_context,
                 product=ticket.get("product"),
+                message_id=timestamp,
+                client_intake_state=ticket.get("client_intake_state"),
+                route_agent=decide_support_route,
+                route_executor=resolve_support_message,
+                rag_agent=lambda **kwargs: _build_rag_answer_detail(
+                    kwargs["message"],
+                    ticket_id=kwargs.get("ticket_id"),
+                    customer_id=kwargs.get("customer_id"),
+                    ticket_context=kwargs.get("ticket_context"),
+                    product=kwargs.get("product"),
+                ),
+                review_agent=_run_client_ticket_review_agent,
+                rag_canceler=None,
             )
-            route_payload.update(
-                {
-                    "answer_route": "rag" if route_decision.execution_action == "rag" else route_decision.execution_action,
-                    "scope_label": route_decision.scope_label,
-                    "route_family": route_decision.route_family,
-                    "execution_action": route_decision.execution_action,
-                    "tooling_profile": route_decision.tooling_profile,
-                    "route_reason": route_decision.reason,
-                    "route_confidence": round(float(route_decision.confidence), 4),
-                    "search_used": False,
-                    "matched_signals": list(route_decision.matched_signals),
-                }
-            )
-            if route_decision.execution_action == "rag" and ASYNC_QUERY_ENABLED:
-                ticket["status"] = resolve_next_ticket_status(ticket.get("status"), COMMUNICATING_STATUS)
-                processing_mode = "legacy_async_rag"
-                task_enqueued = await _schedule_ticket_query_processing(
-                    background_tasks,
-                    task=build_query_task(
-                        ticket_id=ticket_id,
-                        customer_message=customer_message,
-                        message_created_at=timestamp,
-                        processing_mode="legacy_async_rag",
-                    ),
-                )
-            else:
-                execution = orchestrate_ticket_execution(
-                    customer_message,
-                    ticket_id=ticket_id,
-                    customer_id=request.customer_id,
-                    ticket_subject=str(ticket.get("subject") or "").strip() or None,
-                    ticket_context=route_context,
-                    product=ticket.get("product"),
-                    client_intake_state=ticket.get("client_intake_state"),
-                    decision=route_decision,
-                    resolution_builder=resolve_support_message,
-                )
+            execution = runtime_execution.result
         if execution is not None:
             execution_route_payload = build_execution_route_payload(execution)
             route_payload.update(execution_route_payload)
@@ -1785,6 +1821,9 @@ async def create_or_update_ticket(
                 if isinstance(getattr(execution, "client_intake_state", None), dict)
                 else None
             )
+            execution_client_agent_runtime_state = _execution_client_agent_runtime_state(execution)
+            if execution_client_agent_runtime_state is not None:
+                ticket["client_agent_runtime_state"] = execution_client_agent_runtime_state
             if execution.needs_investigating:
                 ticket["client_intake_state"] = execution_client_intake_state
                 engineer_case, engineer_case_created = _prepare_engineer_case_for_ticket(
@@ -1835,7 +1874,7 @@ async def create_or_update_ticket(
             else:
                 ticket["status"] = resolve_next_ticket_status(ticket.get("status"), execution.next_status)
                 ticket["client_intake_state"] = execution_client_intake_state
-        elif not optimistic_parallel_eligible:
+        elif not main_agent_async_eligible:
             ticket["status"] = resolve_next_ticket_status(ticket.get("status"), COMMUNICATING_STATUS)
 
     if str(follow_up_answer).strip():
@@ -1873,6 +1912,8 @@ async def create_or_update_ticket(
     ticket["updated_at"] = now_iso()
     new_messages = ticket.get("messages", [])[initial_message_count:]
     ticket_repository.save_ticket(ticket, new_messages=new_messages)
+    if execution is not None:
+        _record_ticket_agent_runtime_events(execution)
     if engineer_case is not None:
         ticket["engineer_case_count"] = max(
             int(ticket.get("engineer_case_count") or 0),
@@ -1885,7 +1926,7 @@ async def create_or_update_ticket(
         )
 
     api_persist_latency_ms = round((time.perf_counter() - api_started_at) * 1000, 2)
-    if optimistic_parallel_eligible:
+    if main_agent_async_eligible:
         task_enqueued = await _schedule_ticket_query_processing(
             background_tasks,
             task=build_query_task(
@@ -1893,7 +1934,7 @@ async def create_or_update_ticket(
                 customer_message=customer_message,
                 message_created_at=timestamp,
                 api_persist_latency_ms=api_persist_latency_ms,
-                processing_mode="optimistic_parallel",
+                processing_mode="main_agent_async",
             ),
         )
 
@@ -2074,6 +2115,17 @@ def get_ticket_detail(ticket_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Ticket not found")
     client_ref = engineer_case.get("client_ticket_ref") if isinstance(engineer_case.get("client_ticket_ref"), dict) else {}
     client_ticket_id = str(client_ref.get("ticket_id") or "").strip() or None
+    client_ticket = ticket_repository.get_ticket(client_ticket_id) if client_ticket_id else None
+    engineer_case["client_agent_runtime_state"] = (
+        dict(client_ticket.get("client_agent_runtime_state"))
+        if isinstance(client_ticket, dict) and isinstance(client_ticket.get("client_agent_runtime_state"), dict)
+        else None
+    )
+    engineer_case["client_agent_events"] = (
+        ticket_repository.list_ticket_agent_events(client_ticket_id, limit=12)
+        if client_ticket_id
+        else []
+    )
     try:
         engineer_case["token_usage"] = rag_service_client.get_ticket_family_token_summary(
             ticket_id=ticket_id,

@@ -16,12 +16,17 @@ from backend.services.llm_profiles import (
     RAG_ANSWER_SCENARIO,
     RAG_SUFFICIENCY_SCENARIO,
     WEB_SEARCH_SCENARIO,
+    clear_config_warnings_for_testing,
+    get_config_warnings,
     parse_provider_model_reference,
     resolve_model_profile,
 )
 
 
 class LlmProfileTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        clear_config_warnings_for_testing()
+
     def test_default_profiles_match_client_ai_model_strategy(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             web_search = resolve_model_profile(WEB_SEARCH_SCENARIO)
@@ -43,7 +48,7 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(client_ack.api_mode, "openai_responses")
         self.assertEqual(client_ack.model, "gpt-5.4-nano")
         self.assertEqual(client_ack.reasoning_effort, "none")
-        self.assertEqual(client_ack.timeout_seconds, 2.0)
+        self.assertEqual(client_ack.timeout_seconds, 5.0)
 
         self.assertEqual(rag_answer.provider, "openai")
         self.assertEqual(rag_answer.api_mode, "openai_responses")
@@ -116,6 +121,58 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(profile.model, "gpt-5.4-nano-preview")
         self.assertEqual(profile.reasoning_effort, "none")
         self.assertEqual(profile.timeout_seconds, 2.5)
+
+    def test_agent_named_env_overrides_take_precedence_over_legacy_names(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "ROUTE_AGENT_ROUTER_MODEL": "gpt-5.4-mini-route",
+                "ROUTE_AGENT_WEB_SEARCH_MODEL": "gpt-5.4-web",
+                "RAG_AGENT_ANSWER_MODEL": "gpt-5.4-answer",
+                "REVIEW_AGENT_POSTCHECK_MODEL": "gpt-5.4-review",
+                "REVIEW_AGENT_INTAKE_MODEL": "gpt-5.4-mini-intake",
+                "INTENT_ROUTER_MODEL": "legacy-router",
+                "OPENAI_WEB_SEARCH_MODEL": "legacy-web",
+                "RAG_ANSWER_MODEL": "legacy-answer",
+                "RAG_SUFFICIENCY_JUDGE_MODEL": "legacy-review",
+                "TROUBLESHOOTING_INTAKE_MODEL": "legacy-intake",
+            },
+            clear=True,
+        ):
+            router = resolve_model_profile("intent_router")
+            web_search = resolve_model_profile(WEB_SEARCH_SCENARIO)
+            rag_answer = resolve_model_profile(RAG_ANSWER_SCENARIO)
+            review = resolve_model_profile(RAG_SUFFICIENCY_SCENARIO)
+            intake = resolve_model_profile("troubleshooting_intake")
+
+        self.assertEqual(router.model, "gpt-5.4-mini-route")
+        self.assertEqual(web_search.model, "gpt-5.4-web")
+        self.assertEqual(rag_answer.model, "gpt-5.4-answer")
+        self.assertEqual(review.model, "gpt-5.4-review")
+        self.assertEqual(intake.model, "gpt-5.4-mini-intake")
+
+    def test_legacy_env_alias_usage_is_reported_once_in_config_warnings(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "RAG_ANSWER_MODEL": "legacy-answer",
+                "RAG_ANSWER_REASONING_EFFORT": "medium",
+            },
+            clear=True,
+        ):
+            resolve_model_profile(RAG_ANSWER_SCENARIO)
+            resolve_model_profile(RAG_ANSWER_SCENARIO)
+
+        warnings = get_config_warnings()
+        self.assertIn(
+            "Using deprecated env alias RAG_ANSWER_MODEL; prefer RAG_AGENT_ANSWER_MODEL.",
+            warnings,
+        )
+        self.assertIn(
+            "Using deprecated env alias RAG_ANSWER_REASONING_EFFORT; prefer RAG_AGENT_ANSWER_REASONING_EFFORT.",
+            warnings,
+        )
+        self.assertEqual(len(warnings), 2)
 
     def test_parse_provider_model_reference_defaults_unqualified_models_to_openai(self) -> None:
         self.assertEqual(
