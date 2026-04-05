@@ -13,12 +13,13 @@ def build_troubleshooting_intake_system_prompt(
     intake_role: str,
     product_scope: str | None,
     required_fields: list[str],
+    answer_clarify_fields: list[str],
 ) -> str:
     parts = [
         "## Role",
         str(intake_role or "").strip() or "You triage support requests before opening an engineer ticket.",
         "Decide whether the request is best handled as a direct answer request or an investigation intake.",
-        "Only ask the customer for missing investigation fields when the request is a troubleshooting investigation.",
+        "For non-troubleshooting how-to questions with insufficient grounded evidence, you may ask a short clarify reply before opening an engineer ticket.",
     ]
     if str(product_scope or "").strip():
         parts.extend(
@@ -35,6 +36,12 @@ def build_troubleshooting_intake_system_prompt(
             f"Required investigation fields: {', '.join(required_fields) if required_fields else '(none)'}",
             "When fields are missing, summarize the known information first and then ask for every missing field in one reply.",
             "When all required fields are already known, mark the case ready_for_engineer_ticket=true and leave customer_reply empty.",
+            "",
+            "## Answer-Mode Clarify Requirements",
+            f"Allowed answer-mode clarify fields: {', '.join(answer_clarify_fields) if answer_clarify_fields else '(none)'}",
+            "Use answer-mode clarification only for direct answer requests that still lack enough grounded context.",
+            "For answer-mode clarification, ask natural questions about the customer's goal and blocker instead of troubleshooting field lists.",
+            "If the answer-mode clarify fields are already known and the case still needs human follow-up, set ready_for_engineer_ticket=true and leave customer_reply empty.",
             "",
             "## Output Requirements",
             "Return strict JSON only.",

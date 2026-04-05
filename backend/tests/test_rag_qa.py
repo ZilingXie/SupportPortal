@@ -23,6 +23,7 @@ from backend.services.rag_qa import (
     _get_rag_config,
     _raise_if_cancelled,
     _metadata_rerank,
+    probe_customer_rag_index_readiness,
     _retrieve_bm25_chunks,
     _rerank_chunks,
     _resolve_active_vector_table,
@@ -1758,6 +1759,8 @@ class RagQaHybridTests(unittest.TestCase):
         assert result is not None
         self.assertEqual(result.trace.generation_mode, "extractive_fallback")
         self.assertTrue(result.trace.extractive_fallback_used)
+        self.assertTrue(result.trace.needs_human)
+        self.assertEqual(result.trace.handoff_reason, "insufficient_evidence")
         self.assertIn("Evidence:", result.answer.answer)
         self.assertIn("Token generation code", result.answer.answer)
         self.assertNotIn("Key Steps:", result.answer.answer)
@@ -1791,6 +1794,44 @@ class RagQaHybridTests(unittest.TestCase):
 
         self.assertEqual(resolved, "supportportal.docagent_chunks_bge_m3_1024")
         list_mock.assert_not_called()
+
+    def test_probe_customer_rag_index_readiness_reports_configured_table_empty(self) -> None:
+        with patch("backend.services.rag_qa._get_rag_config", return_value={
+            "dsn": "postgresql://example",
+            "api_key": "test-key",
+            "table": "supportportal.docagent_chunks_bge_m3_1024",
+            "vector_enabled": True,
+        }):
+            with patch("backend.services.rag_qa._count_primary_rows_in_table", return_value=0):
+                with patch(
+                    "backend.services.rag_qa._resolve_active_vector_table",
+                    return_value="supportportal.docagent_chunks_bge_m3_1024",
+                ):
+                    readiness = probe_customer_rag_index_readiness()
+
+        self.assertEqual(readiness.status, "configured_table_empty")
+        self.assertEqual(readiness.configured_table, "supportportal.docagent_chunks_bge_m3_1024")
+        self.assertEqual(readiness.resolved_table, "supportportal.docagent_chunks_bge_m3_1024")
+        self.assertEqual(readiness.configured_primary_rows, 0)
+
+    def test_probe_customer_rag_index_readiness_reports_fallback_table_selected(self) -> None:
+        with patch("backend.services.rag_qa._get_rag_config", return_value={
+            "dsn": "postgresql://example",
+            "api_key": "test-key",
+            "table": "supportportal.docagent_chunks_bge_m3_1024",
+            "vector_enabled": True,
+        }):
+            with patch("backend.services.rag_qa._count_primary_rows_in_table", return_value=0):
+                with patch(
+                    "backend.services.rag_qa._resolve_active_vector_table",
+                    return_value="supportportal.docagent_chunks_ag_docs_test_1024",
+                ):
+                    readiness = probe_customer_rag_index_readiness()
+
+        self.assertEqual(readiness.status, "fallback_table_selected")
+        self.assertEqual(readiness.configured_table, "supportportal.docagent_chunks_bge_m3_1024")
+        self.assertEqual(readiness.resolved_table, "supportportal.docagent_chunks_ag_docs_test_1024")
+        self.assertEqual(readiness.configured_primary_rows, 0)
 
     def test_resolve_active_vector_table_uses_ttl_cache_until_expiry(self) -> None:
         config = {

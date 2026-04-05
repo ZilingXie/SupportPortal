@@ -30,8 +30,9 @@ _ANSWER_REQUEST_RE = re.compile(
     re.IGNORECASE,
 )
 _TROUBLESHOOTING_SIGNAL_RE = re.compile(
-    r"\b(issue|problem|error|fail|failed|failure|black screen|blank screen|no audio|no video|recording failed|"
-    r"not work|doesn't work|cannot|can't|stuck|timeout|crash|lag|freeze|symptom|troubleshoot)\b",
+    r"\b(android|ios|macos|windows|linux|sdk|version|debug|callback|renew|renewal|issue|problem|error|"
+    r"fail|failed|failure|black screen|blank screen|no audio|no video|recording failed|not work|"
+    r"doesn't work|cannot|can't|stuck|timeout|crash|lag|freeze|symptom|troubleshoot)\b",
     re.IGNORECASE,
 )
 _LEADING_SYMPTOM_PREFIX_RE = re.compile(
@@ -50,6 +51,16 @@ _SID_RE = re.compile(r"\bsid\s*(?:is|=|:)\s*([A-Za-z0-9_.-]+)\b", re.IGNORECASE)
 _TIMESTAMP_RE = re.compile(
     r"\b(?:timestamp(?:\s*is)?|time(?:\s*is)?|happened at|occurred at|at)\s+"
     r"([0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9:.+-]+Z?)\b",
+    re.IGNORECASE,
+)
+_ANSWER_MODE_REQUIRED_FIELDS = ("desired_outcome", "blocked_step_or_error")
+_ANSWER_GOAL_HINT_RE = re.compile(
+    r"\b(?:trying to|try to|want to|need to|would like to|looking to|aim(?:ing)? to|attempt(?:ing)? to)\s+"
+    r"(.+?)(?=(?:,?\s*(?:but|however|except|although)\b)|[.?!]|$)",
+    re.IGNORECASE,
+)
+_ANSWER_BLOCKER_SIGNAL_RE = re.compile(
+    r"\b(error|problem|fail|failed|failure|cannot|can't|unable|blocked|stuck|timeout|doesn't work|not work)\b",
     re.IGNORECASE,
 )
 
@@ -94,6 +105,10 @@ def _classify_issue_mode(
     current_state: dict[str, Any] | None,
 ) -> str:
     current_mode = str((current_state or {}).get("issue_mode") or "").strip().lower()
+    current_missing_information = list((current_state or {}).get("missing_information") or [])
+    current_ready = bool((current_state or {}).get("ready_for_engineer_ticket"))
+    if current_mode in {"answer", "investigation"} and current_missing_information and not current_ready:
+        return current_mode
     if current_mode == "investigation":
         return "investigation"
     normalized_message = _clean_text(latest_message).lower()
@@ -156,14 +171,50 @@ def _extract_from_message(message: str, *, product: str | None) -> dict[str, str
     return extracted
 
 
+def _extract_answer_mode_information(message: str) -> dict[str, str]:
+    extracted: dict[str, str] = {}
+    text = _clean_text(message).strip(" .,:;!?")
+    if not text:
+        return extracted
+
+    goal_match = _ANSWER_GOAL_HINT_RE.search(text)
+    if goal_match:
+        extracted["desired_outcome"] = _clean_text(goal_match.group(1)).strip(" .,:;!?")
+
+    lowered = text.lower()
+    blocker_text: str | None = None
+    for separator in (" but ", " however ", " except ", " although "):
+        if separator not in lowered:
+            continue
+        start_index = lowered.index(separator) + len(separator)
+        candidate = _clean_text(text[start_index:]).strip(" .,:;!?")
+        if candidate and _ANSWER_BLOCKER_SIGNAL_RE.search(candidate):
+            blocker_text = candidate
+            break
+    if blocker_text is None and _ANSWER_BLOCKER_SIGNAL_RE.search(text):
+        blocker_text = text
+    if blocker_text:
+        extracted["blocked_step_or_error"] = blocker_text
+    return extracted
+
+
 def _merge_known_information(
     *,
     current_state: dict[str, Any] | None,
     ticket_context: list[dict[str, Any]] | None,
     latest_message: str,
     product: str | None,
+    issue_mode: str,
 ) -> dict[str, str]:
     known_information = _normalize_known_information((current_state or {}).get("known_information"))
+    if issue_mode == "answer":
+        current_mode = str((current_state or {}).get("issue_mode") or "").strip().lower()
+        if current_mode == "answer":
+            for key, value in _extract_answer_mode_information(_clean_text(latest_message)).items():
+                if value:
+                    known_information[key] = value
+        return known_information
+
     customer_messages: list[str] = []
     for item in list(ticket_context or [])[-6:]:
         if not isinstance(item, dict):
@@ -231,6 +282,29 @@ def _build_customer_reply(
     )
 
 
+def _build_answer_mode_customer_reply(
+    *,
+    known_information: dict[str, str],
+    missing_information: list[str],
+) -> str:
+    prompts: list[str] = []
+    if "desired_outcome" in missing_information:
+        prompts.append("What are you trying to achieve?")
+    if "blocked_step_or_error" in missing_information:
+        prompts.append("What error or blocker are you seeing?")
+    if not prompts:
+        return ""
+
+    prefix = "I couldn't verify a grounded answer from the current support evidence."
+    if known_information:
+        known_summary = _format_known_information(
+            known_information,
+            required_fields=_ANSWER_MODE_REQUIRED_FIELDS,
+        )
+        return f"{known_summary} {prefix} {' '.join(prompts)}".strip()
+    return f"{prefix} {' '.join(prompts)}".strip()
+
+
 def _fallback_result(
     *,
     latest_message: str,
@@ -243,7 +317,33 @@ def _fallback_result(
         ticket_context=ticket_context,
         current_state=current_state,
     )
-    if issue_mode != "investigation" or get_support_product_profile(product) is None:
+    if issue_mode == "answer":
+        known_information = _merge_known_information(
+            current_state=current_state,
+            ticket_context=ticket_context,
+            latest_message=latest_message,
+            product=product,
+            issue_mode=issue_mode,
+        )
+        missing_information = [
+            field_name
+            for field_name in _ANSWER_MODE_REQUIRED_FIELDS
+            if not _clean_text(known_information.get(field_name))
+        ]
+        ready = not missing_information and bool(known_information)
+        return TroubleshootingIntakeResult(
+            issue_mode="answer",
+            known_information=known_information,
+            missing_information=missing_information,
+            ready_for_engineer_ticket=ready,
+            customer_reply=""
+            if ready
+            else _build_answer_mode_customer_reply(
+                known_information=known_information,
+                missing_information=missing_information,
+            ),
+        )
+    if get_support_product_profile(product) is None:
         return TroubleshootingIntakeResult(
             issue_mode="answer",
             known_information={},
@@ -258,6 +358,7 @@ def _fallback_result(
         ticket_context=ticket_context,
         latest_message=latest_message,
         product=product,
+        issue_mode=issue_mode,
     )
     missing_information = [
         field_name
@@ -296,9 +397,17 @@ def _parse_llm_result(payload: Any, *, fallback: TroubleshootingIntakeResult) ->
     return TroubleshootingIntakeResult(
         issue_mode=issue_mode,
         known_information=known_information or fallback.known_information,
-        missing_information=missing_information if issue_mode == "investigation" else [],
-        ready_for_engineer_ticket=bool(payload.get("ready_for_engineer_ticket")) if issue_mode == "investigation" else False,
-        customer_reply=_clean_text(payload.get("customer_reply")) if issue_mode == "investigation" else "",
+        missing_information=missing_information or list(fallback.missing_information),
+        ready_for_engineer_ticket=(
+            bool(payload.get("ready_for_engineer_ticket"))
+            if "ready_for_engineer_ticket" in payload
+            else bool(fallback.ready_for_engineer_ticket)
+        ),
+        customer_reply=(
+            _clean_text(payload.get("customer_reply"))
+            if "customer_reply" in payload
+            else _clean_text(fallback.customer_reply)
+        ),
     )
 
 
@@ -313,7 +422,7 @@ def _evaluate_with_llm(
     fallback: TroubleshootingIntakeResult,
 ) -> TroubleshootingIntakeResult:
     profile = resolve_model_profile(TROUBLESHOOTING_INTAKE_SCENARIO)
-    if not profile.api_key or get_support_product_profile(product) is None:
+    if not profile.api_key:
         return fallback
     required_labels = list_support_product_field_labels(list(_required_fields_for(product)))
     try:
@@ -323,6 +432,7 @@ def _evaluate_with_llm(
                 intake_role=build_support_product_intake_role(product) or "",
                 product_scope=build_support_product_prompt_scope(product),
                 required_fields=required_labels,
+                answer_clarify_fields=list_support_product_field_labels(list(_ANSWER_MODE_REQUIRED_FIELDS)),
             ),
             user_prompt=build_troubleshooting_intake_user_prompt(
                 latest_customer_message=message,
@@ -375,7 +485,7 @@ def build_client_intake_state(
     product: str | None,
     now_value: str | None = None,
 ) -> dict[str, Any] | None:
-    if result.issue_mode != "investigation":
+    if result.issue_mode not in {"answer", "investigation"}:
         return None
     return {
         "phase": "ready_for_engineer_ticket" if result.ready_for_engineer_ticket else "gather_customer_inputs",

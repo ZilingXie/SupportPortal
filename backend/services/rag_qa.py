@@ -260,6 +260,14 @@ class RagQueryResult:
     trace: RagQueryTrace
 
 
+@dataclass(frozen=True)
+class RagKnowledgeIndexReadiness:
+    status: str
+    configured_table: str | None
+    resolved_table: str | None
+    configured_primary_rows: int | None
+
+
 class RagExecutionCancelled(RuntimeError):
     def __init__(self, stage: str) -> None:
         super().__init__(f"RAG execution cancelled during {stage}")
@@ -2233,8 +2241,69 @@ def _resolve_active_vector_table(config: dict[str, Any]) -> str:
             configured_table,
             fallback_table,
         )
-        _store_active_vector_table_cache(config, fallback_table)
-        return fallback_table
+    _store_active_vector_table_cache(config, fallback_table)
+    return fallback_table
+
+
+def probe_customer_rag_index_readiness(top_k: int | None = None) -> RagKnowledgeIndexReadiness:
+    config = _get_rag_config(top_k=top_k)
+    configured_table = str(config.get("table") or "").strip() or None
+    configured_dsn = str(config.get("dsn") or "").strip()
+    if not configured_table or not configured_dsn or not bool(config.get("vector_enabled", True)):
+        return RagKnowledgeIndexReadiness(
+            status="unconfigured",
+            configured_table=configured_table,
+            resolved_table=configured_table,
+            configured_primary_rows=None,
+        )
+
+    try:
+        configured_primary_rows = _count_primary_rows_in_table(configured_dsn, configured_table)
+    except Exception as exc:
+        logger.warning(
+            "RAG customer index readiness probe failed for %s: %s",
+            configured_table,
+            exc,
+        )
+        return RagKnowledgeIndexReadiness(
+            status="probe_failed",
+            configured_table=configured_table,
+            resolved_table=configured_table,
+            configured_primary_rows=None,
+        )
+
+    if configured_primary_rows is not None and configured_primary_rows > 0:
+        return RagKnowledgeIndexReadiness(
+            status="ready",
+            configured_table=configured_table,
+            resolved_table=configured_table,
+            configured_primary_rows=configured_primary_rows,
+        )
+
+    try:
+        resolved_table = _resolve_active_vector_table(dict(config)) or configured_table
+    except Exception as exc:
+        logger.warning(
+            "RAG customer index readiness resolve failed for %s: %s",
+            configured_table,
+            exc,
+        )
+        return RagKnowledgeIndexReadiness(
+            status="probe_failed",
+            configured_table=configured_table,
+            resolved_table=configured_table,
+            configured_primary_rows=configured_primary_rows,
+        )
+
+    status = "configured_table_empty"
+    if resolved_table != configured_table:
+        status = "fallback_table_selected"
+    return RagKnowledgeIndexReadiness(
+        status=status,
+        configured_table=configured_table,
+        resolved_table=resolved_table,
+        configured_primary_rows=configured_primary_rows,
+    )
 
     _store_active_vector_table_cache(config, configured_table)
     return configured_table
@@ -4139,8 +4208,8 @@ def _run_rag_query_legacy(
                     answer=answer,
                     trace=_trace_for(
                         answer,
-                        needs_human=False,
-                        handoff_reason=None,
+                        needs_human=True,
+                        handoff_reason="insufficient_evidence",
                         generation_mode=generation_mode,
                         extractive_fallback_used=extractive_fallback_used,
                     ),
@@ -4194,8 +4263,8 @@ def _run_rag_query_legacy(
         answer=answer,
         trace=_trace_for(
             answer,
-            needs_human=False,
-            handoff_reason=None,
+            needs_human=True,
+            handoff_reason="insufficient_evidence",
             generation_mode=generation_mode,
             extractive_fallback_used=extractive_fallback_used,
         ),
@@ -4814,8 +4883,8 @@ def _run_rag_query_agentic(
                     answer=answer,
                     trace=_trace_for(
                         answer,
-                        needs_human=False,
-                        handoff_reason=None,
+                        needs_human=True,
+                        handoff_reason="insufficient_evidence",
                         generation_mode=generation_mode,
                         extractive_fallback_used=extractive_fallback_used,
                     ),
@@ -4866,8 +4935,8 @@ def _run_rag_query_agentic(
         answer=answer,
         trace=_trace_for(
             answer,
-            needs_human=False,
-            handoff_reason=None,
+            needs_human=True,
+            handoff_reason="insufficient_evidence",
             generation_mode=generation_mode,
             extractive_fallback_used=extractive_fallback_used,
         ),

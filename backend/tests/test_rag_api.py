@@ -16,7 +16,7 @@ os.environ.setdefault("RAG_SERVICE_SHARED_TOKEN", "test-token")
 
 import backend.rag_api as rag_api
 from backend.repositories.event_repository import InMemoryEventRepository
-from backend.services.rag_qa import RagAnswer, RagQueryResult, RagQueryTrace
+from backend.services.rag_qa import RagAnswer, RagKnowledgeIndexReadiness, RagQueryResult, RagQueryTrace
 
 
 class _TrackingKnowledgeRepository:
@@ -52,7 +52,13 @@ class _BlockingKnowledgeRepository(_TrackingKnowledgeRepository):
             raise self.telemetry_error
 
 
-def _trace(*, needs_human: bool = False, handoff_reason: str | None = None) -> RagQueryTrace:
+def _trace(
+    *,
+    needs_human: bool = False,
+    handoff_reason: str | None = None,
+    generation_mode: str = "structured_answer",
+    extractive_fallback_used: bool = False,
+) -> RagQueryTrace:
     return RagQueryTrace(
         query_type="how_to",
         retrieval_strategy="agentic_multi_tool_v1",
@@ -83,7 +89,8 @@ def _trace(*, needs_human: bool = False, handoff_reason: str | None = None) -> R
         confidence_score=0.92,
         primary_source_type="official",
         primary_chunk_strategy="markdown_header_v1",
-        generation_mode="structured_answer",
+        generation_mode=generation_mode,
+        extractive_fallback_used=extractive_fallback_used,
         selected_doc_count=1,
         top1_similarity_score=0.98,
         avg_selected_similarity_score=0.98,
@@ -266,6 +273,97 @@ class RagApiTests(unittest.TestCase):
         self.assertEqual(kwargs["product"], "cloud_recording")
         self.assertTrue(callable(kwargs["should_cancel"]))
         self.assertTrue(callable(kwargs["record_cancel_stage"]))
+
+    def test_internal_rag_query_fail_closes_extractive_fallback_result(self) -> None:
+        repository = _TrackingKnowledgeRepository()
+        fallback_result = RagQueryResult(
+            answer=RagAnswer(
+                answer="I found relevant support evidence, but I could not verify a complete grounded answer.",
+                confidence=0.55,
+                sources=[],
+                citations=[],
+            ),
+            trace=_trace(
+                needs_human=True,
+                handoff_reason="insufficient_evidence",
+                generation_mode="extractive_fallback",
+                extractive_fallback_used=True,
+            ),
+        )
+
+        with self._client(repository) as client, patch.object(
+            rag_api,
+            "probe_customer_rag_index_readiness",
+            return_value=RagKnowledgeIndexReadiness(
+                status="ready",
+                configured_table="supportportal.docagent_chunks_bge_m3_1024",
+                resolved_table="supportportal.docagent_chunks_bge_m3_1024",
+                configured_primary_rows=123,
+            ),
+        ), patch.object(
+            rag_api,
+            "run_rag_query",
+            return_value=fallback_result,
+        ):
+            response = client.post(
+                "/internal/rag/query",
+                headers={"Authorization": "Bearer test-token"},
+                json={
+                    "question": "how to join channel",
+                    "request_id": "rag-api-fallback-1",
+                    "ticket_id": "TK-004",
+                    "customer_id": "C-004",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["decision"], "escalate")
+        self.assertEqual(payload["answer"], "")
+        self.assertEqual(payload["reason"], "insufficient_evidence")
+        self.assertEqual(payload["evidence_summary"]["quality_signals"]["generation_mode"], "extractive_fallback")
+        self.assertTrue(payload["evidence_summary"]["quality_signals"]["needs_human"])
+
+    def test_internal_rag_query_returns_rag_unavailable_when_knowledge_index_guard_trips(self) -> None:
+        repository = _TrackingKnowledgeRepository()
+
+        with self._client(repository) as client, patch.object(
+            rag_api,
+            "probe_customer_rag_index_readiness",
+            return_value=RagKnowledgeIndexReadiness(
+                status="configured_table_empty",
+                configured_table="supportportal.docagent_chunks_bge_m3_1024",
+                resolved_table="supportportal.docagent_chunks_bge_m3_1024",
+                configured_primary_rows=0,
+            ),
+        ), patch.object(
+            rag_api,
+            "run_rag_query",
+            side_effect=AssertionError("run_rag_query should not be called when the knowledge index is unavailable"),
+        ):
+            response = client.post(
+                "/internal/rag/query",
+                headers={"Authorization": "Bearer test-token"},
+                json={
+                    "question": "how to join channel",
+                    "request_id": "rag-api-guard-1",
+                    "ticket_id": "TK-005",
+                    "customer_id": "C-005",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["decision"], "escalate")
+        self.assertEqual(payload["reason"], "rag_unavailable")
+        self.assertEqual(
+            payload["evidence_summary"]["diagnostics"]["knowledge_index_status"],
+            "configured_table_empty",
+        )
+        self.assertEqual(
+            payload["evidence_summary"]["diagnostics"]["configured_vector_table"],
+            "supportportal.docagent_chunks_bge_m3_1024",
+        )
 
 
 if __name__ == "__main__":

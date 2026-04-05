@@ -173,6 +173,44 @@ class TicketOrchestratorTests(unittest.TestCase):
         self.assertIn("Known so far", execution.answer)
         sufficiency_mock.assert_not_called()
 
+    def test_rag_insufficiency_for_how_to_clarifies_customer_with_answer_mode_fields(self) -> None:
+        with patch(
+            "backend.services.ticket_orchestrator.evaluate_troubleshooting_intake",
+            return_value=types.SimpleNamespace(
+                issue_mode="answer",
+                known_information={},
+                missing_information=["desired_outcome", "blocked_step_or_error"],
+                ready_for_engineer_ticket=False,
+                customer_reply=(
+                    "I couldn't verify a grounded answer yet. What are you trying to achieve? "
+                    "What error or blocker are you seeing?"
+                ),
+            ),
+            create=True,
+        ), patch(
+            "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency"
+        ) as sufficiency_mock:
+            execution = orchestrate_ticket_execution(
+                "How to join channel?",
+                product="audio_video_calling",
+                decision=_decision("rag"),
+                resolution_builder=lambda *_args, **_kwargs: _resolution(
+                    action="rag",
+                    needs_engineer_guidance=True,
+                ),
+            )
+
+        self.assertFalse(execution.needs_investigating)
+        self.assertEqual(execution.next_status, COMMUNICATING_STATUS)
+        self.assertEqual(execution.workflow_action, "clarify_customer_for_intake")
+        self.assertEqual(execution.client_intake_state["issue_mode"], "answer")
+        self.assertEqual(
+            execution.client_intake_state["missing_information"],
+            ["desired_outcome", "blocked_step_or_error"],
+        )
+        self.assertIn("What are you trying to achieve", execution.answer)
+        sufficiency_mock.assert_not_called()
+
     def test_rag_insufficiency_for_troubleshooting_ready_inputs_opens_engineer_ticket(self) -> None:
         with patch(
             "backend.services.ticket_orchestrator.evaluate_troubleshooting_intake",

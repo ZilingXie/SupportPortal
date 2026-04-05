@@ -162,6 +162,170 @@ class ClientTicketAgentRuntimeContractTests(unittest.TestCase):
         self.assertEqual(execution.result.client_intake_state["missing_information"], ["channel_name", "problematic_uid", "issue_timestamp"])
         self.assertEqual(execution.runtime_state.status, "completed")
 
+    def test_rag_extractive_fallback_routes_into_answer_mode_clarification(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        execution = execute_client_ticket_agent_runtime(
+            message="How do I join channel?",
+            ticket_id="TK-RAG-FAQ-1",
+            customer_id="C-001",
+            ticket_subject="Join channel",
+            ticket_context=[{"role": "customer", "content": "How do I join channel?"}],
+            product="audio_video_calling",
+            message_id="2026-04-04T00:00:00+00:00",
+            route_agent=lambda **_kwargs: SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                confidence=0.94,
+                reason="technical_question",
+                matched_signals=["join channel"],
+                response_language="en",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+            ),
+            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                answer="I found relevant support evidence, but I could not verify a complete grounded answer.",
+                confidence=0.41,
+                sources=[],
+                citations=[],
+                needs_engineer_guidance=True,
+                reason="rag_insufficient_evidence",
+                evidence_summary={
+                    "quality_signals": {
+                        "generation_mode": "extractive_fallback",
+                        "extractive_fallback_used": True,
+                        "needs_human": True,
+                    }
+                },
+                packed_evidence=None,
+            ),
+            review_agent=lambda **_kwargs: TroubleshootingIntakeResult(
+                issue_mode="answer",
+                known_information={},
+                missing_information=["desired_outcome", "blocked_step_or_error"],
+                ready_for_engineer_ticket=False,
+                customer_reply=(
+                    "I couldn't verify a grounded answer yet. What are you trying to achieve? "
+                    "What error or blocker are you seeing?"
+                ),
+            ),
+            rag_canceler=None,
+        )
+
+        self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
+        self.assertEqual(execution.result.client_intake_state["issue_mode"], "answer")
+        self.assertEqual(
+            execution.result.client_intake_state["missing_information"],
+            ["desired_outcome", "blocked_step_or_error"],
+        )
+        self.assertIn("What are you trying to achieve", execution.result.answer)
+        self.assertEqual(execution.runtime_state.review_agent.get("decision"), "clarify_customer_for_intake")
+
+    def test_grounded_answer_with_extractive_fallback_signal_never_skips_review(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        execution = execute_client_ticket_agent_runtime(
+            message="How do I join channel?",
+            ticket_id="TK-RISK-FAQ-1",
+            customer_id="C-001",
+            ticket_subject="Join channel",
+            ticket_context=[{"role": "customer", "content": "How do I join channel?"}],
+            product="audio_video_calling",
+            message_id="2026-04-04T00:00:00+00:00",
+            route_agent=lambda **_kwargs: SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                confidence=0.94,
+                reason="technical_question",
+                matched_signals=["join channel"],
+                response_language="en",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+            ),
+            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                answer="I found relevant support evidence, but I could not verify a complete grounded answer.",
+                confidence=0.91,
+                sources=["https://docs.agora.io/en/video-calling/get-started"],
+                citations=[{"chunk_id": "chunk-1"}],
+                needs_engineer_guidance=False,
+                reason="grounded_answer",
+                evidence_summary={
+                    "quality_signals": {
+                        "generation_mode": "extractive_fallback",
+                        "extractive_fallback_used": True,
+                        "selected_doc_count": 1,
+                        "top1_similarity_score": 0.93,
+                        "needs_human": False,
+                    }
+                },
+                packed_evidence=None,
+            ),
+            review_agent=lambda **_kwargs: {"decision": "open_engineer_ticket", "reason": "review_insufficient", "confidence": 0.62},
+            rag_canceler=None,
+        )
+
+        self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
+        self.assertEqual(execution.result.investigation_reason, "rag_post_check_insufficient")
+        self.assertEqual(execution.runtime_state.review_agent.get("status"), "completed")
+        self.assertEqual(execution.runtime_state.review_agent.get("decision"), "open_engineer_ticket")
+
+    def test_rag_unavailable_from_knowledge_index_guard_skips_review_and_surfaces_diagnostics(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        execution = execute_client_ticket_agent_runtime(
+            message="How do I join channel?",
+            ticket_id="TK-RAG-UNAVAIL-1",
+            customer_id="C-001",
+            ticket_subject="Join channel",
+            ticket_context=[{"role": "customer", "content": "How do I join channel?"}],
+            product="audio_video_calling",
+            message_id="2026-04-04T00:00:00+00:00",
+            route_agent=lambda **_kwargs: SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                confidence=0.94,
+                reason="technical_question",
+                matched_signals=["join channel"],
+                response_language="en",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+            ),
+            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                answer="",
+                confidence=0.0,
+                sources=[],
+                citations=[],
+                needs_engineer_guidance=True,
+                reason="rag_unavailable",
+                evidence_summary={
+                    "quality_signals": {
+                        "generation_mode": "insufficient_evidence",
+                        "needs_human": True,
+                    },
+                    "diagnostics": {
+                        "knowledge_index_status": "configured_table_empty",
+                        "knowledge_index_reason": "configured_table_empty",
+                        "configured_vector_table": "supportportal.docagent_chunks_bge_m3_1024",
+                    },
+                },
+                packed_evidence=None,
+            ),
+            review_agent=lambda **_kwargs: self.fail("review agent should not run for rag_unavailable"),
+            rag_canceler=None,
+        )
+
+        self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
+        self.assertEqual(execution.result.investigation_reason, "rag_unavailable")
+        self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
+        self.assertEqual(execution.diagnostics.get("knowledge_index_status"), "configured_table_empty")
+        self.assertEqual(execution.diagnostics.get("knowledge_index_reason"), "configured_table_empty")
+
     def test_grounded_answer_high_risk_waits_for_review(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
 
