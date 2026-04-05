@@ -145,6 +145,26 @@ class SingleHostComposeTests(unittest.TestCase):
             content,
         )
 
+    def test_engineer_investigation_reply_defaults_are_present_for_api_service(self) -> None:
+        api_block = self._service_block("api")
+
+        self.assertIn(
+            "ENGINEER_INVESTIGATION_REPLY_MODEL: ${ENGINEER_INVESTIGATION_REPLY_MODEL:-gpt-5.4}",
+            api_block,
+        )
+        self.assertIn(
+            "ENGINEER_INVESTIGATION_REPLY_REASONING_EFFORT: ${ENGINEER_INVESTIGATION_REPLY_REASONING_EFFORT:-medium}",
+            api_block,
+        )
+        self.assertIn(
+            "ENGINEER_INVESTIGATION_REPLY_TIMEOUT_SECONDS: ${ENGINEER_INVESTIGATION_REPLY_TIMEOUT_SECONDS:-20.0}",
+            api_block,
+        )
+        self.assertIn(
+            "ENGINEER_INVESTIGATION_REPLY_MAX_RETRIES: ${ENGINEER_INVESTIGATION_REPLY_MAX_RETRIES:-1}",
+            api_block,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

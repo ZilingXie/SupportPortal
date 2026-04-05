@@ -19,6 +19,7 @@ RAG_AGENT_PLANNER_SCENARIO = "rag_agent_planner"
 RAG_CONTEXT_COMPRESSION_SCENARIO = "rag_context_compression"
 TROUBLESHOOTING_INTAKE_SCENARIO = "troubleshooting_intake"
 ENGINEER_HELPER_SCENARIO = "engineer_helper"
+ENGINEER_INVESTIGATION_REPLY_SCENARIO = "engineer_investigation_reply"
 KNOWLEDGE_INGESTION_SCENARIO = "knowledge_ingestion_metadata"
 BENCHMARK_JUDGE_SCENARIO = "benchmark_judge"
 AUTO_DEPLOY_REPORT_SCENARIO = "auto_deploy_report"
@@ -381,6 +382,19 @@ def resolve_model_profile(
             timeout_seconds=_safe_positive_float_env("OPENAI_REQUEST_TIMEOUT_SECONDS", 20.0),
             max_retries=_safe_int_env("OPENAI_MAX_RETRIES", 1),
             fallback_models=("gpt-5.4-mini",),
+        )
+    if scenario == ENGINEER_INVESTIGATION_REPLY_SCENARIO:
+        return ModelProfile(
+            scenario=scenario,
+            provider="openai",
+            model=_clean_text(os.getenv("ENGINEER_INVESTIGATION_REPLY_MODEL")) or "gpt-5.4",
+            api_mode=OPENAI_RESPONSES_API,
+            api_key=_openai_api_key(),
+            reasoning_effort=_clean_text(os.getenv("ENGINEER_INVESTIGATION_REPLY_REASONING_EFFORT")) or "medium",
+            temperature=0.0,
+            timeout_seconds=_safe_positive_float_env("ENGINEER_INVESTIGATION_REPLY_TIMEOUT_SECONDS", 20.0),
+            max_retries=_safe_int_env("ENGINEER_INVESTIGATION_REPLY_MAX_RETRIES", 1),
+            fallback_models=(),
         )
     if scenario == KNOWLEDGE_INGESTION_SCENARIO:
         return ModelProfile(

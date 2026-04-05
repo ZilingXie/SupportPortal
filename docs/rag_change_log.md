@@ -2462,3 +2462,37 @@ For each new entry, record:
   - `python3 -m py_compile backend/repositories/ticket_repository.py backend/main.py backend/worker.py scripts/trace_client_ticket_route.py backend/tests/test_repository_configuration.py backend/tests/test_investigation_flow.py backend/tests/test_worker.py backend/tests/test_trace_client_ticket_route_cli.py backend/tests/test_single_host_compose.py`
   - `python3 scripts/verify_feature_list.py`
   - `git diff --check`
+
+## 2026-04-05 - Engineer investigation follow-up replies use dedicated structured drafting
+
+- Summary:
+  - Replaced the old post-engineer string-splice behavior so investigation turns after an engineer reply or revise note now run through a dedicated structured generator before updating `active_investigation`.
+  - Tightened the approval/send path so investigation replies fail closed when no valid draft exists, while the engineer UI now keys its approval affordance off investigation readiness and draft presence instead of fixed confirmation copy.
+  - Preserved auditability by attaching scenario/model/reasoning/prompt-version/generation-status metadata to generated `engineer_ai` internal messages and carrying the refreshed agent-state fields through investigation events.
+- Reason:
+  - Engineer investigations that started from RAG insufficiency or troubleshooting escalation were exposing raw engineer notes directly to customers, which produced stiff wording and unsafe approve behavior when the post-investigation draft was missing or malformed.
+- Affected files/config:
+  - `backend/services/engineer_agent.py`
+  - `backend/services/investigation_flow.py`
+  - `backend/services/prompts/engineer_investigation_reply.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/main.py`
+  - `ui/engineer-ui/app.js`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_engineer_ui_contract.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_single_host_compose.py`
+  - `backend/tests/test_worker.py`
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No vector-table, embedding-model, rerank, retrieval, or answer-generation changes.
+  - Engineer investigation internal messages can now persist additional `meta` fields describing the drafting scenario, resolved model, reasoning effort, prompt version, and generation outcome.
+  - Investigation approval no longer synthesizes customer replies from raw engineer notes when `draft_customer_reply` is empty.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_llm_profiles.py backend/tests/test_prompt_modules.py backend/tests/test_investigation_flow.py backend/tests/test_engineer_ui_contract.py backend/tests/test_single_host_compose.py backend/tests/test_worker.py -q`
+  - `python3 -m py_compile backend/main.py backend/services/engineer_agent.py backend/services/investigation_flow.py backend/services/llm_profiles.py backend/services/prompts/__init__.py backend/services/prompts/engineer_investigation_reply.py backend/tests/test_llm_profiles.py backend/tests/test_prompt_modules.py backend/tests/test_investigation_flow.py backend/tests/test_engineer_ui_contract.py backend/tests/test_single_host_compose.py`
+  - `node --check ui/engineer-ui/app.js`
+  - `podman exec -i engineerreplymanual_api python - <<'PY' ... /api/engineer/tickets/{ticket_id}/investigation/messages smoke for both channel-name follow-up and direct-fix reply paths ... PY`

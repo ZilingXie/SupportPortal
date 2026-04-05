@@ -2059,6 +2059,143 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(payload["active_investigation"]["messages"][-1]["role"], "engineer_ai")
         self.assertEqual(payload["active_investigation"]["messages"][-1]["content"], "I have enough information now. Please confirm this draft before I reply to the customer.")
 
+    def test_engineer_internal_message_uses_investigation_reply_model_and_records_metadata(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-INV-LLM-102",
+            subject="Black screen after joining the call",
+            status="investigating",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "i got black screen, what should i do?",
+                    "created_at": "2026-03-29T09:00:00+00:00",
+                },
+                {
+                    "role": "assistant",
+                    "content": "I've opened an engineer ticket and we're investigating further.",
+                    "created_at": "2026-03-29T09:01:00+00:00",
+                },
+            ],
+            active_investigation={
+                "id": "INV-LLM-102",
+                "state": "active",
+                "trigger_reason": "rag_post_check_insufficient",
+                "trigger_source": "support_query",
+                "draft_customer_reply": None,
+                "final_confirmation_requested_at": None,
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:00:00+00:00",
+                "messages": [
+                    {
+                        "id": "INV-LLM-102-m1",
+                        "role": "engineer_ai",
+                        "content": "Please confirm the exact reproduction scope first.",
+                        "created_at": "2026-03-29T09:00:00+00:00",
+                    }
+                ],
+            },
+        )
+
+        llm_text = """
+        {
+          "state": "awaiting_confirmation",
+          "message": "I drafted a customer follow-up asking for the missing channel name. Please confirm whether it is ready to send.",
+          "draft_customer_reply": "Could you please share the channel name with us for further investigation?",
+          "engineer_agent_state": {
+            "phase": "awaiting_confirmation",
+            "issue_understanding": "The customer sees a black screen after joining the call.",
+            "knowledge_summary": "We still need the exact channel context before the issue can be isolated safely.",
+            "why_not_solved": "The current evidence does not identify which channel/session is affected.",
+            "goal": "Send a customer-safe reply that asks for the next required diagnostic detail.",
+            "known_facts": [
+              "Customer reported a black screen after joining the call."
+            ],
+            "missing_information": [
+              "Channel name"
+            ],
+            "next_request_for_engineer": "Approve the prepared customer reply if it is safe to send.",
+            "resolution_hypothesis": "The next useful step is to collect the channel name.",
+            "ready_to_reply": true,
+            "last_refreshed_at": "2026-03-29T09:04:00+00:00"
+          }
+        }
+        """
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "backend.services.engineer_agent.invoke_responses_text",
+            return_value=LlmTextResult(text=llm_text, model_name="gpt-5.4"),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/engineer/tickets/TK-INV-LLM-102-1/investigation/messages",
+                json={
+                    "engineer_id": "eng",
+                    "message": "you need to get the channel name",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["active_investigation"]["state"], "awaiting_confirmation")
+        self.assertEqual(
+            payload["active_investigation"]["draft_customer_reply"],
+            "Could you please share the channel name with us for further investigation?",
+        )
+        latest_message = payload["active_investigation"]["messages"][-1]
+        self.assertEqual(latest_message["role"], "engineer_ai")
+        self.assertIn("customer follow-up asking for the missing channel name", latest_message["content"])
+        self.assertEqual(latest_message.get("meta", {}).get("scenario"), "engineer_investigation_reply")
+        self.assertEqual(latest_message.get("meta", {}).get("model"), "gpt-5.4")
+        self.assertEqual(latest_message.get("meta", {}).get("reasoning_effort"), "medium")
+        self.assertEqual(latest_message.get("meta", {}).get("prompt_version"), "engineer-investigation-reply-v1")
+        self.assertEqual(latest_message.get("meta", {}).get("generation_status"), "succeeded")
+
+    def test_engineer_internal_message_fail_closes_when_investigation_reply_model_output_is_invalid(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-INV-LLM-ERR-102",
+            status="investigating",
+            active_investigation={
+                "id": "INV-LLM-ERR-102",
+                "state": "active",
+                "trigger_reason": "rag_post_check_insufficient",
+                "trigger_source": "support_query",
+                "draft_customer_reply": None,
+                "final_confirmation_requested_at": None,
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:00:00+00:00",
+                "messages": [
+                    {
+                        "id": "INV-LLM-ERR-102-m1",
+                        "role": "engineer_ai",
+                        "content": "Please confirm the exact reproduction scope first.",
+                        "created_at": "2026-03-29T09:00:00+00:00",
+                    }
+                ],
+            },
+        )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "backend.services.engineer_agent.invoke_responses_text",
+            return_value=LlmTextResult(text="not-json", model_name="gpt-5.4"),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/engineer/tickets/TK-INV-LLM-ERR-102-1/investigation/messages",
+                json={
+                    "engineer_id": "eng",
+                    "message": "you need to get the channel name",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["active_investigation"]["state"], "active")
+        self.assertEqual(payload["active_investigation"]["draft_customer_reply"], "")
+        latest_message = payload["active_investigation"]["messages"][-1]
+        self.assertEqual(latest_message["role"], "engineer_ai")
+        self.assertIn("couldn't prepare a customer-safe reply", latest_message["content"].lower())
+        self.assertEqual(latest_message.get("meta", {}).get("scenario"), "engineer_investigation_reply")
+        self.assertEqual(latest_message.get("meta", {}).get("generation_status"), "failed")
+        self.assertTrue(str(latest_message.get("meta", {}).get("error") or "").strip())
+
     def test_investigation_events_include_agent_summary_fields(self) -> None:
         self._seed_ticket(
             ticket_id="TK-INV-EVENT-102",
@@ -2128,6 +2265,42 @@ class InvestigationFlowTests(unittest.TestCase):
             "Approve the prepared customer reply.",
         )
 
+    def test_confirmation_approve_requires_existing_draft_reply(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-INV-APPROVE-NODRAFT",
+            status="investigating",
+            active_investigation={
+                "id": "INV-APPROVE-NODRAFT",
+                "state": "awaiting_confirmation",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "support_query",
+                "draft_customer_reply": "",
+                "final_confirmation_requested_at": "2026-03-29T09:03:00+00:00",
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:03:00+00:00",
+                "messages": [
+                    {
+                        "id": "INV-APPROVE-NODRAFT-m1",
+                        "role": "engineer_ai",
+                        "content": "Please confirm whether this wording is ready to send.",
+                        "created_at": "2026-03-29T09:03:00+00:00",
+                    }
+                ],
+            },
+        )
+
+        response = self.client.post(
+            "/api/engineer/tickets/TK-INV-APPROVE-NODRAFT-1/investigation/confirmation",
+            json={
+                "engineer_id": "eng",
+                "decision": "approve",
+                "note": "Approved final reply.",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("draft customer reply", response.text.lower())
+
     def test_confirmation_approve_sends_customer_reply_and_closes_investigation(self) -> None:
         self._seed_ticket(
             ticket_id="TK-INV-103",
@@ -2196,12 +2369,13 @@ class InvestigationFlowTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["status"], "communicating")
+        self.assertEqual(payload["status"], "resolved")
         self.assertIsNone(payload["active_investigation"])
+        self.assertEqual(payload["closed_investigation"]["state"], "closed")
 
         detail = self.client.get("/api/engineer/tickets/TK-INV-103-1")
         ticket = detail.json()["ticket"]
-        self.assertEqual(ticket["status"], "communicating")
+        self.assertEqual(ticket["status"], "resolved")
         self.assertIsNone(ticket["active_investigation"])
         self.assertEqual(ticket["messages"][-1]["role"], "assistant")
         self.assertIn("Please upgrade to SDK 4.2.2", ticket["messages"][-1]["content"])
@@ -2211,6 +2385,10 @@ class InvestigationFlowTests(unittest.TestCase):
             "Please upgrade to SDK 4.2.2 and retry token renewal.",
         )
         self.assertEqual(ticket["engineer_agent_state"]["phase"], "awaiting_confirmation")
+        stored_client_ticket = self.repository.get_ticket("TK-INV-103")
+        self.assertIsNotNone(stored_client_ticket)
+        self.assertEqual(stored_client_ticket["status"], "communicating")
+        self.assertIsNone(stored_client_ticket.get("active_engineer_case_id"))
         event_types = [item["event_type"] for item in self.repository.list_ticket_events("TK-INV-103")]
         self.assertIn("ticket_investigation_closed", event_types)
         self.assertIn("ticket_guidance_applied", event_types)

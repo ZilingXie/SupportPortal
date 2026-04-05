@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import types
 import unittest
 from unittest.mock import patch
 
@@ -558,9 +559,75 @@ class ClientTicketAgentRuntimeContractTests(unittest.TestCase):
             "rag_unavailable",
         )
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "completed")
+
+    def test_troubleshooting_rag_unavailable_keeps_investigation_mode_when_intake_llm_prefers_answer(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+        from backend.services.troubleshooting_intake import evaluate_troubleshooting_intake
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "backend.services.troubleshooting_intake.invoke_responses_text",
+            return_value=types.SimpleNamespace(
+                text=(
+                    '{"issue_mode":"answer","known_information":{"symptom":"black screen"},'
+                    '"missing_information":["desired_outcome","blocked_step_or_error"],'
+                    '"ready_for_engineer_ticket":false,'
+                    '"customer_reply":"What are you trying to achieve? What error or blocker are you seeing?"}'
+                )
+            ),
+        ):
+            execution = execute_client_ticket_agent_runtime(
+                message="i got black screen, what should i do?",
+                ticket_id="TK-RAG-UNAVAIL-TRBL-2",
+                customer_id="C-001",
+                ticket_subject="Black screen",
+                ticket_context=[{"role": "customer", "content": "i got black screen, what should i do?"}],
+                product="audio_video_calling",
+                message_id="2026-04-04T00:00:00+00:00",
+                route_agent=lambda **_kwargs: SupportRouteDecision(
+                    scope_label="agora_technical",
+                    route="rag",
+                    confidence=0.94,
+                    reason="technical_question",
+                    matched_signals=["black screen"],
+                    response_language="en",
+                    route_family="agora_docs_rag",
+                    execution_action="rag",
+                    tooling_profile="agora_docs_only",
+                ),
+                route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+                rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                    answer="",
+                    confidence=0.0,
+                    sources=[],
+                    citations=[],
+                    needs_engineer_guidance=True,
+                    reason="rag_unavailable",
+                    evidence_summary={
+                        "quality_signals": {
+                            "generation_mode": "insufficient_evidence",
+                            "needs_human": True,
+                        }
+                    },
+                    packed_evidence=None,
+                ),
+                review_agent=lambda **kwargs: evaluate_troubleshooting_intake(
+                    message=str(kwargs.get("message") or ""),
+                    product=kwargs.get("product"),
+                    ticket_subject=kwargs.get("ticket_subject"),
+                    ticket_context=kwargs.get("ticket_context"),
+                    current_state=kwargs.get("current_state"),
+                    rag_result=kwargs.get("rag_result"),
+                ),
+                rag_canceler=None,
+            )
+
+        self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
+        self.assertEqual(execution.result.client_intake_state["issue_mode"], "investigation")
+        self.assertEqual(
+            execution.result.client_intake_state["missing_information"],
+            ["channel_name", "problematic_uid", "issue_timestamp"],
+        )
         self.assertEqual(execution.runtime_state.review_agent.get("decision"), "clarify_customer_for_intake")
-        self.assertEqual(execution.diagnostics.get("knowledge_index_status"), "configured_table_empty")
-        self.assertEqual(execution.diagnostics.get("knowledge_index_reason"), "configured_table_empty")
 
     def test_grounded_answer_high_risk_waits_for_review(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime

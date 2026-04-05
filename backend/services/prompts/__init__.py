@@ -11,6 +11,11 @@ from backend.services.prompts.query_understanding import (
     build_self_query_system_prompt,
     build_self_query_user_prompt,
 )
+from backend.services.prompts.engineer_investigation_reply import (
+    ENGINEER_INVESTIGATION_REPLY_PROMPT_VERSION,
+    build_engineer_investigation_reply_system_prompt,
+    build_engineer_investigation_reply_user_prompt,
+)
 from backend.services.prompts.rag_agent_planner import (
     build_rag_agent_planner_system_prompt,
     build_rag_agent_planner_user_prompt,
@@ -33,6 +38,9 @@ __all__ = [
     "build_query_rewrite_user_prompt",
     "build_query_decomposition_system_prompt",
     "build_query_decomposition_user_prompt",
+    "ENGINEER_INVESTIGATION_REPLY_PROMPT_VERSION",
+    "build_engineer_investigation_reply_system_prompt",
+    "build_engineer_investigation_reply_user_prompt",
     "build_rag_agent_planner_system_prompt",
     "build_rag_agent_planner_user_prompt",
     "build_rag_answer_system_prompt",

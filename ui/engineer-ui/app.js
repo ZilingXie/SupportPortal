@@ -174,6 +174,21 @@ function applyInvestigationResponseToSelectedTicket(ticketId, payload) {
   }
 
   if (payload && typeof payload === "object") {
+    const nextClosedInvestigation =
+      payload.closed_investigation && typeof payload.closed_investigation === "object"
+        ? payload.closed_investigation
+        : null;
+    const existingHistory = Array.isArray(selectedTicket.investigation_history)
+      ? selectedTicket.investigation_history
+      : [];
+    const nextHistory = nextClosedInvestigation
+      ? [
+          nextClosedInvestigation,
+          ...existingHistory.filter(
+            (item) => String(item?.id || "").trim() !== String(nextClosedInvestigation.id || "").trim()
+          ),
+        ]
+      : existingHistory;
     selectedTicket = {
       ...selectedTicket,
       status: payload.status ?? selectedTicket.status,
@@ -182,7 +197,13 @@ function applyInvestigationResponseToSelectedTicket(ticketId, payload) {
         payload.active_investigation === undefined
           ? selectedTicket.active_investigation
           : payload.active_investigation,
+      investigation_history: nextHistory,
     };
+    if (normalizeStatusValue(selectedTicket.status) === "resolved") {
+      const fallback = buildLocalSummaryFallback(selectedTicket);
+      selectedTicketSummary = fallback.summary;
+      selectedTicketNextAction = fallback.nextAction;
+    }
 
     const ticketIndex = tickets.findIndex(
       (ticket) => normalizeDetailTicketId(ticket?.ticket_id) === normalizedTicketId
@@ -193,6 +214,7 @@ function applyInvestigationResponseToSelectedTicket(ticketId, payload) {
         status: selectedTicket.status,
         updated_at: selectedTicket.updated_at,
         active_investigation: selectedTicket.active_investigation,
+        investigation_history: nextHistory,
       };
     }
   }
@@ -721,35 +743,10 @@ function latestInvestigationUpdate(ticket) {
   return "";
 }
 
-function isApprovalRequestMessage(value) {
-  const content = String(value || "").trim().toLowerCase();
-  if (!content) {
-    return false;
-  }
-  return (
-    content.includes("please confirm this draft before i reply to the customer") ||
-    content.includes("please confirm whether this version is ready to send") ||
-    (content.includes("please confirm") && (content.includes("draft") || content.includes("reply")))
-  );
-}
-
 function findLatestEngineerAiMessageIndex(messages) {
   const items = Array.isArray(messages) ? messages : [];
   for (let index = items.length - 1; index >= 0; index -= 1) {
     if (String(items[index]?.role || "").trim().toLowerCase() === "engineer_ai") {
-      return index;
-    }
-  }
-  return -1;
-}
-
-function findLatestApprovalRequestMessageIndex(messages) {
-  const items = Array.isArray(messages) ? messages : [];
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    if (String(items[index]?.role || "").trim().toLowerCase() !== "engineer_ai") {
-      continue;
-    }
-    if (isApprovalRequestMessage(items[index]?.content)) {
       return index;
     }
   }
@@ -766,7 +763,6 @@ function getInvestigationApprovalUiState(ticket, activeInvestigation, investigat
   const agentState = getEngineerAgentState(ticket);
   const agentPhase = String(agentState?.phase || "").trim().toLowerCase();
   const readyToReply = agentState?.ready_to_reply === true;
-  const latestApprovalIndex = findLatestApprovalRequestMessageIndex(investigationMessages);
   const fallbackEngineerAiIndex = findLatestEngineerAiMessageIndex(investigationMessages);
   const suppressApprovalBlock = options?.suppressApprovalBlock === true;
   const showApprovalBlock =
@@ -774,11 +770,11 @@ function getInvestigationApprovalUiState(ticket, activeInvestigation, investigat
     (normalizedState === "awaiting_confirmation" ||
       agentPhase === "awaiting_confirmation" ||
       readyToReply ||
-      (Boolean(draftCustomerReply) && latestApprovalIndex >= 0));
+      Boolean(draftCustomerReply));
 
   return {
     showApprovalBlock,
-    decisionIndex: latestApprovalIndex >= 0 ? latestApprovalIndex : fallbackEngineerAiIndex,
+    decisionIndex: showApprovalBlock ? fallbackEngineerAiIndex : -1,
   };
 }
 
@@ -2593,9 +2589,12 @@ async function handleDetailClick(event) {
     tellAiSubmitting = true;
     renderTicketDetail();
     try {
-      await submitInvestigationConfirmation(selectedTicketId, "approve");
+      const responsePayload = await submitInvestigationConfirmation(selectedTicketId, "approve");
       investigationReviseMode = false;
       tellAiDraft = "";
+      applyInvestigationResponseToSelectedTicket(selectedTicketId, responsePayload);
+      setSelectedPoolStatus("resolved", { render: false });
+      renderTicketDetail();
       await loadTickets({ refreshDetail: false });
       await refreshSelectedTicket({ silent: true });
     } catch (error) {

@@ -18,6 +18,11 @@ from backend.services.prompts.query_understanding import (
     build_self_query_system_prompt,
     build_self_query_user_prompt,
 )
+from backend.services.prompts.engineer_investigation_reply import (
+    ENGINEER_INVESTIGATION_REPLY_PROMPT_VERSION,
+    build_engineer_investigation_reply_system_prompt,
+    build_engineer_investigation_reply_user_prompt,
+)
 from backend.services.prompts.rag_agent_planner import (
     build_rag_agent_planner_system_prompt,
     build_rag_agent_planner_user_prompt,
@@ -231,6 +236,38 @@ class PromptModuleTests(unittest.TestCase):
         self.assertIn("## Compression Budget", user_prompt)
         self.assertIn("chunk-1", user_prompt)
         self.assertIn("## Required Output Schema", user_prompt)
+
+    def test_engineer_investigation_reply_prompt_is_sectioned_and_json_only(self) -> None:
+        system_prompt = build_engineer_investigation_reply_system_prompt()
+        user_prompt = build_engineer_investigation_reply_user_prompt(
+            customer_language_hint="en",
+            latest_customer_message="I got a black screen after joining the call.",
+            latest_public_assistant_reply="I've opened an engineer ticket and we're investigating.",
+            ticket_conversation_summary="Customer: black screen after join | Client AI: opened engineer ticket",
+            investigation_thread_summary=(
+                "Engineer AI: Please confirm the reproduction scope first. | "
+                "Engineer: you need to get the channel name"
+            ),
+            handoff_packet_summary="unresolved_reason=rag_post_check_insufficient; product=audio_video_calling",
+            agent_state_summary="phase=gather_missing_inputs; next_request_for_engineer=Confirm the missing channel name.",
+            engineer_message="you need to get the channel name",
+            revision_note="",
+            current_draft_customer_reply="",
+        )
+
+        self.assertEqual(
+            ENGINEER_INVESTIGATION_REPLY_PROMPT_VERSION,
+            "engineer-investigation-reply-v1",
+        )
+        self.assertIn("## Role", system_prompt)
+        self.assertIn("Return strict JSON only", system_prompt)
+        self.assertIn('"state"', system_prompt)
+        self.assertIn('"draft_customer_reply"', system_prompt)
+        self.assertIn("## Latest Customer Message", user_prompt)
+        self.assertIn("## Current Investigation Thread", user_prompt)
+        self.assertIn("## Ticket-Level Agent State", user_prompt)
+        self.assertIn("## Latest Engineer Update", user_prompt)
+        self.assertIn("channel name", user_prompt)
 
 
 if __name__ == "__main__":

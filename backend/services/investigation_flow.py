@@ -225,13 +225,17 @@ def build_internal_message(
     created_at: str,
     *,
     sequence: int,
+    meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    message = {
         "id": f"{investigation_id}-m-{sequence}",
         "role": role,
         "content": str(content or "").strip(),
         "created_at": created_at,
     }
+    if isinstance(meta, dict) and meta:
+        message["meta"] = dict(meta)
+    return message
 
 
 def latest_customer_message(ticket: dict[str, Any]) -> str:
@@ -394,6 +398,7 @@ def _apply_ai_turn_to_active_investigation(
             message_text,
             now_value,
             sequence=next_sequence,
+            meta=ai_turn.get("message_meta") if isinstance(ai_turn.get("message_meta"), dict) else None,
         )
         sources = _limited_sources(ai_turn.get("sources"))
         citations = _limited_citations(ai_turn.get("citations"))
@@ -563,7 +568,9 @@ def apply_investigation_confirmation(
         active_investigation["closed_at"] = now_value
         active_investigation["final_confirmation_requested_at"] = None
         draft_reply = str(active_investigation.get("draft_customer_reply") or "").strip()
-        customer_reply = draft_reply or default_customer_reply(ticket, note)
+        if not draft_reply:
+            raise ValueError("A draft customer reply is required before approval.")
+        customer_reply = draft_reply
         history = ticket.get("investigation_history")
         if not isinstance(history, list):
             history = []
