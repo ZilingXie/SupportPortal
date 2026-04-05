@@ -1473,6 +1473,10 @@ html.material-symbols-pending .material-symbols-outlined {
   grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
+.conversation-panel-compact-thread {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
 .tell-ai-composer,
 .takeover-composer {
   display: grid;
@@ -1523,11 +1527,30 @@ html.material-symbols-pending .material-symbols-outlined {
   overflow-y: auto;
 }
 
+.message-list-compact-thread {
+  display: flex;
+  flex-direction: column;
+  align-content: flex-start;
+  max-height: min(60vh, 760px);
+}
+
+.conversation-panel-compact-thread .message-list-compact-thread {
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  justify-content: flex-start;
+}
+
 .message-item {
   display: grid;
   gap: 12px;
   padding: 16px 18px;
   border-radius: 22px;
+}
+
+.message-list-compact-thread .message-item {
+  flex: 0 0 auto;
+  align-self: stretch;
 }
 
 .message-item header {

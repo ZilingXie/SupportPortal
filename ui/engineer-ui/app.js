@@ -1649,6 +1649,7 @@ function renderConversationHtml(messages, options = {}) {
     return '<div class="empty-state">No messages on this ticket yet.</div>';
   }
 
+  const compactThread = Boolean(options.compactThread);
   const inlineDecisionIndex = Number.isInteger(options.inlineDecisionIndex)
     ? options.inlineDecisionIndex
     : -1;
@@ -1657,7 +1658,7 @@ function renderConversationHtml(messages, options = {}) {
   const controlsDisabled = Boolean(options.controlsDisabled);
 
   return `
-    <div class="message-list">
+    <div class="message-list${compactThread ? " message-list-compact-thread" : ""}">
       ${messages
         .map((message, index) => {
           const role = String(message.role || "system").toLowerCase();
@@ -1826,7 +1827,7 @@ function renderTicketDetailView() {
       </header>
 
       <div class="workspace-layout">
-        <section class="panel-card conversation-panel">
+        <section class="panel-card conversation-panel conversation-panel-compact-thread">
           <div class="panel-card-head">
             <div>
               <p class="panel-card-kicker">Engineer Ticket</p>
@@ -1843,6 +1844,7 @@ function renderTicketDetailView() {
           ${
             investigationMessages.length
               ? renderConversationHtml(investigationMessages, {
+                  compactThread: true,
                   inlineDecisionIndex: showInlineConfirmation ? investigationMessages.length - 1 : -1,
                   showInlineConfirmation,
                   draftCustomerReply,

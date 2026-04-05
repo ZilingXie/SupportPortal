@@ -682,6 +682,37 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_engineer_detail_compact_thread_panel_stretches_without_shrinking_card(self) -> None:
+        css = Path("ui/engineer-ui/styles.css").read_text(encoding="utf-8")
+        marker = ".conversation-panel-compact-thread {"
+        start = css.find(marker)
+        self.assertNotEqual(start, -1, msg="Engineer detail should keep the compact thread panel variant.")
+        end = css.find("}", start)
+        self.assertNotEqual(end, -1, msg="Compact thread panel block should be closed.")
+        block = css[start:end]
+
+        self.assertIn("grid-template-rows: auto minmax(0, 1fr) auto;", block)
+        self.assertNotIn(
+            "align-self: start;",
+            block,
+            msg="Compact thread panel should not shrink the entire Engineer Ticket card away from the AI Summary bottom edge.",
+        )
+        list_marker = ".conversation-panel-compact-thread .message-list-compact-thread {"
+        list_start = css.find(list_marker)
+        self.assertNotEqual(
+            list_start,
+            -1,
+            msg="Engineer detail should scope its stretch-and-scroll rules to the compact thread message list.",
+        )
+        list_end = css.find("}", list_start)
+        self.assertNotEqual(list_end, -1, msg="Compact thread message-list block should be closed.")
+        list_block = css[list_start:list_end]
+        self.assertIn("min-height: 0;", list_block)
+        self.assertIn("overflow-y: auto;", list_block)
+        self.assertIn("justify-content: flex-start;", list_block)
+        self.assertIn("max-height: none;", list_block)
+        self.assertIn(".message-list-compact-thread .message-item", css)
+
     def test_engineer_detail_prioritizes_internal_investigation_workspace_and_confirmation(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
@@ -834,6 +865,14 @@ class EngineerUiContractTests(unittest.TestCase):
                 const customerIndex = html.indexOf("Customer Timeline");
                 if (internalIndex === -1 || customerIndex === -1 || internalIndex > customerIndex) {{
                   throw new Error("Engineer ticket thread should render ahead of the customer timeline.");
+                }}
+                const engineerThreadSection = html.slice(internalIndex, customerIndex);
+                if (!engineerThreadSection.includes('message-list message-list-compact-thread')) {{
+                  throw new Error("Engineer ticket thread should use the compact detail conversation layout.");
+                }}
+                const customerTimelineSection = html.slice(customerIndex);
+                if (customerTimelineSection.includes('message-list message-list-compact-thread')) {{
+                  throw new Error("Customer timeline should not inherit the compact engineer thread layout.");
                 }}
                 const decisionIndex = html.indexOf("I have enough information now. Please confirm this draft before I reply to the customer.");
                 const inlineActionsIndex = html.indexOf("detail-investigation-inline-actions");
