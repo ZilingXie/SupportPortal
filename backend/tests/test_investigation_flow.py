@@ -177,6 +177,14 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertGreaterEqual(float(payload_data.get("api_persist_latency_ms") or 0.0), 0.0)
         self.assertGreaterEqual(float(payload_data.get("api_return_latency_ms") or 0.0), 0.0)
 
+    def test_client_ack_prompt_instructions_require_concierge_style(self) -> None:
+        instructions = main._build_client_ack_instructions()
+        self.assertIn("concierge", instructions.lower())
+        self.assertIn("exactly one short acknowledgement sentence", instructions)
+        self.assertIn("Do not provide technical guidance.", instructions)
+        self.assertIn("Do not promise engineer escalation.", instructions)
+        self.assertIn("Match the user's language.", instructions)
+
     def test_client_ack_returns_model_text_and_latency(self) -> None:
         with patch.object(
             main,

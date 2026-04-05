@@ -705,6 +705,24 @@ For each new entry, record:
   - `git diff --check`
 
 - Date: 2026-04-05
+- Area or subsystem: Client acknowledgement prompt tone
+- Prompt or model version: `client-ack-concierge-v1`
+- Summary: Tightened the client ack system prompt so the `gpt-5.4-nano` acknowledgement is explicitly generated in a concierge-style voice while preserving the existing one-sentence, non-technical, no-escalation constraints.
+- Reason: The previous prompt produced acknowledgements that were correct but too generic and operational; the client-facing first touch should feel more polished and concierge-like without changing routing or fallback behavior.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Client ack generations should sound warmer and more polished by default instead of purely transactional.
+  - The model is still constrained to exactly one acknowledgement sentence in the user's language.
+  - The client ack still avoids technical guidance, source citations, and engineer-escalation promises.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_investigation_flow.InvestigationFlowTests.test_client_ack_prompt_instructions_require_concierge_style backend.tests.test_investigation_flow.InvestigationFlowTests.test_client_ack_returns_model_text_and_latency -q`
+  - `python3 -m py_compile backend/main.py backend/tests/test_investigation_flow.py`
+  - `git diff --check`
+
+- Date: 2026-04-05
 - Area or subsystem: Client new-session welcome copy
 - Prompt or model version: `client-empty-session-welcome-v2`
 - Summary: Removed the empty-session hero block above the welcome bubble and updated the transient welcome copy to a title-cased Agora Support greeting.
