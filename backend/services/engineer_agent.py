@@ -132,6 +132,11 @@ def build_engineer_handoff_packet(
         if isinstance(existing.get("client_intake_state"), dict)
         else None
     )
+    existing_client_agent_runtime_state = (
+        existing.get("client_agent_runtime_state")
+        if isinstance(existing.get("client_agent_runtime_state"), dict)
+        else None
+    )
     normalized_route_summary = dict(existing_route_summary)
     if isinstance(route_summary, dict):
         for key in (
@@ -194,6 +199,11 @@ def build_engineer_handoff_packet(
         if isinstance(ticket.get("client_intake_state"), dict)
         else existing_client_intake_state
     )
+    normalized_client_agent_runtime_state = (
+        copy.deepcopy(ticket.get("client_agent_runtime_state"))
+        if isinstance(ticket.get("client_agent_runtime_state"), dict)
+        else existing_client_agent_runtime_state
+    )
 
     return {
         "source": _clean_text(source) or _clean_text(existing.get("source")) or "support_query",
@@ -204,6 +214,7 @@ def build_engineer_handoff_packet(
         "route_summary": normalized_route_summary,
         "rag_result": normalized_rag_result,
         "client_intake_state": normalized_client_intake_state,
+        "client_agent_runtime_state": normalized_client_agent_runtime_state,
         "unresolved_reason": _clean_text(trigger_reason)
         or _clean_text(existing.get("unresolved_reason"))
         or _clean_text(normalized_route_summary.get("route_reason"))

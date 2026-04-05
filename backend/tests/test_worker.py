@@ -60,6 +60,8 @@ def _load_worker_module():
     fake_main.build_engineer_followup_request = lambda *_args, **_kwargs: "follow up"
     fake_main.ensure_ticket_defaults = lambda _ticket: None
     fake_main.now_iso = lambda: "2026-03-22T00:00:00+00:00"
+    fake_main._run_client_ticket_review_agent = lambda *_args, **_kwargs: None
+    fake_main._record_ticket_agent_runtime_events = lambda *_args, **_kwargs: None
     fake_main.ticket_repository = Mock()
 
     module = importlib.util.module_from_spec(spec)
@@ -144,6 +146,7 @@ class WorkerResilienceTests(unittest.TestCase):
             confidence=0.82,
             sources=["https://investor.agora.io"],
             citations=[],
+            needs_engineer_guidance=False,
             needs_investigating=False,
             next_status="communicating",
             answer_route="web_search",
@@ -165,7 +168,7 @@ class WorkerResilienceTests(unittest.TestCase):
 
         with patch.object(
             worker,
-            "analyze_ticket_message",
+            "decide_support_route",
             return_value=_route_decision(
                 action="web_search",
                 scope_label="agora_non_technical",
@@ -181,9 +184,9 @@ class WorkerResilienceTests(unittest.TestCase):
             return_value={"cancelled": True, "stage": "round_1_retrieval"},
         ) as cancel_mock, patch.object(
             worker,
-            "orchestrate_ticket_execution",
+            "resolve_support_message",
             return_value=execution,
-        ) as orchestrate_mock:
+        ) as resolve_mock:
             result, diagnostics = worker._execute_parallel_ticket_query(
                 "Who is Agora's CEO?",
                 ticket_id="T-WEB-1",
@@ -198,9 +201,10 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(diagnostics["rag_cancel_stage"], "round_1_retrieval")
         self.assertEqual(diagnostics["route_final_action"], "web_search")
         self.assertEqual(diagnostics["route_result_source"], "parallel_route")
+        self.assertEqual(result.workflow_action, "answer_customer")
         cancel_mock.assert_called_once()
         self.assertEqual(
-            orchestrate_mock.call_args.kwargs["decision"].execution_action,
+            resolve_mock.call_args.kwargs["decision"].execution_action,
             "web_search",
         )
 
@@ -237,17 +241,13 @@ class WorkerResilienceTests(unittest.TestCase):
 
         with patch.object(
             worker,
-            "analyze_ticket_message",
+            "decide_support_route",
             side_effect=RuntimeError("route timeout"),
         ), patch.object(
             worker,
             "_fetch_rag_answer_detail_for_worker",
             return_value=rag_detail,
-        ), patch.object(
-            worker,
-            "orchestrate_ticket_execution",
-            return_value=execution,
-        ) as orchestrate_mock:
+        ):
             result, diagnostics = worker._execute_parallel_ticket_query(
                 "how to join channel",
                 ticket_id="T-RAG-1",
@@ -264,10 +264,8 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertGreaterEqual(float(diagnostics["route_latency_ms"]), 0.0)
         self.assertTrue(str(diagnostics["rag_started_at"] or "").strip())
         self.assertTrue(str(diagnostics["rag_finished_at"] or "").strip())
-        self.assertEqual(
-            orchestrate_mock.call_args.kwargs["decision"].execution_action,
-            "rag",
-        )
+        self.assertEqual(result.workflow_action, "answer_customer")
+        self.assertEqual(result.answer, "Use joinChannel with the same channel name and token.")
 
     def test_process_ticket_query_forwards_ticket_product_to_orchestrator(self) -> None:
         ticket = _build_ticket()
@@ -377,6 +375,22 @@ class WorkerResilienceTests(unittest.TestCase):
             return_value=execution,
         ), patch.object(
             worker,
+            "_record_ticket_agent_runtime_events",
+            side_effect=lambda execution_arg: [
+                repository.record_ticket_agent_event(
+                    str(item.get("ticket_id") or ""),
+                    str(item.get("message_id") or "").strip() or None,
+                    str(item.get("run_id") or ""),
+                    str(item.get("agent_name") or ""),
+                    str(item.get("phase") or ""),
+                    str(item.get("event_type") or ""),
+                    dict(item.get("payload") or {}) if isinstance(item.get("payload"), dict) else {},
+                )
+                for item in getattr(execution_arg, "client_agent_runtime_events", [])
+                if isinstance(item, dict)
+            ],
+        ), patch.object(
+            worker,
             "build_client_sync_event",
             return_value={"event": "ticket_ai_response_ready"},
         ), patch.object(
@@ -400,6 +414,110 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertFalse(repository.save_engineer_case.called)
         event_payload = repository.record_event.call_args_list[0].args[2]
         self.assertEqual(event_payload["workflow_action"], "clarify_customer_for_intake")
+
+    def test_process_ticket_query_persists_client_agent_runtime_state_and_events(self) -> None:
+        ticket = _build_ticket(ticket_id="T-RUNTIME", customer_message="how to join channel")
+        ticket["product"] = "audio_video_calling"
+        repository = Mock()
+        repository.get_ticket.side_effect = [
+            copy.deepcopy(ticket),
+            copy.deepcopy(ticket),
+        ]
+        repository.list_ticket_events.return_value = []
+        repository.save_ticket.return_value = None
+        repository.record_event.return_value = None
+        repository.record_ticket_agent_event.return_value = None
+        repository.save_engineer_case.return_value = None
+        bus = Mock()
+        execution = types.SimpleNamespace(
+            answer="Use joinChannel with the same channel name and token.",
+            confidence=0.91,
+            sources=["https://docs.agora.io/en/video-calling/get-started"],
+            citations=[{"chunk_id": "chunk-1"}],
+            needs_engineer_guidance=False,
+            answer_route="rag",
+            scope_label="agora_technical",
+            route_reason="grounded_answer",
+            route_confidence=0.91,
+            search_used=False,
+            matched_signals=["join channel"],
+            route_family="agora_docs_rag",
+            execution_action="rag",
+            tooling_profile="agora_docs_only",
+            needs_investigating=False,
+            next_status="communicating",
+            workflow_action="answer_customer",
+            client_intake_state=None,
+            evidence_summary=None,
+            run_id="run-123",
+            client_agent_runtime_state={
+                "runtime_version": "client_ticket_agents_v1",
+                "active_run_id": "run-123",
+                "status": "completed",
+                "main_agent": {"phase": "completed", "status": "completed"},
+                "route_agent": {"phase": "completed", "status": "completed", "decision": "rag"},
+                "rag_agent": {"phase": "completed", "status": "completed", "decision": "grounded_answer"},
+                "review_agent": {"phase": "skipped", "status": "skipped"},
+            },
+            client_agent_runtime_events=[
+                {
+                    "ticket_id": "T-RUNTIME",
+                    "message_id": "2026-03-22T00:00:00+00:00",
+                    "run_id": "run-123",
+                    "agent_name": "main_agent",
+                    "phase": "completed",
+                    "event_type": "workflow_decided",
+                    "payload": {"workflow_action": "answer_customer"},
+                    "created_at": "2026-03-22T00:00:01+00:00",
+                }
+            ],
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "_orchestrate_worker_support_message",
+            return_value=execution,
+        ), patch.object(
+            worker,
+            "_record_ticket_agent_runtime_events",
+            side_effect=lambda execution_arg: [
+                repository.record_ticket_agent_event(
+                    str(item.get("ticket_id") or ""),
+                    str(item.get("message_id") or "").strip() or None,
+                    str(item.get("run_id") or ""),
+                    str(item.get("agent_name") or ""),
+                    str(item.get("phase") or ""),
+                    str(item.get("event_type") or ""),
+                    dict(item.get("payload") or {}) if isinstance(item.get("payload"), dict) else {},
+                )
+                for item in getattr(execution_arg, "client_agent_runtime_events", [])
+                if isinstance(item, dict)
+            ],
+        ), patch.object(
+            worker,
+            "build_client_sync_event",
+            return_value={"event": "ticket_ai_response_ready"},
+        ), patch.object(
+            worker,
+            "ensure_ticket_defaults",
+            side_effect=lambda ticket: None,
+        ), patch.object(
+            worker,
+            "now_iso",
+            return_value="2026-03-22T00:01:00+00:00",
+        ):
+            worker._process_ticket_query(bus, dict(self.task, ticket_id="T-RUNTIME", customer_message="how to join channel"))
+
+        saved_ticket = repository.save_ticket.call_args_list[0].args[0]
+        self.assertEqual(saved_ticket["client_agent_runtime_state"]["active_run_id"], "run-123")
+        assistant_message = saved_ticket["messages"][-1]
+        self.assertEqual(assistant_message["client_agent_run_id"], "run-123")
+        self.assertEqual(assistant_message["client_agent_runtime_status"], "completed")
+        repository.record_ticket_agent_event.assert_called_once()
+        agent_event_args = repository.record_ticket_agent_event.call_args.args
+        self.assertEqual(agent_event_args[2], "run-123")
+        self.assertEqual(agent_event_args[3], "main_agent")
+
     def test_process_ticket_query_retries_transient_save_ticket_failure(self) -> None:
         initial_ticket = _build_ticket()
         repository = Mock()

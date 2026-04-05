@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS support_tickets (
     engineer_case_count INTEGER NOT NULL DEFAULT 0,
     product TEXT,
     client_intake_state JSONB,
+    client_agent_runtime_state JSONB,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
@@ -36,6 +37,18 @@ CREATE TABLE IF NOT EXISTS support_ticket_messages (
 CREATE TABLE IF NOT EXISTS support_ticket_events (
     id BIGSERIAL PRIMARY KEY,
     ticket_id TEXT REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS support_ticket_agent_events (
+    id BIGSERIAL PRIMARY KEY,
+    ticket_id TEXT NOT NULL REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,
+    message_id TEXT,
+    run_id TEXT NOT NULL,
+    agent_name TEXT NOT NULL,
+    phase TEXT NOT NULL,
     event_type TEXT NOT NULL,
     payload JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -107,6 +120,9 @@ CREATE INDEX IF NOT EXISTS idx_support_ticket_messages_ticket_created
 
 CREATE INDEX IF NOT EXISTS idx_support_ticket_events_ticket_created
     ON support_ticket_events (ticket_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_support_ticket_agent_events_ticket_created
+    ON support_ticket_agent_events (ticket_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_support_ticket_investigations_ticket_updated
     ON support_ticket_investigations (ticket_id, updated_at DESC);

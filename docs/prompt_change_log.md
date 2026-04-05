@@ -603,3 +603,103 @@ For each new entry, record:
   - RAG diagnostics now record which answer profile actually served the response and whether the fast-answer fallback path was used.
 - Verification:
   - `/Users/xieziling/.config/superpowers/worktrees/SupportPortal/rag-latency-opt/.venv/bin/python -m unittest backend.tests.test_rag_qa backend.tests.test_rag_api backend.tests.test_knowledge_repository_bm25`
+
+- Date: 2026-04-04
+- Area or subsystem: Client ticket main-agent runtime prompt/config routing
+- Prompt or model version: `client-ticket-agents-v1`
+- Summary: Introduced agent-namespaced prompt/model configuration for the explicit `main agent` runtime so `route agent`, `rag agent`, and `review agent` can resolve their own model profiles while still falling back to the existing legacy scenario env names.
+- Reason: The new runtime needs independently tunable route, web-search, answer, post-check, and intake behavior without breaking current deployments that still rely on legacy `INTENT_ROUTER_*`, `RAG_ANSWER_*`, `RAG_SUFFICIENCY_JUDGE_*`, and `TROUBLESHOOTING_INTAKE_*` environment names.
+- Affected files or config:
+  - `backend/services/llm_profiles.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `docs/prompt_change_log.md`
+  - `ROUTE_AGENT_ROUTER_*`
+  - `ROUTE_AGENT_WEB_SEARCH_*`
+  - `RAG_AGENT_PLANNER_*`
+  - `RAG_AGENT_QUERY_EXPANSION_*`
+  - `RAG_AGENT_ANSWER_*`
+  - `RAG_AGENT_CONTEXT_COMPRESSION_*`
+  - `REVIEW_AGENT_POSTCHECK_*`
+  - `REVIEW_AGENT_INTAKE_*`
+- Expected behavior change:
+  - The client ticket flow runs `route agent` and `rag agent` in parallel and only waits on `review agent` for high-risk grounded answers or `rag_insufficient_evidence`.
+  - Agent-named envs now override the older scenario env names, while legacy names continue to work as compatibility fallbacks.
+  - The client-ticket execution path now converges on the explicit main-agent runtime instead of a separate legacy ticket orchestrator.
+- Verification:
+  - `/Users/xieziling/.config/superpowers/worktrees/SupportPortal/client-agent-runtime/.venv/bin/python -m unittest backend.tests.test_client_ticket_agent_runtime backend.tests.test_llm_profiles backend.tests.test_worker -q`
+  - `python3 -m py_compile backend/main.py backend/worker.py backend/services/client_ticket_agent_runtime.py backend/services/llm_profiles.py`
+  - `git diff --check`
+
+- Date: 2026-04-04
+- Area or subsystem: Client acknowledgement timeout budget
+- Prompt or model version: `client-ack-proxy-only-v4`
+- Summary: Unified the transient client acknowledgement budget to `5.0s/5000ms` and preserved late `gpt-5.4-nano` overwrites by keeping the ack request alive after the static fallback appears.
+- Reason: Live client ack requests are frequently landing between three and five seconds, so the frontend fallback and backend model timeout need the same longer budget to increase the chance that users see model-generated acknowledgement text.
+- Affected files or config:
+  - `ui/client-ui/app.js`
+  - `backend/services/llm_profiles.py`
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `docs/prompt_change_log.md`
+  - `CLIENT_ACK_TIMEOUT_SECONDS`
+  - `CLIENT_ACK_FALLBACK_TIMEOUT_MS`
+- Expected behavior change:
+  - The client now waits up to `5000ms` before rendering localized static fallback acknowledgement text.
+  - The backend now gives the `gpt-5.4-nano` client-ack scenario up to `5.0s` by default instead of `2.0s`.
+  - If the static fallback has already rendered and a later non-empty model acknowledgement arrives, the model text overwrites the fallback instead of being dropped.
+- Verification:
+  - `python3 -m unittest backend.tests.test_client_ui_contract backend.tests.test_llm_profiles backend.tests.test_single_host_compose -q`
+  - `node --check ui/client-ui/app.js`
+  - `python3 -m py_compile backend/services/llm_profiles.py`
+  - `git diff --check`
+
+- Date: 2026-04-04
+- Area or subsystem: Client acknowledgement rendering precedence
+- Prompt or model version: `client-ack-proxy-only-v5`
+- Summary: Stopped rendering server-side placeholder acknowledgements ahead of the client ack path so the UI now waits for the `gpt-5.4-nano` ack first and only falls back to the static template after the full `5000ms` threshold.
+- Reason: The UI could still show a rule-based `server_ack` template immediately on sync paths, which made users see template copy before the model acknowledgement even though the fallback budget had already been moved to five seconds.
+- Affected files or config:
+  - `ui/client-ui/app.js`
+  - `backend/tests/test_client_ui_contract.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - `POST /api/tickets/query` responses marked with `ack_source=server_ack` no longer render that placeholder directly into the local transcript.
+  - If no real assistant reply has arrived yet, the client ack request remains alive after the sync request finishes so the GPT acknowledgement can still render before fallback.
+  - Static fallback acknowledgement text only appears after the `5000ms` timeout, and only when no model acknowledgement or real assistant answer has already arrived.
+- Verification:
+  - `python3 -m unittest backend.tests.test_client_ui_contract backend.tests.test_llm_profiles backend.tests.test_single_host_compose -q`
+  - `node --check ui/client-ui/app.js`
+  - `git diff --check`
+
+- Date: 2026-04-05
+- Area or subsystem: Client ticket agent runtime hard cutover and config deprecation warnings
+- Prompt or model version: `client-ticket-agents-v2`
+- Summary: Removed the client-ticket runtime mode switch, hard-cut the serving path to the explicit `main agent` runtime, and surfaced deprecated legacy env aliases as startup/health warnings while keeping agent-namespaced prompt/model configs authoritative.
+- Reason: The repo no longer needs two ticket-side orchestration stacks, and keeping the runtime-mode flag plus silent legacy env fallbacks made the active execution path harder to reason about and observe.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_ticket_orchestrator.py`
+  - `backend/tests/test_ticket_routing.py`
+  - `backend/tests/test_worker.py`
+  - `backend/tests/test_trace_client_ticket_route_cli.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `docs/prompt_change_log.md`
+  - `ROUTE_AGENT_*`
+  - `RAG_AGENT_*`
+  - `REVIEW_AGENT_*`
+- Expected behavior change:
+  - `POST /api/tickets/query` now always executes through the `main agent` path and reports only `main_agent_async`, `main_agent_sync`, or `active_investigation_followup`.
+  - Legacy scenario env aliases still resolve for one compatibility window, but `/health.config_warnings` and startup logs now explicitly report which deprecated env names are in use.
+  - The benchmark runner now adapts offline RAG output into the same shared main-agent execution contracts instead of composing a separate ticket-side orchestration stack.
+- Verification:
+  - `./.venv/bin/python -m unittest backend.tests.test_client_ticket_agent_runtime backend.tests.test_ticket_orchestrator backend.tests.test_ticket_routing backend.tests.test_trace_client_ticket_route_cli backend.tests.test_llm_profiles backend.tests.test_rag_benchmark_runner backend.tests.test_investigation_flow backend.tests.test_worker -q`
+  - `./.venv/bin/python -m py_compile backend/services/client_ticket_agent_runtime.py backend/services/ticket_orchestrator.py backend/services/rag_benchmark_runner.py backend/services/llm_profiles.py backend/main.py backend/worker.py scripts/trace_client_ticket_route.py`
+  - `git diff --check`

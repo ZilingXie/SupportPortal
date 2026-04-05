@@ -2231,3 +2231,94 @@ For each new entry, record:
   - RAG query telemetry is now eventually consistent because request threads enqueue persistence work instead of waiting for synchronous DB writes to finish.
 - Verification:
   - `/Users/xieziling/.config/superpowers/worktrees/SupportPortal/rag-latency-opt/.venv/bin/python -m unittest backend.tests.test_rag_qa backend.tests.test_rag_api backend.tests.test_knowledge_repository_bm25`
+
+## 2026-04-04 - Client ticket main-agent runtime orchestrates route, RAG, and review subagents
+
+- Summary:
+  - Added an explicit `main agent` runtime for client ticket execution and split the internal support flow into `route agent`, `rag agent`, and `review agent` subagents.
+  - `route agent` now owns final non-RAG outcomes, `rag agent` speculatively produces full RAG candidates, and `review agent` centralizes high-risk grounded-answer post-check plus `rag_insufficient_evidence` intake review.
+  - Added ticket-level runtime snapshots and append-only agent events, plus Ticket Dashboard detail panels that expose the latest runtime state and recent agent decisions.
+  - Introduced a dual-stack runtime switch with conservative default `legacy` mode so the new runtime can be enabled explicitly via environment without breaking the existing customer-support path during rollout.
+- Reason:
+  - The previous client-ticket flow had an implicit controller split across `main.py`, `worker.py`, `ticket_orchestrator.py`, and `troubleshooting_intake.py`, which made orchestration harder to observe, test, and evolve.
+  - The explicit runtime is needed to support clear route/RAG/review ownership, agent-level observability, and a safer staged rollout.
+- Affected files/config:
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/services/engineer_agent.py`
+  - `backend/repositories/ticket_repository.py`
+  - `backend/sql/ticket_storage.sql`
+  - `backend/services/llm_profiles.py`
+  - `ui/dashboard-ui/app.js`
+  - `ui/dashboard-ui/index.html`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_worker.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_repository_configuration.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - `support_tickets` now persists `client_agent_runtime_state JSONB`.
+  - Added append-only `support_ticket_agent_events` for per-agent runtime events keyed by `ticket_id`, `message_id`, and `run_id`.
+  - `client_intake_state` remains in place for compatibility during rollout, and engineer handoff can now read the richer runtime snapshot when present.
+  - No change to the `/internal/rag/query` wire contract.
+- Verification:
+  - `/Users/xieziling/.config/superpowers/worktrees/SupportPortal/client-agent-runtime/.venv/bin/python -m unittest backend.tests.test_investigation_flow backend.tests.test_worker backend.tests.test_ticket_orchestrator backend.tests.test_dashboard_ui_contract backend.tests.test_client_ticket_agent_runtime backend.tests.test_repository_configuration backend.tests.test_llm_profiles -q`
+  - `node --check ui/dashboard-ui/app.js`
+  - `python3 scripts/verify_feature_list.py`
+  - `git diff --check`
+
+## 2026-04-04 - Added local client-ticket route tracing report for main-agent runtime
+
+- Summary:
+  - Added a one-off local tracing script that simulates a real client ticket question, waits for the main-agent runtime to finish, and prints a Markdown latency report covering `client ack`, `main agent`, `route agent`, `rag agent`, `review agent`, and the final answer.
+  - The tracer reads append-only ticket agent events plus `support_rag_query_runs` telemetry so it can reconstruct both outer agent timings and inner RAG segment timings from a single run.
+  - The script also writes a JSON artifact under `/tmp/supportportal-traces/` so traces can be re-opened without re-running the query.
+- Reason:
+  - After enabling the explicit client-ticket main-agent runtime, we needed a repeatable local diagnostic to answer “where did the time go?” for real questions such as `how to join channel` without adding new APIs or mutating the production route path.
+- Affected files/config:
+  - `scripts/trace_client_ticket_route.py`
+  - `backend/tests/test_trace_client_ticket_route_cli.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, prompt, or serving-path changes.
+  - The script creates a trace ticket through the existing API and reads existing `support_ticket_events`, `support_ticket_agent_events`, and `support_rag_query_runs` records.
+  - JSON trace artifacts are written only to local `/tmp/supportportal-traces/`.
+- Verification:
+  - `python3 -m unittest backend.tests.test_trace_client_ticket_route_cli -q`
+
+## 2026-04-05 - Hard-cut client ticket execution to the main-agent runtime and removed duplicate ticket-side RAG orchestration
+
+- Summary:
+  - Removed the dual-stack client-ticket execution split and converged the serving path on one explicit runtime: `main agent -> route agent / rag agent / review agent`.
+  - Reduced `ticket_orchestrator.py` to a compatibility shell and moved the shared ticket execution contracts into `client_ticket_agent_runtime.py`.
+  - Updated the worker, API, trace tooling, and offline benchmark runner to consume the same main-agent contracts and main-agent processing-mode labels.
+  - Added deprecated env-alias warning surfacing through `/health.config_warnings` so remaining legacy prompt/model names stay observable during the compatibility window.
+- Reason:
+  - The repo had two overlapping ticket-side orchestration layers, which duplicated route/RAG/review control flow and made runtime diagnostics, benchmark execution, and operational debugging inconsistent.
+- Affected files/config:
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_ticket_orchestrator.py`
+  - `backend/tests/test_ticket_routing.py`
+  - `backend/tests/test_trace_client_ticket_route_cli.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_worker.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No new schema changes in this step.
+  - `support_ticket_agent_events` and `support_tickets.client_agent_runtime_state` remain the sole ticket-runtime observability surfaces.
+  - `client_intake_state` is retained for business continuity, but it is now fed from the shared review-agent path rather than a separate legacy orchestrator.
+- Verification:
+  - `./.venv/bin/python -m unittest backend.tests.test_client_ticket_agent_runtime backend.tests.test_ticket_orchestrator backend.tests.test_ticket_routing backend.tests.test_trace_client_ticket_route_cli backend.tests.test_llm_profiles backend.tests.test_rag_benchmark_runner backend.tests.test_investigation_flow backend.tests.test_worker -q`
+  - `./.venv/bin/python -m py_compile backend/services/client_ticket_agent_runtime.py backend/services/ticket_orchestrator.py backend/services/rag_benchmark_runner.py backend/services/llm_profiles.py backend/main.py backend/worker.py scripts/trace_client_ticket_route.py`
+  - `git diff --check`

@@ -116,8 +116,8 @@ class InvestigationFlowTests(unittest.TestCase):
             side_effect=AssertionError("server-side ack should be skipped for optimistic parallel queries"),
         ), patch.object(
             main,
-            "analyze_ticket_message",
-            side_effect=AssertionError("sync route analysis should be skipped for optimistic parallel queries"),
+            "execute_client_ticket_agent_runtime",
+            side_effect=AssertionError("sync main-agent execution should be skipped for async queries"),
         ), patch.object(
             main.task_queue,
             "enqueue",
@@ -144,7 +144,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertFalse(payload["ai_replied"])
         self.assertTrue(payload["queued_for_ai"])
         self.assertEqual(payload["ack_source"], "client_model")
-        self.assertEqual(payload["processing_mode"], "optimistic_parallel")
+        self.assertEqual(payload["processing_mode"], "main_agent_async")
         self.assertEqual(payload["status"], "communicating")
         self.assertTrue(str(payload["queued_message_created_at"] or "").strip())
         self.assertGreaterEqual(float(payload["api_persist_latency_ms"]), 0.0)
@@ -173,7 +173,7 @@ class InvestigationFlowTests(unittest.TestCase):
             item for item in events if str(item.get("event_type") or item.get("event") or "").strip() == "ticket_ai_processing"
         )
         payload_data = processing_event.get("payload") if isinstance(processing_event.get("payload"), dict) else processing_event
-        self.assertEqual(payload_data.get("parallel_mode"), "optimistic_parallel")
+        self.assertEqual(payload_data.get("parallel_mode"), "main_agent_async")
         self.assertGreaterEqual(float(payload_data.get("api_persist_latency_ms") or 0.0), 0.0)
         self.assertGreaterEqual(float(payload_data.get("api_return_latency_ms") or 0.0), 0.0)
 
@@ -358,32 +358,30 @@ class InvestigationFlowTests(unittest.TestCase):
             ),
         ), patch.object(
             main,
-            "analyze_ticket_message",
-            return_value=_rag_route_decision(),
-        ), patch.object(
-            main,
-            "orchestrate_ticket_execution",
+            "execute_client_ticket_agent_runtime",
             return_value=types.SimpleNamespace(
-                answer="先使用 quickstart 初始化 SDK。",
-                confidence=0.88,
-                sources=["official/quickstart.md"],
-                citations=[],
-                needs_investigating=False,
-                next_status="communicating",
-                answer_route="rag",
-                scope_label="agora_technical",
-                route_family="agora_docs_rag",
-                execution_action="rag",
-                tooling_profile="agora_docs_only",
-                route_reason="grounded_answer",
-                route_confidence=0.93,
-                search_used=False,
-                matched_signals=["join channel"],
-                investigation_reason=None,
-                evidence_summary=None,
-                packed_evidence=None,
-                workflow_action="answer_customer",
-                client_intake_state=None,
+                result=types.SimpleNamespace(
+                    answer="先使用 quickstart 初始化 SDK。",
+                    confidence=0.88,
+                    sources=["official/quickstart.md"],
+                    citations=[],
+                    needs_investigating=False,
+                    next_status="communicating",
+                    answer_route="rag",
+                    scope_label="agora_technical",
+                    route_family="agora_docs_rag",
+                    execution_action="rag",
+                    tooling_profile="agora_docs_only",
+                    route_reason="grounded_answer",
+                    route_confidence=0.93,
+                    search_used=False,
+                    matched_signals=["join channel"],
+                    investigation_reason=None,
+                    evidence_summary=None,
+                    packed_evidence=None,
+                    workflow_action="answer_customer",
+                    client_intake_state=None,
+                ),
             ),
         ), patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
@@ -540,6 +538,79 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(payload["token_usage"]["related_ticket_ids"], ["TK-040-1"])
         self.assertEqual(payload["token_usage"]["total_input_tokens"], 1200)
 
+    def test_engineer_ticket_detail_includes_client_agent_runtime_state_and_events(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-RUNTIME-100",
+            status="investigating",
+            product="audio_video_calling",
+            client_intake_state={
+                "phase": "gather_customer_inputs",
+                "product": "audio_video_calling",
+                "issue_mode": "investigation",
+                "known_information": {"issue_symptom": "black screen"},
+                "missing_information": ["channel_name"],
+                "ready_for_engineer_ticket": False,
+                "last_updated_at": "2026-04-04T00:00:00+00:00",
+            },
+        )
+        engineer_case = {
+            "engineer_case_id": "TK-RUNTIME-100-1",
+            "client_ticket_id": "TK-RUNTIME-100",
+            "case_sequence": 1,
+            "title": "Runtime ticket",
+            "status": "investigating",
+            "trigger_source": "support_query",
+            "trigger_reason": "rag_insufficient_evidence",
+            "opened_at": "2026-04-04T00:01:00+00:00",
+            "updated_at": "2026-04-04T00:01:00+00:00",
+            "closed_at": None,
+            "messages": [],
+        }
+        client_ticket = self.repository.get_ticket("TK-RUNTIME-100")
+        assert client_ticket is not None
+        client_ticket["active_engineer_case_id"] = "TK-RUNTIME-100-1"
+        client_ticket["engineer_case_count"] = 1
+        client_ticket["client_agent_runtime_state"] = {
+            "runtime_version": "client_ticket_agents_v1",
+            "active_run_id": "run-123",
+            "status": "completed",
+            "main_agent": {"phase": "completed", "status": "completed"},
+            "route_agent": {"phase": "completed", "status": "completed", "decision": "rag"},
+            "rag_agent": {"phase": "completed", "status": "completed", "decision": "rag_insufficient_evidence"},
+            "review_agent": {"phase": "completed", "status": "completed", "decision": "clarify_customer_for_intake"},
+        }
+        self.repository.save_ticket(client_ticket, new_messages=[])
+        self.repository.save_engineer_case(engineer_case, new_messages=[])
+        self.repository.record_ticket_agent_event(
+            "TK-RUNTIME-100",
+            "2026-04-04T00:00:00+00:00",
+            "run-123",
+            "main_agent",
+            "completed",
+            "workflow_decided",
+            {"workflow_action": "clarify_customer_for_intake"},
+        )
+
+        with patch.object(
+            main.rag_service_client,
+            "get_ticket_family_token_summary",
+            return_value={
+                "canonical_ticket_id": "TK-RUNTIME-100",
+                "related_ticket_ids": ["TK-RUNTIME-100-1"],
+                "total_input_tokens": 0,
+                "total_output_tokens": 0,
+                "usage_ledger": [],
+                "usage_summary": {},
+            },
+        ):
+            detail = self.client.get("/api/engineer/tickets/TK-RUNTIME-100-1")
+
+        self.assertEqual(detail.status_code, 200, detail.text)
+        payload = detail.json()["ticket"]
+        self.assertEqual(payload["client_agent_runtime_state"]["active_run_id"], "run-123")
+        self.assertEqual(payload["client_agent_events"][0]["run_id"], "run-123")
+        self.assertEqual(payload["client_agent_events"][0]["agent_name"], "main_agent")
+
     def test_repository_normalizes_legacy_waiting_for_engineer_status_to_investigating(self) -> None:
         ticket = self._seed_ticket(status="waiting_for_engineer")
         loaded = self.repository.get_ticket(str(ticket["ticket_id"]))
@@ -566,45 +637,43 @@ class InvestigationFlowTests(unittest.TestCase):
             ),
         ), patch.object(
             main,
-            "analyze_ticket_message",
-            return_value=_rag_route_decision(reason="technical_troubleshooting_symptom"),
-        ), patch.object(
-            main,
-            "orchestrate_ticket_execution",
+            "execute_client_ticket_agent_runtime",
             return_value=types.SimpleNamespace(
-                answer=main.INSUFFICIENT_EVIDENCE_REPLY,
-                confidence=0.0,
-                sources=[],
-                citations=[],
-                needs_investigating=True,
-                next_status="investigating",
-                answer_route="rag",
-                scope_label="agora_technical",
-                route_family="agora_docs_rag",
-                execution_action="rag",
-                tooling_profile="agora_docs_only",
-                route_reason="rag_insufficient_evidence",
-                route_confidence=0.91,
-                search_used=False,
-                matched_signals=["token renew", "callback"],
-                investigation_reason="rag_insufficient_evidence",
-                evidence_summary=None,
-                packed_evidence=None,
-                workflow_action="open_engineer_ticket",
-                client_intake_state={
-                    "phase": "ready_for_engineer_ticket",
-                    "product": "audio_video_calling",
-                    "issue_mode": "investigation",
-                    "known_information": {
-                        "issue_symptom": "token renew callback never fires",
-                        "channel_name": "demo-room",
-                        "problematic_uid": "42",
-                        "issue_timestamp": "2026-04-04T10:30:00Z",
+                result=types.SimpleNamespace(
+                    answer=main.INSUFFICIENT_EVIDENCE_REPLY,
+                    confidence=0.0,
+                    sources=[],
+                    citations=[],
+                    needs_investigating=True,
+                    next_status="investigating",
+                    answer_route="rag",
+                    scope_label="agora_technical",
+                    route_family="agora_docs_rag",
+                    execution_action="rag",
+                    tooling_profile="agora_docs_only",
+                    route_reason="rag_insufficient_evidence",
+                    route_confidence=0.91,
+                    search_used=False,
+                    matched_signals=["token renew", "callback"],
+                    investigation_reason="rag_insufficient_evidence",
+                    evidence_summary=None,
+                    packed_evidence=None,
+                    workflow_action="open_engineer_ticket",
+                    client_intake_state={
+                        "phase": "ready_for_engineer_ticket",
+                        "product": "audio_video_calling",
+                        "issue_mode": "investigation",
+                        "known_information": {
+                            "issue_symptom": "token renew callback never fires",
+                            "channel_name": "demo-room",
+                            "problematic_uid": "42",
+                            "issue_timestamp": "2026-04-04T10:30:00Z",
+                        },
+                        "missing_information": [],
+                        "ready_for_engineer_ticket": True,
+                        "last_updated_at": "2026-04-04T10:30:00Z",
                     },
-                    "missing_information": [],
-                    "ready_for_engineer_ticket": True,
-                    "last_updated_at": "2026-04-04T10:30:00Z",
-                },
+                ),
             ),
         ), patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
@@ -708,18 +777,30 @@ class InvestigationFlowTests(unittest.TestCase):
             ),
         ), patch.object(
             main,
-            "resolve_support_message",
-            return_value=resolution,
-        ), patch.object(
-            main,
-            "analyze_ticket_message",
-            return_value=_rag_route_decision(),
-        ), patch(
-            "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency",
-            return_value=SufficiencyAssessment(
-                decision="investigate",
-                reason="missing_android_14_specific_evidence",
-                confidence=0.89,
+            "execute_client_ticket_agent_runtime",
+            return_value=types.SimpleNamespace(
+                result=types.SimpleNamespace(
+                    answer=resolution.answer,
+                    confidence=resolution.confidence,
+                    sources=list(resolution.sources),
+                    citations=[dict(item) for item in resolution.citations],
+                    needs_investigating=True,
+                    next_status="investigating",
+                    answer_route="rag",
+                    scope_label="agora_technical",
+                    route_family="agora_docs_rag",
+                    execution_action="rag",
+                    tooling_profile="agora_docs_only",
+                    route_reason="grounded_answer",
+                    route_confidence=0.94,
+                    search_used=False,
+                    matched_signals=["token"],
+                    investigation_reason="rag_post_check_insufficient",
+                    evidence_summary=resolution.evidence_summary,
+                    packed_evidence=resolution.packed_evidence,
+                    workflow_action="open_engineer_ticket",
+                    client_intake_state=None,
+                ),
             ),
         ), patch.object(
             main,
@@ -947,14 +1028,30 @@ class InvestigationFlowTests(unittest.TestCase):
             ),
         ), patch.object(
             main,
-            "resolve_support_message",
-            return_value=resolution,
-        ), patch(
-            "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency",
+            "execute_client_ticket_agent_runtime",
             return_value=types.SimpleNamespace(
-                decision="answer",
-                reason="sufficient_grounding",
-                confidence=0.93,
+                result=types.SimpleNamespace(
+                    answer=resolution.answer,
+                    confidence=resolution.confidence,
+                    sources=[],
+                    citations=[],
+                    needs_investigating=False,
+                    next_status="communicating",
+                    answer_route="rag",
+                    scope_label="agora_technical",
+                    route_family="agora_docs_rag",
+                    execution_action="rag",
+                    tooling_profile="agora_docs_only",
+                    route_reason="docs_match",
+                    route_confidence=0.93,
+                    search_used=False,
+                    matched_signals=[],
+                    investigation_reason=None,
+                    evidence_summary=None,
+                    packed_evidence=None,
+                    workflow_action="answer_customer",
+                    client_intake_state=None,
+                ),
             ),
         ), patch.object(
             main.task_queue,
@@ -1009,44 +1106,42 @@ class InvestigationFlowTests(unittest.TestCase):
             ),
         ), patch.object(
             main,
-            "analyze_ticket_message",
-            return_value=_rag_route_decision(reason="technical_troubleshooting_symptom"),
-        ), patch.object(
-            main,
-            "orchestrate_ticket_execution",
+            "execute_client_ticket_agent_runtime",
             return_value=types.SimpleNamespace(
-                answer=(
-                    "Known so far: the issue symptom is black screen. "
-                    "To investigate this Audio/Video Calling issue, please share the channel name, "
-                    "problematic uid, and issue timestamp."
+                result=types.SimpleNamespace(
+                    answer=(
+                        "Known so far: the issue symptom is black screen. "
+                        "To investigate this Audio/Video Calling issue, please share the channel name, "
+                        "problematic uid, and issue timestamp."
+                    ),
+                    confidence=0.0,
+                    sources=[],
+                    citations=[],
+                    needs_investigating=False,
+                    next_status="communicating",
+                    answer_route="rag",
+                    scope_label="agora_technical",
+                    route_family="agora_docs_rag",
+                    execution_action="rag",
+                    tooling_profile="agora_docs_only",
+                    route_reason="rag_insufficient_evidence",
+                    route_confidence=0.86,
+                    search_used=False,
+                    matched_signals=["black screen"],
+                    investigation_reason=None,
+                    evidence_summary=None,
+                    packed_evidence=None,
+                    workflow_action="clarify_customer_for_intake",
+                    client_intake_state={
+                        "phase": "gather_customer_inputs",
+                        "product": "audio_video_calling",
+                        "issue_mode": "investigation",
+                        "known_information": {"issue_symptom": "black screen"},
+                        "missing_information": ["channel_name", "problematic_uid", "issue_timestamp"],
+                        "ready_for_engineer_ticket": False,
+                        "last_updated_at": "2026-04-04T10:00:00Z",
+                    },
                 ),
-                confidence=0.0,
-                sources=[],
-                citations=[],
-                needs_investigating=False,
-                next_status="communicating",
-                answer_route="rag",
-                scope_label="agora_technical",
-                route_family="agora_docs_rag",
-                execution_action="rag",
-                tooling_profile="agora_docs_only",
-                route_reason="rag_insufficient_evidence",
-                route_confidence=0.86,
-                search_used=False,
-                matched_signals=["black screen"],
-                investigation_reason=None,
-                evidence_summary=None,
-                packed_evidence=None,
-                workflow_action="clarify_customer_for_intake",
-                client_intake_state={
-                    "phase": "gather_customer_inputs",
-                    "product": "audio_video_calling",
-                    "issue_mode": "investigation",
-                    "known_information": {"issue_symptom": "black screen"},
-                    "missing_information": ["channel_name", "problematic_uid", "issue_timestamp"],
-                    "ready_for_engineer_ticket": False,
-                    "last_updated_at": "2026-04-04T10:00:00Z",
-                },
             ),
         ), patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
@@ -1127,45 +1222,43 @@ class InvestigationFlowTests(unittest.TestCase):
             ),
         ), patch.object(
             main,
-            "analyze_ticket_message",
-            return_value=_rag_route_decision(reason="technical_troubleshooting_symptom"),
-        ), patch.object(
-            main,
-            "orchestrate_ticket_execution",
+            "execute_client_ticket_agent_runtime",
             return_value=types.SimpleNamespace(
-                answer=main.INSUFFICIENT_EVIDENCE_REPLY,
-                confidence=0.0,
-                sources=[],
-                citations=[],
-                needs_investigating=True,
-                next_status="investigating",
-                answer_route="rag",
-                scope_label="agora_technical",
-                route_family="agora_docs_rag",
-                execution_action="rag",
-                tooling_profile="agora_docs_only",
-                route_reason="rag_insufficient_evidence",
-                route_confidence=0.88,
-                search_used=False,
-                matched_signals=["black screen", "uid"],
-                investigation_reason="rag_insufficient_evidence",
-                evidence_summary=None,
-                packed_evidence=None,
-                workflow_action="open_engineer_ticket",
-                client_intake_state={
-                    "phase": "ready_for_engineer_ticket",
-                    "product": "audio_video_calling",
-                    "issue_mode": "investigation",
-                    "known_information": {
-                        "issue_symptom": "black screen",
-                        "channel_name": "demo-room",
-                        "problematic_uid": "42",
-                        "issue_timestamp": "2026-04-04T10:30:00Z",
+                result=types.SimpleNamespace(
+                    answer=main.INSUFFICIENT_EVIDENCE_REPLY,
+                    confidence=0.0,
+                    sources=[],
+                    citations=[],
+                    needs_investigating=True,
+                    next_status="investigating",
+                    answer_route="rag",
+                    scope_label="agora_technical",
+                    route_family="agora_docs_rag",
+                    execution_action="rag",
+                    tooling_profile="agora_docs_only",
+                    route_reason="rag_insufficient_evidence",
+                    route_confidence=0.88,
+                    search_used=False,
+                    matched_signals=["black screen", "uid"],
+                    investigation_reason="rag_insufficient_evidence",
+                    evidence_summary=None,
+                    packed_evidence=None,
+                    workflow_action="open_engineer_ticket",
+                    client_intake_state={
+                        "phase": "ready_for_engineer_ticket",
+                        "product": "audio_video_calling",
+                        "issue_mode": "investigation",
+                        "known_information": {
+                            "issue_symptom": "black screen",
+                            "channel_name": "demo-room",
+                            "problematic_uid": "42",
+                            "issue_timestamp": "2026-04-04T10:30:00Z",
+                        },
+                        "missing_information": [],
+                        "ready_for_engineer_ticket": True,
+                        "last_updated_at": "2026-04-04T10:30:00Z",
                     },
-                    "missing_information": [],
-                    "ready_for_engineer_ticket": True,
-                    "last_updated_at": "2026-04-04T10:30:00Z",
-                },
+                ),
             ),
         ), patch.object(
             main,
@@ -1218,7 +1311,7 @@ class InvestigationFlowTests(unittest.TestCase):
             side_effect=main.RagServiceError("RAG service returned HTTP 500", status_code=500),
         ), patch.object(
             main,
-            "analyze_ticket_message",
+            "decide_support_route",
             return_value=_rag_route_decision(reason="joining_channel_support"),
         ), patch.object(main, "_enqueue_or_defer_message_sentiment_tag", AsyncMock(return_value=False)), patch.object(
             main,
@@ -1376,18 +1469,30 @@ class InvestigationFlowTests(unittest.TestCase):
             ),
         ), patch.object(
             main,
-            "resolve_support_message",
-            return_value=resolution,
-        ), patch.object(
-            main,
-            "analyze_ticket_message",
-            return_value=_rag_route_decision(),
-        ), patch(
-            "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency",
-            return_value=SufficiencyAssessment(
-                decision="investigate",
-                reason="missing_android_14_specific_evidence",
-                confidence=0.89,
+            "execute_client_ticket_agent_runtime",
+            return_value=types.SimpleNamespace(
+                result=types.SimpleNamespace(
+                    answer=resolution.answer,
+                    confidence=resolution.confidence,
+                    sources=list(resolution.sources),
+                    citations=[dict(item) for item in resolution.citations],
+                    needs_investigating=True,
+                    next_status="investigating",
+                    answer_route="rag",
+                    scope_label="agora_technical",
+                    route_family="agora_docs_rag",
+                    execution_action="rag",
+                    tooling_profile="agora_docs_only",
+                    route_reason="grounded_answer",
+                    route_confidence=0.94,
+                    search_used=False,
+                    matched_signals=["token"],
+                    investigation_reason="rag_post_check_insufficient",
+                    evidence_summary=resolution.evidence_summary,
+                    packed_evidence=resolution.packed_evidence,
+                    workflow_action="open_engineer_ticket",
+                    client_intake_state=None,
+                ),
             ),
         ), patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
@@ -1478,15 +1583,31 @@ class InvestigationFlowTests(unittest.TestCase):
             ),
         ), patch.object(
             main,
-            "resolve_support_message",
-            return_value=resolution,
-        ), patch.object(
-            main,
-            "analyze_ticket_message",
-            return_value=_rag_route_decision(),
-        ), patch(
-            "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency",
-            side_effect=RuntimeError("judge unavailable"),
+            "execute_client_ticket_agent_runtime",
+            return_value=types.SimpleNamespace(
+                result=types.SimpleNamespace(
+                    answer=resolution.answer,
+                    confidence=resolution.confidence,
+                    sources=list(resolution.sources),
+                    citations=[dict(item) for item in resolution.citations],
+                    needs_investigating=True,
+                    next_status="investigating",
+                    answer_route="rag",
+                    scope_label="agora_technical",
+                    route_family="agora_docs_rag",
+                    execution_action="rag",
+                    tooling_profile="agora_docs_only",
+                    route_reason="grounded_answer",
+                    route_confidence=0.94,
+                    search_used=False,
+                    matched_signals=["token"],
+                    investigation_reason="rag_post_check_error",
+                    evidence_summary=resolution.evidence_summary,
+                    packed_evidence=resolution.packed_evidence,
+                    workflow_action="open_engineer_ticket",
+                    client_intake_state=None,
+                ),
+            ),
         ), patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
                 "/api/tickets/query",

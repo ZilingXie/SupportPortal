@@ -14,6 +14,8 @@ from uuid import uuid4
 import psycopg
 
 from backend.main import (
+    _record_ticket_agent_runtime_events,
+    _run_client_ticket_review_agent,
     build_client_sync_event,
     ensure_ticket_defaults,
     now_iso,
@@ -35,17 +37,16 @@ from backend.services.investigation_flow import (
     normalize_ticket_status,
     start_or_refresh_investigation,
 )
-from backend.services.ticket_orchestrator import (
+from backend.services.client_ticket_agent_runtime import (
     TicketExecutionResult,
-    analyze_ticket_message,
     build_execution_route_payload,
-    orchestrate_ticket_execution,
+    execute_client_ticket_agent_runtime,
     resolve_next_ticket_status,
 )
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
 from backend.services.rag_service_client import RagServiceClient, RagServiceError, RagTicketAnswerDetail
 from backend.services.sentiment_classifier import classify_sentiment
-from backend.services.support_router import SupportResolution, SupportRouteDecision
+from backend.services.support_router import SupportResolution, SupportRouteDecision, decide_support_route
 from backend.services.task_queue import SyncRedisTaskQueue
 from backend.services.ticket_message_sentiment import (
     build_ticket_message_sentiment_event,
@@ -273,29 +274,6 @@ class _WorkerRagCancelled(RuntimeError):
     def __init__(self, stage: str | None = None) -> None:
         super().__init__("Worker RAG execution cancelled")
         self.stage = str(stage or "").strip() or None
-
-
-def _response_language_for_worker(message: str) -> str:
-    return "zh" if re.search(r"[\u3400-\u9fff]", str(message or "")) else "en"
-
-
-def _default_rag_route_decision(message: str) -> SupportRouteDecision:
-    matched_signals = ["optimistic_default"]
-    if "join channel" in str(message or "").lower():
-        matched_signals.append("join channel")
-    return SupportRouteDecision(
-        scope_label="agora_technical",
-        route="rag",
-        confidence=0.0,
-        reason="optimistic_parallel_default_rag",
-        matched_signals=matched_signals,
-        response_language=_response_language_for_worker(message),
-        route_family="agora_docs_rag",
-        execution_action="rag",
-        tooling_profile="agora_docs_only",
-    )
-
-
 def _rag_failure_reason(error: RagServiceError) -> str:
     if error.status_code is not None:
         return "rag_service_error"
@@ -322,31 +300,66 @@ def _fallback_rag_answer_detail(reason: str) -> RagTicketAnswerDetail:
         evidence_summary=None,
         packed_evidence=None,
     )
-
-
-def _rag_resolution_from_detail(
+def _execute_agent_runtime_ticket_query(
+    customer_message: str,
     *,
-    route_decision: SupportRouteDecision,
-    rag_detail: RagTicketAnswerDetail,
-) -> SupportResolution:
-    return SupportResolution(
-        answer=rag_detail.answer,
-        confidence=float(rag_detail.confidence),
-        sources=list(rag_detail.sources),
-        citations=[dict(item) for item in rag_detail.citations],
-        needs_engineer_guidance=bool(rag_detail.needs_engineer_guidance),
-        answer_route="rag",
-        scope_label=route_decision.scope_label,
-        route_family=route_decision.route_family,
-        execution_action=route_decision.execution_action,
-        tooling_profile=route_decision.tooling_profile,
-        route_reason=str(rag_detail.reason or route_decision.reason),
-        route_confidence=float(route_decision.confidence),
-        search_used=False,
-        matched_signals=list(route_decision.matched_signals),
-        evidence_summary=dict(rag_detail.evidence_summary or {}) or None,
-        packed_evidence=dict(rag_detail.packed_evidence or {}) or None,
+    ticket_id: str,
+    customer_id: str | None,
+    ticket_subject: str | None,
+    ticket_context: list[dict[str, str]],
+    message_created_at: str,
+    product: str | None = None,
+    client_intake_state: dict[str, object] | None = None,
+) -> tuple[TicketExecutionResult, dict[str, Any]]:
+    runtime_execution = execute_client_ticket_agent_runtime(
+        customer_message,
+        ticket_id=ticket_id,
+        customer_id=customer_id,
+        ticket_subject=ticket_subject,
+        ticket_context=ticket_context,
+        product=product,
+        message_id=message_created_at,
+        client_intake_state=client_intake_state,
+        route_agent=decide_support_route,
+        route_executor=resolve_support_message,
+        rag_agent=lambda **kwargs: _fetch_rag_answer_detail_for_worker(
+            request_id=str(kwargs.get("request_id") or ""),
+            customer_message=kwargs["message"],
+            ticket_id=str(kwargs.get("ticket_id") or ticket_id),
+            customer_id=kwargs.get("customer_id"),
+            ticket_context=kwargs.get("ticket_context") or ticket_context,
+            product=kwargs.get("product"),
+        ),
+        review_agent=_run_client_ticket_review_agent,
+        rag_canceler=lambda request_id: rag_service_client.cancel_request(request_id),
+        route_timeout_seconds=OPTIMISTIC_ROUTE_TIMEOUT_SECONDS,
     )
+    runtime_state = runtime_execution.runtime_state
+    rag_agent_state = runtime_state.rag_agent if isinstance(runtime_state.rag_agent, dict) else {}
+    route_agent_state = runtime_state.route_agent if isinstance(runtime_state.route_agent, dict) else {}
+    cancel_event = next(
+        (
+            item
+            for item in runtime_execution.agent_events
+            if str(item.get("agent_name") or "").strip() == "rag_agent"
+            and str(item.get("event_type") or "").strip() == "cancel_requested"
+        ),
+        None,
+    )
+    cancel_payload = cancel_event.get("payload") if isinstance(cancel_event, dict) and isinstance(cancel_event.get("payload"), dict) else {}
+    diagnostics: dict[str, Any] = {
+        "parallel_mode": "main_agent",
+        "api_persist_latency_ms": None,
+        "api_return_latency_ms": None,
+        "route_latency_ms": 0.0,
+        "route_final_action": str(route_agent_state.get("decision") or runtime_execution.result.execution_action or "").strip() or None,
+        "route_result_source": "parallel_route" if str(route_agent_state.get("status") or "").strip().lower() == "completed" else "route_fail_open",
+        "rag_started_at": rag_agent_state.get("started_at"),
+        "rag_finished_at": rag_agent_state.get("completed_at"),
+        "rag_cancelled": str(rag_agent_state.get("status") or "").strip().lower() == "cancelled",
+        "rag_cancel_stage": str(cancel_payload.get("stage") or rag_agent_state.get("reason") or "").strip() or None,
+    }
+    return runtime_execution.result, diagnostics
 
 
 def _fetch_rag_answer_detail_for_worker(
@@ -395,130 +408,16 @@ def _execute_parallel_ticket_query(
     product: str | None = None,
     client_intake_state: dict[str, object] | None = None,
 ) -> tuple[TicketExecutionResult, dict[str, Any]]:
-    request_id = f"rag-{uuid4().hex[:12]}"
-    diagnostics: dict[str, Any] = {
-        "parallel_mode": "optimistic_parallel",
-        "api_persist_latency_ms": None,
-        "api_return_latency_ms": None,
-        "route_latency_ms": 0.0,
-        "route_final_action": "rag",
-        "route_result_source": "parallel_route",
-        "rag_started_at": None,
-        "rag_finished_at": None,
-        "rag_cancelled": False,
-        "rag_cancel_stage": None,
-    }
-
-    def _run_route() -> SupportRouteDecision:
-        return analyze_ticket_message(
-            customer_message,
-            ticket_subject=ticket_subject,
-            ticket_context=ticket_context,
-            product=product,
-        )
-
-    def _run_rag() -> RagTicketAnswerDetail:
-        diagnostics["rag_started_at"] = now_iso()
-        try:
-            return _fetch_rag_answer_detail_for_worker(
-                request_id=request_id,
-                customer_message=customer_message,
-                ticket_id=ticket_id,
-                customer_id=customer_id,
-                ticket_context=ticket_context,
-                product=product,
-            )
-        finally:
-            diagnostics["rag_finished_at"] = now_iso()
-
-    executor = ThreadPoolExecutor(max_workers=2)
-    route_started_at = time.perf_counter()
-    route_future = executor.submit(_run_route)
-    rag_future = executor.submit(_run_rag)
-    route_decision: SupportRouteDecision | None = None
-    try:
-        try:
-            route_decision = route_future.result(timeout=OPTIMISTIC_ROUTE_TIMEOUT_SECONDS)
-            diagnostics["route_latency_ms"] = round((time.perf_counter() - route_started_at) * 1000, 2)
-        except FutureTimeoutError:
-            diagnostics["route_latency_ms"] = round((time.perf_counter() - route_started_at) * 1000, 2)
-            diagnostics["route_result_source"] = "route_fail_open"
-        except Exception as exc:
-            diagnostics["route_latency_ms"] = round((time.perf_counter() - route_started_at) * 1000, 2)
-            diagnostics["route_result_source"] = "route_fail_open"
-            LOGGER.warning(
-                "Worker route analysis failed, defaulting to optimistic RAG ticket_id=%s error=%s",
-                ticket_id,
-                exc,
-            )
-
-        if route_decision is not None and str(route_decision.execution_action or "").strip() != "rag":
-            diagnostics["route_final_action"] = str(route_decision.execution_action or "").strip() or "refuse"
-            diagnostics["route_result_source"] = "parallel_route"
-            cancel_result: dict[str, Any] | None = None
-            try:
-                cancel_result = rag_service_client.cancel_request(request_id)
-            except RagServiceError as exc:
-                LOGGER.warning(
-                    "Worker failed to cancel optimistic RAG request_id=%s ticket_id=%s error=%s",
-                    request_id,
-                    ticket_id,
-                    exc,
-                )
-            diagnostics["rag_cancelled"] = True
-            diagnostics["rag_cancel_stage"] = (
-                str((cancel_result or {}).get("stage") or "").strip() or None
-            )
-            resolution = resolve_support_message(
-                customer_message,
-                ticket_id=ticket_id,
-                customer_id=customer_id,
-                ticket_subject=ticket_subject,
-                ticket_context=ticket_context,
-                decision=route_decision,
-                product=product,
-            )
-            execution = orchestrate_ticket_execution(
-                customer_message,
-                ticket_id=ticket_id,
-                customer_id=customer_id,
-                ticket_subject=ticket_subject,
-                ticket_context=ticket_context,
-                product=product,
-                client_intake_state=client_intake_state,
-                decision=route_decision,
-                resolution_builder=lambda *_args, **_kwargs: resolution,
-            )
-            return execution, diagnostics
-
-        effective_route_decision = route_decision or _default_rag_route_decision(customer_message)
-        diagnostics["route_final_action"] = str(effective_route_decision.execution_action or "rag").strip() or "rag"
-        if route_decision is None:
-            diagnostics["route_result_source"] = "route_fail_open"
-        try:
-            rag_detail = rag_future.result()
-        except _WorkerRagCancelled as exc:
-            diagnostics["rag_cancelled"] = True
-            diagnostics["rag_cancel_stage"] = exc.stage
-            rag_detail = _fallback_rag_answer_detail("cancelled_by_route_flip")
-        resolution = _rag_resolution_from_detail(
-            route_decision=effective_route_decision,
-            rag_detail=rag_detail,
-        )
-        execution = orchestrate_ticket_execution(
-            customer_message,
-            ticket_id=ticket_id,
-            customer_id=customer_id,
-            ticket_subject=ticket_subject,
-            ticket_context=ticket_context,
-            product=product,
-            client_intake_state=client_intake_state,
-            decision=effective_route_decision,
-            resolution_builder=lambda *_args, **_kwargs: resolution,
-        )
-        return execution, diagnostics
-    finally:
-        executor.shutdown(wait=False, cancel_futures=False)
+    return _execute_agent_runtime_ticket_query(
+        customer_message,
+        ticket_id=ticket_id,
+        customer_id=customer_id,
+        ticket_subject=ticket_subject,
+        ticket_context=ticket_context,
+        message_created_at=message_created_at,
+        product=product,
+        client_intake_state=client_intake_state,
+    )
 
 
 def _orchestrate_worker_support_message(
@@ -543,25 +442,18 @@ def _orchestrate_worker_support_message(
             product=product,
             client_intake_state=client_intake_state,
         )
-    return orchestrate_ticket_execution(
+    execution, diagnostics = _execute_agent_runtime_ticket_query(
         customer_message,
         ticket_id=ticket_id,
         customer_id=customer_id,
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
+        message_created_at=message_created_at,
         product=product,
         client_intake_state=client_intake_state,
-        resolution_builder=resolve_support_message,
-    ), {
-        "parallel_mode": "disabled",
-        "route_latency_ms": 0.0,
-        "route_final_action": None,
-        "route_result_source": "sequential",
-        "rag_started_at": None,
-        "rag_finished_at": None,
-        "rag_cancelled": False,
-        "rag_cancel_stage": None,
-    }
+    )
+    diagnostics["parallel_mode"] = "main_agent"
+    return execution, diagnostics
 
 
 def _is_retryable_ticket_storage_error(exc: BaseException) -> bool:
@@ -865,10 +757,10 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
     else:
         execution = orchestration_result
         execution_diagnostics = {
-            "parallel_mode": "legacy_stub",
+            "parallel_mode": "main_agent",
             "route_latency_ms": 0.0,
             "route_final_action": None,
-            "route_result_source": "legacy_stub",
+            "route_result_source": "main_agent_fallback",
             "rag_started_at": None,
             "rag_finished_at": None,
             "rag_cancelled": False,
@@ -921,6 +813,13 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
             if isinstance(getattr(execution, "client_intake_state", None), dict)
             else None
         )
+        execution_client_agent_runtime_state = (
+            dict(getattr(execution, "client_agent_runtime_state"))
+            if isinstance(getattr(execution, "client_agent_runtime_state", None), dict)
+            else None
+        )
+        if execution_client_agent_runtime_state is not None:
+            ticket["client_agent_runtime_state"] = execution_client_agent_runtime_state
         execution_workflow_action = str(getattr(execution, "workflow_action", "") or "").strip()
         if execution.needs_investigating:
             ticket["client_intake_state"] = execution_client_intake_state
@@ -989,6 +888,10 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         assistant_message["search_used"] = bool(execution.search_used)
         assistant_message["matched_signals"] = list(execution.matched_signals)
         assistant_message["workflow_action"] = execution_workflow_action
+        if str(getattr(execution, "run_id", "") or "").strip():
+            assistant_message["client_agent_run_id"] = str(getattr(execution, "run_id") or "").strip()
+        if isinstance(execution_client_agent_runtime_state, dict):
+            assistant_message["client_agent_runtime_status"] = str(execution_client_agent_runtime_state.get("status") or "").strip()
         if isinstance(execution_client_intake_state, dict):
             assistant_message["client_intake_phase"] = str(execution_client_intake_state.get("phase") or "").strip()
             assistant_message["client_intake_ready_for_engineer_ticket"] = bool(
@@ -1008,6 +911,10 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         _call_ticket_repository(
             "save_ticket",
             lambda: ticket_repository.save_ticket(ticket, new_messages=new_messages),
+        )
+        _call_ticket_repository(
+            "record_ticket_agent_runtime_events",
+            lambda: _record_ticket_agent_runtime_events(execution),
         )
         if engineer_case is not None:
             ticket["engineer_case_count"] = max(
@@ -1053,6 +960,11 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         "rag_cancelled": bool(execution_diagnostics.get("rag_cancelled")),
         "rag_cancel_stage": execution_diagnostics.get("rag_cancel_stage"),
         "workflow_action": str(getattr(execution, "workflow_action", "") or "").strip(),
+        "client_agent_run_id": str(getattr(execution, "run_id", "") or "").strip() or None,
+        "client_agent_runtime_status": str(
+            (((getattr(execution, "client_agent_runtime_state", None) or {}) if isinstance(getattr(execution, "client_agent_runtime_state", None), dict) else {}).get("status") or "")
+        ).strip()
+        or None,
         "parallel_mode": execution_diagnostics.get("parallel_mode"),
         "api_persist_latency_ms": task.get("api_persist_latency_ms"),
         "api_return_latency_ms": task.get("api_return_latency_ms"),

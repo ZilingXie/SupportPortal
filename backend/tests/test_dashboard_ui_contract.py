@@ -700,6 +700,17 @@ class DashboardUiContractTests(unittest.TestCase):
         ]:
             self.assertIn(marker, js_source)
 
+    def test_ticket_detail_modal_exposes_client_agent_runtime_panels(self) -> None:
+        js_source = Path("ui/dashboard-ui/app.js").read_text(encoding="utf-8")
+
+        for marker in [
+            "Client Agent Runtime",
+            "Recent Agent Events",
+            "client_agent_runtime_state",
+            "client_agent_events",
+        ]:
+            self.assertIn(marker, js_source)
+
 
 if __name__ == "__main__":
     unittest.main()

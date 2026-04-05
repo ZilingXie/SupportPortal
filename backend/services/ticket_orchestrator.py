@@ -5,12 +5,26 @@ import logging
 import re
 from typing import Any, Callable
 
+from backend.services.client_ticket_agent_runtime import (
+    RAG_INSUFFICIENT_EVIDENCE_REASON,
+    RAG_POST_CHECK_ERROR_REASON,
+    RAG_POST_CHECK_INSUFFICIENT_REASON,
+    RAG_SERVICE_ERROR_REASON,
+    RAG_UNAVAILABLE_REASON,
+    TicketExecutionResult,
+    WORKFLOW_ACTION_ANSWER_CUSTOMER,
+    WORKFLOW_ACTION_CLARIFY_CUSTOMER_FOR_INTAKE,
+    WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
+    build_execution_route_payload,
+    execute_client_ticket_agent_runtime,
+    resolve_next_ticket_status,
+)
 from backend.services.investigation_flow import (
     COMMUNICATING_STATUS,
-    ESCALATED_STATUS,
     INVESTIGATING_STATUS,
-    normalize_ticket_status,
 )
+from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
+from backend.services.rag_service_client import RagTicketAnswerDetail
 from backend.services.rag_sufficiency_judge import judge_rag_answer_sufficiency
 from backend.services.support_router import (
     SupportResolution,
@@ -18,18 +32,10 @@ from backend.services.support_router import (
     decide_support_route,
 )
 from backend.services.troubleshooting_intake import (
-    build_client_intake_state,
+    TroubleshootingIntakeResult,
     evaluate_troubleshooting_intake,
 )
 
-RAG_INSUFFICIENT_EVIDENCE_REASON = "rag_insufficient_evidence"
-RAG_SERVICE_ERROR_REASON = "rag_service_error"
-RAG_UNAVAILABLE_REASON = "rag_unavailable"
-RAG_POST_CHECK_INSUFFICIENT_REASON = "rag_post_check_insufficient"
-RAG_POST_CHECK_ERROR_REASON = "rag_post_check_error"
-WORKFLOW_ACTION_ANSWER_CUSTOMER = "answer_customer"
-WORKFLOW_ACTION_CLARIFY_CUSTOMER_FOR_INTAKE = "clarify_customer_for_intake"
-WORKFLOW_ACTION_OPEN_ENGINEER_TICKET = "open_engineer_ticket"
 _GENERIC_HOW_TO_RE = re.compile(r"^\s*(how\s+(?:do\s+i\s+)?(?:to|can\s+i)|what\s+is|what\s+are)\b", re.IGNORECASE)
 _TROUBLESHOOTING_SIGNAL_RE = re.compile(
     r"\b(android|ios|macos|windows|linux|flutter|react native|unity|electron|sdk|version|error|"
@@ -75,192 +81,8 @@ class SufficiencyAssessment:
     confidence: float
 
 
-@dataclass(frozen=True)
-class TicketExecutionResult:
-    answer: str
-    confidence: float
-    sources: list[str]
-    citations: list[dict[str, str]]
-    evidence_summary: dict[str, Any] | None
-    packed_evidence: dict[str, Any] | None
-    needs_investigating: bool
-    next_status: str
-    answer_route: str
-    scope_label: str
-    route_family: str | None
-    execution_action: str
-    tooling_profile: str | None
-    route_reason: str
-    route_confidence: float
-    search_used: bool
-    matched_signals: list[str] = field(default_factory=list)
-    investigation_reason: str | None = None
-    workflow_action: str = WORKFLOW_ACTION_ANSWER_CUSTOMER
-    client_intake_state: dict[str, Any] | None = None
-
-    def route_payload(self) -> dict[str, Any]:
-        payload = {
-            "answer_route": self.answer_route,
-            "scope_label": self.scope_label,
-            "route_family": self.route_family,
-            "execution_action": self.execution_action,
-            "tooling_profile": self.tooling_profile,
-            "route_reason": self.route_reason,
-            "route_confidence": round(float(self.route_confidence), 4),
-            "search_used": bool(self.search_used),
-            "matched_signals": list(self.matched_signals),
-            "workflow_action": self.workflow_action,
-        }
-        if isinstance(self.client_intake_state, dict):
-            payload["client_intake_phase"] = str(self.client_intake_state.get("phase") or "").strip()
-            payload["client_intake_ready_for_engineer_ticket"] = bool(
-                self.client_intake_state.get("ready_for_engineer_ticket")
-            )
-            payload["client_intake_missing_information"] = list(
-                self.client_intake_state.get("missing_information") or []
-            )
-        return payload
-
-
-def build_execution_route_payload(execution: Any) -> dict[str, Any]:
-    route_payload = getattr(execution, "route_payload", None)
-    if callable(route_payload):
-        candidate = route_payload()
-        if isinstance(candidate, dict):
-            return dict(candidate)
-
-    payload: dict[str, Any] = {}
-    for field_name in (
-        "answer_route",
-        "scope_label",
-        "route_family",
-        "execution_action",
-        "tooling_profile",
-        "route_reason",
-        "workflow_action",
-    ):
-        value = getattr(execution, field_name, None)
-        normalized = str(value or "").strip()
-        if normalized:
-            payload[field_name] = normalized
-    route_confidence = getattr(execution, "route_confidence", None)
-    if route_confidence is not None:
-        try:
-            payload["route_confidence"] = round(float(route_confidence), 4)
-        except (TypeError, ValueError):
-            pass
-    search_used = getattr(execution, "search_used", None)
-    if search_used is not None:
-        payload["search_used"] = bool(search_used)
-    matched_signals = getattr(execution, "matched_signals", None)
-    if isinstance(matched_signals, list):
-        payload["matched_signals"] = list(matched_signals)
-    client_intake_state = getattr(execution, "client_intake_state", None)
-    if isinstance(client_intake_state, dict):
-        payload["client_intake_phase"] = str(client_intake_state.get("phase") or "").strip()
-        payload["client_intake_ready_for_engineer_ticket"] = bool(
-            client_intake_state.get("ready_for_engineer_ticket")
-        )
-        payload["client_intake_missing_information"] = list(client_intake_state.get("missing_information") or [])
-    return payload
-
-
-def analyze_ticket_message(
-    message: str,
-    *,
-    ticket_subject: str | None = None,
-    ticket_context: list[dict[str, str]] | None = None,
-    product: str | None = None,
-) -> SupportRouteDecision:
-    return decide_support_route(
-        message,
-        ticket_subject=ticket_subject,
-        ticket_context=ticket_context,
-        product=product,
-    )
-
-
-def _choose_execution_plan(route_decision: SupportRouteDecision) -> AgenticExecutionPlan:
-    execution_action = str(route_decision.execution_action or route_decision.route).strip() or "refuse"
-    stage_sequence: tuple[str, ...] = (
-        "classify",
-        "choose_skill",
-        "execute_skill",
-        "assess_sufficiency",
-        "map_next_state",
-    ) if execution_action == "rag" else (
-        "classify",
-        "choose_skill",
-        "execute_skill",
-        "map_next_state",
-    )
-    return AgenticExecutionPlan(
-        route_family=route_decision.route_family,
-        execution_action=execution_action,
-        tooling_profile=route_decision.tooling_profile,
-        stage_sequence=stage_sequence,
-        requires_sufficiency_assessment=execution_action == "rag",
-    )
-
-
-def _build_skill_execution_result(
-    resolution: SupportResolution,
-    *,
-    route_decision: SupportRouteDecision,
-    plan: AgenticExecutionPlan,
-) -> SkillExecutionResult:
-    return SkillExecutionResult(
-        answer=str(resolution.answer or "").strip(),
-        confidence=float(resolution.confidence),
-        sources=list(resolution.sources),
-        citations=[dict(item) for item in resolution.citations],
-        needs_investigating=bool(resolution.needs_engineer_guidance),
-        answer_route=str(resolution.answer_route or plan.execution_action or route_decision.route),
-        scope_label=str(resolution.scope_label or route_decision.scope_label),
-        route_family=resolution.route_family or route_decision.route_family,
-        execution_action=str(resolution.execution_action or plan.execution_action or route_decision.route),
-        tooling_profile=resolution.tooling_profile or route_decision.tooling_profile,
-        route_reason=str(resolution.route_reason or route_decision.reason),
-        route_confidence=float(resolution.route_confidence or route_decision.confidence),
-        search_used=bool(resolution.search_used),
-        matched_signals=list(resolution.matched_signals or route_decision.matched_signals),
-        evidence_summary=dict(getattr(resolution, "evidence_summary", None) or {}) or None,
-        packed_evidence=dict(getattr(resolution, "packed_evidence", None) or {}) or None,
-    )
-
-
-def assess_rag_answer_sufficiency(
-    *,
-    message: str,
-    ticket_subject: str | None,
-    ticket_context: list[dict[str, str]] | None,
-    route_decision: SupportRouteDecision,
-    skill_result: SkillExecutionResult,
-) -> SufficiencyAssessment:
-    judged = judge_rag_answer_sufficiency(
-        message=message,
-        ticket_subject=ticket_subject,
-        ticket_context=ticket_context,
-        route_summary={
-            "scope_label": route_decision.scope_label,
-            "route_family": route_decision.route_family,
-            "execution_action": route_decision.execution_action,
-            "tooling_profile": route_decision.tooling_profile,
-            "reason": route_decision.reason,
-            "confidence": route_decision.confidence,
-            "matched_signals": list(route_decision.matched_signals),
-        },
-        rag_answer=skill_result.answer,
-        sources=skill_result.sources,
-        citations=skill_result.citations,
-        packed_evidence=skill_result.packed_evidence,
-        evidence_summary=skill_result.evidence_summary,
-    )
-    return SufficiencyAssessment(
-        decision=judged.decision,
-        reason=judged.reason,
-        confidence=judged.confidence,
-    )
+def _clean_text(value: Any) -> str:
+    return " ".join(str(value or "").split()).strip()
 
 
 def _quality_signal_float(value: Any) -> float:
@@ -282,7 +104,7 @@ def _is_generic_grounded_rag_answer_candidate(
     message: str,
     skill_result: SkillExecutionResult,
 ) -> bool:
-    normalized_message = " ".join(str(message or "").split()).strip()
+    normalized_message = _clean_text(message)
     if not normalized_message or not _GENERIC_HOW_TO_RE.search(normalized_message):
         return False
     if _TROUBLESHOOTING_SIGNAL_RE.search(normalized_message):
@@ -330,6 +152,200 @@ def _should_skip_rag_sufficiency_assessment(
     )
 
 
+def _coerce_troubleshooting_intake_result(value: Any) -> TroubleshootingIntakeResult:
+    if isinstance(value, TroubleshootingIntakeResult):
+        return value
+    return TroubleshootingIntakeResult(
+        issue_mode=_clean_text(getattr(value, "issue_mode", None) or (value.get("issue_mode") if isinstance(value, dict) else None))
+        or "answer",
+        known_information=dict(
+            getattr(value, "known_information", None)
+            or (value.get("known_information") if isinstance(value, dict) else None)
+            or {}
+        ),
+        missing_information=list(
+            getattr(value, "missing_information", None)
+            or (value.get("missing_information") if isinstance(value, dict) else None)
+            or []
+        ),
+        ready_for_engineer_ticket=bool(
+            getattr(value, "ready_for_engineer_ticket", None)
+            if not isinstance(value, dict)
+            else value.get("ready_for_engineer_ticket")
+        ),
+        customer_reply=_clean_text(
+            getattr(value, "customer_reply", None) if not isinstance(value, dict) else value.get("customer_reply")
+        ),
+    )
+
+
+def analyze_ticket_message(
+    message: str,
+    *,
+    ticket_subject: str | None = None,
+    ticket_context: list[dict[str, str]] | None = None,
+    product: str | None = None,
+) -> SupportRouteDecision:
+    return decide_support_route(
+        message,
+        ticket_subject=ticket_subject,
+        ticket_context=ticket_context,
+        product=product,
+    )
+
+
+def assess_rag_answer_sufficiency(
+    *,
+    message: str,
+    ticket_subject: str | None,
+    ticket_context: list[dict[str, str]] | None,
+    route_decision: SupportRouteDecision,
+    skill_result: SkillExecutionResult | Any,
+) -> SufficiencyAssessment:
+    judged = judge_rag_answer_sufficiency(
+        message=message,
+        ticket_subject=ticket_subject,
+        ticket_context=ticket_context,
+        route_summary={
+            "scope_label": route_decision.scope_label,
+            "route_family": route_decision.route_family,
+            "execution_action": route_decision.execution_action,
+            "tooling_profile": route_decision.tooling_profile,
+            "reason": route_decision.reason,
+            "confidence": route_decision.confidence,
+            "matched_signals": list(route_decision.matched_signals),
+        },
+        rag_answer=str(getattr(skill_result, "answer", "") or "").strip(),
+        sources=list(getattr(skill_result, "sources", []) or []),
+        citations=[dict(item) for item in list(getattr(skill_result, "citations", []) or []) if isinstance(item, dict)],
+        packed_evidence=dict(getattr(skill_result, "packed_evidence", None) or {}) or None,
+        evidence_summary=dict(getattr(skill_result, "evidence_summary", None) or {}) or None,
+    )
+    return SufficiencyAssessment(
+        decision=judged.decision,
+        reason=judged.reason,
+        confidence=judged.confidence,
+    )
+
+
+def _resolution_to_rag_detail(resolution: SupportResolution) -> RagTicketAnswerDetail:
+    answer_text = _clean_text(resolution.answer)
+    reason = _clean_text(resolution.route_reason) or (
+        RAG_INSUFFICIENT_EVIDENCE_REASON
+        if resolution.needs_engineer_guidance or answer_text == _clean_text(INSUFFICIENT_EVIDENCE_REPLY)
+        else "grounded_answer"
+    )
+    return RagTicketAnswerDetail(
+        answer=resolution.answer,
+        confidence=float(resolution.confidence or 0.0),
+        sources=list(resolution.sources),
+        citations=[dict(item) for item in resolution.citations],
+        needs_engineer_guidance=bool(resolution.needs_engineer_guidance)
+        or answer_text == _clean_text(INSUFFICIENT_EVIDENCE_REPLY),
+        reason=reason,
+        evidence_summary=dict(resolution.evidence_summary or {}) or None,
+        packed_evidence=dict(resolution.packed_evidence or {}) or None,
+    )
+
+
+def _compat_review_agent(
+    *,
+    mode: str,
+    message: str,
+    product: str | None,
+    ticket_subject: str | None,
+    ticket_context: list[dict[str, str]] | None,
+    current_state: dict[str, Any] | None,
+    route_decision: SupportRouteDecision,
+    resolution: SupportResolution,
+    rag_result: dict[str, Any] | None,
+) -> Any:
+    if mode == "rag_insufficient_evidence":
+        return _coerce_troubleshooting_intake_result(
+            evaluate_troubleshooting_intake(
+                message=message,
+                product=product,
+                ticket_subject=ticket_subject,
+                ticket_context=ticket_context,
+                current_state=current_state,
+                rag_result=rag_result,
+            )
+        )
+
+    skill_result = SkillExecutionResult(
+        answer=str(resolution.answer or "").strip(),
+        confidence=float(resolution.confidence or 0.0),
+        sources=list(resolution.sources),
+        citations=[dict(item) for item in resolution.citations],
+        needs_investigating=bool(resolution.needs_engineer_guidance),
+        answer_route=resolution.answer_route,
+        scope_label=resolution.scope_label,
+        route_family=resolution.route_family,
+        execution_action=str(resolution.execution_action or resolution.answer_route or "rag"),
+        tooling_profile=resolution.tooling_profile,
+        route_reason=resolution.route_reason,
+        route_confidence=float(resolution.route_confidence or 0.0),
+        search_used=bool(resolution.search_used),
+        matched_signals=list(resolution.matched_signals),
+        evidence_summary=dict(resolution.evidence_summary or {}) or None,
+        packed_evidence=dict(resolution.packed_evidence or {}) or None,
+    )
+
+    if _should_skip_rag_sufficiency_assessment(
+        message=message,
+        skill_result=skill_result,
+    ):
+        LOGGER.info(
+            "Skipping compat RAG post-check for generic grounded FAQ message=%r route_reason=%s",
+            message,
+            resolution.route_reason,
+        )
+        return {"decision": "approve_answer", "reason": "generic_grounded_faq", "confidence": float(resolution.confidence or 0.0)}
+
+    try:
+        sufficiency = assess_rag_answer_sufficiency(
+            message=message,
+            ticket_subject=ticket_subject,
+            ticket_context=ticket_context,
+            route_decision=route_decision,
+            skill_result=skill_result,
+        )
+    except Exception as exc:
+        LOGGER.warning(
+            "Compat RAG post-check failed message=%r route_reason=%s error=%s",
+            message,
+            resolution.route_reason,
+            exc,
+        )
+        if _is_generic_grounded_rag_answer_candidate(
+            message=message,
+            skill_result=skill_result,
+        ):
+            return {"decision": "approve_answer", "reason": "review_error_generic_faq_kept", "confidence": 0.0}
+        return {"decision": "open_engineer_ticket", "reason": "review_error", "confidence": 0.0}
+    if str(sufficiency.decision or "").strip().lower() == "investigate":
+        if _should_keep_generic_grounded_rag_answer(
+            message=message,
+            skill_result=skill_result,
+            sufficiency=sufficiency,
+        ):
+            return {
+                "decision": "approve_answer",
+                "reason": str(sufficiency.reason or "generic_grounded_faq_kept").strip() or "generic_grounded_faq_kept",
+                "confidence": float(sufficiency.confidence or 0.0),
+            }
+        return {
+            "decision": "open_engineer_ticket",
+            "reason": "review_insufficient",
+            "confidence": float(sufficiency.confidence or 0.0),
+        }
+    return {
+        "decision": "approve_answer",
+        "reason": str(sufficiency.reason or "review_passed").strip() or "review_passed",
+        "confidence": float(sufficiency.confidence or 0.0),
+    }
+
+
 def orchestrate_ticket_execution(
     message: str,
     *,
@@ -348,156 +364,37 @@ def orchestrate_ticket_execution(
         ticket_context=ticket_context,
         product=product,
     )
-    execution_plan = _choose_execution_plan(route_decision)
-    resolution = resolution_builder(
+
+    def _route_agent(**_kwargs: Any) -> SupportRouteDecision:
+        return route_decision
+
+    def _route_executor(**_kwargs: Any) -> SupportResolution:
+        return resolution_builder(
+            message,
+            ticket_id=ticket_id,
+            customer_id=customer_id,
+            ticket_subject=ticket_subject,
+            ticket_context=ticket_context,
+            product=product,
+            decision=route_decision,
+        )
+
+    def _rag_agent(**_kwargs: Any) -> RagTicketAnswerDetail:
+        return _resolution_to_rag_detail(_route_executor())
+
+    runtime_execution = execute_client_ticket_agent_runtime(
         message,
         ticket_id=ticket_id,
         customer_id=customer_id,
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
         product=product,
-        decision=route_decision,
+        message_id=None,
+        client_intake_state=client_intake_state,
+        route_agent=_route_agent,
+        route_executor=_route_executor,
+        rag_agent=_rag_agent,
+        review_agent=_compat_review_agent,
+        rag_canceler=None,
     )
-    skill_result = _build_skill_execution_result(
-        resolution,
-        route_decision=route_decision,
-        plan=execution_plan,
-    )
-
-    needs_investigating = bool(skill_result.needs_investigating)
-    investigation_reason: str | None = None
-    workflow_action = WORKFLOW_ACTION_ANSWER_CUSTOMER
-    next_client_intake_state: dict[str, Any] | None = None
-    if needs_investigating and execution_plan.execution_action == "rag":
-        normalized_route_reason = str(skill_result.route_reason or "").strip().lower()
-        if normalized_route_reason in {RAG_SERVICE_ERROR_REASON, RAG_UNAVAILABLE_REASON}:
-            investigation_reason = normalized_route_reason
-            workflow_action = WORKFLOW_ACTION_OPEN_ENGINEER_TICKET
-        else:
-            investigation_reason = RAG_INSUFFICIENT_EVIDENCE_REASON
-            intake_result = evaluate_troubleshooting_intake(
-                message=message,
-                product=product,
-                ticket_subject=ticket_subject,
-                ticket_context=ticket_context,
-                current_state=client_intake_state,
-                rag_result={
-                    "reason": investigation_reason,
-                    "answer": skill_result.answer,
-                    "evidence_summary": dict(skill_result.evidence_summary or {}) or {},
-                    "packed_evidence": dict(skill_result.packed_evidence or {}) or {},
-                },
-            )
-            if intake_result.issue_mode == "investigation":
-                next_client_intake_state = build_client_intake_state(
-                    intake_result,
-                    product=product,
-                )
-                if intake_result.ready_for_engineer_ticket:
-                    workflow_action = WORKFLOW_ACTION_OPEN_ENGINEER_TICKET
-                else:
-                    needs_investigating = False
-                    investigation_reason = None
-                    workflow_action = WORKFLOW_ACTION_CLARIFY_CUSTOMER_FOR_INTAKE
-                    skill_result = SkillExecutionResult(
-                        answer=intake_result.customer_reply,
-                        confidence=skill_result.confidence,
-                        sources=[],
-                        citations=[],
-                        needs_investigating=False,
-                        answer_route=skill_result.answer_route,
-                        scope_label=skill_result.scope_label,
-                        route_family=skill_result.route_family,
-                        execution_action=skill_result.execution_action,
-                        tooling_profile=skill_result.tooling_profile,
-                        route_reason=RAG_INSUFFICIENT_EVIDENCE_REASON,
-                        route_confidence=skill_result.route_confidence,
-                        search_used=skill_result.search_used,
-                        matched_signals=list(skill_result.matched_signals),
-                        evidence_summary=dict(skill_result.evidence_summary or {}) or None,
-                        packed_evidence=dict(skill_result.packed_evidence or {}) or None,
-                    )
-            else:
-                workflow_action = WORKFLOW_ACTION_OPEN_ENGINEER_TICKET
-    elif execution_plan.requires_sufficiency_assessment:
-        if _should_skip_rag_sufficiency_assessment(
-            message=message,
-            skill_result=skill_result,
-        ):
-            LOGGER.info(
-                "Skipping RAG post-check for generic grounded FAQ message=%r route_reason=%s",
-                message,
-                skill_result.route_reason,
-            )
-        else:
-            try:
-                sufficiency = assess_rag_answer_sufficiency(
-                    message=message,
-                    ticket_subject=ticket_subject,
-                    ticket_context=ticket_context,
-                    route_decision=route_decision,
-                    skill_result=skill_result,
-                )
-            except Exception as exc:
-                LOGGER.warning(
-                    "RAG post-check failed message=%r route_reason=%s error=%s",
-                    message,
-                    skill_result.route_reason,
-                    exc,
-                )
-                if _is_generic_grounded_rag_answer_candidate(
-                    message=message,
-                    skill_result=skill_result,
-                ):
-                    needs_investigating = False
-                    investigation_reason = None
-                else:
-                    needs_investigating = True
-                    investigation_reason = RAG_POST_CHECK_ERROR_REASON
-                    workflow_action = WORKFLOW_ACTION_OPEN_ENGINEER_TICKET
-            else:
-                if sufficiency.decision == "investigate":
-                    if not _should_keep_generic_grounded_rag_answer(
-                        message=message,
-                        skill_result=skill_result,
-                        sufficiency=sufficiency,
-                    ):
-                        needs_investigating = True
-                        investigation_reason = RAG_POST_CHECK_INSUFFICIENT_REASON
-                    workflow_action = WORKFLOW_ACTION_OPEN_ENGINEER_TICKET
-    elif needs_investigating:
-        workflow_action = WORKFLOW_ACTION_OPEN_ENGINEER_TICKET
-
-    next_status = INVESTIGATING_STATUS if needs_investigating else COMMUNICATING_STATUS
-    return TicketExecutionResult(
-        answer=skill_result.answer,
-        confidence=skill_result.confidence,
-        sources=list(skill_result.sources),
-        citations=[dict(item) for item in skill_result.citations],
-        evidence_summary=dict(skill_result.evidence_summary or {}) or None,
-        packed_evidence=dict(skill_result.packed_evidence or {}) or None,
-        needs_investigating=needs_investigating,
-        next_status=normalize_ticket_status(next_status),
-        answer_route=skill_result.answer_route,
-        scope_label=skill_result.scope_label,
-        route_family=skill_result.route_family,
-        execution_action=execution_plan.execution_action,
-        tooling_profile=skill_result.tooling_profile,
-        route_reason=skill_result.route_reason,
-        route_confidence=skill_result.route_confidence,
-        search_used=skill_result.search_used,
-        matched_signals=list(skill_result.matched_signals),
-        investigation_reason=investigation_reason,
-        workflow_action=workflow_action,
-        client_intake_state=next_client_intake_state,
-    )
-
-
-def resolve_next_ticket_status(current_status: str | None, proposed_status: str | None) -> str:
-    current = normalize_ticket_status(current_status)
-    proposed = normalize_ticket_status(proposed_status or COMMUNICATING_STATUS)
-    if proposed == INVESTIGATING_STATUS:
-        return INVESTIGATING_STATUS
-    if current == ESCALATED_STATUS and proposed == COMMUNICATING_STATUS:
-        return ESCALATED_STATUS
-    return proposed
+    return runtime_execution.result
