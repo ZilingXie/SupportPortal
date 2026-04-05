@@ -721,3 +721,43 @@ For each new entry, record:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_investigation_flow.InvestigationFlowTests.test_client_ack_prompt_instructions_require_concierge_style backend.tests.test_investigation_flow.InvestigationFlowTests.test_client_ack_returns_model_text_and_latency -q`
   - `python3 -m py_compile backend/main.py backend/tests/test_investigation_flow.py`
   - `git diff --check`
+
+- Date: 2026-04-05
+- Area or subsystem: Client new-session welcome copy
+- Prompt or model version: `client-empty-session-welcome-v2`
+- Summary: Removed the empty-session hero block above the welcome bubble and updated the transient welcome copy to a title-cased Agora Support greeting.
+- Reason: The new-session screen was visually redundant with both a hero and a welcome bubble, and the welcome sentence needed the revised product-facing wording.
+- Affected files or config:
+  - `ui/client-ui/app.js`
+  - `ui/client-ui/styles.css`
+  - `ui/client-ui/index.html`
+  - `backend/tests/test_client_ui_contract.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Empty draft sessions no longer render the icon/title/description hero block before product selection.
+  - The first visible assistant-style message in a new session now reads `Thank you for contacting Agora Support! How may I help you today?`
+  - The welcome bubble remains transient-only and still disappears once the first real user message exists.
+- Verification:
+  - `python -m unittest backend.tests.test_client_ui_contract`
+  - `node --check ui/client-ui/app.js`
+  - `git diff --check`
+
+- Date: 2026-04-05
+- Area or subsystem: Client new-session welcome copy and product selector layout
+- Prompt or model version: `client-empty-session-welcome-v3`
+- Summary: Reworded the transient welcome bubble to explicitly request product selection and removed the separate product explainer card so the selector now sits directly beneath the greeting.
+- Reason: The product explainer card repeated information already conveyed by the welcome copy and added unnecessary vertical weight before the first action.
+- Affected files or config:
+  - `ui/client-ui/app.js`
+  - `ui/client-ui/styles.css`
+  - `ui/client-ui/index.html`
+  - `backend/tests/test_client_ui_contract.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Empty draft sessions now greet users with `Thank you for contacting Agora Support! We’re here to help. Before we begin, please select the product you need support with.`
+  - The product selector renders immediately below the welcome bubble without the extra kicker/title/description card.
+  - The welcome bubble remains transient-only and still disappears once the first real user message exists.
+- Verification:
+  - `python -m unittest backend.tests.test_client_ui_contract`
+  - `node --check ui/client-ui/app.js`
+  - `git diff --check`
