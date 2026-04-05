@@ -352,7 +352,7 @@ html.material-symbols-pending .material-symbols-outlined {
 }
 
 .filter-select.is-open {
-  z-index: 24;
+  z-index: 96;
 }
 
 .filter-select-trigger {
@@ -435,6 +435,7 @@ html.material-symbols-pending .material-symbols-outlined {
   top: calc(100% + 4px);
   left: 0;
   width: 100%;
+  z-index: 2;
   max-height: 240px;
   padding: 6px;
   border: 1px solid rgba(110, 120, 130, 0.16);
@@ -1477,11 +1478,19 @@ html.material-symbols-pending .material-symbols-outlined {
   padding-top: 18px;
 }
 
+.chat-root.has-open-product-select {
+  overflow: visible;
+}
+
 .chat-main {
   flex: 1;
   min-height: 0;
   overflow: auto;
   padding: 24px 0;
+}
+
+.chat-root.has-open-product-select .chat-main {
+  overflow: visible;
 }
 
 .message-list {

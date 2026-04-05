@@ -136,8 +136,8 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260405-new-session-welcome-3", html)
-        self.assertIn('./app.js?v=20260405-new-session-welcome-3', html)
+        self.assertIn("./styles.css?v=20260405-product-select-overlay-1", html)
+        self.assertIn('./app.js?v=20260405-product-select-overlay-1', html)
         self.assertIn("AI-SOLVING", app_source)
         self.assertIn("Session History", app_source)
         self.assertIn('navigate("/chat");', app_source)
@@ -431,6 +431,133 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_client_product_select_toggles_chat_overlay_class_when_open(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const draft = getOrCreateDraftTicket(state.user.id);
+                state.view = "chat-ticket";
+                state.activeTicketId = draft.id;
+
+                const makeClassList = () => {
+                  const values = new Set();
+                  return {
+                    add(...tokens) {
+                      tokens.forEach((token) => values.add(token));
+                    },
+                    remove(...tokens) {
+                      tokens.forEach((token) => values.delete(token));
+                    },
+                    contains(token) {
+                      return values.has(token);
+                    },
+                  };
+                };
+
+                const triggerListeners = {};
+                const optionListeners = {};
+                const rootListeners = {};
+                const triggerAttrs = {};
+                const hiddenInput = { value: "" };
+                const chatRoot = { classList: makeClassList() };
+                const panel = { hidden: true };
+                const option = {
+                  id: "ticket-product-option-0",
+                  focus() {},
+                  getAttribute(name) {
+                    return name === "data-value" ? "audio_video_calling" : "";
+                  },
+                  addEventListener(type, handler) {
+                    optionListeners[type] = handler;
+                  },
+                };
+                const trigger = {
+                  focus() {},
+                  setAttribute(name, value) {
+                    triggerAttrs[name] = value;
+                  },
+                  removeAttribute(name) {
+                    delete triggerAttrs[name];
+                  },
+                  addEventListener(type, handler) {
+                    triggerListeners[type] = handler;
+                  },
+                };
+                const root = {
+                  classList: makeClassList(),
+                  getAttribute(name) {
+                    return name === "data-ticket-id" ? draft.id : "";
+                  },
+                  querySelector(selector) {
+                    if (selector === "[data-product-select-trigger]") return trigger;
+                    if (selector === "[data-product-select-panel]") return panel;
+                    if (selector === "input[type='hidden']") return hiddenInput;
+                    return null;
+                  },
+                  querySelectorAll(selector) {
+                    if (selector === "[data-product-select-option]") return [option];
+                    return [];
+                  },
+                  addEventListener(type, handler) {
+                    rootListeners[type] = handler;
+                  },
+                  closest(selector) {
+                    return selector === ".chat-root" ? chatRoot : null;
+                  },
+                  contains() {
+                    return false;
+                  },
+                };
+
+                appRoot.querySelectorAll = (selector) => {
+                  if (selector === "[data-product-select]") {
+                    return [root];
+                  }
+                  return [];
+                };
+
+                bindTicketProductSelect();
+                if (typeof triggerListeners.click !== "function") {
+                  throw new Error("Expected product-select trigger click handler to be bound.");
+                }
+
+                triggerListeners.click();
+                if (!root.classList.contains("is-open")) {
+                  throw new Error("Opening the product select should mark the root as open.");
+                }
+                if (panel.hidden) {
+                  throw new Error("Opening the product select should unhide the panel.");
+                }
+                if (!chatRoot.classList.contains("has-open-product-select")) {
+                  throw new Error("Opening the product select should raise the chat overlay class.");
+                }
+
+                triggerListeners.click();
+                if (root.classList.contains("is-open")) {
+                  throw new Error("Closing the product select should clear the open state.");
+                }
+                if (!panel.hidden) {
+                  throw new Error("Closing the product select should hide the panel.");
+                }
+                if (chatRoot.classList.contains("has-open-product-select")) {
+                  throw new Error("Closing the product select should remove the chat overlay class.");
+                }
+              """
+            )
+        )
+
+    def test_client_product_select_overlay_css_allows_dropdown_to_escape_chat_main(self) -> None:
+        css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn(".chat-root.has-open-product-select {\n  overflow: visible;", css)
+        self.assertIn(".chat-root.has-open-product-select .chat-main {\n  overflow: visible;", css)
+        self.assertIn(".filter-select.is-open {\n  z-index:", css)
+        self.assertIn(".filter-select-panel {\n  position: absolute;", css)
+        self.assertIn("z-index:", css)
+
     def test_client_new_session_renders_transient_welcome_bubble_without_mutating_ticket_messages(self) -> None:
         self.run_client_app_script(
             textwrap.dedent(
@@ -704,7 +831,7 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
-    def test_client_send_message_waits_for_model_ack_before_showing_transient_ack(self) -> None:
+    def test_client_send_message_keeps_model_ack_hidden_until_ack_timeout(self) -> None:
         self.run_client_app_script(
             textwrap.dedent(
                 """
@@ -821,12 +948,28 @@ class ClientUiContractTests(unittest.TestCase):
                 await Promise.resolve();
                 await Promise.resolve();
 
-                const html = renderChatTicket();
-                if (!html.includes("I got your message and I am checking it now.")) {
-                  throw new Error("Expected transient client model ack to render after the ack request resolves.");
+                const beforeTimeoutHtml = renderChatTicket();
+                if (beforeTimeoutHtml.includes("I got your message and I am checking it now.")) {
+                  throw new Error("Client model ack should stay hidden until the 5-second delay elapses.");
                 }
-                if (html.includes("Got it, let me check this for you.")) {
+                if (beforeTimeoutHtml.includes("Got it, let me check this for you.")) {
                   throw new Error("Static fallback text should not render when model ack arrives first.");
+                }
+
+                const fallbackTimer = scheduledTimeouts.find((entry) => entry.delay === 5000);
+                if (!fallbackTimer) {
+                  throw new Error("Expected client ack fallback timeout to be scheduled.");
+                }
+                fallbackTimer.fn();
+                await Promise.resolve();
+                await Promise.resolve();
+
+                const afterTimeoutHtml = renderChatTicket();
+                if (!afterTimeoutHtml.includes("I got your message and I am checking it now.")) {
+                  throw new Error("Expected the ready model ack to render once the 5-second delay elapses.");
+                }
+                if (afterTimeoutHtml.includes("Got it, let me check this for you.")) {
+                  throw new Error("Static fallback text should not render when the ready model ack is available at timeout.");
                 }
               """
             )
@@ -945,7 +1088,7 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
-    def test_client_send_message_does_not_render_server_ack_template_before_client_ack_timeout(self) -> None:
+    def test_client_send_message_sync_durable_reply_suppresses_any_client_ack(self) -> None:
         self.run_client_app_script(
             textwrap.dedent(
                 """
@@ -993,10 +1136,10 @@ class ClientUiContractTests(unittest.TestCase):
                       ok: true,
                       json: async () => ({
                         ticket_id: ticket.id,
-                        answer: "Got it, let me check this for you.",
+                        answer: "Use joinChannel with the same channel name and token.",
                         ai_replied: true,
                         queued_for_ai: false,
-                        ack_source: "server_ack",
+                        ack_source: "rule",
                         processing_mode: "main_agent_sync",
                         status: "communicating",
                       }),
@@ -1011,12 +1154,18 @@ class ClientUiContractTests(unittest.TestCase):
                 if (!updated) {
                   throw new Error("Expected ticket to remain available after sending a message.");
                 }
-                if (updated.messages.length !== 1) {
-                  throw new Error(`Expected only the durable user message before fallback, got ${updated.messages.length}.`);
+                if (updated.messages.length !== 2) {
+                  throw new Error(`Expected the durable user message and durable assistant reply, got ${updated.messages.length}.`);
                 }
-                const pendingHtml = renderChatTicket();
-                if (pendingHtml.includes("Got it, let me check this for you.")) {
-                  throw new Error("Server-side template ack should not render before the client ack timeout fires.");
+                if (updated.messages[1].content !== "Use joinChannel with the same channel name and token.") {
+                  throw new Error("Expected the durable assistant reply to be persisted immediately.");
+                }
+                const resolvedHtml = renderChatTicket();
+                if (!resolvedHtml.includes("Use joinChannel with the same channel name and token.")) {
+                  throw new Error("Expected the durable assistant reply to render immediately.");
+                }
+                if (resolvedHtml.includes("Got it, let me check this for you.")) {
+                  throw new Error("Server-side reassurance template should not render as the sync durable reply.");
                 }
                 if (!scheduledTimeouts.some((entry) => entry.delay === 5000)) {
                   throw new Error("Expected client ack fallback timeout to be scheduled.");
@@ -1038,12 +1187,92 @@ class ClientUiContractTests(unittest.TestCase):
                 await Promise.resolve();
                 await Promise.resolve();
 
-                const resolvedHtml = renderChatTicket();
-                if (!resolvedHtml.includes("I got your message and I am checking it now.")) {
-                  throw new Error("Expected the model ack to render once it resolves.");
+                const lateAckHtml = renderChatTicket();
+                if (lateAckHtml.includes("I got your message and I am checking it now.")) {
+                  throw new Error("Late client ack should be ignored once the durable sync reply is already visible.");
                 }
-                if (resolvedHtml.includes("Got it, let me check this for you.")) {
-                  throw new Error("Server-side template ack should stay hidden when the model ack arrives before timeout.");
+                if (!lateAckHtml.includes("Use joinChannel with the same channel name and token.")) {
+                  throw new Error("Durable sync reply should remain visible after late client ack completion.");
+                }
+              """
+            )
+        )
+
+    def test_client_chat_hides_legacy_assistant_reassurance_when_a_later_reply_exists(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const ticket = createTicket(state.user.id);
+                state.view = "chat-ticket";
+                state.activeTicketId = ticket.id;
+                updateTicketStatus(ticket.id, "investigating");
+                saveTicketMessages(ticket.id, [
+                  {
+                    id: "msg-user-1",
+                    role: "user",
+                    content: "how to join channel",
+                    createdAt: "2026-04-04T04:45:46.947235Z",
+                  },
+                  {
+                    id: "msg-assistant-1",
+                    role: "assistant",
+                    content: "Got it, let me check this for you.",
+                    createdAt: "2026-04-04T04:45:46.947758Z",
+                  },
+                  {
+                    id: "msg-assistant-2",
+                    role: "assistant",
+                    content: "I've opened an engineer ticket for this issue and we're investigating further. I'll reply here as soon as the engineer review is confirmed.",
+                    createdAt: "2026-04-04T04:46:28.952143Z",
+                  },
+                ]);
+
+                const html = renderChatTicket();
+                if (html.includes("Got it, let me check this for you.")) {
+                  throw new Error("Legacy assistant reassurance should be hidden once a later assistant reply exists in history.");
+                }
+                if (!html.includes("engineer ticket for this issue")) {
+                  throw new Error("Later durable assistant reply should remain visible.");
+                }
+              """
+            )
+        )
+
+    def test_client_chat_keeps_customer_message_even_if_it_matches_legacy_reassurance_text(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const ticket = createTicket(state.user.id);
+                state.view = "chat-ticket";
+                state.activeTicketId = ticket.id;
+                updateTicketStatus(ticket.id, "communicating");
+                saveTicketMessages(ticket.id, [
+                  {
+                    id: "msg-user-1",
+                    role: "user",
+                    content: "Got it, let me check this for you.",
+                    createdAt: "2026-04-05T04:45:46.947235Z",
+                  },
+                  {
+                    id: "msg-assistant-1",
+                    role: "assistant",
+                    content: "Use the joinChannel method after you obtain a token.",
+                    createdAt: "2026-04-05T04:46:28.952143Z",
+                  },
+                ]);
+
+                const html = renderChatTicket();
+                if (!html.includes("Got it, let me check this for you.")) {
+                  throw new Error("Customer-authored messages should not be hidden just because they match a legacy reassurance template.");
+                }
+                if (!html.includes("Use the joinChannel method after you obtain a token.")) {
+                  throw new Error("Assistant reply should remain visible alongside the matching customer message.");
                 }
               """
             )
@@ -2056,6 +2285,87 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_client_logout_clears_hidden_ack_before_timeout_can_render_it(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+                render = () => {};
 
+                const ticket = createTicket(state.user.id);
+                updateTicketProduct(ticket.id, "audio_video_calling");
+                state.view = "chat-ticket";
+                state.activeTicketId = ticket.id;
+
+                const scheduledTimeouts = [];
+                setTimeout = (fn, delay) => {
+                  const id = `timeout-${scheduledTimeouts.length + 1}`;
+                  scheduledTimeouts.push({ id, fn, delay });
+                  return id;
+                };
+                clearTimeout = (id) => {
+                  const match = scheduledTimeouts.find((entry) => entry.id === id);
+                  if (match) {
+                    match.cleared = true;
+                  }
+                };
+
+                let resolveAck = null;
+                fetch = (url) => {
+                  if (url === "/api/client/ack") {
+                    return new Promise((resolve) => {
+                      resolveAck = resolve;
+                    });
+                  }
+                  throw new Error(`Unexpected fetch call to ${url}`);
+                };
+
+                const ackPromise = startClientAck(ticket.id, "how to join channel");
+                await Promise.resolve();
+
+                resolveAck({
+                  ok: true,
+                  json: async () => ({
+                    ack_text: "I got your message and I am checking it now.",
+                    source: "client_model",
+                    model: "gpt-5.4-nano",
+                    reasoning_effort: "none",
+                    latency_ms: 240,
+                    error: null,
+                  }),
+                });
+                await ackPromise;
+                await Promise.resolve();
+                await Promise.resolve();
+
+                const beforeLogoutHtml = renderChatTicket();
+                if (beforeLogoutHtml.includes("I got your message and I am checking it now.")) {
+                  throw new Error("Ready client ack should stay hidden before the timeout elapses.");
+                }
+
+                logout();
+
+                const fallbackTimer = scheduledTimeouts.find((entry) => entry.delay === 5000);
+                if (!fallbackTimer) {
+                  throw new Error("Expected client ack fallback timeout to be scheduled.");
+                }
+                fallbackTimer.fn();
+
+                if (state.pendingClientAck) {
+                  throw new Error("Logout should clear any visible transient client ack.");
+                }
+                if (state.stagedClientAck) {
+                  throw new Error("Logout should clear any staged hidden client ack.");
+                }
+                if (state.pendingAckAbortController) {
+                  throw new Error("Logout should clear the pending client ack transport.");
+                }
+                if (state.pendingAckFallbackTimerId) {
+                  throw new Error("Logout should clear the client ack timeout.");
+                }
+              """
+            )
+        )
 if __name__ == "__main__":
     unittest.main()
