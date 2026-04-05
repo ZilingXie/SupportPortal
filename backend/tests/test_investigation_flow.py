@@ -2163,12 +2163,13 @@ class InvestigationFlowTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["status"], "communicating")
+        self.assertEqual(payload["status"], "resolved")
         self.assertIsNone(payload["active_investigation"])
+        self.assertEqual(payload["closed_investigation"]["state"], "closed")
 
         detail = self.client.get("/api/engineer/tickets/TK-INV-103-1")
         ticket = detail.json()["ticket"]
-        self.assertEqual(ticket["status"], "communicating")
+        self.assertEqual(ticket["status"], "resolved")
         self.assertIsNone(ticket["active_investigation"])
         self.assertEqual(ticket["messages"][-1]["role"], "assistant")
         self.assertIn("Please upgrade to SDK 4.2.2", ticket["messages"][-1]["content"])
@@ -2178,6 +2179,10 @@ class InvestigationFlowTests(unittest.TestCase):
             "Please upgrade to SDK 4.2.2 and retry token renewal.",
         )
         self.assertEqual(ticket["engineer_agent_state"]["phase"], "awaiting_confirmation")
+        stored_client_ticket = self.repository.get_ticket("TK-INV-103")
+        self.assertIsNotNone(stored_client_ticket)
+        self.assertEqual(stored_client_ticket["status"], "communicating")
+        self.assertIsNone(stored_client_ticket.get("active_engineer_case_id"))
         event_types = [item["event_type"] for item in self.repository.list_ticket_events("TK-INV-103")]
         self.assertIn("ticket_investigation_closed", event_types)
         self.assertIn("ticket_guidance_applied", event_types)

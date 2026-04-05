@@ -2573,7 +2573,7 @@ async def confirm_investigation_reply(
     )
     engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
     if request.decision == "approve":
-        engineer_case["status"] = COMMUNICATING_STATUS
+        engineer_case["status"] = RESOLVED_STATUS
         ticket["status"] = COMMUNICATING_STATUS
     else:
         engineer_case["status"] = INVESTIGATING_STATUS
@@ -2615,7 +2615,7 @@ async def confirm_investigation_reply(
             "ticket_id": str(engineer_case.get("engineer_case_id") or ticket_id),
             "client_ticket_id": str(ticket.get("ticket_id") or ""),
             "engineer_case_id": str(engineer_case.get("engineer_case_id") or ""),
-            "status": ticket["status"],
+            "status": engineer_case["status"],
             "engineer_id": request.engineer_id,
             "message": customer_reply[:200],
             "created_at": timestamp,
@@ -2631,8 +2631,9 @@ async def confirm_investigation_reply(
 
     return {
         "ticket_id": str(engineer_case.get("engineer_case_id") or ticket_id),
-        "status": ticket["status"],
+        "status": engineer_case["status"],
         "active_investigation": result.get("active_investigation"),
+        "closed_investigation": result.get("closed_investigation"),
         "updated_at": ticket["updated_at"],
     }
 

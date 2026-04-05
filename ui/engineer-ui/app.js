@@ -174,6 +174,21 @@ function applyInvestigationResponseToSelectedTicket(ticketId, payload) {
   }
 
   if (payload && typeof payload === "object") {
+    const nextClosedInvestigation =
+      payload.closed_investigation && typeof payload.closed_investigation === "object"
+        ? payload.closed_investigation
+        : null;
+    const existingHistory = Array.isArray(selectedTicket.investigation_history)
+      ? selectedTicket.investigation_history
+      : [];
+    const nextHistory = nextClosedInvestigation
+      ? [
+          nextClosedInvestigation,
+          ...existingHistory.filter(
+            (item) => String(item?.id || "").trim() !== String(nextClosedInvestigation.id || "").trim()
+          ),
+        ]
+      : existingHistory;
     selectedTicket = {
       ...selectedTicket,
       status: payload.status ?? selectedTicket.status,
@@ -182,7 +197,13 @@ function applyInvestigationResponseToSelectedTicket(ticketId, payload) {
         payload.active_investigation === undefined
           ? selectedTicket.active_investigation
           : payload.active_investigation,
+      investigation_history: nextHistory,
     };
+    if (normalizeStatusValue(selectedTicket.status) === "resolved") {
+      const fallback = buildLocalSummaryFallback(selectedTicket);
+      selectedTicketSummary = fallback.summary;
+      selectedTicketNextAction = fallback.nextAction;
+    }
 
     const ticketIndex = tickets.findIndex(
       (ticket) => normalizeDetailTicketId(ticket?.ticket_id) === normalizedTicketId
@@ -193,6 +214,7 @@ function applyInvestigationResponseToSelectedTicket(ticketId, payload) {
         status: selectedTicket.status,
         updated_at: selectedTicket.updated_at,
         active_investigation: selectedTicket.active_investigation,
+        investigation_history: nextHistory,
       };
     }
   }
@@ -2593,9 +2615,12 @@ async function handleDetailClick(event) {
     tellAiSubmitting = true;
     renderTicketDetail();
     try {
-      await submitInvestigationConfirmation(selectedTicketId, "approve");
+      const responsePayload = await submitInvestigationConfirmation(selectedTicketId, "approve");
       investigationReviseMode = false;
       tellAiDraft = "";
+      applyInvestigationResponseToSelectedTicket(selectedTicketId, responsePayload);
+      setSelectedPoolStatus("resolved", { render: false });
+      renderTicketDetail();
       await loadTickets({ refreshDetail: false });
       await refreshSelectedTicket({ silent: true });
     } catch (error) {
