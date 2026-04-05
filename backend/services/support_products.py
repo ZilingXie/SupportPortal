@@ -67,6 +67,8 @@ _INTAKE_FIELD_LABELS = {
     "issue_timestamp": "issue timestamp",
     "issue_symptom": "issue symptom",
     "sid": "sid",
+    "desired_outcome": "desired outcome",
+    "blocked_step_or_error": "blocked step or error",
 }
 
 

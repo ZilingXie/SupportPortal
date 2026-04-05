@@ -45,7 +45,13 @@ from backend.services.rag_benchmark_session import build_local_benchmark_session
 from backend.services.rag_evidence_summary import build_rag_evidence_summary
 from backend.services.local_source_sync import ingest_source_document, stage_source_document
 from backend.services.local_benchmark_sync import sync_default_local_benchmarks
-from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY, RagExecutionCancelled, run_rag_query
+from backend.services.rag_qa import (
+    INSUFFICIENT_EVIDENCE_REPLY,
+    RagExecutionCancelled,
+    RagKnowledgeIndexReadiness,
+    probe_customer_rag_index_readiness,
+    run_rag_query,
+)
 from backend.services.task_queue import AsyncRedisTaskQueue
 from backend.services.token_usage import aggregate_usage_ledger, build_usage_ledger_entry
 
@@ -165,6 +171,7 @@ def _build_quality_signals(
     avg_selected_similarity_score: float | None,
     handoff_reason: str | None,
     needs_human: bool | None,
+    extractive_fallback_used: bool | None = None,
     context_budget_enabled: bool | None = None,
     context_window: int | None = None,
     reserved_output_tokens: int | None = None,
@@ -180,6 +187,7 @@ def _build_quality_signals(
 ) -> dict[str, Any]:
     return {
         "generation_mode": generation_mode,
+        "extractive_fallback_used": extractive_fallback_used,
         "selected_doc_count": selected_doc_count,
         "citation_coverage_ratio": citation_coverage_ratio,
         "top1_similarity_score": top1_similarity_score,
@@ -389,6 +397,142 @@ def _attach_telemetry_diagnostics(
     return {
         **evidence_summary,
         "diagnostics": diagnostics,
+    }
+
+
+def _attach_response_diagnostics(
+    evidence_summary: dict[str, Any],
+    response_diagnostics: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not response_diagnostics:
+        return evidence_summary
+    diagnostics = dict(evidence_summary.get("diagnostics") or {})
+    diagnostics.update(response_diagnostics)
+    return {
+        **evidence_summary,
+        "diagnostics": diagnostics,
+    }
+
+
+def _knowledge_index_guard_diagnostics(readiness: RagKnowledgeIndexReadiness) -> dict[str, Any]:
+    return {
+        "knowledge_index_status": readiness.status,
+        "knowledge_index_reason": readiness.status,
+        "configured_vector_table": readiness.configured_table,
+        "resolved_vector_table": readiness.resolved_table,
+        "configured_primary_rows": readiness.configured_primary_rows,
+    }
+
+
+def _build_rag_unavailable_response(
+    *,
+    request: "RagQueryRequest",
+    diagnostics_extra: dict[str, Any] | None = None,
+    error_type: str = "rag_unavailable",
+) -> dict[str, Any]:
+    usage_ledger: list[dict[str, Any]] = []
+    usage_summary = _empty_usage_summary()
+    telemetry_diagnostics = _record_rag_query_run_best_effort(
+        request_id=request.request_id,
+        ticket_id=request.ticket_id,
+        run={
+            "request_id": request.request_id,
+            "ticket_id": request.ticket_id,
+            "user_query": request.question,
+            "intent": "knowledge_qa",
+            "query_type": "unclear_query",
+            "retrieval_strategy": "agentic_multi_tool_v1",
+            "top_k": request.top_k or 6,
+            "vector_candidates_count": 0,
+            "bm25_candidates_count": 0,
+            "reranked_candidates_count": 0,
+            "retrieved_chunk_ids": [],
+            "selected_chunk_ids": [],
+            "retrieval_latency_ms": 0.0,
+            "rerank_latency_ms": 0.0,
+            "generation_latency_ms": 0.0,
+            "total_latency_ms": 0.0,
+            "intent_latency_ms": 0.0,
+            "rewrite_latency_ms": 0.0,
+            "vector_retrieval_latency_ms": 0.0,
+            "bm25_retrieval_latency_ms": 0.0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "embedding_tokens": 0,
+            "avg_cost_per_query": None,
+            "confidence_score": 0.0,
+            "embedding_provider": _knowledge_embedding_provider(),
+            "embedding_model": _knowledge_embedding_model(),
+            "embedding_dimensions": _knowledge_embedding_dimensions(),
+            "embedding_request_meta": [],
+            "primary_source_type": None,
+            "primary_chunk_strategy": None,
+            "reranker_provider": _knowledge_reranker_provider(),
+            "reranker_model": _knowledge_reranker_model(),
+            "generation_mode": "insufficient_evidence",
+            "structured_retry_used": False,
+            "extractive_fallback_used": False,
+            "selected_doc_count": 0,
+            "top1_similarity_score": None,
+            "avg_selected_similarity_score": None,
+            "citation_coverage_ratio": None,
+            "needs_human": True,
+            "handoff_reason": "rag_unavailable",
+            "error_flag": True,
+            "timeout_flag": False,
+            "error_type": error_type,
+            "answer_text": "",
+            "answer_length": 0,
+            "citation_count": 0,
+            "cited_chunk_ids": [],
+            "model_name": None,
+            "query_understanding_meta": {},
+            "usage_ledger": usage_ledger,
+            "usage_summary": usage_summary,
+            "prompt_version": RAG_PROMPT_VERSION,
+            "created_at": now_iso(),
+        },
+        candidates=[],
+    )
+    evidence_summary = build_rag_evidence_summary(
+        quality_signals=_build_quality_signals(
+            generation_mode="insufficient_evidence",
+            extractive_fallback_used=False,
+            selected_doc_count=0,
+            citation_coverage_ratio=None,
+            top1_similarity_score=None,
+            avg_selected_similarity_score=None,
+            handoff_reason="rag_unavailable",
+            needs_human=True,
+            context_budget_enabled=False,
+            context_window=None,
+            reserved_output_tokens=None,
+            buffer_tokens=None,
+            raw_context_token_estimate=None,
+            packed_context_token_estimate=None,
+            compression_triggered=False,
+            compression_trigger_reason=None,
+            compression_mode=None,
+            compression_model=None,
+            extractive_segment_count=None,
+            packed_evidence_count=None,
+        ),
+        selected_contexts=[],
+        cited_chunk_ids=set(),
+        query_understanding={},
+    )
+    evidence_summary = _attach_telemetry_diagnostics(evidence_summary, telemetry_diagnostics)
+    evidence_summary = _attach_response_diagnostics(evidence_summary, diagnostics_extra)
+    return {
+        "decision": "escalate",
+        "answer": "",
+        "confidence": 0.0,
+        "sources": [],
+        "citations": [],
+        "reason": "rag_unavailable",
+        "evidence_summary": evidence_summary,
+        "packed_evidence": None,
+        "query_understanding": {},
     }
 
 class RagQueryRequest(BaseModel):
@@ -732,19 +876,23 @@ def health() -> dict[str, Any]:
 def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_internal_auth)) -> dict[str, Any]:
     inflight_state = _register_inflight_rag_request(request.request_id)
     try:
-        try:
-            result = run_rag_query(
-                request.question,
-                top_k=request.top_k or 6,
-                ticket_context=request.ticket_context,
-                ticket_id=request.ticket_id,
-                customer_id=request.customer_id,
-                product=request.product,
-                should_cancel=lambda: bool(inflight_state["cancel_event"].is_set()),
-                record_cancel_stage=lambda stage: _update_inflight_rag_stage(request.request_id, stage),
+        readiness = probe_customer_rag_index_readiness(top_k=request.top_k or 6)
+        if readiness.status in {"configured_table_empty", "fallback_table_selected"}:
+            return _build_rag_unavailable_response(
+                request=request,
+                diagnostics_extra=_knowledge_index_guard_diagnostics(readiness),
+                error_type=readiness.status,
             )
-        finally:
-            _cleanup_inflight_rag_request(request.request_id)
+        result = run_rag_query(
+            request.question,
+            top_k=request.top_k or 6,
+            ticket_context=request.ticket_context,
+            ticket_id=request.ticket_id,
+            customer_id=request.customer_id,
+            product=request.product,
+            should_cancel=lambda: bool(inflight_state["cancel_event"].is_set()),
+            record_cancel_stage=lambda stage: _update_inflight_rag_stage(request.request_id, stage),
+        )
     except RagExecutionCancelled as exc:
         LOGGER.info(
             "RAG query cancelled request_id=%s ticket_id=%s stage=%s",
@@ -857,110 +1005,11 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             "packed_evidence": None,
             "query_understanding": {},
         }
+    finally:
+        _cleanup_inflight_rag_request(request.request_id)
 
     if result is None:
-        usage_ledger: list[dict[str, Any]] = []
-        usage_summary = _empty_usage_summary()
-        telemetry_diagnostics = _record_rag_query_run_best_effort(
-            request_id=request.request_id,
-            ticket_id=request.ticket_id,
-            run={
-                "request_id": request.request_id,
-                "ticket_id": request.ticket_id,
-                "user_query": request.question,
-                "intent": "knowledge_qa",
-                "query_type": "unclear_query",
-                "retrieval_strategy": "agentic_multi_tool_v1",
-                "top_k": request.top_k or 6,
-                "vector_candidates_count": 0,
-                "bm25_candidates_count": 0,
-                "reranked_candidates_count": 0,
-                "retrieved_chunk_ids": [],
-                "selected_chunk_ids": [],
-                "retrieval_latency_ms": 0.0,
-                "rerank_latency_ms": 0.0,
-                "generation_latency_ms": 0.0,
-                "total_latency_ms": 0.0,
-                "intent_latency_ms": 0.0,
-                "rewrite_latency_ms": 0.0,
-                "vector_retrieval_latency_ms": 0.0,
-                "bm25_retrieval_latency_ms": 0.0,
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "embedding_tokens": 0,
-                "avg_cost_per_query": None,
-                "confidence_score": 0.0,
-                "embedding_provider": _knowledge_embedding_provider(),
-                "embedding_model": _knowledge_embedding_model(),
-                "embedding_dimensions": _knowledge_embedding_dimensions(),
-                "embedding_request_meta": [],
-                "primary_source_type": None,
-                "primary_chunk_strategy": None,
-                "reranker_provider": _knowledge_reranker_provider(),
-                "reranker_model": _knowledge_reranker_model(),
-                "generation_mode": "insufficient_evidence",
-                "structured_retry_used": False,
-                "extractive_fallback_used": False,
-                "selected_doc_count": 0,
-                "top1_similarity_score": None,
-                "avg_selected_similarity_score": None,
-                "citation_coverage_ratio": None,
-                "needs_human": True,
-                "handoff_reason": "rag_unavailable",
-                "error_flag": True,
-                "timeout_flag": False,
-                "error_type": "rag_unavailable",
-                "answer_text": "",
-                "answer_length": 0,
-                "citation_count": 0,
-                "cited_chunk_ids": [],
-                "model_name": None,
-                "query_understanding_meta": {},
-                "usage_ledger": usage_ledger,
-                "usage_summary": usage_summary,
-                "prompt_version": RAG_PROMPT_VERSION,
-                "created_at": now_iso(),
-            },
-            candidates=[],
-        )
-        evidence_summary = build_rag_evidence_summary(
-            quality_signals=_build_quality_signals(
-                generation_mode="insufficient_evidence",
-                selected_doc_count=0,
-                citation_coverage_ratio=None,
-                top1_similarity_score=None,
-                avg_selected_similarity_score=None,
-                handoff_reason="rag_unavailable",
-                needs_human=True,
-                context_budget_enabled=False,
-                context_window=None,
-                reserved_output_tokens=None,
-                buffer_tokens=None,
-                raw_context_token_estimate=None,
-                packed_context_token_estimate=None,
-                compression_triggered=False,
-                compression_trigger_reason=None,
-                compression_mode=None,
-                compression_model=None,
-                extractive_segment_count=None,
-                packed_evidence_count=None,
-            ),
-            selected_contexts=[],
-            cited_chunk_ids=set(),
-            query_understanding={},
-        )
-        evidence_summary = _attach_telemetry_diagnostics(evidence_summary, telemetry_diagnostics)
-        return {
-            "decision": "escalate",
-            "answer": "",
-            "confidence": 0.0,
-            "sources": [],
-            "citations": [],
-            "reason": "rag_unavailable",
-            "evidence_summary": evidence_summary,
-            "packed_evidence": None,
-            "query_understanding": {},
-        }
+        return _build_rag_unavailable_response(request=request)
 
     rag_answer = result.answer
     trace = result.trace
@@ -972,6 +1021,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
     evidence_summary = build_rag_evidence_summary(
         quality_signals=_build_quality_signals(
             generation_mode=trace.generation_mode,
+            extractive_fallback_used=trace.extractive_fallback_used,
             selected_doc_count=trace.selected_doc_count,
             citation_coverage_ratio=trace.citation_coverage_ratio,
             top1_similarity_score=trace.top1_similarity_score,
@@ -1060,7 +1110,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
     )
     evidence_summary = _attach_telemetry_diagnostics(evidence_summary, telemetry_diagnostics)
 
-    if rag_answer.answer.strip() == INSUFFICIENT_EVIDENCE_REPLY:
+    if bool(trace.needs_human) or rag_answer.answer.strip() == INSUFFICIENT_EVIDENCE_REPLY:
         return {
             "decision": "escalate",
             "answer": "",

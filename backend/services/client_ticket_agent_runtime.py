@@ -404,6 +404,10 @@ def _is_high_risk_grounded_answer(
     )
     if bool(quality_signals.get("needs_human")):
         return True
+    if str(quality_signals.get("generation_mode") or "").strip().lower() == "extractive_fallback":
+        return True
+    if bool(quality_signals.get("extractive_fallback_used")):
+        return True
     if not resolution.citations:
         return True
     return False
@@ -427,16 +431,16 @@ def _handle_insufficient_review(
     resolution: SupportResolution,
     product: str | None,
 ) -> TicketExecutionResult:
-    if review_result.issue_mode == "investigation":
-        next_client_intake_state = build_client_intake_state(review_result, product=product)
-        if review_result.ready_for_engineer_ticket:
-            return _build_ticket_execution_result(
-                resolution=resolution,
-                needs_investigating=True,
-                workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
-                investigation_reason=RAG_INSUFFICIENT_EVIDENCE_REASON,
-                client_intake_state=next_client_intake_state,
-            )
+    next_client_intake_state = build_client_intake_state(review_result, product=product)
+    if review_result.ready_for_engineer_ticket:
+        return _build_ticket_execution_result(
+            resolution=resolution,
+            needs_investigating=True,
+            workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
+            investigation_reason=RAG_INSUFFICIENT_EVIDENCE_REASON,
+            client_intake_state=next_client_intake_state,
+        )
+    if _clean_text(review_result.customer_reply):
         clarify_resolution = SupportResolution(
             answer=review_result.customer_reply,
             confidence=float(resolution.confidence),
@@ -466,7 +470,40 @@ def _handle_insufficient_review(
         needs_investigating=True,
         workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
         investigation_reason=RAG_INSUFFICIENT_EVIDENCE_REASON,
+        client_intake_state=next_client_intake_state,
     )
+
+
+def _extract_resolution_diagnostics(resolution: SupportResolution) -> dict[str, Any]:
+    if not isinstance(resolution.evidence_summary, dict):
+        return {}
+    diagnostics = resolution.evidence_summary.get("diagnostics")
+    return dict(diagnostics) if isinstance(diagnostics, dict) else {}
+
+
+def _merge_rag_resolution_diagnostics(
+    diagnostics: dict[str, Any],
+    *,
+    resolution: SupportResolution,
+) -> dict[str, Any]:
+    merged = dict(diagnostics)
+    quality_signals = (
+        resolution.evidence_summary.get("quality_signals")
+        if isinstance(resolution.evidence_summary, dict)
+        and isinstance(resolution.evidence_summary.get("quality_signals"), dict)
+        else {}
+    )
+    handoff_reason = _clean_text(quality_signals.get("handoff_reason") or resolution.route_reason) or None
+    if handoff_reason:
+        merged["rag_reason"] = handoff_reason
+        if handoff_reason == RAG_UNAVAILABLE_REASON:
+            merged["rag_reason_detail"] = "knowledge_index_unavailable"
+        elif handoff_reason == RAG_INSUFFICIENT_EVIDENCE_REASON:
+            merged["rag_reason_detail"] = "generic_insufficient_evidence"
+    for key, value in _extract_resolution_diagnostics(resolution).items():
+        if value is not None:
+            merged[key] = value
+    return merged
 
 
 def execute_client_ticket_agent_runtime(
@@ -720,13 +757,30 @@ def execute_client_ticket_agent_runtime(
             route_decision=effective_route_decision,
             rag_detail=rag_detail,
         )
+        diagnostics = _merge_rag_resolution_diagnostics(
+            diagnostics,
+            resolution=rag_resolution,
+        )
+        rag_resolution_diagnostics = _extract_resolution_diagnostics(rag_resolution)
         _mark_agent_summary(
             rag_summary,
             phase="completed",
             status="completed",
             decision=str(rag_detail.reason or "rag_result"),
             reason=str(rag_detail.reason or "rag_result"),
-            extra={"confidence": float(rag_detail.confidence)},
+            extra={
+                "confidence": float(rag_detail.confidence),
+                **{
+                    key: rag_resolution_diagnostics.get(key)
+                    for key in (
+                        "knowledge_index_status",
+                        "knowledge_index_reason",
+                        "configured_vector_table",
+                        "resolved_vector_table",
+                    )
+                    if rag_resolution_diagnostics.get(key) is not None
+                },
+            },
         )
         _append_event(
             agent_events,

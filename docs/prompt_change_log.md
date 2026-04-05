@@ -12,6 +12,32 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-04-05 - Troubleshooting intake prompt supports answer-mode clarification
+
+- Area or subsystem: Client AI insufficient-evidence intake review
+- Prompt or model version: `troubleshooting-intake-answer-clarify-v1`
+- Summary: Expanded the troubleshooting-intake prompt so the review stage can now distinguish troubleshooting investigations from non-troubleshooting how-to clarification, explicitly use `desired_outcome` and `blocked_step_or_error` for answer-mode follow-up, and mark answer-mode cases ready for engineer handoff once those fields are known.
+- Reason: The previous prompt only supported investigation-field gathering, so non-troubleshooting `rag_insufficient_evidence` cases either opened engineer immediately or returned no clarify guidance. The fail-closed customer RAG change needs a prompt contract that can ask goal/blocker questions without forcing every how-to miss into troubleshooting intake fields.
+- Affected files or config:
+  - `backend/services/prompts/troubleshooting_intake.py`
+  - `backend/services/troubleshooting_intake.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_troubleshooting_intake.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_ticket_orchestrator.py`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Expected behavior change:
+  - The intake review prompt can now ask natural-language clarification for non-troubleshooting how-to misses instead of only asking troubleshooting field lists.
+  - Answer-mode clarify outputs may populate `known_information` / `missing_information` with `desired_outcome` and `blocked_step_or_error`.
+  - Once those answer-mode clarify fields are present and the query still needs human follow-up, the runtime can reuse that state and open engineer with the clarified customer context.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_troubleshooting_intake backend.tests.test_client_ticket_agent_runtime backend.tests.test_ticket_orchestrator backend.tests.test_rag_api backend.tests.test_rag_qa`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_worker backend.tests.test_investigation_flow backend.tests.test_prompt_modules backend.tests.test_rag_service_client backend.tests.test_rag_evidence_summary`
+  - Verification result:
+    - Prompt-adjacent regression coverage passed in the focused 77-test suite and the broader 83-test integration suite.
+    - The new prompt contract is exercised by answer-mode clarify regressions and by worker/investigation flow tests that preserve `client_intake_state` across customer follow-up turns.
+
 ## 2026-04-02 - Query-understanding prompt surface for client RAG retrieval planning
 
 ## 2026-04-03 - Lower-latency default reasoning for client RAG answers

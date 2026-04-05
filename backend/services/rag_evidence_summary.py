@@ -32,6 +32,7 @@ def build_rag_evidence_summary(
 ) -> dict[str, Any]:
     normalized_quality = {
         "generation_mode": None,
+        "extractive_fallback_used": None,
         "selected_doc_count": None,
         "citation_coverage_ratio": None,
         "top1_similarity_score": None,

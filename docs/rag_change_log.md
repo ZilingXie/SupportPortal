@@ -10,6 +10,38 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-04-05 - Fail-closed customer RAG fallback and rebuild-window guard
+
+- Summary: Hardened the customer RAG path so `extractive_fallback` is no longer treated as a safe customer answer, added a knowledge-index readiness probe that fails closed during empty-index or fallback-table rebuild windows, and routed ordinary insufficient-evidence FAQ misses into a clarify flow instead of exposing ungrounded evidence snippets.
+- Reason: `TK-062` showed that a rebuild/empty-index window plus `extractive_fallback` semantics could still produce a customer-facing answer from mismatched evidence. The customer path now needs to fail closed when the index is unavailable and preserve extractive fallback only for internal/debug traces.
+- Affected files or config:
+  - `backend/rag_api.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/rag_evidence_summary.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/services/troubleshooting_intake.py`
+  - `backend/services/support_products.py`
+  - `backend/services/prompts/troubleshooting_intake.py`
+  - `backend/tests/test_rag_api.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_ticket_orchestrator.py`
+  - `backend/tests/test_troubleshooting_intake.py`
+  - `docs/rag_change_log.md`
+  - `docs/prompt_change_log.md`
+- Data impact:
+  - Customer-facing `/internal/rag/query` now returns `decision="escalate"` whenever the RAG trace is marked `needs_human=true`, including `generation_mode="extractive_fallback"`, so fallback evidence text no longer leaks into direct customer answers.
+  - The RAG API now probes the configured vector table before answer generation and returns `rag_unavailable` when the configured table is empty or when runtime would otherwise auto-switch to a different populated fallback table during rebuild.
+  - `evidence_summary.quality_signals` now carries `extractive_fallback_used`, and `evidence_summary.diagnostics` can carry `knowledge_index_status`, `knowledge_index_reason`, configured/resolved vector tables, and configured primary-row counts for live runtime explainability.
+  - Customer insufficient-evidence review now supports answer-mode clarify state (`desired_outcome`, `blocked_step_or_error`) in `client_intake_state`, while rebuild-window `rag_unavailable` cases still go straight to engineer handoff.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_troubleshooting_intake backend.tests.test_client_ticket_agent_runtime backend.tests.test_ticket_orchestrator backend.tests.test_rag_api backend.tests.test_rag_qa`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_worker backend.tests.test_investigation_flow backend.tests.test_prompt_modules backend.tests.test_rag_service_client backend.tests.test_rag_evidence_summary`
+  - Verification result:
+    - Focused fail-closed/runtime/RAG regression suite passed: `77 tests`.
+    - Follow-on worker/investigation/prompt/service integration suite passed: `83 tests`.
+    - The new regressions now cover answer-mode clarify for `how to join channel`, fail-closed `extractive_fallback`, and `rag_unavailable` on knowledge-index rebuild windows.
+
 ## 2026-04-02 - Query-understanding layer before client RAG retrieval
 
 ## 2026-04-03 - Client RAG latency and failure-path hardening
