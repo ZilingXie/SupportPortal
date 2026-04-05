@@ -198,6 +198,39 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertIn("record_ticket_created_event_ms", payload_data)
         self.assertGreaterEqual(float(payload_data.get("record_ticket_created_event_ms") or 0.0), 0.0)
 
+    def test_build_query_task_includes_execution_snapshot_fields(self) -> None:
+        task = main.build_query_task(
+            ticket_id="TK-SNAPSHOT-001",
+            customer_message="how to join channel",
+            message_created_at="2026-04-05T00:00:00+00:00",
+            customer_id="C-001",
+            ticket_subject="Join question",
+            product="audio_video_calling",
+            route_context_tail=[
+                {"role": "customer", "content": "how to join channel"},
+                {"role": "assistant", "content": "Certainly—I've received your request and will have it checked for you."},
+            ],
+            client_intake_state={"phase": "gather_customer_inputs"},
+            ticket_updated_at="2026-04-05T00:00:01+00:00",
+        )
+
+        self.assertEqual(task["task_type"], "ticket_query")
+        self.assertEqual(task["customer_id"], "C-001")
+        self.assertEqual(task["ticket_subject"], "Join question")
+        self.assertEqual(task["product"], "audio_video_calling")
+        self.assertEqual(task["ticket_updated_at"], "2026-04-05T00:00:01+00:00")
+        self.assertEqual(
+            task["route_context_tail"],
+            [
+                {"role": "customer", "content": "how to join channel"},
+                {
+                    "role": "assistant",
+                    "content": "Certainly—I've received your request and will have it checked for you.",
+                },
+            ],
+        )
+        self.assertEqual(task["client_intake_state"], {"phase": "gather_customer_inputs"})
+
     def test_health_reports_shared_ticket_and_rag_database_warning_when_dsns_match(self) -> None:
         with patch.dict(
             os.environ,
