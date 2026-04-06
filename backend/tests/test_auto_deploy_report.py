@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
+from pathlib import Path
 
 from backend.services.llm_factory import LlmTextResult
 
@@ -97,6 +100,32 @@ class AutoDeployReportTests(unittest.TestCase):
         self.assertNotIn("\x00", sanitized)
         self.assertLessEqual(len(sanitized), 40)
         self.assertIn("[truncated]", sanitized)
+
+    def test_collect_docker_diagnostics_uses_current_worker_service_names(self) -> None:
+        from backend.services.auto_deploy_report import collect_docker_diagnostics
+
+        commands: list[list[str]] = []
+
+        def fake_run(command: list[str], *, text: bool, capture_output: bool, check: bool) -> subprocess.CompletedProcess[str]:
+            commands.append(command)
+            if "ps" in command:
+                return subprocess.CompletedProcess(command, 0, stdout="NAME\napi up\n", stderr="")
+            return subprocess.CompletedProcess(command, 0, stdout="worker_query | INFO ok\n", stderr="")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            compose_file = Path(temp_dir) / "docker-compose.yml"
+            env_file = Path(temp_dir) / ".env"
+            compose_file.write_text("services: {}\n", encoding="utf-8")
+            env_file.write_text("", encoding="utf-8")
+
+            with patch("backend.services.auto_deploy_report.shutil.which", return_value="/usr/bin/docker"):
+                with patch("backend.services.auto_deploy_report.subprocess.run", side_effect=fake_run):
+                    collect_docker_diagnostics(compose_file=compose_file, env_file=env_file)
+
+        logs_command = next(command for command in commands if "logs" in command)
+        self.assertIn("worker_query", logs_command)
+        self.assertIn("worker_aux", logs_command)
+        self.assertNotIn("worker", logs_command)
 
 
 if __name__ == "__main__":

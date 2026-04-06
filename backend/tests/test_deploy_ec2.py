@@ -214,6 +214,11 @@ class DeployEc2ScriptTests(unittest.TestCase):
         self.assertIn("docker compose build failed", result.stdout + result.stderr)
         self.assertEqual(self._compose_verbs(), ["build", "ps", "logs"])
         self.assertEqual(self._read_json_lines(self.state_dir / "curl_calls.jsonl"), [])
+        docker_calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+        logs_call = next(call for call in docker_calls if "logs" in call["argv"])
+        self.assertIn("worker_query", logs_call["argv"])
+        self.assertIn("worker_aux", logs_call["argv"])
+        self.assertNotIn("worker", logs_call["argv"])
 
     def test_successful_deploy_builds_before_down_and_reuses_built_image(self) -> None:
         result = self._run_script(

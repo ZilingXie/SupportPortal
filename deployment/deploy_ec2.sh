@@ -232,7 +232,7 @@ show_compose_diagnostics() {
   log "Service status after failed deploy step:"
   docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps || true
   log "Recent service logs:"
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" logs --tail=80 api nginx rag_api ws_gateway worker rag_worker || true
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" logs --tail=80 api nginx rag_api ws_gateway worker_query worker_aux rag_worker || true
 }
 
 wait_for_http_ok() {
@@ -351,7 +351,7 @@ main() {
 
   if [[ "${FOLLOW_LOGS}" -eq 1 ]]; then
     log "Following logs (Ctrl+C to exit)..."
-    docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" logs -f --tail=120 api ws_gateway worker nginx rag_api rag_worker
+    docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" logs -f --tail=120 api ws_gateway worker_query worker_aux nginx rag_api rag_worker
   fi
 
   log "Deploy finished."
