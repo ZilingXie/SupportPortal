@@ -210,13 +210,24 @@ chmod +x deployment/deploy_ec2.sh
 
 脚本会执行：
 1. 拉取最新代码（`git fetch/pull`，默认当前分支）。
-2. 先执行 `docker compose build`，只有构建成功后才会继续切换服务。
-3. 重启容器（`docker compose down` + `up -d`）。
-4. 健康检查（`http://127.0.0.1:<NGINX_HOST_PORT>/health`）。
-5. 外网检查（默认 `https://support.stellarix.space/health`）。
-6. 使用仓库根目录下的 `.deploy_ec2.lock` 避免并发部署。
+2. 在 build 前检查镜像存储所在磁盘的剩余空间，默认要求至少 `40 GiB`。
+3. 如果剩余空间低于阈值，会自动执行 `docker builder prune -af` 和 `docker image prune -af` 后再复查。
+4. 如果清理后仍低于阈值，会直接失败并输出明确错误，不会开始 `docker compose build`。
+5. 先执行 `docker compose build`，只有构建成功后才会继续切换服务。
+6. 重启容器（`docker compose down` + `up -d`）。
+7. 健康检查（`http://127.0.0.1:<NGINX_HOST_PORT>/health`）。
+8. 外网检查（默认 `https://support.stellarix.space/health`）。
+9. 使用仓库根目录下的 `.deploy_ec2.lock` 避免并发部署。
 
 这样即使镜像构建阶段失败，也不会先把线上容器停掉。
+
+磁盘预检查支持两个可选环境变量：
+1. `DEPLOY_MIN_FREE_DISK_GB`
+   - 默认 `40`
+   - 设为 `0` 可关闭预检查
+2. `DEPLOY_DISK_CHECK_PATH`
+   - 默认自动优先检查 `/var/lib/containerd`，其次 `/var/lib/docker`，最后 `/`
+   - 你也可以手动指定实际的镜像存储路径
 
 常用参数：
 
@@ -296,6 +307,8 @@ DEPLOY_REPORT_LOG_SINCE=24h
 DEPLOY_REPORT_LOG_LINES_PER_SERVICE=120
 DEPLOY_REPORT_MAX_LOG_CHARS=12000
 DEPLOY_REPORT_TIMEZONE=Asia/Shanghai
+DEPLOY_MIN_FREE_DISK_GB=40
+DEPLOY_DISK_CHECK_PATH=
 ```
 
 如果你已经习惯旧命名，bootstrap 脚本也兼容：
@@ -356,6 +369,8 @@ sudo nano /etc/supportportal/auto-deploy.env
 5. `DEPLOY_REPORT_LOG_LINES_PER_SERVICE=120`
 6. `DEPLOY_REPORT_MAX_LOG_CHARS=12000`
 7. `DEPLOY_REPORT_TIMEZONE=Asia/Shanghai`
+8. `DEPLOY_MIN_FREE_DISK_GB=40`
+9. `DEPLOY_DISK_CHECK_PATH=/var/lib/containerd`
 
 安装 systemd unit。下面的命令会把默认仓库路径 `/opt/supportportal/SupportPortal` 和默认用户 `ubuntu` 替换成当前机器的真实值：
 
@@ -439,6 +454,12 @@ journalctl -u supportportal-auto-deploy.service -n 200 --no-pager
    - 先检查仓库 `.env` 中是否存在 `OPENAI_API_KEY`。
    - 检查 `DEPLOY_REPORT_ENABLE_AI` 是否被设为 `false`。
    - 如果 OpenAI 调用失败，日报仍会照常发送，但 AI 区块会回退成 unavailable 文本，不会阻塞部署或健康检查。
+
+7. 如果部署前直接失败，日志里出现 `below required ... GiB even after docker cache cleanup`：
+   - 说明脚本已经自动清理了 builder/image 缓存，但剩余空间仍低于阈值。
+   - 先执行 `df -h`、`docker system df` 确认磁盘使用情况。
+   - 可以扩容 EBS，或手动再次执行 `docker builder prune -af` / `docker image prune -af` 后重试。
+   - 如果确实需要调整阈值，再修改 `DEPLOY_MIN_FREE_DISK_GB`，不要直接关闭预检查。
 
 ---
 

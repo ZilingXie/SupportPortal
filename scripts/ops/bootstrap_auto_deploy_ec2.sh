@@ -17,6 +17,8 @@ DEPLOY_DOMAIN=""
 DEPLOY_ALERT_TO=""
 DEPLOY_ALERT_FROM=""
 DEPLOY_AWS_REGION=""
+DEPLOY_MIN_FREE_DISK_GB=""
+DEPLOY_DISK_CHECK_PATH=""
 CURRENT_STEP="startup"
 
 log() {
@@ -169,6 +171,8 @@ load_bootstrap_config() {
   DEPLOY_ALERT_FROM="$(resolve_first_value DEPLOY_ALERT_FROM ALERT_FROM_EMAIL)"
   DEPLOY_ALERT_TO="$(resolve_first_value DEPLOY_ALERT_TO ALERT_TO_EMAIL)"
   DEPLOY_AWS_REGION="$(resolve_first_value DEPLOY_AWS_REGION AWS_REGION)"
+  DEPLOY_MIN_FREE_DISK_GB="$(resolve_env_value DEPLOY_MIN_FREE_DISK_GB)"
+  DEPLOY_DISK_CHECK_PATH="$(resolve_env_value DEPLOY_DISK_CHECK_PATH)"
 
   [[ -n "${DEPLOY_DOMAIN}" ]] || fail "DEPLOY_DOMAIN is required in ${ENV_FILE}."
   [[ -n "${DEPLOY_ALERT_FROM}" ]] || fail "DEPLOY_ALERT_FROM or ALERT_FROM_EMAIL is required in ${ENV_FILE}."
@@ -241,6 +245,14 @@ DEPLOY_ALERT_TO=${DEPLOY_ALERT_TO}
 DEPLOY_ALERT_FROM=${DEPLOY_ALERT_FROM}
 DEPLOY_AWS_REGION=${DEPLOY_AWS_REGION}
 EOF
+
+  if [[ -n "${DEPLOY_MIN_FREE_DISK_GB}" ]]; then
+    printf 'DEPLOY_MIN_FREE_DISK_GB=%s\n' "${DEPLOY_MIN_FREE_DISK_GB}" >> "${tmpfile}"
+  fi
+
+  if [[ -n "${DEPLOY_DISK_CHECK_PATH}" ]]; then
+    printf 'DEPLOY_DISK_CHECK_PATH=%s\n' "${DEPLOY_DISK_CHECK_PATH}" >> "${tmpfile}"
+  fi
 
   run_privileged install -d -m 0755 "${AUTO_DEPLOY_ETC_DIR}"
   run_privileged cp "${tmpfile}" "${target_file}"

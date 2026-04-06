@@ -376,6 +376,8 @@ class AutoDeployAssetTests(unittest.TestCase):
         self.assertIn("DEPLOY_REPORT_LOG_SINCE=", env_example)
         self.assertIn("DEPLOY_REPORT_LOG_LINES_PER_SERVICE=", env_example)
         self.assertIn("DEPLOY_REPORT_MAX_LOG_CHARS=", env_example)
+        self.assertIn("DEPLOY_MIN_FREE_DISK_GB=", env_example)
+        self.assertIn("DEPLOY_DISK_CHECK_PATH=", env_example)
 
 
 if __name__ == "__main__":

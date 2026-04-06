@@ -14,7 +14,15 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import AUTO_DEPLOY_REPORT_SCENARIO, resolve_model_profile
 
-DEFAULT_REPORT_SERVICES = ("api", "nginx", "rag_api", "ws_gateway", "worker", "rag_worker")
+DEFAULT_REPORT_SERVICES = (
+    "api",
+    "nginx",
+    "rag_api",
+    "ws_gateway",
+    "worker_query",
+    "worker_aux",
+    "rag_worker",
+)
 DEFAULT_REPORT_TIMEZONE = "Asia/Shanghai"
 DEFAULT_REPORT_LOG_SINCE = "24h"
 DEFAULT_REPORT_LOG_LINES_PER_SERVICE = 120

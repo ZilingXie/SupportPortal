@@ -92,6 +92,14 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 with (state_dir / "docker_calls.jsonl").open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps({"argv": args}) + "\\n")
 
+                if args[:2] == ["builder", "prune"]:
+                    print("builder prune ok")
+                    sys.exit(0)
+
+                if args[:2] == ["image", "prune"]:
+                    print("image prune ok")
+                    sys.exit(0)
+
                 if args[:1] != ["compose"]:
                     print("unexpected docker invocation", args, file=sys.stderr)
                     sys.exit(1)
@@ -128,6 +136,37 @@ class DeployEc2ScriptTests(unittest.TestCase):
 
                 print("unsupported docker compose invocation", args, file=sys.stderr)
                 sys.exit(1)
+                """
+            ),
+        )
+
+        self._write_executable(
+            self.fake_bin / "df",
+            textwrap.dedent(
+                """\
+                #!/usr/bin/env python3
+                import json
+                import os
+                import sys
+                from pathlib import Path
+
+                state_dir = Path(os.environ["DEPLOY_TEST_STATE_DIR"])
+                sequence = [
+                    item.strip()
+                    for item in os.environ.get("FAKE_DF_AVAILABLE_KB_SEQUENCE", "209715200").split(",")
+                    if item.strip()
+                ]
+                counter_path = state_dir / "df_counter.txt"
+                current_index = int(counter_path.read_text(encoding="utf-8")) if counter_path.exists() else 0
+                selected_index = min(current_index, len(sequence) - 1)
+                available_kb = sequence[selected_index]
+                counter_path.write_text(str(current_index + 1), encoding="utf-8")
+
+                with (state_dir / "df_calls.jsonl").open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps({"argv": sys.argv[1:], "available_kb": available_kb}) + "\\n")
+
+                print("Filesystem 1024-blocks Used Available Capacity Mounted on")
+                print(f"/dev/root 314572800 104857600 {available_kb} 34% /")
                 """
             ),
         )
@@ -200,6 +239,25 @@ class DeployEc2ScriptTests(unittest.TestCase):
                     break
         return verbs
 
+    def _docker_actions(self) -> list[str]:
+        actions: list[str] = []
+        for call in self._read_json_lines(self.state_dir / "docker_calls.jsonl"):
+            argv = call["argv"]
+            assert isinstance(argv, list)
+            if argv[:2] == ["builder", "prune"]:
+                actions.append("builder-prune")
+                continue
+            if argv[:2] == ["image", "prune"]:
+                actions.append("image-prune")
+                continue
+            if "compose" not in argv:
+                continue
+            for item in argv:
+                if item in {"build", "down", "up", "ps", "logs"}:
+                    actions.append(f"compose-{item}")
+                    break
+        return actions
+
     def test_build_failure_preserves_running_services_until_new_image_exists(self) -> None:
         result = self._run_script(
             "--skip-pull",
@@ -214,6 +272,11 @@ class DeployEc2ScriptTests(unittest.TestCase):
         self.assertIn("docker compose build failed", result.stdout + result.stderr)
         self.assertEqual(self._compose_verbs(), ["build", "ps", "logs"])
         self.assertEqual(self._read_json_lines(self.state_dir / "curl_calls.jsonl"), [])
+        docker_calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
+        logs_call = next(call for call in docker_calls if "logs" in call["argv"])
+        self.assertIn("worker_query", logs_call["argv"])
+        self.assertIn("worker_aux", logs_call["argv"])
+        self.assertNotIn("worker", logs_call["argv"])
 
     def test_successful_deploy_builds_before_down_and_reuses_built_image(self) -> None:
         result = self._run_script(
@@ -227,6 +290,8 @@ class DeployEc2ScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
         verbs = self._compose_verbs()
         self.assertEqual(verbs, ["build", "down", "up", "ps"])
+        self.assertNotIn("builder-prune", self._docker_actions())
+        self.assertNotIn("image-prune", self._docker_actions())
 
         docker_calls = self._read_json_lines(self.state_dir / "docker_calls.jsonl")
         up_call = next(call for call in docker_calls if "up" in call["argv"])
@@ -239,6 +304,45 @@ class DeployEc2ScriptTests(unittest.TestCase):
                 "https://support.stellarix.space/health",
             ],
         )
+
+    def test_low_disk_space_prunes_docker_cache_before_build(self) -> None:
+        result = self._run_script(
+            "--skip-pull",
+            "--branch",
+            "main",
+            "--domain",
+            "support.stellarix.space",
+            extra_env={"FAKE_DF_AVAILABLE_KB_SEQUENCE": "1048576,83886080"},
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("Pruning Docker cache before build", result.stdout)
+        self.assertEqual(
+            self._docker_actions(),
+            [
+                "builder-prune",
+                "image-prune",
+                "compose-build",
+                "compose-down",
+                "compose-up",
+                "compose-ps",
+            ],
+        )
+
+    def test_low_disk_space_after_prune_fails_before_build(self) -> None:
+        result = self._run_script(
+            "--skip-pull",
+            "--branch",
+            "main",
+            "--domain",
+            "support.stellarix.space",
+            extra_env={"FAKE_DF_AVAILABLE_KB_SEQUENCE": "1048576,2097152"},
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("below required 40 GiB even after docker cache cleanup", result.stdout + result.stderr)
+        self.assertEqual(self._docker_actions(), ["builder-prune", "image-prune"])
+        self.assertEqual(self._read_json_lines(self.state_dir / "curl_calls.jsonl"), [])
 
 
 if __name__ == "__main__":

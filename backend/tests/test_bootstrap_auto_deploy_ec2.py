@@ -52,6 +52,8 @@ class BootstrapAutoDeployEc2Tests(unittest.TestCase):
                 AWS_REGION=us-east-1
                 ALERT_FROM_EMAIL=alerts@example.com
                 ALERT_TO_EMAIL=ops@example.com
+                DEPLOY_MIN_FREE_DISK_GB=55
+                DEPLOY_DISK_CHECK_PATH=/var/lib/containerd
                 """
             ),
         )
@@ -312,6 +314,8 @@ class BootstrapAutoDeployEc2Tests(unittest.TestCase):
         self.assertIn("DEPLOY_ALERT_FROM=alerts@example.com", auto_deploy_env)
         self.assertIn("DEPLOY_ALERT_TO=ops@example.com", auto_deploy_env)
         self.assertIn("DEPLOY_AWS_REGION=us-east-1", auto_deploy_env)
+        self.assertIn("DEPLOY_MIN_FREE_DISK_GB=55", auto_deploy_env)
+        self.assertIn("DEPLOY_DISK_CHECK_PATH=/var/lib/containerd", auto_deploy_env)
 
         service = (self.systemd_dir / "supportportal-auto-deploy.service").read_text(encoding="utf-8")
         timer = (self.systemd_dir / "supportportal-auto-deploy.timer").read_text(encoding="utf-8")
@@ -345,6 +349,8 @@ class BootstrapAutoDeployEc2Tests(unittest.TestCase):
         self.assertIn("DEPLOY_REPORT_ENABLE_AI=true", env_example)
         self.assertIn("DEPLOY_REPORT_MODEL=gpt-5.4-mini", env_example)
         self.assertIn("DEPLOY_REPORT_LOG_SINCE=24h", env_example)
+        self.assertIn("DEPLOY_MIN_FREE_DISK_GB=40", env_example)
+        self.assertIn("DEPLOY_DISK_CHECK_PATH=", env_example)
 
     def test_bootstrap_script_does_not_require_unzip_before_install(self) -> None:
         script = BOOTSTRAP_SCRIPT.read_text(encoding="utf-8")

@@ -228,11 +228,89 @@ resolve_positive_integer() {
   fi
 }
 
+resolve_non_negative_integer() {
+  local key="$1"
+  local default_value="$2"
+  local value
+
+  value="$(resolve_env_value "${key}")"
+  if [[ "${value}" =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "${value}"
+  else
+    printf '%s\n' "${default_value}"
+  fi
+}
+
+resolve_disk_check_path() {
+  local configured_path
+  configured_path="$(resolve_env_value DEPLOY_DISK_CHECK_PATH)"
+  if [[ -n "${configured_path}" ]]; then
+    printf '%s\n' "${configured_path}"
+    return 0
+  fi
+
+  if [[ -d "/var/lib/containerd" ]]; then
+    printf '%s\n' "/var/lib/containerd"
+  elif [[ -d "/var/lib/docker" ]]; then
+    printf '%s\n' "/var/lib/docker"
+  else
+    printf '%s\n' "/"
+  fi
+}
+
+available_disk_kb() {
+  local target_path="$1"
+  df -Pk "${target_path}" | awk 'NR==2 { print $4 }'
+}
+
+format_gib_from_kb() {
+  local available_kb="$1"
+  awk -v available_kb="${available_kb}" 'BEGIN { printf "%.1f", available_kb / 1024 / 1024 }'
+}
+
+ensure_minimum_free_disk_space() {
+  local disk_check_path threshold_gb threshold_kb before_kb after_kb before_gib after_gib
+
+  threshold_gb="$(resolve_non_negative_integer DEPLOY_MIN_FREE_DISK_GB 40)"
+  if (( threshold_gb == 0 )); then
+    log "Disk preflight disabled because DEPLOY_MIN_FREE_DISK_GB=0."
+    return 0
+  fi
+
+  disk_check_path="$(resolve_disk_check_path)"
+  [[ -e "${disk_check_path}" ]] || fail "Disk check path does not exist: ${disk_check_path}"
+
+  before_kb="$(available_disk_kb "${disk_check_path}")"
+  [[ "${before_kb}" =~ ^[0-9]+$ ]] || fail "Unable to determine free disk space for ${disk_check_path}."
+
+  threshold_kb=$(( threshold_gb * 1024 * 1024 ))
+  before_gib="$(format_gib_from_kb "${before_kb}")"
+  log "Available disk before build on ${disk_check_path}: ${before_gib} GiB"
+
+  if (( before_kb >= threshold_kb )); then
+    return 0
+  fi
+
+  log "Pruning Docker cache before build because available disk on ${disk_check_path} is below ${threshold_gb} GiB."
+  docker builder prune -af
+  docker image prune -af
+
+  after_kb="$(available_disk_kb "${disk_check_path}")"
+  [[ "${after_kb}" =~ ^[0-9]+$ ]] || fail "Unable to determine free disk space for ${disk_check_path} after Docker cache cleanup."
+
+  after_gib="$(format_gib_from_kb "${after_kb}")"
+  log "Available disk after Docker cache cleanup on ${disk_check_path}: ${after_gib} GiB"
+
+  if (( after_kb < threshold_kb )); then
+    fail "Available disk space on ${disk_check_path} is ${after_gib} GiB, below required ${threshold_gb} GiB even after docker cache cleanup."
+  fi
+}
+
 show_compose_diagnostics() {
   log "Service status after failed deploy step:"
   docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps || true
   log "Recent service logs:"
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" logs --tail=80 api nginx rag_api ws_gateway worker rag_worker || true
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" logs --tail=80 api nginx rag_api ws_gateway worker_query worker_aux rag_worker || true
 }
 
 wait_for_http_ok() {
@@ -267,6 +345,7 @@ main() {
   require_cmd git
   require_cmd docker
   require_cmd curl
+  require_cmd df
   acquire_deploy_lock
 
   [[ -f "${COMPOSE_FILE}" ]] || fail "Compose file not found: ${COMPOSE_FILE}"
@@ -316,6 +395,8 @@ main() {
   health_timeout_seconds="$(resolve_positive_integer DEPLOY_HEALTH_TIMEOUT_SECONDS 90)"
   health_retry_interval_seconds="$(resolve_positive_integer DEPLOY_HEALTH_RETRY_INTERVAL_SECONDS 2)"
 
+  ensure_minimum_free_disk_space
+
   log "Pre-building services before restart..."
   if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" build; then
     show_compose_diagnostics
@@ -351,7 +432,7 @@ main() {
 
   if [[ "${FOLLOW_LOGS}" -eq 1 ]]; then
     log "Following logs (Ctrl+C to exit)..."
-    docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" logs -f --tail=120 api ws_gateway worker nginx rag_api rag_worker
+    docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" logs -f --tail=120 api ws_gateway worker_query worker_aux nginx rag_api rag_worker
   fi
 
   log "Deploy finished."
