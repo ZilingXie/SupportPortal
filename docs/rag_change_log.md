@@ -2496,3 +2496,29 @@ For each new entry, record:
   - `python3 -m py_compile backend/main.py backend/services/engineer_agent.py backend/services/investigation_flow.py backend/services/llm_profiles.py backend/services/prompts/__init__.py backend/services/prompts/engineer_investigation_reply.py backend/tests/test_llm_profiles.py backend/tests/test_prompt_modules.py backend/tests/test_investigation_flow.py backend/tests/test_engineer_ui_contract.py backend/tests/test_single_host_compose.py`
   - `node --check ui/engineer-ui/app.js`
   - `podman exec -i engineerreplymanual_api python - <<'PY' ... /api/engineer/tickets/{ticket_id}/investigation/messages smoke for both channel-name follow-up and direct-fix reply paths ... PY`
+
+## 2026-04-06 - Reuse one PostgreSQL write connection per `local_direct` source document
+
+- Summary:
+  - Added an internal borrowed-write-connection path in `PostgresKnowledgeRepository` so `local_direct` document staging and ingestion reuse one PostgreSQL connection instead of reconnecting for each repository write/read step.
+  - Updated the `local_direct` sync flow to open that borrowed scope once per document, covering `stage_source_document(...)`, `ingest_source_document(...)`, and the follow-up ingestion report read.
+  - Kept existing commit points inside repository methods; this change reduces repeated TLS/SCRAM connection setup without turning the whole document ingest into one large transaction.
+- Reason:
+  - Single-document profiling showed `local_direct` ingest spent most of its wall time on repeated PostgreSQL connection setup rather than embedding or chunking work.
+  - The backfill had stalled around `processed=1139` because each document path paid the same connection overhead repeatedly.
+- Affected files/config:
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/services/agora_doc_sync.py`
+  - `backend/services/local_source_sync.py`
+  - `backend/tests/test_agora_doc_sync.py`
+  - `backend/tests/test_local_source_sync.py`
+  - `backend/tests/test_knowledge_repository_bm25.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema changes.
+  - No embedding provider, model, chunking strategy, reranker, or answer-generation changes.
+  - `local_direct` backfill now reuses one PostgreSQL write connection per source document while preserving the existing document, chunk, ingestion, and report records.
+- Verification:
+  - `source /tmp/supportportal-finalize-venv/bin/activate && python -m unittest backend.tests.test_agora_doc_sync backend.tests.test_local_source_sync backend.tests.test_knowledge_repository_bm25`
+  - `source /tmp/supportportal-finalize-venv/bin/activate && python - <<'PY' ... single-doc probe for en/interactive-live-streaming/advanced-features/ai-noise-suppression_windows.md ... PY`
+  - Probe outcome: `_open_connection` dropped from the old 17-call baseline to `2`, cumulative connect time measured `5334.02ms`, and total wall time dropped to `21476.64ms` from the previous `77070.39ms` baseline.

@@ -10,8 +10,9 @@ import statistics
 import threading
 import time
 from collections import Counter
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, ContextManager, Protocol
 from uuid import uuid4
 
 import psycopg
@@ -713,6 +714,12 @@ class KnowledgeRepository(Protocol):
     def is_enabled(self) -> bool:
         ...
 
+    def borrow_local_direct_write_connection(self) -> ContextManager[Any]:
+        ...
+
+    def local_direct_write_connection_active(self) -> bool:
+        ...
+
     def get_local_benchmark_readiness_snapshot(self) -> dict[str, Any]:
         ...
 
@@ -1141,6 +1148,13 @@ class DisabledKnowledgeRepository:
         return "disabled"
 
     def is_enabled(self) -> bool:
+        return False
+
+    @contextmanager
+    def borrow_local_direct_write_connection(self):
+        yield self
+
+    def local_direct_write_connection_active(self) -> bool:
         return False
 
     def get_local_benchmark_readiness_snapshot(self) -> dict[str, Any]:
@@ -1780,6 +1794,28 @@ class PostgresKnowledgeRepository:
         self._vector_table_bootstrap_lock = threading.Lock()
         self._vector_table_bootstrap_signature: tuple[str, str, int] | None = None
         self._read_connection_local = threading.local()
+        self._borrowed_write_connection_local = threading.local()
+
+    class _BorrowedWriteConnectionProxy:
+        def __init__(self, connection: psycopg.Connection[Any]) -> None:
+            self._connection = connection
+
+        def __enter__(self) -> PostgresKnowledgeRepository._BorrowedWriteConnectionProxy:
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            if exc_type is not None:
+                try:
+                    self._connection.rollback()
+                except Exception:
+                    LOGGER.debug("Failed to rollback borrowed write connection cleanly.", exc_info=True)
+            return False
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._connection, name)
+
+        def close(self) -> None:
+            return None
 
     def _benchmark_runtime_required_relations(self) -> dict[str, set[str]]:
         return {
@@ -1888,7 +1924,55 @@ class PostgresKnowledgeRepository:
     def is_enabled(self) -> bool:
         return bool(self._dsn)
 
-    def _connect(self) -> psycopg.Connection[Any]:
+    def _borrowed_write_connection(self) -> psycopg.Connection[Any] | None:
+        connection = getattr(self._borrowed_write_connection_local, "connection", None)
+        if connection is None:
+            return None
+        if getattr(connection, "closed", False) or getattr(connection, "broken", False):
+            self._borrowed_write_connection_local.connection = None
+            self._borrowed_write_connection_local.depth = 0
+            return None
+        return connection
+
+    def local_direct_write_connection_active(self) -> bool:
+        return self._borrowed_write_connection() is not None
+
+    @contextmanager
+    def borrow_local_direct_write_connection(self):
+        existing = self._borrowed_write_connection()
+        if existing is not None:
+            self._borrowed_write_connection_local.depth = int(
+                getattr(self._borrowed_write_connection_local, "depth", 0)
+            ) + 1
+            try:
+                yield existing
+            finally:
+                self._borrowed_write_connection_local.depth = max(
+                    0,
+                    int(getattr(self._borrowed_write_connection_local, "depth", 1)) - 1,
+                )
+            return
+
+        connection = self._open_connection()
+        self._borrowed_write_connection_local.connection = connection
+        self._borrowed_write_connection_local.depth = 1
+        try:
+            yield connection
+        except Exception:
+            try:
+                connection.rollback()
+            except Exception:
+                LOGGER.debug("Failed to rollback borrowed local-direct connection cleanly.", exc_info=True)
+            raise
+        finally:
+            self._borrowed_write_connection_local.connection = None
+            self._borrowed_write_connection_local.depth = 0
+            try:
+                connection.close()
+            except Exception:
+                LOGGER.debug("Failed to close borrowed local-direct connection cleanly.", exc_info=True)
+
+    def _open_connection(self) -> psycopg.Connection[Any]:
         attempts = max(1, self._connect_retries + 1)
         last_error: Exception | None = None
         for attempt in range(1, attempts + 1):
@@ -1908,6 +1992,12 @@ class PostgresKnowledgeRepository:
         if last_error is not None:
             raise last_error
         raise RuntimeError("Knowledge repository connection failed without an exception")
+
+    def _connect(self) -> psycopg.Connection[Any]:
+        borrowed = self._borrowed_write_connection()
+        if borrowed is not None:
+            return self._BorrowedWriteConnectionProxy(borrowed)
+        return self._open_connection()
 
     def _table(self, table_name: str) -> sql.Identifier:
         return sql.Identifier(self._schema, table_name)

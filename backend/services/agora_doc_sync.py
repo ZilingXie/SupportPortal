@@ -10,6 +10,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -589,47 +590,49 @@ def _ingest_single_document(
     from backend.services.local_source_sync import ingest_source_document, stage_source_document
 
     local_path = file_path.relative_to(output_dir).as_posix()
+    borrow_scope = getattr(repository, "borrow_local_direct_write_connection", None)
     try:
-        source_document = stage_source_document(
-            repository,
-            knowledge_type="official",
-            source_system="agora",
-            external_id=local_path,
-            title=file_path.stem,
-            source_url=None,
-            published_url=None,
-            content_format="markdown",
-            raw_content=file_path.read_text(encoding="utf-8"),
-            metadata={
-                "sync_mode": "local_direct",
-                "source_absolute_path": str(file_path),
-                "source_relative_path": local_path,
-            },
-        )
-        result = ingest_source_document(
-            repository,
-            source_document,
-            sync_mode="local_direct",
-            sync_run_id=sync_run_id,
-        )
-        report = repository.get_ingestion_report(result.ingestion_id) or {}
-        summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
-        warning_count = len(report.get("warnings") or []) if isinstance(report.get("warnings"), list) else 0
-        return UploadResult(
-            local_path=local_path,
-            upload_status="completed" if result.status == "completed" else "ingestion_failed",
-            ingestion_id=result.ingestion_id,
-            ingestion_status=result.status,
-            queued=False,
-            processing_mode="local_direct",
-            http_status=None,
-            chunk_count=result.chunk_count if result.chunk_count is not None else summary.get("chunk_count"),
-            document_id=result.document_id or summary.get("document_id"),
-            dedupe_action=result.dedupe_action or summary.get("dedupe_action"),
-            error_message=result.error_message or summary.get("error_message"),
-            error=None,
-            report_warning_count=warning_count,
-        )
+        with (borrow_scope() if callable(borrow_scope) else nullcontext()):
+            source_document = stage_source_document(
+                repository,
+                knowledge_type="official",
+                source_system="agora",
+                external_id=local_path,
+                title=file_path.stem,
+                source_url=None,
+                published_url=None,
+                content_format="markdown",
+                raw_content=file_path.read_text(encoding="utf-8"),
+                metadata={
+                    "sync_mode": "local_direct",
+                    "source_absolute_path": str(file_path),
+                    "source_relative_path": local_path,
+                },
+            )
+            result = ingest_source_document(
+                repository,
+                source_document,
+                sync_mode="local_direct",
+                sync_run_id=sync_run_id,
+            )
+            report = repository.get_ingestion_report(result.ingestion_id) or {}
+            summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+            warning_count = len(report.get("warnings") or []) if isinstance(report.get("warnings"), list) else 0
+            return UploadResult(
+                local_path=local_path,
+                upload_status="completed" if result.status == "completed" else "ingestion_failed",
+                ingestion_id=result.ingestion_id,
+                ingestion_status=result.status,
+                queued=False,
+                processing_mode="local_direct",
+                http_status=None,
+                chunk_count=result.chunk_count if result.chunk_count is not None else summary.get("chunk_count"),
+                document_id=result.document_id or summary.get("document_id"),
+                dedupe_action=result.dedupe_action or summary.get("dedupe_action"),
+                error_message=result.error_message or summary.get("error_message"),
+                error=None,
+                report_warning_count=warning_count,
+            )
     except Exception as exc:
         report = None
         summary = report.get("summary") if isinstance(report, dict) and isinstance(report.get("summary"), dict) else {}

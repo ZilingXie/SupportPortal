@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from backend.services import local_source_sync
 from backend.services.agora_doc_sync import (
     DiscoveryItem,
     DownloadResult,
@@ -58,8 +60,25 @@ class _FakeRepository:
         }
         self.processed_source_doc_id: str | None = None
         self.failed_source_doc_id: str | None = None
+        self.borrow_local_direct_enter_count = 0
+        self.borrow_local_direct_active = 0
+        self.upsert_borrow_depths: list[int] = []
+        self.create_ingestion_borrow_depths: list[int] = []
+
+    @contextmanager
+    def borrow_local_direct_write_connection(self):
+        self.borrow_local_direct_enter_count += 1
+        self.borrow_local_direct_active += 1
+        try:
+            yield self
+        finally:
+            self.borrow_local_direct_active -= 1
+
+    def local_direct_write_connection_active(self) -> bool:
+        return self.borrow_local_direct_active > 0
 
     def upsert_source_document(self, **kwargs: object) -> dict:
+        self.upsert_borrow_depths.append(self.borrow_local_direct_active)
         return {
             "source_doc_id": "SRC-LOCAL-1",
             "knowledge_type": "official",
@@ -79,6 +98,7 @@ class _FakeRepository:
         return None
 
     def create_ingestion(self, **_: object) -> dict:
+        self.create_ingestion_borrow_depths.append(self.borrow_local_direct_active)
         return {"ingestion_id": "KI-LOCAL-1"}
 
     def mark_source_document_processed(self, source_doc_id: str, *, processed_ingestion_id: str) -> None:
@@ -267,7 +287,7 @@ class AgoraDocSyncTests(unittest.TestCase):
             markdown_path.write_text("# Overview\n", encoding="utf-8")
             repository = _FakeRepository()
 
-            with patch("backend.services.local_source_sync.process_knowledge_ingestion") as process:
+            with patch.object(local_source_sync, "process_knowledge_ingestion") as process:
                 result = _ingest_single_document(
                     file_path=markdown_path,
                     output_dir=root,
@@ -279,6 +299,26 @@ class AgoraDocSyncTests(unittest.TestCase):
         self.assertEqual(result.ingestion_id, "KI-LOCAL-1")
         self.assertEqual(repository.processed_source_doc_id, "SRC-LOCAL-1")
         process.assert_called_once()
+
+    def test_ingest_single_document_reuses_borrowed_local_direct_connection_scope(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            markdown_path = root / "en" / "video-calling" / "overview.md"
+            markdown_path.parent.mkdir(parents=True, exist_ok=True)
+            markdown_path.write_text("# Overview\n", encoding="utf-8")
+            repository = _FakeRepository()
+
+            with patch.object(local_source_sync, "process_knowledge_ingestion"):
+                result = _ingest_single_document(
+                    file_path=markdown_path,
+                    output_dir=root,
+                    repository=repository,
+                )
+
+        self.assertEqual(result.upload_status, "completed")
+        self.assertEqual(repository.borrow_local_direct_enter_count, 1)
+        self.assertEqual(repository.upsert_borrow_depths, [1])
+        self.assertEqual(repository.create_ingestion_borrow_depths, [1])
 
     def test_run_sync_passes_upload_workers_to_local_ingest(self) -> None:
         with TemporaryDirectory() as tmpdir:

@@ -39,12 +39,21 @@ class _FakeCursor:
 class _FakeConnection:
     def __init__(self) -> None:
         self._cursor = _FakeCursor()
+        self.close_count = 0
+        self.closed = False
 
     def cursor(self) -> _FakeCursor:
         return self._cursor
 
     def commit(self) -> None:
         return None
+
+    def rollback(self) -> None:
+        return None
+
+    def close(self) -> None:
+        self.close_count += 1
+        self.closed = True
 
     def __enter__(self) -> _FakeConnection:
         return self
@@ -296,6 +305,41 @@ class KnowledgeRepositoryBm25HookTests(unittest.TestCase):
                         )
 
         clear_cache_mock.assert_called_once()
+
+    def test_replace_document_chunks_reuses_borrowed_local_direct_connection(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        fake_connection = _FakeConnection()
+        rows = [
+            {
+                "id": "chunk-1",
+                "doc_id": "doc-1",
+                "source_path": "official/doc.md",
+                "content": "Token generation details",
+                "metadata": {},
+                "embedding": [0.1, 0.2, 0.3],
+            }
+        ]
+
+        with patch.object(repository, "_open_connection", return_value=fake_connection) as open_connection_mock:
+            with patch.object(repository, "_ensure_vector_table"):
+                with patch.object(repository, "_replace_bm25_document_index"):
+                    with repository.borrow_local_direct_write_connection():
+                        repository.replace_document_chunks(
+                            document_id="doc-1",
+                            index_role="primary",
+                            vector_dim=3,
+                            rows=rows,
+                        )
+                        repository.replace_document_chunks(
+                            document_id="doc-2",
+                            index_role="primary",
+                            vector_dim=3,
+                            rows=rows,
+                        )
+                        self.assertEqual(fake_connection.close_count, 0)
+
+        open_connection_mock.assert_called_once()
+        self.assertEqual(fake_connection.close_count, 1)
 
     def test_replace_bm25_document_index_acquires_write_lock(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")

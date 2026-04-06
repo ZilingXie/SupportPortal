@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -21,6 +22,21 @@ class _FakeRepository:
         self.processed: list[str] = []
         self.failed: list[tuple[str, str]] = []
         self.ingestion_counter = 0
+        self.borrow_local_direct_enter_count = 0
+        self.borrow_local_direct_active = 0
+        self.create_ingestion_borrow_depths: list[int] = []
+
+    @contextmanager
+    def borrow_local_direct_write_connection(self):
+        self.borrow_local_direct_enter_count += 1
+        self.borrow_local_direct_active += 1
+        try:
+            yield self
+        finally:
+            self.borrow_local_direct_active -= 1
+
+    def local_direct_write_connection_active(self) -> bool:
+        return self.borrow_local_direct_active > 0
 
     def create_sync_run(self, **_: object) -> dict[str, str]:
         return {"sync_run_id": "SYNC-1"}
@@ -44,6 +60,7 @@ class _FakeRepository:
 
     def create_ingestion(self, **_: object) -> dict[str, str]:
         self.ingestion_counter += 1
+        self.create_ingestion_borrow_depths.append(self.borrow_local_direct_active)
         return {"ingestion_id": f"KI-{self.ingestion_counter}"}
 
     def get_ingestion_report(self, ingestion_id: str) -> dict[str, object]:
@@ -142,6 +159,8 @@ class LocalSourceSyncTests(unittest.TestCase):
         self.assertEqual(repository.processed, ["SRC-1"])
         self.assertEqual(repository.failed, [])
         self.assertEqual(process.call_count, 2)
+        self.assertEqual(repository.borrow_local_direct_enter_count, 1)
+        self.assertEqual(repository.create_ingestion_borrow_depths, [1, 1])
 
 
 if __name__ == "__main__":
