@@ -89,6 +89,8 @@ from backend.services.rag_service_client import (
     RagServiceClient,
     RagServiceError,
     async_to_thread,
+    classify_rag_service_failure_kind,
+    with_rag_detail_diagnostics,
 )
 from backend.services.support_router import (
     SupportResolution,
@@ -1067,15 +1069,24 @@ def _build_rag_answer_detail(
     ticket_context: list[dict[str, str]] | None = None,
     product: str | None = None,
 ) -> RagTicketAnswerDetail:
-    def _rag_failure_reason(error: RagServiceError) -> str:
+    def _rag_failure_reason(
+        error: RagServiceError,
+        *,
+        timeout_health_status: str | None = None,
+    ) -> str:
+        failure_kind = classify_rag_service_failure_kind(error)
+        if failure_kind == "timeout":
+            return "rag_processing_timeout" if str(timeout_health_status or "").strip().lower() == "ok" else "rag_unavailable"
+        if failure_kind == "transport":
+            return "rag_unavailable"
+        if failure_kind == "http":
+            return "rag_service_error"
         if error.status_code is not None:
             return "rag_service_error"
         normalized_message = str(error).strip().lower()
         if (
             "not configured" in normalized_message
             or "request failed" in normalized_message
-            or "timeout" in normalized_message
-            or "timed out" in normalized_message
         ):
             return "rag_unavailable"
         return "rag_service_error"
@@ -1092,24 +1103,40 @@ def _build_rag_answer_detail(
             insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
         )
     except RagServiceError as exc:
-        failure_reason = _rag_failure_reason(exc)
+        failure_kind = classify_rag_service_failure_kind(exc)
+        timeout_health_status: str | None = None
+        if failure_kind == "timeout":
+            try:
+                health_payload = rag_service_client.health(timeout_seconds=2.0)
+                timeout_health_status = str((health_payload or {}).get("status") or "").strip().lower() or "unknown"
+            except RagServiceError:
+                timeout_health_status = "unreachable"
+        failure_reason = _rag_failure_reason(exc, timeout_health_status=timeout_health_status)
         LOGGER.warning(
-            "RAG service call failed request_id=%s ticket_id=%s reason=%s status_code=%s error=%s",
+            "RAG service call failed request_id=%s ticket_id=%s reason=%s failure_kind=%s status_code=%s error=%s",
             request_id,
             ticket_id,
             failure_reason,
+            failure_kind,
             exc.status_code,
             exc,
         )
-        return RagTicketAnswerDetail(
-            answer=INSUFFICIENT_EVIDENCE_REPLY,
-            confidence=0.0,
-            sources=[],
-            citations=[],
-            needs_engineer_guidance=True,
-            reason=failure_reason,
-            evidence_summary=None,
-            packed_evidence=None,
+        return with_rag_detail_diagnostics(
+            RagTicketAnswerDetail(
+                answer=INSUFFICIENT_EVIDENCE_REPLY,
+                confidence=0.0,
+                sources=[],
+                citations=[],
+                needs_engineer_guidance=True,
+                reason=failure_reason,
+                evidence_summary=None,
+                packed_evidence=None,
+            ),
+            {
+                "rag_failure_kind": failure_kind,
+                "rag_timeout_health_check_status": timeout_health_status,
+                "rag_recovered_from_live_detail": False,
+            },
         )
 
     if answer_detail.needs_engineer_guidance:

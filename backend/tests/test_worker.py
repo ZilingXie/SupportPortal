@@ -147,7 +147,7 @@ class WorkerResilienceTests(unittest.TestCase):
             os.environ,
             {
                 "TICKET_WORKER_RAG_SERVICE_TIMEOUT_SECONDS": "90",
-                "TICKET_WORKER_RAG_RECOVERY_WINDOW_SECONDS": "45",
+                "TICKET_WORKER_RAG_MAX_WAIT_SECONDS": "300",
                 "TICKET_WORKER_RAG_RECOVERY_POLL_INTERVAL_SECONDS": "2",
             },
             clear=False,
@@ -175,9 +175,65 @@ class WorkerResilienceTests(unittest.TestCase):
             product="audio_video_calling",
             insufficient_reply=worker.INSUFFICIENT_EVIDENCE_REPLY,
             timeout_seconds=90.0,
-            recovery_window_seconds=45.0,
+            recovery_window_seconds=210.0,
             recovery_poll_interval_seconds=2.0,
         )
+
+    def test_fetch_rag_answer_detail_for_worker_timeout_with_healthy_service_returns_processing_timeout(self) -> None:
+        with patch.object(
+            worker.rag_service_client,
+            "query_answer_with_recovery_detail",
+            side_effect=worker.RagServiceError(
+                "RAG service request failed",
+                failure_kind="timeout",
+            ),
+        ) as rag_mock, patch.object(
+            worker.rag_service_client,
+            "health",
+            return_value={"status": "ok", "service": "rag-api"},
+        ) as health_mock:
+            result = worker._fetch_rag_answer_detail_for_worker(
+                request_id="rag-worker-timeout-2",
+                customer_message="how to join channel",
+                ticket_id="T-WORKER-2",
+                customer_id="C-123",
+                ticket_context=[{"role": "customer", "content": "how to join channel"}],
+                product="audio_video_calling",
+            )
+
+        self.assertEqual(result.reason, "rag_processing_timeout")
+        self.assertTrue(result.needs_engineer_guidance)
+        self.assertIsInstance(result.evidence_summary, dict)
+        self.assertEqual(result.evidence_summary["diagnostics"]["rag_failure_kind"], "timeout")
+        self.assertEqual(result.evidence_summary["diagnostics"]["rag_timeout_health_check_status"], "ok")
+        rag_mock.assert_called_once()
+        health_mock.assert_called_once()
+
+    def test_fetch_rag_answer_detail_for_worker_transport_failure_with_unhealthy_service_stays_unavailable(self) -> None:
+        with patch.object(
+            worker.rag_service_client,
+            "query_answer_with_recovery_detail",
+            side_effect=worker.RagServiceError(
+                "RAG service request failed",
+                failure_kind="transport",
+            ),
+        ) as rag_mock, patch.object(
+            worker.rag_service_client,
+            "health",
+        ) as health_mock:
+            result = worker._fetch_rag_answer_detail_for_worker(
+                request_id="rag-worker-timeout-3",
+                customer_message="how to join channel",
+                ticket_id="T-WORKER-3",
+                customer_id="C-123",
+                ticket_context=[{"role": "customer", "content": "how to join channel"}],
+                product="audio_video_calling",
+            )
+
+        self.assertEqual(result.reason, "rag_unavailable")
+        self.assertTrue(result.needs_engineer_guidance)
+        rag_mock.assert_called_once()
+        health_mock.assert_not_called()
 
     def test_execute_parallel_ticket_query_cancels_rag_when_route_flips_non_rag(self) -> None:
         rag_detail = types.SimpleNamespace(

@@ -21,6 +21,7 @@ CLIENT_TICKET_AGENT_RUNTIME_VERSION = "client_ticket_agents_v1"
 RAG_INSUFFICIENT_EVIDENCE_REASON = "rag_insufficient_evidence"
 RAG_SERVICE_ERROR_REASON = "rag_service_error"
 RAG_UNAVAILABLE_REASON = "rag_unavailable"
+RAG_PROCESSING_TIMEOUT_REASON = "rag_processing_timeout"
 RAG_POST_CHECK_INSUFFICIENT_REASON = "rag_post_check_insufficient"
 RAG_POST_CHECK_ERROR_REASON = "rag_post_check_error"
 WORKFLOW_ACTION_ANSWER_CUSTOMER = "answer_customer"
@@ -455,6 +456,7 @@ def _normalize_investigation_reason(value: Any) -> str:
         RAG_INSUFFICIENT_EVIDENCE_REASON,
         RAG_SERVICE_ERROR_REASON,
         RAG_UNAVAILABLE_REASON,
+        RAG_PROCESSING_TIMEOUT_REASON,
         RAG_POST_CHECK_INSUFFICIENT_REASON,
         RAG_POST_CHECK_ERROR_REASON,
     }:
@@ -545,6 +547,8 @@ def _merge_rag_resolution_diagnostics(
         merged["rag_reason"] = handoff_reason
         if handoff_reason == RAG_UNAVAILABLE_REASON:
             merged["rag_reason_detail"] = "knowledge_index_unavailable"
+        elif handoff_reason == RAG_PROCESSING_TIMEOUT_REASON:
+            merged["rag_reason_detail"] = "processing_timeout"
         elif handoff_reason == RAG_INSUFFICIENT_EVIDENCE_REASON:
             merged["rag_reason_detail"] = "generic_insufficient_evidence"
     for key, value in _extract_resolution_diagnostics(resolution).items():
@@ -847,7 +851,7 @@ def execute_client_ticket_agent_runtime(
         if rag_detail.needs_engineer_guidance:
             normalized_reason = _normalize_investigation_reason(rag_detail.reason)
             should_skip_review_for_rag_failure = (
-                normalized_reason in {RAG_SERVICE_ERROR_REASON, RAG_UNAVAILABLE_REASON}
+                normalized_reason in {RAG_SERVICE_ERROR_REASON, RAG_UNAVAILABLE_REASON, RAG_PROCESSING_TIMEOUT_REASON}
                 and not _is_troubleshooting_intake_candidate(
                     message=message,
                     client_intake_state=client_intake_state,

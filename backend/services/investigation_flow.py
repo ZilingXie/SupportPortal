@@ -163,6 +163,15 @@ def build_investigation_opening_context(
             "Confirm the RAG service configuration, connectivity, and shared auth, then rerun the customer query once "
             "the service is reachable again."
         )
+    elif normalized_reason == "rag_processing_timeout":
+        rag_summary = (
+            "AI could not complete the RAG request because processing timed out before a grounded answer could be produced, "
+            "even though the RAG service remained healthy."
+        )
+        action_needed = (
+            "Inspect the slow request trace, confirm whether the RAG run later completed, and provide the customer-safe "
+            "answer or next troubleshooting step based on the completed evidence."
+        )
     elif normalized_reason == "rag_insufficient_evidence":
         rag_summary = "AI could not find enough grounded doc evidence to answer safely."
         action_needed = (
@@ -347,6 +356,8 @@ def _build_handoff_rag_result(execution_context: dict[str, Any] | None = None) -
         candidate_answer = "RAG service error prevented a grounded answer from being produced."
     elif route_reason == "rag_unavailable":
         candidate_answer = "RAG service unavailability prevented a grounded answer from being produced."
+    elif route_reason == "rag_processing_timeout":
+        candidate_answer = "RAG processing timed out before a grounded answer could be produced."
     else:
         candidate_answer = str(execution.get("answer") or "").strip()
     return {

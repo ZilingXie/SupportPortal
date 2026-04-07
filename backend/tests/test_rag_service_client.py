@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import socket
 import unittest
 import urllib.error
 import urllib.parse
@@ -134,9 +135,9 @@ class RagServiceClientTests(unittest.TestCase):
         self.assertEqual(payload["status"], "disabled")
         self.assertEqual(payload["knowledge_storage"], "disabled")
 
-    def test_request_raises_rag_service_error_for_timeout(self) -> None:
+    def test_request_raises_rag_service_error_with_timeout_failure_kind(self) -> None:
         client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
-        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("timed out")):
+        with patch("urllib.request.urlopen", side_effect=socket.timeout("timed out")):
             with self.assertRaises(RagServiceError) as ctx:
                 client.query(
                     question="How do I join a channel?",
@@ -145,6 +146,20 @@ class RagServiceClientTests(unittest.TestCase):
                     customer_id="C-001",
                 )
         self.assertIsNone(ctx.exception.status_code)
+        self.assertEqual(ctx.exception.failure_kind, "timeout")
+
+    def test_request_raises_rag_service_error_with_transport_failure_kind(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("connection refused")):
+            with self.assertRaises(RagServiceError) as ctx:
+                client.query(
+                    question="How do I join a channel?",
+                    request_id="rag-transport-1",
+                    ticket_id="T-001",
+                    customer_id="C-001",
+                )
+        self.assertIsNone(ctx.exception.status_code)
+        self.assertEqual(ctx.exception.failure_kind, "transport")
 
     def test_request_raises_rag_service_error_for_http_500(self) -> None:
         client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
@@ -165,6 +180,7 @@ class RagServiceClientTests(unittest.TestCase):
                 )
         self.assertEqual(ctx.exception.status_code, 500)
         self.assertEqual(ctx.exception.payload, {"detail": "boom"})
+        self.assertEqual(ctx.exception.failure_kind, "http")
 
     def test_query_includes_ticket_context_in_json_payload(self) -> None:
         client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
@@ -384,6 +400,68 @@ class RagServiceClientTests(unittest.TestCase):
         self.assertFalse(needs_engineer)
         self.assertEqual(live_detail_mock.call_count, 3)
         self.assertEqual(sleep_mock.call_args_list, [call(2.0), call(2.0)])
+
+    def test_query_answer_with_recovery_attempts_one_final_live_detail_probe_at_deadline(self) -> None:
+        live_detail = {
+            "primary": {
+                "request_id": "rag-join-deadline-1",
+                "needs_human": False,
+                "answer": "Join with a token and channel name.",
+                "confidence_score": 0.94,
+                "answer_sources": ["https://docs.agora.io/en/video-calling/get-started/get-started-sdk"],
+                "answer_citations": [
+                    {
+                        "chunk_id": "chunk-deadline-1",
+                        "source_path": "official/get-started-sdk_android.md",
+                        "heading": "Join a channel",
+                        "source_url": "https://docs.agora.io/en/video-calling/get-started/get-started-sdk",
+                    }
+                ],
+            }
+        }
+        fake_clock = {"now": 100.0}
+
+        def _fake_sleep(seconds: float) -> None:
+            fake_clock["now"] += float(seconds)
+
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+        with patch.object(
+            client,
+            "query",
+            side_effect=RagServiceError("RAG service request failed", failure_kind="timeout"),
+        ), patch.object(
+            client,
+            "rag_dashboard_live_case_detail",
+            side_effect=[
+                RagServiceError("RAG service returned HTTP 404", status_code=404, payload={"detail": "missing-1"}),
+                RagServiceError("RAG service returned HTTP 404", status_code=404, payload={"detail": "missing-2"}),
+                RagServiceError("RAG service returned HTTP 404", status_code=404, payload={"detail": "missing-3"}),
+                live_detail,
+            ],
+        ) as live_detail_mock, patch(
+            "backend.services.rag_service_client.time.monotonic",
+            side_effect=lambda: fake_clock["now"],
+        ), patch(
+            "backend.services.rag_service_client.time.sleep",
+            side_effect=_fake_sleep,
+        ) as sleep_mock:
+            answer, confidence, sources, citations, needs_engineer = client.query_answer_with_recovery(
+                question="how to join channel",
+                request_id="rag-join-deadline-1",
+                ticket_id="TK-021",
+                customer_id="C-001",
+                insufficient_reply="INSUFFICIENT",
+                recovery_window_seconds=2.0,
+                recovery_poll_interval_seconds=1.0,
+            )
+
+        self.assertEqual(answer, "Join with a token and channel name.")
+        self.assertEqual(confidence, 0.94)
+        self.assertEqual(sources, ["https://docs.agora.io/en/video-calling/get-started/get-started-sdk"])
+        self.assertEqual(citations[0]["chunk_id"], "chunk-deadline-1")
+        self.assertFalse(needs_engineer)
+        self.assertEqual(live_detail_mock.call_count, 4)
+        self.assertEqual(sleep_mock.call_args_list, [call(1.0), call(1.0)])
 
     def test_query_prefers_client_timeout_over_shared_service_timeout(self) -> None:
         captured: dict[str, object] = {}
