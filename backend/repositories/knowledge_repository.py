@@ -6,12 +6,13 @@ import logging
 import math
 import os
 import re
+import socket
 import statistics
 import threading
 import time
 from collections import Counter
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, ContextManager, Protocol
 from uuid import uuid4
 
@@ -121,6 +122,10 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _utc_now_plus_seconds(seconds: int | float) -> str:
+    return (datetime.now(timezone.utc) + timedelta(seconds=float(seconds))).isoformat()
+
+
 def _to_iso(value: Any) -> str:
     if isinstance(value, datetime):
         if value.tzinfo is None:
@@ -147,6 +152,17 @@ def _safe_float(value: Any, default_value: float = 0.0) -> float:
 def _safe_positive_float(value: Any, default_value: float) -> float:
     parsed = _safe_float(value, default_value)
     return parsed if parsed > 0 else default_value
+
+
+def _knowledge_ingestion_processing_lease_seconds() -> int:
+    raw = _clean_text(os.getenv("KNOWLEDGE_INGESTION_PROCESSING_LEASE_SECONDS"))
+    if not raw:
+        return 300
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return 300
+    return parsed if parsed > 0 else 300
 
 
 def _env_flag(value: Any, default_value: bool) -> bool:
@@ -753,6 +769,17 @@ class KnowledgeRepository(Protocol):
         knowledge_type: str | None = None,
         claim_token: str,
         claim_host: str | None = None,
+        source_doc_ids: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        ...
+
+    def recover_stale_processing_ingestions(
+        self,
+        *,
+        error_message: str,
+        limit: int = 100,
+        source_system: str | None = None,
+        knowledge_type: str | None = None,
     ) -> list[dict[str, Any]]:
         ...
 
@@ -822,6 +849,9 @@ class KnowledgeRepository(Protocol):
         ...
 
     def mark_ingestion_processing(self, ingestion_id: str) -> None:
+        ...
+
+    def heartbeat_ingestion_processing(self, ingestion_id: str) -> None:
         ...
 
     def update_ingestion_source(
@@ -1187,12 +1217,28 @@ class DisabledKnowledgeRepository:
         knowledge_type: str | None = None,
         claim_token: str,
         claim_host: str | None = None,
+        source_doc_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         _ = limit
         _ = source_system
         _ = knowledge_type
         _ = claim_token
         _ = claim_host
+        _ = source_doc_ids
+        return []
+
+    def recover_stale_processing_ingestions(
+        self,
+        *,
+        error_message: str,
+        limit: int = 100,
+        source_system: str | None = None,
+        knowledge_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        _ = error_message
+        _ = limit
+        _ = source_system
+        _ = knowledge_type
         return []
 
     def mark_source_document_processed(
@@ -1274,6 +1320,10 @@ class DisabledKnowledgeRepository:
         )
 
     def mark_ingestion_processing(self, ingestion_id: str) -> None:
+        _ = ingestion_id
+        self._raise()
+
+    def heartbeat_ingestion_processing(self, ingestion_id: str) -> None:
         _ = ingestion_id
         self._raise()
 
@@ -2107,6 +2157,21 @@ class PostgresKnowledgeRepository:
             ).format(self._table("support_rag_query_candidates"))
         )
 
+    def _ensure_local_direct_runtime_schema(self, *, cur: psycopg.Cursor[Any]) -> None:
+        ingestion_alters = [
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS processing_heartbeat_at TIMESTAMPTZ",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS processing_lease_expires_at TIMESTAMPTZ",
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS processing_host TEXT",
+        ]
+        for statement in ingestion_alters:
+            cur.execute(sql.SQL(statement).format(self._table("support_knowledge_ingestions")))
+        cur.execute(
+            sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (status, processing_lease_expires_at)").format(
+                sql.Identifier("idx_support_knowledge_ingestions_status_lease"),
+                self._table("support_knowledge_ingestions"),
+            )
+        )
+
     def initialize(self) -> None:
         with self._connect() as conn:
             backfilled_bm25_rows = 0
@@ -2124,6 +2189,7 @@ class PostgresKnowledgeRepository:
                 self._ensure_bootstrap_version_table(cur=cur)
                 if self._bootstrap_version_matches(cur=cur):
                     self._ensure_rag_query_telemetry_schema(cur=cur)
+                    self._ensure_local_direct_runtime_schema(cur=cur)
                     conn.commit()
                     return
                 cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
@@ -2155,6 +2221,9 @@ class PostgresKnowledgeRepository:
                             chunk_count INTEGER NOT NULL DEFAULT 0,
                             error_message TEXT,
                             processing_started_at TIMESTAMPTZ,
+                            processing_heartbeat_at TIMESTAMPTZ,
+                            processing_lease_expires_at TIMESTAMPTZ,
+                            processing_host TEXT,
                             finished_at TIMESTAMPTZ,
                             created_at TIMESTAMPTZ NOT NULL,
                             updated_at TIMESTAMPTZ NOT NULL
@@ -2392,6 +2461,7 @@ class PostgresKnowledgeRepository:
                 ]
                 for statement in ingestion_alters:
                     cur.execute(sql.SQL(statement).format(self._table("support_knowledge_ingestions")))
+                self._ensure_local_direct_runtime_schema(cur=cur)
                 document_alters = [
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'official_markdown_upload'",
                     "ALTER TABLE {} ADD COLUMN IF NOT EXISTS source_updated_at TIMESTAMPTZ",
@@ -4004,16 +4074,29 @@ class PostgresKnowledgeRepository:
         knowledge_type: str | None = None,
         claim_token: str,
         claim_host: str | None = None,
+        source_doc_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         safe_limit = _safe_positive_int(limit, 10)
         filters = ["sync_status IN ('pending', 'failed')"]
         filter_params: list[Any] = []
+        normalized_source_doc_ids = sorted(
+            {
+                _clean_text(source_doc_id)
+                for source_doc_id in (source_doc_ids or [])
+                if _clean_text(source_doc_id)
+            }
+        )
+        if source_doc_ids is not None and not normalized_source_doc_ids:
+            return []
         if _clean_text(source_system):
             filters.append("source_system = %s")
             filter_params.append(_clean_text(source_system))
         if _clean_text(knowledge_type):
             filters.append("knowledge_type = %s")
             filter_params.append(_normalize_knowledge_type(knowledge_type))
+        if normalized_source_doc_ids:
+            filters.append("source_doc_id = ANY(%s)")
+            filter_params.append(normalized_source_doc_ids)
         claimed_at = _utc_now()
         updated_at = _utc_now()
         with self._connect() as conn:
@@ -4074,6 +4157,100 @@ class PostgresKnowledgeRepository:
                 rows = cur.fetchall()
             conn.commit()
         return [self._row_to_source_document(row) for row in rows]
+
+    def recover_stale_processing_ingestions(
+        self,
+        *,
+        error_message: str,
+        limit: int = 100,
+        source_system: str | None = None,
+        knowledge_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        safe_limit = _safe_positive_int(limit, 100)
+        now_value = _utc_now()
+        clean_error = _clean_text(error_message) or "stale processing lease expired"
+        filters = [
+            "ing.status = 'processing'",
+            "ing.processing_lease_expires_at IS NOT NULL",
+            "ing.processing_lease_expires_at < %s",
+        ]
+        params: list[Any] = [now_value]
+        if _clean_text(source_system):
+            filters.append("src.source_system = %s")
+            params.append(_clean_text(source_system))
+        if _clean_text(knowledge_type):
+            filters.append("src.knowledge_type = %s")
+            params.append(_normalize_knowledge_type(knowledge_type))
+        params.append(safe_limit)
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        WITH stale AS (
+                            SELECT
+                                ing.ingestion_id,
+                                COALESCE(ing.request_metadata->>'source_doc_id', src.source_doc_id) AS source_doc_id
+                            FROM {} AS ing
+                            LEFT JOIN {} AS src
+                                ON src.source_doc_id = COALESCE(ing.request_metadata->>'source_doc_id', '')
+                            WHERE {}
+                            ORDER BY ing.processing_lease_expires_at ASC, ing.updated_at ASC
+                            FOR UPDATE SKIP LOCKED
+                            LIMIT %s
+                        )
+                        UPDATE {} AS ing
+                        SET status = 'failed',
+                            normalization_status = 'failed',
+                            error_message = %s,
+                            processing_heartbeat_at = NULL,
+                            processing_lease_expires_at = NULL,
+                            processing_host = NULL,
+                            finished_at = %s,
+                            updated_at = %s
+                        FROM stale
+                        WHERE ing.ingestion_id = stale.ingestion_id
+                        RETURNING ing.ingestion_id, stale.source_doc_id
+                        """
+                    ).format(
+                        self._table("support_knowledge_ingestions"),
+                        self._table("support_knowledge_source_documents"),
+                        sql.SQL(" AND ".join(filters)),
+                        self._table("support_knowledge_ingestions"),
+                    ),
+                    (*params, clean_error, now_value, now_value),
+                )
+                rows = cur.fetchall() or []
+                source_doc_ids = [
+                    _clean_text(row[1])
+                    for row in rows
+                    if len(row) >= 2 and _clean_text(row[1])
+                ]
+                if source_doc_ids:
+                    cur.executemany(
+                        sql.SQL(
+                            """
+                            UPDATE {}
+                            SET sync_status = 'failed',
+                                last_error = %s,
+                                claim_token = NULL,
+                                claim_host = NULL,
+                                updated_at = %s
+                            WHERE source_doc_id = %s
+                              AND sync_status = 'claimed'
+                            """
+                        ).format(self._table("support_knowledge_source_documents")),
+                        [(clean_error, now_value, source_doc_id) for source_doc_id in source_doc_ids],
+                    )
+            conn.commit()
+        return [
+            {
+                "ingestion_id": _clean_text(row[0]),
+                "source_doc_id": _clean_text(row[1]),
+            }
+            for row in rows
+            if len(row) >= 2 and _clean_text(row[0])
+        ]
 
     def mark_source_document_processed(
         self,
@@ -4651,6 +4828,8 @@ class PostgresKnowledgeRepository:
         }
 
     def mark_ingestion_processing(self, ingestion_id: str) -> None:
+        now_value = _utc_now()
+        lease_expires_at = _utc_now_plus_seconds(_knowledge_ingestion_processing_lease_seconds())
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -4660,12 +4839,49 @@ class PostgresKnowledgeRepository:
                         SET status = 'processing',
                             error_message = NULL,
                             processing_started_at = %s,
+                            processing_heartbeat_at = %s,
+                            processing_lease_expires_at = %s,
+                            processing_host = %s,
                             finished_at = NULL,
                             updated_at = %s
                         WHERE ingestion_id = %s
                         """
                     ).format(self._table("support_knowledge_ingestions")),
-                    (_utc_now(), _utc_now(), ingestion_id),
+                    (
+                        now_value,
+                        now_value,
+                        lease_expires_at,
+                        _clean_text(socket.gethostname()),
+                        now_value,
+                        ingestion_id,
+                    ),
+                )
+            conn.commit()
+
+    def heartbeat_ingestion_processing(self, ingestion_id: str) -> None:
+        now_value = _utc_now()
+        lease_expires_at = _utc_now_plus_seconds(_knowledge_ingestion_processing_lease_seconds())
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {}
+                        SET processing_heartbeat_at = %s,
+                            processing_lease_expires_at = %s,
+                            processing_host = COALESCE(processing_host, %s),
+                            updated_at = %s
+                        WHERE ingestion_id = %s
+                          AND status = 'processing'
+                        """
+                    ).format(self._table("support_knowledge_ingestions")),
+                    (
+                        now_value,
+                        lease_expires_at,
+                        _clean_text(socket.gethostname()),
+                        now_value,
+                        ingestion_id,
+                    ),
                 )
             conn.commit()
 
@@ -4739,6 +4955,9 @@ class PostgresKnowledgeRepository:
                             document_id = %s,
                             chunk_count = %s,
                             error_message = NULL,
+                            processing_heartbeat_at = NULL,
+                            processing_lease_expires_at = NULL,
+                            processing_host = NULL,
                             finished_at = %s,
                             updated_at = %s
                         WHERE ingestion_id = %s
@@ -4759,6 +4978,9 @@ class PostgresKnowledgeRepository:
                         SET status = 'failed',
                             normalization_status = 'failed',
                             error_message = %s,
+                            processing_heartbeat_at = NULL,
+                            processing_lease_expires_at = NULL,
+                            processing_host = NULL,
                             finished_at = %s,
                             updated_at = %s
                         WHERE ingestion_id = %s

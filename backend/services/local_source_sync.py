@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import socket
+import threading
 import time
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -17,9 +19,14 @@ if TYPE_CHECKING:
 
 from backend.services.knowledge_ingestion import process_knowledge_ingestion
 
+LOGGER = logging.getLogger(__name__)
+
 LOCAL_KNOWLEDGE_ROOT_ENV = "LOCAL_KNOWLEDGE_ROOT"
 DEFAULT_LOCAL_KNOWLEDGE_ROOT = "local_knowledge"
 LOCAL_DIRECT_INGEST_MAX_ATTEMPTS = 3
+LOCAL_DIRECT_PROCESSING_HEARTBEAT_SECONDS = 30.0
+LOCAL_DIRECT_STALE_PROCESSING_CLEANUP_LIMIT = 200
+LOCAL_DIRECT_STALE_PROCESSING_ERROR = "processing lease expired before ingestion completed"
 _RETRYABLE_STORAGE_ERROR_SNIPPETS = (
     "connection timeout expired",
     "server closed the connection unexpectedly",
@@ -82,6 +89,37 @@ def _is_retryable_storage_error(exc: BaseException) -> bool:
         return True
     message = _clean_text(exc).lower()
     return any(snippet in message for snippet in _RETRYABLE_STORAGE_ERROR_SNIPPETS)
+
+
+@contextmanager
+def _processing_lease_heartbeat(repository: "KnowledgeRepository", ingestion_id: str):
+    heartbeat = getattr(repository, "heartbeat_ingestion_processing", None)
+    if not callable(heartbeat):
+        yield
+        return
+
+    interval = max(0.01, float(globals().get("LOCAL_DIRECT_PROCESSING_HEARTBEAT_SECONDS", 30.0) or 30.0))
+    stop_event = threading.Event()
+
+    def _heartbeat_loop() -> None:
+        while not stop_event.wait(interval):
+            try:
+                heartbeat(ingestion_id)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                LOGGER.warning("Failed to heartbeat local_direct ingestion %s: %s", ingestion_id, exc)
+                return
+
+    worker = threading.Thread(
+        target=_heartbeat_loop,
+        name=f"local-direct-heartbeat-{ingestion_id}",
+        daemon=True,
+    )
+    worker.start()
+    try:
+        yield
+    finally:
+        stop_event.set()
+        worker.join(timeout=interval)
 
 
 def stage_source_document(
@@ -211,7 +249,8 @@ def ingest_source_document(
                 ingestion_id = _clean_text(ingestion.get("ingestion_id")) or None
                 if not ingestion_id:
                     raise RuntimeError(f"Failed to create ingestion for {source_doc_id}")
-                process_knowledge_ingestion(repository, ingestion_id)
+                with _processing_lease_heartbeat(repository, ingestion_id):
+                    process_knowledge_ingestion(repository, ingestion_id)
                 report = repository.get_ingestion_report(ingestion_id) or {}
                 summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
                 status = _clean_text(summary.get("status")) or "completed"
@@ -267,6 +306,7 @@ def claim_and_ingest_source_documents(
     knowledge_type: str | None = None,
     root_dir: Path | None = None,
 ) -> tuple[dict[str, Any], list[SourceIngestResult]]:
+    recover_stale = getattr(repository, "recover_stale_processing_ingestions", None)
     sync_run = repository.create_sync_run(
         source_system=source_system or "manual",
         knowledge_type=knowledge_type or "official",
@@ -278,6 +318,16 @@ def claim_and_ingest_source_documents(
             "knowledge_type": knowledge_type,
             "root_dir": str((root_dir or local_knowledge_root()).resolve()),
         },
+    )
+    stale_recoveries = (
+        recover_stale(
+            error_message=LOCAL_DIRECT_STALE_PROCESSING_ERROR,
+            limit=LOCAL_DIRECT_STALE_PROCESSING_CLEANUP_LIMIT,
+            source_system=source_system,
+            knowledge_type=knowledge_type,
+        )
+        if callable(recover_stale)
+        else []
     )
     claim_token = _clean_text(sync_run.get("sync_run_id")) or "sync-claim"
     claimed = repository.claim_source_documents(
@@ -309,6 +359,7 @@ def claim_and_ingest_source_documents(
         summary={
             "completed": processed_count,
             "failed": failed_count,
+            "stale_recovered_count": len(stale_recoveries),
             "source_doc_ids": [_clean_text(item.get("source_doc_id")) for item in claimed if _clean_text(item.get("source_doc_id"))],
             "ingestion_ids": [item.ingestion_id for item in results if item.ingestion_id],
         },

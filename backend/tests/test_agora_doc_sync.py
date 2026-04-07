@@ -127,6 +127,148 @@ class _FakeRepository:
         }
 
 
+class _QueueingRepository:
+    def __init__(self, *, recovered_stale_count: int = 0) -> None:
+        self.borrow_local_direct_active = 0
+        self.sync_run_updates: list[tuple[str, dict[str, object]]] = []
+        self.claim_calls: list[dict[str, object]] = []
+        self.recovered_stale_count = recovered_stale_count
+        self.recover_calls = 0
+        self._source_documents: dict[str, dict[str, object]] = {}
+        self._ingestion_source_map: dict[str, str] = {}
+        self._ingestion_counter = 0
+
+    def initialize(self) -> None:
+        return None
+
+    @contextmanager
+    def borrow_local_direct_write_connection(self):
+        self.borrow_local_direct_active += 1
+        try:
+            yield self
+        finally:
+            self.borrow_local_direct_active -= 1
+
+    def local_direct_write_connection_active(self) -> bool:
+        return self.borrow_local_direct_active > 0
+
+    def upsert_source_document(self, **kwargs: object) -> dict[str, object]:
+        metadata = dict(kwargs.get("metadata") or {})
+        external_id = str(kwargs.get("external_id") or "")
+        source_doc_id = f"SRC-{external_id.replace('/', '_')}"
+        existing = self._source_documents.get(source_doc_id)
+        checksum = str(kwargs.get("checksum") or "")
+        if existing is not None and str(existing.get("checksum") or "") == checksum:
+            return dict(existing)
+        row = {
+            "source_doc_id": source_doc_id,
+            "knowledge_type": "official",
+            "source_system": "agora",
+            "external_id": external_id,
+            "title": kwargs.get("title") or external_id,
+            "source_url": kwargs.get("source_url"),
+            "published_url": kwargs.get("published_url"),
+            "content_format": kwargs.get("content_format") or "markdown",
+            "raw_content": kwargs.get("raw_content"),
+            "raw_payload": kwargs.get("raw_payload") or {},
+            "checksum": checksum,
+            "sync_status": "pending",
+            "metadata": metadata,
+            "processed_ingestion_id": None,
+            "last_error": None,
+        }
+        if existing is not None and str(existing.get("sync_status") or "") == "processed":
+            row["sync_status"] = "pending"
+        self._source_documents[source_doc_id] = row
+        return dict(row)
+
+    def get_source_document(self, source_doc_id: str) -> dict[str, object] | None:
+        row = self._source_documents.get(source_doc_id)
+        return dict(row) if row is not None else None
+
+    def create_sync_run(self, **_: object) -> dict[str, str]:
+        return {"sync_run_id": "SYNC-QUEUE-1"}
+
+    def update_sync_run(self, sync_run_id: str, **kwargs: object) -> None:
+        self.sync_run_updates.append((sync_run_id, dict(kwargs)))
+
+    def recover_stale_processing_ingestions(self, **_: object) -> list[dict[str, object]]:
+        self.recover_calls += 1
+        if self.recover_calls != 1 or self.recovered_stale_count <= 0:
+            return []
+        return [
+            {
+                "ingestion_id": f"KI-STALE-{index + 1}",
+                "source_doc_id": f"SRC-STALE-{index + 1}",
+            }
+            for index in range(self.recovered_stale_count)
+        ]
+
+    def claim_source_documents(
+        self,
+        *,
+        limit: int,
+        source_system: str | None = None,
+        knowledge_type: str | None = None,
+        claim_token: str,
+        claim_host: str | None = None,
+        source_doc_ids: list[str] | None = None,
+    ) -> list[dict[str, object]]:
+        self.claim_calls.append(
+            {
+                "limit": limit,
+                "source_system": source_system,
+                "knowledge_type": knowledge_type,
+                "claim_token": claim_token,
+                "claim_host": claim_host,
+                "source_doc_ids": list(source_doc_ids or []),
+            }
+        )
+        allowed_ids = set(source_doc_ids or [])
+        claimed: list[dict[str, object]] = []
+        for source_doc_id in sorted(allowed_ids):
+            if len(claimed) >= limit:
+                break
+            row = self._source_documents.get(source_doc_id)
+            if row is None:
+                continue
+            if str(row.get("sync_status") or "") not in {"pending", "failed"}:
+                continue
+            row["sync_status"] = "claimed"
+            claimed.append(dict(row))
+        return claimed
+
+    def create_ingestion(self, **kwargs: object) -> dict[str, str]:
+        self._ingestion_counter += 1
+        ingestion_id = f"KI-QUEUE-{self._ingestion_counter}"
+        metadata = kwargs.get("request_metadata") if isinstance(kwargs.get("request_metadata"), dict) else {}
+        self._ingestion_source_map[ingestion_id] = str(metadata.get("source_doc_id") or "")
+        return {"ingestion_id": ingestion_id}
+
+    def get_ingestion_report(self, ingestion_id: str) -> dict[str, object]:
+        source_doc_id = self._ingestion_source_map.get(ingestion_id, "unknown")
+        return {
+            "summary": {
+                "status": "completed",
+                "document_id": f"doc-{source_doc_id}",
+                "chunk_count": 3,
+                "dedupe_action": "new_document",
+            },
+            "warnings": [],
+        }
+
+    def mark_source_document_processed(self, source_doc_id: str, *, processed_ingestion_id: str) -> None:
+        row = self._source_documents[source_doc_id]
+        row["sync_status"] = "processed"
+        row["processed_ingestion_id"] = processed_ingestion_id
+        row["last_error"] = None
+
+    def mark_source_document_failed(self, source_doc_id: str, *, error_message: str) -> None:
+        row = self._source_documents[source_doc_id]
+        row["sync_status"] = "failed"
+        row["last_error"] = error_message
+
+
 class AgoraDocSyncTests(unittest.TestCase):
     def test_html_url_to_markdown_url_handles_platform_query(self) -> None:
         actual = html_url_to_markdown_url(
@@ -380,6 +522,120 @@ class AgoraDocSyncTests(unittest.TestCase):
         self.assertEqual(report_path.name, "_sync_report.json")
         ingest_mock.assert_called_once()
         self.assertEqual(ingest_mock.call_args.kwargs["workers"], 7)
+
+    def test_ingest_documents_locally_stages_documents_then_claims_db_queue_with_progress_updates(self) -> None:
+        repository = _QueueingRepository(recovered_stale_count=1)
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            first = root / "en" / "video-calling" / "overview.md"
+            second = root / "en" / "video-calling" / "join-channel.md"
+            first.parent.mkdir(parents=True, exist_ok=True)
+            first.write_text("# Overview\n", encoding="utf-8")
+            second.write_text("# Join channel\n", encoding="utf-8")
+
+            with patch(
+                "backend.repositories.knowledge_repository.create_knowledge_repository",
+                return_value=repository,
+            ):
+                with patch(
+                    "backend.services.agora_doc_sync._probe_embedding_provider_for_local_sync",
+                    return_value={"provider": "siliconflow", "model_id": "BAAI/bge-m3"},
+                    create=True,
+                ) as probe_mock:
+                    with patch.object(local_source_sync, "process_knowledge_ingestion"):
+                        from backend.services.agora_doc_sync import ingest_documents_locally
+
+                        results = ingest_documents_locally(
+                            markdown_files=[first, second],
+                            output_dir=root,
+                            workers=2,
+                        )
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual(sorted(item.local_path for item in results), sorted(["en/video-calling/overview.md", "en/video-calling/join-channel.md"]))
+        probe_mock.assert_called_once()
+        self.assertTrue(repository.claim_calls)
+        self.assertEqual(
+            sorted(repository.claim_calls[0]["source_doc_ids"]),
+            sorted(["SRC-en_video-calling_join-channel.md", "SRC-en_video-calling_overview.md"]),
+        )
+        self.assertGreaterEqual(len(repository.sync_run_updates), 2)
+        running_updates = [item for item in repository.sync_run_updates if item[1].get("status") == "running"]
+        self.assertTrue(running_updates)
+        self.assertEqual(running_updates[0][1].get("discovered_count"), 2)
+        self.assertEqual(running_updates[0][1].get("summary", {}).get("stale_recovered_count"), 1)
+        self.assertEqual(repository.sync_run_updates[-1][1].get("status"), "completed")
+
+    def test_ingest_documents_locally_fails_fast_when_embedding_provider_probe_fails(self) -> None:
+        repository = _QueueingRepository()
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            markdown_path = root / "en" / "video-calling" / "overview.md"
+            markdown_path.parent.mkdir(parents=True, exist_ok=True)
+            markdown_path.write_text("# Overview\n", encoding="utf-8")
+
+            with patch(
+                "backend.repositories.knowledge_repository.create_knowledge_repository",
+                return_value=repository,
+            ):
+                with patch(
+                    "backend.services.agora_doc_sync._probe_embedding_provider_for_local_sync",
+                    side_effect=RuntimeError("SiliconFlow embedding request failed: Sorry, your account balance is insufficient"),
+                    create=True,
+                ):
+                    from backend.services.agora_doc_sync import ingest_documents_locally
+
+                    with self.assertRaises(RuntimeError):
+                        ingest_documents_locally(
+                            markdown_files=[markdown_path],
+                            output_dir=root,
+                            workers=1,
+                        )
+
+        self.assertFalse(repository.claim_calls)
+        self.assertEqual(repository.sync_run_updates[-1][1].get("status"), "failed")
+        self.assertIn("insufficient", str(repository.sync_run_updates[-1][1].get("summary", {}).get("error_message", "")).lower())
+
+    def test_ingest_documents_locally_serial_retries_conflict_failures(self) -> None:
+        repository = _QueueingRepository()
+        attempts: dict[str, int] = {}
+
+        def _flaky_process(_repository, ingestion_id):
+            source_doc_id = repository._ingestion_source_map[ingestion_id]
+            attempts[source_doc_id] = attempts.get(source_doc_id, 0) + 1
+            if source_doc_id.endswith("firewall_web.md") and attempts[source_doc_id] == 1:
+                raise RuntimeError("deadlock detected")
+            return None
+
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            first = root / "en" / "video-calling" / "reference" / "firewall_web.md"
+            second = root / "en" / "video-calling" / "reference" / "firewall_unreal.md"
+            first.parent.mkdir(parents=True, exist_ok=True)
+            first.write_text("# firewall web\n", encoding="utf-8")
+            second.write_text("# firewall unreal\n", encoding="utf-8")
+
+            with patch(
+                "backend.repositories.knowledge_repository.create_knowledge_repository",
+                return_value=repository,
+            ):
+                with patch(
+                    "backend.services.agora_doc_sync._probe_embedding_provider_for_local_sync",
+                    return_value={"provider": "siliconflow", "model_id": "BAAI/bge-m3"},
+                    create=True,
+                ):
+                    with patch.object(local_source_sync, "process_knowledge_ingestion", side_effect=_flaky_process):
+                        from backend.services.agora_doc_sync import ingest_documents_locally
+
+                        results = ingest_documents_locally(
+                            markdown_files=[first, second],
+                            output_dir=root,
+                            workers=2,
+                        )
+
+        self.assertEqual(sorted(item.upload_status for item in results), ["completed", "completed"])
+        self.assertEqual(repository.sync_run_updates[-1][1].get("status"), "completed")
+        self.assertEqual(repository.sync_run_updates[-1][1].get("summary", {}).get("serial_retry_count"), 1)
 
 
 if __name__ == "__main__":
