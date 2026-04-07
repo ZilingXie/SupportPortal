@@ -10,6 +10,32 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-04-07 - Local-direct ingestion recovery, progress, and stale-lease hardening
+
+- Summary: Reworked the `local_direct` official-doc ingestion path so filesystem discovery/staging happens before heavy ingest, sync runs publish live progress during processing, ingestion rows now carry a lease/heartbeat for stale-processing recovery, provider health is probed before bulk work starts, and concurrency-conflict tail docs automatically fall back to serial retry.
+- Reason: The 2970-document Agora backfill had to be resumed multiple times because some files failed before `source_documents` rows were durable, sync runs only wrote final summaries, stale `processing` ingestions needed manual cleanup, and the last few BM25/connection-conflict documents could wedge an otherwise healthy bulk run.
+- Affected files or config:
+  - `backend/services/agora_doc_sync.py`
+  - `backend/services/local_source_sync.py`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/tests/test_agora_doc_sync.py`
+  - `backend/tests/test_local_source_sync.py`
+  - `backend/tests/test_knowledge_repository_bm25.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - `local_direct` syncs now stage all local files into `support_knowledge_source_documents` before heavy ingest, so resumptions operate from durable DB-tracked source docs instead of depending on a full filesystem diff to rediscover missing rows.
+  - `support_knowledge_sync_runs` now updates `discovered_count`, `claimed_count`, `processed_count`, `failed_count`, `updated_at`, and summary diagnostics while the run is still active, and bulk-run exceptions now finalize the run as `failed` instead of leaving a misleading long-lived `running` row.
+  - `support_knowledge_ingestions` now self-heals new lease columns (`processing_heartbeat_at`, `processing_lease_expires_at`, `processing_host`) on startup, and stale `processing` rows can be auto-failed and released back to `source_documents` without manual SQL cleanup.
+  - `local_direct` workers now probe the configured embedding provider before bulk ingest, and retry deadlock/borrow-contention tail docs serially instead of letting a final hotspot fail the whole batch.
+- Verification:
+  - `source /tmp/supportportal-finalize-venv/bin/activate && python -m unittest backend.tests.test_agora_doc_sync backend.tests.test_local_source_sync backend.tests.test_knowledge_repository_bm25`
+  - `source /tmp/supportportal-finalize-venv/bin/activate && python -m py_compile backend/services/agora_doc_sync.py backend/services/local_source_sync.py backend/repositories/knowledge_repository.py`
+  - `git diff --check`
+  - Verification result:
+    - Focused ingestion/repository regression suite passed: `39 tests`.
+    - `py_compile` completed without syntax errors for the touched ingestion/repository surfaces.
+    - `git diff --check` reported no whitespace or patch-application problems.
+
 ## 2026-04-05 - Fail-closed customer RAG fallback and rebuild-window guard
 
 - Summary: Hardened the customer RAG path so `extractive_fallback` is no longer treated as a safe customer answer, added a knowledge-index readiness probe that fails closed during empty-index or fallback-table rebuild windows, and routed ordinary insufficient-evidence FAQ misses into a clarify flow instead of exposing ungrounded evidence snippets.

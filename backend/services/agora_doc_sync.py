@@ -28,6 +28,13 @@ DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
 DEFAULT_API_TIMEOUT_SECONDS = 90.0
 USER_AGENT = "SupportPortalAgoraDocSync/1.0"
 FINAL_INGESTION_STATUSES = {"completed", "failed"}
+LOCAL_DIRECT_PROGRESS_UPDATE_EVERY = 10
+LOCAL_DIRECT_STALE_RECOVERY_LIMIT = 200
+LOCAL_DIRECT_SERIAL_RETRY_ERROR_SNIPPETS = (
+    "already borrowed",
+    "deadlock detected",
+    "could not serialize access",
+)
 
 
 @dataclass(frozen=True)
@@ -349,6 +356,96 @@ def write_sync_report(output_dir: Path, report: dict[str, Any]) -> Path:
     return report_path
 
 
+def _probe_embedding_provider_for_local_sync() -> dict[str, Any]:
+    from backend.services.embedding_provider import get_embedding_provider
+
+    provider = get_embedding_provider()
+    started = time.perf_counter()
+    vector = provider.embed_query("local direct sync health probe")
+    latency_ms = round((time.perf_counter() - started) * 1000, 2)
+    if not vector:
+        raise RuntimeError("Embedding provider probe returned an empty vector")
+    return {
+        "provider": clean_text(getattr(provider, "provider_name", "")) or "unknown",
+        "model_id": clean_text(getattr(provider, "model_id", "")) or "unknown",
+        "vector_dim": int(getattr(provider, "vector_dim", 0) or 0),
+        "latency_ms": latency_ms,
+    }
+
+
+def _local_path_from_source_document(source_document: dict[str, Any]) -> str:
+    metadata = source_document.get("metadata") if isinstance(source_document.get("metadata"), dict) else {}
+    return (
+        clean_text(metadata.get("source_relative_path"))
+        or clean_text(source_document.get("external_id"))
+        or clean_text(source_document.get("title"))
+        or "unknown.md"
+    )
+
+
+def _upload_result_from_source_ingest(
+    *,
+    source_document: dict[str, Any],
+    result: Any,
+) -> UploadResult:
+    return UploadResult(
+        local_path=_local_path_from_source_document(source_document),
+        upload_status="completed" if clean_text(getattr(result, "status", "")) == "completed" else "ingestion_failed",
+        ingestion_id=getattr(result, "ingestion_id", None),
+        ingestion_status=getattr(result, "status", None),
+        queued=False,
+        processing_mode="local_direct",
+        http_status=None,
+        chunk_count=getattr(result, "chunk_count", None),
+        document_id=getattr(result, "document_id", None),
+        dedupe_action=getattr(result, "dedupe_action", None),
+        error_message=getattr(result, "error_message", None),
+        error=getattr(result, "error_message", None) if clean_text(getattr(result, "status", "")) != "completed" else None,
+        report_warning_count=0,
+    )
+
+
+def _completed_upload_result_from_source_document(source_document: dict[str, Any]) -> UploadResult:
+    return UploadResult(
+        local_path=_local_path_from_source_document(source_document),
+        upload_status="completed",
+        ingestion_id=clean_text(source_document.get("processed_ingestion_id")) or None,
+        ingestion_status="completed",
+        queued=False,
+        processing_mode="local_direct",
+        http_status=None,
+        report_warning_count=0,
+    )
+
+
+def _should_retry_serially(upload_result: UploadResult) -> bool:
+    message = clean_text(upload_result.error_message or upload_result.error).lower()
+    if not message:
+        return False
+    return any(snippet in message for snippet in LOCAL_DIRECT_SERIAL_RETRY_ERROR_SNIPPETS)
+
+
+def _build_local_direct_sync_summary(
+    *,
+    phase: str,
+    already_processed_count: int,
+    stale_recovered_count: int,
+    probe_result: dict[str, Any] | None,
+    recent_errors: list[dict[str, str]],
+    serial_retry_count: int,
+    error_message: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "phase": phase,
+        "already_processed_count": already_processed_count,
+        "stale_recovered_count": stale_recovered_count,
+        "serial_retry_count": serial_retry_count,
+        "provider_probe": probe_result or {},
+        "recent_errors": recent_errors[-10:],
+        "error_message": clean_text(error_message) or None,
+    }
+
+
 def run_sync(config: SyncConfig) -> tuple[int, dict[str, Any], Path]:
     started_at = now_iso()
     discovery_info: dict[str, Any] = {
@@ -422,6 +519,7 @@ def ingest_documents_locally(
     if not markdown_files:
         return []
     from backend.repositories.knowledge_repository import create_knowledge_repository
+    from backend.services.local_source_sync import ingest_source_document, stage_source_document
 
     repository = create_knowledge_repository()
     repository.initialize()
@@ -438,43 +536,207 @@ def ingest_documents_locally(
             "workers": max_workers,
         },
     )
-    if max_workers == 1:
-        results = [
-            _ingest_single_document(
-                file_path=file_path,
-                output_dir=output_dir,
-                repository=repository,
+    recent_errors: list[dict[str, str]] = []
+    serial_retry_count = 0
+    probe_result: dict[str, Any] | None = None
+    claimed_count = 0
+    processed_count = 0
+    failed_count = 0
+    stale_recovered_count = 0
+    staged_source_documents: dict[str, dict[str, Any]] = {}
+    results_by_local_path: dict[str, UploadResult] = {}
+    recover_stale = getattr(repository, "recover_stale_processing_ingestions", None)
+
+    def _sync_summary(*, phase: str, error_message: str | None = None) -> dict[str, Any]:
+        return _build_local_direct_sync_summary(
+            phase=phase,
+            already_processed_count=max(0, len(results_by_local_path) - processed_count - failed_count),
+            stale_recovered_count=stale_recovered_count,
+            probe_result=probe_result,
+            recent_errors=recent_errors,
+            serial_retry_count=serial_retry_count,
+            error_message=error_message,
+        )
+
+    try:
+        stale_recoveries = (
+            recover_stale(
+                error_message="processing lease expired before ingestion completed",
+                limit=LOCAL_DIRECT_STALE_RECOVERY_LIMIT,
+                source_system="agora",
+                knowledge_type="official",
+            )
+            if callable(recover_stale)
+            else []
+        )
+        stale_recovered_count += len(stale_recoveries)
+
+        for file_path in markdown_files:
+            local_path = file_path.relative_to(output_dir).as_posix()
+            staged = stage_source_document(
+                repository,
+                knowledge_type="official",
+                source_system="agora",
+                external_id=local_path,
+                title=file_path.stem,
+                source_url=None,
+                published_url=None,
+                content_format="markdown",
+                raw_content=file_path.read_text(encoding="utf-8"),
+                metadata={
+                    "sync_mode": "local_direct",
+                    "source_absolute_path": str(file_path),
+                    "source_relative_path": local_path,
+                },
+            )
+            source_doc_id = clean_text(staged.get("source_doc_id"))
+            if not source_doc_id:
+                raise RuntimeError(f"Failed to stage source document for {local_path}")
+            staged_source_documents[source_doc_id] = staged
+            if clean_text(staged.get("sync_status")) == "processed":
+                results_by_local_path[local_path] = _completed_upload_result_from_source_document(staged)
+
+        repository.update_sync_run(
+            sync_run["sync_run_id"],
+            status="running",
+            discovered_count=len(markdown_files),
+            claimed_count=0,
+            processed_count=0,
+            failed_count=0,
+            summary=_sync_summary(phase="staged"),
+        )
+
+        probe_result = _probe_embedding_provider_for_local_sync()
+        source_doc_ids = sorted(staged_source_documents.keys())
+        pending_serial_retry_ids: list[str] = []
+
+        if max_workers == 1:
+            executor = None
+            executor_context = nullcontext()
+        else:
+            executor = ThreadPoolExecutor(max_workers=max_workers)
+            executor_context = executor
+
+        with executor_context:
+            while True:
+                claimed = repository.claim_source_documents(
+                    limit=max_workers,
+                    source_system="agora",
+                    knowledge_type="official",
+                    claim_token=sync_run["sync_run_id"],
+                    claim_host=socket.gethostname(),
+                    source_doc_ids=source_doc_ids,
+                )
+                if not claimed:
+                    break
+                claimed_count += len(claimed)
+                batch_results: list[tuple[dict[str, Any], Any]] = []
+                if executor is None:
+                    batch_results = [
+                        (
+                            source_document,
+                            ingest_source_document(
+                                repository,
+                                source_document,
+                                sync_mode="local_direct",
+                                sync_run_id=sync_run["sync_run_id"],
+                            ),
+                        )
+                        for source_document in claimed
+                    ]
+                else:
+                    futures = {
+                        executor.submit(
+                            ingest_source_document,
+                            repository,
+                            source_document,
+                            sync_mode="local_direct",
+                            sync_run_id=sync_run["sync_run_id"],
+                        ): source_document
+                        for source_document in claimed
+                    }
+                    for future in as_completed(futures):
+                        batch_results.append((futures[future], future.result()))
+
+                for source_document, ingest_result in batch_results:
+                    upload_result = _upload_result_from_source_ingest(
+                        source_document=source_document,
+                        result=ingest_result,
+                    )
+                    if upload_result.upload_status != "completed" and _should_retry_serially(upload_result):
+                        pending_serial_retry_ids.append(clean_text(source_document.get("source_doc_id")))
+                        continue
+                    results_by_local_path[upload_result.local_path] = upload_result
+                    if upload_result.upload_status == "completed":
+                        processed_count += 1
+                    else:
+                        failed_count += 1
+                        recent_errors.append(
+                            {
+                                "local_path": upload_result.local_path,
+                                "error_message": clean_text(upload_result.error_message or upload_result.error),
+                            }
+                        )
+
+                repository.update_sync_run(
+                    sync_run["sync_run_id"],
+                    status="running",
+                    discovered_count=len(markdown_files),
+                    claimed_count=claimed_count,
+                    processed_count=processed_count,
+                    failed_count=failed_count,
+                    summary=_sync_summary(phase="ingesting"),
+                )
+
+        for source_doc_id in pending_serial_retry_ids:
+            source_document = repository.get_source_document(source_doc_id)
+            if source_document is None:
+                continue
+            serial_retry_count += 1
+            ingest_result = ingest_source_document(
+                repository,
+                source_document,
+                sync_mode="local_direct",
                 sync_run_id=sync_run["sync_run_id"],
             )
-            for file_path in markdown_files
-        ]
-    else:
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(
-                    _ingest_single_document,
-                    file_path=file_path,
-                    output_dir=output_dir,
-                    repository=repository,
-                    sync_run_id=sync_run["sync_run_id"],
-                ): file_path
-                for file_path in markdown_files
-            }
-            results = [future.result() for future in as_completed(futures)]
-    repository.update_sync_run(
-        sync_run["sync_run_id"],
-        status="completed" if all(item.upload_status == "completed" for item in results) else "failed",
-        discovered_count=len(markdown_files),
-        claimed_count=len(markdown_files),
-        processed_count=sum(1 for item in results if item.upload_status == "completed"),
-        failed_count=sum(1 for item in results if item.upload_status != "completed"),
-        summary={
-            "processed": sum(1 for item in results if item.upload_status == "completed"),
-            "failed": sum(1 for item in results if item.upload_status != "completed"),
-            "ingestion_ids": [item.ingestion_id for item in results if item.ingestion_id],
-        },
-    )
-    return sorted(results, key=lambda item: item.local_path)
+            upload_result = _upload_result_from_source_ingest(
+                source_document=source_document,
+                result=ingest_result,
+            )
+            results_by_local_path[upload_result.local_path] = upload_result
+            if upload_result.upload_status == "completed":
+                processed_count += 1
+            else:
+                failed_count += 1
+                recent_errors.append(
+                    {
+                        "local_path": upload_result.local_path,
+                        "error_message": clean_text(upload_result.error_message or upload_result.error),
+                    }
+                )
+
+        final_results = sorted(results_by_local_path.values(), key=lambda item: item.local_path)
+        repository.update_sync_run(
+            sync_run["sync_run_id"],
+            status="completed" if failed_count == 0 else "failed",
+            discovered_count=len(markdown_files),
+            claimed_count=claimed_count,
+            processed_count=processed_count,
+            failed_count=failed_count,
+            summary=_sync_summary(phase="completed" if failed_count == 0 else "failed"),
+        )
+        return final_results
+    except BaseException as exc:
+        repository.update_sync_run(
+            sync_run["sync_run_id"],
+            status="failed",
+            discovered_count=len(markdown_files),
+            claimed_count=claimed_count,
+            processed_count=processed_count,
+            failed_count=failed_count,
+            summary=_sync_summary(phase="failed", error_message=str(exc)),
+        )
+        raise
 
 
 def discover_documents(*, limit: int | None) -> tuple[list[DiscoveryItem], dict[str, Any]]:

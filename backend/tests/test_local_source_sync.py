@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
@@ -21,6 +22,7 @@ class _FakeRepository:
         self.sync_updates: list[tuple[str, dict[str, object]]] = []
         self.processed: list[str] = []
         self.failed: list[tuple[str, str]] = []
+        self.heartbeat_calls: list[str] = []
         self.ingestion_counter = 0
         self.borrow_local_direct_enter_count = 0
         self.borrow_local_direct_active = 0
@@ -62,6 +64,9 @@ class _FakeRepository:
         self.ingestion_counter += 1
         self.create_ingestion_borrow_depths.append(self.borrow_local_direct_active)
         return {"ingestion_id": f"KI-{self.ingestion_counter}"}
+
+    def heartbeat_ingestion_processing(self, ingestion_id: str) -> None:
+        self.heartbeat_calls.append(ingestion_id)
 
     def get_ingestion_report(self, ingestion_id: str) -> dict[str, object]:
         _ = ingestion_id
@@ -161,6 +166,49 @@ class LocalSourceSyncTests(unittest.TestCase):
         self.assertEqual(process.call_count, 2)
         self.assertEqual(repository.borrow_local_direct_enter_count, 1)
         self.assertEqual(repository.create_ingestion_borrow_depths, [1, 1])
+
+    def test_ingest_source_document_heartbeats_processing_lease_while_ingestion_runs(self) -> None:
+        repository = _FakeRepository()
+        source_document = {
+            "source_doc_id": "SRC-1",
+            "knowledge_type": "technical",
+            "source_system": "n8n",
+            "title": "Runbook",
+            "source_url": "https://example.com/articles/1",
+            "published_url": "https://zendesk.example.com/hc/articles/1",
+            "content_format": "markdown",
+            "raw_content": "# Title\n\nBody",
+            "raw_payload": {"content": "# Title\n\nBody"},
+            "checksum": "checksum-1",
+            "metadata": {},
+        }
+
+        def _slow_process(_repository, _ingestion_id):
+            deadline = time.time() + 0.2
+            while time.time() < deadline and not repository.heartbeat_calls:
+                time.sleep(0.01)
+            return None
+
+        with TemporaryDirectory() as tmpdir:
+            with patch(
+                "backend.services.local_source_sync.process_knowledge_ingestion",
+                side_effect=_slow_process,
+            ):
+                with patch(
+                    "backend.services.local_source_sync.LOCAL_DIRECT_PROCESSING_HEARTBEAT_SECONDS",
+                    0.01,
+                    create=True,
+                ):
+                    result = ingest_source_document(
+                        repository,
+                        source_document,
+                        root_dir=Path(tmpdir),
+                        sync_mode="local_direct",
+                        sync_run_id="SYNC-1",
+                    )
+
+        self.assertEqual(result.status, "completed")
+        self.assertGreaterEqual(len(repository.heartbeat_calls), 1)
 
 
 if __name__ == "__main__":
