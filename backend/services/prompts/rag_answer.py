@@ -38,6 +38,7 @@ def build_rag_answer_user_prompt(
     context_block: str,
     insufficient_reply: str,
     repair_mode: bool,
+    citation_retry_mode: bool = False,
 ) -> str:
     parts = [
         "## User Question",
@@ -91,6 +92,16 @@ def build_rag_answer_user_prompt(
                 "Re-read the chunks and return the smallest grounded answer that directly resolves the question.",
                 "If the chunks clearly overlap with the question, prefer a concise grounded answer over an unnecessary insufficient-evidence response.",
                 "Return JSON only with no extra prose.",
+            ]
+        )
+    if citation_retry_mode:
+        parts.extend(
+            [
+                "",
+                "## Citation Grounding Requirements",
+                "If two different context chunks materially support the how-to answer, cite both supporting chunks.",
+                "Prefer one implementation-step chunk and one token/authentication chunk when both are used.",
+                "Do not force unrelated citations. Use at most 2 citations.",
             ]
         )
     return "\n".join(parts).strip()

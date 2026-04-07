@@ -2548,3 +2548,28 @@ For each new entry, record:
   - `source /tmp/supportportal-finalize-venv/bin/activate && python -m unittest backend.tests.test_agora_doc_sync backend.tests.test_local_source_sync backend.tests.test_knowledge_repository_bm25`
   - `source /tmp/supportportal-finalize-venv/bin/activate && python - <<'PY' ... single-doc probe for en/interactive-live-streaming/advanced-features/ai-noise-suppression_windows.md ... PY`
   - Probe outcome: `_open_connection` dropped from the old 17-call baseline to `2`, cumulative connect time measured `5334.02ms`, and total wall time dropped to `21476.64ms` from the previous `77070.39ms` baseline.
+
+## 2026-04-07 - Harden light-path RTC join-channel retrieval against signaling and multi-channel drift
+
+- Summary:
+  - Added deterministic `audio_video_calling` product affinity inside light-path metadata rerank so RTC-family docs are boosted even when query understanding and vector retrieval are intentionally skipped.
+  - Added deterministic join-intent shaping for generic `join channel` FAQs, explicitly boosting RTC join-step and token/authentication chunks while penalizing `stream-channel` and `join-multiple-channels` families unless the query names those intents.
+  - Added a focused light-path lexical recovery pass for generic join queries, plus join-specific final-context selection so the answer path prefers `join a channel` and token/auth evidence over wrong-family diversity.
+- Reason:
+  - `TK-075` showed `how to join channel` landing on `stream-channel` and `join-multiple-channels` chunks, which produced an incomplete answer and only one citation instead of the RTC Android join flow plus token guidance.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, vector-table, ingestion, or embedding-model changes.
+  - Online light-path FAQ retrieval now applies deterministic product and family heuristics at rerank/judge/final-selection time.
+  - Generic RTC `join channel` answers can now trigger one extra lexical recovery round before generation when round-one evidence is dominated by `stream-channel` or `join-multiple-channels`.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_rag_qa.py backend/tests/test_rag_agentic.py`
+  - Added regressions for:
+    - generic `how to join channel` prefers RTC `join a channel` + token/auth chunks
+    - generic join with two valid RTC supporting chunks retries to produce two citations
+    - `how to join multiple channels` still keeps `join-multiple-channels`
+    - `how to join a stream channel` still keeps `stream-channel`
