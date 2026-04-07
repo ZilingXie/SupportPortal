@@ -11166,6 +11166,7 @@ class PostgresKnowledgeRepository:
                 if _clean_text(item.get("source_url")) or _clean_text(item.get("source_path"))
             )
         )
+        query_understanding_meta = _json_dict(row[16])
         payload = {
             "sample_source": "live_query",
             "request_id": row[0],
@@ -11193,7 +11194,18 @@ class PostgresKnowledgeRepository:
             "generation_latency_ms": _coalesce_metric(row[14]),
             "total_latency_ms": _coalesce_metric(row[15]),
             "answer": row[29],
-            "query_understanding_meta": _json_dict(row[16]),
+            "query_understanding_meta": query_understanding_meta,
+            "query_class": _clean_text(query_understanding_meta.get("query_class")) or None,
+            "light_path_used": bool(query_understanding_meta.get("light_path_used"))
+            if query_understanding_meta.get("light_path_used") is not None
+            else None,
+            "vector_setup_skipped": bool(query_understanding_meta.get("vector_setup_skipped"))
+            if query_understanding_meta.get("vector_setup_skipped") is not None
+            else None,
+            "answer_profile_used": _clean_text(query_understanding_meta.get("answer_profile_used")) or None,
+            "answer_profile_fallback_used": bool(query_understanding_meta.get("answer_profile_fallback_used"))
+            if query_understanding_meta.get("answer_profile_fallback_used") is not None
+            else None,
             "confidence_score": _coalesce_metric(row[17]),
             "citation_count": int(row[18] or 0),
             "citation_coverage_ratio": _coalesce_metric(row[19]),

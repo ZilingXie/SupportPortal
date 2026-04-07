@@ -15,6 +15,13 @@ def _load_script_module():
 
 
 class TraceClientTicketRouteCliTests(unittest.TestCase):
+    def test_parser_exposes_post_answer_artifact_timeout_option(self) -> None:
+        module = _load_script_module()
+
+        args = module.build_parser().parse_args([])
+
+        self.assertEqual(args.post_answer_artifact_timeout_seconds, 15.0)
+
     def test_preflight_requires_healthy_service(self) -> None:
         module = _load_script_module()
 
@@ -221,6 +228,11 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
                 "rerank_latency_ms": 65.0,
                 "generation_latency_ms": 1830.0,
                 "total_latency_ms": 2345.0,
+                "query_class": "how_to_faq",
+                "light_path_used": False,
+                "vector_setup_skipped": False,
+                "answer_profile_used": "gpt-5.4",
+                "answer_profile_fallback_used": False,
             },
         )
 
@@ -232,7 +244,13 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
         self.assertEqual(summary["rag_agent"]["decision"], "grounded_answer")
         self.assertEqual(summary["review_agent"]["status"], "skipped")
         self.assertEqual(summary["rag_internal_telemetry"]["status"], "available")
+        self.assertEqual(summary["rag_internal_telemetry"]["query_class"], "how_to_faq")
+        self.assertFalse(summary["rag_internal_telemetry"]["light_path_used"])
+        self.assertFalse(summary["rag_internal_telemetry"]["vector_setup_skipped"])
+        self.assertEqual(summary["rag_internal_telemetry"]["answer_profile_used"], "gpt-5.4")
+        self.assertFalse(summary["rag_internal_telemetry"]["answer_profile_fallback_used"])
         self.assertEqual(summary["final_result"]["answer_route"], "rag")
+        self.assertFalse(summary["post_answer_artifacts_incomplete"])
         self.assertEqual(summary["admission"]["load_ticket_ms"], 11.0)
         self.assertEqual(summary["worker_queue"]["queue_wait_ms"], 90.0)
         self.assertEqual(summary["worker_queue"]["message_to_task_dequeued_ms"], 90.0)
@@ -248,6 +266,8 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
         markdown = module.render_markdown_report(summary)
         self.assertIn("how to join channel", markdown)
         self.assertIn("RAG 内部分段", markdown)
+        self.assertIn("query_class", markdown)
+        self.assertIn("answer_profile_used", markdown)
         self.assertIn("grounded_answer", markdown)
         self.assertIn("Admission 分段", markdown)
         self.assertIn("Queue / Dispatch", markdown)
@@ -317,6 +337,74 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
         self.assertEqual(summary["raw_ids"]["request_id"], "rag-456")
         markdown = module.render_markdown_report(summary)
         self.assertIn("rag_internal_telemetry=missing", markdown)
+
+    def test_build_trace_summary_flags_incomplete_post_answer_artifacts_when_response_ready_is_missing(self) -> None:
+        module = _load_script_module()
+
+        summary = module.build_trace_summary(
+            ticket={
+                "ticket_id": "TK-TRACE-004",
+                "customer_id": "C-TRACE-004",
+                "product": "audio_video_calling",
+                "client_agent_runtime_state": {
+                    "active_run_id": "run-999",
+                    "workflow_action": "answer_customer",
+                    "status": "completed",
+                    "main_agent": {
+                        "status": "completed",
+                        "phase": "completed",
+                        "decision": "answer_customer",
+                        "reason": "grounded_answer",
+                        "started_at": "2026-04-04T00:00:01.010000+00:00",
+                        "completed_at": "2026-04-04T00:00:05.010000+00:00",
+                    },
+                },
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "how to join channel",
+                        "created_at": "2026-04-04T00:00:01+00:00",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "Use joinChannel with a valid token, channel name, and uid.",
+                        "created_at": "2026-04-04T00:00:05.100000+00:00",
+                        "answer_route": "rag",
+                        "route_reason": "grounded_answer",
+                        "workflow_action": "answer_customer",
+                    },
+                ],
+            },
+            request_context={
+                "ticket_id": "TK-TRACE-004",
+                "customer_id": "C-TRACE-004",
+                "product": "audio_video_calling",
+                "message": "how to join channel",
+                "message_created_at": "2026-04-04T00:00:01+00:00",
+                "question_started_at": "2026-04-04T00:00:00+00:00",
+                "ack_received_at": "2026-04-04T00:00:00.300000+00:00",
+            },
+            ack_payload={"ack_text": "Let me check this for you.", "latency_ms": 300.0},
+            query_payload={"processing_mode": "main_agent_async", "queued_for_ai": True},
+            ticket_events=[],
+            agent_events=[],
+            rag_run={
+                "request_id": "rag-999",
+                "query_class": "how_to_faq",
+                "light_path_used": False,
+                "vector_setup_skipped": False,
+                "answer_profile_used": "gpt-5.4",
+                "answer_profile_fallback_used": False,
+            },
+        )
+
+        self.assertTrue(summary["post_answer_artifacts_incomplete"])
+        self.assertEqual(summary["final_result"]["answer_route"], "rag")
+        self.assertEqual(summary["final_result"]["route_reason"], "grounded_answer")
+        self.assertIsNone(summary["worker_queue"]["queue_wait_ms"])
+        markdown = module.render_markdown_report(summary)
+        self.assertIn("post_answer_artifacts_incomplete", markdown)
+        self.assertIn("true", markdown)
 
     def test_resolve_customer_message_created_at_falls_back_to_ticket_messages(self) -> None:
         module = _load_script_module()

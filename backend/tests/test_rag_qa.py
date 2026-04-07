@@ -748,20 +748,35 @@ class RagQaHybridTests(unittest.TestCase):
             )
         )
 
-    def test_run_rag_query_simple_lexical_light_path_skips_query_understanding_vector_and_rerank(self) -> None:
-        bm25_chunk = RetrievedChunk(
-            chunk_id="bm25-join",
-            text="Call joinChannel with the same channel name on each client.",
-            source_path="official/get-started.md",
-            similarity=0.95,
-        )
-        fts_chunk = RetrievedChunk(
-            chunk_id="fts-join",
-            text="You can join a channel after initializing the engine.",
-            source_path="official/quickstart.md",
-            similarity=0.78,
-        )
+    def test_run_rag_query_short_how_to_faq_uses_vector_first_pass_without_light_path(self) -> None:
+        def _vector_chunk() -> RetrievedChunk:
+            return RetrievedChunk(
+                chunk_id="vec-join",
+                text="Call joinChannel with the same channel name on each client.",
+                source_path="official/get-started.md",
+                similarity=0.95,
+            )
 
+        query_understanding = QueryUnderstandingResult(
+            query_profile="en",
+            query_understanding_version="v2",
+            glossary_version="agora_glossary_en_v2",
+            self_query_version="v2",
+            normalized_query="how to join channel",
+            canonical_terms=["Channel"],
+            glossary_hits=[],
+            dictionary_hits=[{"canonical_term": "Channel"}],
+            retrieval_plan=RetrievalPlan(
+                semantic_query="how to join channel",
+                soft_signals={"topic": ["channel lifecycle"], "use_case": ["join_channel"]},
+                rule_expansions=["channel name"],
+            ),
+            rewritten_queries=["join channel with token"],
+            decomposition_subqueries=[],
+            fallback_mode="none",
+            intent_latency_ms=2.0,
+            rewrite_latency_ms=1.0,
+        )
         with patch("backend.services.rag_qa._get_rag_config") as config_mock:
             config_mock.return_value = {
                 "dsn": "postgresql://example",
@@ -794,40 +809,37 @@ class RagQaHybridTests(unittest.TestCase):
                 "reserved_output_tokens": 1200,
                 "buffer_tokens": 1200,
             }
-            with patch(
-                "backend.services.rag_qa._resolve_active_vector_table",
-                side_effect=AssertionError("vector table resolution should be skipped for simple lexical queries"),
-            ), patch(
+            with patch("backend.services.rag_qa._resolve_active_vector_table", return_value="supportportal.docagent_chunks_bge_m3_1024"), patch(
                 "backend.services.rag_qa.get_embedding_provider",
-                side_effect=AssertionError("embedding provider should be skipped for simple lexical queries"),
+                return_value=self._FakeProvider(),
             ), patch(
                 "backend.services.rag_qa.understand_rag_query",
-                side_effect=AssertionError("query understanding should be skipped for simple lexical queries"),
+                return_value=query_understanding,
             ), patch(
                 "backend.services.rag_qa._invoke_agentic_planner",
-                side_effect=AssertionError("agent planner should be skipped for simple lexical queries"),
+                return_value=None,
             ), patch(
                 "backend.services.rag_qa._retrieve_chunks",
-                side_effect=AssertionError("vector retrieval should be skipped for simple lexical queries"),
+                side_effect=lambda *args, **kwargs: [_vector_chunk()],
             ), patch(
                 "backend.services.rag_qa._retrieve_bm25_chunks",
-                return_value=[bm25_chunk],
+                side_effect=AssertionError("bm25 warmup should be skipped for short how-to FAQ first pass"),
             ), patch(
                 "backend.services.rag_qa._retrieve_fts_chunks",
-                return_value=[fts_chunk],
+                side_effect=AssertionError("fts retrieval should not run when vector first pass is sufficient"),
             ), patch(
                 "backend.services.rag_qa._metadata_rerank",
-                return_value=([bm25_chunk, fts_chunk], {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None}),
+                side_effect=lambda *args, **kwargs: ([_vector_chunk()], {"post_rerank_count": 1, "hints": {}, "applied_filter": False, "filter_type": None}),
             ), patch(
                 "backend.services.rag_qa._rerank_chunks",
-                side_effect=AssertionError("external rerank should be skipped for simple lexical queries"),
+                side_effect=lambda *args, **kwargs: [_vector_chunk()],
             ), patch(
                 "backend.services.rag_qa._invoke_llm_payload_with_trace",
                 return_value=(
                     {
                         "answer": "Call joinChannel with the same channel name on each client.",
                         "key_steps": [],
-                        "citations": ["bm25-join"],
+                        "citations": ["vec-join"],
                         "insufficient_evidence": False,
                     },
                     10,
@@ -840,15 +852,18 @@ class RagQaHybridTests(unittest.TestCase):
         self.assertIsNotNone(result)
         assert result is not None
         self.assertEqual(result.answer.answer, "Call joinChannel with the same channel name on each client.")
-        self.assertEqual(result.trace.selected_chunk_ids[0], "bm25-join")
-        self.assertTrue(result.trace.light_path_used)
-        self.assertTrue(result.trace.vector_setup_skipped)
+        self.assertEqual(result.trace.selected_chunk_ids[0], "vec-join")
+        self.assertEqual(result.trace.query_class, "how_to_faq")
+        self.assertFalse(result.trace.light_path_used)
+        self.assertFalse(result.trace.vector_setup_skipped)
+        self.assertEqual(result.trace.answer_profile_used, "gpt-5.4")
+        self.assertFalse(result.trace.answer_profile_fallback_used)
 
-    def test_run_rag_query_light_path_uses_fast_answer_profile_then_falls_back_to_main_model(self) -> None:
+    def test_run_rag_query_exact_error_lookup_uses_light_path_fast_answer_profile_then_falls_back_to_main_model(self) -> None:
         bm25_chunk = RetrievedChunk(
-            chunk_id="bm25-join",
-            text="Call joinChannel with the same channel name on each client.",
-            source_path="official/get-started.md",
+            chunk_id="bm25-error-109",
+            text="Error 109 means the token is expired.",
+            source_path="official/error-codes.md",
             similarity=0.95,
         )
         captured_models: list[tuple[str, str]] = []
@@ -861,7 +876,7 @@ class RagQaHybridTests(unittest.TestCase):
             if len(captured_models) == 1:
                 return LlmTextResult(
                     text=(
-                        '{"answer":"Call joinChannel with the same channel name on each client.",'
+                        '{"answer":"Error 109 means the token is expired.",'
                         '"key_steps":[],"citations":[],"insufficient_evidence":false}'
                     ),
                     model_name=str(profile.model),
@@ -870,8 +885,8 @@ class RagQaHybridTests(unittest.TestCase):
                 )
             return LlmTextResult(
                 text=(
-                    '{"answer":"Call joinChannel with the same channel name on each client.",'
-                    '"key_steps":[],"citations":["bm25-join"],"insufficient_evidence":false}'
+                    '{"answer":"Error 109 means the token is expired.",'
+                    '"key_steps":[],"citations":["bm25-error-109"],"insufficient_evidence":false}'
                 ),
                 model_name=str(profile.model),
                 prompt_tokens=12,
@@ -928,7 +943,7 @@ class RagQaHybridTests(unittest.TestCase):
                         "backend.services.rag_qa.invoke_responses_text",
                         side_effect=_capture_answer_call,
                     ):
-                        result = run_rag_query("how to join channel")
+                        result = run_rag_query("what does error 109 mean")
 
         self.assertIsNotNone(result)
         assert result is not None
@@ -936,6 +951,9 @@ class RagQaHybridTests(unittest.TestCase):
             captured_models,
             [("gpt-5.4-mini", "low"), ("gpt-5.4", "high")],
         )
+        self.assertEqual(result.trace.query_class, "lexical_exact")
+        self.assertTrue(result.trace.light_path_used)
+        self.assertTrue(result.trace.vector_setup_skipped)
         self.assertEqual(result.trace.answer_profile_used, "gpt-5.4")
         self.assertTrue(result.trace.answer_profile_fallback_used)
 

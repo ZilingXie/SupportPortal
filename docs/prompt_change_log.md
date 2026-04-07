@@ -12,6 +12,34 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-04-07 - Query-planner FAQ class for vector-first how-to retrieval
+
+- Area or subsystem: Client AI technical RAG retrieval planning and trace explainability
+- Prompt or model version: `rag-agent-planner-how-to-faq-v1`
+- Summary: Expanded the RAG agent planner prompt contract to allow a dedicated `how_to_faq` query class, aligned runtime routing so short usage/how-to questions use the non-light-path vector-first profile, and exposed the chosen answer profile and planner flags in live trace/reporting outputs.
+- Reason: The existing planner/runtime split treated `"How to join channel"` as a lean lexical question, which pushed a short FAQ through the slower BM25-first path and hid the final execution profile in the live trace summary when post-answer artifacts arrived late.
+- Affected files or config:
+  - `backend/services/prompts/rag_agent_planner.py`
+  - `backend/services/rag_qa.py`
+  - `backend/repositories/knowledge_repository.py`
+  - `scripts/trace_client_ticket_route.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `backend/tests/test_trace_client_ticket_route_cli.py`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Expected behavior change:
+  - Planner outputs may now explicitly choose `query_class="how_to_faq"` for short usage/how-to questions instead of forcing them into `lexical_exact` or broader configuration buckets.
+  - Runtime retrieval for `how_to_faq` stays on the main answer profile, keeps vector setup enabled, and only introduces BM25 during recovery or vector-unavailable fallback.
+  - Live traces and scorecard detail now expose `query_class`, `light_path_used`, `vector_setup_skipped`, `answer_profile_used`, and `answer_profile_fallback_used`, making the effective prompt/model path visible without reading raw DB telemetry.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_trace_client_ticket_route_cli backend.tests.test_rag_agentic backend.tests.test_rag_qa backend.tests.test_prompt_modules backend.tests.test_rag_scorecard_repository`
+  - Verification result:
+    - Prompt-adjacent regression coverage passed inside the targeted `161`-test suite.
+    - The updated planner prompt surface is exercised by prompt-module assertions and by agentic/runtime tests that now expect `how to join channel` to classify as `how_to_faq` with `light_path_used=false` and `vector_setup_skipped=false`.
+
 ## 2026-04-05 - Troubleshooting intake prompt supports answer-mode clarification
 
 - Area or subsystem: Client AI insufficient-evidence intake review

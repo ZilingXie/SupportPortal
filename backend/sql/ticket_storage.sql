@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS support_ticket_messages (
     created_at TIMESTAMPTZ NOT NULL,
     sentiment_label TEXT,
     sources JSONB,
-    citations JSONB
+    citations JSONB,
+    meta JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
 CREATE TABLE IF NOT EXISTS support_ticket_events (
