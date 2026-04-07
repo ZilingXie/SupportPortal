@@ -10,6 +10,45 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-04-07 - FAQ vector-first retrieval, trace artifact completeness, and benchmark fail-closed cleanup
+
+- Summary: Added a dedicated `how_to_faq` query class for short usage/how-to questions so the first pass goes vector-first without eager BM25 warmup, surfaced query-execution profile fields in live trace/reporting, preserved assistant route/runtime metadata through Postgres ticket-message persistence, and hardened benchmark execution so builtin judge stalls time out and interrupted eval runs close as `failed` instead of staying `running`.
+- Reason: The `"How to join channel"` live trace showed three concrete issues at once: BM25 dominated first-pass latency for short FAQ queries, `ticket_ai_response_ready` could arrive after the trace script's fixed 6-second post-answer window, and benchmark judge calls could hang inside HTTPS reads long enough to strand eval rows in `running`.
+- Affected files or config:
+  - `backend/services/rag_qa.py`
+  - `backend/services/rag_benchmark_runner.py`
+  - `backend/rag_worker.py`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/repositories/ticket_repository.py`
+  - `backend/sql/ticket_storage.sql`
+  - `scripts/trace_client_ticket_route.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_rag_benchmark_runner.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `backend/tests/test_repository_configuration.py`
+  - `backend/tests/test_trace_client_ticket_route_cli.py`
+  - `docs/ticket_db_design.md`
+  - `docs/ticket_db_architecture.md`
+  - `docs/rag_change_log.md`
+  - `docs/prompt_change_log.md`
+- Data impact:
+  - Agentic RAG query understanding now classifies short usage-style questions like `how to join channel` as `how_to_faq`, which keeps `light_path_used=false`, preserves vector setup, and skips eager BM25 warmup on the first pass unless recovery later requires lexical support.
+  - Live query detail and trace artifacts now expose `query_class`, `light_path_used`, `vector_setup_skipped`, `answer_profile_used`, and `answer_profile_fallback_used`, and the trace script now marks `post_answer_artifacts_incomplete=true` instead of silently leaving post-answer fields unset.
+  - `support_ticket_messages` now has a durable `meta` JSONB column so assistant route/runtime and client-intake fields survive `save_ticket() -> get_ticket()` round-trips in Postgres instead of only existing in memory-mode objects.
+  - Builtin benchmark judges now run behind a subprocess hard-timeout, and benchmark/eval cleanup paths mark runs `failed` on `BaseException` so interrupted or wedged judge calls stop leaving `support_rag_benchmark_eval_runs` rows in `running`.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_trace_client_ticket_route_cli backend.tests.test_repository_configuration backend.tests.test_rag_benchmark_runner backend.tests.test_rag_agentic backend.tests.test_rag_qa backend.tests.test_prompt_modules backend.tests.test_rag_scorecard_repository`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://127.0.0.1:8080/health`
+  - Verification result:
+    - Targeted regression suite passed: `161 tests`.
+    - `podman-compose ... up -d --build` failed in the current environment with a Podman overlay mount `input/output error`, so rebuilt-image live trace and benchmark re-smoke against the new code remain blocked.
+    - A non-build `podman-compose ... up -d` restored the stack, `podman-compose ... ps` showed all single-host services `Up`, and host `/health` returned `status=ok`, `ticket_storage=postgres`, `knowledge_storage=postgres`, `rag_service=ok`.
+
 ## 2026-04-07 - Local-direct ingestion recovery, progress, and stale-lease hardening
 
 - Summary: Reworked the `local_direct` official-doc ingestion path so filesystem discovery/staging happens before heavy ingest, sync runs publish live progress during processing, ingestion rows now carry a lease/heartbeat for stale-processing recovery, provider health is probed before bulk work starts, and concurrency-conflict tail docs automatically fall back to serial retry.

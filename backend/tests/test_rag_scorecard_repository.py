@@ -950,6 +950,66 @@ class RagScorecardRepositoryTests(unittest.TestCase):
         self.assertTrue(payload["judge_summary"]["judge_disagreement_flag"])
         self.assertEqual(payload["strategy_snapshot"]["answer_model"], "gpt-5.4")
 
+    def test_live_query_detail_exposes_execution_profile_flags_from_query_understanding_meta(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        primary_rows = [
+            (
+                "RQ-1",
+                "TK-1",
+                "how to join channel",
+                "join channel with token",
+                "knowledge_qa",
+                "faq",
+                "agentic_multi_tool_v1",
+                "official_markdown_upload",
+                "markdown_header_v1",
+                3,
+                0,
+                1,
+                ["chunk-1"],
+                125.0,
+                410.0,
+                535.0,
+                {
+                    "query_class": "how_to_faq",
+                    "light_path_used": False,
+                    "vector_setup_skipped": False,
+                    "answer_profile_used": "gpt-5.4",
+                    "answer_profile_fallback_used": False,
+                },
+                0.95,
+                1,
+                1.0,
+                ["chunk-1"],
+                False,
+                False,
+                1,
+                0.93,
+                0.93,
+                "structured_answer",
+                False,
+                None,
+                "Use joinChannel.",
+                "siliconflow",
+                "BAAI/bge-reranker-v2-m3",
+                datetime(2026, 4, 7, 3, 0, tzinfo=timezone.utc),
+                False,
+            )
+        ]
+
+        with patch.object(repository, "_query_rows", side_effect=[primary_rows, []]), patch.object(
+            repository,
+            "_chunk_details",
+            return_value={"chunk-1": {"chunk_id": "chunk-1", "source_url": "https://docs.example.invalid/join"}},
+        ):
+            payload = repository._query_run_detail("RQ-1")
+
+        self.assertEqual(payload["query_class"], "how_to_faq")
+        self.assertFalse(payload["light_path_used"])
+        self.assertFalse(payload["vector_setup_skipped"])
+        self.assertEqual(payload["answer_profile_used"], "gpt-5.4")
+        self.assertFalse(payload["answer_profile_fallback_used"])
+
     def test_benchmark_session_payload_for_eval_run_orders_runs_by_catalog_snapshot(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
         started_at = datetime(2026, 3, 30, 1, 0, tzinfo=timezone.utc)

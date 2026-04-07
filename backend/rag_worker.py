@@ -155,7 +155,7 @@ def _process_dataset_benchmark(task: dict[str, Any]) -> None:
             repository=knowledge_repository,
             eval_run_id=eval_run_id,
         )
-    except Exception:
+    except BaseException:
         if snapshot is not None:
             knowledge_repository.upsert_rag_eval_run(
                 eval_run={

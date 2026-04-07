@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import multiprocessing as mp
 import os
+import queue
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -826,6 +828,107 @@ def _response_to_text(response: Any) -> str:
     return str(content or "")
 
 
+def _judge_timeout_seconds() -> float:
+    try:
+        return max(float(_clean_text(os.getenv("RAG_BENCHMARK_JUDGE_TIMEOUT_SECONDS")) or 30.0), 1.0)
+    except (TypeError, ValueError):
+        return 30.0
+
+
+def _judge_subprocess_worker(
+    result_queue: Any,
+    *,
+    judge_model: str,
+    case: BenchmarkCase,
+    result: BenchmarkExecutionResult,
+    retrieval_metrics: dict[str, Any],
+) -> None:
+    try:
+        result_queue.put(
+            {
+                "ok": True,
+                "payload": invoke_judge_vote(
+                    judge_model=judge_model,
+                    case=case,
+                    result=result,
+                    retrieval_metrics=retrieval_metrics,
+                ),
+            }
+        )
+    except BaseException as exc:  # pragma: no cover - exercised via parent wrapper
+        result_queue.put(
+            {
+                "ok": False,
+                "error": str(exc),
+                "error_type": exc.__class__.__name__,
+            }
+        )
+
+
+def _invoke_builtin_judge_vote_in_subprocess(
+    *,
+    judge_model: str,
+    case: BenchmarkCase,
+    result: BenchmarkExecutionResult,
+    retrieval_metrics: dict[str, Any],
+) -> dict[str, Any]:
+    timeout_seconds = _judge_timeout_seconds()
+    context = mp.get_context("spawn")
+    result_queue = context.Queue(maxsize=1)
+    process = context.Process(
+        target=_judge_subprocess_worker,
+        kwargs={
+            "result_queue": result_queue,
+            "judge_model": judge_model,
+            "case": case,
+            "result": result,
+            "retrieval_metrics": retrieval_metrics,
+        },
+    )
+    process.start()
+    process.join(timeout_seconds)
+    if process.is_alive():
+        process.terminate()
+        process.join(5.0)
+        if process.is_alive() and hasattr(process, "kill"):
+            process.kill()
+            process.join(1.0)
+        try:
+            result_queue.close()
+            result_queue.join_thread()
+        except Exception:
+            pass
+        raise RuntimeError(f"judge timed out after {timeout_seconds:.1f}s")
+    try:
+        outcome = result_queue.get_nowait()
+    except queue.Empty as exc:
+        raise RuntimeError(f"judge process exited without returning a vote (exitcode={process.exitcode})") from exc
+    finally:
+        try:
+            result_queue.close()
+            result_queue.join_thread()
+        except Exception:
+            pass
+    if bool(outcome.get("ok")):
+        return dict(outcome.get("payload") or {})
+    raise RuntimeError(str(outcome.get("error") or outcome.get("error_type") or "judge subprocess failed"))
+
+
+def invoke_judge_vote_with_timeout(
+    *,
+    judge_model: str,
+    case: BenchmarkCase,
+    result: BenchmarkExecutionResult,
+    retrieval_metrics: dict[str, Any],
+) -> dict[str, Any]:
+    return _invoke_builtin_judge_vote_in_subprocess(
+        judge_model=judge_model,
+        case=case,
+        result=result,
+        retrieval_metrics=retrieval_metrics,
+    )
+
+
 def invoke_judge_vote(
     *,
     judge_model: str,
@@ -1324,7 +1427,7 @@ def run_benchmark(
     started_at = _utc_now()
     normalized_experiment_id = _clean_text(experiment_id) or eval_run_id
     runner = query_runner or run_rag_query
-    judge = judge_runner or invoke_judge_vote
+    judge = judge_runner or invoke_judge_vote_with_timeout
     decider = route_decider or decide_support_route
 
     repo.upsert_rag_eval_run(
@@ -1458,7 +1561,7 @@ def run_benchmark(
                 "finished_at": _utc_now(),
             }
         )
-    except Exception:
+    except BaseException:
         repo.upsert_rag_eval_run(
             eval_run={
                 "eval_run_id": eval_run_id,

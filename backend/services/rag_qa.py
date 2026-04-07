@@ -103,6 +103,31 @@ _LIGHT_PATH_RERANK_TOP_N = 8
 _LIGHT_PATH_CONTEXT_CHUNK_LIMIT = 3
 _LIGHT_PATH_FAST_ANSWER_MODEL = "gpt-5.4-mini"
 _LIGHT_PATH_FAST_ANSWER_REASONING_EFFORT = "low"
+_HOW_TO_FAQ_PREFIXES = (
+    "how to ",
+    "how do i ",
+    "how can i ",
+    "how do we ",
+    "how can we ",
+)
+_HOW_TO_FAQ_USAGE_TERMS = {
+    "create",
+    "destroy",
+    "join",
+    "joinchannel",
+    "leave",
+    "login",
+    "logout",
+    "mute",
+    "publish",
+    "receive",
+    "send",
+    "start",
+    "stop",
+    "subscribe",
+    "switch",
+    "unmute",
+}
 _LIGHT_PATH_JOIN_RECOVERY_BM25_CANDIDATE_K = 24
 _LIGHT_PATH_JOIN_RECOVERY_FTS_CANDIDATE_K = 24
 _LIGHT_PATH_JOIN_RECOVERY_FUSION_CANDIDATE_K = 18
@@ -484,11 +509,57 @@ def _rerank_capability_enabled(
     return bool(api_key and base_url and model)
 
 
+def _is_how_to_faq_query(
+    message: str,
+    understanding: QueryUnderstandingResult | None = None,
+) -> bool:
+    normalized = " ".join(str(message or "").split()).strip()
+    if not normalized:
+        return False
+    lowered = normalized.lower()
+    if not any(lowered.startswith(prefix) for prefix in _HOW_TO_FAQ_PREFIXES):
+        return False
+    if re.search(r"\b(error|code)\s+\d{3,5}\b", lowered):
+        return False
+    if any(
+        marker in lowered
+        for marker in [
+            "black screen",
+            "failed",
+            "failure",
+            "jitter",
+            "no audio",
+            "root cause",
+            "why ",
+            "问题",
+            "排查",
+            "故障",
+        ]
+    ):
+        return False
+    if _is_multiple_channels_query(normalized) or _is_stream_channel_query(normalized):
+        return False
+    query_terms = _extract_query_terms(normalized, max_terms=8)
+    if len(normalized.split()) > 8 or len(query_terms) > 5:
+        return False
+    if any(term in _HOW_TO_FAQ_USAGE_TERMS for term in query_terms):
+        return True
+    soft_signals = (
+        dict(understanding.retrieval_plan.soft_signals)
+        if understanding is not None and isinstance(understanding.retrieval_plan.soft_signals, dict)
+        else {}
+    )
+    return bool(soft_signals.get("use_case"))
+
+
 def _is_simple_lexical_query(message: str) -> bool:
     normalized = " ".join(str(message or "").split()).strip()
     if not normalized:
         return False
-    if re.search(r"\b\d{3,5}\b", normalized.lower()):
+    lowered = normalized.lower()
+    if re.search(r"\b(error|code)\s+\d{3,5}\b", lowered):
+        return len(normalized.split()) <= 6 and len(_extract_query_terms(normalized, max_terms=8)) <= 4
+    if re.search(r"\b\d{3,5}\b", lowered):
         return False
     return len(normalized.split()) <= 6 and len(_extract_query_terms(normalized, max_terms=8)) <= 4
 
@@ -624,6 +695,8 @@ def _classify_agentic_query(
     lowered = str(message or "").lower()
     if _is_comparison_query(message):
         return "comparison"
+    if _is_how_to_faq_query(message, understanding):
+        return "how_to_faq"
     if understanding is not None:
         doc_subtype = str(understanding.retrieval_plan.hard_filters.get("doc_subtype") or "").strip().lower()
         if doc_subtype == "troubleshooting_case":
@@ -640,6 +713,8 @@ def _classify_agentic_query(
 def _tool_order_for_query_class(query_class: str) -> tuple[list[str], str, str]:
     if query_class == "lexical_exact":
         return (["p_bm25", "p_fts", "p_vec"], "exact_match", "lexical")
+    if query_class == "how_to_faq":
+        return (["p_vec", "s_vec"], "how_to_usage_support", "semantic")
     if query_class == "troubleshooting_why":
         return (["p_vec", "s_vec", "p_bm25", "s_bm25", "p_fts", "s_fts"], "causal_grounding", "semantic")
     if query_class == "comparison":
@@ -914,7 +989,7 @@ def _build_agentic_retrieval_plan(
     )
     if isinstance(planner_payload, dict):
         query_class = str(planner_payload.get("query_class") or "").strip().lower()
-        if query_class in {"lexical_exact", "configuration", "troubleshooting_why", "comparison"}:
+        if query_class in {"lexical_exact", "how_to_faq", "configuration", "troubleshooting_why", "comparison"}:
             first_pass_tools = [
                 str(item).strip()
                 for item in planner_payload.get("first_pass_tools") or []
@@ -1130,6 +1205,17 @@ def _tool_weights_for_query_class(query_class: str) -> dict[str, float]:
             "s_vec": 0.35,
             "p_keyword": 0.35,
             "s_keyword": 0.20,
+        }
+    if query_class == "how_to_faq":
+        return {
+            "p_vec": 1.00,
+            "s_vec": 0.72,
+            "p_bm25": 0.50,
+            "s_bm25": 0.25,
+            "p_fts": 0.20,
+            "s_fts": 0.10,
+            "p_keyword": 0.12,
+            "s_keyword": 0.08,
         }
     if query_class == "configuration":
         return {
@@ -4571,6 +4657,7 @@ def _run_rag_query_agentic(
     simple_lexical_query = preliminary_query_class == "lexical_exact" and _is_simple_lexical_query(message)
     vector_setup_skipped = simple_lexical_query
     light_path_used = simple_lexical_query
+    skip_bm25_warmup = preliminary_query_class == "how_to_faq"
     preflight_probe_latency_ms = 0.0
 
     config["_vector_runtime_available"] = (
@@ -4685,14 +4772,15 @@ def _run_rag_query_agentic(
                 limit=int(config.get("vector_candidate_k") or config.get("top_k") or 5),
                 index_role="primary",
             )
-        warm_original_bm25_future = query_understanding_executor.submit(
-            _timed_retrieve,
-            _retrieve_bm25_chunks,
-            message,
-            warm_retrieval_config,
-            limit=int(config.get("bm25_candidate_k") or config.get("top_k") or 5),
-            index_role="primary",
-        )
+        if not skip_bm25_warmup:
+            warm_original_bm25_future = query_understanding_executor.submit(
+                _timed_retrieve,
+                _retrieve_bm25_chunks,
+                message,
+                warm_retrieval_config,
+                limit=int(config.get("bm25_candidate_k") or config.get("top_k") or 5),
+                index_role="primary",
+            )
     if query_understanding_future is not None:
         try:
             query_understanding = query_understanding_future.result()

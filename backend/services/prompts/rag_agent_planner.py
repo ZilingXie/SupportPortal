@@ -36,7 +36,7 @@ def build_rag_agent_planner_system_prompt(
             "",
             "## Output Requirements",
             'Return strict JSON only with keys "query_class", "first_pass_tools", "query_variants", "decomposition_targets", "evidence_goal", and "recovery_bias".',
-            'Allowed query_class values: "lexical_exact", "configuration", "troubleshooting_why", "comparison".',
+            'Allowed query_class values: "lexical_exact", "how_to_faq", "configuration", "troubleshooting_why", "comparison".',
             "Do not include explanations outside JSON.",
             "",
             "## Safety Rules",

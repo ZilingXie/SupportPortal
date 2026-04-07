@@ -34,6 +34,11 @@
   - `sources`（JSONB，可空）
   - `citations`（JSONB，可空）
   - `sentiment_label`（`good|bad|neutral`，可空，仅客户消息使用）
+  - `meta`（JSONB，默认 `{}`，保存 assistant route/runtime、client intake 等非固定消息字段）
+- 说明：
+  - `support_ticket_messages` 的固定列只保存公开消息正文与通用展示字段。
+  - 其余消息级结构化字段统一写入 `meta`，例如 `answer_route`、`route_reason`、`route_confidence`、`search_used`、`scope_label`、`workflow_action`、`client_agent_run_id`、`client_agent_runtime_status`、`client_intake_phase`、`client_intake_ready_for_engineer_ticket`、`client_intake_missing_information`。
+  - 读取时 `meta` 会平铺回消息顶层，保持 Postgres 存储与内存模式返回契约一致。
 
 ### 3. `support_ticket_events`
 - 记录 client ticket 级别的业务事件。
