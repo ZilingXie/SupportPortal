@@ -1232,6 +1232,193 @@ class RagQaHybridTests(unittest.TestCase):
         self.assertEqual(set(result.trace.cited_chunk_ids), {"join-android", "auth-android"})
         self.assertEqual(result.trace.citation_count, 2)
 
+    def test_run_rag_query_generic_join_channel_light_path_recovers_from_wrong_family_mix(self) -> None:
+        join_chunk = RetrievedChunk(
+            chunk_id="join-android",
+            text="Call joinChannel(token, channelName, uid, options) to join a channel.",
+            source_path="official/get-started-sdk_android.md",
+            similarity=0.91,
+            h1="Quickstart",
+            h2="Implement Video Calling",
+            h3="Join a channel",
+            metadata={
+                "product": "video-calling",
+                "source_family": "video-calling/get-started/get-started-sdk",
+            },
+        )
+        auth_chunk = RetrievedChunk(
+            chunk_id="auth-android",
+            text="Request a token from your app server for the channel name and user ID before joining.",
+            source_path="official/authentication-workflow_android.md",
+            similarity=0.9,
+            h1="Use tokens",
+            h2="Implement basic authentication",
+            h3="Use a token to join a channel",
+            metadata={
+                "product": "video-calling",
+                "source_family": "video-calling/get-started/authentication-workflow",
+                "use_case": "basic_authentication",
+            },
+        )
+        broadcast_auth_chunk = RetrievedChunk(
+            chunk_id="auth-broadcast",
+            text="Use a token to join a channel in the Web implementation.",
+            source_path="official/authentication-workflow_web.md",
+            similarity=0.92,
+            h1="Use tokens",
+            h2="Implement basic authentication",
+            h3="Use a token to join a channel",
+            metadata={
+                "product": "broadcast-streaming",
+                "source_family": "broadcast-streaming/token-authentication/authentication-workflow",
+                "use_case": "basic_authentication",
+            },
+        )
+        stream_chunk = RetrievedChunk(
+            chunk_id="stream-join",
+            text="Use a random user ID to join a stream channel.",
+            source_path="official/stream-channel_macos.md",
+            similarity=0.88,
+            h1="Stream channels",
+            h2="Implement communication in a stream channel",
+            h3="Join a stream channel",
+            metadata={
+                "product": "signaling",
+                "source_family": "signaling/core-functionality/stream-channel",
+            },
+        )
+        multi_chunk = RetrievedChunk(
+            chunk_id="multi-join",
+            text="Join the channel using a random user ID.",
+            source_path="official/join-multiple-channels_android.md",
+            similarity=0.87,
+            h1="Join multiple channels",
+            h2="Implementation",
+            h3="Android",
+            metadata={
+                "product": "video-calling",
+                "source_family": "video-calling/advanced-features/join-multiple-channels",
+            },
+        )
+        captured_calls: list[list[str]] = []
+
+        def _bm25_side_effect(query: str, config: dict[str, object], *, limit: int, index_role: str = "primary") -> list[RetrievedChunk]:
+            _ = config
+            _ = limit
+            _ = index_role
+            normalized = " ".join(str(query or "").split()).strip().lower()
+            if "basic authentication" in normalized:
+                return [join_chunk, auth_chunk]
+            return [multi_chunk, stream_chunk]
+
+        def _fts_side_effect(query: str, config: dict[str, object], *, limit: int, index_role: str = "primary") -> list[RetrievedChunk]:
+            _ = config
+            _ = limit
+            _ = index_role
+            normalized = " ".join(str(query or "").split()).strip().lower()
+            if "basic authentication" in normalized:
+                return [auth_chunk, join_chunk]
+            return [broadcast_auth_chunk]
+
+        def _capture_payload(
+            message: str,
+            chunks: list[RetrievedChunk],
+            config: dict[str, object],
+            *,
+            strict_retry: bool = False,
+            packed_evidence=None,
+            product: str | None = None,
+            citation_retry: bool = False,
+            **_: object,
+        ) -> tuple[dict[str, object], int, int, str]:
+            _ = message
+            _ = config
+            _ = strict_retry
+            _ = packed_evidence
+            _ = product
+            _ = citation_retry
+            captured_calls.append([chunk.chunk_id for chunk in chunks])
+            return (
+                {
+                    "answer": "Request a token for the channel name and user ID, then call joinChannel(token, channelName, uid, options).",
+                    "key_steps": [],
+                    "citations": ["join-android", "auth-android"],
+                    "insufficient_evidence": False,
+                },
+                10,
+                5,
+                "gpt-5.4-mini",
+            )
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "app_schema": "supportportal",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 3,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-5.4",
+                "reasoning_effort": "high",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "vector_enabled": True,
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_enabled": True,
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+                "context_budget_enabled": False,
+                "reserved_output_tokens": 1200,
+                "buffer_tokens": 1200,
+            }
+            with patch(
+                "backend.services.rag_qa._resolve_active_vector_table",
+                side_effect=AssertionError("vector table resolution should be skipped for simple lexical queries"),
+            ), patch(
+                "backend.services.rag_qa.get_embedding_provider",
+                side_effect=AssertionError("embedding provider should be skipped for simple lexical queries"),
+            ), patch(
+                "backend.services.rag_qa.understand_rag_query",
+                side_effect=AssertionError("query understanding should be skipped for simple lexical queries"),
+            ), patch(
+                "backend.services.rag_qa._invoke_agentic_planner",
+                side_effect=AssertionError("agent planner should be skipped for simple lexical queries"),
+            ), patch(
+                "backend.services.rag_qa._retrieve_chunks",
+                side_effect=AssertionError("vector retrieval should be skipped for simple lexical queries"),
+            ), patch(
+                "backend.services.rag_qa._retrieve_bm25_chunks",
+                side_effect=_bm25_side_effect,
+            ), patch(
+                "backend.services.rag_qa._retrieve_fts_chunks",
+                side_effect=_fts_side_effect,
+            ), patch(
+                "backend.services.rag_qa._retrieve_keyword_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                side_effect=_capture_payload,
+            ):
+                result = run_rag_query("how to join channel", product="audio_video_calling")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(captured_calls[0][:2], ["join-android", "auth-android"])
+        self.assertEqual(set(result.trace.cited_chunk_ids), {"join-android", "auth-android"})
+        self.assertEqual(result.trace.selected_chunk_ids[:2], ["join-android", "auth-android"])
+        self.assertEqual(result.trace.citation_count, 2)
+
     def test_run_rag_query_join_multiple_channels_keeps_multi_channel_context(self) -> None:
         multi_chunk = RetrievedChunk(
             chunk_id="multi-join",

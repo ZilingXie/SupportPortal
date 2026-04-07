@@ -131,6 +131,54 @@ class WorkerResilienceTests(unittest.TestCase):
             "created_at": "2026-03-22T00:00:01+00:00",
         }
 
+    def test_fetch_rag_answer_detail_for_worker_uses_extended_timeout_and_recovery_window(self) -> None:
+        detail = worker.RagTicketAnswerDetail(
+            answer="Use joinChannel with a token.",
+            confidence=0.92,
+            sources=["https://docs.agora.io/en/video-calling/get-started"],
+            citations=[{"chunk_id": "chunk-1"}],
+            needs_engineer_guidance=False,
+            reason="grounded_answer",
+            evidence_summary=None,
+            packed_evidence=None,
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "TICKET_WORKER_RAG_SERVICE_TIMEOUT_SECONDS": "90",
+                "TICKET_WORKER_RAG_RECOVERY_WINDOW_SECONDS": "45",
+                "TICKET_WORKER_RAG_RECOVERY_POLL_INTERVAL_SECONDS": "2",
+            },
+            clear=False,
+        ), patch.object(
+            worker.rag_service_client,
+            "query_answer_with_recovery_detail",
+            return_value=detail,
+        ) as rag_mock:
+            result = worker._fetch_rag_answer_detail_for_worker(
+                request_id="rag-worker-timeout-1",
+                customer_message="how to join channel",
+                ticket_id="T-WORKER-1",
+                customer_id="C-123",
+                ticket_context=[{"role": "customer", "content": "how to join channel"}],
+                product="audio_video_calling",
+            )
+
+        self.assertEqual(result.answer, "Use joinChannel with a token.")
+        rag_mock.assert_called_once_with(
+            question="how to join channel",
+            request_id="rag-worker-timeout-1",
+            ticket_id="T-WORKER-1",
+            customer_id="C-123",
+            ticket_context=[{"role": "customer", "content": "how to join channel"}],
+            product="audio_video_calling",
+            insufficient_reply=worker.INSUFFICIENT_EVIDENCE_REPLY,
+            timeout_seconds=90.0,
+            recovery_window_seconds=45.0,
+            recovery_poll_interval_seconds=2.0,
+        )
+
     def test_execute_parallel_ticket_query_cancels_rag_when_route_flips_non_rag(self) -> None:
         rag_detail = types.SimpleNamespace(
             answer="Use joinChannel with a valid token.",

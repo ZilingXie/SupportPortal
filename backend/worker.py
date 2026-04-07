@@ -115,6 +115,18 @@ OPTIMISTIC_ROUTE_TIMEOUT_SECONDS = _safe_positive_float(
 rag_service_client = RagServiceClient()
 
 
+def _worker_rag_timeout_seconds() -> float:
+    return _safe_positive_float(os.getenv("TICKET_WORKER_RAG_SERVICE_TIMEOUT_SECONDS"), 90.0)
+
+
+def _worker_rag_recovery_window_seconds() -> float:
+    return _safe_positive_float(os.getenv("TICKET_WORKER_RAG_RECOVERY_WINDOW_SECONDS"), 45.0)
+
+
+def _worker_rag_recovery_poll_interval_seconds() -> float:
+    return _safe_positive_float(os.getenv("TICKET_WORKER_RAG_RECOVERY_POLL_INTERVAL_SECONDS"), 1.0)
+
+
 def _worker_task_types_from_env() -> tuple[str, ...]:
     raw = str(os.getenv("WORKER_TASK_TYPES") or "").strip().lower()
     if not raw or raw == "all":
@@ -398,6 +410,9 @@ def _fetch_rag_answer_detail_for_worker(
             ticket_context=ticket_context,
             product=product,
             insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
+            timeout_seconds=_worker_rag_timeout_seconds(),
+            recovery_window_seconds=_worker_rag_recovery_window_seconds(),
+            recovery_poll_interval_seconds=_worker_rag_recovery_poll_interval_seconds(),
         )
     except RagServiceError as exc:
         payload = exc.payload if isinstance(exc.payload, dict) else {}

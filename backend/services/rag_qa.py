@@ -106,10 +106,10 @@ _LIGHT_PATH_FAST_ANSWER_REASONING_EFFORT = "low"
 _LIGHT_PATH_JOIN_RECOVERY_BM25_CANDIDATE_K = 24
 _LIGHT_PATH_JOIN_RECOVERY_FTS_CANDIDATE_K = 24
 _LIGHT_PATH_JOIN_RECOVERY_FUSION_CANDIDATE_K = 18
+_GENERIC_JOIN_FOCUSED_VARIANT_KINDS = frozenset({"focused_rewrite", "focused_join_step"})
 _JOIN_CHANNEL_PATTERN = re.compile(r"\bjoin(?:\s+a)?\s+channel\b|\bjoinchannel\b", flags=re.IGNORECASE)
-_AUDIO_VIDEO_CALLING_PREFERRED_PRODUCTS = frozenset(
-    {"video-calling", "voice-calling", "interactive-live-streaming", "broadcast-streaming"}
-)
+_AUDIO_VIDEO_CALLING_CORE_PRODUCTS = frozenset({"video-calling", "voice-calling"})
+_AUDIO_VIDEO_CALLING_SECONDARY_PRODUCTS = frozenset({"interactive-live-streaming", "broadcast-streaming"})
 _AUDIO_VIDEO_CALLING_PENALIZED_PRODUCTS = frozenset({"signaling", "iot", "cloud-recording"})
 
 
@@ -528,6 +528,28 @@ def _merge_variant_chunks(
     query_variant: str,
     query_kind: str,
 ) -> list[RetrievedChunk]:
+    def _variant_raw_score(chunk: RetrievedChunk) -> float:
+        trace = chunk.candidate_trace if isinstance(chunk.candidate_trace, dict) else {}
+        for key in ["raw_score", "bm25_score", "fts_rank", "vector_similarity", "keyword_fallback_hits"]:
+            value = trace.get(key)
+            try:
+                if value is not None:
+                    return float(value)
+            except (TypeError, ValueError):
+                continue
+        return float(chunk.similarity or 0.0)
+
+    def _sort_key(chunk: RetrievedChunk) -> tuple[float, float, int, str]:
+        trace = chunk.candidate_trace if isinstance(chunk.candidate_trace, dict) else {}
+        variants = trace.get("query_variants")
+        variant_count = len(variants) if isinstance(variants, list) else 0
+        return (
+            float(chunk.similarity or 0.0),
+            _variant_raw_score(chunk),
+            variant_count,
+            str(chunk.chunk_id or ""),
+        )
+
     merged: dict[str, RetrievedChunk] = {_chunk_dedupe_key(chunk): _copy_chunk(chunk) for chunk in existing}
     for item in incoming:
         chunk = _copy_chunk(item)
@@ -546,6 +568,8 @@ def _merge_variant_chunks(
             continue
         incoming_similarity = float(chunk.similarity or 0.0)
         existing_similarity = float(existing_chunk.similarity or 0.0)
+        incoming_raw_score = _variant_raw_score(chunk)
+        existing_raw_score = _variant_raw_score(existing_chunk)
         existing_chunk.similarity = max(existing_similarity, incoming_similarity)
         existing_chunk.retrieval_sources = list(dict.fromkeys([*existing_chunk.retrieval_sources, *chunk.retrieval_sources]))
         existing_variants = existing_chunk.candidate_trace.get("query_variants")
@@ -555,9 +579,11 @@ def _merge_variant_chunks(
             if variant not in existing_variants:
                 existing_variants.append(variant)
         existing_chunk.candidate_trace["query_variants"] = existing_variants
-        if incoming_similarity > existing_similarity:
+        if incoming_similarity > existing_similarity or (
+            incoming_similarity == existing_similarity and incoming_raw_score > existing_raw_score
+        ):
             existing_chunk.candidate_trace.update(chunk.candidate_trace)
-    return list(merged.values())
+    return sorted(merged.values(), key=_sort_key, reverse=True)
 
 
 def _build_query_variants(
@@ -706,6 +732,16 @@ def _chunk_product(chunk: RetrievedChunk) -> str:
     )
 
 
+def _chunk_platform(chunk: RetrievedChunk) -> str:
+    metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+    platform = str(metadata.get("platform") or "").strip().lower()
+    if platform:
+        return platform
+    source_path = str(chunk.source_path or "").strip().lower()
+    match = re.search(r"_([a-z0-9-]+)\.md$", source_path)
+    return match.group(1) if match else ""
+
+
 def _chunk_surface_text(chunk: RetrievedChunk) -> str:
     parts = [
         chunk.source_path,
@@ -735,6 +771,7 @@ def _is_join_channel_step_chunk(chunk: RetrievedChunk) -> bool:
             marker in surface
             for marker in ["join a channel", "join channel", "joinchannel(", "joinchannel ", " call joinchannel"]
         )
+        and not _is_token_auth_chunk(chunk)
         and not _is_join_multiple_channels_chunk(chunk)
         and not _is_stream_channel_chunk(chunk)
     )
@@ -743,10 +780,69 @@ def _is_join_channel_step_chunk(chunk: RetrievedChunk) -> bool:
 def _is_token_auth_chunk(chunk: RetrievedChunk) -> bool:
     metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
     use_case = str(metadata.get("use_case") or "").strip().lower()
+    source_family = _chunk_source_family(chunk)
+    source_path = str(chunk.source_path or "").strip().lower()
     surface = _chunk_surface_text(chunk)
-    return use_case == "basic_authentication" or (
-        "token" in surface and any(marker in surface for marker in ["join a channel", "join channel", "channel name", "user id", "uid"])
+    if use_case == "basic_authentication":
+        return True
+    if "authentication-workflow" in source_path or "token-authentication" in source_family:
+        return True
+    auth_markers = [
+        "basic authentication",
+        "token authentication",
+        "use tokens",
+        "use a token to join a channel",
+        "request a token",
+        "token server",
+        "authentication server",
+        "access token",
+        "app certificate",
+        "authentication workflow",
+    ]
+    return "token" in surface and any(marker in surface for marker in auth_markers)
+
+
+def _is_preferred_generic_join_step_chunk(chunk: RetrievedChunk) -> bool:
+    if not _is_join_channel_step_chunk(chunk):
+        return False
+    metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+    use_case = str(metadata.get("use_case") or "").strip().lower()
+    source_path = str(chunk.source_path or "").strip().lower()
+    heading = " ".join(
+        str(part or "").strip().lower()
+        for part in [chunk.h1, chunk.h2, chunk.h3]
+        if str(part or "").strip()
     )
+    if use_case == "basic_authentication":
+        return False
+    if "authentication-workflow" in source_path:
+        return False
+    if "basic authentication" in heading or "use tokens" in heading:
+        return False
+    return True
+
+
+def _is_audio_video_calling_core_chunk(chunk: RetrievedChunk) -> bool:
+    return _chunk_product(chunk) in _AUDIO_VIDEO_CALLING_CORE_PRODUCTS
+
+
+def _is_audio_video_calling_secondary_chunk(chunk: RetrievedChunk) -> bool:
+    return _chunk_product(chunk) in _AUDIO_VIDEO_CALLING_SECONDARY_PRODUCTS
+
+
+def _generic_join_product_compatible(chunk: RetrievedChunk, product: str | None) -> bool:
+    normalized_product = _normalized_query_text(product)
+    chunk_product = str(_chunk_product(chunk) or "").strip().lower()
+    if normalized_product != SUPPORT_PRODUCT_AUDIO_VIDEO_CALLING:
+        return chunk_product not in _AUDIO_VIDEO_CALLING_PENALIZED_PRODUCTS
+    return chunk_product in _AUDIO_VIDEO_CALLING_CORE_PRODUCTS
+
+
+def _generic_join_support_signals(chunks: list[RetrievedChunk], *, product: str | None) -> tuple[bool, bool]:
+    compatible_chunks = [chunk for chunk in chunks if _generic_join_product_compatible(chunk, product)]
+    has_join_step = any(_is_join_channel_step_chunk(chunk) for chunk in compatible_chunks)
+    has_token_auth = any(_is_token_auth_chunk(chunk) for chunk in compatible_chunks)
+    return has_join_step, has_token_auth
 
 
 def _product_affinity_adjustment(chunk: RetrievedChunk, product: str | None) -> tuple[float, list[str]]:
@@ -756,9 +852,12 @@ def _product_affinity_adjustment(chunk: RetrievedChunk, product: str | None) -> 
     chunk_product = _chunk_product(chunk)
     reasons: list[str] = []
     boost = 0.0
-    if chunk_product in _AUDIO_VIDEO_CALLING_PREFERRED_PRODUCTS:
-        boost += 0.75
+    if chunk_product in _AUDIO_VIDEO_CALLING_CORE_PRODUCTS:
+        boost += 0.9
         reasons.append(f"product_affinity:{chunk_product}")
+    elif chunk_product in _AUDIO_VIDEO_CALLING_SECONDARY_PRODUCTS:
+        boost += 0.2
+        reasons.append(f"product_affinity_secondary:{chunk_product}")
     if chunk_product in _AUDIO_VIDEO_CALLING_PENALIZED_PRODUCTS:
         boost -= 1.0
         reasons.append(f"product_penalty:{chunk_product}")
@@ -766,10 +865,15 @@ def _product_affinity_adjustment(chunk: RetrievedChunk, product: str | None) -> 
 
 
 def _join_intent_adjustment(query: str, chunk: RetrievedChunk, product: str | None) -> tuple[float, list[str]]:
-    _ = product
     reasons: list[str] = []
     boost = 0.0
     if _is_generic_join_channel_query(query):
+        if (
+            _normalized_query_text(product) == SUPPORT_PRODUCT_AUDIO_VIDEO_CALLING
+            and _is_audio_video_calling_secondary_chunk(chunk)
+        ):
+            boost -= 0.9
+            reasons.append("intent:generic_join_secondary_product_penalty")
         if _is_join_channel_step_chunk(chunk):
             boost += 1.35
             reasons.append("intent:join_channel_step")
@@ -800,10 +904,7 @@ def _generic_join_supporting_chunks(chunks: list[RetrievedChunk], *, product: st
                 continue
             if not matcher(chunk):
                 continue
-            if (
-                _normalized_query_text(product) == SUPPORT_PRODUCT_AUDIO_VIDEO_CALLING
-                and _chunk_product(chunk) in _AUDIO_VIDEO_CALLING_PENALIZED_PRODUCTS
-            ):
+            if not _generic_join_product_compatible(chunk, product):
                 continue
             preferred.append(chunk)
             if chunk_id:
@@ -1077,6 +1178,7 @@ def _judge_agentic_round(
     decomposition_targets: list[str],
     exact_terms: list[str],
     grounded_overlap: bool,
+    product: str | None = None,
 ) -> AgenticJudgeDecision:
     top_chunk = reranked_chunks[0] if reranked_chunks else None
     top_score = float(
@@ -1096,9 +1198,11 @@ def _judge_agentic_round(
             return AgenticJudgeDecision("recover_once", "missing_primary_support", 0.72, recovery)
         if query_class == "lexical_exact" and _is_generic_join_channel_query(message):
             top_focus_chunk = top_chunk or (final_chunks[0] if final_chunks else None)
-            if top_focus_chunk is not None and (
-                _is_join_multiple_channels_chunk(top_focus_chunk) or _is_stream_channel_chunk(top_focus_chunk)
-            ):
+            has_join_step, has_token_auth = _generic_join_support_signals(final_chunks, product=product)
+            if (
+                top_focus_chunk is not None
+                and (_is_join_multiple_channels_chunk(top_focus_chunk) or _is_stream_channel_chunk(top_focus_chunk))
+            ) or not has_join_step or not has_token_auth:
                 return AgenticJudgeDecision("recover_once", "generic_join_wrong_family", 0.78, "lexical_recovery")
         if query_class == "lexical_exact" and (top_score < 0.32 or not exact_match_supported):
             return AgenticJudgeDecision("recover_once", "low_top1_rerank_score", 0.74, "lexical_recovery")
@@ -1226,6 +1330,20 @@ def _agentic_round_variants(
     if not variants:
         variants = [("original", " ".join(str(message or "").split()).strip())]
     if plan.light_path:
+        if round_index > 1 and recovery_action == "lexical_recovery":
+            existing = {query.lower() for _, query in variants}
+            exact_query = " ".join(plan.exact_terms).strip()
+            if exact_query and exact_query.lower() not in existing:
+                variants.append(("exact_token", exact_query))
+                existing.add(exact_query.lower())
+            if _is_generic_join_channel_query(message):
+                focused_query = "join channel joinChannel token channel name uid basic authentication"
+                if focused_query.lower() not in existing:
+                    variants.append(("focused_rewrite", focused_query))
+                    existing.add(focused_query.lower())
+                join_step_query = "join a channel joinChannel channelName uid options"
+                if join_step_query.lower() not in existing:
+                    variants.append(("focused_join_step", join_step_query))
         return _dedupe_agentic_variants(variants)
     existing = {query.lower() for _, query in variants}
 
@@ -1245,6 +1363,10 @@ def _agentic_round_variants(
                 focused_query = "join channel joinChannel token channel name uid basic authentication"
                 if focused_query.lower() not in existing:
                     variants.append(("focused_rewrite", focused_query))
+                    existing.add(focused_query.lower())
+                join_step_query = "join a channel joinChannel channelName uid options"
+                if join_step_query.lower() not in existing:
+                    variants.append(("focused_join_step", join_step_query))
         elif recovery_action == "semantic_recovery":
             context_query = _context_keyword_query(ticket_context)
             if context_query and context_query.lower() not in existing:
@@ -1266,6 +1388,131 @@ def _score_from_candidate_trace(chunk: RetrievedChunk) -> float:
         except (TypeError, ValueError):
             continue
     return float(chunk.similarity or 0.0)
+
+
+def _chunk_query_variant_kinds(chunk: RetrievedChunk) -> list[str]:
+    trace = chunk.candidate_trace if isinstance(chunk.candidate_trace, dict) else {}
+    variants = trace.get("query_variants")
+    if not isinstance(variants, list):
+        query_kind = str(trace.get("query_kind") or "").strip()
+        return [query_kind] if query_kind else []
+    kinds: list[str] = []
+    seen: set[str] = set()
+    for item in variants:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "").strip()
+        if not kind or kind in seen:
+            continue
+        seen.add(kind)
+        kinds.append(kind)
+    if not kinds:
+        query_kind = str(trace.get("query_kind") or "").strip()
+        if query_kind:
+            kinds.append(query_kind)
+    return kinds
+
+
+def _inject_generic_join_recovery_candidates(
+    retrieved_chunks: list[RetrievedChunk],
+    *,
+    tool_results: dict[str, list[RetrievedChunk]],
+    product: str | None,
+    limit: int,
+) -> list[RetrievedChunk]:
+    def _product_rank(chunk: RetrievedChunk) -> int:
+        normalized_product = _normalized_query_text(product)
+        chunk_product = _chunk_product(chunk)
+        if normalized_product != SUPPORT_PRODUCT_AUDIO_VIDEO_CALLING:
+            return 1
+        if chunk_product == "video-calling":
+            return 3
+        if chunk_product == "voice-calling":
+            return 2
+        if chunk_product in _AUDIO_VIDEO_CALLING_CORE_PRODUCTS:
+            return 1
+        return 0
+
+    if not retrieved_chunks:
+        retrieved_chunks = []
+    focused_candidates: list[RetrievedChunk] = []
+    seen: set[str] = set()
+    for tool_name in ["p_bm25", "p_fts", "p_keyword"]:
+        for chunk in tool_results.get(tool_name, []) or []:
+            kinds = _chunk_query_variant_kinds(chunk)
+            if not any(kind in _GENERIC_JOIN_FOCUSED_VARIANT_KINDS for kind in kinds):
+                continue
+            if not _generic_join_product_compatible(chunk, product):
+                continue
+            if not (_is_join_channel_step_chunk(chunk) or _is_token_auth_chunk(chunk)):
+                continue
+            dedupe_key = _chunk_dedupe_key(chunk)
+            if not dedupe_key or dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            focused_candidates.append(_copy_chunk(chunk))
+    if not focused_candidates:
+        return list(retrieved_chunks)
+    focused_candidates = sorted(
+        focused_candidates,
+        key=lambda chunk: (
+            _product_rank(chunk),
+            1 if _is_preferred_generic_join_step_chunk(chunk) else 0,
+            1 if _is_token_auth_chunk(chunk) else 0,
+            _score_from_candidate_trace(chunk),
+            float(chunk.similarity or 0.0),
+        ),
+        reverse=True,
+    )
+    auth_candidates = [chunk for chunk in focused_candidates if _is_token_auth_chunk(chunk)]
+    best_auth = auth_candidates[0] if auth_candidates else None
+
+    pure_join_candidates = [
+        chunk
+        for chunk in focused_candidates
+        if _is_preferred_generic_join_step_chunk(chunk)
+    ]
+    join_candidates = pure_join_candidates or [
+        chunk for chunk in focused_candidates if _is_join_channel_step_chunk(chunk)
+    ]
+    if best_auth is not None:
+        auth_product = _chunk_product(best_auth)
+        auth_platform = _chunk_platform(best_auth)
+        join_candidates = sorted(
+            join_candidates,
+            key=lambda chunk: (
+                1 if _chunk_product(chunk) == auth_product and auth_product else 0,
+                1 if _chunk_platform(chunk) == auth_platform and auth_platform else 0,
+                1 if _is_preferred_generic_join_step_chunk(chunk) else 0,
+                _product_rank(chunk),
+                _score_from_candidate_trace(chunk),
+                float(chunk.similarity or 0.0),
+            ),
+            reverse=True,
+        )
+    best_join = join_candidates[0] if join_candidates else None
+
+    rescue_chunks: list[RetrievedChunk] = []
+    for chunk in [best_join, best_auth]:
+        if chunk is None:
+            continue
+        dedupe_key = _chunk_dedupe_key(chunk)
+        if dedupe_key and any(_chunk_dedupe_key(existing) == dedupe_key for existing in rescue_chunks):
+            continue
+        rescue_chunks.append(_copy_chunk(chunk))
+    if not rescue_chunks:
+        return list(retrieved_chunks)
+    merged: list[RetrievedChunk] = []
+    seen = set()
+    for chunk in ([_copy_chunk(item) for item in rescue_chunks] + [_copy_chunk(item) for item in retrieved_chunks]):
+        dedupe_key = _chunk_dedupe_key(chunk)
+        if not dedupe_key or dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        merged.append(chunk)
+        if len(merged) >= max(1, int(limit or 1)):
+            break
+    return merged
 
 
 def _select_agentic_final_chunks(
@@ -1538,12 +1785,20 @@ def _execute_agentic_round(
                     result=result,
                 )
 
+    fusion_limit = int(variant_config.get("fusion_candidate_k") or config.get("fusion_candidate_k") or config.get("top_k") or 5)
     retrieved_chunks = _merge_agentic_tool_results(
         tool_results=tool_results,
         tool_weights=tool_weights,
-        limit=int(config.get("fusion_candidate_k") or config.get("top_k") or 5),
+        limit=fusion_limit,
         shadow_ratio_cap=float(config.get("agent_shadow_ratio_cap") or 0.4),
     )
+    if plan.light_path and round_index > 1 and recovery_action == "lexical_recovery" and _is_generic_join_channel_query(message):
+        retrieved_chunks = _inject_generic_join_recovery_candidates(
+            retrieved_chunks,
+            tool_results=tool_results,
+            product=plan.product,
+            limit=fusion_limit,
+        )
     reranked_chunks = list(retrieved_chunks)
     rerank_info: dict[str, Any] = {
         "hints": {"language": None, "method_name": None, "intent_terms": []},
@@ -1564,7 +1819,7 @@ def _execute_agentic_round(
         reranked_chunks, rerank_info = _metadata_rerank(
             query=message,
             chunks=reranked_chunks,
-            top_k=int(config.get("fusion_candidate_k") or config.get("top_k") or 5),
+            top_k=fusion_limit,
             retrieval_plan=retrieval_plan,
             query_understanding=query_understanding,
             product=plan.product,
@@ -1572,7 +1827,7 @@ def _execute_agentic_round(
         rerank_latency_ms += (time.perf_counter() - rerank_started_at) * 1000
         reranked_chunks = _reorder_chunks_for_rerank(
             reranked_chunks or retrieved_chunks,
-            limit=int(config.get("rerank_top_n") or len(retrieved_chunks) or 1),
+            limit=int(variant_config.get("rerank_top_n") or config.get("rerank_top_n") or len(retrieved_chunks) or 1),
             query=message,
         ) or reranked_chunks or retrieved_chunks
         if (
@@ -1619,6 +1874,7 @@ def _execute_agentic_round(
         decomposition_targets=plan.decomposition_targets,
         exact_terms=plan.exact_terms,
         grounded_overlap=grounded_overlap,
+        product=plan.product,
     )
     return AgenticRoundResult(
         retrieved_chunks=retrieved_chunks,

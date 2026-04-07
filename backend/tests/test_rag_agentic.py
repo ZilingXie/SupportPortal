@@ -11,10 +11,15 @@ from backend.services.rag_qa import (
     AgenticRetrievalPlan,
     AgenticRoundResult,
     RetrievedChunk,
+    _agentic_round_variants,
     _build_agentic_retrieval_plan,
     _execute_agentic_round,
+    _inject_generic_join_recovery_candidates,
+    _is_join_channel_step_chunk,
+    _is_token_auth_chunk,
     _judge_agentic_round,
     _merge_agentic_tool_results,
+    _merge_variant_chunks,
     run_rag_query,
 )
 
@@ -110,6 +115,35 @@ class RagAgenticTests(unittest.TestCase):
         self.assertEqual(plan.first_pass_tools, ["p_bm25", "p_fts"])
         self.assertEqual(plan.query_variants, [("original", "how to join channel")])
 
+    def test_expand_agentic_variants_adds_focused_join_recovery_queries_for_light_path(self) -> None:
+        plan = AgenticRetrievalPlan(
+            query_class="lexical_exact",
+            first_pass_tools=["p_bm25", "p_fts"],
+            query_variants=[("original", "how to join channel")],
+            decomposition_targets=[],
+            evidence_goal="exact_match",
+            recovery_bias="lexical",
+            ticket_context_used=False,
+            exact_terms=["join", "channel"],
+            light_path=True,
+            product="audio_video_calling",
+        )
+
+        variants = _agentic_round_variants(
+            message="how to join channel",
+            plan=plan,
+            round_index=2,
+            recovery_action="lexical_recovery",
+            ticket_context=None,
+        )
+
+        self.assertEqual(variants[0], ("original", "how to join channel"))
+        self.assertIn(("exact_token", "join channel"), variants)
+        self.assertIn(
+            ("focused_rewrite", "join channel joinChannel token channel name uid basic authentication"),
+            variants,
+        )
+
     def test_merge_agentic_tool_results_caps_shadow_share_and_records_fusion_trace(self) -> None:
         primary_a = RetrievedChunk(
             chunk_id="primary-a",
@@ -165,6 +199,52 @@ class RagAgenticTests(unittest.TestCase):
         self.assertIsNotNone(merged[0].candidate_trace.get("fusion_score"))
         self.assertEqual(merged[0].candidate_trace.get("index_role"), "primary")
 
+    def test_merge_variant_chunks_reorders_later_higher_scoring_candidates_before_rrf(self) -> None:
+        original_multi = RetrievedChunk(
+            chunk_id="join-multi-video",
+            text="Join multiple channels implementation.",
+            source_path="official/join-multiple-channels_android.md",
+            similarity=1.0,
+            index_role="primary",
+            retrieval_sources=["p_bm25"],
+            candidate_trace={
+                "tool_name": "p_bm25",
+                "query_kind": "original",
+                "query_round": 2,
+                "raw_score": 5.45,
+                "bm25_score": 5.45,
+                "index_role": "primary",
+            },
+            metadata={"product": "video-calling"},
+        )
+        focused_auth = RetrievedChunk(
+            chunk_id="auth-android-video",
+            text="Use a token to join a channel on Android.",
+            source_path="official/authentication-workflow_android.md",
+            similarity=1.0,
+            index_role="primary",
+            retrieval_sources=["p_bm25"],
+            candidate_trace={
+                "tool_name": "p_bm25",
+                "query_kind": "focused_rewrite",
+                "query_round": 2,
+                "raw_score": 27.67,
+                "bm25_score": 27.67,
+                "index_role": "primary",
+            },
+            metadata={"product": "video-calling"},
+        )
+
+        merged = _merge_variant_chunks(
+            [original_multi],
+            [focused_auth],
+            source_label="p_bm25",
+            query_variant="join channel joinChannel token channel name uid basic authentication",
+            query_kind="focused_rewrite",
+        )
+
+        self.assertEqual([chunk.chunk_id for chunk in merged[:2]], ["auth-android-video", "join-multi-video"])
+
     def test_judge_agentic_round_requests_lexical_recovery_for_weak_exact_match(self) -> None:
         chunk = RetrievedChunk(
             chunk_id="chunk-1",
@@ -188,6 +268,227 @@ class RagAgenticTests(unittest.TestCase):
 
         self.assertEqual(decision.decision, "recover_once")
         self.assertEqual(decision.recovery_action, "lexical_recovery")
+
+    def test_execute_agentic_round_applies_join_recovery_budget_to_fusion_window(self) -> None:
+        wrong_multi = RetrievedChunk(
+            chunk_id="join-multi-video",
+            text="Join multiple channels implementation.",
+            source_path="official/join-multiple-channels_android.md",
+            similarity=1.0,
+            index_role="primary",
+            retrieval_sources=["bm25"],
+            candidate_trace={"raw_score": 5.45, "bm25_score": 5.45, "index_role": "primary"},
+            metadata={"product": "video-calling", "source_family": "video-calling/advanced-features/join-multiple-channels"},
+        )
+        wrong_stream = RetrievedChunk(
+            chunk_id="stream-join",
+            text="Join a stream channel.",
+            source_path="official/stream-channel_macos.md",
+            similarity=1.0,
+            index_role="primary",
+            retrieval_sources=["bm25"],
+            candidate_trace={"raw_score": 5.47, "bm25_score": 5.47, "index_role": "primary"},
+            metadata={"product": "signaling", "source_family": "signaling/core-functionality/stream-channel"},
+        )
+        right_auth = RetrievedChunk(
+            chunk_id="auth-android",
+            text="Use a token to join a channel on Android.",
+            source_path="official/authentication-workflow_android.md",
+            similarity=1.0,
+            index_role="primary",
+            retrieval_sources=["bm25"],
+            candidate_trace={"raw_score": 27.67, "bm25_score": 27.67, "index_role": "primary"},
+            metadata={"product": "video-calling", "use_case": "basic_authentication"},
+        )
+        right_join = RetrievedChunk(
+            chunk_id="join-android",
+            text="Call joinChannel(token, channelName, uid, options).",
+            source_path="official/get-started-sdk_android.md",
+            similarity=1.0,
+            index_role="primary",
+            retrieval_sources=["bm25"],
+            candidate_trace={"raw_score": 27.54, "bm25_score": 27.54, "index_role": "primary"},
+            metadata={"product": "video-calling"},
+        )
+        noisy_notification = RetrievedChunk(
+            chunk_id="receive-notifications-video",
+            text="Reference for receive notifications when users join channels.",
+            source_path="official/receive-notifications.md",
+            similarity=1.0,
+            index_role="primary",
+            retrieval_sources=["fts"],
+            candidate_trace={"raw_score": 0.78, "fts_rank": 0.78, "index_role": "primary"},
+            metadata={"product": "video-calling"},
+        )
+        noisy_keyword = RetrievedChunk(
+            chunk_id="keyword-cloud-recording",
+            text="Cloud recording authentication workflow.",
+            source_path="official/authentication-workflow.md",
+            similarity=1.0,
+            index_role="primary",
+            retrieval_sources=["keyword"],
+            candidate_trace={"raw_score": 2.0, "keyword_fallback_hits": 2, "index_role": "primary"},
+            metadata={"product": "cloud-recording"},
+        )
+        plan = AgenticRetrievalPlan(
+            query_class="lexical_exact",
+            first_pass_tools=["p_bm25", "p_fts"],
+            query_variants=[("original", "how to join channel")],
+            decomposition_targets=[],
+            evidence_goal="exact_match",
+            recovery_bias="lexical",
+            ticket_context_used=False,
+            exact_terms=["join", "channel"],
+            light_path=True,
+            product="audio_video_calling",
+        )
+        config = {
+            **self._base_config(),
+            "top_k": 3,
+            "fusion_candidate_k": 2,
+            "rerank_top_n": 2,
+            "vector_enabled": False,
+            "_vector_runtime_available": False,
+            "_rerank_runtime_available": False,
+        }
+
+        def _bm25_side_effect(query: str, config: dict[str, object], *, limit: int, index_role: str = "primary") -> list[RetrievedChunk]:
+            _ = config
+            _ = limit
+            _ = index_role
+            normalized = " ".join(str(query or "").split()).strip().lower()
+            if "basic authentication" in normalized:
+                return [right_auth, right_join]
+            if normalized == "join channel":
+                return [wrong_multi, wrong_stream]
+            return [wrong_stream, wrong_multi]
+
+        def _fts_side_effect(query: str, config: dict[str, object], *, limit: int, index_role: str = "primary") -> list[RetrievedChunk]:
+            _ = config
+            _ = limit
+            _ = index_role
+            normalized = " ".join(str(query or "").split()).strip().lower()
+            if "basic authentication" in normalized:
+                return []
+            return [noisy_notification, wrong_stream]
+
+        def _keyword_side_effect(query: str, config: dict[str, object], *, limit: int, index_role: str = "primary") -> list[RetrievedChunk]:
+            _ = config
+            _ = limit
+            _ = index_role
+            normalized = " ".join(str(query or "").split()).strip().lower()
+            if "basic authentication" in normalized:
+                return []
+            return [noisy_keyword, wrong_multi]
+
+        with patch("backend.services.rag_qa._retrieve_bm25_chunks", side_effect=_bm25_side_effect), patch(
+            "backend.services.rag_qa._retrieve_fts_chunks",
+            side_effect=_fts_side_effect,
+        ), patch(
+            "backend.services.rag_qa._retrieve_keyword_chunks",
+            side_effect=_keyword_side_effect,
+        ), patch(
+            "backend.services.rag_qa._metadata_rerank",
+            side_effect=lambda **kwargs: (list(kwargs["chunks"]), {"candidate_reasons": {}, "query_understanding": {}}),
+        ), patch(
+            "backend.services.rag_qa._reorder_chunks_for_rerank",
+            side_effect=lambda chunks, limit, query: list(chunks)[:limit],
+        ):
+            round_result = _execute_agentic_round(
+                message="how to join channel",
+                config=config,
+                plan=plan,
+                round_index=2,
+                retrieval_plan=RetrievalPlan(semantic_query=""),
+                query_understanding=None,
+                ticket_context=None,
+                recovery_action="lexical_recovery",
+            )
+
+        self.assertIn("auth-android", [chunk.chunk_id for chunk in round_result.retrieved_chunks])
+        self.assertIn("join-android", [chunk.chunk_id for chunk in round_result.retrieved_chunks])
+
+    def test_inject_generic_join_recovery_candidates_prefers_coherent_video_calling_pair(self) -> None:
+        auth_android = RetrievedChunk(
+            chunk_id="auth-android-video",
+            text="Use a token to join a channel on Android.",
+            source_path="official/authentication-workflow_android.md",
+            similarity=1.0,
+            index_role="primary",
+            retrieval_sources=["p_bm25"],
+            candidate_trace={
+                "tool_name": "p_bm25",
+                "query_kind": "focused_rewrite",
+                "query_variants": [{"kind": "focused_rewrite", "query": "join channel joinChannel token channel name uid basic authentication"}],
+                "raw_score": 27.67,
+                "bm25_score": 27.67,
+                "index_role": "primary",
+            },
+            metadata={"product": "video-calling", "platform": "android", "use_case": "basic_authentication"},
+        )
+        join_android = RetrievedChunk(
+            chunk_id="join-android-video",
+            text="Call joinChannel(token, channelName, uid, options).",
+            source_path="official/get-started-sdk_android.md",
+            similarity=0.98,
+            index_role="primary",
+            retrieval_sources=["p_bm25"],
+            candidate_trace={
+                "tool_name": "p_bm25",
+                "query_kind": "focused_join_step",
+                "query_variants": [{"kind": "focused_join_step", "query": "join a channel joinChannel channelName uid options"}],
+                "raw_score": 21.26,
+                "bm25_score": 21.26,
+                "index_role": "primary",
+            },
+            metadata={"product": "video-calling", "platform": "android"},
+        )
+        join_macos_voice = RetrievedChunk(
+            chunk_id="join-macos-voice",
+            text="Join a channel for Voice Calling on macOS.",
+            source_path="official/get-started-sdk_macos.md",
+            similarity=1.0,
+            index_role="primary",
+            retrieval_sources=["p_bm25"],
+            candidate_trace={
+                "tool_name": "p_bm25",
+                "query_kind": "focused_join_step",
+                "query_variants": [{"kind": "focused_join_step", "query": "join a channel joinChannel channelName uid options"}],
+                "raw_score": 24.5,
+                "bm25_score": 24.5,
+                "index_role": "primary",
+            },
+            metadata={"product": "voice-calling", "platform": "macos"},
+        )
+        rescued = _inject_generic_join_recovery_candidates(
+            [join_macos_voice],
+            tool_results={"p_bm25": [auth_android, join_macos_voice, join_android], "p_fts": [], "p_keyword": []},
+            product="audio_video_calling",
+            limit=3,
+        )
+
+        self.assertEqual([chunk.chunk_id for chunk in rescued[:2]], ["join-android-video", "auth-android-video"])
+
+    def test_token_auth_chunk_detection_does_not_classify_quickstart_join_step_as_auth(self) -> None:
+        auth_android = RetrievedChunk(
+            chunk_id="auth-android-video",
+            text="Use a token to join a channel on Android.",
+            source_path="official/authentication-workflow_android.md",
+            similarity=1.0,
+            metadata={"product": "video-calling", "platform": "android", "use_case": "basic_authentication"},
+        )
+        join_android = RetrievedChunk(
+            chunk_id="join-android-video",
+            text="Call joinChannel(token, channelName, uid, options).",
+            source_path="official/get-started-sdk_android.md",
+            similarity=0.98,
+            metadata={"product": "video-calling", "platform": "android"},
+        )
+
+        self.assertTrue(_is_token_auth_chunk(auth_android))
+        self.assertFalse(_is_token_auth_chunk(join_android))
+        self.assertFalse(_is_join_channel_step_chunk(auth_android))
+        self.assertTrue(_is_join_channel_step_chunk(join_android))
 
     def test_judge_agentic_round_recovers_when_generic_join_query_top_family_is_stream_channel(self) -> None:
         stream_chunk = RetrievedChunk(
@@ -215,6 +516,70 @@ class RagAgenticTests(unittest.TestCase):
             decomposition_targets=[],
             exact_terms=["join", "channel"],
             grounded_overlap=True,
+        )
+
+        self.assertEqual(decision.decision, "recover_once")
+        self.assertEqual(decision.reason, "generic_join_wrong_family")
+        self.assertEqual(decision.recovery_action, "lexical_recovery")
+
+    def test_judge_agentic_round_recovers_when_generic_join_query_lacks_core_rtc_join_support(self) -> None:
+        token_chunk = RetrievedChunk(
+            chunk_id="token-broadcast",
+            text="Use a token to join a channel in the documented Web flow.",
+            source_path="official/authentication-workflow_web.md",
+            similarity=0.9,
+            index_role="primary",
+            rerank_score=3.33,
+            h1="Use tokens",
+            h2="Implement basic authentication",
+            h3="Use a token to join a channel",
+            metadata={
+                "product": "broadcast-streaming",
+                "source_family": "broadcast-streaming/token-authentication/authentication-workflow",
+                "use_case": "basic_authentication",
+            },
+        )
+        stream_chunk = RetrievedChunk(
+            chunk_id="stream-join",
+            text="Use a random user ID to join a stream channel.",
+            source_path="official/stream-channel_macos.md",
+            similarity=0.88,
+            index_role="primary",
+            rerank_score=-0.4,
+            h1="Stream channels",
+            h2="Implement communication in a stream channel",
+            h3="Join a stream channel",
+            metadata={
+                "product": "signaling",
+                "source_family": "signaling/stream-channel",
+            },
+        )
+        multi_chunk = RetrievedChunk(
+            chunk_id="multi-join",
+            text="Join the channel using a random user ID.",
+            source_path="official/join-multiple-channels_android.md",
+            similarity=0.87,
+            index_role="primary",
+            rerank_score=0.35,
+            h1="Join multiple channels",
+            h2="Implementation",
+            h3="Android",
+            metadata={
+                "product": "video-calling",
+                "source_family": "video-calling/advanced-features/join-multiple-channels",
+            },
+        )
+
+        decision = _judge_agentic_round(
+            message="how to join channel",
+            query_class="lexical_exact",
+            round_index=1,
+            reranked_chunks=[token_chunk, multi_chunk, stream_chunk],
+            final_chunks=[token_chunk, stream_chunk, multi_chunk],
+            decomposition_targets=[],
+            exact_terms=["join", "channel"],
+            grounded_overlap=True,
+            product="audio_video_calling",
         )
 
         self.assertEqual(decision.decision, "recover_once")

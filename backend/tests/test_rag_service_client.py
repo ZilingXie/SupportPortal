@@ -237,6 +237,7 @@ class RagServiceClientTests(unittest.TestCase):
             customer_id="C-001",
             ticket_context=[{"role": "customer", "content": "We only see this on iOS 4.6.0"}],
             top_k=None,
+            timeout_seconds=None,
         )
 
     def test_query_includes_selected_product_in_json_payload(self) -> None:
@@ -293,7 +294,96 @@ class RagServiceClientTests(unittest.TestCase):
             ticket_context=None,
             product="audio_video_calling",
             top_k=None,
+            timeout_seconds=None,
         )
+
+    def test_query_answer_with_recovery_detail_forwards_timeout_override_to_query(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+
+        with patch.object(
+            client,
+            "query",
+            return_value={"decision": "answer", "answer": "ok", "confidence": 0.8, "sources": [], "citations": []},
+        ) as query_mock:
+            client.query_answer_with_recovery_detail(
+                question="What does error 109 mean?",
+                request_id="rag-timeout-override-1",
+                ticket_id="T-001",
+                customer_id="C-001",
+                insufficient_reply="INSUFFICIENT",
+                timeout_seconds=90.0,
+            )
+
+        query_mock.assert_called_once_with(
+            question="What does error 109 mean?",
+            request_id="rag-timeout-override-1",
+            ticket_id="T-001",
+            customer_id="C-001",
+            ticket_context=None,
+            top_k=None,
+            timeout_seconds=90.0,
+        )
+
+    def test_query_answer_with_recovery_uses_override_deadline_window_for_late_live_detail(self) -> None:
+        live_detail = {
+            "primary": {
+                "request_id": "rag-join-override-1",
+                "needs_human": False,
+                "answer": "Join with a token and channel name.",
+                "confidence_score": 0.94,
+                "answer_sources": ["https://docs.agora.io/en/video-calling/get-started/get-started-sdk"],
+                "answer_citations": [
+                    {
+                        "chunk_id": "chunk-override-1",
+                        "source_path": "official/get-started-sdk_android.md",
+                        "heading": "Join a channel",
+                        "source_url": "https://docs.agora.io/en/video-calling/get-started/get-started-sdk",
+                    }
+                ],
+            }
+        }
+        fake_clock = {"now": 100.0}
+
+        def _fake_sleep(seconds: float) -> None:
+            fake_clock["now"] += float(seconds)
+
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+        with patch.object(
+            client,
+            "query",
+            side_effect=RagServiceError("RAG service request failed"),
+        ), patch.object(
+            client,
+            "rag_dashboard_live_case_detail",
+            side_effect=[
+                RagServiceError("RAG service returned HTTP 404", status_code=404, payload={"detail": "missing-1"}),
+                RagServiceError("RAG service returned HTTP 404", status_code=404, payload={"detail": "missing-2"}),
+                live_detail,
+            ],
+        ) as live_detail_mock, patch(
+            "backend.services.rag_service_client.time.monotonic",
+            side_effect=lambda: fake_clock["now"],
+        ), patch(
+            "backend.services.rag_service_client.time.sleep",
+            side_effect=_fake_sleep,
+        ) as sleep_mock:
+            answer, confidence, sources, citations, needs_engineer = client.query_answer_with_recovery(
+                question="how to join channel",
+                request_id="rag-join-override-1",
+                ticket_id="TK-021",
+                customer_id="C-001",
+                insufficient_reply="INSUFFICIENT",
+                recovery_window_seconds=5.0,
+                recovery_poll_interval_seconds=2.0,
+            )
+
+        self.assertEqual(answer, "Join with a token and channel name.")
+        self.assertEqual(confidence, 0.94)
+        self.assertEqual(sources, ["https://docs.agora.io/en/video-calling/get-started/get-started-sdk"])
+        self.assertEqual(citations[0]["chunk_id"], "chunk-override-1")
+        self.assertFalse(needs_engineer)
+        self.assertEqual(live_detail_mock.call_count, 3)
+        self.assertEqual(sleep_mock.call_args_list, [call(2.0), call(2.0)])
 
     def test_query_prefers_client_timeout_over_shared_service_timeout(self) -> None:
         captured: dict[str, object] = {}
