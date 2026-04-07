@@ -201,6 +201,38 @@ class RagAgenticTests(unittest.TestCase):
         self.assertEqual(decision.decision, "recover_once")
         self.assertEqual(decision.recovery_action, "lexical_recovery")
 
+    def test_judge_agentic_round_recovers_when_generic_join_query_top_family_is_stream_channel(self) -> None:
+        stream_chunk = RetrievedChunk(
+            chunk_id="stream-join",
+            text="Use a random user ID to join a stream channel.",
+            source_path="official/stream-channel_macos.md",
+            similarity=0.88,
+            index_role="primary",
+            rerank_score=0.84,
+            h1="Stream channels",
+            h2="Implement communication in a stream channel",
+            h3="Join a stream channel",
+            metadata={
+                "product": "signaling",
+                "source_family": "signaling/stream-channel",
+            },
+        )
+
+        decision = _judge_agentic_round(
+            message="how to join channel",
+            query_class="lexical_exact",
+            round_index=1,
+            reranked_chunks=[stream_chunk],
+            final_chunks=[stream_chunk],
+            decomposition_targets=[],
+            exact_terms=["join", "channel"],
+            grounded_overlap=True,
+        )
+
+        self.assertEqual(decision.decision, "recover_once")
+        self.assertEqual(decision.reason, "generic_join_wrong_family")
+        self.assertEqual(decision.recovery_action, "lexical_recovery")
+
     def test_judge_agentic_round_escalates_after_round_two_without_primary_support(self) -> None:
         chunk = RetrievedChunk(
             chunk_id="shadow-1",

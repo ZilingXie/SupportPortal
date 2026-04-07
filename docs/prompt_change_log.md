@@ -796,6 +796,24 @@ For each new entry, record:
   - `node --check ui/client-ui/app.js`
   - `git diff --check`
 
+- Date: 2026-04-07
+- Area or subsystem: RAG answer grounding retry for RTC how-to FAQs
+- Prompt or model version: `rag-answer-v3`
+- Summary: Extended the RAG answer user prompt with a dedicated citation-grounding retry mode that tells the model to cite both materially used supporting chunks, up to two citations, when a how-to answer relies on both an implementation step chunk and a token/authentication chunk.
+- Reason: `TK-075` showed that the model could produce a grounded RTC join answer from two valid chunks but still cite only one, which weakened answer completeness and lost the second reference even when the evidence was already present.
+- Affected files or config:
+  - `backend/services/prompts/rag_answer.py`
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - When a generic RTC `join channel` answer already has two materially supporting chunks in final context, a first-pass single-citation answer now triggers one stricter grounding retry.
+  - The retry asks for both the implementation-step chunk and the token/authentication chunk when both are actually used, without forcing unrelated citations.
+  - Queries that truly only have one supporting chunk can still return a single citation.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_rag_qa.py backend/tests/test_rag_agentic.py`
+  - Added regression asserting that a first-pass single-citation `how to join channel` answer retries and returns two RTC citations when both supporting chunks are present.
+
 - Date: 2026-04-05
 - Area or subsystem: Engineer investigation reply drafting
 - Prompt or model version: `engineer-investigation-reply-v1`

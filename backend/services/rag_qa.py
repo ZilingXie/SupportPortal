@@ -47,6 +47,7 @@ from backend.services.query_understanding import (
 )
 from backend.services.rag_tokenizer import is_bm25_query_stopword, tokenize_bm25_query
 from backend.services.support_products import (
+    SUPPORT_PRODUCT_AUDIO_VIDEO_CALLING,
     build_support_product_prompt_scope,
     build_support_product_rag_role,
 )
@@ -127,6 +128,14 @@ _HOW_TO_FAQ_USAGE_TERMS = {
     "switch",
     "unmute",
 }
+_LIGHT_PATH_JOIN_RECOVERY_BM25_CANDIDATE_K = 24
+_LIGHT_PATH_JOIN_RECOVERY_FTS_CANDIDATE_K = 24
+_LIGHT_PATH_JOIN_RECOVERY_FUSION_CANDIDATE_K = 18
+_JOIN_CHANNEL_PATTERN = re.compile(r"\bjoin(?:\s+a)?\s+channel\b|\bjoinchannel\b", flags=re.IGNORECASE)
+_AUDIO_VIDEO_CALLING_PREFERRED_PRODUCTS = frozenset(
+    {"video-calling", "voice-calling", "interactive-live-streaming", "broadcast-streaming"}
+)
+_AUDIO_VIDEO_CALLING_PENALIZED_PRODUCTS = frozenset({"signaling", "iot", "cloud-recording"})
 
 
 def _build_answer_system_prompt(product: str | None = None) -> str:
@@ -326,6 +335,7 @@ class AgenticRetrievalPlan:
     ticket_context_used: bool = False
     exact_terms: list[str] = field(default_factory=list)
     light_path: bool = False
+    product: str | None = None
 
 
 @dataclass(frozen=True)
@@ -526,6 +536,8 @@ def _is_how_to_faq_query(
             "故障",
         ]
     ):
+        return False
+    if _is_multiple_channels_query(normalized) or _is_stream_channel_query(normalized):
         return False
     query_terms = _extract_query_terms(normalized, max_terms=8)
     if len(normalized.split()) > 8 or len(query_terms) > 5:
@@ -730,6 +742,168 @@ def _context_keyword_query(ticket_context: list[dict[str, str]] | None) -> str |
     return " ".join(parts[:6])
 
 
+def _normalized_query_text(value: str | None) -> str:
+    return " ".join(str(value or "").split()).strip().lower()
+
+
+def _is_multiple_channels_query(message: str) -> bool:
+    lower = _normalized_query_text(message)
+    return any(
+        marker in lower
+        for marker in ["multiple channels", "multiple channel", "multi-channel", "multichannel", "joinchannelex"]
+    )
+
+
+def _is_stream_channel_query(message: str) -> bool:
+    lower = _normalized_query_text(message)
+    return any(marker in lower for marker in ["stream channel", "stream channels", "signaling", "rtm"])
+
+
+def _is_generic_join_channel_query(message: str) -> bool:
+    lower = _normalized_query_text(message)
+    if not lower or not _JOIN_CHANNEL_PATTERN.search(lower):
+        return False
+    if _is_multiple_channels_query(lower) or _is_stream_channel_query(lower):
+        return False
+    return True
+
+
+def _chunk_source_family(chunk: RetrievedChunk) -> str:
+    metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+    return str(metadata.get("source_family") or "").strip().replace("\\", "/").strip("/").lower()
+
+
+def _chunk_product(chunk: RetrievedChunk) -> str:
+    metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+    return (
+        str(metadata.get("product") or "").strip().lower()
+        or str(metadata.get("product_area") or "").strip().lower()
+    )
+
+
+def _chunk_surface_text(chunk: RetrievedChunk) -> str:
+    parts = [
+        chunk.source_path,
+        _chunk_source_family(chunk),
+        chunk.h1,
+        chunk.h2,
+        chunk.h3,
+        chunk.text,
+    ]
+    return " ".join(str(part or "").strip().lower() for part in parts if str(part or "").strip())
+
+
+def _is_join_multiple_channels_chunk(chunk: RetrievedChunk) -> bool:
+    surface = _chunk_surface_text(chunk)
+    return any(marker in surface for marker in ["join-multiple-channels", "join multiple channels", "joinchannelex"])
+
+
+def _is_stream_channel_chunk(chunk: RetrievedChunk) -> bool:
+    surface = _chunk_surface_text(chunk)
+    return any(marker in surface for marker in ["stream-channel", "stream channel", "signaling/stream-channel"])
+
+
+def _is_join_channel_step_chunk(chunk: RetrievedChunk) -> bool:
+    surface = _chunk_surface_text(chunk)
+    return (
+        any(
+            marker in surface
+            for marker in ["join a channel", "join channel", "joinchannel(", "joinchannel ", " call joinchannel"]
+        )
+        and not _is_join_multiple_channels_chunk(chunk)
+        and not _is_stream_channel_chunk(chunk)
+    )
+
+
+def _is_token_auth_chunk(chunk: RetrievedChunk) -> bool:
+    metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+    use_case = str(metadata.get("use_case") or "").strip().lower()
+    surface = _chunk_surface_text(chunk)
+    return use_case == "basic_authentication" or (
+        "token" in surface and any(marker in surface for marker in ["join a channel", "join channel", "channel name", "user id", "uid"])
+    )
+
+
+def _product_affinity_adjustment(chunk: RetrievedChunk, product: str | None) -> tuple[float, list[str]]:
+    normalized_product = _normalized_query_text(product)
+    if normalized_product != SUPPORT_PRODUCT_AUDIO_VIDEO_CALLING:
+        return 0.0, []
+    chunk_product = _chunk_product(chunk)
+    reasons: list[str] = []
+    boost = 0.0
+    if chunk_product in _AUDIO_VIDEO_CALLING_PREFERRED_PRODUCTS:
+        boost += 0.75
+        reasons.append(f"product_affinity:{chunk_product}")
+    if chunk_product in _AUDIO_VIDEO_CALLING_PENALIZED_PRODUCTS:
+        boost -= 1.0
+        reasons.append(f"product_penalty:{chunk_product}")
+    return boost, reasons
+
+
+def _join_intent_adjustment(query: str, chunk: RetrievedChunk, product: str | None) -> tuple[float, list[str]]:
+    _ = product
+    reasons: list[str] = []
+    boost = 0.0
+    if _is_generic_join_channel_query(query):
+        if _is_join_channel_step_chunk(chunk):
+            boost += 1.35
+            reasons.append("intent:join_channel_step")
+        if _is_token_auth_chunk(chunk):
+            boost += 1.2
+            reasons.append("intent:join_channel_token_auth")
+        if _is_join_multiple_channels_chunk(chunk):
+            boost -= 1.4
+            reasons.append("intent:generic_join_multiple_penalty")
+        if _is_stream_channel_chunk(chunk):
+            boost -= 1.6
+            reasons.append("intent:generic_join_stream_penalty")
+        return boost, reasons
+    if _is_multiple_channels_query(query) and _is_join_multiple_channels_chunk(chunk):
+        return 1.0, ["intent:multiple_channels"]
+    if _is_stream_channel_query(query) and _is_stream_channel_chunk(chunk):
+        return 1.85, ["intent:stream_channel"]
+    return 0.0, []
+
+
+def _generic_join_supporting_chunks(chunks: list[RetrievedChunk], *, product: str | None = None) -> list[RetrievedChunk]:
+    preferred: list[RetrievedChunk] = []
+    seen_ids: set[str] = set()
+    for matcher in (_is_join_channel_step_chunk, _is_token_auth_chunk):
+        for chunk in chunks:
+            chunk_id = str(chunk.chunk_id or "")
+            if chunk_id and chunk_id in seen_ids:
+                continue
+            if not matcher(chunk):
+                continue
+            if (
+                _normalized_query_text(product) == SUPPORT_PRODUCT_AUDIO_VIDEO_CALLING
+                and _chunk_product(chunk) in _AUDIO_VIDEO_CALLING_PENALIZED_PRODUCTS
+            ):
+                continue
+            preferred.append(chunk)
+            if chunk_id:
+                seen_ids.add(chunk_id)
+            break
+    return preferred
+
+
+def _requires_howto_citation_retry(
+    *,
+    message: str,
+    product: str | None,
+    chunks: list[RetrievedChunk],
+    payload: dict[str, Any] | None,
+) -> bool:
+    if not _is_generic_join_channel_query(message):
+        return False
+    if not isinstance(payload, dict) or payload.get("insufficient_evidence") is True:
+        return False
+    citations = payload.get("citations")
+    if not isinstance(citations, list) or len(citations) >= 2:
+        return False
+    return len(_generic_join_supporting_chunks(chunks, product=product)) >= 2
+
+
 def _invoke_agentic_planner(
     *,
     message: str,
@@ -797,6 +971,7 @@ def _build_agentic_retrieval_plan(
             ticket_context_used=bool(ticket_context),
             exact_terms=_extract_query_terms(message, max_terms=6),
             light_path=True,
+            product=product,
         )
 
     _raise_if_cancelled(
@@ -840,6 +1015,7 @@ def _build_agentic_retrieval_plan(
                     ticket_context_used=bool(ticket_context),
                     exact_terms=_extract_query_terms(message, max_terms=6),
                     light_path=False,
+                    product=product,
                 )
 
     tool_order, evidence_goal, recovery_bias = _tool_order_for_query_class(query_class)
@@ -874,6 +1050,7 @@ def _build_agentic_retrieval_plan(
         ticket_context_used=bool(ticket_context),
         exact_terms=_extract_query_terms(message, max_terms=6),
         light_path=False,
+        product=product,
     )
 
 
@@ -992,6 +1169,12 @@ def _judge_agentic_round(
         if primary_count == 0:
             recovery = "lexical_recovery" if query_class in {"lexical_exact", "configuration"} else "semantic_recovery"
             return AgenticJudgeDecision("recover_once", "missing_primary_support", 0.72, recovery)
+        if query_class == "lexical_exact" and _is_generic_join_channel_query(message):
+            top_focus_chunk = top_chunk or (final_chunks[0] if final_chunks else None)
+            if top_focus_chunk is not None and (
+                _is_join_multiple_channels_chunk(top_focus_chunk) or _is_stream_channel_chunk(top_focus_chunk)
+            ):
+                return AgenticJudgeDecision("recover_once", "generic_join_wrong_family", 0.78, "lexical_recovery")
         if query_class == "lexical_exact" and (top_score < 0.32 or not exact_match_supported):
             return AgenticJudgeDecision("recover_once", "low_top1_rerank_score", 0.74, "lexical_recovery")
         if top_score < 0.32:
@@ -1144,6 +1327,10 @@ def _agentic_round_variants(
             exact_query = " ".join(plan.exact_terms).strip()
             if exact_query and exact_query.lower() not in existing:
                 variants.append(("exact_token", exact_query))
+            if _is_generic_join_channel_query(message):
+                focused_query = "join channel joinChannel token channel name uid basic authentication"
+                if focused_query.lower() not in existing:
+                    variants.append(("focused_rewrite", focused_query))
         elif recovery_action == "semantic_recovery":
             context_query = _context_keyword_query(ticket_context)
             if context_query and context_query.lower() not in existing:
@@ -1338,6 +1525,8 @@ def _execute_agentic_round(
     bm25_latency_ms = 0.0
     keyword_latency_ms = 0.0
     variant_config = dict(config)
+    if plan.light_path and round_index > 1 and recovery_action == "lexical_recovery" and _is_generic_join_channel_query(message):
+        variant_config = _apply_join_focused_recovery_budget(variant_config)
     variant_config["_retrieval_plan"] = retrieval_plan
     used_seed_tools: list[str] = []
 
@@ -1464,6 +1653,7 @@ def _execute_agentic_round(
             top_k=int(config.get("fusion_candidate_k") or config.get("top_k") or 5),
             retrieval_plan=retrieval_plan,
             query_understanding=query_understanding,
+            product=plan.product,
         )
         rerank_latency_ms += (time.perf_counter() - rerank_started_at) * 1000
         reranked_chunks = _reorder_chunks_for_rerank(
@@ -1855,6 +2045,7 @@ def _metadata_rerank(
     hints: MetadataHints | None = None,
     retrieval_plan: RetrievalPlan | None = None,
     query_understanding: QueryUnderstandingResult | None = None,
+    product: str | None = None,
 ) -> tuple[list[RetrievedChunk], dict[str, Any]]:
     resolved_hints = hints or _extract_metadata_hints(query)
     mentioned_methods = _mentioned_method_names(query)
@@ -1926,7 +2117,7 @@ def _metadata_rerank(
         keywords = [item.lower() for item in _chunk_metadata_list(metadata.get("keywords"))]
         external_service = str(metadata.get("external_service") or "").strip().lower()
         protocol = str(metadata.get("protocol") or "").strip().lower()
-        product = _normalize_metadata_filter_value("product", metadata.get("product")) or ""
+        chunk_product = _normalize_metadata_filter_value("product", metadata.get("product")) or ""
         technical_terms = {item.lower() for item in resolved_hints.technical_terms}
         text_lower = chunk.text.lower()
 
@@ -2051,9 +2242,18 @@ def _metadata_rerank(
             if normalized_signal and external_service == normalized_signal:
                 boost += 0.6
                 reasons.append(f"plan_external_service:{normalized_signal}")
-        if applied_hard_filters.get("product") and product == applied_hard_filters["product"]:
+        if applied_hard_filters.get("product") and chunk_product == applied_hard_filters["product"]:
             boost += 0.5
             reasons.append(f"plan_product:{applied_hard_filters['product']}")
+
+        affinity_boost, affinity_reasons = _product_affinity_adjustment(chunk, product)
+        if affinity_boost:
+            boost += affinity_boost
+            reasons.extend(affinity_reasons)
+        join_boost, join_reasons = _join_intent_adjustment(query, chunk, product)
+        if join_boost:
+            boost += join_boost
+            reasons.extend(join_reasons)
 
         chunk.rerank_score = round(float(chunk.similarity) + boost, 4)
         chunk.rerank_reasons = reasons
@@ -2198,6 +2398,23 @@ def _apply_light_path_latency_budget(config: dict[str, Any]) -> dict[str, Any]:
     adjusted["light_path_generation_chunk_limit"] = min(
         max(1, int(adjusted.get("top_k") or 1)),
         _LIGHT_PATH_CONTEXT_CHUNK_LIMIT,
+    )
+    return adjusted
+
+
+def _apply_join_focused_recovery_budget(config: dict[str, Any]) -> dict[str, Any]:
+    adjusted = dict(config)
+    adjusted["bm25_candidate_k"] = max(
+        int(adjusted.get("bm25_candidate_k") or 1),
+        _LIGHT_PATH_JOIN_RECOVERY_BM25_CANDIDATE_K,
+    )
+    adjusted["fts_candidate_k"] = max(
+        int(adjusted.get("fts_candidate_k") or adjusted.get("keyword_candidate_k") or 1),
+        _LIGHT_PATH_JOIN_RECOVERY_FTS_CANDIDATE_K,
+    )
+    adjusted["fusion_candidate_k"] = max(
+        int(adjusted.get("fusion_candidate_k") or 1),
+        _LIGHT_PATH_JOIN_RECOVERY_FUSION_CANDIDATE_K,
     )
     return adjusted
 
@@ -3039,15 +3256,22 @@ def _chunk_map_by_id(chunks: list[RetrievedChunk]) -> dict[str, RetrievedChunk]:
 
 
 def _build_answer_prompt(question: str, context_block: str) -> str:
-    return _build_answer_prompt_for_mode(question, context_block, repair_mode=False)
+    return _build_answer_prompt_for_mode(question, context_block, repair_mode=False, citation_retry=False)
 
 
-def _build_answer_prompt_for_mode(question: str, context_block: str, *, repair_mode: bool) -> str:
+def _build_answer_prompt_for_mode(
+    question: str,
+    context_block: str,
+    *,
+    repair_mode: bool,
+    citation_retry: bool = False,
+) -> str:
     return build_rag_answer_user_prompt(
         question=question,
         context_block=context_block,
         insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
         repair_mode=repair_mode,
+        citation_retry_mode=citation_retry,
     )
 
 
@@ -3216,9 +3440,15 @@ def _invoke_llm_payload(
     packed_evidence: PackedEvidence | None = None,
     product: str | None = None,
     profile_override: ModelProfile | None = None,
+    citation_retry: bool = False,
 ) -> dict[str, Any] | None:
     context_block = packed_evidence.prompt_context if packed_evidence is not None else _format_context(chunks)
-    prompt = _build_answer_prompt_for_mode(message, context_block, repair_mode=strict_retry)
+    prompt = _build_answer_prompt_for_mode(
+        message,
+        context_block,
+        repair_mode=strict_retry,
+        citation_retry=citation_retry,
+    )
     profile = profile_override or _build_answer_profile(config)
     try:
         response = invoke_responses_text(
@@ -3240,9 +3470,15 @@ def _invoke_llm_payload_with_trace(
     packed_evidence: PackedEvidence | None = None,
     product: str | None = None,
     profile_override: ModelProfile | None = None,
+    citation_retry: bool = False,
 ) -> tuple[dict[str, Any] | None, int, int, str | None]:
     context_block = packed_evidence.prompt_context if packed_evidence is not None else _format_context(chunks)
-    prompt = _build_answer_prompt_for_mode(message, context_block, repair_mode=strict_retry)
+    prompt = _build_answer_prompt_for_mode(
+        message,
+        context_block,
+        repair_mode=strict_retry,
+        citation_retry=citation_retry,
+    )
     profile = profile_override or _build_answer_profile(config)
     try:
         response = invoke_responses_text(
@@ -3375,6 +3611,19 @@ def _select_diverse_chunks(chunks: list[RetrievedChunk], *, limit: int, query: s
                 if chunk_key in selected_chunk_keys:
                     continue
                 if _chunk_method_name(chunk) != method_name:
+                    continue
+                _select_chunk(chunk, index)
+                break
+            if len(selected) >= safe_limit:
+                return selected
+
+    if _is_generic_join_channel_query(query or ""):
+        for matcher in (_is_join_channel_step_chunk, _is_token_auth_chunk):
+            for index, chunk in enumerate(chunks):
+                chunk_key = _chunk_selection_key(chunk, index)
+                if chunk_key in selected_chunk_keys:
+                    continue
+                if not matcher(chunk):
                     continue
                 _select_chunk(chunk, index)
                 break
@@ -4957,6 +5206,35 @@ def _run_rag_query_agentic(
         model_name = retry_model_name or model_name
         answer_profile_used = model_name or primary_answer_profile.model
         payload = retry_payload
+    if payload is not None and _is_valid_response(payload, allowed_chunk_ids) and _requires_howto_citation_retry(
+        message=message,
+        product=product,
+        chunks=final_chunks,
+        payload=payload,
+    ):
+        if fast_answer_profile is not None:
+            answer_profile_fallback_used = True
+        _raise_if_cancelled(
+            "answer_generation",
+            should_cancel=should_cancel,
+            record_stage=record_cancel_stage,
+        )
+        retry_payload, retry_prompt_tokens, retry_completion_tokens, retry_model_name = _invoke_llm_payload_with_trace(
+            message,
+            final_chunks,
+            generation_config,
+            strict_retry=True,
+            packed_evidence=packed_evidence,
+            product=product,
+            profile_override=primary_answer_profile,
+            citation_retry=True,
+        )
+        prompt_tokens += retry_prompt_tokens
+        completion_tokens += retry_completion_tokens
+        if retry_payload is not None and _is_valid_response(retry_payload, allowed_chunk_ids):
+            model_name = retry_model_name or model_name
+            answer_profile_used = model_name or primary_answer_profile.model
+            payload = retry_payload
     generation_latency_ms = (time.perf_counter() - generation_started_at) * 1000
 
     if payload is not None and _is_valid_response(payload, allowed_chunk_ids):
