@@ -2612,3 +2612,79 @@ For each new entry, record:
     - generic join with two valid RTC supporting chunks retries to produce two citations
     - `how to join multiple channels` still keeps `join-multiple-channels`
     - `how to join a stream channel` still keeps `stream-channel`
+
+## 2026-04-07 - Fix light-path generic join recovery when first-pass evidence lacks core RTC join support
+
+- Summary:
+  - Allowed light-path lexical recovery rounds to actually add `exact_token` and focused `joinChannel + token/authentication` query variants instead of short-circuiting back to the original query only.
+  - Tightened generic `how to join channel` judging so round one now recovers when final evidence lacks a core RTC `join a channel` chunk or a compatible token/auth chunk, even if the current top chunk is a token-auth document from the wrong product family.
+  - Narrowed `audio_video_calling` generic join compatibility so `video-calling` and `voice-calling` count as core support, while `broadcast-streaming` and `interactive-live-streaming` no longer satisfy the join-support/citation heuristic by default.
+- Reason:
+  - `TK-076` still reproduced after PR #123 was deployed: the new image no longer used stale code, but the live run still chose `broadcast-streaming token auth + signaling stream channel + join-multiple-channels`, skipped focused recovery on the light path, and then got escalated by post-check.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, vector-table, or model changes.
+  - Generic RTC `join channel` light-path retrieval can now run a true second lexical pass with focused recovery queries.
+  - Join-support and citation heuristics now require core RTC evidence rather than treating `broadcast-streaming` auth chunks as sufficient support for `audio_video_calling`.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_rag_qa.py backend/tests/test_rag_agentic.py`
+  - `python3 -m py_compile backend/services/rag_qa.py backend/tests/test_rag_qa.py backend/tests/test_rag_agentic.py`
+  - Added regressions for:
+    - light-path round-two recovery expands focused join-channel lexical variants
+    - generic join round-one recovery triggers when only wrong-family token/stream/multi evidence is present
+    - end-to-end light-path recovery reselects `joinChannel` + token/auth chunks after an initial wrong-family mix
+
+## 2026-04-07 - Rescue generic join focused recovery chunks from multi-tool fusion noise
+
+- Summary:
+  - Added a second deterministic light-path recovery query for generic RTC join questions: `join a channel joinChannel channelName uid options`, complementing the existing token/auth-focused rewrite.
+  - Injected a generic-join recovery rescue step after tool fusion so core RTC `join-step` and `token-auth` chunks from focused recovery variants are preserved in the candidate window before metadata rerank.
+  - Updated light-path round-two fusion and rerank stages to honor the expanded recovery budget instead of falling back to the base light-path fusion window.
+  - Split generic RTC `join-step` evidence from token-auth evidence more strictly so `joinChannel(token, ...)` quickstart chunks no longer masquerade as authentication workflow chunks during rescue selection, support-signal checks, or citation retry decisions.
+- Reason:
+  - After deploying the previous fix, live `how to join channel` runs still escalated: the focused auth query was retrieving the right Android auth chunks, but multi-tool WRRF continued to let `stream-channel`, `join-multiple-channels`, and other noisy lexical matches crowd those candidates out before rerank. The recovery path also still lacked a focused join-step query for `get-started-sdk_android.md`.
+  - Follow-up debugging in `TK-076` showed the new rescue helper was still pairing `join-android + join-macos-voice` because quickstart `joinChannel(token, ...)` snippets were being classified as both join-step and token-auth evidence, which prevented the Android auth workflow chunk from surviving as the second supporting citation.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, vector-table, or model changes.
+  - Generic RTC join recovery now has two deterministic lexical recovery intents: one for token/auth support and one for the actual `joinChannel` step.
+  - Round-two recovery can preserve core RTC supporting chunks even when `p_fts` and `p_keyword` inject noisy but lexically similar wrong-family matches.
+  - Generic `how to join channel` support/citation heuristics now require one real join-step chunk and one real auth workflow chunk instead of counting a single quickstart snippet as both.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_rag_agentic.py backend/tests/test_rag_qa.py`
+  - Added regressions for:
+    - higher-scoring later focused BM25 variants reordering ahead of earlier wrong-family variants
+    - generic join round-two recovery keeping focused auth/join chunks even when FTS and keyword noise compete for the fusion window
+    - quickstart `joinChannel(token, ...)` snippets no longer count as token-auth chunks
+    - end-to-end generic join retry now selects `join-step + auth` instead of `auth + wrong-family join`
+
+## 2026-04-07 - Give async worker a longer RAG timeout/recovery budget than the main thread
+
+- Summary:
+  - Added per-call timeout and deadline-window overrides to `RagServiceClient.query*with_recovery*` so callers can choose a longer request budget without mutating the shared client default.
+  - Updated the async ticket worker to use a longer RAG request timeout and live-detail recovery window before classifying a request as `rag_unavailable`.
+- Reason:
+  - After the join-channel retrieval fix was deployed, direct `/internal/rag/query` calls were returning correct grounded answers, but async client tickets were still opening engineer cases. Investigation of `TK-VERIFY-JOIN-CHAN-7` showed the worker marked the request `rag_unavailable` at `08:34:36 UTC` while the same `request_id` produced a valid 3-citation RAG run at `08:34:59 UTC`; the old `40s request timeout + 15s recovery window` expired before the slow-but-successful run completed.
+- Affected files/config:
+  - `backend/services/rag_service_client.py`
+  - `backend/worker.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `backend/tests/test_worker.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, vector-table, or model changes.
+  - Async worker requests now default to a longer RAG budget (`90s` request timeout, `45s` live-detail recovery window) while the shared client default for other call sites remains unchanged unless explicitly overridden.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_rag_service_client.py backend/tests/test_worker.py`
+  - Added regressions for:
+    - `query_answer_with_recovery_detail` forwarding per-call timeout overrides
+    - deadline-window recovery honoring explicit override values
+    - worker RAG calls forwarding the extended async timeout/recovery settings

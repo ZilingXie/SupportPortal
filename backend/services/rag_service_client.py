@@ -338,6 +338,7 @@ class RagServiceClient:
         ticket_context: list[dict[str, str]] | None = None,
         product: str | None = None,
         top_k: int | None = None,
+        timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "question": question,
@@ -360,7 +361,7 @@ class RagServiceClient:
             ]
         if top_k is not None:
             payload["top_k"] = int(top_k)
-        return self._request("POST", "/internal/rag/query", json_body=payload)
+        return self._request("POST", "/internal/rag/query", json_body=payload, timeout_seconds=timeout_seconds)
 
     def cancel_request(self, request_id: str) -> dict[str, Any]:
         normalized_request_id = urllib.parse.quote(str(request_id or "").strip(), safe="")
@@ -382,8 +383,11 @@ class RagServiceClient:
         product: str | None = None,
         insufficient_reply: str,
         top_k: int | None = None,
+        timeout_seconds: float | None = None,
         recovery_attempts: int | None = None,
         recovery_delay_seconds: float | None = None,
+        recovery_window_seconds: float | None = None,
+        recovery_poll_interval_seconds: float | None = None,
     ) -> tuple[str, float, list[str], list[dict[str, str]], bool]:
         detail = self.query_answer_with_recovery_detail(
             question=question,
@@ -393,8 +397,11 @@ class RagServiceClient:
             ticket_context=ticket_context,
             insufficient_reply=insufficient_reply,
             top_k=top_k,
+            timeout_seconds=timeout_seconds,
             recovery_attempts=recovery_attempts,
             recovery_delay_seconds=recovery_delay_seconds,
+            recovery_window_seconds=recovery_window_seconds,
+            recovery_poll_interval_seconds=recovery_poll_interval_seconds,
             **({"product": product} if str(product or "").strip() else {}),
         )
         return detail.as_answer_tuple()
@@ -410,8 +417,11 @@ class RagServiceClient:
         product: str | None = None,
         insufficient_reply: str,
         top_k: int | None = None,
+        timeout_seconds: float | None = None,
         recovery_attempts: int | None = None,
         recovery_delay_seconds: float | None = None,
+        recovery_window_seconds: float | None = None,
+        recovery_poll_interval_seconds: float | None = None,
     ) -> RagTicketAnswerDetail:
         try:
             query_kwargs: dict[str, Any] = {
@@ -421,6 +431,7 @@ class RagServiceClient:
                 "customer_id": customer_id,
                 "ticket_context": ticket_context,
                 "top_k": top_k,
+                "timeout_seconds": timeout_seconds,
             }
             if str(product or "").strip():
                 query_kwargs["product"] = str(product).strip()
@@ -436,6 +447,8 @@ class RagServiceClient:
                 request_id=request_id,
                 recovery_attempts=recovery_attempts,
                 recovery_delay_seconds=recovery_delay_seconds,
+                recovery_window_seconds=recovery_window_seconds,
+                recovery_poll_interval_seconds=recovery_poll_interval_seconds,
             )
             if recovered is not None:
                 LOGGER.warning(
@@ -469,9 +482,15 @@ class RagServiceClient:
         request_id: str,
         recovery_attempts: int | None,
         recovery_delay_seconds: float | None,
+        recovery_window_seconds: float | None = None,
+        recovery_poll_interval_seconds: float | None = None,
     ) -> RagTicketAnswerDetail | None:
         if recovery_attempts is None and recovery_delay_seconds is None:
-            return self._recover_ticket_answer_detail_until_deadline(request_id=request_id)
+            return self._recover_ticket_answer_detail_until_deadline(
+                request_id=request_id,
+                recovery_window_seconds=recovery_window_seconds,
+                recovery_poll_interval_seconds=recovery_poll_interval_seconds,
+            )
         return self._recover_ticket_answer_detail_with_attempts(
             request_id=request_id,
             recovery_attempts=recovery_attempts,
@@ -520,9 +539,21 @@ class RagServiceClient:
         self,
         *,
         request_id: str,
+        recovery_window_seconds: float | None = None,
+        recovery_poll_interval_seconds: float | None = None,
     ) -> RagTicketAnswerDetail | None:
-        deadline = time.monotonic() + _recovery_window_seconds()
-        poll_interval_seconds = _recovery_poll_interval_seconds()
+        deadline = time.monotonic() + max(
+            0.0,
+            float(recovery_window_seconds if recovery_window_seconds is not None else _recovery_window_seconds()),
+        )
+        poll_interval_seconds = max(
+            0.0,
+            float(
+                recovery_poll_interval_seconds
+                if recovery_poll_interval_seconds is not None
+                else _recovery_poll_interval_seconds()
+            ),
+        )
 
         while True:
             try:
