@@ -73,6 +73,9 @@ def _trace(
         rerank_latency_ms=8.0,
         generation_latency_ms=35.0,
         total_latency_ms=63.0,
+        bm25_sql_latency_ms=11.0,
+        fts_latency_ms=7.0,
+        retrieval_round_wall_clock_ms=14.0,
         prompt_tokens=120,
         completion_tokens=40,
         embedding_tokens=12,
@@ -101,6 +104,26 @@ def _trace(
                 "source_path": "official/get-started.md",
                 "source_url": "https://docs.agora.io/en/video-calling/get-started",
             }
+        ],
+        retrieval_tool_timings=[
+            {
+                "tool_name": "p_bm25",
+                "query_kind": "original",
+                "round_index": 1,
+                "index_role": "primary",
+                "latency_ms": 11.0,
+                "candidate_count": 3,
+                "used_seed_tool": False,
+            },
+            {
+                "tool_name": "p_fts",
+                "query_kind": "original",
+                "round_index": 1,
+                "index_role": "primary",
+                "latency_ms": 7.0,
+                "candidate_count": 3,
+                "used_seed_tool": False,
+            },
         ],
         selected_contexts=[
             {
@@ -163,6 +186,15 @@ class RagApiTests(unittest.TestCase):
 
         with self._client(repository) as client, patch.object(
             rag_api,
+            "probe_customer_rag_index_readiness",
+            return_value=RagKnowledgeIndexReadiness(
+                status="ready",
+                configured_table="supportportal.docagent_chunks_bge_m3_1024",
+                resolved_table="supportportal.docagent_chunks_bge_m3_1024",
+                configured_primary_rows=123,
+            ),
+        ), patch.object(
+            rag_api,
             "run_rag_query",
             return_value=_answer_result(),
         ):
@@ -190,6 +222,15 @@ class RagApiTests(unittest.TestCase):
             "async_best_effort",
         )
         self.assertLess(elapsed_ms, 250.0, elapsed_ms)
+
+    def test_trace_query_understanding_meta_exposes_lexical_retrieval_breakdown(self) -> None:
+        meta = rag_api._trace_query_understanding_meta(_trace())
+
+        self.assertEqual(meta["bm25_sql_latency_ms"], 11.0)
+        self.assertEqual(meta["fts_latency_ms"], 7.0)
+        self.assertEqual(meta["retrieval_round_wall_clock_ms"], 14.0)
+        self.assertEqual(len(meta["retrieval_tool_timings"]), 2)
+        self.assertEqual(meta["retrieval_tool_timings"][0]["tool_name"], "p_bm25")
 
     def test_record_rag_query_run_best_effort_returns_enqueue_failure_diagnostics_when_queue_full(self) -> None:
         repository = _TrackingKnowledgeRepository()

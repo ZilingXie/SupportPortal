@@ -2688,3 +2688,37 @@ For each new entry, record:
     - `query_answer_with_recovery_detail` forwarding per-call timeout overrides
     - deadline-window recovery honoring explicit override values
     - worker RAG calls forwarding the extended async timeout/recovery settings
+
+## 2026-04-07 - Split lexical retrieval telemetry and add live BM25/FTS profiling script
+
+- Summary:
+  - Split lexical retrieval telemetry so agentic traces now record `bm25_sql_latency_ms`, `fts_latency_ms`, `retrieval_round_wall_clock_ms`, and per-tool `retrieval_tool_timings`, while keeping `bm25_retrieval_latency_ms` backward-compatible as the combined lexical bucket.
+  - Exposed the new lexical telemetry fields through `/internal/rag/query` persistence, live query detail payloads, and `scripts/trace_client_ticket_route.py` so runtime traces can distinguish BM25 SQL cost from FTS cost without breaking existing consumers.
+  - Added `scripts/ops/profile_lexical_retrieval.py` to capture host/container cold-warm timings, current vs proposed BM25 `EXPLAIN (ANALYZE, BUFFERS)` summaries, FTS explain output, and recent 24h lexical latency percentiles.
+- Reason:
+  - Live `How to join channel` traces showed `bm25_retrieval_latency_ms ≈ 77s`, but that bucket included BM25, FTS, and fallback work together, which made it impossible to attribute the delay precisely or to compare SQL rewrite candidates against real runtime evidence.
+  - Before attempting online DDL or deeper query changes, we needed observability that cleanly separates BM25 SQL from FTS, plus a reproducible profiling tool that can be run against the active compose environment.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/rag_api.py`
+  - `backend/repositories/knowledge_repository.py`
+  - `scripts/trace_client_ticket_route.py`
+  - `scripts/ops/profile_lexical_retrieval.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_trace_client_ticket_route_cli.py`
+  - `backend/tests/test_rag_api.py`
+  - `backend/tests/test_rag_scorecard_repository.py`
+  - `backend/tests/test_profile_lexical_retrieval_cli.py`
+- Data impact:
+  - No schema, ingestion, vector-table, or model changes.
+  - New lexical telemetry fields are stored inside the existing `query_understanding_meta` JSON payloads and surfaced by existing live-query read APIs.
+  - The next default optimization path is now fixed to a non-DDL BM25 SQL rewrite that materializes `top_scored` before joining back to the vector table; no online index changes were made in this task.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_rag_qa backend.tests.test_trace_client_ticket_route_cli backend.tests.test_rag_api backend.tests.test_rag_scorecard_repository backend.tests.test_profile_lexical_retrieval_cli backend.tests.test_rag_agentic backend.tests.test_knowledge_repository_bm25`
+  - `python3 -m py_compile backend/services/rag_qa.py backend/rag_api.py backend/repositories/knowledge_repository.py scripts/trace_client_ticket_route.py scripts/ops/profile_lexical_retrieval.py backend/tests/test_rag_api.py`
+  - `python3 scripts/ops/profile_lexical_retrieval.py --query "How to join channel" --limit 12 --recent-hours 24`
+  - Live profiling on the current compose environment produced:
+    - host timings around `bm25 4.96s -> 3.74s warm`, `fts 3.21s -> 3.18s warm`
+    - container timings around `bm25 3.60–3.69s`, `fts 2.79–3.13s`
+    - recent 24h `bm25_retrieval_latency_ms` percentiles of `P50≈59.1s`, `P90≈86.2s`, `P99≈128.5s`
+    - `EXPLAIN` comparison of `current BM25 ≈ 150.6ms` vs `proposed top_scored-before-vector-join ≈ 102.0ms` on the sampled live query, with FTS explain around `55.1ms`

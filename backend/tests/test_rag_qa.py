@@ -956,6 +956,23 @@ class RagQaHybridTests(unittest.TestCase):
         self.assertTrue(result.trace.vector_setup_skipped)
         self.assertEqual(result.trace.answer_profile_used, "gpt-5.4")
         self.assertTrue(result.trace.answer_profile_fallback_used)
+        self.assertGreaterEqual(result.trace.bm25_sql_latency_ms, 0.0)
+        self.assertGreaterEqual(result.trace.fts_latency_ms, 0.0)
+        self.assertGreaterEqual(result.trace.retrieval_round_wall_clock_ms, 0.0)
+        self.assertTrue(
+            any(
+                timing.get("tool_name") == "p_bm25"
+                for timing in result.trace.retrieval_tool_timings
+                if isinstance(timing, dict)
+            )
+        )
+        self.assertTrue(
+            any(
+                timing.get("tool_name") == "p_fts"
+                for timing in result.trace.retrieval_tool_timings
+                if isinstance(timing, dict)
+            )
+        )
 
     def test_run_rag_query_generic_join_channel_prefers_rtc_join_and_token_contexts_for_audio_video_calling(self) -> None:
         stream_chunk = RetrievedChunk(

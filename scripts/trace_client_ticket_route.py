@@ -595,6 +595,12 @@ def build_trace_summary(
             "rewrite_latency_ms": _safe_float((rag_run or {}).get("rewrite_latency_ms")),
             "vector_retrieval_latency_ms": _safe_float((rag_run or {}).get("vector_retrieval_latency_ms")),
             "bm25_retrieval_latency_ms": _safe_float((rag_run or {}).get("bm25_retrieval_latency_ms")),
+            "bm25_sql_latency_ms": _safe_float((rag_run or {}).get("bm25_sql_latency_ms")),
+            "fts_latency_ms": _safe_float((rag_run or {}).get("fts_latency_ms")),
+            "retrieval_round_wall_clock_ms": _safe_float((rag_run or {}).get("retrieval_round_wall_clock_ms")),
+            "retrieval_tool_timings": list((rag_run or {}).get("retrieval_tool_timings") or [])
+            if isinstance((rag_run or {}).get("retrieval_tool_timings"), list)
+            else [],
             "retrieval_latency_ms": _safe_float((rag_run or {}).get("retrieval_latency_ms")),
             "rerank_latency_ms": _safe_float((rag_run or {}).get("rerank_latency_ms")),
             "generation_latency_ms": _safe_float((rag_run or {}).get("generation_latency_ms")),
@@ -669,6 +675,26 @@ def render_markdown_report(summary: dict[str, Any]) -> str:
     metrics = summary.get("metrics") if isinstance(summary.get("metrics"), dict) else {}
     raw_ids = summary.get("raw_ids") if isinstance(summary.get("raw_ids"), dict) else {}
     post_answer_artifacts_incomplete = bool(summary.get("post_answer_artifacts_incomplete"))
+    retrieval_tool_timings = (
+        list(rag_internal.get("retrieval_tool_timings") or [])
+        if isinstance(rag_internal.get("retrieval_tool_timings"), list)
+        else []
+    )
+    tool_timing_parts: list[str] = []
+    for item in retrieval_tool_timings:
+        if not isinstance(item, dict):
+            continue
+        tool_timing_parts.append(
+            (
+                f"{_format_value(item.get('tool_name'))}"
+                f"(query_kind={_format_value(item.get('query_kind'))}, "
+                f"round={_format_value(item.get('round_index'))}, "
+                f"index_role={_format_value(item.get('index_role'))}, "
+                f"latency_ms={_format_value(item.get('latency_ms'))}, "
+                f"candidate_count={_format_value(item.get('candidate_count'))}, "
+                f"used_seed_tool={_format_value(item.get('used_seed_tool'))})"
+            )
+        )
 
     lines = [
         "# SupportPortal Client Route Trace",
@@ -744,6 +770,10 @@ def render_markdown_report(summary: dict[str, Any]) -> str:
                 f"- rewrite_latency_ms: {_format_value(rag_internal.get('rewrite_latency_ms'))}",
                 f"- vector_retrieval_latency_ms: {_format_value(rag_internal.get('vector_retrieval_latency_ms'))}",
                 f"- bm25_retrieval_latency_ms: {_format_value(rag_internal.get('bm25_retrieval_latency_ms'))}",
+                f"- bm25_sql_latency_ms: {_format_value(rag_internal.get('bm25_sql_latency_ms'))}",
+                f"- fts_latency_ms: {_format_value(rag_internal.get('fts_latency_ms'))}",
+                f"- retrieval_round_wall_clock_ms: {_format_value(rag_internal.get('retrieval_round_wall_clock_ms'))}",
+                f"- retrieval_tool_timings: {_format_value('; '.join(tool_timing_parts) if tool_timing_parts else None)}",
                 f"- retrieval_latency_ms: {_format_value(rag_internal.get('retrieval_latency_ms'))}",
                 f"- rerank_latency_ms: {_format_value(rag_internal.get('rerank_latency_ms'))}",
                 f"- generation_latency_ms: {_format_value(rag_internal.get('generation_latency_ms'))}",
@@ -842,6 +872,12 @@ def _fetch_rag_query_run(request_id: str) -> dict[str, Any] | None:
         "rewrite_latency_ms": _safe_float(row[2]),
         "vector_retrieval_latency_ms": _safe_float(row[3]),
         "bm25_retrieval_latency_ms": _safe_float(row[4]),
+        "bm25_sql_latency_ms": _safe_float(query_understanding_meta.get("bm25_sql_latency_ms")),
+        "fts_latency_ms": _safe_float(query_understanding_meta.get("fts_latency_ms")),
+        "retrieval_round_wall_clock_ms": _safe_float(query_understanding_meta.get("retrieval_round_wall_clock_ms")),
+        "retrieval_tool_timings": list(query_understanding_meta.get("retrieval_tool_timings") or [])
+        if isinstance(query_understanding_meta.get("retrieval_tool_timings"), list)
+        else [],
         "retrieval_latency_ms": _safe_float(row[5]),
         "rerank_latency_ms": _safe_float(row[6]),
         "generation_latency_ms": _safe_float(row[7]),

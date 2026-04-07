@@ -11206,6 +11206,14 @@ class PostgresKnowledgeRepository:
             "answer_profile_fallback_used": bool(query_understanding_meta.get("answer_profile_fallback_used"))
             if query_understanding_meta.get("answer_profile_fallback_used") is not None
             else None,
+            "bm25_sql_latency_ms": _coalesce_metric(query_understanding_meta.get("bm25_sql_latency_ms")),
+            "fts_latency_ms": _coalesce_metric(query_understanding_meta.get("fts_latency_ms")),
+            "retrieval_round_wall_clock_ms": _coalesce_metric(
+                query_understanding_meta.get("retrieval_round_wall_clock_ms")
+            ),
+            "retrieval_tool_timings": list(query_understanding_meta.get("retrieval_tool_timings") or [])
+            if isinstance(query_understanding_meta.get("retrieval_tool_timings"), list)
+            else [],
             "confidence_score": _coalesce_metric(row[17]),
             "citation_count": int(row[18] or 0),
             "citation_coverage_ratio": _coalesce_metric(row[19]),
