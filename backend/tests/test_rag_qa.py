@@ -1319,7 +1319,7 @@ class RagQaHybridTests(unittest.TestCase):
         self.assertEqual(set(result.trace.cited_chunk_ids), {"join-android", "auth-android"})
         self.assertEqual(result.trace.citation_count, 2)
 
-    def test_run_rag_query_generic_join_channel_light_path_recovers_from_wrong_family_mix(self) -> None:
+    def test_run_rag_query_generic_join_channel_recovers_from_wrong_family_mix(self) -> None:
         join_chunk = RetrievedChunk(
             chunk_id="join-android",
             text="Call joinChannel(token, channelName, uid, options) to join a channel.",
@@ -1388,24 +1388,37 @@ class RagQaHybridTests(unittest.TestCase):
             },
         )
         captured_calls: list[list[str]] = []
+        query_understanding = QueryUnderstandingResult(
+            query_profile="en",
+            query_understanding_version="v2",
+            glossary_version="agora_glossary_en_v2",
+            self_query_version="v2",
+            normalized_query="how to join channel",
+            canonical_terms=["Channel"],
+            glossary_hits=[],
+            dictionary_hits=[{"canonical_term": "Channel"}],
+            retrieval_plan=RetrievalPlan(
+                semantic_query="how to join channel",
+                soft_signals={"topic": ["channel lifecycle"], "use_case": ["join_channel"]},
+                rule_expansions=["joinChannel token uid"],
+            ),
+            rewritten_queries=["join channel token uid"],
+            decomposition_subqueries=[],
+            fallback_mode="none",
+            intent_latency_ms=2.0,
+            rewrite_latency_ms=1.0,
+        )
 
-        def _bm25_side_effect(query: str, config: dict[str, object], *, limit: int, index_role: str = "primary") -> list[RetrievedChunk]:
-            _ = config
-            _ = limit
-            _ = index_role
-            normalized = " ".join(str(query or "").split()).strip().lower()
-            if "basic authentication" in normalized:
-                return [join_chunk, auth_chunk]
-            return [multi_chunk, stream_chunk]
-
-        def _fts_side_effect(query: str, config: dict[str, object], *, limit: int, index_role: str = "primary") -> list[RetrievedChunk]:
-            _ = config
-            _ = limit
-            _ = index_role
-            normalized = " ".join(str(query or "").split()).strip().lower()
-            if "basic authentication" in normalized:
-                return [auth_chunk, join_chunk]
-            return [broadcast_auth_chunk]
+        def _vector_side_effect(*args: object, **kwargs: object) -> list[RetrievedChunk]:
+            _ = args
+            _ = kwargs
+            return [
+                rag_qa._copy_chunk(stream_chunk),
+                rag_qa._copy_chunk(multi_chunk),
+                rag_qa._copy_chunk(broadcast_auth_chunk),
+                rag_qa._copy_chunk(auth_chunk),
+                rag_qa._copy_chunk(join_chunk),
+            ]
 
         def _capture_payload(
             message: str,
@@ -1471,28 +1484,31 @@ class RagQaHybridTests(unittest.TestCase):
             }
             with patch(
                 "backend.services.rag_qa._resolve_active_vector_table",
-                side_effect=AssertionError("vector table resolution should be skipped for simple lexical queries"),
+                return_value="supportportal.docagent_chunks_bge_m3_1024",
             ), patch(
                 "backend.services.rag_qa.get_embedding_provider",
-                side_effect=AssertionError("embedding provider should be skipped for simple lexical queries"),
+                return_value=self._FakeProvider(),
             ), patch(
                 "backend.services.rag_qa.understand_rag_query",
-                side_effect=AssertionError("query understanding should be skipped for simple lexical queries"),
+                return_value=query_understanding,
             ), patch(
                 "backend.services.rag_qa._invoke_agentic_planner",
-                side_effect=AssertionError("agent planner should be skipped for simple lexical queries"),
+                return_value=None,
             ), patch(
                 "backend.services.rag_qa._retrieve_chunks",
-                side_effect=AssertionError("vector retrieval should be skipped for simple lexical queries"),
+                side_effect=_vector_side_effect,
             ), patch(
                 "backend.services.rag_qa._retrieve_bm25_chunks",
-                side_effect=_bm25_side_effect,
+                return_value=[],
             ), patch(
                 "backend.services.rag_qa._retrieve_fts_chunks",
-                side_effect=_fts_side_effect,
+                return_value=[],
             ), patch(
                 "backend.services.rag_qa._retrieve_keyword_chunks",
                 return_value=[],
+            ), patch(
+                "backend.services.rag_qa._rerank_chunks",
+                side_effect=lambda query, chunks, config, *, limit=None: chunks,
             ), patch(
                 "backend.services.rag_qa._invoke_llm_payload_with_trace",
                 side_effect=_capture_payload,
@@ -1501,10 +1517,15 @@ class RagQaHybridTests(unittest.TestCase):
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(captured_calls[0][:2], ["join-android", "auth-android"])
+        self.assertEqual(set(captured_calls[0][:2]), {"join-android", "auth-android"})
+        self.assertNotIn("stream-join", captured_calls[0][:2])
+        self.assertNotIn("multi-join", captured_calls[0][:2])
         self.assertEqual(set(result.trace.cited_chunk_ids), {"join-android", "auth-android"})
-        self.assertEqual(result.trace.selected_chunk_ids[:2], ["join-android", "auth-android"])
+        self.assertEqual(set(result.trace.selected_chunk_ids[:2]), {"join-android", "auth-android"})
         self.assertEqual(result.trace.citation_count, 2)
+        self.assertEqual(result.trace.query_class, "how_to_faq")
+        self.assertFalse(result.trace.light_path_used)
+        self.assertFalse(result.trace.vector_setup_skipped)
 
     def test_run_rag_query_join_multiple_channels_keeps_multi_channel_context(self) -> None:
         multi_chunk = RetrievedChunk(
