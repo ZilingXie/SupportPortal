@@ -633,6 +633,11 @@ def _why_not_solved_text(unresolved_reason: str) -> str:
         return "The RAG service failed before it could return a grounded answer, so client AI could not respond safely."
     if normalized == "rag_unavailable":
         return "The RAG service was unavailable, so client AI could not retrieve a grounded answer for the customer."
+    if normalized == "rag_processing_timeout":
+        return (
+            "The RAG service stayed healthy, but the request timed out before it produced a grounded answer, "
+            "so client AI could not respond safely."
+        )
     if normalized == "rag_post_check_insufficient":
         return (
             "The current grounded answer is still missing a critical technical detail, so it is not safe "
@@ -682,6 +687,11 @@ def _default_missing_information(ticket: dict[str, Any], handoff_packet: dict[st
         return [
             "Confirm the RAG service configuration and shared auth are present.",
             "Verify the RAG service endpoint is reachable from the main backend and worker.",
+        ]
+    if unresolved_reason == "rag_processing_timeout":
+        return [
+            "Inspect the slow RAG request trace and confirm whether the run later completed.",
+            "Verify which retrieval stage or downstream dependency caused the request to exceed the worker wait window.",
         ]
     if unresolved_reason == "customer_follow_up":
         return ["Confirm the new scope introduced by the customer follow-up."]

@@ -9,7 +9,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 LOGGER = logging.getLogger(__name__)
@@ -33,10 +33,12 @@ class RagServiceError(RuntimeError):
         *,
         status_code: int | None = None,
         payload: Any | None = None,
+        failure_kind: str | None = None,
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.payload = payload
+        self.failure_kind = str(failure_kind or "").strip() or None
 
 
 @dataclass(frozen=True)
@@ -58,6 +60,40 @@ class RagTicketAnswerDetail:
             [dict(item) for item in self.citations],
             bool(self.needs_engineer_guidance),
         )
+
+
+def classify_rag_service_failure_kind(error: RagServiceError) -> str | None:
+    normalized = str(getattr(error, "failure_kind", "") or "").strip().lower()
+    if normalized in {"timeout", "transport", "http", "cancelled"}:
+        return normalized
+    if error.status_code is not None:
+        return "http"
+    message = str(error).strip().lower()
+    if "timeout" in message or "timed out" in message:
+        return "timeout"
+    if "request failed" in message or "not configured" in message:
+        return "transport"
+    return None
+
+
+def with_rag_detail_diagnostics(
+    detail: RagTicketAnswerDetail,
+    diagnostics: dict[str, Any] | None,
+) -> RagTicketAnswerDetail:
+    if not diagnostics:
+        return detail
+    merged_evidence = dict(detail.evidence_summary or {}) if isinstance(detail.evidence_summary, dict) else {}
+    existing_diagnostics = (
+        dict(merged_evidence.get("diagnostics"))
+        if isinstance(merged_evidence.get("diagnostics"), dict)
+        else {}
+    )
+    for key, value in diagnostics.items():
+        if value is not None:
+            existing_diagnostics[str(key)] = value
+    if existing_diagnostics:
+        merged_evidence["diagnostics"] = existing_diagnostics
+    return replace(detail, evidence_summary=merged_evidence or None)
 
 
 def map_rag_payload_to_ticket_answer_detail(
@@ -269,7 +305,7 @@ class RagServiceClient:
         timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         if not self.is_configured():
-            raise RagServiceError("RAG service is not configured")
+            raise RagServiceError("RAG service is not configured", failure_kind="transport")
 
         timeout = timeout_seconds if timeout_seconds is not None else self._timeout_seconds
         body: bytes | None = raw_body
@@ -290,13 +326,16 @@ class RagServiceClient:
                 return payload if isinstance(payload, dict) else {"payload": payload}
         except urllib.error.HTTPError as exc:
             payload = _json_loads(exc.read())
+            failure_kind = "cancelled" if int(exc.code) == 409 and str(payload.get("reason") or "").strip() == "cancelled_by_route_flip" else "http"
             raise RagServiceError(
                 f"RAG service returned HTTP {exc.code}",
                 status_code=int(exc.code),
                 payload=payload,
+                failure_kind=failure_kind,
             ) from exc
         except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as exc:
-            raise RagServiceError("RAG service request failed") from exc
+            failure_kind = "timeout" if isinstance(exc, (TimeoutError, socket.timeout)) else "transport"
+            raise RagServiceError("RAG service request failed", failure_kind=failure_kind) from exc
 
     def _request_text(
         self,
@@ -307,7 +346,7 @@ class RagServiceClient:
         timeout_seconds: float | None = None,
     ) -> str:
         if not self.is_configured():
-            raise RagServiceError("RAG service is not configured")
+            raise RagServiceError("RAG service is not configured", failure_kind="transport")
 
         timeout = timeout_seconds if timeout_seconds is not None else self._timeout_seconds
         request = urllib.request.Request(
@@ -320,13 +359,16 @@ class RagServiceClient:
                 return response.read().decode("utf-8", errors="replace")
         except urllib.error.HTTPError as exc:
             payload = _json_loads(exc.read())
+            failure_kind = "cancelled" if int(exc.code) == 409 and str(payload.get("reason") or "").strip() == "cancelled_by_route_flip" else "http"
             raise RagServiceError(
                 f"RAG service returned HTTP {exc.code}",
                 status_code=int(exc.code),
                 payload=payload,
+                failure_kind=failure_kind,
             ) from exc
         except (urllib.error.URLError, TimeoutError, socket.timeout, OSError) as exc:
-            raise RagServiceError("RAG service request failed") from exc
+            failure_kind = "timeout" if isinstance(exc, (TimeoutError, socket.timeout)) else "transport"
+            raise RagServiceError("RAG service request failed", failure_kind=failure_kind) from exc
 
     def query(
         self,
@@ -451,6 +493,13 @@ class RagServiceClient:
                 recovery_poll_interval_seconds=recovery_poll_interval_seconds,
             )
             if recovered is not None:
+                recovered = with_rag_detail_diagnostics(
+                    recovered,
+                    {
+                        "rag_recovered_from_live_detail": True,
+                        "rag_failure_kind": classify_rag_service_failure_kind(exc),
+                    },
+                )
                 LOGGER.warning(
                     "Recovered RAG answer from live detail after query failure request_id=%s "
                     "recovery_source=live_detail recovery_elapsed_ms=%.1f error=%s",
@@ -565,8 +614,10 @@ class RagServiceClient:
                     or exc.status_code >= 500
                 )
                 now = time.monotonic()
-                if not should_retry or now >= deadline:
+                if not should_retry:
                     return None
+                if now >= deadline:
+                    return self._recover_ticket_answer_detail_final_probe(request_id=request_id)
                 time.sleep(min(poll_interval_seconds, max(0.0, deadline - now)))
                 continue
 
@@ -576,9 +627,20 @@ class RagServiceClient:
 
             now = time.monotonic()
             if now >= deadline:
-                return None
+                return self._recover_ticket_answer_detail_final_probe(request_id=request_id)
             time.sleep(min(poll_interval_seconds, max(0.0, deadline - now)))
         return None
+
+    def _recover_ticket_answer_detail_final_probe(
+        self,
+        *,
+        request_id: str,
+    ) -> RagTicketAnswerDetail | None:
+        try:
+            payload = self.rag_dashboard_live_case_detail(request_id)
+        except RagServiceError:
+            return None
+        return map_live_detail_payload_to_ticket_answer_detail(payload)
 
     def upload_official_document(self, *, file_name: str, content: bytes) -> dict[str, Any]:
         body, content_type = _encode_multipart_form_data(

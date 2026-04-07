@@ -1653,6 +1653,66 @@ class InvestigationFlowTests(unittest.TestCase):
             ticket["active_investigation"]["messages"][0]["content"],
         )
 
+    def test_rag_processing_timeout_keeps_timeout_reason_in_ticket_and_handoff(self) -> None:
+        with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="Got it, let me check this for you.",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main.rag_service_client,
+            "query_answer_with_recovery_detail",
+            side_effect=main.RagServiceError(
+                "RAG service request failed",
+                failure_kind="timeout",
+            ),
+        ), patch.object(
+            main.rag_service_client,
+            "health",
+            return_value={"status": "ok", "service": "rag-api"},
+        ), patch.object(
+            main,
+            "decide_support_route",
+            return_value=_rag_route_decision(reason="joining_channel_support"),
+        ), patch.object(main, "_enqueue_or_defer_message_sentiment_tag", AsyncMock(return_value=False)), patch.object(
+            main,
+            "dispatch_event",
+            AsyncMock(),
+        ):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-RAG-TIMEOUT-100",
+                    "customer_id": "C-001",
+                    "product": "audio_video_calling",
+                    "message": "how to join channel",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "investigating")
+        self.assertEqual(payload["route_reason"], "rag_processing_timeout")
+
+        detail = self.client.get("/api/engineer/tickets/TK-RAG-TIMEOUT-100-1")
+        self.assertEqual(detail.status_code, 200, detail.text)
+        ticket = detail.json()["ticket"]
+        self.assertEqual(ticket["active_investigation"]["trigger_reason"], "rag_processing_timeout")
+        self.assertEqual(ticket["engineer_handoff_packet"]["route_summary"]["route_reason"], "rag_processing_timeout")
+        self.assertEqual(ticket["engineer_handoff_packet"]["unresolved_reason"], "rag_processing_timeout")
+        self.assertEqual(
+            ticket["engineer_handoff_packet"]["rag_result"]["candidate_answer"],
+            "RAG processing timed out before a grounded answer could be produced.",
+        )
+        self.assertIn("processing timed out", ticket["active_investigation"]["messages"][0]["content"])
+
     def test_black_screen_rag_service_error_persists_intake_gate_before_opening_engineer_ticket(self) -> None:
         clarify_reply = (
             "Known so far: the issue symptom is black screen issue. "

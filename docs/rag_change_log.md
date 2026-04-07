@@ -2722,3 +2722,34 @@ For each new entry, record:
     - container timings around `bm25 3.60–3.69s`, `fts 2.79–3.13s`
     - recent 24h `bm25_retrieval_latency_ms` percentiles of `P50≈59.1s`, `P90≈86.2s`, `P99≈128.5s`
     - `EXPLAIN` comparison of `current BM25 ≈ 150.6ms` vs `proposed top_scored-before-vector-join ≈ 102.0ms` on the sampled live query, with FTS explain around `55.1ms`
+
+## 2026-04-07 - Reclassify slow async RAG failures as processing timeouts instead of service unavailability
+
+- Summary:
+  - Added machine-readable RAG failure kinds (`timeout`, `transport`, `http`, `cancelled`) to `RagServiceError`, propagated them through recovery diagnostics, and taught live-detail recovery to perform one final probe at the deadline edge.
+  - Extended async worker wait budgeting with a new `TICKET_WORKER_RAG_MAX_WAIT_SECONDS` ceiling (default `300s`) and derived the worker recovery window from `max_wait - timeout`, so slow-but-successful RAG runs are given a full 5-minute total budget before fallback.
+  - Introduced the new internal reason `rag_processing_timeout` for “RAG stayed healthy but this request did not finish within the worker wait cap”, and wired that reason through the client runtime, investigation handoff context, and engineer-facing summaries.
+- Reason:
+  - Live investigation showed repeated `rag_unavailable` fallbacks even though the same `request_id` later completed successfully in `support_rag_query_runs`; the async worker was timing out before slow BM25-heavy runs finished and then sometimes missing the late live-detail result.
+  - We needed to stop misclassifying slow processing as service unavailability before doing deeper lexical performance work, so the workflow could preserve the correct failure reason and avoid misleading engineer/context summaries.
+- Affected files/config:
+  - `backend/services/rag_service_client.py`
+  - `backend/worker.py`
+  - `backend/main.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/services/investigation_flow.py`
+  - `backend/services/engineer_agent.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `backend/tests/test_worker.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, vector-table, or model changes.
+  - Async worker requests now default to a `90s` request timeout plus a derived `210s` live-detail recovery window under a `300s` max wait cap.
+  - Slow but healthy requests now fall back as `rag_processing_timeout` instead of `rag_unavailable`, while true connectivity/configuration failures continue to surface as `rag_unavailable` and true HTTP/service failures continue to surface as `rag_service_error`.
+  - RAG diagnostics now carry `rag_failure_kind`, `rag_timeout_seconds`, `rag_recovery_window_seconds`, `rag_max_wait_seconds`, `rag_recovered_from_live_detail`, and `rag_timeout_health_check_status` so later performance work can distinguish timeout behavior from real outages.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_rag_service_client.py backend/tests/test_worker.py backend/tests/test_client_ticket_agent_runtime.py backend/tests/test_investigation_flow.py`
+  - `python3 -m py_compile backend/services/rag_service_client.py backend/worker.py backend/main.py backend/services/client_ticket_agent_runtime.py backend/services/investigation_flow.py backend/services/engineer_agent.py backend/tests/test_rag_service_client.py backend/tests/test_worker.py backend/tests/test_client_ticket_agent_runtime.py backend/tests/test_investigation_flow.py`
+  - `git diff --check`

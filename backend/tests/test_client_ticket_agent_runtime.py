@@ -627,6 +627,101 @@ class ClientTicketAgentRuntimeContractTests(unittest.TestCase):
             execution.result.client_intake_state["missing_information"],
             ["channel_name", "problematic_uid", "issue_timestamp"],
         )
+
+    def test_rag_processing_timeout_skips_review_for_non_troubleshooting_queries(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        execution = execute_client_ticket_agent_runtime(
+            message="How do I join channel?",
+            ticket_id="TK-RAG-TIMEOUT-1",
+            customer_id="C-001",
+            ticket_subject="Join channel",
+            ticket_context=[{"role": "customer", "content": "How do I join channel?"}],
+            product="audio_video_calling",
+            message_id="2026-04-04T00:00:00+00:00",
+            route_agent=lambda **_kwargs: SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                confidence=0.94,
+                reason="technical_question",
+                matched_signals=["join channel"],
+                response_language="en",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+            ),
+            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                answer="",
+                confidence=0.0,
+                sources=[],
+                citations=[],
+                needs_engineer_guidance=True,
+                reason="rag_processing_timeout",
+                evidence_summary={"diagnostics": {"rag_failure_kind": "timeout"}},
+                packed_evidence=None,
+            ),
+            review_agent=lambda **_kwargs: self.fail("review agent should not run for rag_processing_timeout"),
+            rag_canceler=None,
+        )
+
+        self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
+        self.assertEqual(execution.result.investigation_reason, "rag_processing_timeout")
+        self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
+
+    def test_troubleshooting_rag_processing_timeout_routes_into_intake_clarification(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        execution = execute_client_ticket_agent_runtime(
+            message="i got black screen, what should i do?",
+            ticket_id="TK-RAG-TIMEOUT-TRBL-1",
+            customer_id="C-001",
+            ticket_subject="Black screen",
+            ticket_context=[{"role": "customer", "content": "i got black screen, what should i do?"}],
+            product="audio_video_calling",
+            message_id="2026-04-04T00:00:00+00:00",
+            route_agent=lambda **_kwargs: SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                confidence=0.94,
+                reason="technical_question",
+                matched_signals=["black screen"],
+                response_language="en",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+            ),
+            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                answer="",
+                confidence=0.0,
+                sources=[],
+                citations=[],
+                needs_engineer_guidance=True,
+                reason="rag_processing_timeout",
+                evidence_summary={"diagnostics": {"rag_failure_kind": "timeout"}},
+                packed_evidence=None,
+            ),
+            review_agent=lambda **_kwargs: TroubleshootingIntakeResult(
+                issue_mode="investigation",
+                known_information={"issue_symptom": "black screen issue"},
+                missing_information=["channel_name", "problematic_uid", "issue_timestamp"],
+                ready_for_engineer_ticket=False,
+                customer_reply=(
+                    "Known so far: the issue symptom is black screen issue. "
+                    "To investigate this Audio/Video Calling issue, please share the channel name, "
+                    "problematic uid, and issue timestamp."
+                ),
+            ),
+            rag_canceler=None,
+        )
+
+        self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
+        self.assertEqual(
+            execution.result.client_intake_state["pending_investigation_reason"],
+            "rag_processing_timeout",
+        )
+        self.assertEqual(execution.runtime_state.review_agent.get("status"), "completed")
         self.assertEqual(execution.runtime_state.review_agent.get("decision"), "clarify_customer_for_intake")
 
     def test_grounded_answer_high_risk_waits_for_review(self) -> None:
