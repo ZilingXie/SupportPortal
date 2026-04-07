@@ -666,6 +666,79 @@ class RagBenchmarkRunnerTests(unittest.TestCase):
         self.assertEqual(first_row["expected_document_ids"], ["official-doc-1"])
         self.assertEqual(first_row["expected_heading_paths"], ["Setup"])
 
+    def test_run_benchmark_marks_eval_run_failed_on_keyboard_interrupt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dataset_path = Path(tmpdir) / "dataset.jsonl"
+            dataset_path.write_text(
+                json.dumps(
+                    {
+                        "test_case_id": "case-interrupt-1",
+                        "question": "How do I use it?",
+                        "query_type": "faq",
+                        "source_type": "official_markdown_upload",
+                        "expected_document_ids": ["official-doc-1"],
+                        "expected_heading_paths": ["Setup"],
+                        "expected_evidence_refs": [{"chunk_id": "chunk-1", "doc_id": "official-doc-1", "heading": "Setup"}],
+                        "answer_key_points": ["Use the official guide."],
+                        "expected_handoff": False,
+                        "tags": ["faq"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            repository = _FakeRepository()
+
+            with self.assertRaises(KeyboardInterrupt):
+                run_benchmark(
+                    dataset_path=dataset_path,
+                    experiment_id="exp-interrupt-1",
+                    repository=repository,
+                    query_runner=mock.Mock(side_effect=KeyboardInterrupt()),
+                    judge_runner=_fake_judge_runner,
+                )
+
+        self.assertEqual(repository.eval_runs[0]["status"], "running")
+        self.assertEqual(repository.eval_runs[-1]["status"], "failed")
+
+    def test_run_benchmark_default_judge_timeout_becomes_error_vote_without_stalling_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dataset_path = Path(tmpdir) / "dataset.jsonl"
+            dataset_path.write_text(
+                json.dumps(
+                    {
+                        "test_case_id": "case-judge-timeout-1",
+                        "question": "How do I use it?",
+                        "query_type": "faq",
+                        "source_type": "official_markdown_upload",
+                        "expected_document_ids": ["official-doc-1"],
+                        "expected_heading_paths": ["Setup"],
+                        "expected_evidence_refs": [{"chunk_id": "chunk-1", "doc_id": "official-doc-1", "heading": "Setup"}],
+                        "answer_key_points": ["Use the official guide."],
+                        "expected_handoff": False,
+                        "tags": ["faq"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            repository = _FakeRepository()
+
+            with mock.patch(
+                "backend.services.rag_benchmark_runner._invoke_builtin_judge_vote_in_subprocess",
+                side_effect=RuntimeError("judge timed out after 30.0s"),
+            ):
+                summary = run_benchmark(
+                    dataset_path=dataset_path,
+                    experiment_id="exp-judge-timeout-1",
+                    repository=repository,
+                    query_runner=_fake_query_runner,
+                )
+
+        self.assertEqual(summary["case_count"], 1)
+        self.assertEqual(repository.eval_runs[-1]["status"], "completed")
+        first_row = repository.eval_results[0]["rows"][0]
+        self.assertEqual(len(first_row["judge_votes"]), 3)
+        self.assertTrue(all(vote.get("error") == "judge timed out after 30.0s" for vote in first_row["judge_votes"]))
+
     def test_run_benchmark_emits_refactored_retrieval_generation_and_performance_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             dataset_path = Path(tmpdir) / "dataset.jsonl"

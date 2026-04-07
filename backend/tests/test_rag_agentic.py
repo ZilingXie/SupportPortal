@@ -103,7 +103,7 @@ class RagAgenticTests(unittest.TestCase):
         self.assertEqual(plan.query_variants[0][0], "original")
         self.assertTrue(plan.ticket_context_used)
 
-    def test_build_agentic_retrieval_plan_uses_lean_first_pass_for_simple_lexical_query(self) -> None:
+    def test_build_agentic_retrieval_plan_uses_vector_first_pass_for_short_how_to_faq(self) -> None:
         plan = _build_agentic_retrieval_plan(
             message="how to join channel",
             top_k=5,
@@ -111,9 +111,21 @@ class RagAgenticTests(unittest.TestCase):
             ticket_context=None,
         )
 
+        self.assertEqual(plan.query_class, "how_to_faq")
+        self.assertEqual(plan.first_pass_tools, ["p_vec", "s_vec"])
+        self.assertEqual(plan.query_variants, [("original", "how to join channel")])
+
+    def test_build_agentic_retrieval_plan_keeps_lean_first_pass_for_exact_error_lookup(self) -> None:
+        plan = _build_agentic_retrieval_plan(
+            message="what does error 109 mean",
+            top_k=5,
+            query_understanding=None,
+            ticket_context=None,
+        )
+
         self.assertEqual(plan.query_class, "lexical_exact")
         self.assertEqual(plan.first_pass_tools, ["p_bm25", "p_fts"])
-        self.assertEqual(plan.query_variants, [("original", "how to join channel")])
+        self.assertTrue(plan.light_path)
 
     def test_expand_agentic_variants_adds_focused_join_recovery_queries_for_light_path(self) -> None:
         plan = AgenticRetrievalPlan(

@@ -209,6 +209,7 @@ class PromptModuleTests(unittest.TestCase):
         self.assertIn("Audio/Video Calling issue", system_prompt)
         self.assertIn("## Product Scope", system_prompt)
         self.assertIn("## Output Requirements", system_prompt)
+        self.assertIn('"how_to_faq"', system_prompt)
         self.assertIn("## Latest User Question", user_prompt)
         self.assertIn("## Ticket Context", user_prompt)
         self.assertIn("## Query Understanding Prior", user_prompt)

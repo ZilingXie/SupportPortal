@@ -202,6 +202,13 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("def record_ticket_agent_event", repo_source)
         self.assertIn("def list_ticket_agent_events", repo_source)
 
+    def test_ticket_storage_contract_includes_support_ticket_message_meta(self) -> None:
+        sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
+        repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+
+        self.assertIn("meta JSONB NOT NULL DEFAULT '{}'::jsonb", sql_source)
+        self.assertIn("ALTER TABLE {} ADD COLUMN IF NOT EXISTS meta JSONB NOT NULL DEFAULT '{{}}'::jsonb", repo_source)
+
     def test_ticket_repository_requires_ticket_db_dsn(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(RuntimeError):
@@ -732,6 +739,88 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIsNotNone(ticket)
         self.assertEqual(ticket["client_agent_runtime_state"]["active_run_id"], "run-123")
         self.assertEqual(ticket["client_agent_runtime_state"]["review_agent"]["status"], "skipped")
+
+    def test_ticket_repository_save_ticket_persists_assistant_message_meta_fields(self) -> None:
+        repository = PostgresTicketRepository(dsn="postgresql://example")
+        cursor = _ReusableCursor()
+        connection = _ReusableConnection(cursor)
+        ticket = {
+            "ticket_id": "T-1",
+            "customer_id": "C-1",
+            "requester": "Requester",
+            "subject": "Subject",
+            "status": "communicating",
+            "created_at": "2026-03-31T00:00:00+00:00",
+            "updated_at": "2026-03-31T00:00:00+00:00",
+        }
+        message = {
+            "role": "assistant",
+            "content": "Use joinChannel with a token.",
+            "created_at": "2026-04-04T00:00:01+00:00",
+            "sources": ["https://docs.example.invalid/join"],
+            "citations": [{"chunk_id": "chunk-1"}],
+            "answer_route": "rag",
+            "route_reason": "grounded_answer",
+            "workflow_action": "answer_customer",
+            "client_agent_run_id": "run-123",
+            "client_agent_runtime_status": "completed",
+            "client_intake_phase": "gather_customer_inputs",
+            "client_intake_ready_for_engineer_ticket": False,
+            "client_intake_missing_information": ["channel_name"],
+        }
+
+        with patch("backend.repositories.ticket_repository.psycopg.connect", return_value=connection):
+            repository.save_ticket(ticket, new_messages=[message])
+
+        insert_args = cursor.executed[1][0]
+        self.assertIn("meta", str(insert_args[0]).lower())
+        self.assertEqual(insert_args[1][5].obj, ["https://docs.example.invalid/join"])
+        self.assertEqual(insert_args[1][6].obj, [{"chunk_id": "chunk-1"}])
+        self.assertEqual(insert_args[1][7].obj["answer_route"], "rag")
+        self.assertEqual(insert_args[1][7].obj["route_reason"], "grounded_answer")
+        self.assertEqual(insert_args[1][7].obj["client_agent_run_id"], "run-123")
+        self.assertEqual(insert_args[1][7].obj["client_intake_missing_information"], ["channel_name"])
+
+    def test_ticket_repository_fetch_messages_flattens_assistant_message_meta_fields(self) -> None:
+        repository = PostgresTicketRepository(dsn="postgresql://example")
+        connection = _ReusableConnection(
+            _ReusableCursor(
+                fetchall_results=[
+                    [
+                        (
+                            "T-1",
+                            "assistant",
+                            "Use joinChannel with a token.",
+                            "2026-04-04T00:00:01+00:00",
+                            None,
+                            ["https://docs.example.invalid/join"],
+                            [{"chunk_id": "chunk-1"}],
+                            {
+                                "answer_route": "rag",
+                                "route_reason": "grounded_answer",
+                                "workflow_action": "answer_customer",
+                                "client_agent_run_id": "run-123",
+                                "client_agent_runtime_status": "completed",
+                                "client_intake_phase": "gather_customer_inputs",
+                                "client_intake_ready_for_engineer_ticket": False,
+                                "client_intake_missing_information": ["channel_name"],
+                            },
+                        )
+                    ]
+                ]
+            )
+        )
+
+        messages = repository._fetch_messages(connection, ["T-1"])
+
+        self.assertEqual(messages["T-1"][0]["answer_route"], "rag")
+        self.assertEqual(messages["T-1"][0]["route_reason"], "grounded_answer")
+        self.assertEqual(messages["T-1"][0]["workflow_action"], "answer_customer")
+        self.assertEqual(messages["T-1"][0]["client_agent_run_id"], "run-123")
+        self.assertEqual(messages["T-1"][0]["client_intake_phase"], "gather_customer_inputs")
+        self.assertEqual(messages["T-1"][0]["client_intake_missing_information"], ["channel_name"])
+        self.assertEqual(messages["T-1"][0]["sources"], ["https://docs.example.invalid/join"])
+        self.assertEqual(messages["T-1"][0]["citations"], [{"chunk_id": "chunk-1"}])
 
     def test_ticket_repository_record_and_list_ticket_agent_events(self) -> None:
         repository = PostgresTicketRepository(dsn="postgresql://example")

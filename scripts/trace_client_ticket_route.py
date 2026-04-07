@@ -30,6 +30,7 @@ DEFAULT_BASE_URL = "http://127.0.0.1:8080"
 DEFAULT_MESSAGE = "how to join channel"
 DEFAULT_PRODUCT = "audio_video_calling"
 DEFAULT_TRACE_OUTPUT_DIR = Path("/tmp/supportportal-traces")
+DEFAULT_POST_ANSWER_ARTIFACT_TIMEOUT_SECONDS = 15.0
 
 
 def create_ticket_repository():
@@ -598,6 +599,17 @@ def build_trace_summary(
             "rerank_latency_ms": _safe_float((rag_run or {}).get("rerank_latency_ms")),
             "generation_latency_ms": _safe_float((rag_run or {}).get("generation_latency_ms")),
             "total_latency_ms": _safe_float((rag_run or {}).get("total_latency_ms")),
+            "query_class": _clean_text((rag_run or {}).get("query_class")) or None,
+            "light_path_used": bool((rag_run or {}).get("light_path_used"))
+            if (rag_run or {}).get("light_path_used") is not None
+            else None,
+            "vector_setup_skipped": bool((rag_run or {}).get("vector_setup_skipped"))
+            if (rag_run or {}).get("vector_setup_skipped") is not None
+            else None,
+            "answer_profile_used": _clean_text((rag_run or {}).get("answer_profile_used")) or None,
+            "answer_profile_fallback_used": bool((rag_run or {}).get("answer_profile_fallback_used"))
+            if (rag_run or {}).get("answer_profile_fallback_used") is not None
+            else None,
         },
         "final_result": {
             "answer": _clean_text(final_assistant.get("content")),
@@ -606,14 +618,17 @@ def build_trace_summary(
                 _clean_text(final_assistant.get("route_reason"))
                 or _clean_text(response_ready_payload.get("route_reason"))
                 or main_summary.get("reason")
+                or rag_summary.get("reason")
             ),
             "answer_route": (
                 _clean_text(final_assistant.get("answer_route"))
                 or _clean_text(response_ready_payload.get("answer_route"))
+                or route_summary.get("decision")
                 or None
             ),
             "workflow_action": workflow_action,
         },
+        "post_answer_artifacts_incomplete": not bool(response_ready_payload),
         "metrics": {
             "question_to_final_answer_ms": _duration_ms(question_started_at, final_answer_created_at),
             "ack_to_final_answer_ms": _duration_ms(ack_received_at, final_answer_created_at),
@@ -653,6 +668,7 @@ def render_markdown_report(summary: dict[str, Any]) -> str:
     final_result = summary.get("final_result") if isinstance(summary.get("final_result"), dict) else {}
     metrics = summary.get("metrics") if isinstance(summary.get("metrics"), dict) else {}
     raw_ids = summary.get("raw_ids") if isinstance(summary.get("raw_ids"), dict) else {}
+    post_answer_artifacts_incomplete = bool(summary.get("post_answer_artifacts_incomplete"))
 
     lines = [
         "# SupportPortal Client Route Trace",
@@ -732,6 +748,11 @@ def render_markdown_report(summary: dict[str, Any]) -> str:
                 f"- rerank_latency_ms: {_format_value(rag_internal.get('rerank_latency_ms'))}",
                 f"- generation_latency_ms: {_format_value(rag_internal.get('generation_latency_ms'))}",
                 f"- total_latency_ms: {_format_value(rag_internal.get('total_latency_ms'))}",
+                f"- query_class: `{_format_value(rag_internal.get('query_class'))}`",
+                f"- light_path_used: {_format_value(rag_internal.get('light_path_used'))}",
+                f"- vector_setup_skipped: {_format_value(rag_internal.get('vector_setup_skipped'))}",
+                f"- answer_profile_used: `{_format_value(rag_internal.get('answer_profile_used'))}`",
+                f"- answer_profile_fallback_used: {_format_value(rag_internal.get('answer_profile_fallback_used'))}",
             ]
         )
     lines.extend(
@@ -750,6 +771,7 @@ def render_markdown_report(summary: dict[str, Any]) -> str:
             f"- route_reason: `{_format_value(final_result.get('route_reason'))}`",
             f"- workflow_action: `{_format_value(final_result.get('workflow_action'))}`",
             f"- answer_created_at: `{_format_value(final_result.get('answer_created_at'))}`",
+            f"- post_answer_artifacts_incomplete: {_format_value(post_answer_artifacts_incomplete)}",
             f"- answer: {_format_value(final_result.get('answer'))}",
             "",
             "## 总结指标",
@@ -795,7 +817,8 @@ def _fetch_rag_query_run(request_id: str) -> dict[str, Any] | None:
                             retrieval_latency_ms,
                             rerank_latency_ms,
                             generation_latency_ms,
-                            total_latency_ms
+                            total_latency_ms,
+                            query_understanding_meta
                         FROM {}
                         WHERE request_id = %s
                         ORDER BY created_at DESC
@@ -812,6 +835,7 @@ def _fetch_rag_query_run(request_id: str) -> dict[str, Any] | None:
         }
     if row is None:
         return None
+    query_understanding_meta = row[9] if isinstance(row[9], dict) else {}
     return {
         "request_id": str(row[0]),
         "intent_latency_ms": _safe_float(row[1]),
@@ -822,6 +846,17 @@ def _fetch_rag_query_run(request_id: str) -> dict[str, Any] | None:
         "rerank_latency_ms": _safe_float(row[6]),
         "generation_latency_ms": _safe_float(row[7]),
         "total_latency_ms": _safe_float(row[8]),
+        "query_class": _clean_text(query_understanding_meta.get("query_class")) or None,
+        "light_path_used": bool(query_understanding_meta.get("light_path_used"))
+        if query_understanding_meta.get("light_path_used") is not None
+        else None,
+        "vector_setup_skipped": bool(query_understanding_meta.get("vector_setup_skipped"))
+        if query_understanding_meta.get("vector_setup_skipped") is not None
+        else None,
+        "answer_profile_used": _clean_text(query_understanding_meta.get("answer_profile_used")) or None,
+        "answer_profile_fallback_used": bool(query_understanding_meta.get("answer_profile_fallback_used"))
+        if query_understanding_meta.get("answer_profile_fallback_used") is not None
+        else None,
     }
 
 
@@ -876,6 +911,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout-seconds", type=float, default=90.0)
     parser.add_argument("--poll-interval-seconds", type=float, default=0.5)
     parser.add_argument("--rag-telemetry-timeout-seconds", type=float, default=6.0)
+    parser.add_argument(
+        "--post-answer-artifact-timeout-seconds",
+        type=float,
+        default=DEFAULT_POST_ANSWER_ARTIFACT_TIMEOUT_SECONDS,
+    )
     parser.add_argument("--event-limit", type=int, default=200)
     parser.add_argument("--output-dir", default=str(DEFAULT_TRACE_OUTPUT_DIR))
     return parser
@@ -931,11 +971,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     runtime_state = ticket.get("client_agent_runtime_state") if isinstance(ticket.get("client_agent_runtime_state"), dict) else {}
     run_id = _clean_text(runtime_state.get("active_run_id")) or None
+    post_answer_artifact_timeout_seconds = max(float(args.post_answer_artifact_timeout_seconds), 0.5)
     ticket_events = wait_for_ticket_events(
         ticket_repository=ticket_repository,
         ticket_id=ticket_id,
         target_event_type="ticket_ai_response_ready",
-        timeout_seconds=min(float(args.timeout_seconds), 6.0),
+        timeout_seconds=post_answer_artifact_timeout_seconds,
         poll_interval_seconds=args.poll_interval_seconds,
         limit=max(int(args.event_limit), 20),
     )
@@ -943,7 +984,7 @@ def main(argv: list[str] | None = None) -> int:
         ticket_repository=ticket_repository,
         ticket_id=ticket_id,
         run_id=run_id,
-        timeout_seconds=min(float(args.timeout_seconds), 6.0),
+        timeout_seconds=post_answer_artifact_timeout_seconds,
         poll_interval_seconds=args.poll_interval_seconds,
         limit=max(int(args.event_limit), 20),
     )

@@ -30,6 +30,7 @@ erDiagram
         jsonb sources
         jsonb citations
         text sentiment_label
+        jsonb meta
     }
 
     support_ticket_events {
@@ -94,6 +95,7 @@ erDiagram
   - engineer UI 的唯一 canonical work item identity
 - `support_ticket_messages`
   - parent client ticket 的公开对话
+  - route/runtime/client-intake 等扩展消息元数据持久化在 `meta`
 - `support_engineer_case_messages`
   - engineer AI / engineer 的内部调查线程
 - `support_ticket_events`

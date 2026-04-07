@@ -35,7 +35,7 @@ _RETRYABLE_STORAGE_ERROR_SNIPPETS = (
 _ResultT = TypeVar("_ResultT")
 _VALID_MESSAGE_SENTIMENTS = {"good", "bad", "neutral"}
 _TICKET_SCHEMA_VERSION_KEY = "ticket_flow_schema_version"
-_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v7-client-agent-runtime"
+_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v8-message-meta"
 _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
     "2026-single-ai-managed-v2",
     "2026-single-ai-managed-v3",
@@ -43,6 +43,15 @@ _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
     "2026-single-ai-managed-v5",
     "2026-single-ai-managed-v6",
     "2026-single-ai-managed-v7-client-agent-runtime",
+    "2026-single-ai-managed-v8-message-meta",
+}
+_TICKET_MESSAGE_PERSISTED_FIELDS = {
+    "role",
+    "content",
+    "created_at",
+    "sentiment_label",
+    "sources",
+    "citations",
 }
 
 
@@ -163,6 +172,21 @@ def _normalize_client_agent_runtime_state(value: Any) -> dict[str, Any] | None:
         else:
             normalized[agent_key] = {}
     return normalized
+
+
+def _ticket_message_meta(message: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(message, dict):
+        return {}
+    meta: dict[str, Any] = {}
+    raw_meta = message.get("meta")
+    if isinstance(raw_meta, dict):
+        meta.update(copy.deepcopy(raw_meta))
+    for key, value in message.items():
+        normalized_key = str(key or "").strip()
+        if not normalized_key or normalized_key in _TICKET_MESSAGE_PERSISTED_FIELDS or normalized_key == "meta":
+            continue
+        meta[normalized_key] = copy.deepcopy(value)
+    return meta
 
 
 def _safe_positive_int(value: Any, default_value: int) -> int:
@@ -1194,13 +1218,19 @@ class PostgresTicketRepository:
                             created_at TIMESTAMPTZ NOT NULL,
                             sentiment_label TEXT,
                             sources JSONB,
-                            citations JSONB
+                            citations JSONB,
+                            meta JSONB NOT NULL DEFAULT '{{}}'::jsonb
                         )
                         """
                     ).format(
                         self._table("support_ticket_messages"),
                         self._table("support_tickets"),
                     )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS meta JSONB NOT NULL DEFAULT '{{}}'::jsonb"
+                    ).format(self._table("support_ticket_messages"))
                 )
                 cur.execute(
                     sql.SQL(
@@ -1625,7 +1655,7 @@ class PostgresTicketRepository:
             cur.execute(
                 sql.SQL(
                     """
-                    SELECT ticket_id, role, content, created_at, sentiment_label, sources, citations
+                    SELECT ticket_id, role, content, created_at, sentiment_label, sources, citations, meta
                     FROM {}
                     WHERE ticket_id = ANY(%s)
                     ORDER BY created_at ASC, id ASC
@@ -1645,6 +1675,12 @@ class PostgresTicketRepository:
                     message["sources"] = row[5]
                 if row[6]:
                     message["citations"] = row[6]
+                if isinstance(row[7], dict):
+                    for key, value in row[7].items():
+                        normalized_key = str(key or "").strip()
+                        if not normalized_key or normalized_key in message:
+                            continue
+                        message[normalized_key] = value
                 grouped[str(row[0])].append(message)
         return grouped
 
@@ -2043,6 +2079,7 @@ class PostgresTicketRepository:
                         )
                         sources = message.get("sources")
                         citations = message.get("citations")
+                        meta = _ticket_message_meta(message)
                         cur.execute(
                             sql.SQL(
                                 """
@@ -2053,9 +2090,10 @@ class PostgresTicketRepository:
                                     created_at,
                                     sentiment_label,
                                     sources,
-                                    citations
+                                    citations,
+                                    meta
                                 )
-                                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                                 """
                             ).format(self._table("support_ticket_messages")),
                             (
@@ -2066,6 +2104,7 @@ class PostgresTicketRepository:
                                 sentiment_label,
                                 Json(sources) if sources else None,
                                 Json(citations) if citations else None,
+                                Json(meta),
                             ),
                         )
 
