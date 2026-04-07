@@ -976,6 +976,20 @@ class RagScorecardRepositoryTests(unittest.TestCase):
                     "vector_setup_skipped": False,
                     "answer_profile_used": "gpt-5.4",
                     "answer_profile_fallback_used": False,
+                    "bm25_sql_latency_ms": 22.0,
+                    "fts_latency_ms": 10.0,
+                    "retrieval_round_wall_clock_ms": 145.0,
+                    "retrieval_tool_timings": [
+                        {
+                            "tool_name": "p_bm25",
+                            "query_kind": "original",
+                            "round_index": 1,
+                            "index_role": "primary",
+                            "latency_ms": 22.0,
+                            "candidate_count": 12,
+                            "used_seed_tool": False,
+                        }
+                    ],
                 },
                 0.95,
                 1,
@@ -1009,6 +1023,10 @@ class RagScorecardRepositoryTests(unittest.TestCase):
         self.assertFalse(payload["vector_setup_skipped"])
         self.assertEqual(payload["answer_profile_used"], "gpt-5.4")
         self.assertFalse(payload["answer_profile_fallback_used"])
+        self.assertEqual(payload["bm25_sql_latency_ms"], 22.0)
+        self.assertEqual(payload["fts_latency_ms"], 10.0)
+        self.assertEqual(payload["retrieval_round_wall_clock_ms"], 145.0)
+        self.assertEqual(payload["retrieval_tool_timings"][0]["tool_name"], "p_bm25")
 
     def test_benchmark_session_payload_for_eval_run_orders_runs_by_catalog_snapshot(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")

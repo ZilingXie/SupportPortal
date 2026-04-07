@@ -224,6 +224,29 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
                 "rewrite_latency_ms": 18.0,
                 "vector_retrieval_latency_ms": 140.0,
                 "bm25_retrieval_latency_ms": 32.0,
+                "bm25_sql_latency_ms": 22.0,
+                "fts_latency_ms": 10.0,
+                "retrieval_round_wall_clock_ms": 145.0,
+                "retrieval_tool_timings": [
+                    {
+                        "tool_name": "p_bm25",
+                        "query_kind": "original",
+                        "round_index": 1,
+                        "index_role": "primary",
+                        "latency_ms": 22.0,
+                        "candidate_count": 12,
+                        "used_seed_tool": False,
+                    },
+                    {
+                        "tool_name": "p_fts",
+                        "query_kind": "original",
+                        "round_index": 1,
+                        "index_role": "primary",
+                        "latency_ms": 10.0,
+                        "candidate_count": 12,
+                        "used_seed_tool": False,
+                    },
+                ],
                 "retrieval_latency_ms": 172.0,
                 "rerank_latency_ms": 65.0,
                 "generation_latency_ms": 1830.0,
@@ -249,6 +272,10 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
         self.assertFalse(summary["rag_internal_telemetry"]["vector_setup_skipped"])
         self.assertEqual(summary["rag_internal_telemetry"]["answer_profile_used"], "gpt-5.4")
         self.assertFalse(summary["rag_internal_telemetry"]["answer_profile_fallback_used"])
+        self.assertEqual(summary["rag_internal_telemetry"]["bm25_sql_latency_ms"], 22.0)
+        self.assertEqual(summary["rag_internal_telemetry"]["fts_latency_ms"], 10.0)
+        self.assertEqual(summary["rag_internal_telemetry"]["retrieval_round_wall_clock_ms"], 145.0)
+        self.assertEqual(len(summary["rag_internal_telemetry"]["retrieval_tool_timings"]), 2)
         self.assertEqual(summary["final_result"]["answer_route"], "rag")
         self.assertFalse(summary["post_answer_artifacts_incomplete"])
         self.assertEqual(summary["admission"]["load_ticket_ms"], 11.0)
@@ -268,6 +295,10 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
         self.assertIn("RAG 内部分段", markdown)
         self.assertIn("query_class", markdown)
         self.assertIn("answer_profile_used", markdown)
+        self.assertIn("bm25_sql_latency_ms", markdown)
+        self.assertIn("fts_latency_ms", markdown)
+        self.assertIn("retrieval_round_wall_clock_ms", markdown)
+        self.assertIn("retrieval_tool_timings", markdown)
         self.assertIn("grounded_answer", markdown)
         self.assertIn("Admission 分段", markdown)
         self.assertIn("Queue / Dispatch", markdown)
