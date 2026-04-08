@@ -10,7 +10,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field, replace
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from backend.services.embedding_provider import (
     DEFAULT_PGVECTOR_TABLE,
@@ -293,6 +293,8 @@ class RagQueryTrace:
     light_path_used: bool = False
     answer_profile_used: str | None = None
     answer_profile_fallback_used: bool = False
+    shadow_retrieval_enabled: bool = True
+    shadow_tools_skipped: list[str] = field(default_factory=list)
     bm25_sql_latency_ms: float = 0.0
     fts_latency_ms: float = 0.0
     retrieval_round_wall_clock_ms: float = 0.0
@@ -347,6 +349,7 @@ class AgenticRetrievalPlan:
     exact_terms: list[str] = field(default_factory=list)
     light_path: bool = False
     product: str | None = None
+    shadow_tools_skipped: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -365,6 +368,7 @@ class AgenticIterationTrace:
     selected_chunk_ids: list[str]
     decision: str
     recovery_action: str | None = None
+    shadow_tools_skipped: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -385,6 +389,7 @@ class AgenticRoundResult:
     retrieval_tool_timings: list[dict[str, Any]] = field(default_factory=list)
     rerank_latency_ms: float = 0.0
     used_seed_tools: list[str] = field(default_factory=list)
+    shadow_tools_skipped: list[str] = field(default_factory=list)
 
 
 def _feature_flag_enabled(name: str, default: bool = True) -> bool:
@@ -396,6 +401,36 @@ def _feature_flag_enabled(name: str, default: bool = True) -> bool:
     if raw in {"0", "false", "no", "off"}:
         return False
     return default
+
+
+def _shadow_retrieval_enabled(config: dict[str, Any] | None = None) -> bool:
+    if isinstance(config, dict) and "shadow_retrieval_enabled" in config:
+        return bool(config.get("shadow_retrieval_enabled"))
+    return _feature_flag_enabled("RAG_SHADOW_RETRIEVAL_ENABLED", True)
+
+
+def _is_shadow_tool(tool_name: str) -> bool:
+    return str(tool_name or "").strip().lower().startswith("s_")
+
+
+def _filter_shadow_tool_names(
+    tool_names: Iterable[str],
+    *,
+    shadow_retrieval_enabled: bool,
+) -> tuple[list[str], list[str]]:
+    filtered: list[str] = []
+    skipped: list[str] = []
+    seen: set[str] = set()
+    for tool_name in tool_names:
+        normalized = str(tool_name or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        if not shadow_retrieval_enabled and _is_shadow_tool(normalized):
+            skipped.append(normalized)
+            continue
+        filtered.append(normalized)
+    return filtered, skipped
 
 
 def _clean_env_text(name: str) -> str:
@@ -750,7 +785,7 @@ def _classify_agentic_query(
     return "configuration"
 
 
-def _tool_order_for_query_class(query_class: str) -> tuple[list[str], str, str]:
+def _raw_tool_order_for_query_class(query_class: str) -> tuple[list[str], str, str]:
     if query_class == "lexical_exact":
         return (["p_bm25", "p_fts", "p_vec"], "exact_match", "lexical")
     if query_class == "how_to_faq":
@@ -760,6 +795,21 @@ def _tool_order_for_query_class(query_class: str) -> tuple[list[str], str, str]:
     if query_class == "comparison":
         return (["p_vec", "p_bm25", "s_vec", "p_fts"], "balanced_comparison", "compare")
     return (["p_bm25", "p_vec", "p_fts", "s_bm25", "s_vec"], "configuration_support", "lexical")
+
+
+def _tool_order_for_query_class(
+    query_class: str,
+    *,
+    shadow_retrieval_enabled: bool | None = None,
+) -> tuple[list[str], str, str]:
+    if shadow_retrieval_enabled is None:
+        shadow_retrieval_enabled = _shadow_retrieval_enabled()
+    raw_tool_names, evidence_goal, recovery_bias = _raw_tool_order_for_query_class(query_class)
+    filtered_tool_names, _ = _filter_shadow_tool_names(
+        raw_tool_names,
+        shadow_retrieval_enabled=shadow_retrieval_enabled,
+    )
+    return filtered_tool_names, evidence_goal, recovery_bias
 
 
 def _context_keyword_query(ticket_context: list[dict[str, str]] | None) -> str | None:
@@ -1175,9 +1225,12 @@ def _build_agentic_retrieval_plan(
     query_understanding: QueryUnderstandingResult | None,
     ticket_context: list[dict[str, str]] | None,
     product: str | None = None,
+    shadow_retrieval_enabled: bool | None = None,
     should_cancel: Callable[[], bool] | None = None,
     record_cancel_stage: Callable[[str], None] | None = None,
 ) -> AgenticRetrievalPlan:
+    if shadow_retrieval_enabled is None:
+        shadow_retrieval_enabled = _shadow_retrieval_enabled()
     query_class = _classify_agentic_query(message, query_understanding)
     normalized_message = " ".join(str(message or "").split()).strip()
     short_faq_pattern = _short_lexical_faq_pattern(message)
@@ -1198,6 +1251,7 @@ def _build_agentic_retrieval_plan(
             exact_terms=exact_terms,
             light_path=True,
             product=product,
+            shadow_tools_skipped=[],
         )
     if short_faq_pattern in {"token_usage", "connection_state"}:
         return AgenticRetrievalPlan(
@@ -1211,6 +1265,7 @@ def _build_agentic_retrieval_plan(
             exact_terms=exact_terms,
             light_path=True,
             product=product,
+            shadow_tools_skipped=[],
         )
 
     _raise_if_cancelled(
@@ -1229,11 +1284,21 @@ def _build_agentic_retrieval_plan(
     if isinstance(planner_payload, dict):
         query_class = str(planner_payload.get("query_class") or "").strip().lower()
         if query_class in {"lexical_exact", "how_to_faq", "configuration", "troubleshooting_why", "comparison"}:
-            first_pass_tools = [
-                str(item).strip()
-                for item in planner_payload.get("first_pass_tools") or []
-                if str(item).strip()
-            ]
+            first_pass_tools, planner_shadow_skipped = _filter_shadow_tool_names(
+                [
+                    str(item).strip()
+                    for item in planner_payload.get("first_pass_tools") or []
+                    if str(item).strip()
+                ],
+                shadow_retrieval_enabled=shadow_retrieval_enabled,
+            )
+            raw_default_tool_order, default_evidence_goal, default_recovery_bias = _raw_tool_order_for_query_class(
+                query_class
+            )
+            default_tool_order, default_shadow_skipped = _filter_shadow_tool_names(
+                raw_default_tool_order,
+                shadow_retrieval_enabled=shadow_retrieval_enabled,
+            )
             query_variants = [
                 (str(item[0]).strip(), str(item[1]).strip())
                 for item in planner_payload.get("query_variants") or []
@@ -1242,22 +1307,31 @@ def _build_agentic_retrieval_plan(
             if query_variants:
                 return AgenticRetrievalPlan(
                     query_class=query_class,
-                    first_pass_tools=first_pass_tools or list(_tool_order_for_query_class(query_class)[0]),
+                    first_pass_tools=first_pass_tools or list(default_tool_order),
                     query_variants=query_variants,
                     decomposition_targets=[
                         str(item).strip()
                         for item in planner_payload.get("decomposition_targets") or []
                         if str(item).strip()
                     ],
-                    evidence_goal=str(planner_payload.get("evidence_goal") or _tool_order_for_query_class(query_class)[1]).strip(),
-                    recovery_bias=str(planner_payload.get("recovery_bias") or _tool_order_for_query_class(query_class)[2]).strip(),
+                    evidence_goal=str(planner_payload.get("evidence_goal") or default_evidence_goal).strip(),
+                    recovery_bias=str(planner_payload.get("recovery_bias") or default_recovery_bias).strip(),
                     ticket_context_used=bool(ticket_context),
                     exact_terms=exact_terms,
                     light_path=False,
                     product=product,
+                    shadow_tools_skipped=(
+                        list(planner_shadow_skipped)
+                        if first_pass_tools
+                        else list(default_shadow_skipped)
+                    ),
                 )
 
-    tool_order, evidence_goal, recovery_bias = _tool_order_for_query_class(query_class)
+    raw_tool_order, evidence_goal, recovery_bias = _raw_tool_order_for_query_class(query_class)
+    tool_order, default_shadow_skipped = _filter_shadow_tool_names(
+        raw_tool_order,
+        shadow_retrieval_enabled=shadow_retrieval_enabled,
+    )
     query_variants = [("original", normalized_message)]
     simple_lexical_query = query_class == "lexical_exact" and _is_simple_lexical_query(message)
     if query_understanding is not None:
@@ -1290,6 +1364,7 @@ def _build_agentic_retrieval_plan(
         exact_terms=exact_terms,
         light_path=False,
         product=product,
+        shadow_tools_skipped=list(default_shadow_skipped),
     )
 
 
@@ -1490,7 +1565,7 @@ def _tool_weights_for_query_class(query_class: str) -> dict[str, float]:
 
 
 def _tool_index_role(tool_name: str) -> str:
-    return "shadow" if str(tool_name or "").strip().lower().startswith("s_") else "primary"
+    return "shadow" if _is_shadow_tool(tool_name) else "primary"
 
 
 def _tool_family(tool_name: str) -> str:
@@ -1585,25 +1660,37 @@ def _agentic_round_tools(
     *,
     round_index: int,
     recovery_action: str | None,
-) -> list[str]:
+    shadow_retrieval_enabled: bool | None = None,
+) -> tuple[list[str], list[str]]:
+    if shadow_retrieval_enabled is None:
+        shadow_retrieval_enabled = _shadow_retrieval_enabled()
     original_message = plan.query_variants[0][1] if plan.query_variants else ""
     if round_index > 1 and recovery_action == "lexical_recovery" and _is_short_lexical_faq_bucket(original_message, plan):
-        return ["p_bm25"]
+        return _filter_shadow_tool_names(["p_bm25"], shadow_retrieval_enabled=shadow_retrieval_enabled)
     if plan.light_path:
         if round_index <= 1:
-            return ["p_bm25", "p_fts"]
+            return _filter_shadow_tool_names(["p_bm25", "p_fts"], shadow_retrieval_enabled=shadow_retrieval_enabled)
         if recovery_action == "lexical_recovery":
-            return ["p_bm25", "p_fts"]
-        return ["p_bm25", "p_fts"]
+            return _filter_shadow_tool_names(["p_bm25", "p_fts"], shadow_retrieval_enabled=shadow_retrieval_enabled)
+        return _filter_shadow_tool_names(["p_bm25", "p_fts"], shadow_retrieval_enabled=shadow_retrieval_enabled)
     if round_index <= 1:
-        return list(dict.fromkeys(plan.first_pass_tools))
+        return _filter_shadow_tool_names(plan.first_pass_tools, shadow_retrieval_enabled=shadow_retrieval_enabled)
     if recovery_action == "lexical_recovery":
-        return ["p_bm25", "p_fts", "p_vec", "s_bm25"]
+        return _filter_shadow_tool_names(
+            ["p_bm25", "p_fts", "p_vec", "s_bm25"],
+            shadow_retrieval_enabled=shadow_retrieval_enabled,
+        )
     if recovery_action == "semantic_recovery":
-        return ["p_vec", "s_vec", "p_bm25", "s_bm25", "p_fts", "s_fts"]
+        return _filter_shadow_tool_names(
+            ["p_vec", "s_vec", "p_bm25", "s_bm25", "p_fts", "s_fts"],
+            shadow_retrieval_enabled=shadow_retrieval_enabled,
+        )
     if recovery_action == "compare_recovery":
-        return ["p_vec", "p_bm25", "s_vec", "p_fts"]
-    return list(dict.fromkeys(plan.first_pass_tools))
+        return _filter_shadow_tool_names(
+            ["p_vec", "p_bm25", "s_vec", "p_fts"],
+            shadow_retrieval_enabled=shadow_retrieval_enabled,
+        )
+    return _filter_shadow_tool_names(plan.first_pass_tools, shadow_retrieval_enabled=shadow_retrieval_enabled)
 
 
 def _agentic_round_variants(
@@ -1996,7 +2083,12 @@ def _execute_agentic_round(
     if not _runtime_capability_available("rerank", provider=str(config.get("rerank_provider") or "")):
         config["_rerank_runtime_available"] = False
 
-    tool_names = _agentic_round_tools(plan, round_index=round_index, recovery_action=recovery_action)
+    tool_names, shadow_tools_skipped = _agentic_round_tools(
+        plan,
+        round_index=round_index,
+        recovery_action=recovery_action,
+        shadow_retrieval_enabled=_shadow_retrieval_enabled(config),
+    )
     query_variants = _agentic_round_variants(
         message=message,
         plan=plan,
@@ -2279,6 +2371,7 @@ def _execute_agentic_round(
             selected_chunk_ids=[chunk.chunk_id for chunk in final_chunks if chunk.chunk_id],
             decision=judge.decision,
             recovery_action=judge.recovery_action,
+            shadow_tools_skipped=list(shadow_tools_skipped),
         ),
         vector_candidate_count=len(vector_candidate_ids),
         bm25_candidate_count=len(bm25_candidate_ids),
@@ -2290,6 +2383,7 @@ def _execute_agentic_round(
         retrieval_tool_timings=list(retrieval_tool_timings),
         rerank_latency_ms=round(rerank_latency_ms, 2),
         used_seed_tools=list(dict.fromkeys(used_seed_tools)),
+        shadow_tools_skipped=list(shadow_tools_skipped),
     )
 
 
@@ -2933,6 +3027,7 @@ def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
         "rerank_api_key": rerank_api_key,
         "rerank_base_url": rerank_base_url,
         "rerank_enabled": rerank_enabled,
+        "shadow_retrieval_enabled": _feature_flag_enabled("RAG_SHADOW_RETRIEVAL_ENABLED", True),
         "rerank_timeout_seconds": _safe_float_env("RAG_RERANK_TIMEOUT_SECONDS", 10.0),
         "rerank_max_retries": _safe_int_env("RAG_RERANK_MAX_RETRIES", 1),
         "request_timeout_seconds": answer_profile.timeout_seconds,
@@ -5217,6 +5312,7 @@ def _iteration_trace_payload(iteration: AgenticIterationTrace) -> dict[str, Any]
     return {
         "round_index": int(iteration.round_index),
         "tool_names": list(iteration.tool_names),
+        "shadow_tools_skipped": list(iteration.shadow_tools_skipped),
         "query_variants": list(iteration.query_variants),
         "selected_chunk_ids": list(iteration.selected_chunk_ids),
         "decision": str(iteration.decision),
@@ -5243,6 +5339,7 @@ def _run_rag_query_agentic(
         return None
 
     query_type = _infer_query_type(message)
+    shadow_retrieval_enabled = _shadow_retrieval_enabled(config)
     preliminary_query_class = _classify_agentic_query(message, None)
     simple_lexical_query = preliminary_query_class == "lexical_exact" and _is_simple_lexical_query(message)
     vector_setup_skipped = simple_lexical_query
@@ -5302,6 +5399,7 @@ def _run_rag_query_agentic(
     keyword_fallback_latency_ms = 0.0
     retrieval_round_wall_clock_ms = 0.0
     retrieval_tool_timings: list[dict[str, Any]] = []
+    shadow_tools_skipped: list[str] = []
     rerank_latency_ms = 0.0
     generation_latency_ms = 0.0
     prompt_tokens = 0
@@ -5436,12 +5534,14 @@ def _run_rag_query_agentic(
         query_understanding=effective_query_understanding or query_understanding,
         ticket_context=ticket_context,
         product=product,
+        shadow_retrieval_enabled=shadow_retrieval_enabled,
         should_cancel=should_cancel,
         record_cancel_stage=record_cancel_stage,
     )
     if plan.light_path:
         config = _apply_light_path_latency_budget(config)
         light_path_used = True
+    shadow_tools_skipped = list(plan.shadow_tools_skipped)
     warm_seed_tool_results = {
         tool_name: chunks
         for tool_name, chunks in {
@@ -5499,6 +5599,7 @@ def _run_rag_query_agentic(
         keyword_fallback_latency_ms += round_result.keyword_latency_ms
         retrieval_round_wall_clock_ms += round_result.retrieval_wall_clock_ms
         retrieval_tool_timings.extend(list(round_result.retrieval_tool_timings))
+        shadow_tools_skipped.extend(list(round_result.shadow_tools_skipped))
         rerank_latency_ms += round_result.rerank_latency_ms
         total_vector_candidates += round_result.vector_candidate_count
         total_bm25_candidates += round_result.bm25_candidate_count
@@ -5672,6 +5773,8 @@ def _run_rag_query_agentic(
             light_path_used=light_path_used,
             answer_profile_used=answer_profile_used,
             answer_profile_fallback_used=answer_profile_fallback_used,
+            shadow_retrieval_enabled=shadow_retrieval_enabled,
+            shadow_tools_skipped=list(dict.fromkeys(shadow_tools_skipped)),
             bm25_sql_latency_ms=round(bm25_latency_ms, 2),
             fts_latency_ms=round(fts_latency_ms, 2),
             retrieval_round_wall_clock_ms=round(retrieval_round_wall_clock_ms, 2),
