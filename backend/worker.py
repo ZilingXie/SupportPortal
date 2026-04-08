@@ -934,6 +934,7 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         if execution_client_agent_runtime_state is not None:
             ticket["client_agent_runtime_state"] = execution_client_agent_runtime_state
         execution_workflow_action = str(getattr(execution, "workflow_action", "") or "").strip()
+        execution_route_payload = build_execution_route_payload(execution)
         if execution.needs_investigating:
             ticket["client_intake_state"] = execution_client_intake_state
             engineer_case, engineer_case_created = _prepare_engineer_case_for_ticket(
@@ -951,7 +952,6 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
                 sources=list(execution.sources),
                 citations=[dict(item) for item in execution.citations],
             )
-            execution_route_payload = build_execution_route_payload(execution)
             investigation_result = start_or_refresh_investigation(
                 case_context,
                 trigger_reason=str(execution.investigation_reason or "rag_insufficient_evidence"),
@@ -1002,6 +1002,10 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         assistant_message["search_used"] = bool(execution.search_used)
         assistant_message["matched_signals"] = list(execution.matched_signals)
         assistant_message["workflow_action"] = execution_workflow_action
+        if isinstance(execution_route_payload.get("retrieval_plan_snapshot"), dict):
+            assistant_message["retrieval_plan_snapshot"] = dict(
+                execution_route_payload.get("retrieval_plan_snapshot") or {}
+            )
         if str(getattr(execution, "run_id", "") or "").strip():
             assistant_message["client_agent_run_id"] = str(getattr(execution, "run_id") or "").strip()
         if isinstance(execution_client_agent_runtime_state, dict):

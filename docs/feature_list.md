@@ -47,6 +47,7 @@
 - Dashboard 的 ticket detail 可查看按工单 family 聚合的 token 用量摘要。
 - Dashboard 可跟踪实时事件流。
 - Dashboard 的 ticket detail 可查看 client agent runtime 摘要与最近 agent events。
+- Dashboard 的 ticket detail 可在单条 RAG 回复下展开检索计划、执行轮次和最终证据。
 
 ### 未完成
 - 待补充。
@@ -79,6 +80,7 @@
 - 新会话会先选择产品，并按产品加载对应的 support prompt。
 - 排查型问题会先向客户补齐必要信息，再自动创建工程师工单。
 - 客户工单处理支持 main agent 调度 route、RAG 和 review 子 agent。
+- Dashboard 的 ticket detail 可在单条 RAG 回复下展开检索计划、执行轮次和最终证据。
 
 ### 未完成
 - 待补充。

@@ -2796,6 +2796,42 @@ For each new entry, record:
     - overall measured average across the `3 x 3` counted runs: `42717.20 ms`
   - No measured run returned `rag_unavailable` or engineer fallback text.
 
+## 2026-04-08 - Persist message-level retrieval plan snapshots for ticket dashboard RAG answers
+
+- Summary:
+  - Added a message-scoped `retrieval_plan_snapshot` to successful RAG assistant messages so ticket detail can explain how a specific grounded answer was retrieved without depending on the latest live runtime state.
+  - Extended agentic RAG traces and `rag_api` response diagnostics to capture retrieval-plan fields such as `first_pass_tools`, `query_variants`, `decomposition_targets`, `evidence_goal`, `recovery_bias`, `judge_summary`, and compact timing summaries.
+  - Updated the ticket dashboard to show a per-message `RAG Plan` disclosure with `Build Retrieval Plan`, `Execution`, and `Final Evidence` sections, plus a request-id deep link to the full RAG diagnosis page.
+- Reason:
+  - Ticket-level `Client Agent Runtime` only explains the latest run on the ticket, which is not reliable for understanding historical assistant messages after subsequent replies or re-runs.
+  - Operators needed a stable, message-level explanation surface inside ticket detail so they can inspect the retrieval plan and evidence for a specific customer-visible RAG answer without switching context or risking history drift.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/rag_api.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `ui/dashboard-ui/app.js`
+  - `ui/dashboard-ui/styles.css`
+  - `backend/tests/test_rag_api.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_worker.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_ticket_routing.py`
+  - `docs/rag_change_log.md`
+  - `docs/feature_list.md`
+- Data impact:
+  - No schema, ingestion, vector-table, or model changes.
+  - Newly generated assistant messages with `answer_route="rag"` and `workflow_action="answer_customer"` now persist a lightweight `retrieval_plan_snapshot` inside `ticket.messages[]`.
+  - Historical messages are not backfilled; the feature is forward-only.
+  - RAG response diagnostics now expose request-scoped retrieval-plan summaries that can be reused by ticket runtime and the dashboard without live re-querying.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_rag_api.py backend/tests/test_client_ticket_agent_runtime.py backend/tests/test_worker.py backend/tests/test_dashboard_ui_contract.py backend/tests/test_ticket_routing.py`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_rag_qa.py backend/tests/test_rag_agentic.py`
+  - `python3 -m py_compile backend/services/rag_qa.py backend/rag_api.py backend/services/client_ticket_agent_runtime.py backend/main.py backend/worker.py backend/tests/test_rag_api.py backend/tests/test_client_ticket_agent_runtime.py backend/tests/test_worker.py backend/tests/test_dashboard_ui_contract.py backend/tests/test_ticket_routing.py`
+  - `node --check ui/dashboard-ui/app.js`
+  - `git diff --check`
+
 ## 2026-04-08 - Global shadow retrieval kill switch
 
 - Summary:
