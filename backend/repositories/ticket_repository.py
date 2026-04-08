@@ -1057,12 +1057,21 @@ class PostgresTicketRepository:
     def _connection_pool(self) -> Any:
         if not self._use_connection_pool:
             return None
-        if self._pool is not None:
+        existing_pool = self._pool
+        if existing_pool is not None and not bool(getattr(existing_pool, "closed", False)):
             return self._pool
         with self._pool_lock:
-            if self._pool is None:
-                self._pool = self._pool_factory()
-                self._pool.open(wait=True, timeout=self._pool_timeout_seconds)
+            existing_pool = self._pool
+            if existing_pool is not None and not bool(getattr(existing_pool, "closed", False)):
+                return existing_pool
+            self._pool = None
+            pool = self._pool_factory()
+            try:
+                pool.open(wait=True, timeout=self._pool_timeout_seconds)
+            except Exception:
+                self._pool = None
+                raise
+            self._pool = pool
         return self._pool
 
     @contextmanager

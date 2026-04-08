@@ -14,6 +14,7 @@ from backend.services.rag_qa import (
     _agentic_round_variants,
     _build_agentic_retrieval_plan,
     _execute_agentic_round,
+    _generation_chunk_limit_for_agentic_query,
     _inject_generic_join_recovery_candidates,
     _is_join_channel_step_chunk,
     _is_token_auth_chunk,
@@ -127,6 +128,45 @@ class RagAgenticTests(unittest.TestCase):
         self.assertEqual(plan.first_pass_tools, ["p_bm25", "p_fts"])
         self.assertTrue(plan.light_path)
 
+    def test_build_agentic_retrieval_plan_uses_lexical_fast_path_for_short_token_usage_query(self) -> None:
+        plan = _build_agentic_retrieval_plan(
+            message="how to use token",
+            top_k=5,
+            query_understanding=None,
+            ticket_context=None,
+        )
+
+        self.assertEqual(plan.query_class, "lexical_exact")
+        self.assertEqual(plan.first_pass_tools, ["p_bm25", "p_fts"])
+        self.assertEqual(plan.query_variants, [("original", "how to use token")])
+        self.assertEqual(plan.exact_terms, ["use", "token"])
+        self.assertTrue(plan.light_path)
+
+    def test_build_agentic_retrieval_plan_uses_lexical_fast_path_for_connection_state_reference_query(self) -> None:
+        plan = _build_agentic_retrieval_plan(
+            message="what is connection state change used for",
+            top_k=5,
+            query_understanding=None,
+            ticket_context=None,
+        )
+
+        self.assertEqual(plan.query_class, "lexical_exact")
+        self.assertEqual(plan.first_pass_tools, ["p_bm25", "p_fts"])
+        self.assertEqual(plan.query_variants, [("original", "what is connection state change used for")])
+        self.assertEqual(plan.exact_terms, ["connection", "state", "change"])
+        self.assertTrue(plan.light_path)
+
+    def test_build_agentic_retrieval_plan_does_not_misclassify_token_auth_errors_as_token_usage_fast_path(self) -> None:
+        plan = _build_agentic_retrieval_plan(
+            message="how do I handle token authentication errors?",
+            top_k=5,
+            query_understanding=None,
+            ticket_context=None,
+        )
+
+        self.assertFalse(plan.light_path)
+        self.assertNotEqual(plan.first_pass_tools, ["p_bm25", "p_fts"])
+
     def test_expand_agentic_variants_adds_focused_join_recovery_queries_for_light_path(self) -> None:
         plan = AgenticRetrievalPlan(
             query_class="lexical_exact",
@@ -149,11 +189,116 @@ class RagAgenticTests(unittest.TestCase):
             ticket_context=None,
         )
 
-        self.assertEqual(variants[0], ("original", "how to join channel"))
+        self.assertNotIn(("original", "how to join channel"), variants)
         self.assertIn(("exact_token", "join channel"), variants)
+        self.assertIn(("focused_join_step", "join a channel joinChannel channelName uid options"), variants)
         self.assertIn(
             ("focused_rewrite", "join channel joinChannel token channel name uid basic authentication"),
             variants,
+        )
+
+    def test_expand_agentic_variants_adds_token_usage_recovery_queries_for_light_path(self) -> None:
+        plan = AgenticRetrievalPlan(
+            query_class="lexical_exact",
+            first_pass_tools=["p_bm25", "p_fts"],
+            query_variants=[("original", "how to use token")],
+            decomposition_targets=[],
+            evidence_goal="exact_match",
+            recovery_bias="lexical",
+            ticket_context_used=False,
+            exact_terms=["use", "token"],
+            light_path=True,
+            product="audio_video_calling",
+        )
+
+        variants = _agentic_round_variants(
+            message="how to use token",
+            plan=plan,
+            round_index=2,
+            recovery_action="lexical_recovery",
+            ticket_context=None,
+        )
+
+        self.assertEqual(
+            variants,
+            [
+                ("exact_token", "use token"),
+                ("focused_token_usage", "use token token authentication token server basic authentication join channel"),
+                ("focused_rewrite", "token authentication use token app server token join channel"),
+            ],
+        )
+
+    def test_expand_agentic_variants_adds_connection_state_reference_queries_for_short_faq_bucket(self) -> None:
+        plan = AgenticRetrievalPlan(
+            query_class="lexical_exact",
+            first_pass_tools=["p_bm25", "p_fts"],
+            query_variants=[("original", "what is connection state change used for")],
+            decomposition_targets=[],
+            evidence_goal="exact_match",
+            recovery_bias="lexical",
+            ticket_context_used=False,
+            exact_terms=["connection", "state", "change"],
+            light_path=False,
+            product="audio_video_calling",
+        )
+
+        variants = _agentic_round_variants(
+            message="what is connection state change used for",
+            plan=plan,
+            round_index=2,
+            recovery_action="lexical_recovery",
+            ticket_context=None,
+        )
+
+        self.assertEqual(
+            variants,
+            [
+                ("exact_token", "connection state change"),
+                ("focused_reference", "connection state change onConnectionStateChanged connection state callback state changed"),
+                ("focused_rewrite", "connection state change callback purpose api reference state transition"),
+            ],
+        )
+
+    def test_generation_chunk_limit_for_short_lexical_faq_bucket_caps_context_to_two_chunks(self) -> None:
+        short_faq_plan = AgenticRetrievalPlan(
+            query_class="lexical_exact",
+            first_pass_tools=["p_bm25", "p_fts"],
+            query_variants=[("original", "how to use token")],
+            decomposition_targets=[],
+            evidence_goal="exact_match",
+            recovery_bias="lexical",
+            ticket_context_used=False,
+            exact_terms=["use", "token"],
+            light_path=True,
+            product="audio_video_calling",
+        )
+        generic_plan = AgenticRetrievalPlan(
+            query_class="configuration",
+            first_pass_tools=["p_bm25", "p_vec"],
+            query_variants=[("original", "how to configure dual stream")],
+            decomposition_targets=[],
+            evidence_goal="configuration_support",
+            recovery_bias="lexical",
+            ticket_context_used=False,
+            exact_terms=["configure", "dual", "stream"],
+            light_path=False,
+            product="audio_video_calling",
+        )
+
+        self.assertEqual(
+            _generation_chunk_limit_for_agentic_query(
+                message="how to use token",
+                plan=short_faq_plan,
+                config={"top_k": 5, "light_path_generation_chunk_limit": 3},
+            ),
+            2,
+        )
+        self.assertIsNone(
+            _generation_chunk_limit_for_agentic_query(
+                message="how to configure dual stream",
+                plan=generic_plan,
+                config={"top_k": 5, "light_path_generation_chunk_limit": 3},
+            )
         )
 
     def test_merge_agentic_tool_results_caps_shadow_share_and_records_fusion_trace(self) -> None:
@@ -371,6 +516,8 @@ class RagAgenticTests(unittest.TestCase):
             normalized = " ".join(str(query or "").split()).strip().lower()
             if "basic authentication" in normalized:
                 return [right_auth, right_join]
+            if "joinchannel channelname uid options" in normalized:
+                return [right_join, wrong_stream]
             if normalized == "join channel":
                 return [wrong_multi, wrong_stream]
             return [wrong_stream, wrong_multi]
@@ -381,7 +528,7 @@ class RagAgenticTests(unittest.TestCase):
             _ = index_role
             normalized = " ".join(str(query or "").split()).strip().lower()
             if "basic authentication" in normalized:
-                return []
+                return [right_auth]
             return [noisy_notification, wrong_stream]
 
         def _keyword_side_effect(query: str, config: dict[str, object], *, limit: int, index_role: str = "primary") -> list[RetrievedChunk]:
@@ -419,6 +566,188 @@ class RagAgenticTests(unittest.TestCase):
 
         self.assertIn("auth-android", [chunk.chunk_id for chunk in round_result.retrieved_chunks])
         self.assertIn("join-android", [chunk.chunk_id for chunk in round_result.retrieved_chunks])
+
+    def test_execute_agentic_round_uses_sparse_short_faq_lexical_recovery_matrix(self) -> None:
+        plan = AgenticRetrievalPlan(
+            query_class="lexical_exact",
+            first_pass_tools=["p_bm25", "p_fts"],
+            query_variants=[("original", "what is connection state change used for")],
+            decomposition_targets=[],
+            evidence_goal="exact_match",
+            recovery_bias="lexical",
+            ticket_context_used=False,
+            exact_terms=["connection", "state", "change"],
+            light_path=False,
+            product="audio_video_calling",
+        )
+        config = {
+            **self._base_config(),
+            "top_k": 3,
+            "fusion_candidate_k": 10,
+            "rerank_top_n": 6,
+            "vector_enabled": True,
+            "_vector_runtime_available": True,
+            "_rerank_runtime_available": False,
+        }
+        bm25_calls: list[tuple[str, str, int]] = []
+        fts_calls: list[tuple[str, str, int]] = []
+
+        def _bm25_side_effect(query: str, config: dict[str, object], *, limit: int, index_role: str = "primary") -> list[RetrievedChunk]:
+            _ = config
+            bm25_calls.append((query, index_role, limit))
+            return []
+
+        def _fts_side_effect(query: str, config: dict[str, object], *, limit: int, index_role: str = "primary") -> list[RetrievedChunk]:
+            _ = config
+            fts_calls.append((query, index_role, limit))
+            return []
+
+        with patch("backend.services.rag_qa._retrieve_bm25_chunks", side_effect=_bm25_side_effect), patch(
+            "backend.services.rag_qa._retrieve_fts_chunks",
+            side_effect=_fts_side_effect,
+        ), patch(
+            "backend.services.rag_qa._retrieve_chunks",
+            side_effect=AssertionError("vector retrieval should be skipped for short lexical FAQ recovery"),
+        ), patch(
+            "backend.services.rag_qa._retrieve_keyword_chunks",
+            side_effect=AssertionError("keyword retrieval should be skipped for short lexical FAQ recovery"),
+        ), patch(
+            "backend.services.rag_qa._metadata_rerank",
+            return_value=([], {"candidate_reasons": {}, "query_understanding": {}}),
+        ):
+            round_result = _execute_agentic_round(
+                message="what is connection state change used for",
+                config=config,
+                plan=plan,
+                round_index=2,
+                retrieval_plan=RetrievalPlan(semantic_query=""),
+                query_understanding=None,
+                ticket_context=None,
+                recovery_action="lexical_recovery",
+            )
+
+        self.assertEqual(
+            bm25_calls,
+            [
+                ("connection state change", "primary", 8),
+                ("connection state change onConnectionStateChanged connection state callback state changed", "primary", 8),
+                ("connection state change callback purpose api reference state transition", "primary", 8),
+            ],
+        )
+        self.assertEqual(fts_calls, [])
+        self.assertEqual(round_result.retrieved_chunks, [])
+
+    def test_execute_agentic_round_reuses_cached_lexical_queries_across_rounds(self) -> None:
+        plan = AgenticRetrievalPlan(
+            query_class="lexical_exact",
+            first_pass_tools=["p_bm25", "p_fts"],
+            query_variants=[("original", "join channel")],
+            decomposition_targets=[],
+            evidence_goal="exact_match",
+            recovery_bias="lexical",
+            ticket_context_used=False,
+            exact_terms=["join", "channel"],
+            light_path=True,
+            product="audio_video_calling",
+        )
+        config = {
+            **self._base_config(),
+            "top_k": 3,
+            "bm25_candidate_k": 12,
+            "fts_candidate_k": 12,
+            "fusion_candidate_k": 10,
+            "rerank_top_n": 6,
+            "vector_enabled": False,
+            "_vector_runtime_available": False,
+            "_rerank_runtime_available": False,
+        }
+        shared_cache: dict[tuple[str, str, str, int], tuple[str, list[RetrievedChunk]]] = {}
+        bm25_calls: list[tuple[str, int]] = []
+        join_chunk = RetrievedChunk(
+            chunk_id="join-android",
+            text="Call joinChannel(token, channelName, uid, options) to join a channel.",
+            source_path="official/get-started-sdk_android.md",
+            similarity=0.97,
+            index_role="primary",
+            retrieval_sources=["bm25"],
+            metadata={"product": "video-calling"},
+        )
+        auth_chunk = RetrievedChunk(
+            chunk_id="auth-android",
+            text="Use a token to join a channel on Android.",
+            source_path="official/authentication-workflow_android.md",
+            similarity=0.95,
+            index_role="primary",
+            retrieval_sources=["bm25"],
+            metadata={"product": "video-calling", "use_case": "basic_authentication"},
+        )
+
+        def _bm25_side_effect(query: str, config: dict[str, object], *, limit: int, index_role: str = "primary") -> list[RetrievedChunk]:
+            _ = config
+            _ = index_role
+            bm25_calls.append((query, limit))
+            normalized = " ".join(str(query or "").split()).strip().lower()
+            if normalized == "join channel":
+                return [join_chunk]
+            if "joinchannel channelname uid options" in normalized:
+                return [join_chunk]
+            return [auth_chunk]
+
+        def _fts_side_effect(query: str, config: dict[str, object], *, limit: int, index_role: str = "primary") -> list[RetrievedChunk]:
+            _ = config
+            _ = query
+            _ = limit
+            _ = index_role
+            return [auth_chunk]
+
+        rerank_info = {"candidate_reasons": {}, "query_understanding": {}}
+
+        with patch("backend.services.rag_qa._retrieve_bm25_chunks", side_effect=_bm25_side_effect), patch(
+            "backend.services.rag_qa._retrieve_fts_chunks",
+            side_effect=_fts_side_effect,
+        ), patch(
+            "backend.services.rag_qa._metadata_rerank",
+            side_effect=lambda **kwargs: (list(kwargs["chunks"]), rerank_info),
+        ), patch(
+            "backend.services.rag_qa._reorder_chunks_for_rerank",
+            side_effect=lambda chunks, limit, query: list(chunks)[:limit],
+        ):
+            round_one = _execute_agentic_round(
+                message="join channel",
+                config=config,
+                plan=plan,
+                round_index=1,
+                retrieval_plan=RetrievalPlan(semantic_query=""),
+                query_understanding=None,
+                ticket_context=None,
+                lexical_result_cache=shared_cache,
+            )
+            round_two = _execute_agentic_round(
+                message="join channel",
+                config=config,
+                plan=plan,
+                round_index=2,
+                retrieval_plan=RetrievalPlan(semantic_query=""),
+                query_understanding=None,
+                ticket_context=None,
+                recovery_action="lexical_recovery",
+                lexical_result_cache=shared_cache,
+            )
+
+        self.assertEqual(
+            bm25_calls,
+            [
+                ("join channel", 12),
+                ("join a channel joinChannel channelName uid options", 8),
+                ("join channel joinChannel token channel name uid basic authentication", 8),
+            ],
+        )
+        cached_exact_token_timing = next(
+            timing
+            for timing in round_two.retrieval_tool_timings
+            if timing.get("tool_name") == "p_bm25" and timing.get("query_kind") == "exact_token"
+        )
+        self.assertTrue(cached_exact_token_timing.get("used_cached_tool"))
 
     def test_inject_generic_join_recovery_candidates_prefers_coherent_video_calling_pair(self) -> None:
         auth_android = RetrievedChunk(

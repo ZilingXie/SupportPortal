@@ -244,6 +244,18 @@ class KnowledgeRepositoryBm25HookTests(unittest.TestCase):
         self.assertEqual(rebuilt, 0)
         rebuild_mock.assert_not_called()
 
+    def test_ensure_bm25_tables_creates_covering_indexes_for_postings_and_docs(self) -> None:
+        repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
+        cursor = _FakeCursor()
+
+        repository._ensure_bm25_tables(cur=cursor)
+
+        executed_sql = "\n".join(cursor.executed)
+        self.assertIn("idx_support_knowledge_bm25_postings_term_role_chunk_tf", executed_sql)
+        self.assertIn("INCLUDE (tf)", executed_sql)
+        self.assertIn("idx_support_knowledge_bm25_docs_role_chunk_length", executed_sql)
+        self.assertIn("INCLUDE (doc_length)", executed_sql)
+
     def test_replace_document_chunks_updates_bm25_index_for_primary_rows(self) -> None:
         repository = PostgresKnowledgeRepository(dsn="postgresql://example", schema="supportportal")
         rows = [

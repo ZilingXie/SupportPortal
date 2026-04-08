@@ -3417,8 +3417,20 @@ class PostgresKnowledgeRepository:
             )
         )
         cur.execute(
+            sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (term, index_role, chunk_id) INCLUDE (tf)").format(
+                sql.Identifier("idx_support_knowledge_bm25_postings_term_role_chunk_tf"),
+                self._table("support_knowledge_bm25_postings"),
+            )
+        )
+        cur.execute(
             sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (index_role, doc_length)").format(
                 sql.Identifier("idx_support_knowledge_bm25_docs_role_length"),
+                self._table("support_knowledge_bm25_docs"),
+            )
+        )
+        cur.execute(
+            sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (index_role, chunk_id) INCLUDE (doc_length)").format(
+                sql.Identifier("idx_support_knowledge_bm25_docs_role_chunk_length"),
                 self._table("support_knowledge_bm25_docs"),
             )
         )

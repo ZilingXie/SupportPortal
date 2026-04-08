@@ -367,6 +367,12 @@ class RagQaHybridTests(unittest.TestCase):
         self.assertIn("matched_docs AS MATERIALIZED", source)
         self.assertIn("SELECT DISTINCT chunk_id FROM matched_postings", source)
 
+    def test_bm25_query_materializes_top_scored_candidates_before_joining_chunk_table(self) -> None:
+        source = Path("backend/services/rag_qa.py").read_text(encoding="utf-8")
+        self.assertIn("top_scored AS MATERIALIZED", source)
+        self.assertIn("FROM top_scored", source)
+        self.assertIn("LIMIT %s", source)
+
     def test_retrieve_bm25_chunks_binds_index_role_after_bm25_constants(self) -> None:
         class _FakeCursor:
             def __init__(self) -> None:
@@ -435,7 +441,8 @@ class RagQaHybridTests(unittest.TestCase):
         self.assertEqual(params[6], 1.2)
         self.assertEqual(params[7], 0.75)
         self.assertEqual(params[8], 0.75)
-        self.assertEqual(params[9], "shadow")
+        self.assertEqual(params[9], 96)
+        self.assertEqual(params[10], "shadow")
 
     def test_extract_metadata_hints_recognizes_language_method_and_structure_intent(self) -> None:
         hints = _extract_metadata_hints("Node.js 的 BuildTokenWithUidAndPrivilege Docker parameter 是什么")
