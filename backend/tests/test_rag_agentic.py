@@ -102,7 +102,7 @@ class RagAgenticTests(unittest.TestCase):
         )
 
         self.assertEqual(plan.query_class, "troubleshooting_why")
-        self.assertEqual(plan.first_pass_tools[:3], ["p_vec", "p_bm25", "p_fts"])
+        self.assertEqual(plan.first_pass_tools[:3], ["p_vec", "s_vec", "p_bm25"])
         self.assertEqual(plan.query_variants[0][0], "original")
         self.assertTrue(plan.ticket_context_used)
 
@@ -115,7 +115,7 @@ class RagAgenticTests(unittest.TestCase):
         )
 
         self.assertEqual(plan.query_class, "how_to_faq")
-        self.assertEqual(plan.first_pass_tools, ["p_vec"])
+        self.assertEqual(plan.first_pass_tools, ["p_vec", "s_vec"])
         self.assertEqual(plan.query_variants, [("original", "how to join channel")])
 
     def test_tool_order_for_query_class_skips_shadow_tools_when_disabled(self) -> None:

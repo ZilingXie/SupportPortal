@@ -16,6 +16,8 @@ class TicketRoutingContractTests(unittest.TestCase):
         self.assertIn('"route_reason":', source)
         self.assertIn('"route_confidence":', source)
         self.assertIn('"search_used":', source)
+        self.assertIn('assistant_message["retrieval_plan_snapshot"]', source)
+        self.assertIn('route_payload.get("retrieval_plan_snapshot")', source)
         self.assertIn("class TicketExecutionResult", runtime_source)
         self.assertIn("AGENT_NAME_MAIN", runtime_source)
         self.assertIn("AGENT_NAME_ROUTE", runtime_source)
@@ -36,6 +38,7 @@ class TicketRoutingContractTests(unittest.TestCase):
         self.assertNotIn("orchestrate_ticket_execution", source)
         self.assertIn('assistant_message["answer_route"]', source)
         self.assertIn('assistant_message["scope_label"]', source)
+        self.assertIn('assistant_message["retrieval_plan_snapshot"]', source)
         self.assertIn('"answer_route": execution.answer_route', source)
         self.assertIn('"scope_label": execution.scope_label', source)
 

@@ -38,6 +38,50 @@ class ClientTicketAgentRuntimeContractTests(unittest.TestCase):
         self.assertFalse(hasattr(runtime, "CLIENT_TICKET_AGENT_RUNTIME_MODE_AGENT"))
         self.assertFalse(hasattr(runtime, "current_client_ticket_agent_runtime_mode"))
 
+    def test_build_execution_route_payload_exposes_retrieval_plan_snapshot_for_rag_answers(self) -> None:
+        from backend.services.client_ticket_agent_runtime import build_execution_route_payload
+
+        execution = types.SimpleNamespace(
+            answer_route="rag",
+            scope_label="agora_technical",
+            route_family="agora_docs_rag",
+            execution_action="rag",
+            tooling_profile="agora_docs_only",
+            route_reason="grounded_answer",
+            workflow_action="answer_customer",
+            route_confidence=0.91,
+            search_used=False,
+            matched_signals=["join channel"],
+            evidence_summary={
+                "diagnostics": {
+                    "retrieval_plan_snapshot": {
+                        "request_id": "rag-abc123",
+                        "query_class": "how_to_faq",
+                        "retrieval_strategy": "agentic_multi_tool_v1",
+                        "light_path_used": False,
+                        "evidence_goal": "how_to_usage_support",
+                        "recovery_bias": "semantic",
+                        "first_pass_tools": ["p_vec", "s_vec"],
+                        "query_variants": [{"kind": "original", "query": "How to join channel"}],
+                        "decomposition_targets": [],
+                        "agent_iterations": [{"round_index": 1, "decision": "answer_now"}],
+                        "judge_summary": {"decision": "answer_now", "reason": "sufficient_first_pass_support"},
+                        "selected_contexts": [{"chunk_id": "chunk-1"}],
+                        "query_understanding_summary": {"query_profile": "how_to_faq"},
+                        "tool_timing_summary": {"total_latency_ms": 1234.5},
+                        "open_diagnosis_target": "rag-abc123",
+                    }
+                }
+            },
+        )
+
+        payload = build_execution_route_payload(execution)
+
+        self.assertIn("retrieval_plan_snapshot", payload)
+        self.assertEqual(payload["retrieval_plan_snapshot"]["request_id"], "rag-abc123")
+        self.assertEqual(payload["retrieval_plan_snapshot"]["query_class"], "how_to_faq")
+        self.assertEqual(payload["retrieval_plan_snapshot"]["open_diagnosis_target"], "rag-abc123")
+
     def test_non_rag_route_skips_review_and_cancels_rag(self) -> None:
         from backend.services.client_ticket_agent_runtime import (
             AGENT_NAME_RAG,

@@ -236,6 +236,44 @@ class RagApiTests(unittest.TestCase):
         )
         self.assertLess(elapsed_ms, 250.0, elapsed_ms)
 
+    def test_internal_rag_query_attaches_retrieval_plan_snapshot_to_evidence_summary(self) -> None:
+        repository = _TrackingKnowledgeRepository()
+
+        with self._client(repository) as client, patch.object(
+            rag_api,
+            "probe_customer_rag_index_readiness",
+            return_value=RagKnowledgeIndexReadiness(
+                status="ready",
+                configured_table="supportportal.docagent_chunks_bge_m3_1024",
+                resolved_table="supportportal.docagent_chunks_bge_m3_1024",
+                configured_primary_rows=123,
+            ),
+        ), patch.object(
+            rag_api,
+            "run_rag_query",
+            return_value=_answer_result(),
+        ):
+            response = client.post(
+                "/internal/rag/query",
+                headers={"Authorization": "Bearer test-token"},
+                json={
+                    "question": "how to join channel",
+                    "request_id": "rag-api-plan-snapshot-1",
+                    "ticket_id": "TK-PLAN-001",
+                    "customer_id": "C-PLAN-001",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        snapshot = payload["evidence_summary"]["diagnostics"]["retrieval_plan_snapshot"]
+        self.assertEqual(snapshot["request_id"], "rag-api-plan-snapshot-1")
+        self.assertEqual(snapshot["retrieval_strategy"], "agentic_multi_tool_v1")
+        self.assertIn("agent_iterations", snapshot)
+        self.assertIn("selected_contexts", snapshot)
+        self.assertIn("tool_timing_summary", snapshot)
+        self.assertEqual(snapshot["open_diagnosis_target"], "rag-api-plan-snapshot-1")
+
     def test_trace_query_understanding_meta_exposes_lexical_retrieval_breakdown(self) -> None:
         meta = rag_api._trace_query_understanding_meta(_trace())
 

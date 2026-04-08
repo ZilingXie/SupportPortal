@@ -2190,6 +2190,8 @@ async def create_or_update_ticket(
             assistant_message["matched_signals"] = list(route_payload.get("matched_signals") or [])
             if route_payload.get("workflow_action"):
                 assistant_message["workflow_action"] = route_payload.get("workflow_action")
+            if isinstance(route_payload.get("retrieval_plan_snapshot"), dict):
+                assistant_message["retrieval_plan_snapshot"] = dict(route_payload.get("retrieval_plan_snapshot") or {})
             if route_payload.get("client_intake_phase"):
                 assistant_message["client_intake_phase"] = route_payload.get("client_intake_phase")
                 assistant_message["client_intake_ready_for_engineer_ticket"] = bool(

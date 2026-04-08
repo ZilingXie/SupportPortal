@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import re
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field, replace
@@ -123,13 +124,12 @@ class TicketExecutionResult:
 
 
 def build_execution_route_payload(execution: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
     route_payload = getattr(execution, "route_payload", None)
     if callable(route_payload):
         candidate = route_payload()
         if isinstance(candidate, dict):
-            return dict(candidate)
-
-    payload: dict[str, Any] = {}
+            payload.update(dict(candidate))
     for field_name in (
         "answer_route",
         "scope_label",
@@ -180,7 +180,29 @@ def build_execution_route_payload(execution: Any) -> dict[str, Any]:
         payload["review_agent_phase"] = str(
             ((client_agent_runtime_state.get("review_agent") or {}) if isinstance(client_agent_runtime_state.get("review_agent"), dict) else {}).get("phase") or ""
         ).strip()
+    retrieval_plan_snapshot = _extract_execution_retrieval_plan_snapshot(execution)
+    if retrieval_plan_snapshot is not None:
+        payload["retrieval_plan_snapshot"] = retrieval_plan_snapshot
     return payload
+
+
+def _extract_execution_retrieval_plan_snapshot(execution: Any) -> dict[str, Any] | None:
+    answer_route = str(getattr(execution, "answer_route", "") or "").strip().lower()
+    workflow_action = str(getattr(execution, "workflow_action", "") or "").strip()
+    if answer_route != "rag":
+        return None
+    if workflow_action and workflow_action != WORKFLOW_ACTION_ANSWER_CUSTOMER:
+        return None
+    evidence_summary = getattr(execution, "evidence_summary", None)
+    if not isinstance(evidence_summary, dict):
+        return None
+    diagnostics = evidence_summary.get("diagnostics")
+    if not isinstance(diagnostics, dict):
+        return None
+    snapshot = diagnostics.get("retrieval_plan_snapshot")
+    if not isinstance(snapshot, dict) or not snapshot:
+        return None
+    return deepcopy(snapshot)
 
 
 def resolve_next_ticket_status(current_status: str | None, proposed_status: str | None) -> str:
