@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import os
 from unittest.mock import patch
 
 import backend.services.rag_qa as rag_qa
@@ -21,6 +22,7 @@ from backend.services.rag_qa import (
     _judge_agentic_round,
     _merge_agentic_tool_results,
     _merge_variant_chunks,
+    _tool_order_for_query_class,
     run_rag_query,
 )
 
@@ -100,7 +102,7 @@ class RagAgenticTests(unittest.TestCase):
         )
 
         self.assertEqual(plan.query_class, "troubleshooting_why")
-        self.assertEqual(plan.first_pass_tools[:3], ["p_vec", "s_vec", "p_bm25"])
+        self.assertEqual(plan.first_pass_tools[:3], ["p_vec", "p_bm25", "p_fts"])
         self.assertEqual(plan.query_variants[0][0], "original")
         self.assertTrue(plan.ticket_context_used)
 
@@ -113,7 +115,28 @@ class RagAgenticTests(unittest.TestCase):
         )
 
         self.assertEqual(plan.query_class, "how_to_faq")
-        self.assertEqual(plan.first_pass_tools, ["p_vec", "s_vec"])
+        self.assertEqual(plan.first_pass_tools, ["p_vec"])
+        self.assertEqual(plan.query_variants, [("original", "how to join channel")])
+
+    def test_tool_order_for_query_class_skips_shadow_tools_when_disabled(self) -> None:
+        with patch.dict(os.environ, {"RAG_SHADOW_RETRIEVAL_ENABLED": "false"}, clear=False):
+            tools, evidence_goal, recovery_bias = _tool_order_for_query_class("troubleshooting_why")
+
+        self.assertEqual(tools, ["p_vec", "p_bm25", "p_fts"])
+        self.assertEqual(evidence_goal, "causal_grounding")
+        self.assertEqual(recovery_bias, "semantic")
+
+    def test_build_agentic_retrieval_plan_omits_shadow_tools_when_disabled(self) -> None:
+        with patch.dict(os.environ, {"RAG_SHADOW_RETRIEVAL_ENABLED": "false"}, clear=False):
+            plan = _build_agentic_retrieval_plan(
+                message="how to join channel",
+                top_k=5,
+                query_understanding=None,
+                ticket_context=None,
+            )
+
+        self.assertEqual(plan.query_class, "how_to_faq")
+        self.assertEqual(plan.first_pass_tools, ["p_vec"])
         self.assertEqual(plan.query_variants, [("original", "how to join channel")])
 
     def test_build_agentic_retrieval_plan_keeps_lean_first_pass_for_exact_error_lookup(self) -> None:
@@ -1196,3 +1219,79 @@ class RagAgenticTests(unittest.TestCase):
         self.assertEqual(vector_mock.call_count, 1)
         self.assertEqual(first.final_chunks[0].chunk_id, "chunk-2")
         self.assertEqual(second.final_chunks[0].chunk_id, "chunk-2")
+
+    def test_execute_agentic_round_skips_shadow_tools_when_disabled(self) -> None:
+        plan = AgenticRetrievalPlan(
+            query_class="configuration",
+            first_pass_tools=["p_bm25", "s_bm25", "p_fts", "s_fts"],
+            query_variants=[("original", "How do I enable dual stream in Node.js?")],
+            decomposition_targets=[],
+            evidence_goal="configuration_support",
+            recovery_bias="lexical",
+            ticket_context_used=False,
+            exact_terms=["dual", "stream"],
+        )
+        chunk = RetrievedChunk(
+            chunk_id="chunk-shadow-off",
+            text="Enable dual stream before joining the channel.",
+            source_path="official/dual-stream.md",
+            similarity=0.92,
+            index_role="primary",
+        )
+        config = {
+            "top_k": 5,
+            "vector_candidate_k": 10,
+            "bm25_candidate_k": 10,
+            "fts_candidate_k": 10,
+            "keyword_candidate_k": 10,
+            "fusion_candidate_k": 10,
+            "rerank_top_n": 5,
+            "agent_shadow_ratio_cap": 0.4,
+            "agent_final_shadow_cap": 1,
+            "agent_recovery_shadow_cap": 2,
+            "vector_enabled": False,
+            "rerank_enabled": False,
+            "shadow_retrieval_enabled": False,
+        }
+        rerank_info = {
+            "post_rerank_count": 1,
+            "hints": {},
+            "applied_filter": False,
+            "filter_type": None,
+            "candidate_reasons": {},
+        }
+
+        with patch(
+            "backend.services.rag_qa._retrieve_bm25_chunks",
+            return_value=[chunk],
+        ) as bm25_mock, patch(
+            "backend.services.rag_qa._retrieve_fts_chunks",
+            return_value=[],
+        ) as fts_mock, patch(
+            "backend.services.rag_qa._metadata_rerank",
+            return_value=([chunk], rerank_info),
+        ), patch(
+            "backend.services.rag_qa._rerank_chunks",
+            side_effect=AssertionError("rerank should be skipped when disabled"),
+        ):
+            result = _execute_agentic_round(
+                message="How do I enable dual stream in Node.js?",
+                config=config,
+                plan=plan,
+                round_index=1,
+                retrieval_plan=RetrievalPlan(semantic_query="How do I enable dual stream in Node.js?"),
+                query_understanding=None,
+                ticket_context=None,
+            )
+
+        self.assertEqual(bm25_mock.call_count, 1)
+        self.assertEqual(fts_mock.call_count, 1)
+        self.assertEqual(result.iteration_trace.tool_names, ["p_bm25", "p_fts"])
+        self.assertEqual(result.shadow_tools_skipped, ["s_bm25", "s_fts"])
+        self.assertTrue(
+            all(
+                not str(timing.get("tool_name") or "").startswith("s_")
+                for timing in result.retrieval_tool_timings
+                if isinstance(timing, dict)
+            )
+        )

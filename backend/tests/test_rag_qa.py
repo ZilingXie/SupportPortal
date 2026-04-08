@@ -92,6 +92,13 @@ class RagQaHybridTests(unittest.TestCase):
         self.assertEqual(config["embedding_model"], "BAAI/bge-m3")
         self.assertEqual(config["bm25_max_query_terms"], 6)
         self.assertEqual(config["bm25_max_term_doc_freq_ratio"], 0.08)
+        self.assertTrue(config["shadow_retrieval_enabled"])
+
+    def test_get_rag_config_reads_shadow_retrieval_flag(self) -> None:
+        with patch.dict(os.environ, {"RAG_SHADOW_RETRIEVAL_ENABLED": "false"}, clear=True):
+            config = _get_rag_config(top_k=6)
+
+        self.assertFalse(config["shadow_retrieval_enabled"])
 
     def test_get_rag_config_reads_lowercase_silliconflow_key_for_reranker(self) -> None:
         with patch.dict(os.environ, {"silliconflow_key": "test-rerank-key"}, clear=True):
