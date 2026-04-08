@@ -100,6 +100,7 @@ from backend.services.support_router import (
 )
 from backend.services.support_products import normalize_support_product
 from backend.services.task_queue import AsyncRedisTaskQueue
+from backend.services.ticket_title import derive_ticket_title
 from backend.services.ticket_message_sentiment import (
     build_ticket_message_sentiment_event,
     classify_customer_message_sentiment,
@@ -378,10 +379,7 @@ rag_service_client = RagServiceClient()
 
 
 def derive_subject(message: str) -> str:
-    normalized = " ".join(str(message).split())
-    if not normalized:
-        return "General support request"
-    return normalized[:100]
+    return derive_ticket_title(message)
 
 
 def latest_customer_message(ticket: dict[str, Any]) -> str:

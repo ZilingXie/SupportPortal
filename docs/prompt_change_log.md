@@ -797,6 +797,28 @@ For each new entry, record:
   - `git diff --check`
 
 - Date: 2026-04-08
+- Area or subsystem: Client ticket title generation
+- Prompt or model version: `ticket-title-v1`
+- Summary: Replaced the new-ticket subject fallback with a short issue-label generator so first-message titles stop using raw 100-character truncation and instead produce compact labels such as technical object plus mismatch/symptom.
+- Reason: Real ticket `TK-078` showed that the old `subject` behavior was not a summary at all; it copied the first customer paragraph prefix into every new ticket, which made client and dashboard rows noisy and hard to scan.
+- Affected files or config:
+  - `backend/services/ticket_title.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/main.py`
+  - `backend/tests/test_ticket_title.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - New tickets created through `/api/tickets/query` without an explicit `subject` now try a `gpt-5.4-nano` short-title prompt with `reasoning_effort=none`, `temperature=0`, and a `2.0s` timeout.
+  - If the model output is empty, too long, includes greetings or URLs, or looks like a raw prefix copy, the backend falls back to deterministic title compaction instead of persisting the first 100 characters of the customer message.
+  - Existing tickets and explicit caller-provided `subject` values remain unchanged.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_ticket_title`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_llm_profiles`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_investigation_flow`
+
+- Date: 2026-04-08
 - Area or subsystem: Dashboard ticket summary context
 - Prompt or model version: `dashboard-ticket-summary-v2`
 - Summary: Expanded the shared dashboard ticket summary context so client-rooted dashboard summaries include linked sub ticket counts, active-state context, and the latest linked sub ticket updates when a main ticket has one or more engineer-side cases.

@@ -504,6 +504,203 @@ class InvestigationFlowTests(unittest.TestCase):
         ticket = next(item for item in list_response.json()["tickets"] if item["ticket_id"] == "TK-PROD-002")
         self.assertEqual(ticket["product"], "audio_video_calling")
 
+    def test_ticket_query_derives_short_issue_label_for_new_ticket_without_subject(self) -> None:
+        with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="Thanks, I am checking this.",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main,
+            "execute_client_ticket_agent_runtime",
+            return_value=types.SimpleNamespace(
+                result=types.SimpleNamespace(
+                    answer="Please share the affected channel name and timestamp.",
+                    confidence=0.22,
+                    sources=[],
+                    citations=[],
+                    needs_investigating=False,
+                    next_status="communicating",
+                    answer_route="rag",
+                    scope_label="agora_technical",
+                    route_family="agora_docs_rag",
+                    execution_action="rag",
+                    tooling_profile="agora_docs_only",
+                    route_reason="clarify_needed",
+                    route_confidence=0.78,
+                    search_used=False,
+                    matched_signals=["optimistic_default"],
+                    investigation_reason=None,
+                    evidence_summary=None,
+                    packed_evidence=None,
+                    workflow_action="answer_customer",
+                    client_intake_state=None,
+                ),
+            ),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-TITLE-001",
+                    "customer_id": "C-001",
+                    "product": "audio_video_calling",
+                    "message": (
+                        "Hello, Agora team. We are using the Ban User Privileges API "
+                        "(POST /dev/v1/kicking-rule) to disband channels after a broadcast ends, "
+                        "but the documented uid=0 and time=0 behavior does not match the API response."
+                    ),
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        stored = self.repository.get_ticket("TK-TITLE-001")
+        self.assertIsNotNone(stored)
+        assert stored is not None
+        self.assertLessEqual(len(stored["subject"]), 64)
+        self.assertLessEqual(len(stored["subject"].split()), 8)
+        self.assertNotIn("Hello, Agora team", stored["subject"])
+        self.assertNotIn("https://", stored["subject"])
+        self.assertNotEqual(
+            stored["subject"],
+            "Hello, Agora team. We are using the Ban User Privileges API (POST /dev/v1/kicking-rule) to",
+        )
+
+    def test_ticket_query_keeps_explicit_subject_when_creating_new_ticket(self) -> None:
+        with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="Thanks, I am checking this.",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main,
+            "execute_client_ticket_agent_runtime",
+            return_value=types.SimpleNamespace(
+                result=types.SimpleNamespace(
+                    answer="Need a few more details.",
+                    confidence=0.2,
+                    sources=[],
+                    citations=[],
+                    needs_investigating=False,
+                    next_status="communicating",
+                    answer_route="rag",
+                    scope_label="agora_technical",
+                    route_family="agora_docs_rag",
+                    execution_action="rag",
+                    tooling_profile="agora_docs_only",
+                    route_reason="clarify_needed",
+                    route_confidence=0.78,
+                    search_used=False,
+                    matched_signals=["optimistic_default"],
+                    investigation_reason=None,
+                    evidence_summary=None,
+                    packed_evidence=None,
+                    workflow_action="answer_customer",
+                    client_intake_state=None,
+                ),
+            ),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-TITLE-002",
+                    "customer_id": "C-001",
+                    "product": "audio_video_calling",
+                    "subject": "Ban API mismatch",
+                    "message": "Hello, Agora team. We found a Ban User Privileges API mismatch.",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        stored = self.repository.get_ticket("TK-TITLE-002")
+        self.assertIsNotNone(stored)
+        assert stored is not None
+        self.assertEqual(stored["subject"], "Ban API mismatch")
+
+    def test_ticket_query_follow_up_keeps_existing_subject(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-TITLE-003",
+            subject="Existing short title",
+            status="communicating",
+            product="audio_video_calling",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "Initial short issue",
+                    "created_at": "2026-03-29T09:00:00+00:00",
+                }
+            ],
+        )
+
+        with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="Thanks, I am checking this.",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main,
+            "execute_client_ticket_agent_runtime",
+            return_value=types.SimpleNamespace(
+                result=types.SimpleNamespace(
+                    answer="Please confirm whether this reproduces in a new session.",
+                    confidence=0.5,
+                    sources=[],
+                    citations=[],
+                    needs_investigating=False,
+                    next_status="communicating",
+                    answer_route="rag",
+                    scope_label="agora_technical",
+                    route_family="agora_docs_rag",
+                    execution_action="rag",
+                    tooling_profile="agora_docs_only",
+                    route_reason="clarify_needed",
+                    route_confidence=0.78,
+                    search_used=False,
+                    matched_signals=["optimistic_default"],
+                    investigation_reason=None,
+                    evidence_summary=None,
+                    packed_evidence=None,
+                    workflow_action="answer_customer",
+                    client_intake_state=None,
+                ),
+            ),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-TITLE-003",
+                    "customer_id": "C-001",
+                    "product": "audio_video_calling",
+                    "message": "Follow-up details with timestamps and sample payloads.",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        stored = self.repository.get_ticket("TK-TITLE-003")
+        self.assertIsNotNone(stored)
+        assert stored is not None
+        self.assertEqual(stored["subject"], "Existing short title")
+
     def test_existing_non_empty_session_keeps_locked_product_and_ignores_override(self) -> None:
         self._seed_ticket(
             ticket_id="TK-PROD-003",
