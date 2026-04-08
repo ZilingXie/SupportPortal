@@ -719,6 +719,112 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertIn("main_agent_to_answer_saved_ms", response_ready_payload)
         self.assertIn("answer_saved_to_response_ready_ms", response_ready_payload)
 
+    def test_process_ticket_query_persists_message_level_retrieval_plan_snapshot(self) -> None:
+        ticket = _build_ticket(
+            ticket_id="T-RAG-SNAPSHOT",
+            customer_message="how to join channel",
+            message_created_at="2026-03-22T00:00:00+00:00",
+        )
+        ticket["product"] = "audio_video_calling"
+        repository = Mock()
+        repository.get_ticket.side_effect = [
+            copy.deepcopy(ticket),
+            copy.deepcopy(ticket),
+        ]
+        repository.list_ticket_events.return_value = []
+        repository.save_ticket.return_value = None
+        repository.record_event.return_value = None
+        repository.record_ticket_agent_event.return_value = None
+        bus = Mock()
+        execution = types.SimpleNamespace(
+            answer="Use joinChannel with a valid token and channel name.",
+            confidence=0.94,
+            sources=["https://docs.agora.io/en/video-calling/get-started"],
+            citations=[{"chunk_id": "chunk-1", "source_path": "official/get-started-sdk_android.md"}],
+            needs_engineer_guidance=False,
+            answer_route="rag",
+            scope_label="agora_technical",
+            route_reason="grounded_answer",
+            route_confidence=0.94,
+            search_used=False,
+            matched_signals=["join channel"],
+            route_family="agora_docs_rag",
+            execution_action="rag",
+            tooling_profile="agora_docs_only",
+            needs_investigating=False,
+            next_status="communicating",
+            workflow_action="answer_customer",
+            client_intake_state=None,
+            evidence_summary={
+                "diagnostics": {
+                    "retrieval_plan_snapshot": {
+                        "request_id": "rag-snapshot-1",
+                        "query_class": "how_to_faq",
+                        "retrieval_strategy": "agentic_multi_tool_v1",
+                        "light_path_used": False,
+                        "evidence_goal": "how_to_usage_support",
+                        "recovery_bias": "semantic",
+                        "first_pass_tools": ["p_vec", "s_vec"],
+                        "query_variants": [{"kind": "original", "query": "how to join channel"}],
+                        "decomposition_targets": [],
+                        "agent_iterations": [{"round_index": 1, "decision": "answer_now"}],
+                        "judge_summary": {"decision": "answer_now", "reason": "sufficient_first_pass_support"},
+                        "selected_contexts": [{"chunk_id": "chunk-1"}],
+                        "query_understanding_summary": {"query_profile": "how_to_faq"},
+                        "tool_timing_summary": {"total_latency_ms": 1200.0},
+                        "open_diagnosis_target": "rag-snapshot-1",
+                    }
+                }
+            },
+            packed_evidence=None,
+            client_agent_runtime_state={"status": "completed"},
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "_orchestrate_worker_support_message",
+            return_value=(execution, {"parallel_mode": "main_agent"}),
+        ), patch.object(
+            worker,
+            "_record_ticket_agent_runtime_events",
+            side_effect=lambda execution_arg: [
+                repository.record_ticket_agent_event(
+                    str(item.get("ticket_id") or ""),
+                    str(item.get("message_id") or "").strip() or None,
+                    str(item.get("run_id") or ""),
+                    str(item.get("agent_name") or ""),
+                    str(item.get("phase") or ""),
+                    str(item.get("event_type") or ""),
+                    dict(item.get("payload") or {}) if isinstance(item.get("payload"), dict) else {},
+                )
+                for item in getattr(execution_arg, "client_agent_runtime_events", [])
+                if isinstance(item, dict)
+            ],
+        ), patch.object(
+            worker,
+            "build_client_sync_event",
+            return_value={"event": "ticket_ai_response_ready"},
+        ), patch.object(
+            worker,
+            "ensure_ticket_defaults",
+            side_effect=lambda ticket: None,
+        ), patch.object(
+            worker,
+            "now_iso",
+            return_value="2026-03-22T00:01:00+00:00",
+        ):
+            worker._process_ticket_query(
+                bus,
+                dict(self.task, ticket_id="T-RAG-SNAPSHOT", customer_message="how to join channel"),
+            )
+
+        saved_ticket = repository.save_ticket.call_args_list[0].args[0]
+        assistant_message = saved_ticket["messages"][-1]
+        self.assertEqual(assistant_message["answer_route"], "rag")
+        self.assertIn("retrieval_plan_snapshot", assistant_message)
+        self.assertEqual(assistant_message["retrieval_plan_snapshot"]["request_id"], "rag-snapshot-1")
+        self.assertEqual(assistant_message["retrieval_plan_snapshot"]["query_class"], "how_to_faq")
+
     def test_process_ticket_query_records_queue_wait_and_main_agent_timing_fields(self) -> None:
         ticket = _build_ticket(
             ticket_id="T-TIMING",

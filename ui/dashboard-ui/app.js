@@ -88,6 +88,7 @@ let ticketDetailSummaryFailed = false;
 let ticketDetailSummaryModel = "";
 let ticketDetailRuntimeExpanded = false;
 let ticketDetailExpandedSubTicketIds = new Set();
+let ticketDetailExpandedRagPlanMessageKeys = new Set();
 let lastTicketDetailFocusEl = null;
 
 const ticketBoardStore = Object.fromEntries(TICKET_DETAIL_STATUSES.map((status) => [status, []]));
@@ -498,6 +499,7 @@ function resetTicketDetailState({ clearSelection = true } = {}) {
   ticketDetailSummaryModel = "";
   ticketDetailRuntimeExpanded = false;
   ticketDetailExpandedSubTicketIds = new Set();
+  ticketDetailExpandedRagPlanMessageKeys = new Set();
 }
 
 function buildDefinitionGrid(items) {
@@ -541,6 +543,265 @@ function buildTokenUsagePanel(tokenUsage) {
         ? `<p class="detail-note">token_by_model: ${escapeHtml(JSON.stringify(usage.token_by_model))}</p>`
         : `<p class="detail-note">token_by_model: []</p>`
     }
+  `;
+}
+
+function ticketDetailMessageKey(message, index) {
+  const role = normalizeString(message?.role || "system").toLowerCase() || "system";
+  const createdAt = normalizeString(message?.created_at) || `message-${index}`;
+  return `${role}:${createdAt}:${index}`;
+}
+
+function formatRagPlanSummaryValue(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => formatRagPlanSummaryValue(item))
+      .filter((item) => normalizeString(item))
+      .join(", ");
+  }
+  if (value && typeof value === "object") {
+    return Object.entries(value)
+      .map(([key, item]) => {
+        const normalizedItem = formatRagPlanSummaryValue(item);
+        return normalizeString(normalizedItem) ? `${humanizeToken(key)}: ${normalizedItem}` : "";
+      })
+      .filter((item) => normalizeString(item))
+      .join(" • ");
+  }
+  return normalizeString(value);
+}
+
+function buildRagPlanChipList(items) {
+  const safeItems = Array.isArray(items)
+    ? items.map((item) => normalizeString(item)).filter((item) => item && item !== "-")
+    : [];
+  if (!safeItems.length) {
+    return '<div class="detail-empty-state compact">No structured values captured for this section.</div>';
+  }
+  return `
+    <div class="ticket-detail-rag-plan-chip-list">
+      ${safeItems.map((item) => `<span class="ticket-detail-rag-plan-chip">${escapeHtml(item)}</span>`).join("")}
+    </div>
+  `;
+}
+
+function buildRagPlanDefinitionGrid(items) {
+  const safeItems = (Array.isArray(items) ? items : [])
+    .map((item) => ({
+      label: item?.label || "-",
+      value: formatRagPlanSummaryValue(item?.value),
+    }))
+    .filter((item) => normalizeString(item.value) && normalizeString(item.value) !== "-");
+  if (!safeItems.length) {
+    return '<div class="detail-empty-state compact">No structured values captured for this section.</div>';
+  }
+  return buildDefinitionGrid(safeItems);
+}
+
+function buildRagPlanExecutionTimeline(snapshot) {
+  const iterations = Array.isArray(snapshot?.agent_iterations) ? snapshot.agent_iterations : [];
+  const toolTimings = Array.isArray(snapshot?.tool_timing_summary?.retrieval_tool_timings)
+    ? snapshot.tool_timing_summary.retrieval_tool_timings
+    : [];
+  if (!iterations.length) {
+    return '<div class="detail-empty-state compact">No execution rounds were captured for this answer.</div>';
+  }
+  return `
+    <div class="ticket-detail-rag-plan-timeline">
+      ${iterations
+        .map((iteration) => {
+          const roundIndex = Number(iteration?.round_index || 0) || 1;
+          const toolNames = Array.isArray(iteration?.tool_names)
+            ? iteration.tool_names.map((item) => normalizeString(item)).filter(Boolean)
+            : [];
+          const selectedChunkIds = Array.isArray(iteration?.selected_chunk_ids)
+            ? iteration.selected_chunk_ids.map((item) => normalizeString(item)).filter(Boolean)
+            : [];
+          const roundToolTimings = toolTimings.filter(
+            (item) => Number(item?.round_index || 0) === roundIndex
+          );
+          return `
+            <article class="ticket-detail-rag-plan-round">
+              <div class="ticket-detail-rag-plan-round-head">
+                <strong>Round ${escapeHtml(String(roundIndex))}</strong>
+                <span>${escapeHtml(humanizeToken(iteration?.decision || "unknown"))}</span>
+              </div>
+              ${toolNames.length ? buildRagPlanChipList(toolNames) : ""}
+              ${
+                normalizeString(iteration?.recovery_action)
+                  ? `<p class="detail-note">Recovery Action: ${escapeHtml(
+                      humanizeToken(iteration.recovery_action)
+                    )}</p>`
+                  : ""
+              }
+              ${
+                selectedChunkIds.length
+                  ? `<p class="detail-note">Selected Chunks: ${escapeHtml(selectedChunkIds.join(", "))}</p>`
+                  : ""
+              }
+              ${
+                roundToolTimings.length
+                  ? `<ul class="ticket-detail-rag-plan-timing-list">
+                      ${roundToolTimings
+                        .map((item) => {
+                          const toolName = normalizeString(item?.tool_name) || "-";
+                          const queryKind = normalizeString(item?.query_kind) || "original";
+                          const latencyMs = Number(item?.latency_ms || 0);
+                          return `<li>${escapeHtml(toolName)} · ${escapeHtml(queryKind)} · ${escapeHtml(
+                            `${formatDecimal(latencyMs, 2)} ms`
+                          )}</li>`;
+                        })
+                        .join("")}
+                    </ul>`
+                  : ""
+              }
+            </article>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function buildRagPlanEvidenceList(items, emptyLabel) {
+  const safeItems = Array.isArray(items) ? items.filter((item) => item && typeof item === "object") : [];
+  if (!safeItems.length) {
+    return `<div class="detail-empty-state compact">${escapeHtml(emptyLabel)}</div>`;
+  }
+  return `
+    <div class="ticket-detail-rag-plan-evidence-list">
+      ${safeItems
+        .map((item) => {
+          const title = normalizeString(item?.heading || item?.source_path || item?.chunk_id) || "Context";
+          const meta = normalizeString(item?.source_path || item?.source_url || item?.chunk_id);
+          const excerpt = normalizeString(item?.text_excerpt || item?.text || "");
+          return `
+            <article class="ticket-detail-rag-plan-evidence-card">
+              <strong>${escapeHtml(title)}</strong>
+              ${meta ? `<p class="detail-note">${escapeHtml(meta)}</p>` : ""}
+              ${excerpt ? `<p>${escapeHtml(excerpt)}</p>` : ""}
+            </article>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function buildTicketDetailRagPlanPanel(message, messageKey) {
+  const snapshot =
+    message?.retrieval_plan_snapshot && typeof message.retrieval_plan_snapshot === "object"
+      ? message.retrieval_plan_snapshot
+      : null;
+  if (!snapshot) {
+    return "";
+  }
+  const expanded = ticketDetailExpandedRagPlanMessageKeys.has(messageKey);
+  const diagnosisTarget = normalizeString(snapshot?.open_diagnosis_target || snapshot?.request_id);
+  const querySummary =
+    snapshot?.query_understanding_summary && typeof snapshot.query_understanding_summary === "object"
+      ? snapshot.query_understanding_summary
+      : {};
+  const selectedContexts = Array.isArray(snapshot?.selected_contexts) ? snapshot.selected_contexts : [];
+  const citations = Array.isArray(message?.citations) ? message.citations : [];
+  return `
+    <section
+      class="ticket-detail-rag-plan-panel"
+      data-rag-plan-panel
+      data-rag-plan-message-key="${escapeHtml(messageKey)}"
+      ${expanded ? "" : "hidden"}
+    >
+      <div class="ticket-detail-rag-plan-section">
+        <div class="panel-header">
+          <div>
+            <h4>Build Retrieval Plan</h4>
+            <p>Summary of the plan that shaped this grounded answer.</p>
+          </div>
+          ${
+            diagnosisTarget
+              ? `<a class="ghost-button ticket-detail-rag-plan-link" href="/dashboard/rag/?tab=diagnosis&request_id=${encodeURIComponent(
+                  diagnosisTarget
+                )}">Open Full Diagnosis</a>`
+              : ""
+          }
+        </div>
+        ${buildRagPlanDefinitionGrid([
+          { label: "Query Class", value: snapshot?.query_class },
+          { label: "Retrieval Strategy", value: snapshot?.retrieval_strategy },
+          { label: "Light Path", value: snapshot?.light_path_used ? "Yes" : "No" },
+          { label: "Evidence Goal", value: snapshot?.evidence_goal },
+          { label: "Recovery Bias", value: snapshot?.recovery_bias },
+        ])}
+        <div class="ticket-detail-rag-plan-subsection">
+          <p class="eyebrow">First-pass Tools</p>
+          ${buildRagPlanChipList(snapshot?.first_pass_tools)}
+        </div>
+        <div class="ticket-detail-rag-plan-subsection">
+          <p class="eyebrow">Query Variants</p>
+          ${buildRagPlanChipList(
+            Array.isArray(snapshot?.query_variants)
+              ? snapshot.query_variants.map(
+                  (item) => `${normalizeString(item?.kind) || "variant"}: ${normalizeString(item?.query) || "-"}`
+                )
+              : []
+          )}
+        </div>
+        <div class="ticket-detail-rag-plan-subsection">
+          <p class="eyebrow">Decomposition Targets</p>
+          ${buildRagPlanChipList(snapshot?.decomposition_targets)}
+        </div>
+      </div>
+      <div class="ticket-detail-rag-plan-section">
+        <div class="panel-header">
+          <div>
+            <h4>Execution</h4>
+            <p>Round-by-round tool usage, decisions, and recovery path.</p>
+          </div>
+        </div>
+        ${buildRagPlanDefinitionGrid([
+          { label: "Final Decision", value: snapshot?.judge_summary?.decision },
+          { label: "Judge Reason", value: snapshot?.judge_summary?.reason },
+          { label: "Recovery Action", value: snapshot?.judge_summary?.recovery_action },
+          { label: "Judge Confidence", value: snapshot?.judge_summary?.confidence },
+          { label: "Retrieval", value: `${formatDecimal(snapshot?.tool_timing_summary?.retrieval_latency_ms, 2)} ms` },
+          { label: "Rerank", value: `${formatDecimal(snapshot?.tool_timing_summary?.rerank_latency_ms, 2)} ms` },
+          { label: "Generation", value: `${formatDecimal(snapshot?.tool_timing_summary?.generation_latency_ms, 2)} ms` },
+          { label: "Total", value: `${formatDecimal(snapshot?.tool_timing_summary?.total_latency_ms, 2)} ms` },
+        ])}
+        ${buildRagPlanExecutionTimeline(snapshot)}
+      </div>
+      <div class="ticket-detail-rag-plan-section">
+        <div class="panel-header">
+          <div>
+            <h4>Final Evidence</h4>
+            <p>Final selected contexts, query-understanding summary, and citations used by this answer.</p>
+          </div>
+        </div>
+        ${buildRagPlanEvidenceList(selectedContexts, "No selected contexts were captured for this message.")}
+        <div class="ticket-detail-rag-plan-subsection">
+          <p class="eyebrow">Query Understanding</p>
+          ${buildRagPlanDefinitionGrid([
+            { label: "Query Profile", value: querySummary?.query_profile },
+            { label: "Hard Filters", value: querySummary?.hard_filters },
+            { label: "Soft Signals", value: querySummary?.soft_signals },
+            { label: "Dictionary Hits", value: querySummary?.dictionary_hits },
+            { label: "Rule Expansions", value: querySummary?.rule_expansions },
+            { label: "LLM Expansions", value: querySummary?.llm_expansions },
+          ])}
+        </div>
+        <div class="ticket-detail-rag-plan-subsection">
+          <p class="eyebrow">Citations</p>
+          ${buildRagPlanEvidenceList(
+            citations.map((item) => ({
+              heading: normalizeString(item?.heading || item?.label || item?.chunk_id) || "Citation",
+              source_path: normalizeString(item?.source_path || item?.source_url || item?.chunk_id),
+              text_excerpt: normalizeString(item?.chunk_id) ? `Chunk: ${normalizeString(item?.chunk_id)}` : "",
+            })),
+            "This answer did not include message-level citations."
+          )}
+        </div>
+      </div>
+    </section>
   `;
 }
 
@@ -1252,6 +1513,20 @@ function renderTicketBoard() {
 function buildTicketDetailMessageCard(message) {
   const role = String(message?.role || "system").toLowerCase();
   const sentimentLabel = normalizeSentimentLabel(message?.sentiment_label);
+  const messageKey = normalizeString(message?._dashboard_message_key);
+  const retrievalPlanSnapshot =
+    message?.retrieval_plan_snapshot && typeof message?.retrieval_plan_snapshot === "object"
+      ? message.retrieval_plan_snapshot
+      : null;
+  const answerRoute = normalizeString(message?.answer_route).toLowerCase();
+  const workflowAction = normalizeString(message?.workflow_action);
+  const canShowRagPlan =
+    role === "assistant"
+    && answerRoute === "rag"
+    && workflowAction === "answer_customer"
+    && retrievalPlanSnapshot
+    && messageKey;
+  const ragPlanExpanded = canShowRagPlan && ticketDetailExpandedRagPlanMessageKeys.has(messageKey);
   return `
     <article class="ticket-detail-message ${role === "customer" ? "is-customer" : ""}">
       <header class="ticket-detail-message-header">
@@ -1264,10 +1539,22 @@ function buildTicketDetailMessageCard(message) {
                 )}</span>`
               : ""
           }
+          ${
+            canShowRagPlan
+              ? `<button
+                  type="button"
+                  class="ticket-detail-rag-plan-toggle"
+                  data-rag-plan-toggle
+                  data-rag-plan-message-key="${escapeHtml(messageKey)}"
+                  aria-expanded="${ragPlanExpanded ? "true" : "false"}"
+                >RAG Plan</button>`
+              : ""
+          }
           <span class="ticket-detail-message-time">${escapeHtml(formatDateTime(message?.created_at))}</span>
         </div>
       </header>
       <div class="ticket-detail-message-content">${escapeHtml(normalizeString(message?.content) || "-")}</div>
+      ${canShowRagPlan ? buildTicketDetailRagPlanPanel(message, messageKey) : ""}
     </article>
   `;
 }
@@ -1366,7 +1653,12 @@ function renderTicketDetail() {
         ${
           detailMessages.length
             ? `<div class="ticket-detail-message-list">${detailMessages
-                .map(buildTicketDetailMessageCard)
+                .map((message, index) =>
+                  buildTicketDetailMessageCard({
+                    ...(message && typeof message === "object" ? message : {}),
+                    _dashboard_message_key: ticketDetailMessageKey(message, index),
+                  })
+                )
                 .join("")}</div>`
             : '<div class="detail-empty-state">No customer-visible conversation is available yet.</div>'
         }
@@ -1791,6 +2083,21 @@ function handleDocumentClick(event) {
   const runtimeToggleButton = event.target.closest("[data-ticket-detail-runtime-toggle]");
   if (runtimeToggleButton) {
     ticketDetailRuntimeExpanded = !ticketDetailRuntimeExpanded;
+    renderTicketDetail();
+    return;
+  }
+
+  const ragPlanToggleButton = event.target.closest("[data-rag-plan-toggle]");
+  if (ragPlanToggleButton) {
+    const messageKey = normalizeString(ragPlanToggleButton.dataset.ragPlanMessageKey);
+    if (!messageKey) {
+      return;
+    }
+    if (ticketDetailExpandedRagPlanMessageKeys.has(messageKey)) {
+      ticketDetailExpandedRagPlanMessageKeys.delete(messageKey);
+    } else {
+      ticketDetailExpandedRagPlanMessageKeys.add(messageKey);
+    }
     renderTicketDetail();
     return;
   }

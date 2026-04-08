@@ -236,6 +236,16 @@ def _trace_query_understanding_meta(trace: Any) -> dict[str, Any]:
         "agent_enabled": bool(getattr(trace, "agent_enabled", False)),
         "agent_plan_version": getattr(trace, "agent_plan_version", None),
         "query_class": getattr(trace, "query_class", None),
+        "first_pass_tools": list(getattr(trace, "first_pass_tools", []) or []),
+        "query_variants": [
+            dict(item)
+            for item in getattr(trace, "plan_query_variants", []) or []
+            if isinstance(item, dict)
+        ],
+        "decomposition_targets": list(getattr(trace, "plan_decomposition_targets", []) or []),
+        "evidence_goal": getattr(trace, "evidence_goal", None),
+        "recovery_bias": getattr(trace, "recovery_bias", None),
+        "judge_summary": dict(getattr(trace, "judge_summary", {}) or {}),
         "agent_iterations": list(getattr(trace, "agent_iterations", []) or []),
         "agent_recovery_action": getattr(trace, "agent_recovery_action", None),
         "execution_mode": getattr(trace, "execution_mode", None),
@@ -306,6 +316,61 @@ def _build_usage_ledger(trace: Any) -> list[dict[str, Any]]:
 
 def _empty_usage_summary() -> dict[str, Any]:
     return aggregate_usage_ledger([])
+
+
+def _query_understanding_snapshot(query_understanding_meta: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "query_profile": query_understanding_meta.get("query_profile"),
+        "hard_filters": dict(query_understanding_meta.get("applied_hard_filters") or {}),
+        "soft_signals": dict(query_understanding_meta.get("applied_soft_signals") or {}),
+        "dictionary_hits": list(query_understanding_meta.get("dictionary_hits") or []),
+        "rule_expansions": list(query_understanding_meta.get("rule_expansions") or []),
+        "llm_expansions": list(query_understanding_meta.get("llm_expansions") or []),
+    }
+
+
+def _build_retrieval_plan_snapshot(
+    *,
+    request_id: str,
+    trace: Any,
+    query_understanding_meta: dict[str, Any],
+    evidence_summary: dict[str, Any],
+) -> dict[str, Any] | None:
+    normalized_request_id = _clean_text(request_id)
+    if not normalized_request_id:
+        return None
+    selected_contexts = [
+        dict(item)
+        for item in evidence_summary.get("selected_contexts") or []
+        if isinstance(item, dict)
+    ]
+    return {
+        "request_id": normalized_request_id,
+        "query_class": getattr(trace, "query_class", None),
+        "retrieval_strategy": getattr(trace, "retrieval_strategy", None),
+        "light_path_used": bool(getattr(trace, "light_path_used", False)),
+        "evidence_goal": getattr(trace, "evidence_goal", None),
+        "recovery_bias": getattr(trace, "recovery_bias", None),
+        "first_pass_tools": list(getattr(trace, "first_pass_tools", []) or []),
+        "query_variants": [
+            dict(item)
+            for item in getattr(trace, "plan_query_variants", []) or []
+            if isinstance(item, dict)
+        ],
+        "decomposition_targets": list(getattr(trace, "plan_decomposition_targets", []) or []),
+        "agent_iterations": list(getattr(trace, "agent_iterations", []) or []),
+        "judge_summary": dict(getattr(trace, "judge_summary", {}) or {}),
+        "selected_contexts": selected_contexts,
+        "query_understanding_summary": _query_understanding_snapshot(query_understanding_meta),
+        "tool_timing_summary": {
+            "retrieval_latency_ms": float(getattr(trace, "retrieval_latency_ms", 0.0) or 0.0),
+            "rerank_latency_ms": float(getattr(trace, "rerank_latency_ms", 0.0) or 0.0),
+            "generation_latency_ms": float(getattr(trace, "generation_latency_ms", 0.0) or 0.0),
+            "total_latency_ms": float(getattr(trace, "total_latency_ms", 0.0) or 0.0),
+            "retrieval_tool_timings": list(getattr(trace, "retrieval_tool_timings", []) or []),
+        },
+        "open_diagnosis_target": normalized_request_id,
+    }
 
 
 def _packed_evidence_payload(trace: Any) -> dict[str, Any] | None:
@@ -1049,6 +1114,12 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
         cited_chunk_ids=set(trace.cited_chunk_ids or []),
         query_understanding=query_understanding_meta,
     )
+    retrieval_plan_snapshot = _build_retrieval_plan_snapshot(
+        request_id=request.request_id,
+        trace=trace,
+        query_understanding_meta=query_understanding_meta,
+        evidence_summary=evidence_summary,
+    )
     telemetry_diagnostics = _record_rag_query_run_best_effort(
         request_id=request.request_id,
         ticket_id=request.ticket_id,
@@ -1113,6 +1184,11 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
         candidates=candidates,
     )
     evidence_summary = _attach_telemetry_diagnostics(evidence_summary, telemetry_diagnostics)
+    if retrieval_plan_snapshot is not None:
+        evidence_summary = _attach_response_diagnostics(
+            evidence_summary,
+            {"retrieval_plan_snapshot": retrieval_plan_snapshot},
+        )
 
     if bool(trace.needs_human) or rag_answer.answer.strip() == INSUFFICIENT_EVIDENCE_REPLY:
         return {

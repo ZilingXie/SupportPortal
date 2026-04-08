@@ -265,6 +265,12 @@ class RagQueryTrace:
     agent_enabled: bool = False
     agent_plan_version: str | None = None
     query_class: str | None = None
+    first_pass_tools: list[str] = field(default_factory=list)
+    plan_query_variants: list[dict[str, Any]] = field(default_factory=list)
+    plan_decomposition_targets: list[str] = field(default_factory=list)
+    evidence_goal: str | None = None
+    recovery_bias: str | None = None
+    judge_summary: dict[str, Any] = field(default_factory=dict)
     agent_iterations: list[dict[str, Any]] = field(default_factory=list)
     agent_recovery_action: str | None = None
     ticket_context_used: bool = False
@@ -5636,6 +5642,25 @@ def _run_rag_query_agentic(
             agent_enabled=True,
             agent_plan_version=AGENT_PLAN_VERSION,
             query_class=plan.query_class,
+            first_pass_tools=list(plan.first_pass_tools),
+            plan_query_variants=[
+                {"kind": str(kind), "query": str(query)}
+                for kind, query in plan.query_variants
+                if str(query or "").strip()
+            ],
+            plan_decomposition_targets=list(plan.decomposition_targets),
+            evidence_goal=plan.evidence_goal,
+            recovery_bias=plan.recovery_bias,
+            judge_summary={
+                "decision": str(final_judge.decision) if final_judge is not None else None,
+                "reason": str(final_judge.reason) if final_judge is not None else None,
+                "recovery_action": (
+                    str(final_judge.recovery_action) if final_judge is not None and final_judge.recovery_action else None
+                ),
+                "confidence": (
+                    round(float(final_judge.confidence), 4) if final_judge is not None else None
+                ),
+            },
             agent_iterations=list(agent_iterations),
             agent_recovery_action=recovery_action,
             ticket_context_used=bool(ticket_context),

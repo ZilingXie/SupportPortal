@@ -1726,6 +1726,124 @@ html.material-symbols-pending .material-symbols-outlined {
   font-size: 12px;
 }
 
+.ticket-detail-rag-plan-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid rgba(161, 174, 187, 0.42);
+  border-radius: 999px;
+  background: rgba(246, 249, 252, 0.92);
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.ticket-detail-rag-plan-toggle:hover {
+  color: var(--ink);
+  border-color: rgba(113, 134, 156, 0.4);
+  background: rgba(236, 242, 248, 0.96);
+}
+
+.ticket-detail-rag-plan-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(0, 176, 255, 0.14);
+}
+
+.ticket-detail-rag-plan-panel {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(244, 248, 252, 0.9);
+  border: 1px solid rgba(180, 194, 207, 0.34);
+}
+
+.ticket-detail-rag-plan-section {
+  display: grid;
+  gap: 12px;
+}
+
+.ticket-detail-rag-plan-subsection {
+  display: grid;
+  gap: 8px;
+}
+
+.ticket-detail-rag-plan-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ticket-detail-rag-plan-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(180, 194, 207, 0.34);
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.ticket-detail-rag-plan-timeline {
+  display: grid;
+  gap: 10px;
+}
+
+.ticket-detail-rag-plan-round {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(190, 201, 212, 0.28);
+}
+
+.ticket-detail-rag-plan-round-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ticket-detail-rag-plan-timing-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ink-muted);
+  font-size: 13px;
+}
+
+.ticket-detail-rag-plan-evidence-list {
+  display: grid;
+  gap: 10px;
+}
+
+.ticket-detail-rag-plan-evidence-card {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(190, 201, 212, 0.28);
+}
+
+.ticket-detail-rag-plan-link {
+  justify-self: start;
+}
+
 .detail-empty-state {
   padding: 18px;
   border-radius: 20px;

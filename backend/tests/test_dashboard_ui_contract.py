@@ -745,6 +745,34 @@ class DashboardUiContractTests(unittest.TestCase):
         ]:
             self.assertNotIn(removed_marker, render_ticket_detail_block)
 
+    def test_ticket_detail_message_cards_expose_rag_plan_disclosure(self) -> None:
+        js_source = Path("ui/dashboard-ui/app.js").read_text(encoding="utf-8")
+        css_source = Path("ui/dashboard-ui/styles.css").read_text(encoding="utf-8")
+        message_card_block = self._extract_js_function_block(js_source, "function buildTicketDetailMessageCard(message) {")
+
+        for marker in [
+            "RAG Plan",
+            "Build Retrieval Plan",
+            "Execution",
+            "Final Evidence",
+            "Open Full Diagnosis",
+            "retrieval_plan_snapshot",
+            "data-rag-plan-toggle",
+            "data-rag-plan-panel",
+        ]:
+            self.assertIn(marker, js_source)
+
+        for marker in [
+            ".ticket-detail-rag-plan-toggle",
+            ".ticket-detail-rag-plan-panel",
+            ".ticket-detail-rag-plan-section",
+            ".ticket-detail-rag-plan-timeline",
+        ]:
+            self.assertIn(marker, css_source)
+
+        self.assertIn("message?.answer_route", message_card_block)
+        self.assertIn("message?.retrieval_plan_snapshot", message_card_block)
+
 
 if __name__ == "__main__":
     unittest.main()
