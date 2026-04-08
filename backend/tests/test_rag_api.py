@@ -180,6 +180,19 @@ class RagApiTests(unittest.TestCase):
         rag_api.event_repository = event_repository
         return TestClient(rag_api.app)
 
+    def test_health_returns_app_build_metadata(self) -> None:
+        with self._client(_TrackingKnowledgeRepository()) as client, patch.object(
+            rag_api,
+            "get_app_build_info",
+            return_value={"ref": "def456abc123", "built_at": "2026-04-08T08:02:00Z"},
+        ):
+            response = client.get("/health")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["app_build"]["ref"], "def456abc123")
+        self.assertEqual(payload["app_build"]["built_at"], "2026-04-08T08:02:00Z")
+
     def test_internal_rag_query_returns_answer_without_waiting_for_async_telemetry_persistence(self) -> None:
         gate = threading.Event()
         repository = _BlockingKnowledgeRepository(gate)

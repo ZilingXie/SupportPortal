@@ -59,6 +59,23 @@ class InvestigationFlowTests(unittest.TestCase):
     def tearDown(self) -> None:
         main.ticket_repository = self.original_repository
 
+    def test_health_returns_app_build_metadata(self) -> None:
+        with patch.object(
+            main.rag_service_client,
+            "probe_health",
+            return_value={"status": "ok", "knowledge_storage": "postgres"},
+        ), patch.object(
+            main,
+            "get_app_build_info",
+            return_value={"ref": "abc123def456", "built_at": "2026-04-08T08:00:00Z"},
+        ):
+            response = self.client.get("/health")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["app_build"]["ref"], "abc123def456")
+        self.assertEqual(payload["app_build"]["built_at"], "2026-04-08T08:00:00Z")
+
     def _seed_ticket(
         self,
         *,

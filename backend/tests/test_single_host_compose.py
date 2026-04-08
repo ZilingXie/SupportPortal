@@ -7,6 +7,7 @@ import unittest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_PATH = REPO_ROOT / "deployment" / "docker-compose.single-host.yml"
+DOCKERFILE_PATH = REPO_ROOT / "backend" / "Dockerfile"
 
 
 class SingleHostComposeTests(unittest.TestCase):
@@ -164,6 +165,29 @@ class SingleHostComposeTests(unittest.TestCase):
             "ENGINEER_INVESTIGATION_REPLY_MAX_RETRIES: ${ENGINEER_INVESTIGATION_REPLY_MAX_RETRIES:-1}",
             api_block,
         )
+
+    def test_api_build_injects_app_build_metadata(self) -> None:
+        api_block = self._service_block("api")
+
+        self.assertIn("args:", api_block)
+        self.assertIn("APP_BUILD_REF: ${APP_BUILD_REF:-unknown}", api_block)
+        self.assertIn("APP_BUILD_TIME: ${APP_BUILD_TIME:-}", api_block)
+        self.assertIn("APP_BUILD_REF: ${APP_BUILD_REF:-unknown}", api_block)
+        self.assertIn("APP_BUILD_TIME: ${APP_BUILD_TIME:-}", api_block)
+
+    def test_rag_api_runtime_env_includes_app_build_metadata(self) -> None:
+        rag_api_block = self._service_block("rag_api")
+
+        self.assertIn("APP_BUILD_REF: ${APP_BUILD_REF:-unknown}", rag_api_block)
+        self.assertIn("APP_BUILD_TIME: ${APP_BUILD_TIME:-}", rag_api_block)
+
+    def test_dockerfile_exports_app_build_env(self) -> None:
+        content = DOCKERFILE_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("ARG APP_BUILD_REF=unknown", content)
+        self.assertIn("ARG APP_BUILD_TIME=", content)
+        self.assertIn("APP_BUILD_REF=${APP_BUILD_REF}", content)
+        self.assertIn("APP_BUILD_TIME=${APP_BUILD_TIME}", content)
 
 
 if __name__ == "__main__":

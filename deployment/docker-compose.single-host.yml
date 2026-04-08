@@ -15,6 +15,9 @@ services:
     build:
       context: ..
       dockerfile: backend/Dockerfile
+      args:
+        APP_BUILD_REF: ${APP_BUILD_REF:-unknown}
+        APP_BUILD_TIME: ${APP_BUILD_TIME:-}
     env_file:
       - ../.env
     volumes:
@@ -29,6 +32,8 @@ services:
       - --workers
       - "${API_WORKERS:-2}"
     environment:
+      APP_BUILD_REF: ${APP_BUILD_REF:-unknown}
+      APP_BUILD_TIME: ${APP_BUILD_TIME:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-5.4}
       OPENAI_REQUEST_TIMEOUT_SECONDS: ${OPENAI_REQUEST_TIMEOUT_SECONDS:-20.0}
@@ -113,6 +118,8 @@ services:
       - --workers
       - "${RAG_API_WORKERS:-1}"
     environment:
+      APP_BUILD_REF: ${APP_BUILD_REF:-unknown}
+      APP_BUILD_TIME: ${APP_BUILD_TIME:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_CHAT_MODEL: ${RAG_OPENAI_CHAT_MODEL:-gpt-5.4}
       OPENAI_REQUEST_TIMEOUT_SECONDS: ${OPENAI_REQUEST_TIMEOUT_SECONDS:-20.0}

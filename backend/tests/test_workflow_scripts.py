@@ -39,6 +39,11 @@ class WorkflowScriptTests(unittest.TestCase):
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(content, encoding="utf-8")
 
+    def _write_executable(self, path: Path, content: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        path.chmod(0o755)
+
     def _valid_feature_list(self) -> str:
         return textwrap.dedent(
             """\
@@ -163,6 +168,15 @@ class WorkflowScriptTests(unittest.TestCase):
 
     def _write_json(self, path: Path, payload: object) -> None:
         path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def _read_json_lines(self, path: Path) -> list[dict[str, object]]:
+        if not path.exists():
+            return []
+        return [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
 
     def _install_fake_gh(self, remote_bare: Path | None = None) -> tuple[Path, Path]:
         bin_dir = self.root / "fake-bin"
@@ -528,6 +542,59 @@ class WorkflowScriptTests(unittest.TestCase):
         gh_path.chmod(0o755)
         return bin_dir, state_dir
 
+    def _install_fake_restart_commands(self) -> tuple[Path, Path]:
+        bin_dir = self.root / "restart-bin"
+        state_dir = self.root / "restart-state"
+        bin_dir.mkdir()
+        state_dir.mkdir()
+
+        self._write_executable(
+            bin_dir / "podman-compose",
+            textwrap.dedent(
+                """\
+                #!/usr/bin/env python3
+                import json
+                import os
+                import sys
+                from pathlib import Path
+
+                state_dir = Path(os.environ["RESTART_TEST_STATE_DIR"])
+                payload = {
+                    "argv": sys.argv[1:],
+                    "cwd": os.getcwd(),
+                    "app_build_ref": os.environ.get("APP_BUILD_REF"),
+                    "app_build_time": os.environ.get("APP_BUILD_TIME"),
+                }
+                with (state_dir / "podman_calls.jsonl").open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(payload) + "\\n")
+
+                if "ps" in sys.argv[1:]:
+                    print("NAME\\napi up")
+                else:
+                    print("ok")
+                """
+            ),
+        )
+        self._write_executable(
+            bin_dir / "curl",
+            textwrap.dedent(
+                """\
+                #!/usr/bin/env python3
+                import json
+                import os
+                import sys
+                from pathlib import Path
+
+                state_dir = Path(os.environ["RESTART_TEST_STATE_DIR"])
+                payload = {"argv": sys.argv[1:], "url": sys.argv[-1]}
+                with (state_dir / "curl_calls.jsonl").open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(payload) + "\\n")
+                print('{"status":"ok","app_build":{"ref":"test-ref"}}')
+                """
+            ),
+        )
+        return bin_dir, state_dir
+
     def _fake_gh_env(self, bin_dir: Path, state_dir: Path, remote_bare: Path | None = None) -> dict[str, str]:
         env = {
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
@@ -642,6 +709,50 @@ class WorkflowScriptTests(unittest.TestCase):
         self.assertIn("Created task branch codex/engineer-opt-2.", result.stdout)
         self.assertTrue(expected_path.is_dir())
         self.assertEqual(_git(["branch", "--show-current"], cwd=expected_path).stdout.strip(), "codex/engineer-opt-2")
+
+    def test_restart_single_host_stack_requires_clean_root_main(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        self._write(seed, ".env", "TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets\nPGVECTOR_DSN=postgresql://rag:test@db.local/rag\n")
+        self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
+        self._commit_all(seed, "Add local runtime files")
+        _git(["push", "origin", "main"], cwd=seed)
+        _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
+        self._write(repo, "README.md", "dirty\n")
+
+        result = self._run_workflow("restart_single_host_stack.sh", repo)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Current worktree must be clean", result.stderr)
+
+    def test_restart_single_host_stack_rebuilds_with_current_main_build_metadata(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        self._write(seed, ".env", "TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets\nPGVECTOR_DSN=postgresql://rag:test@db.local/rag\n")
+        self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
+        self._commit_all(seed, "Add local runtime files")
+        _git(["push", "origin", "main"], cwd=seed)
+        _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
+        fake_bin, state_dir = self._install_fake_restart_commands()
+
+        result = self._run_workflow(
+            "restart_single_host_stack.sh",
+            repo,
+            extra_env={
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "RESTART_TEST_STATE_DIR": str(state_dir),
+            },
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
+        self.assertEqual([call["argv"][-1] for call in calls], ["down", "--build", "ps"])
+        self.assertEqual(calls[0]["argv"][:2], ["-f", "deployment/docker-compose.single-host.yml"])
+        self.assertEqual(calls[1]["argv"][:2], ["-f", "deployment/docker-compose.single-host.yml"])
+        self.assertEqual(calls[2]["argv"][:2], ["-f", "deployment/docker-compose.single-host.yml"])
+        expected_ref = _git(["rev-parse", "--short=12", "HEAD"], cwd=repo).stdout.strip()
+        self.assertEqual(calls[0]["app_build_ref"], expected_ref)
+        self.assertTrue(str(calls[0]["app_build_time"]).strip())
+        curl_calls = self._read_json_lines(state_dir / "curl_calls.jsonl")
+        self.assertEqual(curl_calls[0]["url"], "http://127.0.0.1:8080/health")
 
     def test_rehome_task_worktree_moves_dirty_root_codex_branch(self) -> None:
         _, _, repo = self._init_remote_repo_on_main()
