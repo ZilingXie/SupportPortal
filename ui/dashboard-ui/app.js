@@ -46,8 +46,8 @@ const TICKET_VIEW_COPY = {
   investigating: {
     title: "Investigating Tickets",
     detail:
-      "Tickets with an active engineer ticket. Use this board to review the current investigation context before switching into the engineer workspace.",
-    summary: "Engineer-facing tickets that still need review or approval before the customer sees the final answer.",
+      "Primary client tickets with at least one active linked sub ticket. Review the root ticket first, then inspect each sub ticket before switching into the engineer workspace.",
+    summary: "One card per client ticket, even when multiple linked sub tickets are active or recently closed.",
   },
   escalated: {
     title: "Escalated Tickets",
@@ -87,6 +87,7 @@ let ticketDetailSummaryLoading = false;
 let ticketDetailSummaryFailed = false;
 let ticketDetailSummaryModel = "";
 let ticketDetailRuntimeExpanded = false;
+let ticketDetailExpandedSubTicketIds = new Set();
 let lastTicketDetailFocusEl = null;
 
 const ticketBoardStore = Object.fromEntries(TICKET_DETAIL_STATUSES.map((status) => [status, []]));
@@ -345,6 +346,33 @@ function getDisplayInvestigation(ticket) {
   return getActiveInvestigation(ticket) || getLatestClosedInvestigation(ticket);
 }
 
+function ticketSubTickets(ticket) {
+  return Array.isArray(ticket?.sub_tickets)
+    ? ticket.sub_tickets.filter((item) => item && typeof item === "object")
+    : [];
+}
+
+function latestLinkedSubTicketUpdate(ticket) {
+  const directUpdate = normalizeString(ticket?.latest_sub_ticket_update);
+  if (directUpdate) {
+    return directUpdate;
+  }
+
+  const orderedSubTickets = ticketSubTickets(ticket).slice().sort((left, right) => {
+    const leftStamp = String(left?.updated_at || left?.created_at || "");
+    const rightStamp = String(right?.updated_at || right?.created_at || "");
+    return rightStamp.localeCompare(leftStamp);
+  });
+
+  for (const item of orderedSubTickets) {
+    const latestUpdate = latestInvestigationUpdate(item);
+    if (latestUpdate) {
+      return latestUpdate;
+    }
+  }
+  return "";
+}
+
 function latestInvestigationUpdate(ticket) {
   const activeInvestigation = getActiveInvestigation(ticket);
   if (activeInvestigation) {
@@ -367,6 +395,10 @@ function latestInvestigationUpdate(ticket) {
         return content;
       }
     }
+  }
+  const linkedSubTicketUpdate = latestLinkedSubTicketUpdate(ticket);
+  if (linkedSubTicketUpdate) {
+    return linkedSubTicketUpdate;
   }
   return "";
 }
@@ -421,6 +453,7 @@ function buildLocalSummaryFallback(ticket) {
   const latestAssistant = latestTicketMessage(ticket, ["assistant"]);
   const activeInvestigation = getActiveInvestigation(ticket);
   const latestInternal = latestInvestigationUpdate(ticket);
+  const subTickets = ticketSubTickets(ticket);
   const summaryLines = [`Ticket is currently ${status}.`];
 
   if (latestCustomer?.content) {
@@ -432,6 +465,11 @@ function buildLocalSummaryFallback(ticket) {
   if (activeInvestigation) {
     summaryLines.push(
       `Engineer ticket is ${investigationStateLabel(activeInvestigation.state).toLowerCase()}.`
+    );
+  }
+  if (!activeInvestigation && subTickets.length) {
+    summaryLines.push(
+      `Linked sub tickets: ${subTickets.length} total.`
     );
   }
   if (latestInternal) {
@@ -459,6 +497,7 @@ function resetTicketDetailState({ clearSelection = true } = {}) {
   ticketDetailSummaryFailed = false;
   ticketDetailSummaryModel = "";
   ticketDetailRuntimeExpanded = false;
+  ticketDetailExpandedSubTicketIds = new Set();
 }
 
 function buildDefinitionGrid(items) {
@@ -580,6 +619,134 @@ function buildClientAgentEventsPanel(ticket) {
     return '<div class="detail-empty-state">No agent events have been recorded for this ticket yet.</div>';
   }
   return `<div class="ticket-detail-message-list">${agentEvents.map(buildClientAgentEventCard).join("")}</div>`;
+}
+
+function subTicketIdentifier(subTicket) {
+  return normalizeString(subTicket?.engineer_case_id) || normalizeString(subTicket?.ticket_id);
+}
+
+function subTicketThreadMessages(subTicket) {
+  const displayInvestigation = getDisplayInvestigation(subTicket);
+  return Array.isArray(displayInvestigation?.messages)
+    ? displayInvestigation.messages.filter((item) => item && typeof item === "object")
+    : [];
+}
+
+function buildSubTicketThreadDisclosure(subTicket) {
+  const subTicketId = subTicketIdentifier(subTicket);
+  const threadMessages = subTicketThreadMessages(subTicket);
+  const isExpanded = ticketDetailExpandedSubTicketIds.has(subTicketId);
+  const threadMeta = [
+    threadMessages.length ? `${formatNumber(threadMessages.length)} internal messages` : "No internal messages",
+    formatDateTime(subTicket?.updated_at || subTicket?.opened_at || subTicket?.created_at),
+  ].filter((value) => normalizeString(value) && normalizeString(value) !== "-");
+
+  return `
+    <button
+      type="button"
+      class="sub-ticket-thread-toggle ${isExpanded ? "is-expanded" : ""}"
+      data-sub-ticket-thread-toggle
+      data-sub-ticket-id="${escapeHtml(subTicketId)}"
+      aria-expanded="${isExpanded ? "true" : "false"}"
+    >
+      <div class="sub-ticket-thread-toggle-copy">
+        <p class="eyebrow">Internal Thread</p>
+        <h4>Internal Thread</h4>
+        <p>Collapsed by default. Expand only when you need the engineer-side conversation.</p>
+      </div>
+      <div class="sub-ticket-thread-meta">
+        ${threadMeta.map((value) => `<span class="sub-ticket-pill">${escapeHtml(value)}</span>`).join("")}
+        <span class="material-symbols-outlined sub-ticket-thread-icon" aria-hidden="true">expand_more</span>
+      </div>
+    </button>
+    <div class="sub-ticket-thread-body" ${isExpanded ? "" : "hidden"}>
+      ${
+        threadMessages.length
+          ? `<div class="ticket-detail-message-list">${threadMessages.map(buildTicketDetailMessageCard).join("")}</div>`
+          : '<div class="detail-empty-state compact">No internal thread messages have been recorded for this sub ticket yet.</div>'
+      }
+    </div>
+  `;
+}
+
+function buildSubTicketCard(subTicket) {
+  const subTicketId = subTicketIdentifier(subTicket) || "-";
+  const displayInvestigation = getDisplayInvestigation(subTicket);
+  const latestInternalUpdate = normalizeString(latestInvestigationUpdate(subTicket));
+  const activeStateLabel = investigationStateLabel(
+    displayInvestigation?.state || subTicket?.investigation_state || "active"
+  );
+  const title = normalizeString(subTicket?.subject || subTicket?.title) || subTicketId;
+
+  return `
+    <article class="sub-ticket-card">
+      <div class="sub-ticket-card-header">
+        <div class="sub-ticket-card-copy">
+          <p class="eyebrow">Sub Ticket</p>
+          <h4>${escapeHtml(subTicketId)}</h4>
+          <p>${escapeHtml(title)}</p>
+        </div>
+        <div class="sub-ticket-card-badges">
+          <span class="status-badge ${statusClass(subTicket?.status || "investigating")}">${escapeHtml(
+            statusLabel(subTicket?.status || "investigating")
+          )}</span>
+          <span class="sub-ticket-pill">${escapeHtml(activeStateLabel)}</span>
+        </div>
+      </div>
+
+      ${buildDefinitionGrid([
+        { label: "Trigger Reason", value: humanizeToken(subTicket?.trigger_reason || "unknown") },
+        { label: "Trigger Source", value: humanizeToken(subTicket?.trigger_source || "unknown") },
+        { label: "Opened", value: formatDateTime(subTicket?.opened_at || subTicket?.created_at) },
+        { label: "Updated", value: formatDateTime(subTicket?.updated_at) },
+        { label: "Closed", value: subTicket?.closed_at ? formatDateTime(subTicket.closed_at) : "Still open" },
+      ])}
+
+      ${
+        latestInternalUpdate
+          ? `
+            <div class="sub-ticket-latest-update">
+              <span class="sub-ticket-latest-update-label">Latest Internal Update</span>
+              <p>${escapeHtml(truncateText(latestInternalUpdate, 360))}</p>
+            </div>
+          `
+          : ""
+      }
+
+      ${buildSubTicketThreadDisclosure(subTicket)}
+    </article>
+  `;
+}
+
+function buildLinkedSubTicketsSection(ticket) {
+  const subTickets = ticketSubTickets(ticket);
+  if (!subTickets.length) {
+    return "";
+  }
+
+  const activeSubTicketCount = Number(ticket?.active_sub_ticket_count || 0);
+  const latestUpdate = latestLinkedSubTicketUpdate(ticket);
+  const sectionChip = activeSubTicketCount > 0
+    ? `${formatNumber(activeSubTicketCount)} active / ${formatNumber(subTickets.length)} total`
+    : `${formatNumber(subTickets.length)} total`;
+
+  return `
+    <section class="panel-card detail-panel">
+      <div class="panel-header">
+        <div>
+          <h3>Linked Sub Tickets</h3>
+          <p>Engineer-side cases attached to this client ticket. Active cases stay first, and each internal thread is collapsed by default.</p>
+        </div>
+        <span class="section-chip">${escapeHtml(sectionChip)}</span>
+      </div>
+      ${
+        latestUpdate
+          ? `<p class="detail-note">Latest linked update: ${escapeHtml(truncateText(latestUpdate, 320))}</p>`
+          : ""
+      }
+      <div class="linked-sub-ticket-list">${subTickets.map(buildSubTicketCard).join("")}</div>
+    </section>
+  `;
 }
 
 function buildTicketSummaryPanel(fallbackSummary) {
@@ -824,13 +991,17 @@ function describeTicketBoardTicket(ticket) {
   const requester = ticketRequester(ticket);
   const latestCustomer = latestTicketMessage(ticket, ["customer"]);
   const latestAssistant = latestTicketMessage(ticket, ["assistant"]);
-  const investigationPreview = latestInvestigationUpdate(ticket);
+  const subTicketPreview = latestLinkedSubTicketUpdate(ticket);
+  const investigationPreview = subTicketPreview || latestInvestigationUpdate(ticket);
   const latestSentiment = normalizeSentimentLabel(latestCustomer?.sentiment_label);
 
   let previewLabel = "Latest Update";
   let previewValue = "No recent ticket update recorded yet.";
-  if (investigationPreview) {
-    previewLabel = "Engineer Ticket";
+  if (subTicketPreview) {
+    previewLabel = "Latest Sub Ticket Update";
+    previewValue = truncateText(subTicketPreview, 220);
+  } else if (investigationPreview) {
+    previewLabel = "Latest Investigation Update";
     previewValue = truncateText(investigationPreview, 220);
   } else if (latestCustomer?.content) {
     previewLabel = "Latest Customer Message";
@@ -1140,11 +1311,16 @@ function renderTicketDetail() {
   const ticket = selectedTicketDetail;
   const ticketId = String(ticket.ticket_id || selectedTicketId || "-");
   const status = normalizeStatusValue(ticket.status || "open");
-  const displayInvestigation = getDisplayInvestigation(ticket);
   const fallbackSummary = buildLocalSummaryFallback(ticket);
   const latestAssistant = latestTicketMessage(ticket, ["assistant"]);
   const detailMessages = Array.isArray(ticket.messages) ? ticket.messages.slice(-4) : [];
   const requester = ticketRequester(ticket);
+  const linkedSubTickets = ticketSubTickets(ticket);
+  const linkedSubTicketCount = Number(ticket?.linked_sub_ticket_count || linkedSubTickets.length || 0);
+  const activeSubTicketCount = Number(ticket?.active_sub_ticket_count || 0);
+  const heroCopy = linkedSubTicketCount
+    ? `Read-only client ticket context from the dashboard. Review the root ticket first, then inspect ${linkedSubTicketCount} linked sub ticket${linkedSubTicketCount === 1 ? "" : "s"} below before changing the workflow in the engineer workspace.`
+    : "Read-only ticket context from the dashboard. Switch to the engineer workspace if you need to change the workflow.";
 
   ticketDetailTitleEl.textContent = `${ticketId} detail`;
   ticketDetailBodyEl.innerHTML = `
@@ -1154,7 +1330,7 @@ function renderTicketDetail() {
           <div>
             <p class="eyebrow">Ticket Detail</p>
             <h3 class="ticket-detail-hero-title">${escapeHtml(ticketSubject(ticket))}</h3>
-            <p>Read-only ticket context from the dashboard. Switch to the engineer workspace if you need to change the workflow.</p>
+            <p>${escapeHtml(heroCopy)}</p>
           </div>
           <span class="status-badge ${statusClass(status)}">${escapeHtml(statusLabel(status))}</span>
         </div>
@@ -1163,10 +1339,8 @@ function renderTicketDetail() {
           { label: "Requester", value: requester },
           { label: "Created", value: formatDateTime(ticket.created_at) },
           { label: "Updated", value: formatDateTime(ticket.updated_at) },
-          {
-            label: "Engineer Ticket",
-            value: displayInvestigation ? investigationStateLabel(displayInvestigation.state) : "None",
-          },
+          { label: "Linked Sub Tickets", value: formatNumber(linkedSubTicketCount) },
+          { label: "Active Sub Tickets", value: formatNumber(activeSubTicketCount) },
         ])}
       </section>
 
@@ -1202,6 +1376,8 @@ function renderTicketDetail() {
             : ""
         }
       </section>
+
+      ${buildLinkedSubTicketsSection(ticket)}
 
       ${buildTicketRuntimeDisclosure(ticket)}
     </div>
@@ -1329,7 +1505,7 @@ async function loadTicketBoard(status = currentDashboardView) {
 
   try {
     const params = new URLSearchParams({ status: requestedStatus });
-    const payload = await fetchJson(`/api/engineer/tickets?${params.toString()}`);
+    const payload = await fetchJson(`/api/dashboard/tickets?${params.toString()}`);
     ticketBoardStore[requestedStatus] = Array.isArray(payload?.tickets) ? payload.tickets : [];
   } catch (error) {
     ticketBoardErrorByStatus[requestedStatus] = `Failed to load tickets: ${error.message}`;
@@ -1354,7 +1530,7 @@ async function loadTicketDetail(ticketId, { silent = false } = {}) {
   }
 
   try {
-    const payload = await fetchJson(`/api/engineer/tickets/${encodeURIComponent(requestedTicketId)}`);
+    const payload = await fetchJson(`/api/dashboard/tickets/${encodeURIComponent(requestedTicketId)}`);
     if (selectedTicketId !== requestedTicketId) {
       return;
     }
@@ -1389,7 +1565,7 @@ async function loadTicketDetailSummary(ticketId, { silent = false } = {}) {
 
   try {
     const payload = await fetchJson(
-      `/api/engineer/tickets/${encodeURIComponent(requestedTicketId)}/summary`
+      `/api/dashboard/tickets/${encodeURIComponent(requestedTicketId)}/summary`
     );
     if (selectedTicketId !== requestedTicketId) {
       return;
@@ -1615,6 +1791,21 @@ function handleDocumentClick(event) {
   const runtimeToggleButton = event.target.closest("[data-ticket-detail-runtime-toggle]");
   if (runtimeToggleButton) {
     ticketDetailRuntimeExpanded = !ticketDetailRuntimeExpanded;
+    renderTicketDetail();
+    return;
+  }
+
+  const subTicketThreadToggleButton = event.target.closest("[data-sub-ticket-thread-toggle]");
+  if (subTicketThreadToggleButton) {
+    const subTicketId = normalizeString(subTicketThreadToggleButton.dataset.subTicketId);
+    if (!subTicketId) {
+      return;
+    }
+    if (ticketDetailExpandedSubTicketIds.has(subTicketId)) {
+      ticketDetailExpandedSubTicketIds.delete(subTicketId);
+    } else {
+      ticketDetailExpandedSubTicketIds.add(subTicketId);
+    }
     renderTicketDetail();
     return;
   }
