@@ -12,6 +12,7 @@ SILICONFLOW_CHAT_API = "siliconflow_openai_compatible_chat"
 INTENT_ROUTER_SCENARIO = "intent_router"
 WEB_SEARCH_SCENARIO = "web_search_non_technical"
 CLIENT_ACK_SCENARIO = "client_ack"
+TICKET_TITLE_SCENARIO = "ticket_title"
 RAG_ANSWER_SCENARIO = "rag_answer"
 RAG_SUFFICIENCY_SCENARIO = "rag_sufficiency_judge"
 QUERY_EXPANSION_SCENARIO = "query_expansion"
@@ -249,6 +250,19 @@ def resolve_model_profile(
             reasoning_effort=_clean_text(os.getenv("CLIENT_ACK_REASONING_EFFORT")) or "none",
             temperature=0.0,
             timeout_seconds=_safe_positive_float_env("CLIENT_ACK_TIMEOUT_SECONDS", 5.0),
+            max_retries=1,
+            fallback_models=(),
+        )
+    if scenario == TICKET_TITLE_SCENARIO:
+        return ModelProfile(
+            scenario=scenario,
+            provider="openai",
+            model=_clean_text(os.getenv("TICKET_TITLE_MODEL")) or "gpt-5.4-nano",
+            api_mode=OPENAI_RESPONSES_API,
+            api_key=_openai_api_key(),
+            reasoning_effort="none",
+            temperature=0.0,
+            timeout_seconds=_safe_positive_float_env("TICKET_TITLE_TIMEOUT_SECONDS", 2.0),
             max_retries=1,
             fallback_models=(),
         )
