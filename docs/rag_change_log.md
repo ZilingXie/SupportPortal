@@ -2831,3 +2831,31 @@ For each new entry, record:
   - `python3 -m py_compile backend/services/rag_qa.py backend/rag_api.py backend/services/client_ticket_agent_runtime.py backend/main.py backend/worker.py backend/tests/test_rag_api.py backend/tests/test_client_ticket_agent_runtime.py backend/tests/test_worker.py backend/tests/test_dashboard_ui_contract.py backend/tests/test_ticket_routing.py`
   - `node --check ui/dashboard-ui/app.js`
   - `git diff --check`
+
+## 2026-04-08 - Global shadow retrieval kill switch
+
+- Summary:
+  - Added a global `RAG_SHADOW_RETRIEVAL_ENABLED` runtime flag that removes `s_vec`, `s_bm25`, and `s_fts` from the tool set before any retrieval work begins.
+  - Preserved primary retrieval, rerank, and final chunk selection behavior so the experiment isolates shadow latency without changing other retrieval paths.
+  - Extended RAG trace telemetry and `rag_api` exports with `shadow_retrieval_enabled` and `shadow_tools_skipped`, so live runs clearly show when shadow was disabled and which tools were skipped.
+- Reason:
+  - Live traces for `TK-078` class slow queries showed shadow tools consuming roughly `40s` while returning zero useful candidates, but the previous `shadow_ratio_cap` logic only limited final retained chunks and did not prevent the shadow calls themselves.
+  - The goal of this experiment is to measure the latency impact of removing shadow retrieval without simultaneously changing decomposition, query classification, or planner behavior.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/rag_api.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `deployment/docker-compose.single-host.yml`
+  - `.env.example`
+  - runtime `.env`: `RAG_SHADOW_RETRIEVAL_ENABLED=false`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema or vector-table changes.
+  - No ingestion changes.
+  - Live RAG runs in the experiment environment will report `primary_shadow_mix.shadow=0` and omit `s_*` entries from `retrieval_tool_timings`.
+- Verification:
+  - `source /tmp/supportportal-finalize-venv/bin/activate && python -m unittest backend.tests.test_rag_agentic backend.tests.test_rag_qa backend.tests.test_rag_api`
+  - `python3 -m py_compile backend/services/rag_qa.py backend/rag_api.py`
+  - `git diff --check`
+  - Compose rebuild and live `TK-078` replay verification were completed after applying the runtime flag.
