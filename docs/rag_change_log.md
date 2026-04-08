@@ -2859,3 +2859,33 @@ For each new entry, record:
   - `python3 -m py_compile backend/services/rag_qa.py backend/rag_api.py`
   - `git diff --check`
   - Compose rebuild and live `TK-078` replay verification were completed after applying the runtime flag.
+
+## 2026-04-08 - Expose single-host build metadata on API and RAG health endpoints
+
+- Summary:
+  - Added a shared `app_build` payload with `ref` / `built_at` to both the customer API and `rag_api` `/health` endpoints.
+  - Added build metadata injection to the single-host Docker build and runtime environment so local compose stacks can report which checkout actually produced the running API and RAG services.
+  - Added a guarded root-main local restart script to reduce future single-host image drift caused by rebuilding `localhost/supportportal-app:latest` from stale task worktrees.
+- Reason:
+  - The `TK-079` title regression investigation showed that the live local stack could be healthy while still running an older image that lacked the merged title helper, and there was no runtime-visible build identifier on either API or RAG health to prove that mismatch quickly.
+- Affected files/config:
+  - `backend/services/app_build.py`
+  - `backend/main.py`
+  - `backend/rag_api.py`
+  - `backend/Dockerfile`
+  - `deployment/docker-compose.single-host.yml`
+  - `scripts/workflow/restart_single_host_stack.sh`
+  - `backend/tests/test_app_build.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_rag_api.py`
+  - `backend/tests/test_single_host_compose.py`
+  - `backend/tests/test_workflow_scripts.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, embedding, retrieval, rerank, or vector-table changes.
+  - No benchmark or evaluation data changes.
+  - Single-host API / RAG health responses now include `app_build.ref` and `app_build.built_at` for runtime provenance.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_app_build backend.tests.test_single_host_compose backend.tests.test_workflow_scripts backend.tests.test_investigation_flow backend.tests.test_rag_api`
+  - `curl http://127.0.0.1:8080/health`
+  - `podman exec deployment_rag_api_1 python -c "import json, urllib.request; print(json.dumps(json.loads(urllib.request.urlopen('http://127.0.0.1:8020/health').read().decode()), ensure_ascii=False))"`

@@ -65,15 +65,22 @@ NGINX_HOST_PORT=8080
 cd /Users/xieziling/Desktop/personal_proj/SupportPortal
 export PODMAN_COMPOSE_PROVIDER=podman-compose
 
-podman-compose -f deployment/docker-compose.single-host.yml build api
-podman-compose -f deployment/docker-compose.single-host.yml up -d
+bash scripts/workflow/restart_single_host_stack.sh
 ```
+
+说明：
+1. 该脚本只能从根工作区的干净 `main` 运行；如果本地 `main` 没有同步到 `origin/main`，脚本会直接失败。
+2. 脚本会自动注入 `APP_BUILD_REF` / `APP_BUILD_TIME`，然后执行 `down -> up -d --build -> ps -> curl /health`。
+3. 本地长期运行栈不要再从任意 task worktree 直接执行 `podman-compose ... up -d --build`，否则 `localhost/supportportal-app:latest` 可能被旧 checkout 覆盖。
 
 ### 2.4 访问
 1. 客户端: [http://localhost:8080/client/](http://localhost:8080/client/)
 2. 工程师端: [http://localhost:8080/engineer/](http://localhost:8080/engineer/)
 3. 管理端: [http://localhost:8080/dashboard/](http://localhost:8080/dashboard/)
 4. 健康检查: [http://localhost:8080/health](http://localhost:8080/health)
+
+补充：
+1. `/health` 现在会返回 `app_build.ref` 和 `app_build.built_at`，可直接核对当前在线 API / RAG 服务到底跑的是哪次构建。
 
 ### 2.5 运维命令
 
@@ -185,8 +192,7 @@ curl -I http://support.stellarix.space
 
 ```bash
 cd /Users/xieziling/Desktop/personal_proj/SupportPortal
-podman-compose -f deployment/docker-compose.single-host.yml build api
-podman-compose -f deployment/docker-compose.single-host.yml up -d api ws_gateway worker
+bash scripts/workflow/restart_single_host_stack.sh
 ```
 
 ### 4.2 EC2 Docker

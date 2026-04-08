@@ -69,6 +69,7 @@ from backend.services.client_ticket_agent_runtime import (
     execute_client_ticket_agent_runtime,
     resolve_next_ticket_status,
 )
+from backend.services.app_build import get_app_build_info
 from backend.services.dashboard_ticket_ops import (
     build_ticket_dashboard_metrics,
     normalize_ticket_dashboard_events,
@@ -1869,6 +1870,7 @@ def health() -> dict[str, Any]:
     return {
         "status": "ok",
         "time": now_iso(),
+        "app_build": get_app_build_info(),
         "ticket_storage": ticket_repository.storage_mode(),
         "knowledge_storage": rag_health.get("knowledge_storage") or "proxy",
         "rag_service": rag_health.get("status") or "unknown",

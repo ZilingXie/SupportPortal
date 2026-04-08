@@ -23,6 +23,7 @@ from backend.repositories.knowledge_repository import (
     KnowledgeRepository,
     create_knowledge_repository,
 )
+from backend.services.app_build import get_app_build_info
 from backend.services.embedding_provider import (
     DEFAULT_PGVECTOR_TABLE,
     embedding_model_id,
@@ -935,6 +936,7 @@ def health() -> dict[str, Any]:
     return {
         "status": "ok",
         "time": now_iso(),
+        "app_build": get_app_build_info(),
         "service": "rag-api",
         "knowledge_storage": knowledge_repository.storage_mode(),
         "embedding_provider": _knowledge_embedding_provider(),

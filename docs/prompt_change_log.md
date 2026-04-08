@@ -797,6 +797,38 @@ For each new entry, record:
   - `git diff --check`
 
 - Date: 2026-04-08
+- Area or subsystem: Ticket title runtime observability and local single-host rebuild guardrails
+- Prompt or model version: `ticket-title-runtime-guard-v1`
+- Summary: Added a root-main-only local single-host restart script, exposed `app_build.ref` / `app_build.built_at` on API and RAG API `/health`, and introduced `scripts/fix_ticket_subject.py` so the canonical `ticket_title` helper can repair stale long subjects like `TK-079`.
+- Reason: `TK-079` proved that the short-title change had merged in source control but the live local API was still serving the old `normalized[:100]` subject path because the shared `localhost/supportportal-app:latest` tag had been overwritten by a stale checkout build.
+- Affected files or config:
+  - `backend/services/app_build.py`
+  - `backend/main.py`
+  - `backend/rag_api.py`
+  - `backend/Dockerfile`
+  - `deployment/docker-compose.single-host.yml`
+  - `scripts/workflow/restart_single_host_stack.sh`
+  - `scripts/fix_ticket_subject.py`
+  - `docs/deploy_single_host_ec2.md`
+  - `backend/tests/test_app_build.py`
+  - `backend/tests/test_fix_ticket_subject_cli.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_rag_api.py`
+  - `backend/tests/test_single_host_compose.py`
+  - `backend/tests/test_workflow_scripts.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Local operators can compare `/health.app_build.ref` against the expected commit before trusting any runtime behavior.
+  - The canonical local rebuild path is now `scripts/workflow/restart_single_host_stack.sh`, which refuses to run from a dirty or stale non-root checkout.
+  - One-off ticket subject repairs can reuse the same `derive_ticket_title()` helper that new tickets use, instead of editing `support_tickets.subject` by hand.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_app_build backend.tests.test_fix_ticket_subject_cli backend.tests.test_single_host_compose backend.tests.test_workflow_scripts backend.tests.test_investigation_flow backend.tests.test_rag_api`
+  - `curl http://127.0.0.1:8080/health`
+  - `podman exec deployment_api_1 python -c "import backend.main; print(backend.main.derive_subject.__code__.co_names)"`
+  - `./scripts/fix_ticket_subject.py --ticket-id TK-079 --apply`
+  - `GET /api/tickets` showed `TK-079.subject = "Ban User Privileges API behavior mismatch"` and a new synthetic `TK-TITLE-SMOKE-081930` ticket was created with the same compact short-title style.
+
+- Date: 2026-04-08
 - Area or subsystem: Client ticket title generation
 - Prompt or model version: `ticket-title-v1`
 - Summary: Replaced the new-ticket subject fallback with a short issue-label generator so first-message titles stop using raw 100-character truncation and instead produce compact labels such as technical object plus mismatch/symptom.
