@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 from backend.services.llm_profiles import (
     AUTO_DEPLOY_REPORT_SCENARIO,
-    CLIENT_ACK_SCENARIO,
     BENCHMARK_JUDGE_SCENARIO,
+    CLIENT_ACK_SCENARIO,
     ENGINEER_HELPER_SCENARIO,
     ENGINEER_INVESTIGATION_REPLY_SCENARIO,
     KNOWLEDGE_INGESTION_SCENARIO,
@@ -16,6 +16,7 @@ from backend.services.llm_profiles import (
     RAG_CONTEXT_COMPRESSION_SCENARIO,
     RAG_ANSWER_SCENARIO,
     RAG_SUFFICIENCY_SCENARIO,
+    TICKET_TITLE_SCENARIO,
     WEB_SEARCH_SCENARIO,
     clear_config_warnings_for_testing,
     get_config_warnings,
@@ -37,6 +38,7 @@ class LlmProfileTests(unittest.TestCase):
             query_expansion = resolve_model_profile(QUERY_EXPANSION_SCENARIO)
             planner = resolve_model_profile(RAG_AGENT_PLANNER_SCENARIO)
             compression = resolve_model_profile(RAG_CONTEXT_COMPRESSION_SCENARIO)
+            ticket_title = resolve_model_profile(TICKET_TITLE_SCENARIO)
             engineer = resolve_model_profile(ENGINEER_HELPER_SCENARIO)
             engineer_investigation_reply = resolve_model_profile(ENGINEER_INVESTIGATION_REPLY_SCENARIO)
             ingestion = resolve_model_profile(KNOWLEDGE_INGESTION_SCENARIO)
@@ -75,6 +77,12 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(compression.api_mode, "openai_responses")
         self.assertEqual(compression.model, "gpt-5.4-mini")
         self.assertEqual(compression.reasoning_effort, "low")
+
+        self.assertEqual(ticket_title.provider, "openai")
+        self.assertEqual(ticket_title.api_mode, "openai_responses")
+        self.assertEqual(ticket_title.model, "gpt-5.4-nano")
+        self.assertEqual(ticket_title.reasoning_effort, "none")
+        self.assertEqual(ticket_title.timeout_seconds, 2.0)
 
         self.assertEqual(engineer.provider, "openai")
         self.assertEqual(engineer.api_mode, "openai_responses")
@@ -129,6 +137,21 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(profile.model, "gpt-5.4-nano-preview")
         self.assertEqual(profile.reasoning_effort, "none")
         self.assertEqual(profile.timeout_seconds, 2.5)
+
+    def test_ticket_title_profile_honors_env_overrides(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TICKET_TITLE_MODEL": "gpt-5.4-mini",
+                "TICKET_TITLE_TIMEOUT_SECONDS": "1.5",
+            },
+            clear=True,
+        ):
+            profile = resolve_model_profile(TICKET_TITLE_SCENARIO)
+
+        self.assertEqual(profile.model, "gpt-5.4-mini")
+        self.assertEqual(profile.reasoning_effort, "none")
+        self.assertEqual(profile.timeout_seconds, 1.5)
 
     def test_agent_named_env_overrides_take_precedence_over_legacy_names(self) -> None:
         with patch.dict(
@@ -211,6 +234,7 @@ class LlmProfileTests(unittest.TestCase):
             profiles = [
                 resolve_model_profile(WEB_SEARCH_SCENARIO),
                 resolve_model_profile(CLIENT_ACK_SCENARIO),
+                resolve_model_profile(TICKET_TITLE_SCENARIO),
                 resolve_model_profile(RAG_ANSWER_SCENARIO),
                 resolve_model_profile(RAG_SUFFICIENCY_SCENARIO),
                 resolve_model_profile(QUERY_EXPANSION_SCENARIO),
