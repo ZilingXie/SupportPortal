@@ -103,8 +103,8 @@ class DashboardUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', source)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', source)
         self.assertIn("if (iconFontStylesheet?.sheet) {", source)
-        self.assertIn("./styles.css?v=20260405-ticket-detail-refresh-2", source)
-        self.assertIn('./app.js?v=20260405-ticket-detail-refresh-2', source)
+        self.assertIn("./styles.css?v=20260408-dashboard-client-rooted-tickets-1", source)
+        self.assertIn('./app.js?v=20260408-dashboard-client-rooted-tickets-1', source)
 
         self.assertRegex(
             source,
@@ -146,7 +146,7 @@ class DashboardUiContractTests(unittest.TestCase):
         self.assertIn("html.material-symbols-pending .material-symbols-outlined", css)
         self.assertIn("visibility: hidden;", css)
 
-    def test_root_dashboard_app_defaults_to_ticket_ops_and_uses_engineer_ticket_endpoints(self) -> None:
+    def test_root_dashboard_app_defaults_to_ticket_ops_and_uses_dashboard_ticket_endpoints(self) -> None:
         source = Path("ui/dashboard-ui/app.js").read_text(encoding="utf-8")
         css = Path("ui/dashboard-ui/styles.css").read_text(encoding="utf-8")
 
@@ -157,9 +157,9 @@ class DashboardUiContractTests(unittest.TestCase):
             'const TICKET_DETAIL_STATUSES = ["investigating", "escalated", "communicating", "resolved"];',
             "renderRailNav",
             "/api/dashboard/metrics",
-            "/api/engineer/tickets?",
-            "/api/engineer/tickets/${encodeURIComponent(requestedTicketId)}",
-            "/api/engineer/tickets/${encodeURIComponent(requestedTicketId)}/summary",
+            "/api/dashboard/tickets?",
+            "/api/dashboard/tickets/${encodeURIComponent(requestedTicketId)}",
+            "/api/dashboard/tickets/${encodeURIComponent(requestedTicketId)}/summary",
             'opsHeaderEl.hidden = !isTicketOpsView;',
             "buildTicketBoardViewToggleHtml",
             'viewMode === "list" ? renderTicketBoardList(boardRows) : renderTicketBoardGrid(boardRows)',
@@ -711,9 +711,12 @@ class DashboardUiContractTests(unittest.TestCase):
             "Ticket Summary",
             "Client Agent Runtime",
             "Recent Agent Events",
+            "Linked Sub Tickets",
             "client_agent_runtime_state",
             "client_agent_events",
+            "sub_tickets",
             "data-ticket-detail-runtime-toggle",
+            "data-sub-ticket-thread-toggle",
             "ticket-detail-runtime-disclosure",
         ]:
             self.assertIn(marker, js_source)
@@ -722,12 +725,18 @@ class DashboardUiContractTests(unittest.TestCase):
             ".ticket-detail-runtime-disclosure",
             ".ticket-detail-runtime-toggle",
             ".ticket-detail-runtime-body",
+            ".linked-sub-ticket-list",
+            ".sub-ticket-thread-body",
         ]:
             self.assertIn(marker, css_source)
 
         self.assertRegex(
             css_source,
             r"\.ticket-detail-runtime-body\[hidden\]\s*\{[^}]*display:\s*none(?:\s*!important)?;",
+        )
+        self.assertRegex(
+            css_source,
+            r"\.sub-ticket-thread-body\[hidden\]\s*\{[^}]*display:\s*none(?:\s*!important)?;",
         )
 
         for removed_marker in [

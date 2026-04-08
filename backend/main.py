@@ -133,6 +133,12 @@ ACTIVE_TICKET_STATUSES = {
     ESCALATED_STATUS,
     INVESTIGATING_STATUS,
 }
+DASHBOARD_TICKET_DETAIL_STATUSES = (
+    INVESTIGATING_STATUS,
+    ESCALATED_STATUS,
+    COMMUNICATING_STATUS,
+    RESOLVED_STATUS,
+)
 LOGGER = logging.getLogger(__name__)
 
 
@@ -821,7 +827,7 @@ def build_engineer_followup_request(ticket: dict[str, Any], customer_message: st
 
 
 def _summary_fallback(ticket: dict[str, Any]) -> tuple[str, str]:
-    agent_summary, agent_next_action = build_engineer_agent_brief(ticket)
+    agent_summary, agent_next_action = _dashboard_ticket_agent_brief(ticket)
     if normalize_ticket_status(ticket.get("status")) == INVESTIGATING_STATUS and agent_summary and agent_next_action:
         return agent_summary, agent_next_action
 
@@ -843,6 +849,19 @@ def _summary_fallback(ticket: dict[str, Any]) -> tuple[str, str]:
                 if content:
                     latest_internal_update = content
                     break
+
+    sub_tickets = _dashboard_sort_sub_tickets(
+        [item for item in ticket.get("sub_tickets", []) if isinstance(item, dict)]
+    )
+    active_sub_ticket_count = sum(1 for item in sub_tickets if _dashboard_sub_ticket_is_active(item))
+    latest_linked_sub_ticket_update = _dashboard_latest_linked_sub_ticket_update(sub_tickets)
+    latest_open_sub_ticket = next(
+        (item for item in sub_tickets if _dashboard_sub_ticket_is_active(item)),
+        None,
+    )
+    if active_investigation is None and isinstance(latest_open_sub_ticket, dict):
+        latest_open_investigation = _dashboard_sub_ticket_investigation_source(latest_open_sub_ticket) or {}
+        investigation_state = str(latest_open_investigation.get("state") or "active").strip().lower()
 
     latest_customer = ""
     latest_assistant = ""
@@ -871,6 +890,18 @@ def _summary_fallback(ticket: dict[str, Any]) -> tuple[str, str]:
         if latest_internal_update:
             summary_parts.append(
                 f"Latest engineer ticket update: {latest_internal_update[:260]}"
+            )
+    elif sub_tickets:
+        summary_parts.append(
+            f"Linked sub tickets: {len(sub_tickets)} total, {active_sub_ticket_count} active."
+        )
+        if investigation_state:
+            summary_parts.append(
+                f"Current active sub ticket state is {investigation_state}."
+            )
+        if latest_linked_sub_ticket_update:
+            summary_parts.append(
+                f"Latest engineer ticket update: {latest_linked_sub_ticket_update[:260]}"
             )
     if not latest_customer and not latest_assistant and active_investigation is None:
         summary_parts.append("No conversation history is available yet.")
@@ -986,7 +1017,7 @@ def _llm_response_to_text(response: Any) -> str:
 
 
 def build_ticket_summary(ticket: dict[str, Any]) -> tuple[str, str, str]:
-    agent_summary, agent_next_action = build_engineer_agent_brief(ticket)
+    agent_summary, agent_next_action = _dashboard_ticket_agent_brief(ticket)
     if normalize_ticket_status(ticket.get("status")) == INVESTIGATING_STATUS and agent_summary and agent_next_action:
         return agent_summary, agent_next_action, "engineer_agent_state"
 
@@ -1024,6 +1055,33 @@ def build_ticket_summary(ticket: dict[str, Any]) -> tuple[str, str, str]:
             f"draft_customer_reply={str(active_investigation.get('draft_customer_reply') or '').strip()[:220] or 'None'}"
         )
 
+    sub_tickets = _dashboard_sort_sub_tickets(
+        [item for item in ticket.get("sub_tickets", []) if isinstance(item, dict)]
+    )
+    sub_ticket_lines: list[str] = []
+    for sub_ticket in sub_tickets[:6]:
+        source = _dashboard_sub_ticket_investigation_source(sub_ticket) or {}
+        latest_update = _dashboard_sub_ticket_latest_update(sub_ticket)
+        sub_ticket_lines.append(
+            "ticket_id={ticket_id}; status={status}; state={state}; trigger_reason={trigger_reason}; "
+            "trigger_source={trigger_source}; latest_update={latest_update}".format(
+                ticket_id=str(
+                    sub_ticket.get("engineer_case_id")
+                    or sub_ticket.get("ticket_id")
+                    or "-"
+                ).strip(),
+                status=str(sub_ticket.get("status") or "open").strip(),
+                state=str(
+                    source.get("state")
+                    or ("active" if _dashboard_sub_ticket_is_active(sub_ticket) else "closed")
+                ).strip(),
+                trigger_reason=str(sub_ticket.get("trigger_reason") or "unknown").strip(),
+                trigger_source=str(sub_ticket.get("trigger_source") or "unknown").strip(),
+                latest_update=latest_update[:220] if latest_update else "None",
+            )
+        )
+    sub_ticket_summary = "\n".join(sub_ticket_lines) if sub_ticket_lines else "None"
+
     prompt = (
         "Return a JSON object with exactly two keys: summary and next_action_needed.\n"
         "Requirements:\n"
@@ -1036,6 +1094,9 @@ def build_ticket_summary(ticket: dict[str, Any]) -> tuple[str, str, str]:
         f"Requester: {requester}\n"
         f"Status: {status}\n"
         f"Active investigation: {investigation_summary}\n"
+        f"Linked sub tickets: {len(sub_tickets)}\n"
+        "Sub ticket details:\n"
+        f"{sub_ticket_summary}\n"
         "Recent messages:\n"
         + "\n".join(lines)
     )
@@ -1564,6 +1625,152 @@ def build_engineer_request_records(ticket_id: str) -> list[dict[str, Any]]:
             }
         )
     return records
+
+
+def _dashboard_sub_ticket_investigation_source(sub_ticket: dict[str, Any]) -> dict[str, Any] | None:
+    active = sub_ticket.get("active_investigation")
+    if isinstance(active, dict):
+        return active
+    history = sub_ticket.get("investigation_history")
+    if isinstance(history, list):
+        for item in history:
+            if isinstance(item, dict):
+                return item
+    return None
+
+
+def _dashboard_sub_ticket_is_active(sub_ticket: dict[str, Any]) -> bool:
+    return isinstance(sub_ticket.get("active_investigation"), dict)
+
+
+def _dashboard_sub_ticket_latest_update(sub_ticket: dict[str, Any]) -> str:
+    investigation = _dashboard_sub_ticket_investigation_source(sub_ticket) or {}
+    messages = investigation.get("messages")
+    if not isinstance(messages, list):
+        return ""
+    for message in reversed(messages):
+        content = " ".join(str(message.get("content", "")).split()).strip()
+        if content:
+            return content
+    return ""
+
+
+def _dashboard_sort_sub_tickets(sub_tickets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        [copy.deepcopy(item) for item in sub_tickets if isinstance(item, dict)],
+        key=lambda item: (
+            1 if _dashboard_sub_ticket_is_active(item) else 0,
+            str(item.get("updated_at") or item.get("created_at") or ""),
+            str(item.get("engineer_case_id") or item.get("ticket_id") or ""),
+        ),
+        reverse=True,
+    )
+
+
+def _dashboard_latest_linked_sub_ticket_update(sub_tickets: list[dict[str, Any]]) -> str:
+    ordered = sorted(
+        [item for item in sub_tickets if isinstance(item, dict)],
+        key=lambda item: (
+            str(item.get("updated_at") or item.get("created_at") or ""),
+            str(item.get("engineer_case_id") or item.get("ticket_id") or ""),
+        ),
+        reverse=True,
+    )
+    for item in ordered:
+        latest_update = _dashboard_sub_ticket_latest_update(item)
+        if latest_update:
+            return latest_update
+    return ""
+
+
+def _dashboard_ticket_sub_tickets(ticket_id: str) -> list[dict[str, Any]]:
+    normalized_ticket_id = str(ticket_id or "").strip()
+    if not normalized_ticket_id:
+        return []
+    return _dashboard_sort_sub_tickets(
+        ticket_repository.list_ticket_engineer_cases(
+            normalized_ticket_id,
+            include_client_messages=True,
+        )
+    )
+
+
+def _dashboard_ticket_agent_brief(ticket: dict[str, Any]) -> tuple[str, str]:
+    agent_summary, agent_next_action = build_engineer_agent_brief(ticket)
+    if agent_summary and agent_next_action:
+        return agent_summary, agent_next_action
+
+    for sub_ticket in _dashboard_sort_sub_tickets(
+        [item for item in ticket.get("sub_tickets", []) if isinstance(item, dict)]
+    ):
+        sub_summary, sub_next_action = build_engineer_agent_brief(sub_ticket)
+        if sub_summary and sub_next_action:
+            return sub_summary, sub_next_action
+
+    return "", ""
+
+
+def _build_dashboard_ticket_payload(
+    ticket: dict[str, Any],
+    *,
+    include_sub_tickets: bool,
+    include_agent_events: bool,
+    include_token_usage: bool,
+) -> dict[str, Any]:
+    payload = copy.deepcopy(ticket)
+    ensure_ticket_defaults(payload)
+    ticket_id = str(payload.get("ticket_id") or "").strip()
+    sub_tickets = _dashboard_ticket_sub_tickets(ticket_id)
+    related_ticket_ids = [
+        str(item.get("engineer_case_id") or item.get("ticket_id") or "").strip()
+        for item in sub_tickets
+        if str(item.get("engineer_case_id") or item.get("ticket_id") or "").strip()
+    ]
+
+    payload["linked_sub_ticket_count"] = len(sub_tickets)
+    payload["active_sub_ticket_count"] = sum(1 for item in sub_tickets if _dashboard_sub_ticket_is_active(item))
+    payload["latest_sub_ticket_update"] = _dashboard_latest_linked_sub_ticket_update(sub_tickets)
+    payload["sub_tickets"] = copy.deepcopy(sub_tickets) if include_sub_tickets else []
+
+    if include_agent_events:
+        payload["client_agent_events"] = (
+            ticket_repository.list_ticket_agent_events(ticket_id, limit=12)
+            if ticket_id
+            else []
+        )
+
+    if include_token_usage:
+        try:
+            payload["token_usage"] = rag_service_client.get_ticket_family_token_summary(
+                ticket_id=ticket_id,
+                client_ticket_id=ticket_id or None,
+            )
+        except RagServiceError:
+            payload["token_usage"] = {
+                **resolve_ticket_family_identity(
+                    {
+                        "ticket_id": ticket_id,
+                        "client_ticket_id": ticket_id,
+                    },
+                    related_ticket_ids=related_ticket_ids,
+                ),
+                **aggregate_usage_ledger([]),
+            }
+
+    payload["engineer_request_records"] = build_engineer_request_records(ticket_id)
+    return payload
+
+
+def _dashboard_ticket_detail_or_404(ticket_id: str, *, include_token_usage: bool) -> dict[str, Any]:
+    ticket = ticket_repository.get_ticket(ticket_id)
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    return _build_dashboard_ticket_payload(
+        ticket,
+        include_sub_tickets=True,
+        include_agent_events=True,
+        include_token_usage=include_token_usage,
+    )
 
 
 def _resolve_engineer_case_payload(reference_id: str) -> dict[str, Any] | None:
@@ -2207,6 +2414,55 @@ def list_client_tickets(
         "tickets": tickets,
         "customer_id": normalized_customer_id or None,
         "status_filter": status if status == "all" else normalize_ticket_status(status),
+    }
+
+
+@app.get("/api/dashboard/tickets")
+def list_dashboard_tickets(
+    status: str = Query(
+        default=INVESTIGATING_STATUS,
+        pattern="^(resolved|communicating|escalated|investigating)$",
+    ),
+) -> dict[str, Any]:
+    normalized_filter = normalize_ticket_status(status)
+    all_tickets = ticket_repository.list_tickets(include_messages=True)
+    filtered_tickets: list[dict[str, Any]] = []
+    for ticket in all_tickets:
+        if normalize_ticket_status(ticket.get("status")) != normalized_filter:
+            continue
+        filtered_tickets.append(
+            _build_dashboard_ticket_payload(
+                ticket,
+                include_sub_tickets=False,
+                include_agent_events=False,
+                include_token_usage=False,
+            )
+        )
+
+    tickets = sorted(
+        filtered_tickets,
+        key=lambda item: item.get("updated_at", item.get("created_at", "")),
+        reverse=True,
+    )
+    return {"tickets": tickets, "status_filter": normalized_filter}
+
+
+@app.get("/api/dashboard/tickets/{ticket_id}")
+def get_dashboard_ticket_detail(ticket_id: str) -> dict[str, Any]:
+    ticket = _dashboard_ticket_detail_or_404(ticket_id, include_token_usage=True)
+    return {"ticket": ticket}
+
+
+@app.get("/api/dashboard/tickets/{ticket_id}/summary")
+def get_dashboard_ticket_summary(ticket_id: str) -> dict[str, Any]:
+    ticket = _dashboard_ticket_detail_or_404(ticket_id, include_token_usage=False)
+    summary, next_action_needed, model = build_ticket_summary(ticket)
+    return {
+        "ticket_id": str(ticket.get("ticket_id") or ticket_id),
+        "summary": summary,
+        "next_action_needed": next_action_needed,
+        "model": model,
+        "generated_at": now_iso(),
     }
 
 

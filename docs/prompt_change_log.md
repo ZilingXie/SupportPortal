@@ -796,6 +796,29 @@ For each new entry, record:
   - `node --check ui/client-ui/app.js`
   - `git diff --check`
 
+- Date: 2026-04-08
+- Area or subsystem: Dashboard ticket summary context
+- Prompt or model version: `dashboard-ticket-summary-v2`
+- Summary: Expanded the shared dashboard ticket summary context so client-rooted dashboard summaries include linked sub ticket counts, active-state context, and the latest linked sub ticket updates when a main ticket has one or more engineer-side cases.
+- Reason: The ticket dashboard now renders one row per client ticket, so summary generation must stay rooted in the main ticket while still reflecting investigation progress from any linked sub tickets.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/tests/test_dashboard_ticket_routes.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `ui/dashboard-ui/app.js`
+  - `ui/dashboard-ui/styles.css`
+  - `ui/dashboard-ui/index.html`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Dashboard summary generation now incorporates linked sub ticket progress instead of only the root ticket's direct investigation fields.
+  - If the canonical summary endpoint is unavailable or returns empty content, the dashboard fallback summary still mentions linked sub ticket counts and the latest linked engineer update.
+  - Investigating, escalated, communicating, and resolved dashboard detail views remain client-ticket-rooted while surfacing sub ticket progress in the summary narrative.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_dashboard_ticket_routes`
+  - `python3 -m unittest backend.tests.test_dashboard_ui_contract`
+  - `node --check ui/dashboard-ui/app.js`
+  - `python3 -m py_compile backend/main.py`
+
 - Date: 2026-04-07
 - Area or subsystem: RAG answer grounding retry for RTC how-to FAQs
 - Prompt or model version: `rag-answer-v3`
