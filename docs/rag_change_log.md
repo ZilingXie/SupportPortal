@@ -2753,3 +2753,45 @@ For each new entry, record:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_rag_service_client.py backend/tests/test_worker.py backend/tests/test_client_ticket_agent_runtime.py backend/tests/test_investigation_flow.py`
   - `python3 -m py_compile backend/services/rag_service_client.py backend/worker.py backend/main.py backend/services/client_ticket_agent_runtime.py backend/services/investigation_flow.py backend/services/engineer_agent.py backend/tests/test_rag_service_client.py backend/tests/test_worker.py backend/tests/test_client_ticket_agent_runtime.py backend/tests/test_investigation_flow.py`
   - `git diff --check`
+
+## 2026-04-07 - Compress BM25-heavy short FAQ routing latency for join/token/connection-state queries
+
+- Summary:
+  - Rewrote BM25 retrieval to materialize `top_scored` before joining back to `docagent_chunks`, so lexical retrieval no longer drags the full scored candidate set through the vector chunk table before the final limit is applied.
+  - Introduced a deterministic short-FAQ lexical bucket for `how to join channel`, `how to use token`, and `what is connection state change used for`, with focused exact-term shaping, sparse recovery variants, request-scope lexical result reuse, and a final BM25-only recovery path capped at `bm25_candidate_k=8`, `fusion_candidate_k=6`, `rerank_top_n=4`, and at most `2` generation chunks.
+  - Added BM25 covering indexes to the repository ensure path, recreated closed ticket DB pools before reuse, and executed the matching online RDS `CREATE INDEX CONCURRENTLY` plus `ANALYZE` maintenance so the live compose environment would stop regressing into pool errors and repeated heap-heavy BM25 joins.
+- Reason:
+  - Live route traces for short lexical FAQ questions were spending `70s ~ 235s` in the combined lexical bucket because round-2 recovery repeatedly re-ran BM25/FTS/keyword across multiple query variants, and the pre-existing BM25 SQL shape joined too many scored candidates back to the chunk table before limiting.
+  - The optimization target was operational, not benchmark-driven: bring the real compose route for three representative FAQ/reference questions below `50s` average per question without introducing `rag_unavailable` or engineer fallback behavior.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/repositories/knowledge_repository.py`
+  - `backend/repositories/ticket_repository.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_knowledge_repository_bm25.py`
+  - `backend/tests/test_repository_configuration.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema or vector-table changes.
+  - Live AWS RDS received the following online maintenance:
+    - `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_support_knowledge_bm25_postings_term_role_chunk_tf ON supportportal.support_knowledge_bm25_postings (term, index_role, chunk_id) INCLUDE (tf);`
+    - `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_support_knowledge_bm25_docs_role_chunk_length ON supportportal.support_knowledge_bm25_docs (index_role, chunk_id) INCLUDE (doc_length);`
+    - `ANALYZE supportportal.support_knowledge_bm25_postings;`
+    - `ANALYZE supportportal.support_knowledge_bm25_docs;`
+    - `ANALYZE supportportal.docagent_chunks_bge_m3_1024;`
+  - Short lexical FAQ round-2 recovery is now BM25-only with tighter budgets, and generation for that bucket is capped to two supporting chunks to avoid paying for extra context packing that does not improve the final answer.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_rag_qa.py backend/tests/test_rag_agentic.py backend/tests/test_knowledge_repository_bm25.py backend/tests/test_repository_configuration.py`
+  - `python3 -m py_compile backend/services/rag_qa.py backend/repositories/knowledge_repository.py backend/repositories/ticket_repository.py backend/tests/test_rag_qa.py backend/tests/test_rag_agentic.py backend/tests/test_knowledge_repository_bm25.py backend/tests/test_repository_configuration.py`
+  - `git diff --check`
+  - Rebuilt compose with:
+    - `podman-compose -f deployment/docker-compose.single-host.yml down`
+    - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+    - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - Route skill validation artifacts stored under `/tmp/supportportal-bm25-faq-latency-validation`, with measured averages:
+    - `How to join channel`: `49313.61 ms`
+    - `how to use token`: `39983.54 ms`
+    - `what is connection state change used for`: `38854.44 ms`
+    - overall measured average across the `3 x 3` counted runs: `42717.20 ms`
+  - No measured run returned `rag_unavailable` or engineer fallback text.

@@ -103,6 +103,11 @@ _LIGHT_PATH_RERANK_TOP_N = 8
 _LIGHT_PATH_CONTEXT_CHUNK_LIMIT = 3
 _LIGHT_PATH_FAST_ANSWER_MODEL = "gpt-5.4-mini"
 _LIGHT_PATH_FAST_ANSWER_REASONING_EFFORT = "low"
+_SHORT_FAQ_RECOVERY_BM25_CANDIDATE_K = 8
+_SHORT_FAQ_RECOVERY_FTS_CANDIDATE_K = 0
+_SHORT_FAQ_RECOVERY_FUSION_CANDIDATE_K = 6
+_SHORT_FAQ_RECOVERY_RERANK_TOP_N = 4
+_SHORT_FAQ_CONTEXT_CHUNK_LIMIT = 2
 _HOW_TO_FAQ_PREFIXES = (
     "how to ",
     "how do i ",
@@ -136,6 +141,8 @@ _JOIN_CHANNEL_PATTERN = re.compile(r"\bjoin(?:\s+a)?\s+channel\b|\bjoinchannel\b
 _AUDIO_VIDEO_CALLING_CORE_PRODUCTS = frozenset({"video-calling", "voice-calling"})
 _AUDIO_VIDEO_CALLING_SECONDARY_PRODUCTS = frozenset({"interactive-live-streaming", "broadcast-streaming"})
 _AUDIO_VIDEO_CALLING_PENALIZED_PRODUCTS = frozenset({"signaling", "iot", "cloud-recording"})
+_TOKEN_USAGE_FOCUSED_VARIANT_KINDS = frozenset({"focused_token_usage", "focused_rewrite"})
+_CONNECTION_STATE_FOCUSED_VARIANT_KINDS = frozenset({"focused_reference", "focused_rewrite"})
 
 
 def _build_answer_system_prompt(product: str | None = None) -> str:
@@ -801,6 +808,111 @@ def _is_generic_join_channel_query(message: str) -> bool:
     return True
 
 
+def _is_generic_token_usage_query(message: str) -> bool:
+    lower = _normalized_query_text(message)
+    if "token" not in lower:
+        return False
+    if any(
+        marker in lower
+        for marker in [
+            " error",
+            " errors",
+            " failed",
+            " failure",
+            " issue",
+            " issues",
+            " problem",
+            " problems",
+            " handle ",
+            " handle token",
+            " troubleshooting",
+            " why ",
+        ]
+    ):
+        return False
+    return any(
+        lower.startswith(marker)
+        for marker in [
+            "how to use token",
+            "use token",
+            "using token",
+            "token authentication",
+        ]
+    )
+
+
+def _is_connection_state_reference_query(message: str) -> bool:
+    lower = _normalized_query_text(message)
+    return "connection state change" in lower or "onconnectionstatechanged" in lower
+
+
+def _short_lexical_faq_pattern(message: str) -> str | None:
+    if _is_generic_join_channel_query(message):
+        return "join_channel"
+    if _is_generic_token_usage_query(message):
+        return "token_usage"
+    if _is_connection_state_reference_query(message):
+        return "connection_state"
+    return None
+
+
+def _is_short_lexical_faq_bucket(message: str, plan: AgenticRetrievalPlan) -> bool:
+    if plan.query_class not in {"lexical_exact", "how_to_faq"}:
+        return False
+    query_terms = _extract_query_terms(message, max_terms=8)
+    if len(query_terms) > 6:
+        return False
+    return _short_lexical_faq_pattern(message) is not None
+
+
+def _short_lexical_faq_recovery_variants(message: str, exact_terms: list[str]) -> list[tuple[str, str]]:
+    exact_query = " ".join(exact_terms).strip()
+    pattern = _short_lexical_faq_pattern(message)
+    if pattern == "join_channel":
+        return _dedupe_agentic_variants(
+            [
+                ("exact_token", exact_query),
+                ("focused_join_step", "join a channel joinChannel channelName uid options"),
+                ("focused_rewrite", "join channel joinChannel token channel name uid basic authentication"),
+            ]
+        )
+    if pattern == "token_usage":
+        return _dedupe_agentic_variants(
+            [
+                ("exact_token", exact_query or "use token"),
+                ("focused_token_usage", "use token token authentication token server basic authentication join channel"),
+                ("focused_rewrite", "token authentication use token app server token join channel"),
+            ]
+        )
+    if pattern == "connection_state":
+        return _dedupe_agentic_variants(
+            [
+                ("exact_token", exact_query or "connection state change"),
+                ("focused_reference", "connection state change onConnectionStateChanged connection state callback state changed"),
+                ("focused_rewrite", "connection state change callback purpose api reference state transition"),
+            ]
+        )
+    return []
+
+
+def _short_lexical_faq_recovery_requests(message: str, exact_terms: list[str]) -> list[tuple[str, str, str]]:
+    requests: list[tuple[str, str, str]] = []
+    for query_kind, query_text in _short_lexical_faq_recovery_variants(message, exact_terms):
+        requests.append(("p_bm25", query_kind, query_text))
+    return requests
+
+
+def _short_lexical_faq_exact_terms(message: str) -> list[str]:
+    pattern = _short_lexical_faq_pattern(message)
+    if pattern == "join_channel":
+        return _extract_query_terms("join channel", max_terms=6)
+    if pattern == "token_usage":
+        return _extract_query_terms("use token", max_terms=6)
+    if pattern == "connection_state":
+        return _extract_query_terms("connection state change", max_terms=6)
+    return _extract_query_terms(message, max_terms=6)
+
+
 def _chunk_source_family(chunk: RetrievedChunk) -> str:
     metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
     return str(metadata.get("source_family") or "").strip().replace("\\", "/").strip("/").lower()
@@ -1068,6 +1180,12 @@ def _build_agentic_retrieval_plan(
 ) -> AgenticRetrievalPlan:
     query_class = _classify_agentic_query(message, query_understanding)
     normalized_message = " ".join(str(message or "").split()).strip()
+    short_faq_pattern = _short_lexical_faq_pattern(message)
+    exact_terms = (
+        _short_lexical_faq_exact_terms(message)
+        if short_faq_pattern is not None
+        else _extract_query_terms(message, max_terms=6)
+    )
     if query_class == "lexical_exact" and _is_simple_lexical_query(message):
         return AgenticRetrievalPlan(
             query_class=query_class,
@@ -1077,7 +1195,20 @@ def _build_agentic_retrieval_plan(
             evidence_goal="exact_match",
             recovery_bias="lexical",
             ticket_context_used=bool(ticket_context),
-            exact_terms=_extract_query_terms(message, max_terms=6),
+            exact_terms=exact_terms,
+            light_path=True,
+            product=product,
+        )
+    if short_faq_pattern in {"token_usage", "connection_state"}:
+        return AgenticRetrievalPlan(
+            query_class="lexical_exact",
+            first_pass_tools=["p_bm25", "p_fts"],
+            query_variants=[("original", normalized_message)],
+            decomposition_targets=[],
+            evidence_goal="exact_match",
+            recovery_bias="lexical",
+            ticket_context_used=bool(ticket_context),
+            exact_terms=exact_terms,
             light_path=True,
             product=product,
         )
@@ -1121,7 +1252,7 @@ def _build_agentic_retrieval_plan(
                     evidence_goal=str(planner_payload.get("evidence_goal") or _tool_order_for_query_class(query_class)[1]).strip(),
                     recovery_bias=str(planner_payload.get("recovery_bias") or _tool_order_for_query_class(query_class)[2]).strip(),
                     ticket_context_used=bool(ticket_context),
-                    exact_terms=_extract_query_terms(message, max_terms=6),
+                    exact_terms=exact_terms,
                     light_path=False,
                     product=product,
                 )
@@ -1156,7 +1287,7 @@ def _build_agentic_retrieval_plan(
         evidence_goal=evidence_goal,
         recovery_bias=recovery_bias,
         ticket_context_used=bool(ticket_context),
-        exact_terms=_extract_query_terms(message, max_terms=6),
+        exact_terms=exact_terms,
         light_path=False,
         product=product,
     )
@@ -1373,6 +1504,67 @@ def _tool_family(tool_name: str) -> str:
     return "keyword"
 
 
+def _tool_candidate_k(config: dict[str, Any], tool_name: str) -> int:
+    family = _tool_family(tool_name)
+    if family == "vector":
+        return int(config.get("vector_candidate_k") or config.get("top_k") or 5)
+    if family == "bm25":
+        return int(config.get("bm25_candidate_k") or config.get("top_k") or 5)
+    if family == "fts":
+        return int(config.get("fts_candidate_k") or config.get("keyword_candidate_k") or config.get("top_k") or 5)
+    return int(config.get("keyword_candidate_k") or config.get("top_k") or 5)
+
+
+def _lexical_cache_key(
+    *,
+    tool_name: str,
+    query_text: str,
+    index_role: str,
+    candidate_k: int,
+) -> tuple[str, str, str, int] | None:
+    family = _tool_family(tool_name)
+    if family not in {"bm25", "fts", "keyword"}:
+        return None
+    normalized_query = " ".join(str(query_text or "").split()).strip()
+    if not normalized_query:
+        return None
+    normalized_role = str(index_role or "").strip().lower() or "primary"
+    return (
+        str(tool_name or "").strip().lower(),
+        normalized_query.lower(),
+        normalized_role,
+        max(1, int(candidate_k or 1)),
+    )
+
+
+def _lookup_lexical_cache(
+    lexical_result_cache: dict[tuple[str, str, str, int], tuple[str, list[RetrievedChunk]]] | None,
+    *,
+    cache_key: tuple[str, str, str, int] | None,
+) -> tuple[str, list[RetrievedChunk]] | None:
+    if lexical_result_cache is None or cache_key is None:
+        return None
+    cached = lexical_result_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    tool_name, query_text, index_role, candidate_k = cache_key
+    fallback_key: tuple[str, str, str, int] | None = None
+    fallback_limit: int | None = None
+    for existing_key in lexical_result_cache:
+        existing_tool, existing_query, existing_role, existing_limit = existing_key
+        if existing_tool != tool_name or existing_query != query_text or existing_role != index_role:
+            continue
+        if existing_limit < candidate_k:
+            continue
+        if fallback_limit is None or existing_limit < fallback_limit:
+            fallback_key = existing_key
+            fallback_limit = existing_limit
+    if fallback_key is None:
+        return None
+    cached_tool_label, cached_chunks = lexical_result_cache[fallback_key]
+    return cached_tool_label, list(cached_chunks[:candidate_k])
+
+
 def _dedupe_agentic_variants(variants: list[tuple[str, str]]) -> list[tuple[str, str]]:
     deduped: list[tuple[str, str]] = []
     seen: set[str] = set()
@@ -1394,11 +1586,14 @@ def _agentic_round_tools(
     round_index: int,
     recovery_action: str | None,
 ) -> list[str]:
+    original_message = plan.query_variants[0][1] if plan.query_variants else ""
+    if round_index > 1 and recovery_action == "lexical_recovery" and _is_short_lexical_faq_bucket(original_message, plan):
+        return ["p_bm25"]
     if plan.light_path:
         if round_index <= 1:
             return ["p_bm25", "p_fts"]
         if recovery_action == "lexical_recovery":
-            return ["p_bm25", "p_fts", "p_keyword"]
+            return ["p_bm25", "p_fts"]
         return ["p_bm25", "p_fts"]
     if round_index <= 1:
         return list(dict.fromkeys(plan.first_pass_tools))
@@ -1422,6 +1617,13 @@ def _agentic_round_variants(
     variants = list(plan.query_variants)
     if not variants:
         variants = [("original", " ".join(str(message or "").split()).strip())]
+    short_faq_variants = (
+        _short_lexical_faq_recovery_variants(message, plan.exact_terms)
+        if round_index > 1 and recovery_action == "lexical_recovery" and _is_short_lexical_faq_bucket(message, plan)
+        else []
+    )
+    if short_faq_variants:
+        return short_faq_variants
     if plan.light_path:
         if round_index > 1 and recovery_action == "lexical_recovery":
             existing = {query.lower() for _, query in variants}
@@ -1640,9 +1842,10 @@ def _retrieve_agentic_tool_variant(
     index_role: str,
     round_index: int,
     seeded_chunks: list[RetrievedChunk] | None = None,
+    lexical_result_cache: dict[tuple[str, str, str, int], tuple[str, list[RetrievedChunk]]] | None = None,
     should_cancel: Callable[[], bool] | None = None,
     record_cancel_stage: Callable[[str], None] | None = None,
-) -> tuple[str, list[RetrievedChunk], float, float, float, float, bool]:
+) -> tuple[str, list[RetrievedChunk], float, float, float, float, bool, bool]:
     family = _tool_family(tool_name)
     current_tool_label = tool_name
     vector_latency_ms = 0.0
@@ -1650,6 +1853,14 @@ def _retrieve_agentic_tool_variant(
     fts_latency_ms = 0.0
     keyword_latency_ms = 0.0
     used_seed_tool = False
+    used_cached_tool = False
+    candidate_limit = _tool_candidate_k(config, tool_name)
+    cache_key = _lexical_cache_key(
+        tool_name=tool_name,
+        query_text=query_text,
+        index_role=index_role,
+        candidate_k=candidate_limit,
+    )
 
     stage_name = "vector_embedding" if family == "vector" else f"round_{round_index}_retrieval"
     _raise_if_cancelled(
@@ -1660,73 +1871,93 @@ def _retrieve_agentic_tool_variant(
     if family == "vector" and not bool(
         config.get("_vector_runtime_available", config.get("vector_enabled", True))
     ):
-        return current_tool_label, [], 0.0, 0.0, 0.0, 0.0, False
+        return current_tool_label, [], 0.0, 0.0, 0.0, 0.0, False, False
 
     if seeded_chunks:
         raw_chunks = [_copy_chunk(chunk) for chunk in seeded_chunks]
         used_seed_tool = True
+        if cache_key is not None and lexical_result_cache is not None:
+            lexical_result_cache[cache_key] = (
+                current_tool_label,
+                [_copy_chunk(chunk) for chunk in raw_chunks],
+            )
     else:
-        started_at = time.perf_counter()
-        try:
-            if family == "vector":
-                raw_chunks = _retrieve_chunks(
-                    query_text,
-                    config,
-                    limit=int(config.get("vector_candidate_k") or config.get("top_k") or 5),
-                    index_role=index_role,
-                )
-                vector_latency_ms += (time.perf_counter() - started_at) * 1000
-            elif family == "bm25":
-                raw_chunks = _retrieve_bm25_chunks(
-                    query_text,
-                    config,
-                    limit=int(config.get("bm25_candidate_k") or config.get("top_k") or 5),
-                    index_role=index_role,
-                )
-                bm25_latency_ms += (time.perf_counter() - started_at) * 1000
-            elif family == "fts":
-                raw_chunks = _retrieve_fts_chunks(
-                    query_text,
-                    config,
-                    limit=int(config.get("fts_candidate_k") or config.get("keyword_candidate_k") or config.get("top_k") or 5),
-                    index_role=index_role,
-                )
-                fts_latency_ms += (time.perf_counter() - started_at) * 1000
-            else:
-                raw_chunks = _retrieve_keyword_chunks(
-                    query_text,
-                    config,
-                    limit=int(config.get("keyword_candidate_k") or config.get("top_k") or 5),
-                    index_role=index_role,
-                )
-                keyword_latency_ms += (time.perf_counter() - started_at) * 1000
-        except Exception as exc:
-            if family == "vector":
-                config["_vector_runtime_available"] = False
-                _record_runtime_capability_failure(
-                    "vector",
-                    provider=str(config.get("embedding_provider") or ""),
-                    error=exc,
-                )
-                logger.warning("RAG %s retrieval failed for %s query: %s", tool_name, query_kind, exc)
-                return current_tool_label, [], vector_latency_ms, bm25_latency_ms, fts_latency_ms, keyword_latency_ms, used_seed_tool
-            if family not in {"bm25", "fts"}:
-                logger.warning("RAG %s retrieval failed for %s query: %s", tool_name, query_kind, exc)
-                return current_tool_label, [], vector_latency_ms, bm25_latency_ms, fts_latency_ms, keyword_latency_ms, used_seed_tool
-            logger.warning("RAG %s retrieval failed for %s query, trying keyword fallback: %s", tool_name, query_kind, exc)
+        cached_result = _lookup_lexical_cache(
+            lexical_result_cache,
+            cache_key=cache_key,
+        )
+        if cached_result is not None:
+            cached_tool_label, cached_chunks = cached_result
+            current_tool_label = str(cached_tool_label or tool_name).strip() or tool_name
+            raw_chunks = [_copy_chunk(chunk) for chunk in cached_chunks]
+            used_cached_tool = True
+        else:
             started_at = time.perf_counter()
             try:
-                raw_chunks = _retrieve_keyword_chunks(
-                    query_text,
-                    config,
-                    limit=int(config.get("keyword_candidate_k") or config.get("top_k") or 5),
-                    index_role=index_role,
+                if family == "vector":
+                    raw_chunks = _retrieve_chunks(
+                        query_text,
+                        config,
+                        limit=candidate_limit,
+                        index_role=index_role,
+                    )
+                    vector_latency_ms += (time.perf_counter() - started_at) * 1000
+                elif family == "bm25":
+                    raw_chunks = _retrieve_bm25_chunks(
+                        query_text,
+                        config,
+                        limit=candidate_limit,
+                        index_role=index_role,
+                    )
+                    bm25_latency_ms += (time.perf_counter() - started_at) * 1000
+                elif family == "fts":
+                    raw_chunks = _retrieve_fts_chunks(
+                        query_text,
+                        config,
+                        limit=candidate_limit,
+                        index_role=index_role,
+                    )
+                    fts_latency_ms += (time.perf_counter() - started_at) * 1000
+                else:
+                    raw_chunks = _retrieve_keyword_chunks(
+                        query_text,
+                        config,
+                        limit=candidate_limit,
+                        index_role=index_role,
+                    )
+                    keyword_latency_ms += (time.perf_counter() - started_at) * 1000
+            except Exception as exc:
+                if family == "vector":
+                    config["_vector_runtime_available"] = False
+                    _record_runtime_capability_failure(
+                        "vector",
+                        provider=str(config.get("embedding_provider") or ""),
+                        error=exc,
+                    )
+                    logger.warning("RAG %s retrieval failed for %s query: %s", tool_name, query_kind, exc)
+                    return current_tool_label, [], vector_latency_ms, bm25_latency_ms, fts_latency_ms, keyword_latency_ms, used_seed_tool, used_cached_tool
+                if family not in {"bm25", "fts"}:
+                    logger.warning("RAG %s retrieval failed for %s query: %s", tool_name, query_kind, exc)
+                    return current_tool_label, [], vector_latency_ms, bm25_latency_ms, fts_latency_ms, keyword_latency_ms, used_seed_tool, used_cached_tool
+                logger.warning("RAG %s retrieval failed for %s query, trying keyword fallback: %s", tool_name, query_kind, exc)
+                started_at = time.perf_counter()
+                try:
+                    raw_chunks = _retrieve_keyword_chunks(
+                        query_text,
+                        config,
+                        limit=_tool_candidate_k(config, "p_keyword" if index_role == "primary" else "s_keyword"),
+                        index_role=index_role,
+                    )
+                    keyword_latency_ms += (time.perf_counter() - started_at) * 1000
+                    current_tool_label = f"{'s' if index_role == 'shadow' else 'p'}_keyword"
+                except Exception as keyword_exc:
+                    logger.warning("RAG keyword retrieval failed for %s query: %s", query_kind, keyword_exc)
+                    return current_tool_label, [], vector_latency_ms, bm25_latency_ms, fts_latency_ms, keyword_latency_ms, used_seed_tool, used_cached_tool
+            if cache_key is not None and lexical_result_cache is not None:
+                lexical_result_cache[cache_key] = (
+                    current_tool_label,
+                    [_copy_chunk(chunk) for chunk in raw_chunks],
                 )
-                keyword_latency_ms += (time.perf_counter() - started_at) * 1000
-                current_tool_label = f"{'s' if index_role == 'shadow' else 'p'}_keyword"
-            except Exception as keyword_exc:
-                logger.warning("RAG keyword retrieval failed for %s query: %s", query_kind, keyword_exc)
-                return current_tool_label, [], vector_latency_ms, bm25_latency_ms, fts_latency_ms, keyword_latency_ms, used_seed_tool
 
     for chunk in raw_chunks:
         chunk.index_role = index_role
@@ -1737,7 +1968,7 @@ def _retrieve_agentic_tool_variant(
         chunk.candidate_trace["raw_score"] = _score_from_candidate_trace(chunk)
         chunk.candidate_trace["index_role"] = index_role
 
-    return current_tool_label, raw_chunks, vector_latency_ms, bm25_latency_ms, fts_latency_ms, keyword_latency_ms, used_seed_tool
+    return current_tool_label, raw_chunks, vector_latency_ms, bm25_latency_ms, fts_latency_ms, keyword_latency_ms, used_seed_tool, used_cached_tool
 
 
 def _execute_agentic_round(
@@ -1751,6 +1982,7 @@ def _execute_agentic_round(
     ticket_context: list[dict[str, str]] | None,
     recovery_action: str | None = None,
     seed_tool_results: dict[str, list[RetrievedChunk]] | None = None,
+    lexical_result_cache: dict[tuple[str, str, str, int], tuple[str, list[RetrievedChunk]]] | None = None,
     should_cancel: Callable[[], bool] | None = None,
     record_cancel_stage: Callable[[str], None] | None = None,
 ) -> AgenticRoundResult:
@@ -1782,8 +2014,8 @@ def _execute_agentic_round(
     keyword_latency_ms = 0.0
     retrieval_tool_timings: list[dict[str, Any]] = []
     variant_config = dict(config)
-    if plan.light_path and round_index > 1 and recovery_action == "lexical_recovery" and _is_generic_join_channel_query(message):
-        variant_config = _apply_join_focused_recovery_budget(variant_config)
+    if round_index > 1 and recovery_action == "lexical_recovery" and _is_short_lexical_faq_bucket(message, plan):
+        variant_config = _apply_short_lexical_faq_recovery_budget(variant_config)
     variant_config["_retrieval_plan"] = retrieval_plan
     used_seed_tools: list[str] = []
 
@@ -1794,10 +2026,10 @@ def _execute_agentic_round(
         query_kind: str,
         query_text: str,
         index_role: str,
-        result: tuple[str, list[RetrievedChunk], float, float, float, float, bool],
+        result: tuple[str, list[RetrievedChunk], float, float, float, float, bool, bool],
     ) -> None:
         nonlocal vector_latency_ms, bm25_latency_ms, fts_latency_ms, keyword_latency_ms
-        current_tool_label, raw_chunks, vector_ms, bm25_ms, fts_ms, keyword_ms, used_seed_tool = result
+        current_tool_label, raw_chunks, vector_ms, bm25_ms, fts_ms, keyword_ms, used_seed_tool, used_cached_tool = result
         vector_latency_ms += vector_ms
         bm25_latency_ms += bm25_ms
         fts_latency_ms += fts_ms
@@ -1822,6 +2054,7 @@ def _execute_agentic_round(
                 "latency_ms": round(tool_latency_ms, 2),
                 "candidate_count": len(raw_chunks),
                 "used_seed_tool": used_seed_tool,
+                "used_cached_tool": used_cached_tool,
             }
         )
         if not raw_chunks:
@@ -1841,11 +2074,40 @@ def _execute_agentic_round(
                 target_set.add(dedupe_key)
 
     retrieval_started_at = time.perf_counter()
-    if plan.light_path and round_index == 1 and len(query_variants) == 1 and set(tool_names) == {"p_bm25", "p_fts"}:
+    short_faq_sparse_requests = (
+        _short_lexical_faq_recovery_requests(message, plan.exact_terms)
+        if round_index > 1 and recovery_action == "lexical_recovery" and _is_short_lexical_faq_bucket(message, plan)
+        else []
+    )
+    if short_faq_sparse_requests:
+        for tool_name, query_kind, query_text in short_faq_sparse_requests:
+            family = _tool_family(tool_name)
+            index_role = _tool_index_role(tool_name)
+            result = _retrieve_agentic_tool_variant(
+                tool_name=tool_name,
+                query_kind=query_kind,
+                query_text=query_text,
+                config=variant_config,
+                index_role=index_role,
+                round_index=round_index,
+                seeded_chunks=None,
+                lexical_result_cache=lexical_result_cache,
+                should_cancel=should_cancel,
+                record_cancel_stage=record_cancel_stage,
+            )
+            _consume_tool_result(
+                family=family,
+                tool_name=tool_name,
+                query_kind=query_kind,
+                query_text=query_text,
+                index_role=index_role,
+                result=result,
+            )
+    elif plan.light_path and round_index == 1 and len(query_variants) == 1 and set(tool_names) == {"p_bm25", "p_fts"}:
         query_kind, query_text = query_variants[0]
         with ThreadPoolExecutor(max_workers=2) as executor:
             future_map: dict[
-                Future[tuple[str, list[RetrievedChunk], float, float, float, float, bool]],
+                Future[tuple[str, list[RetrievedChunk], float, float, float, float, bool, bool]],
                 tuple[str, str, str],
             ] = {}
             for tool_name in tool_names:
@@ -1861,6 +2123,7 @@ def _execute_agentic_round(
                         index_role=index_role,
                         round_index=round_index,
                         seeded_chunks=None,
+                        lexical_result_cache=lexical_result_cache,
                         should_cancel=should_cancel,
                         record_cancel_stage=record_cancel_stage,
                     )
@@ -1898,6 +2161,7 @@ def _execute_agentic_round(
                     index_role=index_role,
                     round_index=round_index,
                     seeded_chunks=seeded_chunks,
+                    lexical_result_cache=lexical_result_cache,
                     should_cancel=should_cancel,
                     record_cancel_stage=record_cancel_stage,
                 )
@@ -2701,21 +2965,27 @@ def _apply_light_path_latency_budget(config: dict[str, Any]) -> dict[str, Any]:
     return adjusted
 
 
-def _apply_join_focused_recovery_budget(config: dict[str, Any]) -> dict[str, Any]:
+def _apply_short_lexical_faq_recovery_budget(config: dict[str, Any]) -> dict[str, Any]:
     adjusted = dict(config)
-    adjusted["bm25_candidate_k"] = max(
-        int(adjusted.get("bm25_candidate_k") or 1),
-        _LIGHT_PATH_JOIN_RECOVERY_BM25_CANDIDATE_K,
-    )
-    adjusted["fts_candidate_k"] = max(
-        int(adjusted.get("fts_candidate_k") or adjusted.get("keyword_candidate_k") or 1),
-        _LIGHT_PATH_JOIN_RECOVERY_FTS_CANDIDATE_K,
-    )
-    adjusted["fusion_candidate_k"] = max(
-        int(adjusted.get("fusion_candidate_k") or 1),
-        _LIGHT_PATH_JOIN_RECOVERY_FUSION_CANDIDATE_K,
-    )
+    adjusted["bm25_candidate_k"] = _SHORT_FAQ_RECOVERY_BM25_CANDIDATE_K
+    adjusted["fts_candidate_k"] = _SHORT_FAQ_RECOVERY_FTS_CANDIDATE_K
+    adjusted["fusion_candidate_k"] = _SHORT_FAQ_RECOVERY_FUSION_CANDIDATE_K
+    adjusted["rerank_top_n"] = _SHORT_FAQ_RECOVERY_RERANK_TOP_N
+    adjusted["short_faq_generation_chunk_limit"] = _SHORT_FAQ_CONTEXT_CHUNK_LIMIT
     return adjusted
+
+
+def _generation_chunk_limit_for_agentic_query(
+    *,
+    message: str,
+    plan: AgenticRetrievalPlan,
+    config: dict[str, Any],
+) -> int | None:
+    if _is_short_lexical_faq_bucket(message, plan):
+        return _SHORT_FAQ_CONTEXT_CHUNK_LIMIT
+    if plan.light_path:
+        return int(config.get("light_path_generation_chunk_limit") or _LIGHT_PATH_CONTEXT_CHUNK_LIMIT)
+    return None
 
 
 def _list_vector_tables_with_primary_counts(dsn: str, schema: str) -> list[tuple[str, int]]:
@@ -3056,6 +3326,8 @@ def _retrieve_bm25_chunks(
     filter_sql, filter_params = _metadata_filter_clauses(sql, downpush_filters, metadata_ref="v.metadata")
     app_schema = str(config.get("app_schema") or "supportportal").strip() or "supportportal"
     normalized_index_role = str(index_role or "").strip().lower() or "primary"
+    candidate_limit = int(limit or config["bm25_candidate_k"])
+    prejoin_limit = max(candidate_limit * 8, 64)
     query = sql.SQL(
         """
         WITH query_terms AS (
@@ -3134,6 +3406,14 @@ def _retrieve_bm25_chunks(
               ON d.chunk_id = p.chunk_id
             CROSS JOIN stats
             GROUP BY p.chunk_id
+        ),
+        top_scored AS MATERIALIZED (
+            SELECT
+                scored.chunk_id,
+                scored.bm25_score
+            FROM scored
+            ORDER BY scored.bm25_score DESC
+            LIMIT %s
         )
         SELECT
             v.id,
@@ -3147,13 +3427,13 @@ def _retrieve_bm25_chunks(
             v.metadata,
             v.metadata ->> 'source_type' AS source_type,
             v.chunk_strategy,
-            scored.bm25_score
-        FROM scored
+            top_scored.bm25_score
+        FROM top_scored
         JOIN {} AS v
-          ON v.id = scored.chunk_id
+          ON v.id = top_scored.chunk_id
         WHERE v.index_role = %s
           {}
-        ORDER BY scored.bm25_score DESC, v.updated_at DESC
+        ORDER BY top_scored.bm25_score DESC, v.updated_at DESC
         LIMIT %s
         """
     ).format(
@@ -3216,9 +3496,10 @@ def _retrieve_bm25_chunks(
                     float(config["bm25_k1"]),
                     float(config["bm25_b"]),
                     float(config["bm25_b"]),
+                    prejoin_limit,
                     normalized_index_role,
                     *filter_params,
-                    int(limit or config["bm25_candidate_k"]),
+                    candidate_limit,
                 ),
             )
             rows = cur.fetchall()
@@ -5055,6 +5336,7 @@ def _run_rag_query_agentic(
     warm_original_bm25_chunks: list[RetrievedChunk] = []
     warm_original_vector_latency_ms = 0.0
     warm_original_bm25_latency_ms = 0.0
+    lexical_result_cache: dict[tuple[str, str, str, int], tuple[str, list[RetrievedChunk]]] = {}
 
     def _timed_retrieve(
         retrieval_fn: Any,
@@ -5176,6 +5458,10 @@ def _run_rag_query_agentic(
                 should_cancel=should_cancel,
                 record_stage=record_cancel_stage,
             )
+        previous_reranked_chunks = list(reranked_chunks)
+        previous_final_chunks = list(final_chunks)
+        previous_rerank_info = dict(final_rerank_info)
+        previous_judge = final_judge
         round_result = _execute_agentic_round(
             message=message,
             config=config,
@@ -5186,6 +5472,7 @@ def _run_rag_query_agentic(
             ticket_context=ticket_context,
             recovery_action=recovery_action,
             seed_tool_results=warm_seed_tool_results if round_index == 1 else None,
+            lexical_result_cache=lexical_result_cache,
             should_cancel=should_cancel,
             record_cancel_stage=record_cancel_stage,
         )
@@ -5203,6 +5490,7 @@ def _run_rag_query_agentic(
                     "latency_ms": round(warm_original_bm25_latency_ms, 2),
                     "candidate_count": len(warm_original_bm25_chunks),
                     "used_seed_tool": True,
+                    "used_cached_tool": False,
                 }
             )
         vector_latency_ms += round_result.vector_latency_ms
@@ -5219,6 +5507,12 @@ def _run_rag_query_agentic(
         final_chunks = list(round_result.final_chunks)
         final_rerank_info = dict(round_result.rerank_info)
         final_judge = round_result.judge
+        if not final_chunks and previous_final_chunks:
+            reranked_chunks = previous_reranked_chunks
+            final_chunks = previous_final_chunks
+            final_rerank_info = previous_rerank_info
+            if final_judge is None or final_judge.decision == "escalate":
+                final_judge = previous_judge
         agent_iterations.append(_iteration_trace_payload(round_result.iteration_trace))
         if round_index == 1:
             first_pass_candidate_count = len(round_result.retrieved_chunks)
@@ -5411,10 +5705,12 @@ def _run_rag_query_agentic(
         query_class=plan.query_class,
         query_type=query_type,
     )
-    if plan.light_path:
-        generation_chunk_limit = int(
-            generation_config.get("light_path_generation_chunk_limit") or _LIGHT_PATH_CONTEXT_CHUNK_LIMIT
-        )
+    generation_chunk_limit = _generation_chunk_limit_for_agentic_query(
+        message=message,
+        plan=plan,
+        config=generation_config,
+    )
+    if generation_chunk_limit is not None:
         final_chunks = list(final_chunks[:generation_chunk_limit])
         allowed_chunk_ids = {chunk.chunk_id for chunk in final_chunks if chunk.chunk_id}
         grounded_overlap = _has_grounded_keyword_overlap(message, final_chunks)

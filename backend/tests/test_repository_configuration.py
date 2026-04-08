@@ -144,6 +144,16 @@ class _ReusableConnection:
         return False
 
 
+class _FakePool:
+    def __init__(self, *, closed: bool = False) -> None:
+        self.closed = closed
+        self.open_calls: list[tuple[bool, float | None]] = []
+
+    def open(self, *, wait: bool = True, timeout: float | None = None) -> None:
+        self.open_calls.append((wait, timeout))
+        self.closed = False
+
+
 class RepositoryConfigurationTests(unittest.TestCase):
     def test_ticket_storage_contract_removes_priority_column_and_index(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
@@ -385,6 +395,23 @@ class RepositoryConfigurationTests(unittest.TestCase):
 
         self.assertEqual(connect_mock.call_count, 2)
         self.assertFalse(hasattr(repository, "_connection_local"))
+
+    def test_ticket_repository_recreates_closed_pool_before_reuse(self) -> None:
+        repository = PostgresTicketRepository(
+            dsn="postgresql://example",
+            use_connection_pool=True,
+        )
+        stale_pool = _FakePool(closed=True)
+        fresh_pool = _FakePool(closed=False)
+        repository._pool = stale_pool
+
+        with patch.object(repository, "_pool_factory", return_value=fresh_pool) as pool_factory_mock:
+            pool = repository._connection_pool()
+
+        self.assertIs(pool, fresh_pool)
+        self.assertIs(repository._pool, fresh_pool)
+        pool_factory_mock.assert_called_once()
+        self.assertEqual(fresh_pool.open_calls, [(True, repository._pool_timeout_seconds)])
 
     def test_ticket_repository_opens_new_connection_between_event_writes_without_pool(self) -> None:
         repository = PostgresTicketRepository(dsn="postgresql://example")
