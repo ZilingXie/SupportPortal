@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 from uuid import uuid4
 
+from backend.services.api_semantics import is_api_semantics_mismatch_context
 from backend.services.rag_service_client import RagTicketAnswerDetail
 from backend.services.investigation_flow import (
     COMMUNICATING_STATUS,
@@ -25,6 +26,8 @@ RAG_UNAVAILABLE_REASON = "rag_unavailable"
 RAG_PROCESSING_TIMEOUT_REASON = "rag_processing_timeout"
 RAG_POST_CHECK_INSUFFICIENT_REASON = "rag_post_check_insufficient"
 RAG_POST_CHECK_ERROR_REASON = "rag_post_check_error"
+DEADLINE_EXHAUSTED_REASON = "deadline_exhausted"
+ROUTE_TIMEOUT_REASON = "route_timeout"
 WORKFLOW_ACTION_ANSWER_CUSTOMER = "answer_customer"
 WORKFLOW_ACTION_CLARIFY_CUSTOMER_FOR_INTAKE = "clarify_customer_for_intake"
 WORKFLOW_ACTION_OPEN_ENGINEER_TICKET = "open_engineer_ticket"
@@ -415,16 +418,34 @@ def _is_high_risk_grounded_answer(
 ) -> bool:
     if isinstance(client_intake_state, dict) and client_intake_state:
         return True
-    if _TROUBLESHOOTING_SIGNAL_RE.search(_clean_text(message).lower()):
-        return True
-    if float(resolution.confidence or 0.0) < 0.9:
-        return True
     quality_signals = (
         resolution.evidence_summary.get("quality_signals")
         if isinstance(resolution.evidence_summary, dict)
         and isinstance(resolution.evidence_summary.get("quality_signals"), dict)
         else {}
     )
+    if is_api_semantics_mismatch_context(
+        message=message,
+        rag_result={
+            "reason": resolution.route_reason,
+            "answer": resolution.answer,
+            "evidence_summary": dict(resolution.evidence_summary or {}) or {},
+            "packed_evidence": dict(resolution.packed_evidence or {}) or {},
+        },
+    ):
+        if bool(quality_signals.get("needs_human")):
+            return True
+        if str(quality_signals.get("generation_mode") or "").strip().lower() == "extractive_fallback":
+            return True
+        if bool(quality_signals.get("extractive_fallback_used")):
+            return True
+        if not resolution.citations:
+            return True
+        return float(resolution.confidence or 0.0) < 0.85
+    if _TROUBLESHOOTING_SIGNAL_RE.search(_clean_text(message).lower()):
+        return True
+    if float(resolution.confidence or 0.0) < 0.9:
+        return True
     if bool(quality_signals.get("needs_human")):
         return True
     if str(quality_signals.get("generation_mode") or "").strip().lower() == "extractive_fallback":
@@ -481,6 +502,8 @@ def _normalize_investigation_reason(value: Any) -> str:
         RAG_PROCESSING_TIMEOUT_REASON,
         RAG_POST_CHECK_INSUFFICIENT_REASON,
         RAG_POST_CHECK_ERROR_REASON,
+        DEADLINE_EXHAUSTED_REASON,
+        ROUTE_TIMEOUT_REASON,
     }:
         return normalized
     return RAG_INSUFFICIENT_EVIDENCE_REASON
@@ -534,6 +557,7 @@ def _handle_insufficient_review(
             resolution=clarify_resolution,
             needs_investigating=False,
             workflow_action=WORKFLOW_ACTION_CLARIFY_CUSTOMER_FOR_INTAKE,
+            investigation_reason=pending_investigation_reason,
             client_intake_state=next_client_intake_state,
         )
     return _build_ticket_execution_result(
@@ -571,6 +595,8 @@ def _merge_rag_resolution_diagnostics(
             merged["rag_reason_detail"] = "knowledge_index_unavailable"
         elif handoff_reason == RAG_PROCESSING_TIMEOUT_REASON:
             merged["rag_reason_detail"] = "processing_timeout"
+        elif handoff_reason == DEADLINE_EXHAUSTED_REASON:
+            merged["rag_reason_detail"] = "deadline_exhausted"
         elif handoff_reason == RAG_INSUFFICIENT_EVIDENCE_REASON:
             merged["rag_reason_detail"] = "generic_insufficient_evidence"
     for key, value in _extract_resolution_diagnostics(resolution).items():
@@ -915,6 +941,17 @@ def execute_client_ticket_agent_runtime(
                     event_type="started",
                     payload={"mode": "rag_insufficient_evidence"},
                 )
+                effective_review_reason = normalized_reason
+                if is_api_semantics_mismatch_context(
+                    message=message,
+                    rag_result={
+                        "reason": normalized_reason,
+                        "answer": rag_resolution.answer,
+                        "evidence_summary": dict(rag_resolution.evidence_summary or {}) or {},
+                        "packed_evidence": dict(rag_resolution.packed_evidence or {}) or {},
+                    },
+                ) and normalized_reason == RAG_PROCESSING_TIMEOUT_REASON:
+                    effective_review_reason = DEADLINE_EXHAUSTED_REASON
                 review_result = review_agent(
                     mode="rag_insufficient_evidence",
                     message=message,
@@ -925,7 +962,7 @@ def execute_client_ticket_agent_runtime(
                     route_decision=effective_route_decision,
                     resolution=rag_resolution,
                     rag_result={
-                        "reason": normalized_reason,
+                        "reason": effective_review_reason,
                         "answer": rag_resolution.answer,
                         "evidence_summary": dict(rag_resolution.evidence_summary or {}) or {},
                         "packed_evidence": dict(rag_resolution.packed_evidence or {}) or {},
@@ -943,7 +980,7 @@ def execute_client_ticket_agent_runtime(
                     review_result=review_result,
                     resolution=rag_resolution,
                     product=product,
-                    investigation_reason=normalized_reason,
+                    investigation_reason=effective_review_reason,
                     current_state=client_intake_state,
                 )
                 _mark_agent_summary(
@@ -951,7 +988,7 @@ def execute_client_ticket_agent_runtime(
                     phase="completed",
                     status="completed",
                     decision=result.workflow_action,
-                    reason=normalized_reason,
+                    reason=effective_review_reason,
                     extra={
                         "issue_mode": review_result.issue_mode,
                         "ready_for_engineer_ticket": bool(review_result.ready_for_engineer_ticket),

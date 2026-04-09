@@ -2889,3 +2889,71 @@ For each new entry, record:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_app_build backend.tests.test_single_host_compose backend.tests.test_workflow_scripts backend.tests.test_investigation_flow backend.tests.test_rag_api`
   - `curl http://127.0.0.1:8080/health`
   - `podman exec deployment_rag_api_1 python -c "import json, urllib.request; print(json.dumps(json.loads(urllib.request.urlopen('http://127.0.0.1:8020/health').read().decode()), ensure_ascii=False))"`
+
+## 2026-04-08 - Add docs/API semantics RAG path with fanout and timeout diagnostics
+
+- Summary:
+  - Added a new `api_semantics_mismatch` RAG query class for docs/API behavior mismatch questions so these requests stop using the heavy `troubleshooting_why` retrieval matrix.
+  - Added deterministic docs/API routing, anchor-aware retrieval variants, metadata rerank boosts for section/endpoint/parameter hits, and true numbered-question fanout aggregation for multi-claim messages like `TK-080`.
+  - Extended RAG telemetry with fanout and timeout diagnostics so live runs expose `fanout_used`, child latencies, `anchor_hits`, `deadline_exhausted`, and `timeout_stage`.
+- Reason:
+  - `TK-080` and similar tickets were timing out on a heavy troubleshooting path, then falling back to intake questions about `channel_name` and `issue_timestamp` instead of giving docs-backed explanations for API semantics.
+- Affected files/config:
+  - `backend/services/api_semantics.py`
+  - `backend/services/support_router.py`
+  - `backend/services/troubleshooting_intake.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/services/rag_qa.py`
+  - `backend/rag_api.py`
+  - `backend/tests/test_support_router.py`
+  - `backend/tests/test_troubleshooting_intake.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, or vector-table changes.
+  - Live RAG runs now record docs/API semantics trace fields in telemetry and retrieval-plan snapshots.
+  - Numbered docs/API mismatch questions are aggregated from child RAG results instead of being treated only as query variants.
+- Verification:
+  - `source /tmp/supportportal-finalize-venv/bin/activate && python -m unittest backend.tests.test_support_router backend.tests.test_troubleshooting_intake backend.tests.test_client_ticket_agent_runtime backend.tests.test_rag_agentic backend.tests.test_rag_qa`
+  - `python3 -m py_compile backend/services/api_semantics.py backend/services/support_router.py backend/services/troubleshooting_intake.py backend/services/client_ticket_agent_runtime.py backend/services/rag_qa.py backend/rag_api.py`
+  - `git diff --check`
+
+## 2026-04-08 - Add deterministic docs/API semantics answers and tighten child BM25 budgets
+
+- Summary:
+  - Added a deterministic answer builder for `api_semantics_mismatch` so child queries can resolve directly from pinned docs chunks without invoking the general answer-generation retry chain.
+  - Tightened the per-child BM25 candidate cap for docs/API semantics fanout so the retrieval deadline is enforced correctly instead of expanding to the general large-candidate window.
+  - Preserved the existing telemetry surface while making `generation_mode=api_semantics_deterministic` explicit for resolved semantics answers.
+- Reason:
+  - After the initial `TK-080` fanout and anchor-aware retrieval work, the system was still falling back to `insufficient_evidence` because answer generation kept using the slower generic path even when the exact `Disband a channel` and `Create rule > Request parameters` chunks were already selected.
+  - A budget bug in the child BM25 window was also letting one fanout child overrun its intended deadline.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, or vector-table changes.
+  - Live RAG runs for docs/API semantics questions can now resolve with `generation_mode=api_semantics_deterministic`, `needs_human=false`, and zero shadow contribution while retaining the fanout child telemetry.
+- Verification:
+  - `source /tmp/supportportal-finalize-venv/bin/activate && python -m unittest backend.tests.test_rag_agentic.RagAgenticTests.test_build_api_semantics_grounded_answer_resolves_uid_zero_disband_conflict backend.tests.test_rag_agentic.RagAgenticTests.test_build_api_semantics_grounded_answer_resolves_time_zero_non_persistent_rule backend.tests.test_rag_agentic.RagAgenticTests.test_run_rag_query_agentic_single_uses_api_semantics_grounded_answer_without_llm backend.tests.test_rag_agentic.RagAgenticTests.test_apply_api_semantics_latency_budget_caps_bm25_candidate_window`
+  - Direct `run_rag_query(...)` probes for the `uid=0` child, the `time=0` child, and the full `TK-080` long message all returned `needs_human=false` with the two intended docs-backed explanations in under `9s` total for the full message replay.
+
+## 2026-04-08 - Skip grounded post-check for deterministic docs/API semantics answers
+
+- Summary:
+  - Exempted grounded `api_semantics_mismatch` answers from the generic troubleshooting-style post-check so completed deterministic docs answers are delivered directly instead of being re-routed into intake clarification.
+- Reason:
+  - The first live replay after the deterministic answer path landed showed `rag_agent.reason=grounded_answer`, but `main_agent` and `review_agent` still downgraded the ticket via `rag_post_check_error` because the generic high-risk grounded-answer gate treated the long message's words like `issue` and `error` as troubleshooting signals.
+- Affected files/config:
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, or vector-table changes.
+  - Grounded docs/API semantics answers with citations now bypass the post-check review leg and keep `workflow_action=answer_customer`.
+- Verification:
+  - `source /tmp/supportportal-finalize-venv/bin/activate && python -m unittest backend.tests.test_client_ticket_agent_runtime`
+  - `python3 -m py_compile backend/services/client_ticket_agent_runtime.py backend/tests/test_client_ticket_agent_runtime.py`
+  - Live replay before the patch reproduced `rag_post_check_error`; the follow-up replay after the patch is used as the final customer-visible verification.

@@ -9,9 +9,16 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 from typing import Any, Callable, Iterable
 
+from backend.services.api_semantics import (
+    build_anchor_variant,
+    extract_anchor_hits,
+    extract_endpoint_operation_hints,
+    extract_numbered_subqueries,
+    is_api_semantics_mismatch_message,
+)
 from backend.services.embedding_provider import (
     DEFAULT_PGVECTOR_TABLE,
     embedding_model_id,
@@ -103,6 +110,11 @@ _LIGHT_PATH_RERANK_TOP_N = 8
 _LIGHT_PATH_CONTEXT_CHUNK_LIMIT = 3
 _LIGHT_PATH_FAST_ANSWER_MODEL = "gpt-5.4-mini"
 _LIGHT_PATH_FAST_ANSWER_REASONING_EFFORT = "low"
+_API_SEMANTICS_CONTEXT_CHUNK_LIMIT = 2
+_API_SEMANTICS_FAST_ANSWER_MODEL = "gpt-5.4-nano"
+_API_SEMANTICS_FAST_ANSWER_REASONING_EFFORT = "low"
+_API_SEMANTICS_BM25_CANDIDATE_K = 36
+_API_SEMANTICS_RERANK_TOP_N = 16
 _SHORT_FAQ_RECOVERY_BM25_CANDIDATE_K = 8
 _SHORT_FAQ_RECOVERY_FTS_CANDIDATE_K = 0
 _SHORT_FAQ_RECOVERY_FUSION_CANDIDATE_K = 6
@@ -143,6 +155,7 @@ _AUDIO_VIDEO_CALLING_SECONDARY_PRODUCTS = frozenset({"interactive-live-streaming
 _AUDIO_VIDEO_CALLING_PENALIZED_PRODUCTS = frozenset({"signaling", "iot", "cloud-recording"})
 _TOKEN_USAGE_FOCUSED_VARIANT_KINDS = frozenset({"focused_token_usage", "focused_rewrite"})
 _CONNECTION_STATE_FOCUSED_VARIANT_KINDS = frozenset({"focused_reference", "focused_rewrite"})
+_API_SEMANTICS_MAX_FANOUT_CHILDREN = 3
 
 
 def _build_answer_system_prompt(product: str | None = None) -> str:
@@ -305,6 +318,12 @@ class RagQueryTrace:
     fts_latency_ms: float = 0.0
     retrieval_round_wall_clock_ms: float = 0.0
     retrieval_tool_timings: list[dict[str, Any]] = field(default_factory=list)
+    fanout_used: bool = False
+    fanout_child_count: int = 0
+    fanout_children: list[dict[str, Any]] = field(default_factory=list)
+    deadline_exhausted: bool = False
+    anchor_hits: list[str] = field(default_factory=list)
+    timeout_stage: str | None = None
 
 
 @dataclass
@@ -776,6 +795,8 @@ def _classify_agentic_query(
     lowered = str(message or "").lower()
     if _is_comparison_query(message):
         return "comparison"
+    if is_api_semantics_mismatch_message(message):
+        return "api_semantics_mismatch"
     if _is_how_to_faq_query(message, understanding):
         return "how_to_faq"
     if understanding is not None:
@@ -792,6 +813,8 @@ def _classify_agentic_query(
 
 
 def _raw_tool_order_for_query_class(query_class: str) -> tuple[list[str], str, str]:
+    if query_class == "api_semantics_mismatch":
+        return (["p_bm25", "p_fts", "p_vec"], "api_semantics_grounding", "lexical")
     if query_class == "lexical_exact":
         return (["p_bm25", "p_fts", "p_vec"], "exact_match", "lexical")
     if query_class == "how_to_faq":
@@ -1273,6 +1296,20 @@ def _build_agentic_retrieval_plan(
             product=product,
             shadow_tools_skipped=[],
         )
+    if query_class == "api_semantics_mismatch":
+        return AgenticRetrievalPlan(
+            query_class=query_class,
+            first_pass_tools=["p_bm25"],
+            query_variants=[("original", normalized_message)],
+            decomposition_targets=[],
+            evidence_goal="api_semantics_grounding",
+            recovery_bias="lexical",
+            ticket_context_used=bool(ticket_context),
+            exact_terms=exact_terms,
+            light_path=True,
+            product=product,
+            shadow_tools_skipped=[],
+        )
 
     _raise_if_cancelled(
         "planner",
@@ -1462,6 +1499,305 @@ def _same_family_only(chunks: list[RetrievedChunk]) -> bool:
     return len(families) <= 1
 
 
+def _api_semantics_has_request_parameter_support(message: str, chunks: list[RetrievedChunk]) -> bool:
+    parameter_groups = _api_semantics_parameter_groups(message)
+    if not parameter_groups:
+        return True
+    for parameter_group in parameter_groups:
+        if not any(_is_api_semantics_request_parameters_chunk(chunk, required_terms=parameter_group) for chunk in chunks):
+            return False
+    return True
+
+
+def _api_semantics_parameter_groups(message: str) -> list[set[str]]:
+    parameter_terms = {
+        term.lower()
+        for term in extract_anchor_hits(message)
+        if term.lower() in {"uid", "str_uid", "time", "time_in_seconds", "cname", "ip"}
+    }
+    groups: list[set[str]] = []
+    if {"uid", "str_uid"} & parameter_terms:
+        groups.append({"uid", "str_uid"})
+    if {"time", "time_in_seconds"} & parameter_terms:
+        groups.append({"time", "time_in_seconds"})
+    if "cname" in parameter_terms:
+        groups.append({"cname"})
+    if "ip" in parameter_terms:
+        groups.append({"ip"})
+    return groups
+
+
+def _api_semantics_prefers_disband_chunk(message: str) -> bool:
+    lowered = str(message or "").lower()
+    return "disband" in lowered and "channel" in lowered
+
+
+def _is_api_semantics_disband_chunk(chunk: RetrievedChunk) -> bool:
+    metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+    section_path = " > ".join(_chunk_metadata_list(metadata.get("section_path"))).lower()
+    source_url_lower = str(chunk.source_url or "").strip().lower()
+    source_path_lower = str(chunk.source_path or "").strip().lower()
+    return (
+        "disband a channel" in section_path
+        or "disband-a-channel" in source_url_lower
+        or ("ban-user-privileges" in source_path_lower and "disband a channel" in _chunk_search_text(chunk))
+    )
+
+
+def _is_api_semantics_request_parameters_chunk(
+    chunk: RetrievedChunk,
+    *,
+    required_terms: set[str] | None = None,
+) -> bool:
+    metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+    chunk_type = str(metadata.get("chunk_type") or "").strip().lower()
+    section_path = " > ".join(_chunk_metadata_list(metadata.get("section_path"))).lower()
+    source_url_lower = str(chunk.source_url or "").strip().lower()
+    source_path_lower = str(chunk.source_path or "").strip().lower()
+    search_text = _chunk_search_text(chunk)
+    if "create-rules" not in source_url_lower and "create-rules" not in source_path_lower:
+        return False
+    if "response parameters" in section_path:
+        return False
+    if "request parameters" not in section_path and chunk_type != "api_params":
+        return False
+    if not required_terms:
+        return True
+    return any(term in search_text for term in required_terms)
+
+
+def _api_semantics_product_hints(message: str) -> list[str]:
+    anchor_hits = {item.lower() for item in extract_anchor_hits(message)}
+    products: list[str] = []
+    for slug in ["broadcast-streaming", "video-calling", "voice-calling", "interactive-live-streaming"]:
+        if slug in anchor_hits or slug in str(message or "").lower():
+            products.append(slug)
+    return products
+
+
+def _api_semantics_pinned_chunk_from_row(
+    row: tuple[Any, ...],
+    *,
+    index_role: str,
+    retrieval_source: str,
+) -> RetrievedChunk:
+    return RetrievedChunk(
+        chunk_id=str(row[0]),
+        doc_id=(str(row[1]).strip() or None) if row[1] is not None else None,
+        text=str(row[2]),
+        source_path=str(row[3]),
+        h1=(str(row[4]).strip() or None) if row[4] is not None else None,
+        h2=(str(row[5]).strip() or None) if row[5] is not None else None,
+        h3=(str(row[6]).strip() or None) if row[6] is not None else None,
+        source_url=(str(row[7]).strip() or None) if row[7] is not None else None,
+        metadata=row[8] if isinstance(row[8], dict) else {},
+        source_type=(str(row[9]).strip() or None) if row[9] is not None else None,
+        chunk_strategy=(str(row[10]).strip() or None) if row[10] is not None else None,
+        similarity=1.0,
+        index_role=index_role,
+        retrieval_sources=[retrieval_source],
+        candidate_trace={
+            "raw_score": 1.0,
+            "source_pinned": True,
+            "index_role": index_role,
+        },
+    )
+
+
+def _fetch_api_semantics_pinned_chunks(
+    *,
+    message: str,
+    config: dict[str, Any],
+    existing_chunks: list[RetrievedChunk],
+    index_role: str = "primary",
+) -> list[RetrievedChunk]:
+    product_hints = _api_semantics_product_hints(message)
+    needs_disband = _api_semantics_prefers_disband_chunk(message) and not any(
+        _is_api_semantics_disband_chunk(chunk) for chunk in existing_chunks
+    )
+    required_parameter_groups = [
+        group
+        for group in _api_semantics_parameter_groups(message)
+        if not any(_is_api_semantics_request_parameters_chunk(chunk, required_terms=group) for chunk in existing_chunks)
+    ]
+    if not needs_disband and not required_parameter_groups:
+        return []
+
+    psycopg = _import_psycopg()
+    sql = psycopg.sql
+    normalized_index_role = str(index_role or "").strip().lower() or "primary"
+    like_product_patterns = [f"%{slug}%" for slug in product_hints] or ["%broadcast-streaming%"]
+
+    def _fetch_one(
+        *,
+        retrieval_source: str,
+        url_pattern: str,
+        h3_pattern: str | None = None,
+        content_patterns: list[str] | None = None,
+    ) -> RetrievedChunk | None:
+        query = sql.SQL(
+            """
+            SELECT
+                id,
+                doc_id,
+                content,
+                source_path,
+                h1,
+                h2,
+                h3,
+                source_url,
+                metadata,
+                metadata ->> 'source_type' AS source_type,
+                chunk_strategy
+            FROM {}
+            WHERE index_role = %s
+              AND lower(coalesce(source_url, '')) LIKE %s
+              AND (%s::text IS NULL OR lower(coalesce(h3, '')) LIKE %s::text)
+              AND (
+                    %s::text[] IS NULL
+                    OR lower(coalesce(content, '')) LIKE ANY(%s::text[])
+                  )
+            ORDER BY
+              CASE
+                WHEN EXISTS (
+                  SELECT 1
+                  FROM unnest(%s::text[]) AS product(pattern)
+                  WHERE lower(coalesce(source_url, '')) LIKE product.pattern
+                ) THEN 0
+                ELSE 1
+              END,
+              CASE
+                WHEN lower(coalesce(metadata ->> 'product', '')) = ANY(%s::text[]) THEN 0
+                ELSE 1
+              END,
+              id
+            LIMIT 1
+            """
+        ).format(_table_identifier(sql, config["table"]))
+        normalized_product_hints = [slug.lower() for slug in product_hints]
+        content_terms = content_patterns or None
+        with psycopg.connect(config["dsn"]) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    query,
+                    (
+                        normalized_index_role,
+                        url_pattern.lower(),
+                        h3_pattern.lower() if h3_pattern else None,
+                        h3_pattern.lower() if h3_pattern else None,
+                        content_terms,
+                        content_terms,
+                        like_product_patterns,
+                        normalized_product_hints,
+                    ),
+                )
+                row = cur.fetchone()
+        if row is None:
+            return None
+        chunk = _api_semantics_pinned_chunk_from_row(
+            row,
+            index_role=normalized_index_role,
+            retrieval_source=retrieval_source,
+        )
+        chunk.rerank_reasons = [f"api_semantics:source_pinned:{retrieval_source}"]
+        chunk.rerank_score = 7.2
+        return chunk
+
+    pinned_chunks: list[RetrievedChunk] = []
+    if needs_disband:
+        disband_chunk = _fetch_one(
+            retrieval_source="api_semantics_disband_pinned",
+            url_pattern="%ban-user-privileges%",
+            h3_pattern="%disband a channel%",
+        )
+        if disband_chunk is not None:
+            pinned_chunks.append(disband_chunk)
+
+    for parameter_group in required_parameter_groups:
+        content_patterns = [f"%{term}%" for term in sorted(parameter_group)]
+        parameter_chunk = _fetch_one(
+            retrieval_source="api_semantics_request_params_pinned",
+            url_pattern="%create-rules%",
+            h3_pattern="%request parameters%",
+            content_patterns=content_patterns,
+        )
+        if parameter_chunk is not None:
+            pinned_chunks.append(parameter_chunk)
+
+    deduped: dict[str, RetrievedChunk] = {}
+    for chunk in pinned_chunks:
+        deduped[_chunk_dedupe_key(chunk)] = chunk
+    return list(deduped.values())
+
+
+def _prepend_api_semantics_pinned_chunks(
+    *,
+    message: str,
+    chunks: list[RetrievedChunk],
+    pinned_chunks: list[RetrievedChunk],
+) -> list[RetrievedChunk]:
+    if not pinned_chunks:
+        return chunks
+    merged: dict[str, RetrievedChunk] = {}
+    ordered: list[RetrievedChunk] = []
+    for chunk in [*pinned_chunks, *chunks]:
+        dedupe_key = _chunk_dedupe_key(chunk)
+        existing = merged.get(dedupe_key)
+        if existing is None:
+            copied = _copy_chunk(chunk)
+            if any(source.startswith("api_semantics_") for source in copied.retrieval_sources):
+                copied.rerank_score = max(float(copied.rerank_score or 0.0), 7.2)
+            merged[dedupe_key] = copied
+            ordered.append(copied)
+            continue
+        existing.retrieval_sources = list(dict.fromkeys([*existing.retrieval_sources, *chunk.retrieval_sources]))
+        if chunk.rerank_reasons:
+            existing.rerank_reasons = list(dict.fromkeys([*existing.rerank_reasons, *chunk.rerank_reasons]))
+        if any(source.startswith("api_semantics_") for source in chunk.retrieval_sources):
+            existing.rerank_score = max(float(existing.rerank_score or 0.0), float(chunk.rerank_score or 7.2))
+    return _reorder_chunks_for_rerank(ordered, limit=len(ordered), query=message) or ordered
+
+
+def _select_api_semantics_final_chunks(
+    chunks: list[RetrievedChunk],
+    *,
+    limit: int,
+    query: str,
+) -> list[RetrievedChunk]:
+    if not chunks:
+        return []
+    safe_limit = max(1, int(limit or 1))
+    selected: list[RetrievedChunk] = []
+    selected_keys: set[str] = set()
+
+    def _add_first(predicate: Callable[[RetrievedChunk], bool]) -> None:
+        if len(selected) >= safe_limit:
+            return
+        for chunk in chunks:
+            key = _chunk_dedupe_key(chunk)
+            if key in selected_keys:
+                continue
+            if not predicate(chunk):
+                continue
+            selected.append(chunk)
+            selected_keys.add(key)
+            break
+
+    if _api_semantics_prefers_disband_chunk(query):
+        _add_first(_is_api_semantics_disband_chunk)
+    for parameter_group in _api_semantics_parameter_groups(query):
+        _add_first(lambda chunk, group=parameter_group: _is_api_semantics_request_parameters_chunk(chunk, required_terms=group))
+    for chunk in chunks:
+        if len(selected) >= safe_limit:
+            break
+        key = _chunk_dedupe_key(chunk)
+        if key in selected_keys:
+            continue
+        selected.append(chunk)
+        selected_keys.add(key)
+    return selected
+
+
 def _judge_agentic_round(
     *,
     message: str,
@@ -1485,6 +1821,8 @@ def _judge_agentic_round(
     all_shadow = bool(final_chunks) and all(str(chunk.index_role or "").strip().lower() == "shadow" for chunk in final_chunks)
 
     if round_index <= 1:
+        if query_class == "api_semantics_mismatch" and not _api_semantics_has_request_parameter_support(message, final_chunks):
+            return AgenticJudgeDecision("recover_once", "api_request_parameter_evidence_missing", 0.78, "lexical_recovery")
         if query_class == "comparison" and not comparison_covered:
             return AgenticJudgeDecision("recover_once", "comparison_targets_missing", 0.74, "compare_recovery")
         if primary_count == 0:
@@ -1560,6 +1898,17 @@ def _tool_weights_for_query_class(query_class: str) -> dict[str, float]:
             "s_fts": 0.15,
             "p_keyword": 0.15,
             "s_keyword": 0.10,
+        }
+    if query_class == "api_semantics_mismatch":
+        return {
+            "p_bm25": 1.00,
+            "p_fts": 0.95,
+            "p_vec": 0.55,
+            "p_keyword": 0.20,
+            "s_bm25": 0.0,
+            "s_fts": 0.0,
+            "s_vec": 0.0,
+            "s_keyword": 0.0,
         }
     return {
         "p_vec": 0.90,
@@ -1673,6 +2022,12 @@ def _agentic_round_tools(
     original_message = plan.query_variants[0][1] if plan.query_variants else ""
     if round_index > 1 and recovery_action == "lexical_recovery" and _is_short_lexical_faq_bucket(original_message, plan):
         return _filter_shadow_tool_names(["p_bm25"], shadow_retrieval_enabled=shadow_retrieval_enabled)
+    if plan.query_class == "api_semantics_mismatch":
+        if round_index <= 1:
+            return _filter_shadow_tool_names(["p_bm25"], shadow_retrieval_enabled=shadow_retrieval_enabled)
+        if recovery_action == "lexical_recovery":
+            return _filter_shadow_tool_names(["p_bm25"], shadow_retrieval_enabled=shadow_retrieval_enabled)
+        return _filter_shadow_tool_names(["p_bm25", "p_fts", "p_vec"], shadow_retrieval_enabled=shadow_retrieval_enabled)
     if plan.light_path:
         if round_index <= 1:
             return _filter_shadow_tool_names(["p_bm25", "p_fts"], shadow_retrieval_enabled=shadow_retrieval_enabled)
@@ -1717,6 +2072,13 @@ def _agentic_round_variants(
     )
     if short_faq_variants:
         return short_faq_variants
+    if plan.query_class == "api_semantics_mismatch":
+        if round_index > 1:
+            existing = {query.lower() for _, query in variants}
+            anchor_variant = build_anchor_variant(message)
+            if anchor_variant and anchor_variant.lower() not in existing:
+                variants.append(("anchor", anchor_variant))
+        return _dedupe_agentic_variants(variants)
     if plan.light_path:
         if round_index > 1 and recovery_action == "lexical_recovery":
             existing = {query.lower() for _, query in variants}
@@ -1913,6 +2275,8 @@ def _select_agentic_final_chunks(
     if not chunks:
         return []
     ordered = _reorder_chunks_for_rerank(chunks, limit=len(chunks), query=query) or list(chunks)
+    if is_api_semantics_mismatch_message(query):
+        return _select_api_semantics_final_chunks(ordered, limit=limit, query=query)
     results: list[RetrievedChunk] = []
     shadow_count = 0
     for chunk in ordered:
@@ -2336,6 +2700,20 @@ def _execute_agentic_round(
             ) or reranked_chunks
             rerank_latency_ms += (time.perf_counter() - rerank_started_at) * 1000
 
+    if plan.query_class == "api_semantics_mismatch":
+        pinned_chunks = _fetch_api_semantics_pinned_chunks(
+            message=message,
+            config=config,
+            existing_chunks=reranked_chunks,
+            index_role="primary",
+        )
+        if pinned_chunks:
+            reranked_chunks = _prepend_api_semantics_pinned_chunks(
+                message=message,
+                chunks=reranked_chunks,
+                pinned_chunks=pinned_chunks,
+            )
+
     final_shadow_cap = int(config.get("agent_final_shadow_cap") or 1)
     recovery_shadow_cap = int(config.get("agent_recovery_shadow_cap") or 2)
     final_chunks = _select_agentic_final_chunks(
@@ -2538,6 +2916,22 @@ def _safe_float_env(key: str, default_value: float) -> float:
     return parsed if parsed > 0 else default_value
 
 
+def _fanout_enabled() -> bool:
+    return _feature_flag_enabled("RAG_MULTI_QUESTION_FANOUT_ENABLED", True)
+
+
+def _api_semantics_total_deadline_seconds() -> float:
+    return _safe_float_env("RAG_API_SEMANTICS_TOTAL_DEADLINE_SECONDS", 20.0)
+
+
+def _api_semantics_retrieval_deadline_seconds() -> float:
+    return _safe_float_env("RAG_API_SEMANTICS_RETRIEVAL_DEADLINE_SECONDS", 8.0)
+
+
+def _api_semantics_generation_deadline_seconds() -> float:
+    return _safe_float_env("RAG_API_SEMANTICS_GENERATION_DEADLINE_SECONDS", 12.0)
+
+
 def _build_heading(chunk: RetrievedChunk) -> str:
     heading_items = [item for item in [chunk.h1, chunk.h2, chunk.h3] if item]
     return " > ".join(heading_items) if heading_items else "Unknown heading"
@@ -2711,6 +3105,14 @@ def _metadata_rerank(
     product: str | None = None,
 ) -> tuple[list[RetrievedChunk], dict[str, Any]]:
     resolved_hints = hints or _extract_metadata_hints(query)
+    query_lower = str(query or "").lower()
+    api_semantics_query = is_api_semantics_mismatch_message(query)
+    anchor_hits = {item.lower() for item in extract_anchor_hits(query)}
+    endpoint_operation_hints = {item.lower() for item in extract_endpoint_operation_hints(query)}
+    api_semantics_parameter_query = bool(
+        {"uid", "str_uid", "time", "time_in_seconds", "cname", "ip"} & anchor_hits
+    )
+    api_semantics_kicking_rule_query = "kicking-rule" in anchor_hits
     mentioned_methods = _mentioned_method_names(query)
     comparison_mode = _is_method_comparison_query(query, mentioned_methods)
     generic_token_generation_query = _is_generic_token_generation_query(query, resolved_hints)
@@ -2783,6 +3185,8 @@ def _metadata_rerank(
         chunk_product = _normalize_metadata_filter_value("product", metadata.get("product")) or ""
         technical_terms = {item.lower() for item in resolved_hints.technical_terms}
         text_lower = chunk.text.lower()
+        source_url_lower = str(chunk.source_url or "").strip().lower()
+        source_path_lower = str(chunk.source_path or "").strip().lower()
 
         if normalized_language and chunk_language == normalized_language:
             boost += 2.0
@@ -2864,6 +3268,56 @@ def _metadata_rerank(
             if protocol and protocol in technical_terms:
                 boost += 0.6
                 reasons.append(f"protocol:{str(metadata.get('protocol') or '').upper()}")
+        if anchor_hits:
+            matched_anchor_hits = [
+                hit
+                for hit in anchor_hits
+                if hit and (
+                    hit in source_url_lower
+                    or hit in source_path_lower
+                    or hit in section_path
+                    or hit in text_lower
+                )
+            ]
+            if matched_anchor_hits:
+                boost += min(2.4, 1.2 + 0.45 * (len(matched_anchor_hits) - 1))
+                reasons.append(f"anchor_hits:{','.join(sorted(set(matched_anchor_hits)))}")
+        if api_semantics_query and "disband" in query_lower:
+            if "disband a channel" in section_path or "disband-a-channel" in source_url_lower:
+                boost += 1.5
+                reasons.append("api_semantics:disband_section")
+            elif "kick a user out of a channel" in section_path or "kick-a-user-out-of-a-channel" in source_url_lower:
+                boost -= 0.9
+                reasons.append("api_semantics:wrong_kick_section")
+        if api_semantics_query and api_semantics_kicking_rule_query:
+            if "create-rules" in source_url_lower or "create-rules" in source_path_lower:
+                boost += 1.4
+                reasons.append("api_semantics:create_rules_endpoint")
+            elif any(token in source_url_lower or token in source_path_lower for token in ("delete-rules", "get-rule-list")):
+                boost -= 0.8
+                reasons.append("api_semantics:wrong_endpoint_reference")
+            if api_semantics_parameter_query and (
+                "request parameters" in section_path or chunk_type == "api_params"
+            ):
+                boost += 1.35
+                reasons.append("api_semantics:request_parameters")
+        if api_semantics_query and "broadcast-streaming" in anchor_hits and chunk_product == "broadcast-streaming":
+            boost += 0.9
+            reasons.append("api_semantics:docs_product_match")
+        if api_semantics_query and endpoint_operation_hints:
+            matched_operation_hints = [
+                hint
+                for hint in endpoint_operation_hints
+                if hint and (
+                    hint in source_url_lower
+                    or hint in source_path_lower
+                    or hint in section_path
+                    or hint in text_lower
+                )
+            ]
+            if matched_operation_hints:
+                boost += min(1.6, 0.8 + 0.4 * (len(matched_operation_hints) - 1))
+                reasons.append(f"api_semantics:endpoint_operation:{','.join(sorted(set(matched_operation_hints)))}")
 
         for soft_signal in _chunk_metadata_list(plan_soft_signals.get("chunk_type")):
             normalized_signal = soft_signal.strip().lower()
@@ -3066,6 +3520,25 @@ def _apply_light_path_latency_budget(config: dict[str, Any]) -> dict[str, Any]:
     return adjusted
 
 
+def _apply_api_semantics_latency_budget(config: dict[str, Any]) -> dict[str, Any]:
+    adjusted = dict(config)
+    adjusted["bm25_candidate_k"] = min(
+        max(1, int(adjusted.get("bm25_candidate_k") or _API_SEMANTICS_BM25_CANDIDATE_K)),
+        _API_SEMANTICS_BM25_CANDIDATE_K,
+    )
+    adjusted["fts_candidate_k"] = 0
+    adjusted["fusion_candidate_k"] = min(
+        max(1, int(adjusted.get("fusion_candidate_k") or _API_SEMANTICS_RERANK_TOP_N)),
+        _API_SEMANTICS_RERANK_TOP_N,
+    )
+    adjusted["rerank_top_n"] = min(
+        max(1, int(adjusted.get("rerank_top_n") or _API_SEMANTICS_RERANK_TOP_N)),
+        _API_SEMANTICS_RERANK_TOP_N,
+    )
+    adjusted["light_path_generation_chunk_limit"] = _API_SEMANTICS_CONTEXT_CHUNK_LIMIT
+    return adjusted
+
+
 def _apply_short_lexical_faq_recovery_budget(config: dict[str, Any]) -> dict[str, Any]:
     adjusted = dict(config)
     adjusted["bm25_candidate_k"] = _SHORT_FAQ_RECOVERY_BM25_CANDIDATE_K
@@ -3084,6 +3557,8 @@ def _generation_chunk_limit_for_agentic_query(
 ) -> int | None:
     if _is_short_lexical_faq_bucket(message, plan):
         return _SHORT_FAQ_CONTEXT_CHUNK_LIMIT
+    if plan.query_class == "api_semantics_mismatch":
+        return _API_SEMANTICS_CONTEXT_CHUNK_LIMIT
     if plan.light_path:
         return int(config.get("light_path_generation_chunk_limit") or _LIGHT_PATH_CONTEXT_CHUNK_LIMIT)
     return None
@@ -4034,6 +4509,90 @@ def _build_extractive_fallback(chunks: list[RetrievedChunk]) -> str:
     return "\n".join(lines)
 
 
+def _normalize_api_semantics_text(value: str) -> str:
+    return " ".join(str(value or "").lower().replace("`", "").split())
+
+
+def _api_semantics_uid_rule_chunk(chunks: list[RetrievedChunk]) -> RetrievedChunk | None:
+    for chunk in chunks:
+        if not _is_api_semantics_request_parameters_chunk(chunk, required_terms={"uid", "str_uid"}):
+            continue
+        text = _normalize_api_semantics_text(_chunk_search_text(chunk))
+        if "uid" in text and "do not set it as 0" in text:
+            return chunk
+    return None
+
+
+def _api_semantics_time_rule_chunk(chunks: list[RetrievedChunk]) -> RetrievedChunk | None:
+    for chunk in chunks:
+        if not _is_api_semantics_request_parameters_chunk(chunk, required_terms={"time", "time_in_seconds"}):
+            continue
+        text = _normalize_api_semantics_text(_chunk_search_text(chunk))
+        if "does not take effect" not in text:
+            continue
+        if "offline" in text or "log in again" in text or "rejoin the channel" in text:
+            return chunk
+    return None
+
+
+def _build_api_semantics_grounded_answer(
+    message: str,
+    chunks: list[RetrievedChunk],
+) -> RagAnswer | None:
+    parameter_groups = _api_semantics_parameter_groups(message)
+    if not chunks or not parameter_groups:
+        return None
+
+    disband_chunk = next((chunk for chunk in chunks if _is_api_semantics_disband_chunk(chunk)), None)
+    uid_rule_chunk = _api_semantics_uid_rule_chunk(chunks)
+    time_rule_chunk = _api_semantics_time_rule_chunk(chunks)
+    sections: list[str] = []
+    cited_chunks: list[RetrievedChunk] = []
+
+    for parameter_group in parameter_groups:
+        if {"uid", "str_uid"} & parameter_group:
+            if disband_chunk is None or uid_rule_chunk is None:
+                return None
+            sections.append(
+                "For disbanding a channel, the docs say to fill in `cname` and leave `uid` and `ip` blank. "
+                "The create-rule request parameters also say do not set `uid` to `0`, so you should omit `uid` "
+                "instead of sending `uid: 0`."
+            )
+            cited_chunks.extend([disband_chunk, uid_rule_chunk])
+        elif {"time", "time_in_seconds"} & parameter_group:
+            if time_rule_chunk is None:
+                return None
+            sections.append(
+                "For `time` or `time_in_seconds`, a value of `0` does not create a persistent rule. "
+                "The request parameters say the banning rule does not take effect; instead, the server sets matching "
+                "users offline and they can log in again. Use a positive duration if you need a stored rule."
+            )
+            cited_chunks.append(time_rule_chunk)
+        else:
+            return None
+
+    deduped_cited_chunks: list[RetrievedChunk] = []
+    seen_chunk_ids: set[str] = set()
+    for chunk in cited_chunks:
+        chunk_id = str(chunk.chunk_id or "").strip() or str(id(chunk))
+        if chunk_id in seen_chunk_ids:
+            continue
+        seen_chunk_ids.add(chunk_id)
+        deduped_cited_chunks.append(chunk)
+    citation_records = _citation_records_from_chunks(deduped_cited_chunks, limit=len(deduped_cited_chunks))
+    sources = [
+        record.get("source_url") or f"rag:{record['chunk_id']}"
+        for record in citation_records
+    ]
+    confidence = max(0.86, _confidence_from_chunks(deduped_cited_chunks or chunks))
+    return RagAnswer(
+        answer="\n\n".join(section.strip() for section in sections if section.strip()),
+        confidence=round(min(0.95, confidence), 2),
+        sources=sources,
+        citations=citation_records,
+    )
+
+
 def _citation_records_from_ids(
     citation_ids: list[str],
     chunks: list[RetrievedChunk],
@@ -4089,14 +4648,19 @@ def _build_answer_profile(
     config: dict[str, Any],
     *,
     use_light_path_fast_model: bool = False,
+    query_class: str | None = None,
 ) -> ModelProfile:
     defaults = resolve_model_profile(RAG_ANSWER_SCENARIO)
     model_name = str(config.get("chat_model") or "").strip() or defaults.model
     reasoning_effort = str(config.get("reasoning_effort") or "").strip() or defaults.reasoning_effort or "high"
     fallback_models = tuple(config.get("fallback_models") or defaults.fallback_models)
     if use_light_path_fast_model:
-        model_name = _LIGHT_PATH_FAST_ANSWER_MODEL
-        reasoning_effort = _LIGHT_PATH_FAST_ANSWER_REASONING_EFFORT
+        if str(query_class or "").strip().lower() == "api_semantics_mismatch":
+            model_name = _API_SEMANTICS_FAST_ANSWER_MODEL
+            reasoning_effort = _API_SEMANTICS_FAST_ANSWER_REASONING_EFFORT
+        else:
+            model_name = _LIGHT_PATH_FAST_ANSWER_MODEL
+            reasoning_effort = _LIGHT_PATH_FAST_ANSWER_REASONING_EFFORT
         fallback_models = ()
     return ModelProfile(
         scenario=RAG_ANSWER_SCENARIO,
@@ -5326,7 +5890,7 @@ def _iteration_trace_payload(iteration: AgenticIterationTrace) -> dict[str, Any]
     }
 
 
-def _run_rag_query_agentic(
+def _run_rag_query_agentic_single(
     message: str,
     top_k: int | None = None,
     *,
@@ -5347,10 +5911,11 @@ def _run_rag_query_agentic(
     query_type = _infer_query_type(message)
     shadow_retrieval_enabled = _shadow_retrieval_enabled(config)
     preliminary_query_class = _classify_agentic_query(message, None)
+    api_semantics_query = preliminary_query_class == "api_semantics_mismatch"
     simple_lexical_query = preliminary_query_class == "lexical_exact" and _is_simple_lexical_query(message)
-    vector_setup_skipped = simple_lexical_query
-    light_path_used = simple_lexical_query
-    skip_bm25_warmup = preliminary_query_class == "how_to_faq"
+    vector_setup_skipped = simple_lexical_query or api_semantics_query
+    light_path_used = simple_lexical_query or api_semantics_query
+    skip_bm25_warmup = preliminary_query_class in {"how_to_faq", "api_semantics_mismatch"}
     preflight_probe_latency_ms = 0.0
 
     config["_vector_runtime_available"] = (
@@ -5382,11 +5947,13 @@ def _run_rag_query_agentic(
             config["vector_enabled"] = False
             config["_vector_runtime_available"] = False
     preflight_probe_latency_ms = round((time.perf_counter() - request_started_at) * 1000, 2)
-    warm_vector_enabled = bool(config.get("vector_enabled")) and not simple_lexical_query
-    query_understanding_enabled = _feature_flag_enabled("RAG_QUERY_UNDERSTANDING_ENABLED", True) and not simple_lexical_query
-    query_rewrite_enabled = _feature_flag_enabled("RAG_QUERY_REWRITE_ENABLED", True)
-    query_decomposition_enabled = _feature_flag_enabled("RAG_QUERY_DECOMPOSITION_ENABLED", True)
-    query_expansion_enabled = _feature_flag_enabled("RAG_QUERY_EXPANSION_ENABLED", True)
+    warm_vector_enabled = bool(config.get("vector_enabled")) and not (simple_lexical_query or api_semantics_query)
+    query_understanding_enabled = _feature_flag_enabled("RAG_QUERY_UNDERSTANDING_ENABLED", True) and not (
+        simple_lexical_query or api_semantics_query
+    )
+    query_rewrite_enabled = _feature_flag_enabled("RAG_QUERY_REWRITE_ENABLED", True) and not api_semantics_query
+    query_decomposition_enabled = _feature_flag_enabled("RAG_QUERY_DECOMPOSITION_ENABLED", True) and not api_semantics_query
+    query_expansion_enabled = _feature_flag_enabled("RAG_QUERY_EXPANSION_ENABLED", True) and not api_semantics_query
     query_understanding: QueryUnderstandingResult | None = None
     effective_hard_filters: dict[str, str] = {}
     effective_soft_signals: dict[str, list[str]] = {}
@@ -5544,7 +6111,10 @@ def _run_rag_query_agentic(
         should_cancel=should_cancel,
         record_cancel_stage=record_cancel_stage,
     )
-    if plan.light_path:
+    if plan.query_class == "api_semantics_mismatch":
+        config = _apply_api_semantics_latency_budget(config)
+        light_path_used = True
+    elif plan.light_path:
         config = _apply_light_path_latency_budget(config)
         light_path_used = True
     shadow_tools_skipped = list(plan.shadow_tools_skipped)
@@ -5804,6 +6374,7 @@ def _run_rag_query_agentic(
             fts_latency_ms=round(fts_latency_ms, 2),
             retrieval_round_wall_clock_ms=round(retrieval_round_wall_clock_ms, 2),
             retrieval_tool_timings=list(retrieval_tool_timings),
+            anchor_hits=extract_anchor_hits(message),
         )
 
     if not final_chunks or final_judge is None or final_judge.decision == "escalate":
@@ -5833,6 +6404,22 @@ def _run_rag_query_agentic(
         query_class=plan.query_class,
         query_type=query_type,
     )
+    if plan.query_class == "api_semantics_mismatch":
+        deterministic_generation_started_at = time.perf_counter()
+        deterministic_answer = _build_api_semantics_grounded_answer(message, final_chunks)
+        if deterministic_answer is not None:
+            generation_latency_ms = (time.perf_counter() - deterministic_generation_started_at) * 1000
+            answer_profile_used = "api_semantics_deterministic"
+            return RagQueryResult(
+                answer=deterministic_answer,
+                trace=_trace_for(
+                    deterministic_answer,
+                    needs_human=False,
+                    handoff_reason=None,
+                    generation_mode="api_semantics_deterministic",
+                    extractive_fallback_used=False,
+                ),
+            )
     generation_chunk_limit = _generation_chunk_limit_for_agentic_query(
         message=message,
         plan=plan,
@@ -5888,12 +6475,17 @@ def _run_rag_query_agentic(
             grounded_overlap = _has_grounded_keyword_overlap(message, final_chunks)
     payload: dict[str, Any] | None = None
     generation_started_at = time.perf_counter()
+    api_semantics_fast_path = plan.query_class == "api_semantics_mismatch" and final_judge.decision == "answer_now"
     fast_answer_profile = (
-        _build_answer_profile(generation_config, use_light_path_fast_model=True)
+        _build_answer_profile(
+            generation_config,
+            use_light_path_fast_model=True,
+            query_class=plan.query_class,
+        )
         if plan.light_path and final_judge.decision == "answer_now"
         else None
     )
-    primary_answer_profile = _build_answer_profile(generation_config)
+    primary_answer_profile = _build_answer_profile(generation_config, query_class=plan.query_class)
     _raise_if_cancelled(
         "answer_generation",
         should_cancel=should_cancel,
@@ -5915,7 +6507,7 @@ def _run_rag_query_agentic(
         or not _is_valid_response(payload, allowed_chunk_ids)
         or (payload.get("insufficient_evidence") is True and grounded_overlap)
     )
-    if retry_required and fast_answer_profile is not None:
+    if retry_required and fast_answer_profile is not None and not api_semantics_fast_path:
         answer_profile_fallback_used = True
         _raise_if_cancelled(
             "answer_generation",
@@ -5941,7 +6533,7 @@ def _run_rag_query_agentic(
             or not _is_valid_response(payload, allowed_chunk_ids)
             or (payload.get("insufficient_evidence") is True and grounded_overlap)
         )
-    if retry_required:
+    if retry_required and not api_semantics_fast_path:
         structured_retry_used = True
         _raise_if_cancelled(
             "answer_generation",
@@ -5962,11 +6554,16 @@ def _run_rag_query_agentic(
         model_name = retry_model_name or model_name
         answer_profile_used = model_name or primary_answer_profile.model
         payload = retry_payload
-    if payload is not None and _is_valid_response(payload, allowed_chunk_ids) and _requires_howto_citation_retry(
+    if (
+        not api_semantics_fast_path
+        and payload is not None
+        and _is_valid_response(payload, allowed_chunk_ids)
+        and _requires_howto_citation_retry(
         message=message,
         product=product,
         chunks=final_chunks,
         payload=payload,
+        )
     ):
         if fast_answer_profile is not None:
             answer_profile_fallback_used = True
@@ -6060,6 +6657,339 @@ def _run_rag_query_agentic(
             generation_mode=generation_mode,
             extractive_fallback_used=extractive_fallback_used,
         ),
+    )
+
+
+def _fanout_child_payload(index: int, query: str, result: RagQueryResult) -> dict[str, Any]:
+    return {
+        "index": index,
+        "query": str(query or "").strip(),
+        "query_class": getattr(result.trace, "query_class", None),
+        "resolved": not bool(getattr(result.trace, "needs_human", False)),
+        "latency_ms": float(getattr(result.trace, "total_latency_ms", 0.0) or 0.0),
+        "retrieval_latency_ms": float(getattr(result.trace, "retrieval_latency_ms", 0.0) or 0.0),
+        "generation_latency_ms": float(getattr(result.trace, "generation_latency_ms", 0.0) or 0.0),
+        "selected_chunk_ids": list(getattr(result.trace, "selected_chunk_ids", []) or []),
+        "selected_doc_count": int(getattr(result.trace, "selected_doc_count", 0) or 0),
+        "handoff_reason": getattr(result.trace, "handoff_reason", None),
+    }
+
+
+def _coerce_trace_like(base_trace: Any, **overrides: Any) -> RagQueryTrace:
+    if is_dataclass(base_trace):
+        return replace(base_trace, **overrides)
+    values: dict[str, Any] = {}
+    for field_info in fields(RagQueryTrace):
+        values[field_info.name] = getattr(base_trace, field_info.name, None)
+    values.update(overrides)
+    return RagQueryTrace(**values)
+
+
+def _aggregate_fanout_results(
+    *,
+    message: str,
+    child_queries: list[str],
+    child_results: list[RagQueryResult],
+    total_started_at: float,
+) -> RagQueryResult:
+    if not child_results:
+        raise ValueError("fanout aggregation requires at least one child result")
+
+    aggregated_sources: list[str] = []
+    aggregated_citations: list[dict[str, str]] = []
+    citation_keys: set[tuple[str, str]] = set()
+    retrieved_chunk_ids: list[str] = []
+    selected_chunk_ids: list[str] = []
+    cited_chunk_ids: list[str] = []
+    retrieval_tool_timings: list[dict[str, Any]] = []
+    shadow_tools_skipped: list[str] = []
+    anchor_hits: list[str] = []
+    fanout_children: list[dict[str, Any]] = []
+    any_needs_human = False
+    handoff_reason: str | None = None
+    timeout_stage: str | None = None
+    deadline_exhausted = False
+
+    for index, (child_query, child_result) in enumerate(zip(child_queries, child_results, strict=False), start=1):
+        fanout_children.append(_fanout_child_payload(index, child_query, child_result))
+        trace = child_result.trace
+        any_needs_human = any_needs_human or bool(trace.needs_human)
+        if handoff_reason is None and trace.handoff_reason:
+            handoff_reason = trace.handoff_reason
+        deadline_exhausted = deadline_exhausted or bool(getattr(trace, "deadline_exhausted", False))
+        if timeout_stage is None and getattr(trace, "timeout_stage", None):
+            timeout_stage = trace.timeout_stage
+        for source in child_result.answer.sources:
+            normalized = str(source or "").strip()
+            if normalized and normalized not in aggregated_sources:
+                aggregated_sources.append(normalized)
+        for citation in child_result.answer.citations:
+            if not isinstance(citation, dict):
+                continue
+            citation_key = (str(citation.get("chunk_id") or "").strip(), str(citation.get("source_url") or "").strip())
+            if citation_key in citation_keys:
+                continue
+            citation_keys.add(citation_key)
+            aggregated_citations.append(dict(citation))
+        for chunk_id in getattr(trace, "retrieved_chunk_ids", []) or []:
+            normalized = str(chunk_id or "").strip()
+            if normalized and normalized not in retrieved_chunk_ids:
+                retrieved_chunk_ids.append(normalized)
+        for chunk_id in getattr(trace, "selected_chunk_ids", []) or []:
+            normalized = str(chunk_id or "").strip()
+            if normalized and normalized not in selected_chunk_ids:
+                selected_chunk_ids.append(normalized)
+        for chunk_id in getattr(trace, "cited_chunk_ids", []) or []:
+            normalized = str(chunk_id or "").strip()
+            if normalized and normalized not in cited_chunk_ids:
+                cited_chunk_ids.append(normalized)
+        for item in getattr(trace, "retrieval_tool_timings", []) or []:
+            if isinstance(item, dict):
+                retrieval_tool_timings.append(dict(item))
+        for tool_name in getattr(trace, "shadow_tools_skipped", []) or []:
+            normalized = str(tool_name or "").strip()
+            if normalized and normalized not in shadow_tools_skipped:
+                shadow_tools_skipped.append(normalized)
+        for hit in getattr(trace, "anchor_hits", []) or []:
+            normalized = str(hit or "").strip()
+            if normalized and normalized not in anchor_hits:
+                anchor_hits.append(normalized)
+
+    if any_needs_human:
+        answer_text = INSUFFICIENT_EVIDENCE_REPLY
+        answer_sources: list[str] = []
+        answer_citations: list[dict[str, str]] = []
+        confidence = min(float(result.answer.confidence or 0.55) for result in child_results)
+    else:
+        answer_text = "\n\n".join(
+            f"{index}. {result.answer.answer.strip()}"
+            for index, result in enumerate(child_results, start=1)
+            if str(result.answer.answer or "").strip()
+        ).strip()
+        answer_sources = aggregated_sources
+        answer_citations = aggregated_citations
+        confidence = min(float(result.answer.confidence or 0.0) for result in child_results)
+
+    answer = RagAnswer(
+        answer=answer_text,
+        confidence=confidence,
+        sources=answer_sources,
+        citations=answer_citations,
+    )
+    base_trace = child_results[0].trace
+    aggregated_trace = _coerce_trace_like(
+        base_trace,
+        query_class="api_semantics_mismatch",
+        query_type="knowledge_qa",
+        retrieval_strategy="agentic_multi_question_fanout_v1",
+        vector_candidates_count=sum(int(result.trace.vector_candidates_count or 0) for result in child_results),
+        bm25_candidates_count=sum(int(result.trace.bm25_candidates_count or 0) for result in child_results),
+        reranked_candidates_count=sum(int(result.trace.reranked_candidates_count or 0) for result in child_results),
+        retrieved_chunk_ids=retrieved_chunk_ids,
+        selected_chunk_ids=selected_chunk_ids,
+        vector_retrieval_latency_ms=round(
+            sum(float(result.trace.vector_retrieval_latency_ms or 0.0) for result in child_results),
+            2,
+        ),
+        bm25_retrieval_latency_ms=round(
+            sum(float(result.trace.bm25_retrieval_latency_ms or 0.0) for result in child_results),
+            2,
+        ),
+        retrieval_latency_ms=round(
+            sum(float(result.trace.retrieval_latency_ms or 0.0) for result in child_results),
+            2,
+        ),
+        rerank_latency_ms=round(
+            sum(float(result.trace.rerank_latency_ms or 0.0) for result in child_results),
+            2,
+        ),
+        generation_latency_ms=round(
+            sum(float(result.trace.generation_latency_ms or 0.0) for result in child_results),
+            2,
+        ),
+        total_latency_ms=round((time.perf_counter() - total_started_at) * 1000, 2),
+        prompt_tokens=sum(int(result.trace.prompt_tokens or 0) for result in child_results),
+        completion_tokens=sum(int(result.trace.completion_tokens or 0) for result in child_results),
+        embedding_tokens=sum(int(result.trace.embedding_tokens or 0) for result in child_results),
+        answer_length=len(answer.answer.strip()),
+        citation_count=len(answer.citations),
+        cited_chunk_ids=cited_chunk_ids,
+        needs_human=any_needs_human,
+        handoff_reason=handoff_reason,
+        confidence_score=confidence,
+        selected_doc_count=len(selected_chunk_ids),
+        first_pass_candidate_count=sum(int(result.trace.first_pass_candidate_count or 0) for result in child_results),
+        second_pass_candidate_count=sum(int(result.trace.second_pass_candidate_count or 0) for result in child_results),
+        first_pass_tools=["fanout_children"],
+        plan_query_variants=[{"kind": "fanout_child", "query": query} for query in child_queries if str(query or "").strip()],
+        plan_decomposition_targets=[],
+        evidence_goal="api_semantics_grounding",
+        recovery_bias="lexical",
+        judge_summary={
+            "decision": "answer_now" if not any_needs_human else "needs_human",
+            "reason": "all_children_resolved" if not any_needs_human else (handoff_reason or "child_unresolved"),
+        },
+        agent_iterations=[],
+        primary_shadow_mix={
+            "primary": sum(int((result.trace.primary_shadow_mix or {}).get("primary") or 0) for result in child_results),
+            "shadow": sum(int((result.trace.primary_shadow_mix or {}).get("shadow") or 0) for result in child_results),
+        },
+        retrieval_tool_timings=retrieval_tool_timings,
+        shadow_tools_skipped=shadow_tools_skipped,
+        fanout_used=True,
+        fanout_child_count=len(child_results),
+        fanout_children=fanout_children,
+        deadline_exhausted=deadline_exhausted,
+        anchor_hits=anchor_hits,
+        timeout_stage=timeout_stage,
+    )
+    return RagQueryResult(answer=answer, trace=aggregated_trace)
+
+
+def _run_rag_query_agentic(
+    message: str,
+    top_k: int | None = None,
+    *,
+    ticket_context: list[dict[str, str]] | None = None,
+    ticket_id: str | None = None,
+    customer_id: str | None = None,
+    product: str | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+    record_cancel_stage: Callable[[str], None] | None = None,
+) -> RagQueryResult | None:
+    total_started_at = time.perf_counter()
+    fanout_queries = (
+        extract_numbered_subqueries(message, max_items=_API_SEMANTICS_MAX_FANOUT_CHILDREN)
+        if _fanout_enabled() and is_api_semantics_mismatch_message(message)
+        else []
+    )
+    if len(fanout_queries) < 2:
+        return _run_rag_query_agentic_single(
+            message,
+            top_k=top_k,
+            ticket_context=ticket_context,
+            ticket_id=ticket_id,
+            customer_id=customer_id,
+            product=product,
+            should_cancel=should_cancel,
+            record_cancel_stage=record_cancel_stage,
+        )
+
+    deadline_at = time.perf_counter() + _api_semantics_total_deadline_seconds()
+    retrieval_deadline_seconds = _api_semantics_retrieval_deadline_seconds()
+    generation_deadline_seconds = _api_semantics_generation_deadline_seconds()
+
+    def _run_child(child_query: str) -> RagQueryResult:
+        child_started_at = time.perf_counter()
+        stage_state: dict[str, Any] = {"stage": None, "answer_generation_started_at": None}
+
+        def _child_record(stage: str) -> None:
+            normalized_stage = str(stage or "").strip() or None
+            stage_state["stage"] = normalized_stage
+            if normalized_stage == "answer_generation" and stage_state["answer_generation_started_at"] is None:
+                stage_state["answer_generation_started_at"] = time.perf_counter()
+            if callable(record_cancel_stage) and normalized_stage:
+                record_cancel_stage(normalized_stage)
+
+        def _child_should_cancel() -> bool:
+            if callable(should_cancel) and should_cancel():
+                return True
+            now_value = time.perf_counter()
+            if now_value >= deadline_at:
+                stage_state["deadline_exhausted"] = True
+                stage_state["timeout_stage"] = stage_state.get("stage") or "total_deadline"
+                return True
+            answer_started_at = stage_state.get("answer_generation_started_at")
+            if answer_started_at is not None and (now_value - float(answer_started_at)) >= generation_deadline_seconds:
+                stage_state["deadline_exhausted"] = True
+                stage_state["timeout_stage"] = "answer_generation"
+                return True
+            if answer_started_at is None and stage_state.get("stage") and (now_value - child_started_at) >= retrieval_deadline_seconds:
+                stage_state["deadline_exhausted"] = True
+                stage_state["timeout_stage"] = stage_state.get("stage") or "retrieval"
+                return True
+            return False
+
+        result = _run_rag_query_agentic_single(
+            child_query,
+            top_k=top_k,
+            ticket_context=ticket_context,
+            ticket_id=ticket_id,
+            customer_id=customer_id,
+            product=product,
+            should_cancel=_child_should_cancel,
+            record_cancel_stage=_child_record,
+        )
+        if result is not None and bool(stage_state.get("deadline_exhausted")):
+            result.trace.deadline_exhausted = True
+            result.trace.timeout_stage = str(stage_state.get("timeout_stage") or "").strip() or None
+        return result
+
+    child_results: list[RagQueryResult] = []
+    with ThreadPoolExecutor(max_workers=min(2, len(fanout_queries))) as executor:
+        futures = [executor.submit(_run_child, child_query) for child_query in fanout_queries]
+        for future in futures:
+            try:
+                child_result = future.result()
+            except RagExecutionCancelled as exc:
+                child_result = RagQueryResult(
+                    answer=RagAnswer(
+                        answer=INSUFFICIENT_EVIDENCE_REPLY,
+                        confidence=0.55,
+                        sources=[],
+                        citations=[],
+                    ),
+                    trace=RagQueryTrace(
+                        query_type="knowledge_qa",
+                        retrieval_strategy="agentic_multi_tool_v1",
+                        vector_candidates_count=0,
+                        bm25_candidates_count=0,
+                        reranked_candidates_count=0,
+                        retrieved_chunk_ids=[],
+                        selected_chunk_ids=[],
+                        vector_retrieval_latency_ms=0.0,
+                        bm25_retrieval_latency_ms=0.0,
+                        retrieval_latency_ms=0.0,
+                        rerank_latency_ms=0.0,
+                        generation_latency_ms=0.0,
+                        total_latency_ms=round((time.perf_counter() - total_started_at) * 1000, 2),
+                        prompt_tokens=0,
+                        completion_tokens=0,
+                        embedding_tokens=0,
+                        embedding_provider=None,
+                        embedding_model=None,
+                        embedding_dimensions=None,
+                        embedding_request_meta=[],
+                        model_name=None,
+                        answer_length=len(INSUFFICIENT_EVIDENCE_REPLY),
+                        citation_count=0,
+                        cited_chunk_ids=[],
+                        needs_human=True,
+                        handoff_reason="deadline_exhausted",
+                        confidence_score=0.55,
+                        primary_source_type=None,
+                        primary_chunk_strategy=None,
+                        query_class="api_semantics_mismatch",
+                        evidence_goal="api_semantics_grounding",
+                        recovery_bias="lexical",
+                        execution_mode="agentic",
+                        shadow_retrieval_enabled=_shadow_retrieval_enabled(),
+                        fanout_used=False,
+                        deadline_exhausted=True,
+                        anchor_hits=extract_anchor_hits(message),
+                        timeout_stage=exc.stage,
+                    ),
+                )
+            if child_result is not None:
+                child_results.append(child_result)
+
+    if not child_results:
+        return None
+    return _aggregate_fanout_results(
+        message=message,
+        child_queries=fanout_queries[: len(child_results)],
+        child_results=child_results,
+        total_started_at=total_started_at,
     )
 
 

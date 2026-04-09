@@ -8,6 +8,7 @@ import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from backend.services.api_semantics import is_api_semantics_mismatch_message
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import INTENT_ROUTER_SCENARIO, WEB_SEARCH_SCENARIO, resolve_model_profile
 from backend.services.prompts.web_search import build_web_search_system_prompt, build_web_search_user_prompt
@@ -248,6 +249,19 @@ def _heuristic_route_decision(
     text = _normalize_text(message)
     if not text:
         return None
+
+    if is_api_semantics_mismatch_message(text):
+        matched_signals = ["docs_url", "endpoint_path"]
+        if _looks_like_question(text):
+            matched_signals.append("looks_like_question")
+        return _build_route_decision(
+            scope_label="agora_technical",
+            action="rag",
+            confidence=0.99,
+            reason="docs_api_semantics_support",
+            matched_signals=matched_signals,
+            response_language=response_language,
+        )
 
     if _JOIN_CHANNEL_RE.search(text):
         matched_signals = ["join channel", "channel"]

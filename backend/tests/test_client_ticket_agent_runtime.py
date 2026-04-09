@@ -11,6 +11,18 @@ from backend.services.troubleshooting_intake import TroubleshootingIntakeResult
 
 
 class ClientTicketAgentRuntimeContractTests(unittest.TestCase):
+    _BAN_API_MISMATCH_MESSAGE = """Hello, Agora team.
+
+We are using the Ban User Privileges API (POST /dev/v1/kicking-rule) to disband channels after a broadcast ends, but we have found some differences between the official documentation and the actual API behavior.
+
+1. uid: 0 cannot be used
+According to the documentation
+(https://docs.agora.io/en/broadcast-streaming/channel-management-api/best-practices/ban-user-privileges#disband-a-channel), when targeting all users in a channel, it says to use uid: 0. However, in actual use:
+"uid": 0 (number) -> Error: uid '0' must be a number, or set str_uid = true
+
+2. Cannot create a permanent rule with time: 0
+The documentation states that time: 0 means the rule is applied permanently. However, when we actually send time: 0, the API returns {"status":"success","id":0}, but no rule is created."""
+
     def test_runtime_contract_exposes_explicit_agents_and_run_state(self) -> None:
         from backend.services.client_ticket_agent_runtime import (
             AGENT_NAME_MAIN,
@@ -207,6 +219,134 @@ class ClientTicketAgentRuntimeContractTests(unittest.TestCase):
         self.assertEqual(execution.result.client_intake_state["missing_information"], ["channel_name", "problematic_uid", "issue_timestamp"])
         self.assertEqual(execution.runtime_state.status, "completed")
 
+    def test_api_semantics_timeout_routes_to_docs_clarification_without_channel_timestamp(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+        from backend.services.troubleshooting_intake import evaluate_troubleshooting_intake
+
+        execution = execute_client_ticket_agent_runtime(
+            message=self._BAN_API_MISMATCH_MESSAGE,
+            ticket_id="TK-API-1",
+            customer_id="C-001",
+            ticket_subject="Ban User Privileges API mismatch",
+            ticket_context=[{"role": "customer", "content": self._BAN_API_MISMATCH_MESSAGE}],
+            product="audio_video_calling",
+            message_id="2026-04-08T00:00:00+00:00",
+            route_agent=lambda **_kwargs: SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                confidence=0.98,
+                reason="docs_api_semantics_support",
+                matched_signals=["docs_url", "endpoint_path"],
+                response_language="en",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+            ),
+            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                answer="",
+                confidence=0.0,
+                sources=[],
+                citations=[],
+                needs_engineer_guidance=True,
+                reason="deadline_exhausted",
+                evidence_summary={
+                    "diagnostics": {
+                        "retrieval_plan_snapshot": {
+                            "query_class": "api_semantics_mismatch",
+                        }
+                    }
+                },
+                packed_evidence=None,
+            ),
+            review_agent=lambda **kwargs: evaluate_troubleshooting_intake(
+                message=str(kwargs.get("message") or ""),
+                product=kwargs.get("product"),
+                ticket_subject=kwargs.get("ticket_subject"),
+                ticket_context=kwargs.get("ticket_context"),
+                current_state=kwargs.get("current_state"),
+                rag_result=kwargs.get("rag_result"),
+            ),
+            rag_canceler=None,
+        )
+
+        self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
+        self.assertEqual(execution.result.client_intake_state["issue_mode"], "answer")
+        self.assertNotIn("channel_name", execution.result.client_intake_state["missing_information"])
+        self.assertNotIn("issue_timestamp", execution.result.client_intake_state["missing_information"])
+        self.assertIn("platform", execution.result.answer.lower())
+        self.assertIn("sdk", execution.result.answer.lower())
+        self.assertEqual(execution.result.investigation_reason, "deadline_exhausted")
+
+    def test_api_semantics_grounded_answer_skips_post_check_and_answers_customer(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        execution = execute_client_ticket_agent_runtime(
+            message=self._BAN_API_MISMATCH_MESSAGE,
+            ticket_id="TK-API-2",
+            customer_id="C-001",
+            ticket_subject="Ban User Privileges API mismatch",
+            ticket_context=[{"role": "customer", "content": self._BAN_API_MISMATCH_MESSAGE}],
+            product="audio_video_calling",
+            message_id="2026-04-08T00:00:00+00:00",
+            route_agent=lambda **_kwargs: SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                confidence=0.98,
+                reason="docs_api_semantics_support",
+                matched_signals=["docs_url", "endpoint_path"],
+                response_language="en",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+            ),
+            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                answer=(
+                    "1. For disbanding a channel, the docs say to fill in `cname` and leave `uid` and `ip` blank. "
+                    "The create-rule request parameters also say do not set `uid` to `0`, so you should omit `uid` "
+                    "instead of sending `uid: 0`.\n\n"
+                    "2. For `time` or `time_in_seconds`, a value of `0` does not create a persistent rule."
+                ),
+                confidence=0.94,
+                sources=[
+                    "https://docs.agora.io/en/broadcast-streaming/channel-management-api/best-practices/ban-user-privileges",
+                    "https://docs.agora.io/en/broadcast-streaming/channel-management-api/endpoint/ban-user-privileges/create-rules",
+                ],
+                citations=[
+                    {"chunk_id": "chunk-disband"},
+                    {"chunk_id": "chunk-create-rule"},
+                ],
+                needs_engineer_guidance=False,
+                reason="grounded_answer",
+                evidence_summary={
+                    "quality_signals": {
+                        "query_class": "api_semantics_mismatch",
+                        "generation_mode": "api_semantics_deterministic",
+                        "selected_doc_count": 3,
+                        "top1_similarity_score": 0.95,
+                        "needs_human": False,
+                    },
+                    "diagnostics": {
+                        "retrieval_plan_snapshot": {
+                            "query_class": "api_semantics_mismatch",
+                            "fanout_used": True,
+                        }
+                    },
+                },
+                packed_evidence=None,
+            ),
+            review_agent=lambda **_kwargs: self.fail("review agent should not run for grounded api semantics answers"),
+            rag_canceler=None,
+        )
+
+        self.assertEqual(execution.result.workflow_action, "answer_customer")
+        self.assertFalse(execution.result.needs_investigating)
+        self.assertIn("omit `uid`", execution.result.answer)
+        self.assertIn("does not create a persistent rule", execution.result.answer)
+        self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.review_agent.get("reason"), "low_risk_grounded_answer")
+
     def test_rag_extractive_fallback_routes_into_answer_mode_clarification(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
 
@@ -385,7 +525,7 @@ class ClientTicketAgentRuntimeContractTests(unittest.TestCase):
         self.assertEqual(review_modes, ["grounded_postcheck", "pre_engineer_intake"])
         self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
         self.assertFalse(execution.result.needs_investigating)
-        self.assertEqual(execution.result.investigation_reason, None)
+        self.assertEqual(execution.result.investigation_reason, "rag_post_check_insufficient")
         self.assertEqual(
             execution.result.client_intake_state["missing_information"],
             ["channel_name", "problematic_uid", "issue_timestamp"],

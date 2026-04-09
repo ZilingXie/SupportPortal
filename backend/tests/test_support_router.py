@@ -33,6 +33,18 @@ class _FakeResponse:
 
 
 class SupportRouterTests(unittest.TestCase):
+    _BAN_API_MISMATCH_MESSAGE = """Hello, Agora team.
+
+We are using the Ban User Privileges API (POST /dev/v1/kicking-rule) to disband channels after a broadcast ends, but we have found some differences between the official documentation and the actual API behavior.
+
+1. uid: 0 cannot be used
+According to the documentation
+(https://docs.agora.io/en/broadcast-streaming/channel-management-api/best-practices/ban-user-privileges#disband-a-channel), when targeting all users in a channel, it says to use uid: 0. However, in actual use:
+"uid": 0 (number) -> Error: uid '0' must be a number, or set str_uid = true
+
+2. Cannot create a permanent rule with time: 0
+The documentation states that time: 0 means the rule is applied permanently. However, when we actually send time: 0, the API returns {"status":"success","id":0}, but no rule is created."""
+
     def test_build_route_prompt_hints_captures_product_mode_and_context_signals(self) -> None:
         hints = build_route_prompt_hints(
             "What's the real difference between COMMUNICATION and LIVE_BROADCASTING?",
@@ -130,6 +142,20 @@ class SupportRouterTests(unittest.TestCase):
         self.assertEqual(decision.execution_action, "rag")
         self.assertEqual(decision.reason, "channel_joining_support")
         self.assertEqual(decision.matched_signals, ["join channel", "channel", "looks_like_question"])
+        urlopen_mock.assert_not_called()
+
+    def test_decide_support_route_fast_paths_docs_api_semantics_without_llm(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen"
+        ) as urlopen_mock:
+            decision = decide_support_route(self._BAN_API_MISMATCH_MESSAGE)
+
+        self.assertEqual(decision.scope_label, "agora_technical")
+        self.assertEqual(decision.route_family, "agora_docs_rag")
+        self.assertEqual(decision.execution_action, "rag")
+        self.assertEqual(decision.reason, "docs_api_semantics_support")
+        self.assertIn("docs_url", decision.matched_signals)
+        self.assertIn("endpoint_path", decision.matched_signals)
         urlopen_mock.assert_not_called()
 
     def test_decide_support_route_uses_llm_classification_for_public_info(self) -> None:
