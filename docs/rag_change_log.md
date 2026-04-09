@@ -2976,3 +2976,24 @@ For each new entry, record:
   - `python3 -m unittest backend.tests.test_embedding_provider`
   - `python3 -m py_compile backend/services/embedding_provider.py backend/tests/test_embedding_provider.py`
   - Compose restart plus `/health`, route timing skill, and answer chain skill re-run in the repaired environment.
+
+## 2026-04-09 - Return structured direct-ingestion failures and isolate dashboard event errors
+
+- Summary:
+  - Unified the direct source ingestion flow for technical articles and official documents behind one shared helper in `rag_api`.
+  - Synchronous direct-ingestion failures now return a structured `500` detail with `message`, `ingestion_id`, `status`, and `error_message` instead of a generic internal error.
+  - `knowledge_ingestion_completed` and `knowledge_ingestion_failed` dashboard event publication now runs best-effort so event-side failures no longer turn a successful ingestion request into `500`.
+- Reason:
+  - `/api/engineer/knowledge/articles` was surfacing opaque `500` responses to n8n even when the real failure had already been recorded in the ingestion record, and dashboard event publishing could also incorrectly mask a completed ingestion as an HTTP failure.
+- Affected files/config:
+  - `backend/rag_api.py`
+  - `backend/tests/test_rag_api.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema or vector-table changes.
+  - Direct article/document ingestion now exposes persisted failure metadata to engineer-side callers and no longer depends on dashboard event delivery for HTTP success.
+- Verification:
+  - `/tmp/supportportal-knowledge-ingestion-500-venv/bin/python -m unittest backend.tests.test_rag_api`
+  - `/tmp/supportportal-knowledge-ingestion-500-venv/bin/python -m unittest backend.tests.test_rag_api backend.tests.test_rag_service_client`
+  - `/tmp/supportportal-knowledge-ingestion-500-venv/bin/python -m py_compile backend/rag_api.py backend/tests/test_rag_api.py`
+  - `git diff --check`

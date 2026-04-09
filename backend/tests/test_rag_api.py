@@ -5,7 +5,8 @@ import os
 import threading
 import time
 import unittest
-from unittest.mock import Mock, patch
+from typing import Any
+from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi.testclient import TestClient
 
@@ -16,6 +17,7 @@ os.environ.setdefault("RAG_SERVICE_SHARED_TOKEN", "test-token")
 
 import backend.rag_api as rag_api
 from backend.repositories.event_repository import InMemoryEventRepository
+from backend.services.local_source_sync import SourceIngestResult
 from backend.services.rag_qa import RagAnswer, RagKnowledgeIndexReadiness, RagQueryResult, RagQueryTrace
 
 
@@ -50,6 +52,27 @@ class _BlockingKnowledgeRepository(_TrackingKnowledgeRepository):
         self.gate.wait(timeout=0.5)
         if self.telemetry_error is not None:
             raise self.telemetry_error
+
+
+class _DirectIngestionRepository:
+    def __init__(self, ingestions: dict[str, dict[str, Any]]) -> None:
+        self.ingestions = {key: dict(value) for key, value in ingestions.items()}
+        self.initialize_calls = 0
+
+    def is_enabled(self) -> bool:
+        return True
+
+    def initialize(self) -> None:
+        self.initialize_calls += 1
+
+    def storage_mode(self) -> str:
+        return "postgres"
+
+    def get_ingestion(self, ingestion_id: str, *, include_content: bool = False) -> dict[str, Any] | None:
+        record = self.ingestions.get(ingestion_id)
+        if record is None:
+            return None
+        return dict(record)
 
 
 def _trace(
@@ -173,12 +196,48 @@ class RagApiTests(unittest.TestCase):
         else:
             os.environ["RAG_SERVICE_SHARED_TOKEN"] = self.original_shared_token
 
-    def _client(self, repository: _TrackingKnowledgeRepository) -> TestClient:
+    def _client(self, repository: Any, *, raise_server_exceptions: bool = True) -> TestClient:
         rag_api.knowledge_repository = repository
         event_repository = InMemoryEventRepository()
         event_repository.initialize()
         rag_api.event_repository = event_repository
-        return TestClient(rag_api.app)
+        return TestClient(rag_api.app, raise_server_exceptions=raise_server_exceptions)
+
+    def _direct_ingestion_record(
+        self,
+        *,
+        ingestion_id: str,
+        status: str,
+        knowledge_type: str = "technical",
+        error_message: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "ingestion_id": ingestion_id,
+            "status": status,
+            "knowledge_type": knowledge_type,
+            "source_type": "technical_article_api" if knowledge_type == "technical" else "official_markdown_upload",
+            "title": "Troubleshooting article" if knowledge_type == "technical" else "official.md",
+            "file_name": "official.md" if knowledge_type == "official" else None,
+            "source_url": "https://example.com/article" if knowledge_type == "technical" else None,
+            "chunk_count": 3 if status == "completed" else 0,
+            "error_message": error_message,
+        }
+
+    def _direct_ingest_result(
+        self,
+        *,
+        ingestion_id: str | None,
+        status: str,
+        artifact_path: str = "/tmp/source.md",
+        error_message: str | None = None,
+    ) -> SourceIngestResult:
+        return SourceIngestResult(
+            source_doc_id="src-1",
+            ingestion_id=ingestion_id,
+            status=status,
+            artifact_path=artifact_path,
+            error_message=error_message,
+        )
 
     def test_health_returns_app_build_metadata(self) -> None:
         with self._client(_TrackingKnowledgeRepository()) as client, patch.object(
@@ -455,6 +514,224 @@ class RagApiTests(unittest.TestCase):
         self.assertEqual(
             payload["evidence_summary"]["diagnostics"]["configured_vector_table"],
             "supportportal.docagent_chunks_bge_m3_1024",
+        )
+
+    def test_upload_technical_article_returns_202_for_completed_direct_ingestion(self) -> None:
+        record = self._direct_ingestion_record(ingestion_id="ing-article-success", status="completed")
+        repository = _DirectIngestionRepository({record["ingestion_id"]: record})
+
+        with self._client(repository) as client, patch.object(
+            rag_api,
+            "stage_source_document",
+            return_value={"source_doc_id": "src-1"},
+        ), patch.object(
+            rag_api,
+            "ingest_source_document",
+            return_value=self._direct_ingest_result(
+                ingestion_id="ing-article-success",
+                status="completed",
+            ),
+        ), patch.object(
+            rag_api,
+            "_publish_dashboard_event",
+            new=AsyncMock(return_value={"event": "knowledge_ingestion_completed"}),
+        ) as publish_mock:
+            response = client.post(
+                "/internal/knowledge/articles",
+                headers={"Authorization": "Bearer test-token"},
+                json={
+                    "title": "Troubleshooting article",
+                    "source_url": "https://example.com/article",
+                    "content": "# Article\n\nHello",
+                },
+            )
+
+        self.assertEqual(response.status_code, 202, response.text)
+        payload = response.json()
+        self.assertFalse(payload["queued"])
+        self.assertEqual(payload["processing_mode"], "synchronous_direct")
+        self.assertEqual(payload["ingestion"]["ingestion_id"], "ing-article-success")
+        publish_mock.assert_awaited_once()
+
+    def test_upload_technical_article_returns_structured_500_when_direct_ingestion_failed(self) -> None:
+        record = self._direct_ingestion_record(
+            ingestion_id="ing-article-failed",
+            status="failed",
+            error_message="parser exploded",
+        )
+        repository = _DirectIngestionRepository({record["ingestion_id"]: record})
+
+        with self._client(repository, raise_server_exceptions=False) as client, patch.object(
+            rag_api,
+            "stage_source_document",
+            return_value={"source_doc_id": "src-1"},
+        ), patch.object(
+            rag_api,
+            "ingest_source_document",
+            return_value=self._direct_ingest_result(
+                ingestion_id="ing-article-failed",
+                status="failed",
+                error_message="parser exploded",
+            ),
+        ), patch.object(
+            rag_api,
+            "_publish_dashboard_event",
+            new=AsyncMock(return_value={"event": "knowledge_ingestion_failed"}),
+        ):
+            response = client.post(
+                "/internal/knowledge/articles",
+                headers={"Authorization": "Bearer test-token"},
+                json={
+                    "title": "Troubleshooting article",
+                    "source_url": "https://example.com/article",
+                    "content": "# Article\n\nHello",
+                },
+            )
+
+        self.assertEqual(response.status_code, 500, response.text)
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": {
+                    "message": "Knowledge ingestion failed",
+                    "ingestion_id": "ing-article-failed",
+                    "status": "failed",
+                    "error_message": "parser exploded",
+                }
+            },
+        )
+
+    def test_upload_official_document_returns_structured_500_when_direct_ingestion_failed(self) -> None:
+        record = self._direct_ingestion_record(
+            ingestion_id="ing-official-failed",
+            status="failed",
+            knowledge_type="official",
+            error_message="markdown parse failed",
+        )
+        repository = _DirectIngestionRepository({record["ingestion_id"]: record})
+
+        with self._client(repository, raise_server_exceptions=False) as client, patch.object(
+            rag_api,
+            "stage_source_document",
+            return_value={"source_doc_id": "src-2"},
+        ), patch.object(
+            rag_api,
+            "ingest_source_document",
+            return_value=self._direct_ingest_result(
+                ingestion_id="ing-official-failed",
+                status="failed",
+                error_message="markdown parse failed",
+            ),
+        ), patch.object(
+            rag_api,
+            "_publish_dashboard_event",
+            new=AsyncMock(return_value={"event": "knowledge_ingestion_failed"}),
+        ):
+            response = client.post(
+                "/internal/knowledge/official-documents",
+                headers={"Authorization": "Bearer test-token"},
+                files={"file": ("official.md", b"# Official\n\nHello", "text/markdown")},
+            )
+
+        self.assertEqual(response.status_code, 500, response.text)
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": {
+                    "message": "Knowledge ingestion failed",
+                    "ingestion_id": "ing-official-failed",
+                    "status": "failed",
+                    "error_message": "markdown parse failed",
+                }
+            },
+        )
+
+    def test_upload_technical_article_ignores_dashboard_event_failure_after_successful_ingestion(self) -> None:
+        record = self._direct_ingestion_record(ingestion_id="ing-article-event-ok", status="completed")
+        repository = _DirectIngestionRepository({record["ingestion_id"]: record})
+
+        async def _publish_failure(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            raise RuntimeError("event bus unavailable")
+
+        with self._client(repository, raise_server_exceptions=False) as client, patch.object(
+            rag_api,
+            "stage_source_document",
+            return_value={"source_doc_id": "src-1"},
+        ), patch.object(
+            rag_api,
+            "ingest_source_document",
+            return_value=self._direct_ingest_result(
+                ingestion_id="ing-article-event-ok",
+                status="completed",
+            ),
+        ), patch.object(
+            rag_api,
+            "_publish_dashboard_event",
+            side_effect=_publish_failure,
+        ):
+            response = client.post(
+                "/internal/knowledge/articles",
+                headers={"Authorization": "Bearer test-token"},
+                json={
+                    "title": "Troubleshooting article",
+                    "source_url": "https://example.com/article",
+                    "content": "# Article\n\nHello",
+                },
+            )
+
+        self.assertEqual(response.status_code, 202, response.text)
+        payload = response.json()
+        self.assertEqual(payload["ingestion"]["ingestion_id"], "ing-article-event-ok")
+
+    def test_upload_technical_article_preserves_structured_failure_when_dashboard_event_publish_fails(self) -> None:
+        record = self._direct_ingestion_record(
+            ingestion_id="ing-article-event-failed",
+            status="failed",
+            error_message="chunking failed",
+        )
+        repository = _DirectIngestionRepository({record["ingestion_id"]: record})
+
+        async def _publish_failure(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            raise RuntimeError("event bus unavailable")
+
+        with self._client(repository, raise_server_exceptions=False) as client, patch.object(
+            rag_api,
+            "stage_source_document",
+            return_value={"source_doc_id": "src-1"},
+        ), patch.object(
+            rag_api,
+            "ingest_source_document",
+            return_value=self._direct_ingest_result(
+                ingestion_id="ing-article-event-failed",
+                status="failed",
+                error_message="chunking failed",
+            ),
+        ), patch.object(
+            rag_api,
+            "_publish_dashboard_event",
+            side_effect=_publish_failure,
+        ):
+            response = client.post(
+                "/internal/knowledge/articles",
+                headers={"Authorization": "Bearer test-token"},
+                json={
+                    "title": "Troubleshooting article",
+                    "source_url": "https://example.com/article",
+                    "content": "# Article\n\nHello",
+                },
+            )
+
+        self.assertEqual(response.status_code, 500, response.text)
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": {
+                    "message": "Knowledge ingestion failed",
+                    "ingestion_id": "ing-article-event-failed",
+                    "status": "failed",
+                    "error_message": "chunking failed",
+                }
+            },
         )
 
 
