@@ -332,6 +332,36 @@ class InvestigationFlowTests(unittest.TestCase):
         payload = response.json()
         self.assertIn("lightweight_image_incompatible_with_local_bge_m3", payload["config_warnings"])
 
+    def test_health_defaults_runtime_profile_to_full(self) -> None:
+        with patch.dict(os.environ, {}, clear=False), patch.object(
+            main.rag_service_client,
+            "probe_health",
+            return_value={"status": "ok", "knowledge_storage": "postgres"},
+        ):
+            response = self.client.get("/health")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["runtime_profile"], "full")
+
+    def test_health_reports_overridden_runtime_profile(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "RUNTIME_PROFILE": "local_lightweight",
+            },
+            clear=False,
+        ), patch.object(
+            main.rag_service_client,
+            "probe_health",
+            return_value={"status": "ok", "knowledge_storage": "postgres"},
+        ):
+            response = self.client.get("/health")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["runtime_profile"], "local_lightweight")
+
     def test_client_ack_prompt_instructions_require_concierge_style(self) -> None:
         instructions = main._build_client_ack_instructions()
         self.assertIn("concierge", instructions.lower())

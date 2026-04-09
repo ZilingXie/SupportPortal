@@ -4,12 +4,27 @@ services:
       args:
         INSTALL_ML_DEPS: "0"
     environment:
+      RUNTIME_PROFILE: local_lightweight
       SENTIMENT_PROVIDER: legacy
+
+  rag_api:
+    environment:
+      RUNTIME_PROFILE: local_lightweight
+
+  rag_worker:
+    environment:
+      RUNTIME_PROFILE: local_lightweight
+
+  ws_gateway:
+    environment:
+      RUNTIME_PROFILE: local_lightweight
 
   worker_query:
     environment:
+      RUNTIME_PROFILE: local_lightweight
       SENTIMENT_PROVIDER: legacy
 
   worker_aux:
     environment:
+      RUNTIME_PROFILE: local_lightweight
       SENTIMENT_PROVIDER: legacy

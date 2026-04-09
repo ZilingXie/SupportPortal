@@ -43,6 +43,7 @@ info "Current main commit: $APP_BUILD_REF"
 info "Build timestamp: $APP_BUILD_TIME"
 info "Rebuilding single-host stack in lightweight local mode."
 
+"$SCRIPT_DIR/cleanup_single_host_aux_stack.sh"
 podman-compose -f deployment/docker-compose.single-host.yml -f "$lightweight_compose_file" down
 podman-compose -f deployment/docker-compose.single-host.yml -f "$lightweight_compose_file" up -d --build
 podman-compose -f deployment/docker-compose.single-host.yml -f "$lightweight_compose_file" ps
