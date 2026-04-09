@@ -39,11 +39,11 @@
 ## Container Handling After Changes
 1. Restart containers after completing changes only when a restart is required for the change to take effect. Typical cases include backend or service code that is loaded only at container start, dependency or image changes, startup configuration or environment changes, and compose or deployment changes.
 2. Do not restart containers for changes that do not require it, such as documentation-only updates or other edits that do not affect the running containers.
-3. When a restart is required, restart containers with compose down first, then compose up:
-   - `podman-compose -f deployment/docker-compose.single-host.yml down`
-   - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
-4. After any restart, verify running status:
-   - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+3. For local development, the default single-host restart path is `bash scripts/workflow/restart_single_host_lightweight_stack.sh`.
+4. Use `bash scripts/workflow/restart_single_host_stack.sh` only for production / EC2 style full builds or when the task explicitly needs local ML dependencies.
+5. Before relying on a running single-host environment for validation, run `bash scripts/workflow/inspect_single_host_stack_mode.sh` to confirm the official stack mode and detect any auxiliary stack.
+6. If `inspect_single_host_stack_mode.sh` reports an auxiliary stack such as `deploymentlw`, report it and clean it with `bash scripts/workflow/cleanup_single_host_aux_stack.sh` before treating the local environment as the official single-host stack.
+7. The official local single-host stack is `deployment`. Auxiliary stacks such as `deploymentlw` are for temporary manual isolation only and are not part of the standard workflow.
 
 ## SupportPortal Diagnostic Verification
 1. If a task optimizes SupportPortal latency, timing, queue performance, retrieval latency, generation latency, or other end-to-end performance behavior, run the local `$supportportal-route-timing-report` skill against the repo `real_case/real_user_questions.txt` before calling the task complete.
