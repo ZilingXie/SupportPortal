@@ -1,0 +1,15 @@
+services:
+  api:
+    build:
+      args:
+        INSTALL_ML_DEPS: "0"
+    environment:
+      SENTIMENT_PROVIDER: legacy
+
+  worker_query:
+    environment:
+      SENTIMENT_PROVIDER: legacy
+
+  worker_aux:
+    environment:
+      SENTIMENT_PROVIDER: legacy

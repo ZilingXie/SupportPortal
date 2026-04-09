@@ -39,6 +39,16 @@ class SentimentClassifierTests(unittest.TestCase):
         self.assertEqual(result.provider, "legacy_fallback")
         self.assertEqual(result.bucket, "negative")
 
+    def test_legacy_provider_never_touches_model_path(self) -> None:
+        with patch.dict(os.environ, {"SENTIMENT_PROVIDER": "legacy"}):
+            with patch(
+                "backend.services.sentiment_classifier.classify_sentiment_with_model",
+                side_effect=AssertionError("model path should be skipped"),
+            ):
+                result = classify_sentiment("I am angry and very frustrated")
+        self.assertEqual(result.provider, "legacy")
+        self.assertEqual(result.bucket, "negative")
+
 
 if __name__ == "__main__":
     unittest.main()

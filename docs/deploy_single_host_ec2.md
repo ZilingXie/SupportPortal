@@ -73,6 +73,21 @@ bash scripts/workflow/restart_single_host_stack.sh
 2. 脚本会自动注入 `APP_BUILD_REF` / `APP_BUILD_TIME`，然后执行 `down -> up -d --build -> ps -> curl /health`。
 3. 本地长期运行栈不要再从任意 task worktree 直接执行 `podman-compose ... up -d --build`，否则 `localhost/supportportal-app:latest` 可能被旧 checkout 覆盖。
 
+### 2.3.1 本地 lightweight 重建（无 PyTorch）
+
+```bash
+cd /Users/xieziling/Desktop/personal_proj/SupportPortal
+export PODMAN_COMPOSE_PROVIDER=podman-compose
+
+bash scripts/workflow/restart_single_host_lightweight_stack.sh
+```
+
+说明：
+1. 该模式只用于本地开发，不改变 EC2 / `support.stellarix.space` 的 full build 默认行为。
+2. lightweight override 会把本地 `api` 的镜像构建切到 `INSTALL_ML_DEPS=0`，同时将本地 sentiment provider 固定为 `legacy`。
+3. 这会跳过 `torch` / `sentence-transformers` / `accelerate` 的镜像安装，缩短本地 `down -> up -d --build`。
+4. 默认 `EMBEDDING_PROVIDER=siliconflow` 仍可正常工作；如果你把 `EMBEDDING_PROVIDER` 改成 `local_bge_m3`，`/health.config_warnings` 会报告该 lightweight 镜像不兼容。
+
 ### 2.4 访问
 1. 客户端: [http://localhost:8080/client/](http://localhost:8080/client/)
 2. 工程师端: [http://localhost:8080/engineer/](http://localhost:8080/engineer/)
@@ -81,6 +96,7 @@ bash scripts/workflow/restart_single_host_stack.sh
 
 补充：
 1. `/health` 现在会返回 `app_build.ref` 和 `app_build.built_at`，可直接核对当前在线 API / RAG 服务到底跑的是哪次构建。
+2. 在 local lightweight 模式下，如果你错误地把 `SENTIMENT_PROVIDER=model` 或 `EMBEDDING_PROVIDER=local_bge_m3` 打开，`/health.config_warnings` 会给出兼容性提示。
 
 ### 2.5 运维命令
 
@@ -193,6 +209,13 @@ curl -I http://support.stellarix.space
 ```bash
 cd /Users/xieziling/Desktop/personal_proj/SupportPortal
 bash scripts/workflow/restart_single_host_stack.sh
+```
+
+本地如果只想做轻量重建，可改用：
+
+```bash
+cd /Users/xieziling/Desktop/personal_proj/SupportPortal
+bash scripts/workflow/restart_single_host_lightweight_stack.sh
 ```
 
 ### 4.2 EC2 Docker
