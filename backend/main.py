@@ -1711,6 +1711,19 @@ def _dashboard_ticket_agent_brief(ticket: dict[str, Any]) -> tuple[str, str]:
     return "", ""
 
 
+def _latest_assistant_message_for_ticket(ticket: dict[str, Any]) -> dict[str, Any] | None:
+    messages = ticket.get("messages") if isinstance(ticket.get("messages"), list) else []
+    for message in reversed(messages):
+        if not isinstance(message, dict):
+            continue
+        if str(message.get("role") or "").strip().lower() != "assistant":
+            continue
+        if not " ".join(str(message.get("content") or "").split()).strip():
+            continue
+        return copy.deepcopy(message)
+    return None
+
+
 def _build_dashboard_ticket_payload(
     ticket: dict[str, Any],
     *,
@@ -1843,6 +1856,9 @@ def startup_event() -> None:
 async def shutdown_event() -> None:
     await event_bus.close()
     await task_queue.close()
+    close_ticket_repository = getattr(ticket_repository, "close", None)
+    if callable(close_ticket_repository):
+        close_ticket_repository()
 
 
 def _dsn_host_database_signature(raw_dsn: str) -> tuple[str, str] | None:
@@ -2443,6 +2459,28 @@ def list_client_tickets(
         "tickets": tickets,
         "customer_id": normalized_customer_id or None,
         "status_filter": status if status == "all" else normalize_ticket_status(status),
+    }
+
+
+@app.get("/internal/trace/tickets/{ticket_id}")
+def get_internal_trace_ticket_snapshot(
+    ticket_id: str,
+    event_limit: int = Query(default=100, ge=1, le=500),
+) -> dict[str, Any]:
+    ticket = ticket_repository.get_ticket(ticket_id)
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    runtime_state = (
+        copy.deepcopy(ticket.get("client_agent_runtime_state"))
+        if isinstance(ticket.get("client_agent_runtime_state"), dict)
+        else {}
+    )
+    return {
+        "ticket": ticket,
+        "runtime_state": runtime_state,
+        "final_assistant": _latest_assistant_message_for_ticket(ticket),
+        "ticket_events": ticket_repository.list_ticket_events(ticket_id, limit=event_limit),
+        "agent_events": ticket_repository.list_ticket_agent_events(ticket_id, limit=event_limit),
     }
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+from unittest import mock
 import unittest
 from pathlib import Path
 
@@ -15,11 +16,14 @@ def _load_script_module():
 
 
 class TraceClientTicketRouteCliTests(unittest.TestCase):
-    def test_parser_exposes_post_answer_artifact_timeout_option(self) -> None:
+    def test_parser_exposes_split_timeout_budgets(self) -> None:
         module = _load_script_module()
 
         args = module.build_parser().parse_args([])
 
+        self.assertEqual(args.query_timeout_seconds, 45.0)
+        self.assertEqual(args.completion_timeout_seconds, 90.0)
+        self.assertEqual(args.direct_probe_timeout_seconds, 30.0)
         self.assertEqual(args.post_answer_artifact_timeout_seconds, 15.0)
 
     def test_preflight_requires_healthy_service(self) -> None:
@@ -304,6 +308,100 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
         self.assertIn("Queue / Dispatch", markdown)
         self.assertIn("message_to_task_dequeued_ms", markdown)
         self.assertIn("answer_saved_to_response_ready_ms", markdown)
+
+    def test_build_trace_artifact_marks_timeout_partial_and_keeps_direct_probe(self) -> None:
+        module = _load_script_module()
+
+        artifact = module.build_trace_artifact(
+            preflight={"health": {"status": "ok", "rag_service": "ok"}},
+            request_context={"ticket_id": "TK-TRACE-TP", "message": "how to join channel"},
+            ack_payload={"ack_text": "Got it"},
+            query_payload={"ticket_id": "TK-TRACE-TP", "queued_for_ai": True},
+            ticket={"ticket_id": "TK-TRACE-TP", "messages": []},
+            final_assistant=None,
+            ticket_events=[],
+            agent_events=[],
+            rag_run=None,
+            summary={"request": {"ticket_id": "TK-TRACE-TP"}, "final_result": {"answer": ""}},
+            trace_status="timeout_partial",
+            trace_completed=False,
+            direct_probe={"status": "request_error", "error": "timed out"},
+            query_error=None,
+        )
+
+        self.assertEqual(artifact["skill_runtime"]["trace_status"], "timeout_partial")
+        self.assertFalse(artifact["skill_runtime"]["trace_completed"])
+        self.assertEqual(artifact["direct_probe"]["status"], "request_error")
+
+    def test_build_trace_artifact_marks_query_timeout_without_final_answer(self) -> None:
+        module = _load_script_module()
+
+        artifact = module.build_trace_artifact(
+            preflight={"health": {"status": "ok", "rag_service": "ok"}},
+            request_context={"ticket_id": "TK-TRACE-QT", "message": "black screen"},
+            ack_payload={"ack_text": "Got it"},
+            query_payload=None,
+            ticket=None,
+            final_assistant=None,
+            ticket_events=[],
+            agent_events=[],
+            rag_run=None,
+            summary={"request": {"ticket_id": "TK-TRACE-QT"}, "final_result": {"answer": ""}},
+            trace_status="query_timeout",
+            trace_completed=False,
+            direct_probe={"status": "probe_timeout", "error": "timed out"},
+            query_error="POST /api/tickets/query timed out",
+        )
+
+        self.assertEqual(artifact["skill_runtime"]["trace_status"], "query_timeout")
+        self.assertEqual(artifact["query_error"], "POST /api/tickets/query timed out")
+        self.assertEqual(artifact["direct_probe"]["status"], "probe_timeout")
+
+    def test_wait_for_trace_completion_tolerates_snapshot_timeout_and_returns_partial(self) -> None:
+        module = _load_script_module()
+
+        fetch_calls = {"count": 0}
+
+        def _fake_fetch(*_args, **_kwargs):
+            fetch_calls["count"] += 1
+            raise TimeoutError("timed out")
+
+        with mock.patch.object(module, "fetch_trace_snapshot", side_effect=_fake_fetch):
+            snapshot, final_assistant, completed = module.wait_for_trace_completion(
+                base_url="http://127.0.0.1:8080",
+                ticket_id="TK-TRACE-TIMEOUT",
+                message="how to join channel",
+                message_created_at=None,
+                completion_timeout_seconds=0.3,
+                poll_interval_seconds=0.05,
+                event_limit=20,
+            )
+
+        self.assertIsNone(snapshot)
+        self.assertIsNone(final_assistant)
+        self.assertFalse(completed)
+        self.assertGreater(fetch_calls["count"], 0)
+
+    def test_wait_for_trace_artifacts_tolerates_snapshot_timeout_and_keeps_latest_snapshot(self) -> None:
+        module = _load_script_module()
+
+        latest_snapshot = {
+            "ticket": {"ticket_id": "TK-TRACE-TIMEOUT", "messages": []},
+            "ticket_events": [],
+            "agent_events": [],
+        }
+
+        with mock.patch.object(module, "fetch_trace_snapshot", side_effect=TimeoutError("timed out")):
+            snapshot = module.wait_for_trace_artifacts(
+                base_url="http://127.0.0.1:8080",
+                ticket_id="TK-TRACE-TIMEOUT",
+                event_limit=20,
+                timeout_seconds=0.2,
+                poll_interval_seconds=0.05,
+                latest_snapshot=latest_snapshot,
+            )
+
+        self.assertEqual(snapshot, latest_snapshot)
 
     def test_build_trace_summary_handles_missing_rag_telemetry(self) -> None:
         module = _load_script_module()

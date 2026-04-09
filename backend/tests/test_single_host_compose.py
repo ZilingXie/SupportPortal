@@ -38,7 +38,7 @@ class SingleHostComposeTests(unittest.TestCase):
             api_block,
         )
         self.assertIn(
-            "TICKET_DB_POOL_TIMEOUT_SECONDS: ${TICKET_DB_POOL_TIMEOUT_SECONDS:-5}",
+            "TICKET_DB_POOL_TIMEOUT_SECONDS: ${TICKET_DB_POOL_TIMEOUT_SECONDS:-15}",
             api_block,
         )
 
@@ -58,11 +58,11 @@ class SingleHostComposeTests(unittest.TestCase):
             worker_block,
         )
         self.assertIn(
-            "TICKET_DB_POOL_MAX_LIFETIME_SECONDS: ${TICKET_DB_POOL_MAX_LIFETIME_SECONDS:-300}",
+            "TICKET_DB_POOL_MAX_LIFETIME_SECONDS: ${TICKET_DB_POOL_MAX_LIFETIME_SECONDS:-1800}",
             worker_block,
         )
         self.assertIn(
-            "TICKET_DB_POOL_MAX_IDLE_SECONDS: ${TICKET_DB_POOL_MAX_IDLE_SECONDS:-60}",
+            "TICKET_DB_POOL_MAX_IDLE_SECONDS: ${TICKET_DB_POOL_MAX_IDLE_SECONDS:-300}",
             worker_block,
         )
 

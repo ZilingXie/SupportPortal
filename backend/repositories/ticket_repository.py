@@ -14,9 +14,10 @@ import psycopg
 from psycopg import sql
 from psycopg.types.json import Json
 try:
-    from psycopg_pool import ConnectionPool
+    from psycopg_pool import ConnectionPool, PoolTimeout
 except ImportError:  # pragma: no cover - exercised in environments without pool support
     ConnectionPool = None
+    PoolTimeout = None
 
 LOGGER = logging.getLogger(__name__)
 
@@ -347,6 +348,9 @@ class TicketRepository(Protocol):
     def initialize(self) -> None:
         ...
 
+    def close(self) -> None:
+        ...
+
     def storage_mode(self) -> str:
         ...
 
@@ -483,6 +487,9 @@ class InMemoryTicketRepository:
         self._engineer_case_events: list[dict[str, Any]] = []
 
     def initialize(self) -> None:
+        return None
+
+    def close(self) -> None:
         return None
 
     def storage_mode(self) -> str:
@@ -999,9 +1006,10 @@ class PostgresTicketRepository:
         self._use_connection_pool = bool(use_connection_pool)
         self._pool_min_size = _safe_positive_int(pool_min_size, 1)
         self._pool_max_size = max(self._pool_min_size, _safe_positive_int(pool_max_size, 8))
-        self._pool_timeout_seconds = _safe_positive_float(pool_timeout_seconds, 5.0)
-        self._pool_max_lifetime_seconds = _safe_positive_float(pool_max_lifetime_seconds, 300.0)
-        self._pool_max_idle_seconds = _safe_positive_float(pool_max_idle_seconds, 60.0)
+        requested_pool_timeout_seconds = _safe_positive_float(pool_timeout_seconds, 15.0)
+        self._pool_timeout_seconds = max(requested_pool_timeout_seconds, float(self._connect_timeout))
+        self._pool_max_lifetime_seconds = _safe_positive_float(pool_max_lifetime_seconds, 1800.0)
+        self._pool_max_idle_seconds = _safe_positive_float(pool_max_idle_seconds, 300.0)
         if self._use_connection_pool and ConnectionPool is None:
             raise RuntimeError("psycopg_pool is required when TICKET_DB connection pooling is enabled")
         self._pool: Any = None
@@ -1054,6 +1062,66 @@ class PostgresTicketRepository:
             open=False,
         )
 
+    def _close_pool_instance(self, pool: Any) -> None:
+        if pool is None:
+            return
+        try:
+            close = getattr(pool, "close", None)
+            if callable(close):
+                close()
+        except Exception:
+            LOGGER.debug("Failed to close ticket repository connection pool cleanly.", exc_info=True)
+
+    def close(self) -> None:
+        with self._pool_lock:
+            pool = self._pool
+            self._pool = None
+        self._close_pool_instance(pool)
+
+    def _classify_pool_timeout(self, exc: Exception, *, phase: str, pool: Any | None = None) -> psycopg.OperationalError:
+        message = _clean_error_text(exc)
+        lowered = message.lower()
+        if phase == "open":
+            if "connection timeout expired" in lowered:
+                detail = (
+                    f"ticket db pool warm-up failed because backend connection establishment timed out "
+                    f"after {self._pool_timeout_seconds:.2f} sec"
+                )
+            else:
+                detail = (
+                    f"ticket db pool warm-up did not complete after {self._pool_timeout_seconds:.2f} sec"
+                )
+        else:
+            pool_stats: dict[str, Any] = {}
+            try:
+                get_stats = getattr(pool, "get_stats", None)
+                if callable(get_stats):
+                    stats_value = get_stats()
+                    if isinstance(stats_value, dict):
+                        pool_stats = stats_value
+            except Exception:
+                pool_stats = {}
+            pool_available = _safe_non_negative_int(pool_stats.get("pool_available"), 0)
+            requests_waiting = _safe_non_negative_int(pool_stats.get("requests_waiting"), 0)
+            pool_size = _safe_non_negative_int(pool_stats.get("pool_size"), self._pool_max_size)
+            if "connection timeout expired" in lowered:
+                detail = (
+                    f"ticket db pool borrow timed out after {self._pool_timeout_seconds:.2f} sec "
+                    f"while backend connections were still establishing"
+                )
+            elif pool_available <= 0 and requests_waiting > 0 and pool_size >= self._pool_max_size:
+                detail = (
+                    f"ticket db pool borrow timed out after {self._pool_timeout_seconds:.2f} sec "
+                    f"because the pool was fully leased"
+                )
+            else:
+                detail = (
+                    f"ticket db pool borrow timed out after {self._pool_timeout_seconds:.2f} sec"
+                )
+        if message:
+            detail = f"{detail}: {message}"
+        return psycopg.OperationalError(detail)
+
     def _connection_pool(self) -> Any:
         if not self._use_connection_pool:
             return None
@@ -1065,13 +1133,28 @@ class PostgresTicketRepository:
             if existing_pool is not None and not bool(getattr(existing_pool, "closed", False)):
                 return existing_pool
             self._pool = None
-            pool = self._pool_factory()
-            try:
-                pool.open(wait=True, timeout=self._pool_timeout_seconds)
-            except Exception:
-                self._pool = None
-                raise
-            self._pool = pool
+            attempts = max(1, self._connect_retries + 1)
+            last_error: Exception | None = None
+            for attempt in range(1, attempts + 1):
+                pool = self._pool_factory()
+                try:
+                    pool.open(wait=True, timeout=self._pool_timeout_seconds)
+                    self._pool = pool
+                    return pool
+                except Exception as exc:
+                    self._close_pool_instance(pool)
+                    last_error = exc
+                    if attempt >= attempts:
+                        raise self._classify_pool_timeout(exc, phase="open") from exc
+                    LOGGER.warning(
+                        "Ticket repository pool warm-up failed attempt %s/%s: %s",
+                        attempt,
+                        attempts,
+                        exc,
+                    )
+                    time.sleep(self._connect_retry_delay_seconds)
+            if last_error is not None:
+                raise self._classify_pool_timeout(last_error, phase="open") from last_error
         return self._pool
 
     @contextmanager
@@ -1088,8 +1171,13 @@ class PostgresTicketRepository:
                     except Exception:
                         LOGGER.debug("Failed to close direct ticket repository connection cleanly.", exc_info=True)
             return
-        with pool.connection(timeout=self._pool_timeout_seconds) as connection:
-            yield connection
+        try:
+            with pool.connection(timeout=self._pool_timeout_seconds) as connection:
+                yield connection
+        except Exception as exc:
+            if PoolTimeout is not None and isinstance(exc, PoolTimeout):
+                raise self._classify_pool_timeout(exc, phase="borrow", pool=pool) from exc
+            raise
 
     def _invalidate_connection(self, conn: psycopg.Connection[Any]) -> None:
         try:
@@ -2747,14 +2835,14 @@ def create_ticket_repository() -> TicketRepository:
     )
     pool_min_size = _safe_positive_int(os.getenv("TICKET_DB_POOL_MIN_SIZE"), 1)
     pool_max_size = _safe_positive_int(os.getenv("TICKET_DB_POOL_MAX_SIZE"), 8)
-    pool_timeout_seconds = _safe_positive_float(os.getenv("TICKET_DB_POOL_TIMEOUT_SECONDS"), 5.0)
+    pool_timeout_seconds = _safe_positive_float(os.getenv("TICKET_DB_POOL_TIMEOUT_SECONDS"), 15.0)
     pool_max_lifetime_seconds = _safe_positive_float(
         os.getenv("TICKET_DB_POOL_MAX_LIFETIME_SECONDS"),
-        300.0,
+        1800.0,
     )
     pool_max_idle_seconds = _safe_positive_float(
         os.getenv("TICKET_DB_POOL_MAX_IDLE_SECONDS"),
-        60.0,
+        300.0,
     )
     return PostgresTicketRepository(
         dsn=dsn,
