@@ -7,7 +7,11 @@ import unittest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_PATH = REPO_ROOT / "deployment" / "docker-compose.single-host.yml"
+LIGHTWEIGHT_COMPOSE_PATH = REPO_ROOT / "deployment" / "docker-compose.single-host.local-lightweight.yml"
 DOCKERFILE_PATH = REPO_ROOT / "backend" / "Dockerfile"
+REQUIREMENTS_PATH = REPO_ROOT / "requirements.txt"
+REQUIREMENTS_BASE_PATH = REPO_ROOT / "requirements.base.txt"
+REQUIREMENTS_ML_PATH = REPO_ROOT / "requirements.ml.txt"
 
 
 class SingleHostComposeTests(unittest.TestCase):
@@ -188,6 +192,42 @@ class SingleHostComposeTests(unittest.TestCase):
         self.assertIn("ARG APP_BUILD_TIME=", content)
         self.assertIn("APP_BUILD_REF=${APP_BUILD_REF}", content)
         self.assertIn("APP_BUILD_TIME=${APP_BUILD_TIME}", content)
+
+    def test_dockerfile_supports_optional_ml_dependency_install(self) -> None:
+        content = DOCKERFILE_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("ARG INSTALL_ML_DEPS=1", content)
+        self.assertIn("COPY requirements.base.txt /app/requirements.base.txt", content)
+        self.assertIn("COPY requirements.ml.txt /app/requirements.ml.txt", content)
+        self.assertIn("python -m pip install --no-cache-dir -r /app/requirements.base.txt", content)
+        self.assertIn('if [ "${INSTALL_ML_DEPS}" = "1" ]; then', content)
+        self.assertIn("python -m pip install --no-cache-dir -r /app/requirements.ml.txt", content)
+
+    def test_requirements_txt_aggregates_base_and_ml_files(self) -> None:
+        content = REQUIREMENTS_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("-r requirements.base.txt", content)
+        self.assertIn("-r requirements.ml.txt", content)
+
+    def test_base_and_ml_requirements_are_split_for_lightweight_builds(self) -> None:
+        base_content = REQUIREMENTS_BASE_PATH.read_text(encoding="utf-8")
+        ml_content = REQUIREMENTS_ML_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("transformers==4.46.3", base_content)
+        self.assertIn("sentencepiece>=0.2.0", base_content)
+        self.assertNotIn("torch>=2.2.0", base_content)
+        self.assertNotIn("sentence-transformers>=3.2.1", base_content)
+        self.assertNotIn("accelerate>=0.26.0", base_content)
+
+        self.assertIn("torch>=2.2.0", ml_content)
+        self.assertIn("sentence-transformers>=3.2.1", ml_content)
+        self.assertIn("accelerate>=0.26.0", ml_content)
+
+    def test_local_lightweight_override_forces_legacy_sentiment_and_skips_ml_deps(self) -> None:
+        content = LIGHTWEIGHT_COMPOSE_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("INSTALL_ML_DEPS: \"0\"", content)
+        self.assertIn("SENTIMENT_PROVIDER: legacy", content)
 
 
 if __name__ == "__main__":

@@ -286,6 +286,52 @@ class InvestigationFlowTests(unittest.TestCase):
         payload = response.json()
         self.assertNotIn("shared_ticket_and_rag_database", payload["config_warnings"])
 
+    def test_health_reports_missing_sentiment_model_dependencies_warning(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "SENTIMENT_PROVIDER": "model",
+                "EMBEDDING_PROVIDER": "siliconflow",
+            },
+            clear=False,
+        ), patch.object(
+            main,
+            "_module_spec_available",
+            side_effect=lambda name: False if name == "torch" else True,
+        ), patch.object(
+            main.rag_service_client,
+            "probe_health",
+            return_value={"status": "ok", "knowledge_storage": "postgres"},
+        ):
+            response = self.client.get("/health")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertIn("missing_local_sentiment_model_dependencies", payload["config_warnings"])
+
+    def test_health_reports_local_bge_m3_warning_when_ml_dependencies_are_missing(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "SENTIMENT_PROVIDER": "legacy",
+                "EMBEDDING_PROVIDER": "local_bge_m3",
+            },
+            clear=False,
+        ), patch.object(
+            main,
+            "_module_spec_available",
+            side_effect=lambda name: False if name in {"torch", "sentence_transformers"} else True,
+        ), patch.object(
+            main.rag_service_client,
+            "probe_health",
+            return_value={"status": "ok", "knowledge_storage": "postgres"},
+        ):
+            response = self.client.get("/health")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertIn("lightweight_image_incompatible_with_local_bge_m3", payload["config_warnings"])
+
     def test_client_ack_prompt_instructions_require_concierge_style(self) -> None:
         instructions = main._build_client_ack_instructions()
         self.assertIn("concierge", instructions.lower())

@@ -754,6 +754,45 @@ class WorkflowScriptTests(unittest.TestCase):
         curl_calls = self._read_json_lines(state_dir / "curl_calls.jsonl")
         self.assertEqual(curl_calls[0]["url"], "http://127.0.0.1:8080/health")
 
+    def test_restart_single_host_lightweight_stack_rebuilds_with_override_and_health_check(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        self._write(
+            seed,
+            ".env",
+            "TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets\nPGVECTOR_DSN=postgresql://rag:test@db.local/rag\n",
+        )
+        self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
+        self._write(seed, "deployment/docker-compose.single-host.local-lightweight.yml", "services: {}\n")
+        self._commit_all(seed, "Add local lightweight runtime files")
+        _git(["push", "origin", "main"], cwd=seed)
+        _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
+        fake_bin, state_dir = self._install_fake_restart_commands()
+
+        result = self._run_workflow(
+            "restart_single_host_lightweight_stack.sh",
+            repo,
+            extra_env={
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "RESTART_TEST_STATE_DIR": str(state_dir),
+            },
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
+        self.assertEqual([call["argv"][-1] for call in calls], ["down", "--build", "ps"])
+        for call in calls:
+            self.assertEqual(
+                call["argv"][:4],
+                [
+                    "-f",
+                    "deployment/docker-compose.single-host.yml",
+                    "-f",
+                    "deployment/docker-compose.single-host.local-lightweight.yml",
+                ],
+            )
+        curl_calls = self._read_json_lines(state_dir / "curl_calls.jsonl")
+        self.assertEqual(curl_calls[0]["url"], "http://127.0.0.1:8080/health")
+
     def test_rehome_task_worktree_moves_dirty_root_codex_branch(self) -> None:
         _, _, repo = self._init_remote_repo_on_main()
         _git(["switch", "-c", "codex/example-task"], cwd=repo)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import importlib.util
 import json
 import logging
 import os
@@ -39,6 +40,7 @@ from backend.repositories.ticket_repository import (
 from backend.services.embedding_provider import (
     DEFAULT_PGVECTOR_TABLE,
     embedding_model_id,
+    embedding_provider_name,
 )
 from backend.services.emotion_reply import build_initial_ack
 from backend.services.engineer_agent import build_engineer_agent_brief
@@ -1855,8 +1857,28 @@ def _dsn_host_database_signature(raw_dsn: str) -> tuple[str, str] | None:
     return None
 
 
+def _module_spec_available(module_name: str) -> bool:
+    return importlib.util.find_spec(module_name) is not None
+
+
+def _lightweight_runtime_warnings() -> set[str]:
+    warnings: set[str] = set()
+    sentiment_provider = (os.getenv("SENTIMENT_PROVIDER") or "model").strip().lower()
+    embedding_provider = embedding_provider_name()
+    torch_available = _module_spec_available("torch")
+    sentence_transformers_available = _module_spec_available("sentence_transformers")
+
+    if sentiment_provider == "model" and not torch_available:
+        warnings.add("missing_local_sentiment_model_dependencies")
+    if embedding_provider == "local_bge_m3" and not (torch_available and sentence_transformers_available):
+        warnings.add("lightweight_image_incompatible_with_local_bge_m3")
+
+    return warnings
+
+
 def _health_config_warnings() -> list[str]:
     warnings = set(get_config_warnings())
+    warnings.update(_lightweight_runtime_warnings())
     ticket_signature = _dsn_host_database_signature(os.getenv("TICKET_DB_DSN") or "")
     rag_signature = _dsn_host_database_signature(os.getenv("PGVECTOR_DSN") or "")
     if ticket_signature is not None and ticket_signature == rag_signature:
