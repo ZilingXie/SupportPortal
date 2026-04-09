@@ -14,6 +14,7 @@ from backend.services.embedding_provider import (
     _resolve_embedding_device,
     EmbeddingRuntimeConfig,
     OpenAIEmbeddingProvider,
+    SiliconFlowEmbeddingProvider,
     embedding_model_id,
     embedding_provider_name,
     siliconflow_api_key,
@@ -156,6 +157,59 @@ class EmbeddingProviderConfigTests(unittest.TestCase):
 
         self.assertEqual(provider.vector_dim, 1024)
         self.assertEqual(captured["dimensions"], 1024)
+
+    def test_siliconflow_provider_init_does_not_load_tokenizer(self) -> None:
+        config = EmbeddingRuntimeConfig(
+            provider="siliconflow",
+            model_id="BAAI/bge-m3",
+            device="cpu",
+            batch_size=16,
+            cache_dir="/tmp/hf-cache",
+            request_timeout_seconds=20.0,
+            max_retries=1,
+            configured_vector_dim=1024,
+        )
+
+        with patch.dict(os.environ, {"SILICONFLOW_API_KEY": "secret"}, clear=True):
+            with patch.object(SiliconFlowEmbeddingProvider, "_load_tokenizer", return_value=object()) as load_tokenizer:
+                provider = SiliconFlowEmbeddingProvider(config)
+
+        self.assertIsNone(provider._tokenizer)
+        load_tokenizer.assert_not_called()
+
+    def test_siliconflow_count_tokens_uses_local_files_only_once(self) -> None:
+        calls: list[dict[str, object]] = []
+
+        class _FakeAutoTokenizer:
+            @staticmethod
+            def from_pretrained(model_id: str, **kwargs: object) -> object:
+                calls.append({"model_id": model_id, **kwargs})
+                raise RuntimeError("missing local tokenizer cache")
+
+        fake_transformers = types.SimpleNamespace(AutoTokenizer=_FakeAutoTokenizer)
+        config = EmbeddingRuntimeConfig(
+            provider="siliconflow",
+            model_id="BAAI/bge-m3",
+            device="cpu",
+            batch_size=16,
+            cache_dir="/tmp/hf-cache",
+            request_timeout_seconds=20.0,
+            max_retries=1,
+            configured_vector_dim=1024,
+        )
+
+        with patch.dict(os.environ, {"SILICONFLOW_API_KEY": "secret"}, clear=True):
+            with patch.dict(sys.modules, {"transformers": fake_transformers}):
+                provider = SiliconFlowEmbeddingProvider(config)
+                first = provider.count_tokens("hello world")
+                second = provider.count_tokens("hello world again")
+
+        self.assertGreater(first, 0)
+        self.assertGreater(second, 0)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["model_id"], "BAAI/bge-m3")
+        self.assertEqual(calls[0]["cache_dir"], "/tmp/hf-cache")
+        self.assertTrue(calls[0]["local_files_only"])
 
 
 if __name__ == "__main__":

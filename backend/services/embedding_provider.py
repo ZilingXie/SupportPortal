@@ -433,9 +433,11 @@ class SiliconFlowEmbeddingProvider:
                 f"(configured={config.configured_vector_dim}, actual={self.vector_dim})"
             )
         self._request_log: list[dict[str, Any]] = []
-        self._tokenizer = self._load_tokenizer(config.cache_dir)
+        self._tokenizer = None
+        self._tokenizer_cache_dir = config.cache_dir
+        self._tokenizer_probe_attempted = False
 
-    def _load_tokenizer(self, cache_dir: str | None) -> Any:
+    def _load_tokenizer(self, cache_dir: str | None, *, local_files_only: bool = False) -> Any:
         try:
             from transformers import AutoTokenizer
         except ImportError:
@@ -443,10 +445,21 @@ class SiliconFlowEmbeddingProvider:
         kwargs: dict[str, Any] = {}
         if cache_dir:
             kwargs["cache_dir"] = cache_dir
+        if local_files_only:
+            kwargs["local_files_only"] = True
         try:
             return AutoTokenizer.from_pretrained(self.model_id, **kwargs)
         except Exception:
             return None
+
+    def _ensure_tokenizer_best_effort(self) -> Any:
+        if self._tokenizer is not None:
+            return self._tokenizer
+        if self._tokenizer_probe_attempted:
+            return None
+        self._tokenizer_probe_attempted = True
+        self._tokenizer = self._load_tokenizer(self._tokenizer_cache_dir, local_files_only=True)
+        return self._tokenizer
 
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
         attempt = 0
@@ -518,9 +531,10 @@ class SiliconFlowEmbeddingProvider:
         raw = str(text or "")
         if not raw.strip():
             return 0
-        if self._tokenizer is not None:
+        tokenizer = self._tokenizer if self._tokenizer is not None else self._ensure_tokenizer_best_effort()
+        if tokenizer is not None:
             try:
-                return len(self._tokenizer.encode(raw, add_special_tokens=False, truncation=False))
+                return len(tokenizer.encode(raw, add_special_tokens=False, truncation=False))
             except Exception:
                 pass
         return _estimate_tokens_fallback(raw)
