@@ -10,6 +10,37 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-04-09 - Trace snapshot endpoint and Ticket DB pool hardening
+
+- Summary: Hardened Postgres ticket-repository pool defaults and timeout classification, added an internal ticket-trace snapshot endpoint, and taught the client-route tracing/report scripts to produce partial artifacts for slow cases instead of failing before artifact creation.
+- Reason: `supportportal-route-timing-report` and `supportportal-answer-chain-report` were failing on host-local `psycopg_pool.PoolTimeout` rather than exposing the real admission-vs-final-answer latency of live SupportPortal tickets, and the default Ticket DB pool settings were too aggressive for RDS TLS connection jitter.
+- Affected files or config:
+  - `backend/repositories/ticket_repository.py`
+  - `backend/main.py`
+  - `scripts/trace_client_ticket_route.py`
+  - `backend/tests/test_repository_configuration.py`
+  - `backend/tests/test_trace_client_ticket_route_cli.py`
+  - `backend/tests/test_internal_trace_routes.py`
+  - `backend/tests/test_single_host_compose.py`
+  - `deployment/docker-compose.single-host.yml`
+  - `.env.example`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - Internal tracing can now fetch aggregated ticket snapshots from `/internal/trace/tickets/{ticket_id}` instead of opening a host-local Ticket DB pool, and slow traces now persist `timeout_partial` / `query_timeout` artifacts with runtime state, events, and probe details.
+  - Ticket DB pool defaults now use a longer wait/idle/lifetime budget (`15s` / `300s` / `1800s`) and clamp borrow timeout to at least connect timeout, reducing false pool timeouts during RDS TLS warm-up.
+  - Ticket repository instances now expose `close()` so short-lived scripts can release pool worker threads cleanly.
+- Verification:
+  - `python -m unittest backend.tests.test_repository_configuration backend.tests.test_trace_client_ticket_route_cli backend.tests.test_internal_trace_routes backend.tests.test_single_host_compose`
+  - `python -m unittest backend.tests.test_dashboard_ticket_routes backend.tests.test_investigation_flow`
+  - `python3 -m py_compile backend/repositories/ticket_repository.py backend/main.py scripts/trace_client_ticket_route.py backend/tests/test_repository_configuration.py backend/tests/test_trace_client_ticket_route_cli.py backend/tests/test_internal_trace_routes.py`
+  - `python3 -m py_compile /Users/xieziling/.codex/skills/supportportal-route-timing-report/scripts/run_route_timing_report.py /Users/xieziling/.codex/skills/supportportal-route-timing-report/scripts/trace_compat.py /Users/xieziling/.codex/skills/supportportal-answer-chain-report/scripts/run_answer_chain_report.py /Users/xieziling/.codex/skills/supportportal-answer-chain-report/scripts/trace_compat.py`
+  - `podman-compose -f deployment/docker-compose.single-host.yml down`
+  - `podman-compose -f deployment/docker-compose.single-host.yml up -d --build`
+  - `podman-compose -f deployment/docker-compose.single-host.yml ps`
+  - `curl -sS http://127.0.0.1:8080/health`
+  - `python3 /Users/xieziling/.codex/skills/supportportal-route-timing-report/scripts/run_route_timing_report.py`
+  - `python3 /Users/xieziling/.codex/skills/supportportal-answer-chain-report/scripts/run_answer_chain_report.py`
+
 ## 2026-04-07 - FAQ vector-first retrieval, trace artifact completeness, and benchmark fail-closed cleanup
 
 - Summary: Added a dedicated `how_to_faq` query class for short usage/how-to questions so the first pass goes vector-first without eager BM25 warmup, surfaced query-execution profile fields in live trace/reporting, preserved assistant route/runtime metadata through Postgres ticket-message persistence, and hardened benchmark execution so builtin judge stalls time out and interrupted eval runs close as `failed` instead of staying `running`.

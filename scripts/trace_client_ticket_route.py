@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import sys
@@ -30,6 +31,9 @@ DEFAULT_BASE_URL = "http://127.0.0.1:8080"
 DEFAULT_MESSAGE = "how to join channel"
 DEFAULT_PRODUCT = "audio_video_calling"
 DEFAULT_TRACE_OUTPUT_DIR = Path("/tmp/supportportal-traces")
+DEFAULT_QUERY_TIMEOUT_SECONDS = 45.0
+DEFAULT_COMPLETION_TIMEOUT_SECONDS = 90.0
+DEFAULT_DIRECT_PROBE_TIMEOUT_SECONDS = 30.0
 DEFAULT_POST_ANSWER_ARTIFACT_TIMEOUT_SECONDS = 15.0
 
 
@@ -99,14 +103,17 @@ def _http_request_json(
     url: str,
     *,
     payload: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
     timeout_seconds: float = 30.0,
 ) -> dict[str, Any]:
     body = None
-    headers = {"Accept": "application/json"}
+    request_headers = {"Accept": "application/json"}
+    if isinstance(headers, dict):
+        request_headers.update({str(key): str(value) for key, value in headers.items()})
     if payload is not None:
         body = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-    request = urllib.request.Request(url, data=body, headers=headers, method=method.upper())
+        request_headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(url, data=body, headers=request_headers, method=method.upper())
     try:
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             raw = response.read().decode("utf-8").strip()
@@ -118,17 +125,23 @@ def _http_request_json(
         raise RuntimeError(f"{method.upper()} {url} failed: {exc.reason}") from exc
 
 
-def http_get_json(url: str, *, timeout_seconds: float = 10.0) -> dict[str, Any]:
-    return _http_request_json("GET", url, timeout_seconds=timeout_seconds)
+def http_get_json(
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    timeout_seconds: float = 10.0,
+) -> dict[str, Any]:
+    return _http_request_json("GET", url, headers=headers, timeout_seconds=timeout_seconds)
 
 
 def http_post_json(
     url: str,
     payload: dict[str, Any],
     *,
+    headers: dict[str, str] | None = None,
     timeout_seconds: float = 30.0,
 ) -> dict[str, Any]:
-    return _http_request_json("POST", url, payload=payload, timeout_seconds=timeout_seconds)
+    return _http_request_json("POST", url, payload=payload, headers=headers, timeout_seconds=timeout_seconds)
 
 
 def run_preflight_checks(
@@ -212,6 +225,211 @@ def _resolve_customer_message_created_at(
     if customer_index is None:
         return None
     return _clean_text(messages[customer_index].get("created_at")) or None
+
+
+def _is_timeout_error(exc: BaseException) -> bool:
+    return "timeout" in _clean_text(exc).lower() or "timed out" in _clean_text(exc).lower()
+
+
+def _trace_snapshot_url(base_url: str, ticket_id: str, *, event_limit: int) -> str:
+    quoted_ticket_id = urllib.parse.quote(str(ticket_id or "").strip(), safe="")
+    return _join_url(base_url, f"/internal/trace/tickets/{quoted_ticket_id}?event_limit={int(event_limit)}")
+
+
+def fetch_trace_snapshot(
+    *,
+    base_url: str,
+    ticket_id: str,
+    event_limit: int,
+    timeout_seconds: float = 10.0,
+) -> dict[str, Any] | None:
+    try:
+        return http_get_json(
+            _trace_snapshot_url(base_url, ticket_id, event_limit=event_limit),
+            timeout_seconds=timeout_seconds,
+        )
+    except RuntimeError as exc:
+        if "HTTP 404" in _clean_text(exc):
+            return None
+        raise
+
+
+def wait_for_trace_completion(
+    *,
+    base_url: str,
+    ticket_id: str,
+    message: str,
+    message_created_at: str | None,
+    completion_timeout_seconds: float,
+    poll_interval_seconds: float,
+    event_limit: int,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, bool]:
+    deadline = time.monotonic() + max(float(completion_timeout_seconds), 1.0)
+    latest_snapshot: dict[str, Any] | None = None
+    latest_final_assistant: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        try:
+            snapshot = fetch_trace_snapshot(
+                base_url=base_url,
+                ticket_id=ticket_id,
+                event_limit=event_limit,
+                timeout_seconds=max(min(float(poll_interval_seconds) * 4.0, 10.0), 1.0),
+            )
+        except Exception as exc:
+            if _is_timeout_error(exc):
+                time.sleep(max(float(poll_interval_seconds), 0.1))
+                continue
+            raise
+        if isinstance(snapshot, dict):
+            latest_snapshot = snapshot
+            ticket = snapshot.get("ticket") if isinstance(snapshot.get("ticket"), dict) else {}
+            latest_final_assistant = _find_final_assistant_message(
+                ticket,
+                message_created_at=message_created_at,
+                message=message,
+            )
+            runtime_state = snapshot.get("runtime_state") if isinstance(snapshot.get("runtime_state"), dict) else {}
+            if str(runtime_state.get("status") or "").strip().lower() == "completed" and latest_final_assistant is not None:
+                return latest_snapshot, latest_final_assistant, True
+        time.sleep(max(float(poll_interval_seconds), 0.1))
+    return latest_snapshot, latest_final_assistant, False
+
+
+def wait_for_trace_artifacts(
+    *,
+    base_url: str,
+    ticket_id: str,
+    event_limit: int,
+    timeout_seconds: float,
+    poll_interval_seconds: float,
+    latest_snapshot: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if latest_snapshot is None:
+        return None
+    deadline = time.monotonic() + max(float(timeout_seconds), 0.5)
+    current_snapshot = latest_snapshot
+    while time.monotonic() < deadline:
+        ticket_events = (
+            current_snapshot.get("ticket_events")
+            if isinstance(current_snapshot.get("ticket_events"), list)
+            else []
+        )
+        agent_events = (
+            current_snapshot.get("agent_events")
+            if isinstance(current_snapshot.get("agent_events"), list)
+            else []
+        )
+        has_response_ready = any(
+            _clean_text(item.get("event_type")) == "ticket_ai_response_ready"
+            for item in ticket_events
+            if isinstance(item, dict)
+        )
+        if has_response_ready and agent_events:
+            return current_snapshot
+        try:
+            refreshed_snapshot = fetch_trace_snapshot(
+                base_url=base_url,
+                ticket_id=ticket_id,
+                event_limit=event_limit,
+                timeout_seconds=max(min(float(poll_interval_seconds) * 4.0, 10.0), 1.0),
+            )
+        except Exception as exc:
+            if _is_timeout_error(exc):
+                time.sleep(max(float(poll_interval_seconds), 0.1))
+                continue
+            raise
+        if isinstance(refreshed_snapshot, dict):
+            current_snapshot = refreshed_snapshot
+        time.sleep(max(float(poll_interval_seconds), 0.1))
+    return current_snapshot
+
+
+def run_direct_probe(
+    *,
+    base_url: str,
+    message: str,
+    product: str,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    token = _clean_text(os.getenv("RAG_SERVICE_SHARED_TOKEN"))
+    if not token:
+        return {"status": "skipped", "error": "missing_shared_token"}
+    request_id = _generate_trace_id("diag")
+    payload = {
+        "question": message,
+        "request_id": request_id,
+        "ticket_id": _generate_trace_id("TK-DIRECT"),
+        "customer_id": _generate_trace_id("C-DIRECT"),
+        "product": product,
+        "top_k": 6,
+    }
+    started_at = time.perf_counter()
+    try:
+        response = http_post_json(
+            _join_url(base_url, "/internal/rag/query"),
+            payload,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout_seconds=timeout_seconds,
+        )
+    except Exception as exc:
+        status = "probe_timeout" if _is_timeout_error(exc) else "request_error"
+        return {
+            "status": status,
+            "latency_ms": round((time.perf_counter() - started_at) * 1000, 2),
+            "request_id": request_id,
+            "error": _clean_text(exc) or str(exc),
+        }
+    return {
+        "status": "ok",
+        "latency_ms": round((time.perf_counter() - started_at) * 1000, 2),
+        "request_id": request_id,
+        "response": response,
+    }
+
+
+def build_trace_artifact(
+    *,
+    preflight: dict[str, Any],
+    request_context: dict[str, Any],
+    ack_payload: dict[str, Any] | None,
+    query_payload: dict[str, Any] | None,
+    ticket: dict[str, Any] | None,
+    final_assistant: dict[str, Any] | None,
+    ticket_events: list[dict[str, Any]],
+    agent_events: list[dict[str, Any]],
+    rag_run: dict[str, Any] | None,
+    summary: dict[str, Any],
+    trace_status: str,
+    trace_completed: bool,
+    direct_probe: dict[str, Any] | None,
+    query_error: str | None,
+) -> dict[str, Any]:
+    ticket_payload = copy.deepcopy(ticket) if isinstance(ticket, dict) else {}
+    runtime_state = (
+        copy.deepcopy(ticket_payload.get("client_agent_runtime_state"))
+        if isinstance(ticket_payload.get("client_agent_runtime_state"), dict)
+        else {}
+    )
+    return {
+        "preflight": copy.deepcopy(preflight) if isinstance(preflight, dict) else {},
+        "request_context": copy.deepcopy(request_context),
+        "ack": copy.deepcopy(ack_payload) if isinstance(ack_payload, dict) else {},
+        "query": copy.deepcopy(query_payload) if isinstance(query_payload, dict) else {},
+        "query_error": _clean_text(query_error) or None,
+        "final_assistant": copy.deepcopy(final_assistant) if isinstance(final_assistant, dict) else None,
+        "ticket": ticket_payload,
+        "runtime_state": runtime_state,
+        "ticket_events": copy.deepcopy(ticket_events),
+        "agent_events": copy.deepcopy(agent_events),
+        "rag_telemetry": copy.deepcopy(rag_run) if isinstance(rag_run, dict) else rag_run,
+        "direct_probe": copy.deepcopy(direct_probe) if isinstance(direct_probe, dict) else direct_probe,
+        "summary": copy.deepcopy(summary),
+        "skill_runtime": {
+            "trace_mode": "snapshot_endpoint",
+            "trace_completed": bool(trace_completed),
+            "trace_status": _clean_text(trace_status) or "ok",
+        },
+    }
 
 
 def wait_for_ticket_completion(
@@ -944,7 +1162,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--product", default=DEFAULT_PRODUCT)
     parser.add_argument("--ticket-id", default=None)
     parser.add_argument("--customer-id", default=None)
-    parser.add_argument("--timeout-seconds", type=float, default=90.0)
+    parser.add_argument("--query-timeout-seconds", type=float, default=DEFAULT_QUERY_TIMEOUT_SECONDS)
+    parser.add_argument("--completion-timeout-seconds", type=float, default=DEFAULT_COMPLETION_TIMEOUT_SECONDS)
+    parser.add_argument("--direct-probe-timeout-seconds", type=float, default=DEFAULT_DIRECT_PROBE_TIMEOUT_SECONDS)
+    parser.add_argument("--timeout-seconds", type=float, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--poll-interval-seconds", type=float, default=0.5)
     parser.add_argument("--rag-telemetry-timeout-seconds", type=float, default=6.0)
     parser.add_argument(
@@ -960,15 +1181,65 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-
-    preflight = run_preflight_checks(base_url=args.base_url)
+    if args.timeout_seconds is not None:
+        args.completion_timeout_seconds = float(args.timeout_seconds)
 
     ticket_id = _clean_text(args.ticket_id) or _generate_trace_id("TK-TRACE")
     customer_id = _clean_text(args.customer_id) or _generate_trace_id("C-TRACE")
     message = _clean_text(args.message) or DEFAULT_MESSAGE
     product = _clean_text(args.product) or DEFAULT_PRODUCT
+    request_context = {
+        "ticket_id": ticket_id,
+        "customer_id": customer_id,
+        "product": product,
+        "message": message,
+        "message_created_at": None,
+        "question_started_at": _utc_now_iso(),
+        "ack_received_at": None,
+    }
 
-    question_started_at = _utc_now_iso()
+    try:
+        preflight = run_preflight_checks(base_url=args.base_url)
+    except Exception as exc:
+        summary = build_trace_summary(
+            ticket={
+                "ticket_id": ticket_id,
+                "customer_id": customer_id,
+                "product": product,
+                "messages": [],
+                "client_agent_runtime_state": {},
+            },
+            request_context=request_context,
+            ack_payload={},
+            query_payload={},
+            ticket_events=[],
+            agent_events=[],
+            rag_run=None,
+        )
+        artifact = build_trace_artifact(
+            preflight={"health_error": _clean_text(exc) or str(exc)},
+            request_context=request_context,
+            ack_payload={},
+            query_payload={},
+            ticket={},
+            final_assistant=None,
+            ticket_events=[],
+            agent_events=[],
+            rag_run=None,
+            summary=summary,
+            trace_status="environment_unhealthy",
+            trace_completed=False,
+            direct_probe=None,
+            query_error=None,
+        )
+        output_path = _write_trace_artifact(
+            output_dir=Path(args.output_dir),
+            ticket_id=ticket_id,
+            payload=artifact,
+        )
+        print(f"Trace JSON: {output_path}")
+        return 0
+
     ack_response = http_post_json(
         _join_url(args.base_url, "/api/client/ack"),
         {
@@ -977,64 +1248,125 @@ def main(argv: list[str] | None = None) -> int:
             "customer_id": customer_id,
         },
     )
-    ack_received_at = _utc_now_iso()
+    request_context["ack_received_at"] = _utc_now_iso()
 
-    query_response = http_post_json(
-        _join_url(args.base_url, "/api/tickets/query"),
-        {
-            "ticket_id": ticket_id,
-            "customer_id": customer_id,
-            "product": product,
-            "message": message,
-        },
-    )
+    query_response: dict[str, Any] = {}
+    query_error: str | None = None
+    direct_probe: dict[str, Any] | None = None
+    trace_status = "ok"
+    trace_completed = False
+    final_assistant: dict[str, Any] | None = None
+    rag_run: dict[str, Any] | None = None
+    ticket_events: list[dict[str, Any]] = []
+    agent_events: list[dict[str, Any]] = []
+    ticket: dict[str, Any] = {
+        "ticket_id": ticket_id,
+        "customer_id": customer_id,
+        "product": product,
+        "messages": [],
+        "client_agent_runtime_state": {},
+    }
 
-    ticket_repository = create_ticket_repository()
+    try:
+        query_response = http_post_json(
+            _join_url(args.base_url, "/api/tickets/query"),
+            {
+                "ticket_id": ticket_id,
+                "customer_id": customer_id,
+                "product": product,
+                "message": message,
+            },
+            timeout_seconds=max(float(args.query_timeout_seconds), 1.0),
+        )
+    except Exception as exc:
+        query_error = _clean_text(exc) or str(exc)
+        trace_status = "query_timeout"
+        direct_probe = run_direct_probe(
+            base_url=args.base_url,
+            message=message,
+            product=product,
+            timeout_seconds=max(float(args.direct_probe_timeout_seconds), 1.0),
+        )
+        summary = build_trace_summary(
+            ticket=ticket,
+            request_context=request_context,
+            ack_payload=ack_response,
+            query_payload=query_response,
+            ticket_events=[],
+            agent_events=[],
+            rag_run=None,
+        )
+        artifact = build_trace_artifact(
+            preflight=preflight,
+            request_context=request_context,
+            ack_payload=ack_response,
+            query_payload=query_response,
+            ticket=ticket,
+            final_assistant=None,
+            ticket_events=[],
+            agent_events=[],
+            rag_run=None,
+            summary=summary,
+            trace_status=trace_status,
+            trace_completed=False,
+            direct_probe=direct_probe,
+            query_error=query_error,
+        )
+        output_path = _write_trace_artifact(
+            output_dir=Path(args.output_dir),
+            ticket_id=ticket_id,
+            payload=artifact,
+        )
+        print(f"Trace JSON: {output_path}")
+        return 0
 
     message_created_at = _clean_text(query_response.get("queued_message_created_at")) or None
-    ticket, final_assistant = wait_for_ticket_completion(
-        ticket_repository=ticket_repository,
+    request_context["message_created_at"] = message_created_at
+    snapshot, final_assistant, trace_completed = wait_for_trace_completion(
+        base_url=args.base_url,
         ticket_id=ticket_id,
         message=message,
         message_created_at=message_created_at,
-        timeout_seconds=args.timeout_seconds,
+        completion_timeout_seconds=max(float(args.completion_timeout_seconds), 1.0),
         poll_interval_seconds=args.poll_interval_seconds,
+        event_limit=max(int(args.event_limit), 20),
     )
-    message_created_at = _resolve_customer_message_created_at(
-        ticket,
-        message_created_at=message_created_at,
-        message=message,
-    )
-    runtime_state = ticket.get("client_agent_runtime_state") if isinstance(ticket.get("client_agent_runtime_state"), dict) else {}
-    run_id = _clean_text(runtime_state.get("active_run_id")) or None
-    post_answer_artifact_timeout_seconds = max(float(args.post_answer_artifact_timeout_seconds), 0.5)
-    ticket_events = wait_for_ticket_events(
-        ticket_repository=ticket_repository,
-        ticket_id=ticket_id,
-        target_event_type="ticket_ai_response_ready",
-        timeout_seconds=post_answer_artifact_timeout_seconds,
-        poll_interval_seconds=args.poll_interval_seconds,
-        limit=max(int(args.event_limit), 20),
-    )
-    agent_events = wait_for_agent_events(
-        ticket_repository=ticket_repository,
-        ticket_id=ticket_id,
-        run_id=run_id,
-        timeout_seconds=post_answer_artifact_timeout_seconds,
-        poll_interval_seconds=args.poll_interval_seconds,
-        limit=max(int(args.event_limit), 20),
-    )
+    if isinstance(snapshot, dict):
+        snapshot = wait_for_trace_artifacts(
+            base_url=args.base_url,
+            ticket_id=ticket_id,
+            event_limit=max(int(args.event_limit), 20),
+            timeout_seconds=max(float(args.post_answer_artifact_timeout_seconds), 0.5),
+            poll_interval_seconds=args.poll_interval_seconds,
+            latest_snapshot=snapshot,
+        )
+    if isinstance(snapshot, dict):
+        ticket = snapshot.get("ticket") if isinstance(snapshot.get("ticket"), dict) else ticket
+        ticket_events = list(snapshot.get("ticket_events") or []) if isinstance(snapshot.get("ticket_events"), list) else []
+        agent_events = list(snapshot.get("agent_events") or []) if isinstance(snapshot.get("agent_events"), list) else []
+        request_context["message_created_at"] = _resolve_customer_message_created_at(
+            ticket,
+            message_created_at=message_created_at,
+            message=message,
+        )
+        if final_assistant is None:
+            final_assistant = _find_final_assistant_message(
+                ticket,
+                message_created_at=request_context.get("message_created_at"),
+                message=message,
+            )
+    if not trace_completed:
+        trace_status = "timeout_partial"
+        direct_probe = run_direct_probe(
+            base_url=args.base_url,
+            message=message,
+            product=product,
+            timeout_seconds=max(float(args.direct_probe_timeout_seconds), 1.0),
+        )
+
     preliminary_summary = build_trace_summary(
         ticket=ticket,
-        request_context={
-            "ticket_id": ticket_id,
-            "customer_id": customer_id,
-            "product": product,
-            "message": message,
-            "message_created_at": message_created_at,
-            "question_started_at": question_started_at,
-            "ack_received_at": ack_received_at,
-        },
+        request_context=request_context,
         ack_payload=ack_response,
         query_payload=query_response,
         ticket_events=ticket_events,
@@ -1048,15 +1380,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     summary = build_trace_summary(
         ticket=ticket,
-        request_context={
-            "ticket_id": ticket_id,
-            "customer_id": customer_id,
-            "product": product,
-            "message": message,
-            "message_created_at": message_created_at,
-            "question_started_at": question_started_at,
-            "ack_received_at": ack_received_at,
-        },
+        request_context=request_context,
         ack_payload=ack_response,
         query_payload=query_response,
         ticket_events=ticket_events,
@@ -1064,18 +1388,22 @@ def main(argv: list[str] | None = None) -> int:
         rag_run=rag_run,
     )
 
-    artifact = {
-        "preflight": preflight,
-        "request_context": summary["request"],
-        "ack": ack_response,
-        "query": query_response,
-        "final_assistant": final_assistant,
-        "ticket": ticket,
-        "ticket_events": summary["ticket_events"],
-        "agent_events": summary["agent_events"],
-        "rag_telemetry": rag_run,
-        "summary": summary,
-    }
+    artifact = build_trace_artifact(
+        preflight=preflight,
+        request_context=request_context,
+        ack_payload=ack_response,
+        query_payload=query_response,
+        ticket=ticket,
+        final_assistant=final_assistant,
+        ticket_events=summary["ticket_events"],
+        agent_events=summary["agent_events"],
+        rag_run=rag_run,
+        summary=summary,
+        trace_status=trace_status,
+        trace_completed=trace_completed,
+        direct_probe=direct_probe,
+        query_error=query_error,
+    )
     output_path = _write_trace_artifact(
         output_dir=Path(args.output_dir),
         ticket_id=ticket_id,

@@ -148,10 +148,15 @@ class _FakePool:
     def __init__(self, *, closed: bool = False) -> None:
         self.closed = closed
         self.open_calls: list[tuple[bool, float | None]] = []
+        self.close_calls = 0
 
     def open(self, *, wait: bool = True, timeout: float | None = None) -> None:
         self.open_calls.append((wait, timeout))
         self.closed = False
+
+    def close(self) -> None:
+        self.close_calls += 1
+        self.closed = True
 
 
 class RepositoryConfigurationTests(unittest.TestCase):
@@ -286,9 +291,32 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertTrue(repository._use_connection_pool)
         self.assertEqual(repository._pool_min_size, 2)
         self.assertEqual(repository._pool_max_size, 9)
-        self.assertEqual(repository._pool_timeout_seconds, 7)
+        self.assertEqual(repository._pool_timeout_seconds, 10.0)
         self.assertEqual(repository._pool_max_lifetime_seconds, 301)
         self.assertEqual(repository._pool_max_idle_seconds, 61)
+
+    def test_ticket_repository_defaults_pool_timeouts_for_rds_jitter(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TICKET_DB_DSN": "postgresql://example",
+            },
+            clear=True,
+        ):
+            repository = create_ticket_repository()
+        self.assertIsInstance(repository, PostgresTicketRepository)
+        self.assertEqual(repository._pool_timeout_seconds, 15.0)
+        self.assertEqual(repository._pool_max_lifetime_seconds, 1800.0)
+        self.assertEqual(repository._pool_max_idle_seconds, 300.0)
+
+    def test_ticket_repository_clamps_pool_timeout_to_connect_timeout(self) -> None:
+        repository = PostgresTicketRepository(
+            dsn="postgresql://example",
+            connect_timeout=12,
+            pool_timeout_seconds=5,
+        )
+
+        self.assertEqual(repository._pool_timeout_seconds, 12.0)
 
     def test_knowledge_repository_defaults_to_supportportal_vector_table(self) -> None:
         with patch.dict(
@@ -412,6 +440,20 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIs(repository._pool, fresh_pool)
         pool_factory_mock.assert_called_once()
         self.assertEqual(fresh_pool.open_calls, [(True, repository._pool_timeout_seconds)])
+
+    def test_ticket_repository_close_closes_live_pool_and_clears_reference(self) -> None:
+        repository = PostgresTicketRepository(
+            dsn="postgresql://example",
+            use_connection_pool=True,
+        )
+        live_pool = _FakePool(closed=False)
+        repository._pool = live_pool
+
+        repository.close()
+
+        self.assertEqual(live_pool.close_calls, 1)
+        self.assertTrue(live_pool.closed)
+        self.assertIsNone(repository._pool)
 
     def test_ticket_repository_opens_new_connection_between_event_writes_without_pool(self) -> None:
         repository = PostgresTicketRepository(dsn="postgresql://example")
