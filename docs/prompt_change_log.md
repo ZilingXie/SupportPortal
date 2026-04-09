@@ -12,6 +12,41 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-04-08 - real_case batch diagnostics become the default local SupportPortal verification flow
+
+- Area or subsystem: Agent workflow and local SupportPortal diagnostic skills
+- Prompt or model version: `supportportal-diagnostic-real-case-batch-v1`
+- Summary: Switched the local `supportportal-route-timing-report` and `supportportal-answer-chain-report` skills from single-message defaults to batch-first execution over the repo `real_case/real_user_questions.txt`, updated their agent metadata to advertise batch verification, and added an `AGENTS.md` rule that timing optimizations must run route timing while answer-quality optimizations must run answer-chain verification.
+- Reason: Single-message diagnostics were too easy to skip or tailor to one happy-path query. Making `real_case` batch runs the default gives post-change verification a broader, repeatable question set and makes the required diagnostic skill explicit in repo workflow rules.
+- Affected files or config:
+  - `AGENTS.md`
+  - `real_case/real_user_questions.txt`
+  - `docs/prompt_change_log.md`
+  - `/Users/xieziling/.codex/skills/supportportal-route-timing-report/SKILL.md`
+  - `/Users/xieziling/.codex/skills/supportportal-route-timing-report/agents/openai.yaml`
+  - `/Users/xieziling/.codex/skills/supportportal-route-timing-report/scripts/run_route_timing_report.py`
+  - `/Users/xieziling/.codex/skills/supportportal-answer-chain-report/SKILL.md`
+  - `/Users/xieziling/.codex/skills/supportportal-answer-chain-report/agents/openai.yaml`
+  - `/Users/xieziling/.codex/skills/supportportal-answer-chain-report/scripts/run_answer_chain_report.py`
+- Expected behavior change:
+  - Running either diagnostic skill with no `--message` now reads the active repo/worktree `real_case/real_user_questions.txt` and executes all non-empty questions.
+  - `--message` remains available as an explicit single-case override, and `--real-case-file` allows swapping the batch input file.
+  - Both skills now print one merged stdout report with a case summary plus per-case details instead of defaulting to one single-question report.
+  - Repo workflow instructions now require route timing verification after performance/timing work and answer-chain verification after answer-quality work, with both required when a task affects both dimensions.
+- Verification:
+  - `python3 /Users/xieziling/.codex/skills/supportportal-route-timing-report/scripts/run_route_timing_report.py --help`
+  - `python3 /Users/xieziling/.codex/skills/supportportal-answer-chain-report/scripts/run_answer_chain_report.py --help`
+  - `python3 -m py_compile /Users/xieziling/.codex/skills/supportportal-route-timing-report/scripts/run_route_timing_report.py /Users/xieziling/.codex/skills/supportportal-answer-chain-report/scripts/run_answer_chain_report.py`
+  - Inline monkeypatch harnesses that asserted the old single-case defaults failed before the change and that both wrappers now execute `4` real-case questions plus emit `## Case 总表`
+  - `python3 /Users/xieziling/.codex/skills/supportportal-route-timing-report/scripts/run_route_timing_report.py`
+  - `python3 /Users/xieziling/.codex/skills/supportportal-answer-chain-report/scripts/run_answer_chain_report.py`
+  - Verification result:
+    - Both wrappers now expose batch-first CLI help, support `--message` override plus `--real-case-file`, and resolve the Python runtime from the root workspace `.venv` when invoked from a worktree.
+    - The repo workflow instructions now explicitly name both diagnostic skills and when each one is required.
+    - The batch harnesses turned green after the change: both wrappers executed all `4` real-case questions and emitted merged stdout reports with `## Case 总表`.
+    - Live route timing verification produced `/tmp/supportportal_route_timing_real_case_20260408.md` with `success_count=1` and `failure_count=3`; the first FAQ case (`how to join channel`) returned a full timing report with `answer_route=rag` and `question_to_final_answer_ms=61839.97`, while the other real-case questions exposed existing timeout/restart instability in the current compose environment.
+    - Live answer-chain verification produced `/tmp/supportportal_answer_chain_real_case_20260408.md` with `success_count=1` and `failure_count=3`; the first FAQ case returned a full grounded-answer chain report, and the other cases surfaced the same environment/worker instability while still proving the batch report and health-failure reporting paths work.
+
 ## 2026-04-07 - Query-planner FAQ class for vector-first how-to retrieval
 
 - Area or subsystem: Client AI technical RAG retrieval planning and trace explainability
