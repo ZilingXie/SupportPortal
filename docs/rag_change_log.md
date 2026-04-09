@@ -2957,3 +2957,22 @@ For each new entry, record:
   - `source /tmp/supportportal-finalize-venv/bin/activate && python -m unittest backend.tests.test_client_ticket_agent_runtime`
   - `python3 -m py_compile backend/services/client_ticket_agent_runtime.py backend/tests/test_client_ticket_agent_runtime.py`
   - Live replay before the patch reproduced `rag_post_check_error`; the follow-up replay after the patch is used as the final customer-visible verification.
+
+## 2026-04-09 - Stop SiliconFlow embedding startup from pulling Hugging Face tokenizer
+
+- Summary:
+  - Changed the SiliconFlow embedding provider so startup and best-effort prewarm no longer attempt to download the `BAAI/bge-m3` tokenizer from Hugging Face.
+  - Token counting now lazily tries a local-files-only tokenizer load once and then falls back to heuristic token estimation if no local cache is present.
+- Reason:
+  - `rag_api` was repeatedly failing readiness in the single-host compose environment because provider prewarm instantiated `SiliconFlowEmbeddingProvider`, which eagerly called `AutoTokenizer.from_pretrained(...)` and blocked on Hugging Face timeouts during startup.
+- Affected files/config:
+  - `backend/services/embedding_provider.py`
+  - `backend/tests/test_embedding_provider.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, or vector-table changes.
+  - `EMBEDDING_PROVIDER=siliconflow` no longer depends on external Hugging Face access during service startup; token counting may use heuristic estimates when no local tokenizer cache exists.
+- Verification:
+  - `python3 -m unittest backend.tests.test_embedding_provider`
+  - `python3 -m py_compile backend/services/embedding_provider.py backend/tests/test_embedding_provider.py`
+  - Compose restart plus `/health`, route timing skill, and answer chain skill re-run in the repaired environment.
