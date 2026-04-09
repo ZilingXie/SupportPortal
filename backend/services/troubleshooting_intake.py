@@ -7,6 +7,10 @@ import logging
 import re
 from typing import Any
 
+from backend.services.api_semantics import (
+    build_api_semantics_clarification,
+    is_api_semantics_mismatch_context,
+)
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import TROUBLESHOOTING_INTAKE_SCENARIO, resolve_model_profile
 from backend.services.prompts.troubleshooting_intake import (
@@ -320,7 +324,21 @@ def _fallback_result(
     product: str | None,
     ticket_context: list[dict[str, Any]] | None,
     current_state: dict[str, Any] | None,
+    rag_result: dict[str, Any] | None,
 ) -> TroubleshootingIntakeResult:
+    if is_api_semantics_mismatch_context(message=latest_message, rag_result=rag_result):
+        known_information, missing_information, customer_reply = build_api_semantics_clarification(
+            latest_message,
+            rag_result=rag_result,
+        )
+        return TroubleshootingIntakeResult(
+            issue_mode="answer",
+            known_information=known_information,
+            missing_information=missing_information,
+            ready_for_engineer_ticket=False,
+            customer_reply=customer_reply,
+        )
+
     issue_mode = _classify_issue_mode(
         latest_message=latest_message,
         ticket_context=ticket_context,
@@ -468,6 +486,8 @@ def _evaluate_with_llm(
     rag_result: dict[str, Any] | None,
     fallback: TroubleshootingIntakeResult,
 ) -> TroubleshootingIntakeResult:
+    if is_api_semantics_mismatch_context(message=message, rag_result=rag_result):
+        return fallback
     profile = resolve_model_profile(TROUBLESHOOTING_INTAKE_SCENARIO)
     if not profile.api_key:
         return fallback
@@ -514,6 +534,7 @@ def evaluate_troubleshooting_intake(
         product=product,
         ticket_context=ticket_context,
         current_state=current_state,
+        rag_result=rag_result,
     )
     return _evaluate_with_llm(
         message=message,

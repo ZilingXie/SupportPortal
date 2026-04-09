@@ -797,6 +797,67 @@ For each new entry, record:
   - `git diff --check`
 
 - Date: 2026-04-08
+- Area or subsystem: Docs/API semantics answer generation
+- Prompt or model version: `rag-answer-api-semantics-deterministic-v1`
+- Summary: Added a deterministic docs-grounded answer path for `api_semantics_mismatch` so pinned child evidence can resolve `uid=0` and `time=0` semantics directly from the selected docs sections without using the generic multi-retry RAG answer prompt.
+- Reason: `TK-080` still timed out or failed closed after retrieval because the generic answer generation path retried into `insufficient_evidence` even when the exact `Disband a channel` and `Create rule > Request parameters` chunks were already present.
+- Affected files or config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - `api_semantics_mismatch` child queries that have the required docs sections selected can now resolve immediately with a deterministic two-sentence explanation and citations instead of entering the slower general answer/retry chain.
+  - Full `TK-080`-style multi-question requests can aggregate the `uid=0` and `time=0` explanations without falling back to troubleshooting intake prompts.
+  - When the deterministic path is used, telemetry now shows `generation_mode=api_semantics_deterministic`.
+- Verification:
+  - `source /tmp/supportportal-finalize-venv/bin/activate && python -m unittest backend.tests.test_rag_agentic.RagAgenticTests.test_build_api_semantics_grounded_answer_resolves_uid_zero_disband_conflict backend.tests.test_rag_agentic.RagAgenticTests.test_build_api_semantics_grounded_answer_resolves_time_zero_non_persistent_rule backend.tests.test_rag_agentic.RagAgenticTests.test_run_rag_query_agentic_single_uses_api_semantics_grounded_answer_without_llm backend.tests.test_rag_agentic.RagAgenticTests.test_apply_api_semantics_latency_budget_caps_bm25_candidate_window`
+  - Direct full-message `run_rag_query(...)` replay for the `TK-080` customer text returned both docs-backed explanations with `needs_human=false` and no troubleshooting-intake follow-up.
+
+- Date: 2026-04-08
+- Area or subsystem: Client grounded-answer post-check gating
+- Prompt or model version: `grounded-postcheck-api-semantics-bypass-v1`
+- Summary: Grounded `api_semantics_mismatch` answers with citations now skip the generic grounded-answer post-check so deterministic docs/API explanations are not re-routed into troubleshooting intake when the customer message contains words like `issue`, `error`, or `failed`.
+- Reason: The first live replay after the deterministic docs-answer path still produced a customer clarification because the generic high-risk gate forced post-check, and a post-check error then collapsed into `rag_post_check_error` despite the RAG answer already being correct.
+- Affected files or config:
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Grounded docs/API semantics answers now stay on the direct answer path.
+  - `TK-080`-style tickets should no longer ask for `channel_name` or `issue_timestamp` once the deterministic docs-backed answer is available.
+  - Review telemetry for these grounded semantics answers will show `review_agent.status=skipped` with `reason=low_risk_grounded_answer`.
+- Verification:
+  - `source /tmp/supportportal-finalize-venv/bin/activate && python -m unittest backend.tests.test_client_ticket_agent_runtime`
+  - `python3 -m py_compile backend/services/client_ticket_agent_runtime.py backend/tests/test_client_ticket_agent_runtime.py`
+
+- Date: 2026-04-08
+- Area or subsystem: Docs/API semantics review and clarification path
+- Prompt or model version: `troubleshooting-intake-v3` / `rag-answer-api-semantics-v1`
+- Summary: Added a deterministic docs/API semantics clarification path so tickets that compare official docs against observed API behavior stay in answer-mode review, use anchor-aware RAG evidence, and preserve real timeout or insufficient-evidence reasons instead of defaulting to troubleshooting intake fields.
+- Reason: `TK-080` style tickets were being misread as troubleshooting investigations, which caused timeouts to degrade into `channel_name` / `issue_timestamp` follow-up questions instead of clarifying the documented API semantics.
+- Affected files or config:
+  - `backend/services/api_semantics.py`
+  - `backend/services/support_router.py`
+  - `backend/services/troubleshooting_intake.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/services/rag_qa.py`
+  - `backend/rag_api.py`
+  - `backend/tests/test_support_router.py`
+  - `backend/tests/test_troubleshooting_intake.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Docs/API mismatch questions with official docs URLs, endpoint paths, and parameter behavior differences now route directly to Agora technical RAG without waiting on the intent-router LLM.
+  - When RAG cannot fully resolve a docs/API semantics question, the follow-up asks only for docs/API scope details such as platform, SDK family, docs page, or API version.
+  - Multi-question docs/API tickets use numbered fanout child queries and preserve child-level timeout diagnostics in telemetry.
+- Verification:
+  - `source /tmp/supportportal-finalize-venv/bin/activate && python -m unittest backend.tests.test_support_router backend.tests.test_troubleshooting_intake backend.tests.test_client_ticket_agent_runtime backend.tests.test_rag_agentic backend.tests.test_rag_qa`
+  - `python3 -m py_compile backend/services/api_semantics.py backend/services/support_router.py backend/services/troubleshooting_intake.py backend/services/client_ticket_agent_runtime.py backend/services/rag_qa.py backend/rag_api.py`
+  - `git diff --check`
+
+- Date: 2026-04-08
 - Area or subsystem: Ticket title runtime observability and local single-host rebuild guardrails
 - Prompt or model version: `ticket-title-runtime-guard-v1`
 - Summary: Added a root-main-only local single-host restart script, exposed `app_build.ref` / `app_build.built_at` on API and RAG API `/health`, and introduced `scripts/fix_ticket_subject.py` so the canonical `ticket_title` helper can repair stale long subjects like `TK-079`.

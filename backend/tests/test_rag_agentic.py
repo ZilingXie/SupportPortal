@@ -2,17 +2,24 @@ from __future__ import annotations
 
 import unittest
 import os
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import backend.services.rag_qa as rag_qa
+from backend.services.api_semantics import build_anchor_variant, extract_numbered_subqueries
 from backend.services.query_understanding import QueryUnderstandingResult, RetrievalPlan
 from backend.services.rag_qa import (
     AgenticIterationTrace,
     AgenticJudgeDecision,
     AgenticRetrievalPlan,
     AgenticRoundResult,
+    RagAnswer,
+    RagQueryResult,
     RetrievedChunk,
     _agentic_round_variants,
+    _apply_api_semantics_latency_budget,
+    _build_api_semantics_grounded_answer,
+    _api_semantics_has_request_parameter_support,
     _build_agentic_retrieval_plan,
     _execute_agentic_round,
     _generation_chunk_limit_for_agentic_query,
@@ -21,13 +28,28 @@ from backend.services.rag_qa import (
     _is_token_auth_chunk,
     _judge_agentic_round,
     _merge_agentic_tool_results,
+    _run_rag_query_agentic_single,
     _merge_variant_chunks,
+    _select_agentic_final_chunks,
     _tool_order_for_query_class,
     run_rag_query,
 )
 
 
 class RagAgenticTests(unittest.TestCase):
+    _BAN_API_MISMATCH_MESSAGE = """Hello, Agora team.
+
+We are using the Ban User Privileges API (POST /dev/v1/kicking-rule) to disband channels after a broadcast ends, but we have found some differences between the official documentation and the actual API behavior, so we would like to inquire about them.
+
+1. uid: 0 cannot be used
+According to the documentation
+(https://docs.agora.io/en/broadcast-streaming/channel-management-api/best-practices/ban-user-privileges#disband-a-channel), when targeting all users in a channel, it says to use uid: 0. However, in actual use:
+"uid": 0 (number) -> Error: uid '0' must be a number, or set str_uid = true
+Omitting the uid field entirely works correctly
+
+2. Cannot create a permanent rule with time: 0
+The documentation states that time: 0 means the rule is applied permanently. However, when we actually send time: 0, the API returns {"status":"success","id":0}, but when we query the rule list, no rule has been created."""
+
     class _FakeProvider:
         provider_name = "siliconflow"
         model_id = "BAAI/bge-m3"
@@ -92,27 +114,459 @@ class RagAgenticTests(unittest.TestCase):
             rewrite_latency_ms=1.2,
         )
 
-        plan = _build_agentic_retrieval_plan(
-            message="Why does iOS black screen happen after users join?",
-            top_k=5,
-            query_understanding=understanding,
-            ticket_context=[
-                {"role": "customer", "content": "We see this on iOS 4.6.0 after the remote user joins."},
-            ],
-        )
+        with patch.dict(os.environ, {"RAG_SHADOW_RETRIEVAL_ENABLED": "true"}, clear=False):
+            plan = _build_agentic_retrieval_plan(
+                message="Why does iOS black screen happen after users join?",
+                top_k=5,
+                query_understanding=understanding,
+                ticket_context=[
+                    {"role": "customer", "content": "We see this on iOS 4.6.0 after the remote user joins."},
+                ],
+            )
 
         self.assertEqual(plan.query_class, "troubleshooting_why")
         self.assertEqual(plan.first_pass_tools[:3], ["p_vec", "s_vec", "p_bm25"])
         self.assertEqual(plan.query_variants[0][0], "original")
         self.assertTrue(plan.ticket_context_used)
 
-    def test_build_agentic_retrieval_plan_uses_vector_first_pass_for_short_how_to_faq(self) -> None:
+    def test_classify_agentic_query_prefers_api_semantics_mismatch_over_troubleshooting(self) -> None:
+        self.assertEqual(
+            rag_qa._classify_agentic_query(self._BAN_API_MISMATCH_MESSAGE, None),
+            "api_semantics_mismatch",
+        )
+
+    def test_build_agentic_retrieval_plan_uses_bm25_only_light_path_for_api_semantics_query(self) -> None:
         plan = _build_agentic_retrieval_plan(
-            message="how to join channel",
+            message=self._BAN_API_MISMATCH_MESSAGE,
             top_k=5,
             query_understanding=None,
             ticket_context=None,
         )
+
+        self.assertEqual(plan.query_class, "api_semantics_mismatch")
+        self.assertEqual(plan.first_pass_tools, ["p_bm25"])
+        self.assertEqual(plan.query_variants[0][0], "original")
+        self.assertEqual(len(plan.query_variants), 1)
+        self.assertTrue(plan.light_path)
+
+    def test_apply_api_semantics_latency_budget_caps_bm25_candidate_window(self) -> None:
+        adjusted = _apply_api_semantics_latency_budget(
+            {
+                **self._base_config(),
+                "bm25_candidate_k": 60,
+                "fusion_candidate_k": 48,
+                "rerank_top_n": 24,
+            }
+        )
+
+        self.assertEqual(adjusted["bm25_candidate_k"], 36)
+        self.assertEqual(adjusted["fusion_candidate_k"], 16)
+        self.assertEqual(adjusted["rerank_top_n"], 16)
+
+    def test_api_semantics_recovery_variants_add_anchor_only_after_round_one(self) -> None:
+        plan = _build_agentic_retrieval_plan(
+            message=self._BAN_API_MISMATCH_MESSAGE,
+            top_k=5,
+            query_understanding=None,
+            ticket_context=None,
+        )
+
+        self.assertEqual(
+            _agentic_round_variants(
+                message=self._BAN_API_MISMATCH_MESSAGE,
+                plan=plan,
+                round_index=1,
+                recovery_action=None,
+                ticket_context=None,
+            ),
+            plan.query_variants,
+        )
+        recovery_variants = _agentic_round_variants(
+            message=self._BAN_API_MISMATCH_MESSAGE,
+            plan=plan,
+            round_index=2,
+            recovery_action="lexical_recovery",
+            ticket_context=None,
+        )
+        self.assertEqual(recovery_variants[0][0], "original")
+        self.assertGreaterEqual(len(recovery_variants), 2)
+        self.assertEqual(recovery_variants[1][0], "anchor")
+        self.assertIn("create-rules", recovery_variants[1][1].lower())
+        self.assertIn("request parameters", recovery_variants[1][1].lower())
+        self.assertIn("kicking-rule", recovery_variants[1][1].lower())
+
+    def test_extract_numbered_subqueries_keeps_docs_context_without_full_preamble(self) -> None:
+        subqueries = extract_numbered_subqueries(self._BAN_API_MISMATCH_MESSAGE, max_items=2)
+
+        self.assertEqual(len(subqueries), 2)
+        self.assertIn("https://docs.agora.io/en/broadcast-streaming/channel-management-api/best-practices/ban-user-privileges#disband-a-channel", subqueries[0])
+        self.assertIn("/dev/v1/kicking-rule", subqueries[0])
+        self.assertNotIn("Hello, Agora team.", subqueries[0])
+        self.assertIn("time: 0", subqueries[1])
+
+    def test_build_anchor_variant_adds_endpoint_operation_hints_for_kicking_rule_post(self) -> None:
+        anchor_variant = build_anchor_variant(self._BAN_API_MISMATCH_MESSAGE)
+
+        self.assertIsNotNone(anchor_variant)
+        self.assertIn("create-rules", anchor_variant.lower())
+        self.assertIn("request parameters", anchor_variant.lower())
+        self.assertIn("kicking-rule", anchor_variant.lower())
+
+    def test_run_rag_query_fans_out_numbered_api_semantics_questions(self) -> None:
+        child_trace = SimpleNamespace(
+            query_type="knowledge_qa",
+            retrieval_strategy="agentic_multi_tool_v1",
+            vector_candidates_count=0,
+            bm25_candidates_count=2,
+            reranked_candidates_count=2,
+            retrieved_chunk_ids=["chunk-1"],
+            selected_chunk_ids=["chunk-1"],
+            vector_retrieval_latency_ms=0.0,
+            bm25_retrieval_latency_ms=1200.0,
+            retrieval_latency_ms=1200.0,
+            rerank_latency_ms=8.0,
+            generation_latency_ms=900.0,
+            total_latency_ms=2400.0,
+            prompt_tokens=20,
+            completion_tokens=10,
+            embedding_tokens=0,
+            embedding_provider="siliconflow",
+            embedding_model="BAAI/bge-m3",
+            embedding_dimensions=1024,
+            embedding_request_meta=[],
+            model_name="gpt-5.4-mini",
+            answer_length=64,
+            citation_count=1,
+            cited_chunk_ids=["chunk-1"],
+            needs_human=False,
+            handoff_reason=None,
+            confidence_score=0.91,
+            primary_source_type="official_documentation",
+            primary_chunk_strategy="official_section_token_v1",
+            reranker_provider="siliconflow",
+            reranker_model="BAAI/bge-reranker-v2-m3",
+            generation_mode="structured_answer",
+            structured_retry_used=False,
+            extractive_fallback_used=False,
+            selected_doc_count=1,
+            top1_similarity_score=0.92,
+            avg_selected_similarity_score=0.92,
+            citation_coverage_ratio=1.0,
+            retrieval_candidates=[],
+            selected_contexts=[],
+            metadata_hints={},
+            metadata_filter_applied=False,
+            metadata_filter_type=None,
+            error_flag=False,
+            timeout_flag=False,
+            error_type=None,
+            intent_latency_ms=0.0,
+            rewrite_latency_ms=0.0,
+            query_understanding_enabled=False,
+            query_understanding_version=None,
+            query_profile=None,
+            glossary_version=None,
+            self_query_version=None,
+            fallback_mode=None,
+            glossary_hit_terms=[],
+            applied_hard_filters={},
+            applied_soft_signals={},
+            rewritten_queries=[],
+            decomposition_subqueries=[],
+            dictionary_hits=[],
+            rule_expansions=[],
+            llm_expansions=[],
+            prf_expansions=[],
+            hard_filter_sources={},
+            cache_hit=False,
+            prf_used=False,
+            query_expansion_enabled=False,
+            query_expansion_model=None,
+            first_pass_candidate_count=2,
+            second_pass_candidate_count=2,
+            agent_enabled=True,
+            agent_plan_version="v1",
+            query_class="api_semantics_mismatch",
+            first_pass_tools=["p_bm25", "p_fts"],
+            plan_query_variants=[{"kind": "original", "query": "child"}],
+            plan_decomposition_targets=[],
+            evidence_goal="api_semantics_grounding",
+            recovery_bias="lexical",
+            judge_summary={"decision": "answer_now"},
+            agent_iterations=[],
+            agent_recovery_action=None,
+            ticket_context_used=False,
+            primary_shadow_mix={"primary": 1, "shadow": 0},
+            context_budget_enabled=False,
+            context_window=0,
+            reserved_output_tokens=0,
+            buffer_tokens=0,
+            raw_context_token_estimate=0,
+            packed_context_token_estimate=0,
+            compression_triggered=False,
+            compression_trigger_reason=None,
+            compression_mode=None,
+            compression_model=None,
+            extractive_segment_count=0,
+            packed_evidence_count=0,
+            packed_context_text=None,
+            packed_chunk_ids=[],
+            query_expansion_usage_ledger=[],
+            context_compression_usage_ledger=[],
+            execution_mode="agentic",
+            agent_fallback_used=False,
+            agent_fallback_reason=None,
+            preflight_probe_latency_ms=0.0,
+            vector_setup_skipped=True,
+            light_path_used=False,
+            answer_profile_used="gpt-5.4-mini",
+            answer_profile_fallback_used=False,
+            shadow_retrieval_enabled=False,
+            shadow_tools_skipped=["s_vec", "s_bm25", "s_fts"],
+            bm25_sql_latency_ms=1200.0,
+            fts_latency_ms=40.0,
+            retrieval_round_wall_clock_ms=1240.0,
+            retrieval_tool_timings=[],
+            fanout_used=False,
+            fanout_child_count=0,
+            fanout_children=[],
+            deadline_exhausted=False,
+            anchor_hits=["kicking-rule", "disband-a-channel"],
+            timeout_stage=None,
+        )
+        side_effect = [
+            RagQueryResult(
+                answer=RagAnswer(
+                    answer="Use cname only and leave uid blank when disbanding a channel.",
+                    confidence=0.91,
+                    sources=["https://docs.agora.io/en/broadcast-streaming/channel-management-api/best-practices/ban-user-privileges#disband-a-channel"],
+                    citations=[{"chunk_id": "chunk-1", "source_url": "https://docs.agora.io/en/broadcast-streaming/channel-management-api/best-practices/ban-user-privileges#disband-a-channel"}],
+                ),
+                trace=child_trace,
+            ),
+            RagQueryResult(
+                answer=RagAnswer(
+                    answer="time=0 is a one-time offline action and does not create a persistent rule.",
+                    confidence=0.9,
+                    sources=["https://docs.agora.io/en/broadcast-streaming/channel-management-api/reference/create-rules"],
+                    citations=[{"chunk_id": "chunk-2", "source_url": "https://docs.agora.io/en/broadcast-streaming/channel-management-api/reference/create-rules"}],
+                ),
+                trace=child_trace,
+            ),
+        ]
+
+        with patch.object(rag_qa, "_get_rag_config", return_value=self._base_config()), patch.object(
+            rag_qa,
+            "_run_rag_query_agentic_single",
+            side_effect=side_effect,
+        ) as single_query_mock:
+            result = run_rag_query(
+                self._BAN_API_MISMATCH_MESSAGE,
+                product="audio_video_calling",
+            )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(single_query_mock.call_count, 2)
+        self.assertTrue(result.trace.fanout_used)
+        self.assertEqual(result.trace.fanout_child_count, 2)
+        self.assertIn("1. ", result.answer.answer)
+        self.assertIn("2. ", result.answer.answer)
+
+    def test_build_api_semantics_grounded_answer_resolves_uid_zero_disband_conflict(self) -> None:
+        disband_chunk = RetrievedChunk(
+            chunk_id="disband",
+            text=(
+                "When streaming ends, kick all users out of the channel by the channel name: "
+                "set `privileges` to `join_channel`, fill in `cname`, leave `uid` and `ip` blank, "
+                "and set `time` to `0`."
+            ),
+            source_path="official/ban-user-privileges.md",
+            similarity=0.88,
+            source_url="https://docs.agora.io/en/broadcast-streaming/channel-management-api/best-practices/ban-user-privileges#disband-a-channel",
+            h1="Ban user privileges",
+            h2="Applicable use-cases",
+            h3="Disband a channel",
+            metadata={
+                "product": "broadcast-streaming",
+                "section_path": ["Ban user privileges", "Applicable use-cases", "Disband a channel"],
+            },
+        )
+        request_params_chunk = RetrievedChunk(
+            chunk_id="request-uid",
+            text=(
+                "| `uid` | Number | Optional | The user ID. Do not set it as `0`. |\n"
+                "| `time` | Number | Required | If the set value is `0`, the banning rule does not take effect. |"
+            ),
+            source_path="official/create-rules.md",
+            similarity=0.84,
+            source_url="https://docs.agora.io/en/broadcast-streaming/channel-management-api/endpoint/ban-user-privileges/create-rules",
+            h1="Create rule",
+            h2="Prototype",
+            h3="Request parameters",
+            metadata={
+                "product": "broadcast-streaming",
+                "section_path": ["Create rule", "Prototype", "Request parameters"],
+            },
+        )
+
+        answer = _build_api_semantics_grounded_answer(
+            "POST /dev/v1/kicking-rule ... uid: 0 cannot be used",
+            [disband_chunk, request_params_chunk],
+        )
+
+        self.assertIsNotNone(answer)
+        assert answer is not None
+        self.assertIn("omit `uid`", answer.answer)
+        self.assertIn("do not set `uid` to `0`", answer.answer)
+        self.assertEqual(
+            [record["chunk_id"] for record in answer.citations],
+            ["disband", "request-uid"],
+        )
+
+    def test_build_api_semantics_grounded_answer_resolves_time_zero_non_persistent_rule(self) -> None:
+        request_params_chunk = RetrievedChunk(
+            chunk_id="request-time",
+            text=(
+                "| `time` | Number | Required | If the set value is `0`, the banning rule does not take effect. "
+                "The server sets all users that conform to the rule offline, and users can log in again to rejoin the channel. |\n"
+                "| `time_in_seconds` | Number | Required | If the set value is `0`, the banning rule does not take effect. |"
+            ),
+            source_path="official/create-rules.md",
+            similarity=0.85,
+            source_url="https://docs.agora.io/en/broadcast-streaming/channel-management-api/endpoint/ban-user-privileges/create-rules",
+            h1="Create rule",
+            h2="Prototype",
+            h3="Request parameters",
+            metadata={
+                "product": "broadcast-streaming",
+                "section_path": ["Create rule", "Prototype", "Request parameters"],
+            },
+        )
+
+        answer = _build_api_semantics_grounded_answer(
+            "POST /dev/v1/kicking-rule ... time: 0 cannot create a permanent rule",
+            [request_params_chunk],
+        )
+
+        self.assertIsNotNone(answer)
+        assert answer is not None
+        self.assertIn("does not create a persistent rule", answer.answer)
+        self.assertIn("sets matching users offline", answer.answer)
+        self.assertEqual(
+            [record["chunk_id"] for record in answer.citations],
+            ["request-time"],
+        )
+
+    def test_run_rag_query_agentic_single_uses_api_semantics_grounded_answer_without_llm(self) -> None:
+        disband_chunk = RetrievedChunk(
+            chunk_id="disband",
+            text=(
+                "When streaming ends, kick all users out of the channel by the channel name: "
+                "set `privileges` to `join_channel`, fill in `cname`, leave `uid` and `ip` blank, "
+                "and set `time` to `0`."
+            ),
+            source_path="official/ban-user-privileges.md",
+            similarity=0.88,
+            source_url="https://docs.agora.io/en/broadcast-streaming/channel-management-api/best-practices/ban-user-privileges#disband-a-channel",
+            h1="Ban user privileges",
+            h2="Applicable use-cases",
+            h3="Disband a channel",
+            metadata={
+                "product": "broadcast-streaming",
+                "section_path": ["Ban user privileges", "Applicable use-cases", "Disband a channel"],
+            },
+        )
+        request_params_chunk = RetrievedChunk(
+            chunk_id="request-uid",
+            text="| `uid` | Number | Optional | The user ID. Do not set it as `0`. |",
+            source_path="official/create-rules.md",
+            similarity=0.84,
+            source_url="https://docs.agora.io/en/broadcast-streaming/channel-management-api/endpoint/ban-user-privileges/create-rules",
+            h1="Create rule",
+            h2="Prototype",
+            h3="Request parameters",
+            metadata={
+                "product": "broadcast-streaming",
+                "section_path": ["Create rule", "Prototype", "Request parameters"],
+            },
+        )
+        plan = AgenticRetrievalPlan(
+            query_class="api_semantics_mismatch",
+            first_pass_tools=["p_bm25", "p_fts"],
+            query_variants=[("original", "uid: 0 cannot be used")],
+            decomposition_targets=[],
+            evidence_goal="api_semantics_grounding",
+            recovery_bias="lexical",
+            light_path=True,
+            shadow_tools_skipped=["s_vec", "s_bm25", "s_fts"],
+        )
+        round_result = AgenticRoundResult(
+            retrieved_chunks=[disband_chunk, request_params_chunk],
+            reranked_chunks=[disband_chunk, request_params_chunk],
+            final_chunks=[disband_chunk, request_params_chunk],
+            rerank_info={
+                "post_rerank_count": 2,
+                "hints": {},
+                "applied_filter": False,
+                "filter_type": None,
+                "candidate_reasons": {},
+            },
+            judge=AgenticJudgeDecision(
+                decision="answer_now",
+                reason="api_semantics_supported",
+                confidence=0.97,
+            ),
+            iteration_trace=AgenticIterationTrace(
+                round_index=1,
+                tool_names=["p_bm25", "p_fts"],
+                query_variants=["original"],
+                selected_chunk_ids=["disband", "request-uid"],
+                decision="answer_now",
+                shadow_tools_skipped=["s_vec", "s_bm25", "s_fts"],
+            ),
+            bm25_candidate_count=2,
+            bm25_latency_ms=120.0,
+            retrieval_wall_clock_ms=120.0,
+            shadow_tools_skipped=["s_vec", "s_bm25", "s_fts"],
+        )
+
+        with patch.object(rag_qa, "_get_rag_config", return_value=self._base_config()), patch.object(
+            rag_qa,
+            "_classify_agentic_query",
+            return_value="api_semantics_mismatch",
+        ), patch.object(
+            rag_qa,
+            "_build_agentic_retrieval_plan",
+            return_value=plan,
+        ), patch.object(
+            rag_qa,
+            "_execute_agentic_round",
+            return_value=round_result,
+        ), patch.object(
+            rag_qa,
+            "_invoke_llm_payload_with_trace",
+            side_effect=AssertionError("LLM should not run for deterministic api semantics answers"),
+        ):
+            result = _run_rag_query_agentic_single(
+                "POST /dev/v1/kicking-rule ... uid: 0 cannot be used",
+                product="audio_video_calling",
+            )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertFalse(result.trace.needs_human)
+        self.assertEqual(result.trace.generation_mode, "api_semantics_deterministic")
+        self.assertIn("omit `uid`", result.answer.answer)
+
+    def test_build_agentic_retrieval_plan_uses_vector_first_pass_for_short_how_to_faq(self) -> None:
+        with patch.dict(os.environ, {"RAG_SHADOW_RETRIEVAL_ENABLED": "true"}, clear=False):
+            plan = _build_agentic_retrieval_plan(
+                message="how to join channel",
+                top_k=5,
+                query_understanding=None,
+                ticket_context=None,
+            )
 
         self.assertEqual(plan.query_class, "how_to_faq")
         self.assertEqual(plan.first_pass_tools, ["p_vec", "s_vec"])
@@ -448,6 +902,119 @@ class RagAgenticTests(unittest.TestCase):
 
         self.assertEqual(decision.decision, "recover_once")
         self.assertEqual(decision.recovery_action, "lexical_recovery")
+
+    def test_judge_agentic_round_recovers_when_api_semantics_lacks_request_parameter_support(self) -> None:
+        disband_chunk = RetrievedChunk(
+            chunk_id="disband",
+            text="To disband a channel, fill in cname and leave uid and ip blank. Set time to 0.",
+            source_path="official/ban-user-privileges.md",
+            source_url="https://docs.agora.io/en/broadcast-streaming/channel-management-api/best-practices/ban-user-privileges#disband-a-channel",
+            similarity=0.95,
+            metadata={
+                "section_path": ["Ban user privileges", "Disband a channel"],
+            },
+        )
+
+        decision = _judge_agentic_round(
+            message=self._BAN_API_MISMATCH_MESSAGE,
+            query_class="api_semantics_mismatch",
+            round_index=1,
+            reranked_chunks=[disband_chunk],
+            final_chunks=[disband_chunk],
+            decomposition_targets=[],
+            exact_terms=[],
+            grounded_overlap=True,
+            product="audio_video_calling",
+        )
+
+        self.assertEqual(decision.decision, "recover_once")
+        self.assertEqual(decision.reason, "api_request_parameter_evidence_missing")
+        self.assertEqual(decision.recovery_action, "lexical_recovery")
+
+    def test_api_semantics_request_parameter_support_excludes_wrong_endpoint_response_parameters(self) -> None:
+        wrong_chunk = RetrievedChunk(
+            chunk_id="wrong-response-params",
+            text="rules: The list of banning rules.",
+            source_path="official/get-rule-list.md",
+            similarity=0.9,
+            source_url="https://docs.agora.io/en/broadcast-streaming/channel-management-api/endpoint/ban-user-privileges/get-rule-list",
+            metadata={
+                "chunk_type": "api_params",
+                "section_path": ["Prototype", "Response parameters"],
+            },
+        )
+        correct_chunk = RetrievedChunk(
+            chunk_id="create-rules-uid",
+            text="uid: The user ID. Do not set it as 0.",
+            source_path="official/create-rules.md",
+            similarity=0.9,
+            source_url="https://docs.agora.io/en/broadcast-streaming/channel-management-api/endpoint/ban-user-privileges/create-rules",
+            metadata={
+                "chunk_type": "api_params",
+                "section_path": ["Prototype", "Request parameters"],
+            },
+        )
+
+        self.assertFalse(
+            _api_semantics_has_request_parameter_support(
+                "POST /dev/v1/kicking-rule uid 0 actual behavior mismatch",
+                [wrong_chunk],
+            )
+        )
+        self.assertTrue(
+            _api_semantics_has_request_parameter_support(
+                "POST /dev/v1/kicking-rule uid 0 actual behavior mismatch",
+                [wrong_chunk, correct_chunk],
+            )
+        )
+
+    def test_select_agentic_final_chunks_prefers_disband_and_request_parameters_for_api_semantics(self) -> None:
+        disband_chunk = RetrievedChunk(
+            chunk_id="disband",
+            text="To disband a channel, fill in cname and leave uid and ip blank.",
+            source_path="official/ban-user-privileges.md",
+            similarity=0.94,
+            source_url="https://docs.agora.io/en/broadcast-streaming/channel-management-api/best-practices/ban-user-privileges",
+            metadata={
+                "section_path": ["Applicable use-cases", "Disband a channel"],
+            },
+        )
+        example_chunk = RetrievedChunk(
+            chunk_id="create-rules-example",
+            text="Create rule request example includes a numeric uid.",
+            source_path="official/create-rules.md",
+            similarity=1.0,
+            source_url="https://docs.agora.io/en/broadcast-streaming/channel-management-api/endpoint/ban-user-privileges/create-rules",
+            metadata={
+                "chunk_type": "code",
+                "section_path": ["Prototype", "Request examples"],
+            },
+        )
+        request_params_chunk = RetrievedChunk(
+            chunk_id="create-rules-uid",
+            text="uid: The user ID. Do not set it as 0.",
+            source_path="official/create-rules.md",
+            similarity=0.83,
+            source_url="https://docs.agora.io/en/broadcast-streaming/channel-management-api/endpoint/ban-user-privileges/create-rules",
+            metadata={
+                "chunk_type": "api_params",
+                "section_path": ["Prototype", "Request parameters"],
+            },
+        )
+
+        selected = _select_agentic_final_chunks(
+            [example_chunk, disband_chunk, request_params_chunk],
+            limit=2,
+            query=(
+                "POST /dev/v1/kicking-rule docs "
+                "https://docs.agora.io/en/broadcast-streaming/channel-management-api/"
+                "best-practices/ban-user-privileges#disband-a-channel "
+                "actual behavior mismatch disband channel uid 0"
+            ),
+            shadow_cap=0,
+        )
+
+        self.assertEqual([chunk.chunk_id for chunk in selected], ["disband", "create-rules-uid"])
 
     def test_execute_agentic_round_applies_join_recovery_budget_to_fusion_window(self) -> None:
         wrong_multi = RetrievedChunk(

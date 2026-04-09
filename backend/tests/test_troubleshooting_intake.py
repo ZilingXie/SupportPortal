@@ -9,6 +9,18 @@ from backend.services.troubleshooting_intake import build_client_intake_state, e
 
 
 class TroubleshootingIntakeTests(unittest.TestCase):
+    _BAN_API_MISMATCH_MESSAGE = """Hello, Agora team.
+
+We are using the Ban User Privileges API (POST /dev/v1/kicking-rule) to disband channels after a broadcast ends, but we have found some differences between the official documentation and the actual API behavior, so we would like to inquire about them.
+
+1. uid: 0 cannot be used
+According to the documentation
+(https://docs.agora.io/en/broadcast-streaming/channel-management-api/best-practices/ban-user-privileges#disband-a-channel), when targeting all users in a channel, it says to use uid: 0. However, in actual use:
+"uid": 0 (number) -> Error: uid '0' must be a number, or set str_uid = true
+
+2. Cannot create a permanent rule with time: 0
+The documentation states that time: 0 means the rule is applied permanently. However, when we actually send time: 0, the API returns {"status":"success","id":0}, but no rule is created."""
+
     def test_how_to_question_requests_goal_and_blocker_clarification(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
             result = evaluate_troubleshooting_intake(
@@ -66,6 +78,33 @@ class TroubleshootingIntakeTests(unittest.TestCase):
         )
         self.assertFalse(result.ready_for_engineer_ticket)
         self.assertIn("Known so far", result.customer_reply)
+
+    def test_docs_api_semantics_mismatch_does_not_request_channel_or_timestamp(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
+            result = evaluate_troubleshooting_intake(
+                message=self._BAN_API_MISMATCH_MESSAGE,
+                product="audio_video_calling",
+                ticket_subject="Ban User Privileges API mismatch",
+                ticket_context=[{"role": "customer", "content": self._BAN_API_MISMATCH_MESSAGE}],
+                current_state=None,
+                rag_result={
+                    "reason": "deadline_exhausted",
+                    "answer": "",
+                    "evidence_summary": {
+                        "diagnostics": {
+                            "retrieval_plan_snapshot": {
+                                "query_class": "api_semantics_mismatch",
+                            }
+                        }
+                    },
+                },
+            )
+
+        self.assertEqual(result.issue_mode, "answer")
+        self.assertNotIn("channel_name", result.missing_information)
+        self.assertNotIn("issue_timestamp", result.missing_information)
+        self.assertIn("platform", result.customer_reply.lower())
+        self.assertIn("sdk", result.customer_reply.lower())
 
     def test_cloud_recording_issue_requests_sid(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):

@@ -37,6 +37,18 @@ from backend.services.query_understanding import QueryUnderstandingResult, Retri
 
 
 class RagQaHybridTests(unittest.TestCase):
+    _BAN_API_MISMATCH_MESSAGE = """Hello, Agora team.
+
+We are using the Ban User Privileges API (POST /dev/v1/kicking-rule) to disband channels after a broadcast ends, but we have found some differences between the official documentation and the actual API behavior.
+
+1. uid: 0 cannot be used
+According to the documentation
+(https://docs.agora.io/en/broadcast-streaming/channel-management-api/best-practices/ban-user-privileges#disband-a-channel), when targeting all users in a channel, it says to use uid: 0. However, in actual use:
+"uid": 0 (number) -> Error: uid '0' must be a number, or set str_uid = true
+
+2. Cannot create a permanent rule with time: 0
+The documentation states that time: 0 means the rule is applied permanently. However, when we actually send time: 0, the API returns {"status":"success","id":0}, but no rule is created."""
+
     class _FakeProvider:
         provider_name = "siliconflow"
         model_id = "BAAI/bge-m3"
@@ -200,6 +212,72 @@ class RagQaHybridTests(unittest.TestCase):
         self.assertIn("error", selected)
         self.assertIn("token", selected)
         self.assertIn("expired", selected)
+
+    def test_metadata_rerank_prefers_disband_section_for_api_semantics_query(self) -> None:
+        disband_chunk = RetrievedChunk(
+            chunk_id="disband",
+            text="To disband a channel, fill in cname and leave uid and ip blank. Set time to 0.",
+            source_path="official/ban-user-privileges.md",
+            similarity=0.61,
+            source_url="https://docs.agora.io/en/broadcast-streaming/channel-management-api/best-practices/ban-user-privileges#disband-a-channel",
+            metadata={
+                "section_path": ["Ban user privileges", "Disband a channel"],
+                "keywords": ["uid", "time", "cname"],
+            },
+        )
+        kick_chunk = RetrievedChunk(
+            chunk_id="kick-user",
+            text="To kick a user out of a channel, specify the target uid.",
+            source_path="official/ban-user-privileges.md",
+            similarity=0.88,
+            source_url="https://docs.agora.io/en/broadcast-streaming/channel-management-api/best-practices/ban-user-privileges#kick-a-user-out-of-a-channel",
+            metadata={
+                "section_path": ["Ban user privileges", "Kick a user out of a channel"],
+                "keywords": ["uid"],
+            },
+        )
+
+        reranked, _ = rag_qa._metadata_rerank(
+            query=self._BAN_API_MISMATCH_MESSAGE,
+            chunks=[kick_chunk, disband_chunk],
+            top_k=2,
+        )
+
+        self.assertEqual(reranked[0].chunk_id, "disband")
+
+    def test_metadata_rerank_prefers_create_rules_request_parameters_over_wrong_endpoints(self) -> None:
+        create_rules_chunk = RetrievedChunk(
+            chunk_id="create-rules-request",
+            text="uid: Do not set it as 0. time: If the set value is 0, the banning rule does not take effect.",
+            source_path="official/create-rules.md",
+            similarity=0.71,
+            source_url="https://docs.agora.io/en/broadcast-streaming/channel-management-api/endpoint/ban-user-privileges/create-rules",
+            metadata={
+                "product": "broadcast-streaming",
+                "chunk_type": "api_params",
+                "section_path": ["Create rule", "Request parameters"],
+                "keywords": ["uid", "time", "time_in_seconds"],
+            },
+        )
+        delete_rules_chunk = RetrievedChunk(
+            chunk_id="delete-rules-request",
+            text="Delete a previously created rule by id.",
+            source_path="official/delete-rules.md",
+            similarity=0.93,
+            source_url="https://docs.agora.io/en/broadcast-streaming/channel-management-api/endpoint/ban-user-privileges/delete-rules",
+            metadata={
+                "product": "broadcast-streaming",
+                "section_path": ["Delete rule", "Request examples"],
+            },
+        )
+
+        reranked, _ = rag_qa._metadata_rerank(
+            query=self._BAN_API_MISMATCH_MESSAGE,
+            chunks=[delete_rules_chunk, create_rules_chunk],
+            top_k=2,
+        )
+
+        self.assertEqual(reranked[0].chunk_id, "create-rules-request")
 
     def test_rrf_merge_dedupes_and_limits_results(self) -> None:
         shared = RetrievedChunk(
