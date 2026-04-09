@@ -46,10 +46,9 @@
 7. The official local single-host stack is `deployment`. Auxiliary stacks such as `deploymentlw` are for temporary manual isolation only and are not part of the standard workflow.
 
 ## SupportPortal Diagnostic Verification
-1. If a task optimizes SupportPortal latency, timing, queue performance, retrieval latency, generation latency, or other end-to-end performance behavior, run the local `$supportportal-route-timing-report` skill against the repo `real_case/real_user_questions.txt` before calling the task complete.
-2. If a task optimizes SupportPortal answer accuracy, grounded-answer quality, routing correctness, review/intake/investigation correctness, or other answer-chain behavior, run the local `$supportportal-answer-chain-report` skill against the repo `real_case/real_user_questions.txt` before calling the task complete.
-3. If a task affects both timing/performance and answer quality/answer-chain behavior, run both skills.
-4. Final task reports must summarize the key conclusions from those skill runs, not merely state that the skills were executed.
+1. If a task optimizes SupportPortal latency, timing, queue performance, retrieval latency, generation latency, answer accuracy, grounded-answer quality, routing correctness, review/intake/investigation correctness, or other run-level performance or answer-chain behavior, run the local `$supportportal-run-report` skill against the repo `real_case/real_user_questions.txt` before calling the task complete.
+2. If the task specifically targets lexical retrieval performance such as BM25 or FTS latency, run the same `$supportportal-run-report` skill with `--profile-lexical`.
+3. Final task reports must summarize the key conclusions from those skill runs, not merely state that the skill was executed.
 
 ## RAG Change Logging
 1. Every RAG-related change must be appended to `/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/rag_change_log.md` before the task is considered complete.
