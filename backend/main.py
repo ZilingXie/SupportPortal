@@ -1886,6 +1886,10 @@ def _health_config_warnings() -> list[str]:
     return sorted(warnings)
 
 
+def _runtime_profile() -> str:
+    return (os.getenv("RUNTIME_PROFILE") or "full").strip() or "full"
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     rag_health = rag_service_client.probe_health()
@@ -1897,6 +1901,7 @@ def health() -> dict[str, Any]:
         "knowledge_storage": rag_health.get("knowledge_storage") or "proxy",
         "rag_service": rag_health.get("status") or "unknown",
         "async_query_enabled": "true" if ASYNC_QUERY_ENABLED else "false",
+        "runtime_profile": _runtime_profile(),
         "config_warnings": _health_config_warnings(),
     }
 

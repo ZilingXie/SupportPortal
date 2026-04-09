@@ -228,6 +228,12 @@ class SingleHostComposeTests(unittest.TestCase):
 
         self.assertIn("INSTALL_ML_DEPS: \"0\"", content)
         self.assertIn("SENTIMENT_PROVIDER: legacy", content)
+        self.assertIn("RUNTIME_PROFILE: local_lightweight", content)
+
+    def test_base_compose_defaults_runtime_profile_to_full(self) -> None:
+        content = COMPOSE_PATH.read_text(encoding="utf-8")
+
+        self.assertGreaterEqual(content.count("RUNTIME_PROFILE: ${RUNTIME_PROFILE:-full}"), 6)
 
 
 if __name__ == "__main__":

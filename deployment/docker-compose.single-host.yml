@@ -34,6 +34,7 @@ services:
     environment:
       APP_BUILD_REF: ${APP_BUILD_REF:-unknown}
       APP_BUILD_TIME: ${APP_BUILD_TIME:-}
+      RUNTIME_PROFILE: ${RUNTIME_PROFILE:-full}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-5.4}
       OPENAI_REQUEST_TIMEOUT_SECONDS: ${OPENAI_REQUEST_TIMEOUT_SECONDS:-20.0}
@@ -120,6 +121,7 @@ services:
     environment:
       APP_BUILD_REF: ${APP_BUILD_REF:-unknown}
       APP_BUILD_TIME: ${APP_BUILD_TIME:-}
+      RUNTIME_PROFILE: ${RUNTIME_PROFILE:-full}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_CHAT_MODEL: ${RAG_OPENAI_CHAT_MODEL:-gpt-5.4}
       OPENAI_REQUEST_TIMEOUT_SECONDS: ${OPENAI_REQUEST_TIMEOUT_SECONDS:-20.0}
@@ -204,6 +206,7 @@ services:
       - -m
       - backend.rag_worker
     environment:
+      RUNTIME_PROFILE: ${RUNTIME_PROFILE:-full}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_CHAT_MODEL: ${RAG_OPENAI_CHAT_MODEL:-gpt-5.4}
       OPENAI_REQUEST_TIMEOUT_SECONDS: ${OPENAI_REQUEST_TIMEOUT_SECONDS:-20.0}
@@ -276,6 +279,7 @@ services:
       - --workers
       - "1"
     environment:
+      RUNTIME_PROFILE: ${RUNTIME_PROFILE:-full}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       EVENT_BUS_CHANNEL: ${EVENT_BUS_CHANNEL:-support.events}
     depends_on:
@@ -294,6 +298,7 @@ services:
       - -m
       - backend.worker
     environment:
+      RUNTIME_PROFILE: ${RUNTIME_PROFILE:-full}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       TICKET_DB_DSN: ${TICKET_DB_DSN:?TICKET_DB_DSN is required}
       TICKET_DB_SCHEMA: ${TICKET_DB_SCHEMA:-supportportal}
@@ -341,6 +346,7 @@ services:
       - -m
       - backend.worker
     environment:
+      RUNTIME_PROFILE: ${RUNTIME_PROFILE:-full}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       TICKET_DB_DSN: ${TICKET_DB_DSN:?TICKET_DB_DSN is required}
       TICKET_DB_SCHEMA: ${TICKET_DB_SCHEMA:-supportportal}

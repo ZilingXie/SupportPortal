@@ -38,7 +38,9 @@ APP_BUILD_TIME="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
 info "Current main commit: $APP_BUILD_REF"
 info "Build timestamp: $APP_BUILD_TIME"
+info "Rebuilding single-host stack in full mode."
 
+"$SCRIPT_DIR/cleanup_single_host_aux_stack.sh"
 podman-compose -f deployment/docker-compose.single-host.yml down
 podman-compose -f deployment/docker-compose.single-host.yml up -d --build
 podman-compose -f deployment/docker-compose.single-host.yml ps

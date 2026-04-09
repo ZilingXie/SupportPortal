@@ -542,7 +542,17 @@ class WorkflowScriptTests(unittest.TestCase):
         gh_path.chmod(0o755)
         return bin_dir, state_dir
 
-    def _install_fake_restart_commands(self) -> tuple[Path, Path]:
+    def _install_fake_single_host_commands(
+        self,
+        *,
+        official_runtime_profile: str = "full",
+        official_sentiment_provider: str = "model",
+        official_torch_available: bool = True,
+        auxiliary_present: bool = False,
+        auxiliary_runtime_profile: str = "local_lightweight",
+        auxiliary_sentiment_provider: str = "legacy",
+        auxiliary_torch_available: bool = False,
+    ) -> tuple[Path, Path]:
         bin_dir = self.root / "restart-bin"
         state_dir = self.root / "restart-state"
         bin_dir.mkdir()
@@ -590,6 +600,57 @@ class WorkflowScriptTests(unittest.TestCase):
                 with (state_dir / "curl_calls.jsonl").open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps(payload) + "\\n")
                 print('{"status":"ok","app_build":{"ref":"test-ref"}}')
+                """
+            ),
+        )
+        self._write_executable(
+            bin_dir / "podman",
+            textwrap.dedent(
+                f"""\
+                #!/usr/bin/env python3
+                import json
+                import os
+                import sys
+                from pathlib import Path
+
+                state_dir = Path(os.environ["RESTART_TEST_STATE_DIR"])
+                payload = {{"argv": sys.argv[1:], "cwd": os.getcwd()}}
+                with (state_dir / "podman_cli_calls.jsonl").open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(payload) + "\\n")
+
+                args = sys.argv[1:]
+                if args[:2] == ["ps", "--format"]:
+                    lines = ["deployment_api_1|localhost/supportportal-app:latest"]
+                    if {auxiliary_present!r}:
+                        lines.append("deploymentlw_api_1|localhost/supportportal-app:local-lightweight-verify")
+                    print("\\n".join(lines))
+                elif args[:2] == ["pod", "ps"]:
+                    lines = ["pod_deployment"]
+                    if {auxiliary_present!r}:
+                        lines.append("pod_deploymentlw")
+                    print("\\n".join(lines))
+                elif args[:1] == ["port"]:
+                    container = args[1]
+                    if container == "deployment_nginx_1":
+                        print("80/tcp -> 0.0.0.0:8080")
+                    elif container == "deploymentlw_nginx_1":
+                        print("80/tcp -> 0.0.0.0:18080")
+                elif args[:1] == ["exec"]:
+                    container = args[1]
+                    if container == "deployment_api_1":
+                        print(json.dumps({{
+                            "runtime_profile": {official_runtime_profile!r},
+                            "sentiment_provider": {official_sentiment_provider!r},
+                            "torch_available": {official_torch_available!r},
+                        }}))
+                    elif container == "deploymentlw_api_1":
+                        print(json.dumps({{
+                            "runtime_profile": {auxiliary_runtime_profile!r},
+                            "sentiment_provider": {auxiliary_sentiment_provider!r},
+                            "torch_available": {auxiliary_torch_available!r},
+                        }}))
+                else:
+                    print("")
                 """
             ),
         )
@@ -731,7 +792,7 @@ class WorkflowScriptTests(unittest.TestCase):
         self._commit_all(seed, "Add local runtime files")
         _git(["push", "origin", "main"], cwd=seed)
         _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
-        fake_bin, state_dir = self._install_fake_restart_commands()
+        fake_bin, state_dir = self._install_fake_single_host_commands()
 
         result = self._run_workflow(
             "restart_single_host_stack.sh",
@@ -744,13 +805,14 @@ class WorkflowScriptTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
-        self.assertEqual([call["argv"][-1] for call in calls], ["down", "--build", "ps"])
-        self.assertEqual(calls[0]["argv"][:2], ["-f", "deployment/docker-compose.single-host.yml"])
+        self.assertEqual([call["argv"][-1] for call in calls], ["down", "down", "--build", "ps"])
+        self.assertEqual(calls[0]["argv"][:4], ["-p", "deploymentlw", "-f", "deployment/docker-compose.single-host.yml"])
         self.assertEqual(calls[1]["argv"][:2], ["-f", "deployment/docker-compose.single-host.yml"])
         self.assertEqual(calls[2]["argv"][:2], ["-f", "deployment/docker-compose.single-host.yml"])
+        self.assertEqual(calls[3]["argv"][:2], ["-f", "deployment/docker-compose.single-host.yml"])
         expected_ref = _git(["rev-parse", "--short=12", "HEAD"], cwd=repo).stdout.strip()
-        self.assertEqual(calls[0]["app_build_ref"], expected_ref)
-        self.assertTrue(str(calls[0]["app_build_time"]).strip())
+        self.assertEqual(calls[1]["app_build_ref"], expected_ref)
+        self.assertTrue(str(calls[1]["app_build_time"]).strip())
         curl_calls = self._read_json_lines(state_dir / "curl_calls.jsonl")
         self.assertEqual(curl_calls[0]["url"], "http://127.0.0.1:8080/health")
 
@@ -766,7 +828,7 @@ class WorkflowScriptTests(unittest.TestCase):
         self._commit_all(seed, "Add local lightweight runtime files")
         _git(["push", "origin", "main"], cwd=seed)
         _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
-        fake_bin, state_dir = self._install_fake_restart_commands()
+        fake_bin, state_dir = self._install_fake_single_host_commands()
 
         result = self._run_workflow(
             "restart_single_host_lightweight_stack.sh",
@@ -779,8 +841,9 @@ class WorkflowScriptTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
-        self.assertEqual([call["argv"][-1] for call in calls], ["down", "--build", "ps"])
-        for call in calls:
+        self.assertEqual([call["argv"][-1] for call in calls], ["down", "down", "--build", "ps"])
+        self.assertEqual(calls[0]["argv"][:4], ["-p", "deploymentlw", "-f", "deployment/docker-compose.single-host.yml"])
+        for call in calls[1:]:
             self.assertEqual(
                 call["argv"][:4],
                 [
@@ -789,9 +852,85 @@ class WorkflowScriptTests(unittest.TestCase):
                     "-f",
                     "deployment/docker-compose.single-host.local-lightweight.yml",
                 ],
-            )
+        )
         curl_calls = self._read_json_lines(state_dir / "curl_calls.jsonl")
         self.assertEqual(curl_calls[0]["url"], "http://127.0.0.1:8080/health")
+
+    def test_cleanup_single_host_aux_stack_only_targets_auxiliary_project(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
+        self._commit_all(seed, "Add compose file")
+        _git(["push", "origin", "main"], cwd=seed)
+        _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
+        fake_bin, state_dir = self._install_fake_single_host_commands()
+
+        result = self._run_workflow(
+            "cleanup_single_host_aux_stack.sh",
+            repo,
+            extra_env={
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "RESTART_TEST_STATE_DIR": str(state_dir),
+            },
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(
+            calls[0]["argv"],
+            ["-p", "deploymentlw", "-f", "deployment/docker-compose.single-host.yml", "down"],
+        )
+
+    def test_inspect_single_host_stack_mode_reports_full_profile(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        fake_bin, state_dir = self._install_fake_single_host_commands(
+            official_runtime_profile="full",
+            official_sentiment_provider="model",
+            official_torch_available=True,
+            auxiliary_present=False,
+        )
+
+        result = self._run_workflow(
+            "inspect_single_host_stack_mode.sh",
+            repo,
+            extra_env={
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "RESTART_TEST_STATE_DIR": str(state_dir),
+            },
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("official_project=deployment", result.stdout)
+        self.assertIn("official_health_url=http://127.0.0.1:8080/health", result.stdout)
+        self.assertIn("official_runtime_profile=full", result.stdout)
+        self.assertIn("official_sentiment_provider=model", result.stdout)
+        self.assertIn("official_torch_available=true", result.stdout)
+        self.assertIn("auxiliary_stack_present=false", result.stdout)
+
+    def test_inspect_single_host_stack_mode_reports_lightweight_profile_and_auxiliary_stack(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        fake_bin, state_dir = self._install_fake_single_host_commands(
+            official_runtime_profile="local_lightweight",
+            official_sentiment_provider="legacy",
+            official_torch_available=False,
+            auxiliary_present=True,
+        )
+
+        result = self._run_workflow(
+            "inspect_single_host_stack_mode.sh",
+            repo,
+            extra_env={
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "RESTART_TEST_STATE_DIR": str(state_dir),
+            },
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("official_runtime_profile=local_lightweight", result.stdout)
+        self.assertIn("official_sentiment_provider=legacy", result.stdout)
+        self.assertIn("official_torch_available=false", result.stdout)
+        self.assertIn("auxiliary_stack_present=true", result.stdout)
+        self.assertIn("auxiliary_project=deploymentlw", result.stdout)
 
     def test_rehome_task_worktree_moves_dirty_root_codex_branch(self) -> None:
         _, _, repo = self._init_remote_repo_on_main()
