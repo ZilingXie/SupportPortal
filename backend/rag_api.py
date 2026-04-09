@@ -44,7 +44,7 @@ from backend.services.rag_benchmark_readiness import (
 )
 from backend.services.rag_benchmark_session import build_local_benchmark_session_record
 from backend.services.rag_evidence_summary import build_rag_evidence_summary
-from backend.services.local_source_sync import ingest_source_document, stage_source_document
+from backend.services.local_source_sync import SourceIngestResult, ingest_source_document, stage_source_document
 from backend.services.local_benchmark_sync import sync_default_local_benchmarks
 from backend.services.rag_qa import (
     INSUFFICIENT_EVIDENCE_REPLY,
@@ -777,6 +777,129 @@ async def _publish_dashboard_event(
     return payload
 
 
+async def _publish_dashboard_event_best_effort(
+    event_name: str,
+    ingestion: dict[str, Any] | None,
+    *,
+    status_override: str | None = None,
+) -> dict[str, Any] | None:
+    try:
+        return await _publish_dashboard_event(
+            event_name,
+            ingestion,
+            status_override=status_override,
+        )
+    except Exception as exc:
+        record = ingestion if isinstance(ingestion, dict) else {}
+        LOGGER.warning(
+            "Best-effort knowledge dashboard event publish failed: event=%s ingestion_id=%s error=%s",
+            event_name,
+            _clean_text(record.get("ingestion_id")) or "-",
+            exc,
+            exc_info=True,
+        )
+        return None
+
+
+def _knowledge_ingestion_failure_detail(
+    *,
+    ingestion_id: str | None,
+    status: str | None,
+    error_message: str | None = None,
+    fallback_error: Any = None,
+) -> dict[str, Any]:
+    detail: dict[str, Any] = {
+        "message": "Knowledge ingestion failed",
+        "status": _clean_text(status) or "failed",
+    }
+    normalized_ingestion_id = _clean_text(ingestion_id)
+    if normalized_ingestion_id:
+        detail["ingestion_id"] = normalized_ingestion_id
+    normalized_error = _clean_text(error_message)
+    if not normalized_error and fallback_error is not None:
+        normalized_error = _clean_text(fallback_error)
+    if normalized_error:
+        detail["error_message"] = normalized_error
+    return detail
+
+
+async def _run_direct_source_ingestion(
+    repository: KnowledgeRepository,
+    *,
+    stage_kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        source_document = stage_source_document(repository, **stage_kwargs)
+        result = await asyncio.to_thread(
+            ingest_source_document,
+            repository,
+            source_document,
+            sync_mode="api_compat",
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=_knowledge_ingestion_failure_detail(
+                ingestion_id=None,
+                status="failed",
+                fallback_error=exc,
+            ),
+        ) from exc
+
+    return await _finalize_direct_source_ingestion(repository, result)
+
+
+async def _finalize_direct_source_ingestion(
+    repository: KnowledgeRepository,
+    result: SourceIngestResult,
+) -> dict[str, Any]:
+    ingestion_id = _clean_text(result.ingestion_id)
+    if not ingestion_id:
+        raise HTTPException(
+            status_code=500,
+            detail=_knowledge_ingestion_failure_detail(
+                ingestion_id=None,
+                status=result.status,
+                error_message=result.error_message,
+                fallback_error="Knowledge ingestion failed before ingestion creation",
+            ),
+        )
+
+    record = repository.get_ingestion(ingestion_id, include_content=False)
+    if record is None:
+        raise HTTPException(
+            status_code=500,
+            detail=_knowledge_ingestion_failure_detail(
+                ingestion_id=ingestion_id,
+                status=result.status,
+                error_message=result.error_message,
+                fallback_error="Knowledge ingestion finished without a record",
+            ),
+        )
+
+    record_status = _clean_text(record.get("status")) or _clean_text(result.status) or "failed"
+    event_name = "knowledge_ingestion_completed" if record_status == "completed" else "knowledge_ingestion_failed"
+    await _publish_dashboard_event_best_effort(
+        event_name,
+        record,
+        status_override=record_status,
+    )
+
+    if record_status != "completed":
+        raise HTTPException(
+            status_code=500,
+            detail=_knowledge_ingestion_failure_detail(
+                ingestion_id=ingestion_id,
+                status=record_status,
+                error_message=record.get("error_message") or result.error_message,
+            ),
+        )
+
+    return _ingestion_payload(record, queued=False, processing_mode="synchronous_direct")
+
+
 def _build_knowledge_ingest_task(ingestion_id: str) -> dict[str, str]:
     return {
         "task_type": "knowledge_ingest",
@@ -885,7 +1008,7 @@ async def _run_knowledge_ingestion_or_enqueue(ingestion_id: str) -> tuple[dict[s
     except Exception as exc:
         failed_record = knowledge_repository.get_ingestion(ingestion_id, include_content=False)
         if failed_record is not None:
-            await _publish_dashboard_event(
+            await _publish_dashboard_event_best_effort(
                 "knowledge_ingestion_failed",
                 failed_record,
                 status_override="failed",
@@ -906,7 +1029,7 @@ async def _run_knowledge_ingestion_or_enqueue(ingestion_id: str) -> tuple[dict[s
         if latest is None:
             raise HTTPException(status_code=500, detail=f"Knowledge ingestion finished without a record: {ingestion_id}")
         record = latest
-    await _publish_dashboard_event(
+    await _publish_dashboard_event_best_effort(
         "knowledge_ingestion_completed",
         record,
         status_override="completed",
@@ -1579,34 +1702,19 @@ async def upload_official_document(
         content_length_chars=len(markdown_text),
         raw_content=markdown_text,
     )
-    source_document = stage_source_document(
+    return await _run_direct_source_ingestion(
         repository,
-        knowledge_type="official",
-        source_system="manual",
-        external_id=_clean_text(request_metadata.get("idempotency_key")) or original_name,
-        title=original_name,
-        content_format="markdown",
-        raw_content=markdown_text,
-        raw_payload={"file_name": original_name},
-        metadata=request_metadata,
+        stage_kwargs={
+            "knowledge_type": "official",
+            "source_system": "manual",
+            "external_id": _clean_text(request_metadata.get("idempotency_key")) or original_name,
+            "title": original_name,
+            "content_format": "markdown",
+            "raw_content": markdown_text,
+            "raw_payload": {"file_name": original_name},
+            "metadata": request_metadata,
+        },
     )
-    result = await asyncio.to_thread(
-        ingest_source_document,
-        repository,
-        source_document,
-        sync_mode="api_compat",
-    )
-    if not result.ingestion_id:
-        raise HTTPException(status_code=500, detail="Knowledge ingestion failed before ingestion creation")
-    record = repository.get_ingestion(result.ingestion_id, include_content=False)
-    if record is None:
-        raise HTTPException(status_code=500, detail="Knowledge ingestion finished without a record")
-    await _publish_dashboard_event(
-        "knowledge_ingestion_completed" if record.get("status") == "completed" else "knowledge_ingestion_failed",
-        record,
-        status_override=str(record.get("status") or "").lower() or None,
-    )
-    return _ingestion_payload(record, queued=False, processing_mode="synchronous_direct")
 
 
 @app.post("/internal/knowledge/articles", status_code=202)
@@ -1627,40 +1735,27 @@ async def upload_technical_article(
         source_url=request.source_url,
         raw_content=request.content,
     )
-    source_document = stage_source_document(
+    normalized_source_url = request.source_url.strip()
+    normalized_title = request.title.strip()
+    return await _run_direct_source_ingestion(
         repository,
-        knowledge_type="technical",
-        source_system="manual",
-        external_id=_clean_text(request_metadata.get("idempotency_key")) or request.source_url.strip(),
-        title=request.title.strip(),
-        source_url=request.source_url.strip(),
-        published_url=request.source_url.strip(),
-        content_format="markdown",
-        raw_content=request.content,
-        raw_payload={
-            "title": request.title.strip(),
-            "content": request.content,
-            "source_url": request.source_url.strip(),
+        stage_kwargs={
+            "knowledge_type": "technical",
+            "source_system": "manual",
+            "external_id": _clean_text(request_metadata.get("idempotency_key")) or normalized_source_url,
+            "title": normalized_title,
+            "source_url": normalized_source_url,
+            "published_url": normalized_source_url,
+            "content_format": "markdown",
+            "raw_content": request.content,
+            "raw_payload": {
+                "title": normalized_title,
+                "content": request.content,
+                "source_url": normalized_source_url,
+            },
+            "metadata": request_metadata,
         },
-        metadata=request_metadata,
     )
-    result = await asyncio.to_thread(
-        ingest_source_document,
-        repository,
-        source_document,
-        sync_mode="api_compat",
-    )
-    if not result.ingestion_id:
-        raise HTTPException(status_code=500, detail="Knowledge ingestion failed before ingestion creation")
-    record = repository.get_ingestion(result.ingestion_id, include_content=False)
-    if record is None:
-        raise HTTPException(status_code=500, detail="Knowledge ingestion finished without a record")
-    await _publish_dashboard_event(
-        "knowledge_ingestion_completed" if record.get("status") == "completed" else "knowledge_ingestion_failed",
-        record,
-        status_override=str(record.get("status") or "").lower() or None,
-    )
-    return _ingestion_payload(record, queued=False, processing_mode="synchronous_direct")
 
 
 @app.get("/internal/knowledge/ingestions")
