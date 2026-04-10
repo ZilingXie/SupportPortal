@@ -12,6 +12,8 @@ import urllib.request
 from dataclasses import dataclass, replace
 from typing import Any
 
+from backend.services.rag_evidence_summary import build_rag_evidence_summary
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -148,6 +150,40 @@ def map_live_detail_payload_to_ticket_answer(payload: dict[str, Any]) -> tuple[s
     return None if detail is None else detail.as_answer_tuple()
 
 
+def _synthesize_live_detail_evidence_summary(primary: dict[str, Any]) -> dict[str, Any] | None:
+    selected_contexts = primary.get("selected_contexts") if isinstance(primary.get("selected_contexts"), list) else []
+    cited_chunk_ids = {
+        str(chunk_id).strip()
+        for chunk_id in (primary.get("cited_chunk_ids") if isinstance(primary.get("cited_chunk_ids"), list) else [])
+        if str(chunk_id).strip()
+    }
+    query_understanding = (
+        primary.get("query_understanding_meta")
+        if isinstance(primary.get("query_understanding_meta"), dict)
+        else {}
+    )
+    quality_signals = {
+        "generation_mode": primary.get("generation_mode"),
+        "extractive_fallback_used": primary.get("extractive_fallback_used"),
+        "selected_doc_count": primary.get("selected_doc_count"),
+        "query_class": primary.get("query_class"),
+        "light_path_used": primary.get("light_path_used"),
+        "citation_coverage_ratio": primary.get("citation_coverage_ratio"),
+        "top1_similarity_score": primary.get("top1_similarity_score"),
+        "avg_selected_similarity_score": primary.get("avg_selected_similarity_score"),
+        "handoff_reason": primary.get("handoff_reason"),
+        "needs_human": primary.get("needs_human"),
+    }
+    if not any(value is not None for value in quality_signals.values()) and not selected_contexts and not query_understanding:
+        return None
+    return build_rag_evidence_summary(
+        quality_signals=quality_signals,
+        selected_contexts=[item for item in selected_contexts if isinstance(item, dict)],
+        cited_chunk_ids=cited_chunk_ids,
+        query_understanding=query_understanding,
+    )
+
+
 def map_live_detail_payload_to_ticket_answer_detail(payload: dict[str, Any]) -> RagTicketAnswerDetail | None:
     primary = payload.get("primary") if isinstance(payload, dict) else None
     if not isinstance(primary, dict):
@@ -166,7 +202,7 @@ def map_live_detail_payload_to_ticket_answer_detail(payload: dict[str, Any]) -> 
         if isinstance(primary.get("evidence_summary"), dict)
         else payload.get("evidence_summary")
         if isinstance(payload.get("evidence_summary"), dict)
-        else None
+        else _synthesize_live_detail_evidence_summary(primary)
     )
     packed_evidence = (
         primary.get("packed_evidence")

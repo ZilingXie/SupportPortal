@@ -12,6 +12,7 @@ from unittest.mock import call, patch
 from backend.services.rag_service_client import (
     RagServiceClient,
     RagServiceError,
+    map_live_detail_payload_to_ticket_answer_detail,
     map_rag_payload_to_ticket_answer,
     map_rag_payload_to_ticket_answer_detail,
 )
@@ -128,6 +129,54 @@ class RagServiceClientTests(unittest.TestCase):
         self.assertEqual(sources, [])
         self.assertEqual(citations, [])
         self.assertTrue(needs_engineer)
+
+    def test_map_live_detail_payload_synthesizes_evidence_summary_from_flat_fields(self) -> None:
+        detail = map_live_detail_payload_to_ticket_answer_detail(
+            {
+                "primary": {
+                    "answer": "Call joinChannel with the channel name and token.",
+                    "confidence_score": 0.81,
+                    "needs_human": False,
+                    "answer_sources": ["https://docs.agora.io/en/video-calling/get-started"],
+                    "answer_citations": [],
+                    "generation_mode": "structured_answer",
+                    "selected_doc_count": 1,
+                    "query_class": "how_to_faq",
+                    "light_path_used": True,
+                    "top1_similarity_score": 0.97,
+                    "avg_selected_similarity_score": 0.97,
+                    "citation_coverage_ratio": 1.0,
+                    "selected_contexts": [
+                        {
+                            "chunk_id": "chunk-1",
+                            "heading": "Join a channel",
+                            "source_path": "official/get-started.md",
+                            "source_url": "https://docs.agora.io/en/video-calling/get-started",
+                            "text_excerpt": "Call joinChannel with the channel name and token.",
+                            "similarity": 0.97,
+                        }
+                    ],
+                    "cited_chunk_ids": ["chunk-1"],
+                    "query_understanding_meta": {
+                        "query_profile": "how_to_usage_support",
+                        "fallback_mode": "light_path",
+                    },
+                }
+            }
+        )
+
+        self.assertIsNotNone(detail)
+        assert detail is not None
+        self.assertEqual(detail.reason, "recovered_live_detail")
+        self.assertFalse(detail.needs_engineer_guidance)
+        quality_signals = dict((detail.evidence_summary or {}).get("quality_signals") or {})
+        self.assertEqual(quality_signals.get("generation_mode"), "structured_answer")
+        self.assertEqual(quality_signals.get("selected_doc_count"), 1)
+        self.assertEqual(quality_signals.get("query_class"), "how_to_faq")
+        self.assertTrue(quality_signals.get("light_path_used"))
+        selected_contexts = list((detail.evidence_summary or {}).get("selected_contexts") or [])
+        self.assertEqual(selected_contexts[0]["chunk_id"], "chunk-1")
+        self.assertTrue(selected_contexts[0]["cited_in_answer"])
 
     def test_probe_health_returns_disabled_without_base_url(self) -> None:
         client = RagServiceClient(base_url="")

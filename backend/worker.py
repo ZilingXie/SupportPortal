@@ -116,7 +116,7 @@ OPTIMISTIC_PARALLEL_ROUTE_ENABLED = str(os.getenv("OPTIMISTIC_PARALLEL_ROUTE_ENA
 }
 OPTIMISTIC_ROUTE_TIMEOUT_SECONDS = _safe_positive_float(
     os.getenv("OPTIMISTIC_ROUTE_TIMEOUT_SECONDS"),
-    3.0,
+    8.0,
 )
 rag_service_client = RagServiceClient()
 
@@ -426,8 +426,13 @@ def _execute_agent_runtime_ticket_query(
         "api_persist_latency_ms": None,
         "api_return_latency_ms": None,
         "route_latency_ms": 0.0,
+        "route_timeout_seconds": float(
+            runtime_execution.diagnostics.get("route_timeout_seconds") or OPTIMISTIC_ROUTE_TIMEOUT_SECONDS
+        ),
         "route_final_action": str(route_agent_state.get("decision") or runtime_execution.result.execution_action or "").strip() or None,
         "route_result_source": "parallel_route" if str(route_agent_state.get("status") or "").strip().lower() == "completed" else "route_fail_open",
+        "route_fail_open": bool(runtime_execution.diagnostics.get("route_fail_open"))
+        or str(route_agent_state.get("status") or "").strip().lower() != "completed",
         "rag_started_at": rag_agent_state.get("started_at"),
         "rag_finished_at": rag_agent_state.get("completed_at"),
         "rag_cancelled": str(rag_agent_state.get("status") or "").strip().lower() == "cancelled",
@@ -1030,10 +1035,7 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
             "save_ticket",
             lambda: ticket_repository.save_ticket(ticket, new_messages=new_messages),
         )
-        _call_ticket_repository(
-            "record_ticket_agent_runtime_events",
-            lambda: _record_ticket_agent_runtime_events(execution),
-        )
+        answer_saved_at = now_iso()
         if engineer_case is not None:
             ticket["engineer_case_count"] = max(
                 int(ticket.get("engineer_case_count") or 0),
@@ -1124,12 +1126,18 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         event["client_intake_missing_information"] = list(
             execution_client_intake_state.get("missing_information") or []
         )
+    # Publish the ready signal immediately after the assistant message is durable so
+    # event-log writes do not add avoidable tail latency to the client-visible path.
+    _publish(bus, ["client"], build_client_sync_event(ticket, event["event"]))
+    _publish(bus, ["engineer", "dashboard"], event)
     _call_ticket_repository(
         "record_event",
         lambda: ticket_repository.record_event(ticket_id, event["event"], event),
     )
-    _publish(bus, ["engineer", "dashboard"], event)
-    _publish(bus, ["client"], build_client_sync_event(ticket, event["event"]))
+    _call_ticket_repository(
+        "record_ticket_agent_runtime_events",
+        lambda: _record_ticket_agent_runtime_events(execution),
+    )
     if investigation_result is not None:
         investigation_event = _build_worker_investigation_event(
             ticket,

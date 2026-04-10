@@ -366,6 +366,8 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertFalse(diagnostics["rag_cancelled"])
         self.assertEqual(diagnostics["route_final_action"], "rag")
         self.assertEqual(diagnostics["route_result_source"], "route_fail_open")
+        self.assertTrue(diagnostics["route_fail_open"])
+        self.assertEqual(diagnostics["route_timeout_seconds"], 8.0)
         self.assertGreaterEqual(float(diagnostics["route_latency_ms"]), 0.0)
         self.assertTrue(str(diagnostics["rag_started_at"] or "").strip())
         self.assertTrue(str(diagnostics["rag_finished_at"] or "").strip())
@@ -718,6 +720,20 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertIn("main_agent_total_ms", response_ready_payload)
         self.assertIn("main_agent_to_answer_saved_ms", response_ready_payload)
         self.assertIn("answer_saved_to_response_ready_ms", response_ready_payload)
+        record_event_index = next(
+            index
+            for index, call in enumerate(repository.mock_calls)
+            if call[0] == "record_event" and call.args[:2] == ("T-RUNTIME", "ticket_ai_response_ready")
+        )
+        runtime_event_index = next(
+            index
+            for index, call in enumerate(repository.mock_calls)
+            if call[0] == "record_ticket_agent_event"
+        )
+        self.assertLess(
+            record_event_index,
+            runtime_event_index,
+        )
 
     def test_process_ticket_query_persists_message_level_retrieval_plan_snapshot(self) -> None:
         ticket = _build_ticket(
@@ -871,6 +887,7 @@ class WorkerResilienceTests(unittest.TestCase):
                 "2026-03-22T00:00:13+00:00",
                 "2026-03-22T00:00:14+00:00",
                 "2026-03-22T00:00:15+00:00",
+                "2026-03-22T00:00:16+00:00",
             ]
         )
         task = dict(
@@ -912,7 +929,7 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(event_payload["main_agent_started_at"], "2026-03-22T00:00:11+00:00")
         self.assertEqual(event_payload["main_agent_completed_at"], "2026-03-22T00:00:12+00:00")
         self.assertEqual(event_payload["queue_wait_ms"], 10000.0)
-        self.assertEqual(event_payload["response_ready_dispatch_ms"], 3000.0)
+        self.assertEqual(event_payload["response_ready_dispatch_ms"], 4000.0)
         self.assertEqual(event_payload["load_ticket_ms"], 5.0)
         self.assertEqual(event_payload["save_ticket_ms"], 8.0)
         self.assertEqual(event_payload["record_ticket_created_event_ms"], 2.0)

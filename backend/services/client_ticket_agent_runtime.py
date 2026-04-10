@@ -42,6 +42,7 @@ _TROUBLESHOOTING_SIGNAL_RE = re.compile(
     r"failure|timeout|callback|debug|troubleshoot|black screen|blank screen|no audio|no video)\b",
     re.IGNORECASE,
 )
+_GENERIC_HOW_TO_RE = re.compile(r"^\s*(how\s+(?:do\s+i\s+)?(?:to|can\s+i)|what\s+is|what\s+are)\b", re.IGNORECASE)
 
 
 def _utc_now() -> str:
@@ -58,6 +59,14 @@ def _safe_positive_float(value: Any, default: float) -> float:
     except (TypeError, ValueError):
         return default
     return parsed if parsed > 0 else default
+
+
+def _safe_nonnegative_int(value: Any, default: int = 0) -> int:
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= 0 else default
 
 
 @dataclass(frozen=True)
@@ -442,6 +451,23 @@ def _is_high_risk_grounded_answer(
         if not resolution.citations:
             return True
         return float(resolution.confidence or 0.0) < 0.85
+    normalized_message = _clean_text(message)
+    query_class = str(quality_signals.get("query_class") or "").strip().lower()
+    if (
+        query_class == "how_to_faq"
+        and normalized_message
+        and _GENERIC_HOW_TO_RE.search(normalized_message)
+        and not _TROUBLESHOOTING_SIGNAL_RE.search(normalized_message.lower())
+    ):
+        if bool(quality_signals.get("needs_human")):
+            return True
+        if str(quality_signals.get("generation_mode") or "").strip().lower() != "structured_answer":
+            return True
+        if bool(quality_signals.get("extractive_fallback_used")):
+            return True
+        if _safe_nonnegative_int(quality_signals.get("selected_doc_count"), 0) < 1:
+            return True
+        return float(resolution.confidence or 0.0) < 0.75
     if _TROUBLESHOOTING_SIGNAL_RE.search(_clean_text(message).lower()):
         return True
     if float(resolution.confidence or 0.0) < 0.9:
@@ -620,7 +646,7 @@ def execute_client_ticket_agent_runtime(
     rag_agent: Callable[..., RagTicketAnswerDetail],
     review_agent: Callable[..., Any] | None = None,
     rag_canceler: Callable[[str], dict[str, Any] | None] | None = None,
-    route_timeout_seconds: float = 3.0,
+    route_timeout_seconds: float = 8.0,
 ) -> ClientTicketAgentRuntimeExecution:
     run_id = f"run-{uuid4().hex[:12]}"
     rag_request_id = f"rag-{uuid4().hex[:12]}"
@@ -629,6 +655,8 @@ def execute_client_ticket_agent_runtime(
         "run_id": run_id,
         "rag_request_id": rag_request_id,
         "parallel_mode": "main_agent",
+        "route_timeout_seconds": float(route_timeout_seconds),
+        "route_fail_open": False,
     }
 
     main_summary = _new_agent_summary(phase="created", status="created")
@@ -728,6 +756,7 @@ def execute_client_ticket_agent_runtime(
             )
         except FutureTimeoutError:
             route_decision = None
+            diagnostics["route_fail_open"] = True
             _mark_agent_summary(route_summary, phase="failed", status="failed", reason="timeout")
             _append_event(
                 agent_events,
@@ -741,6 +770,7 @@ def execute_client_ticket_agent_runtime(
             )
         except Exception as exc:
             route_decision = None
+            diagnostics["route_fail_open"] = True
             _mark_agent_summary(route_summary, phase="failed", status="failed", reason=str(exc))
             _append_event(
                 agent_events,

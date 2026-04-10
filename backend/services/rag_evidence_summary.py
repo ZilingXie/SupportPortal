@@ -34,6 +34,8 @@ def build_rag_evidence_summary(
         "generation_mode": None,
         "extractive_fallback_used": None,
         "selected_doc_count": None,
+        "query_class": None,
+        "light_path_used": None,
         "citation_coverage_ratio": None,
         "top1_similarity_score": None,
         "avg_selected_similarity_score": None,
