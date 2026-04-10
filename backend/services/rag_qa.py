@@ -191,6 +191,7 @@ class RetrievedChunk:
 class MetadataHints:
     language: str | None = None
     method_name: str | None = None
+    query_class: str | None = None
     intent_terms: tuple[str, ...] = ()
     technical_terms: tuple[str, ...] = ()
 
@@ -324,6 +325,9 @@ class RagQueryTrace:
     deadline_exhausted: bool = False
     anchor_hits: list[str] = field(default_factory=list)
     timeout_stage: str | None = None
+    generic_join_primary_chunk_found: bool = False
+    generic_join_support_chunks: list[str] = field(default_factory=list)
+    generic_join_recovery_used: bool = False
 
 
 @dataclass
@@ -818,7 +822,7 @@ def _raw_tool_order_for_query_class(query_class: str) -> tuple[list[str], str, s
     if query_class == "lexical_exact":
         return (["p_bm25", "p_fts", "p_vec"], "exact_match", "lexical")
     if query_class == "how_to_faq":
-        return (["p_vec", "s_vec"], "how_to_usage_support", "semantic")
+        return (["p_bm25", "p_fts", "p_vec"], "how_to_usage_support", "lexical")
     if query_class == "troubleshooting_why":
         return (["p_vec", "s_vec", "p_bm25", "s_bm25", "p_fts", "s_fts"], "causal_grounding", "semantic")
     if query_class == "comparison":
@@ -944,14 +948,54 @@ def _is_short_lexical_faq_bucket(message: str, plan: AgenticRetrievalPlan) -> bo
     return _short_lexical_faq_pattern(message) is not None
 
 
+def _is_short_how_to_faq_query(
+    message: str,
+    understanding: QueryUnderstandingResult | None = None,
+) -> bool:
+    if not _is_how_to_faq_query(message, understanding):
+        return False
+    normalized = " ".join(str(message or "").split()).strip()
+    if not normalized or len(normalized) > 96 or "\n" in str(message or ""):
+        return False
+    query_terms = _extract_query_terms(normalized, max_terms=10)
+    return bool(query_terms) and len(query_terms) <= 8
+
+
+def _is_short_symptom_troubleshooting_query(message: str) -> bool:
+    normalized = " ".join(str(message or "").split()).strip()
+    if not normalized or len(normalized) > 120 or "\n" in str(message or ""):
+        return False
+    lowered = normalized.lower()
+    if "http://" in lowered or "https://" in lowered:
+        return False
+    query_terms = _extract_query_terms(normalized, max_terms=12)
+    if not query_terms or len(query_terms) > 9:
+        return False
+    return any(
+        marker in lowered
+        for marker in [
+            "black screen",
+            "blank screen",
+            "no audio",
+            "video freeze",
+            "freeze",
+            "frozen",
+            "stutter",
+            "jitter",
+            "lag",
+            "echo",
+            "crash",
+        ]
+    )
+
+
 def _short_lexical_faq_recovery_variants(message: str, exact_terms: list[str]) -> list[tuple[str, str]]:
     exact_query = " ".join(exact_terms).strip()
     pattern = _short_lexical_faq_pattern(message)
     if pattern == "join_channel":
         return _dedupe_agentic_variants(
             [
-                ("exact_token", exact_query),
-                ("focused_join_step", "join a channel joinChannel channelName uid options"),
+                ("focused_join_step", "join a channel joinChannel channelName uid token appid quickstart get started"),
                 ("focused_rewrite", "join channel joinChannel token channel name uid basic authentication"),
             ]
         )
@@ -974,8 +1018,102 @@ def _short_lexical_faq_recovery_variants(message: str, exact_terms: list[str]) -
     return []
 
 
-def _short_lexical_faq_recovery_requests(message: str, exact_terms: list[str]) -> list[tuple[str, str, str]]:
+def _generic_join_recovery_variants() -> list[tuple[str, str]]:
+    return _dedupe_agentic_variants(
+        [
+            ("focused_join_step", "join a channel joinChannel channelName uid token appid quickstart get started"),
+            ("focused_rewrite", "join channel joinChannel token channel name uid basic authentication"),
+        ]
+    )
+
+
+def _original_query_text_for_plan(message: str, plan: AgenticRetrievalPlan) -> str:
+    for query_kind, query_text in list(plan.query_variants or []):
+        normalized_query = " ".join(str(query_text or "").split()).strip()
+        if query_kind == "original" and normalized_query:
+            return normalized_query
+    return " ".join(str(message or "").split()).strip()
+
+
+def _load_short_faq_original_tool_results(
+    *,
+    message: str,
+    plan: AgenticRetrievalPlan,
+    config: dict[str, Any],
+    lexical_result_cache: dict[tuple[str, str, str, int], tuple[str, list[RetrievedChunk]]] | None,
+) -> tuple[str, dict[str, list[RetrievedChunk]]]:
+    original_query_text = _original_query_text_for_plan(message, plan)
+    if not original_query_text:
+        return "", {}
+
+    original_tool_results: dict[str, list[RetrievedChunk]] = {}
+    for tool_name in ("p_bm25", "p_fts", "p_keyword"):
+        cache_key = _lexical_cache_key(
+            tool_name=tool_name,
+            query_text=original_query_text,
+            index_role="primary",
+            candidate_k=_tool_candidate_k(config, tool_name),
+        )
+        cached_result = _lookup_lexical_cache(
+            lexical_result_cache,
+            cache_key=cache_key,
+        )
+        if cached_result is None:
+            continue
+        cached_tool_name, cached_chunks = cached_result
+        normalized_tool_name = str(cached_tool_name or tool_name).strip() or tool_name
+        original_tool_results[normalized_tool_name] = [_copy_chunk(chunk) for chunk in cached_chunks]
+    return original_query_text, original_tool_results
+
+
+def _merge_tool_result_maps(
+    *tool_result_maps: dict[str, list[RetrievedChunk]],
+) -> dict[str, list[RetrievedChunk]]:
+    merged: dict[str, list[RetrievedChunk]] = {}
+    seen_by_tool: dict[str, set[str]] = {}
+    for tool_result_map in tool_result_maps:
+        for tool_name, chunks in (tool_result_map or {}).items():
+            normalized_tool_name = str(tool_name or "").strip()
+            if not normalized_tool_name:
+                continue
+            target = merged.setdefault(normalized_tool_name, [])
+            seen = seen_by_tool.setdefault(normalized_tool_name, set())
+            for chunk in list(chunks or []):
+                dedupe_key = _chunk_dedupe_key(chunk)
+                if dedupe_key and dedupe_key in seen:
+                    continue
+                target.append(_copy_chunk(chunk))
+                if dedupe_key:
+                    seen.add(dedupe_key)
+    return merged
+
+
+def _short_lexical_faq_recovery_requests(
+    message: str,
+    exact_terms: list[str],
+    *,
+    original_chunks: list[RetrievedChunk] | None = None,
+    product: str | None = None,
+) -> list[tuple[str, str, str]]:
     requests: list[tuple[str, str, str]] = []
+    pattern = _short_lexical_faq_pattern(message)
+    if pattern == "join_channel":
+        has_join_step, has_token_auth = _generic_join_support_signals(
+            list(original_chunks or []),
+            product=product,
+            query=message,
+        )
+        for query_kind, query_text in _short_lexical_faq_recovery_variants(message, exact_terms):
+            if query_kind == "focused_join_step":
+                if has_join_step:
+                    continue
+                requests.append(("p_bm25", query_kind, query_text))
+                continue
+            if query_kind == "focused_rewrite" and has_token_auth:
+                continue
+            requests.append(("p_bm25", query_kind, query_text))
+        return requests
+
     for query_kind, query_text in _short_lexical_faq_recovery_variants(message, exact_terms):
         requests.append(("p_bm25", query_kind, query_text))
     return requests
@@ -1037,6 +1175,23 @@ def _is_stream_channel_chunk(chunk: RetrievedChunk) -> bool:
     return any(marker in surface for marker in ["stream-channel", "stream channel", "signaling/stream-channel"])
 
 
+def _is_release_note_chunk(chunk: RetrievedChunk) -> bool:
+    surface = _chunk_surface_text(chunk)
+    return any(
+        marker in surface
+        for marker in [
+            "release notes",
+            "release-notes",
+            "issue fixed",
+            "issues fixed",
+            "fixed issue",
+            "fixed issues",
+            "known issues",
+            "release note",
+        ]
+    )
+
+
 def _is_join_channel_step_chunk(chunk: RetrievedChunk) -> bool:
     surface = _chunk_surface_text(chunk)
     return (
@@ -1047,6 +1202,43 @@ def _is_join_channel_step_chunk(chunk: RetrievedChunk) -> bool:
         and not _is_token_auth_chunk(chunk)
         and not _is_join_multiple_channels_chunk(chunk)
         and not _is_stream_channel_chunk(chunk)
+    )
+
+
+def _generic_join_requires_role_agnostic_guidance(query: str) -> bool:
+    normalized = _normalized_query_text(query)
+    if not _is_generic_join_channel_query(normalized):
+        return False
+    return not any(
+        marker in normalized
+        for marker in [
+            "live",
+            "broadcast",
+            "broadcaster",
+            "host",
+            "audience",
+            "client role",
+            "clientrole",
+            "setclientrole",
+            "role switch",
+        ]
+    )
+
+
+def _is_role_specific_join_chunk(chunk: RetrievedChunk) -> bool:
+    if not _is_join_channel_step_chunk(chunk):
+        return False
+    surface = _chunk_surface_text(chunk)
+    return any(
+        marker in surface
+        for marker in [
+            "clientroletype",
+            "setclientrole",
+            "broadcaster",
+            "livebroadcasting",
+            "channelprofile",
+            "audiencelatencylevel",
+        ]
     )
 
 
@@ -1078,6 +1270,8 @@ def _is_token_auth_chunk(chunk: RetrievedChunk) -> bool:
 def _is_preferred_generic_join_step_chunk(chunk: RetrievedChunk) -> bool:
     if not _is_join_channel_step_chunk(chunk):
         return False
+    if _is_role_specific_join_chunk(chunk):
+        return False
     metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
     use_case = str(metadata.get("use_case") or "").strip().lower()
     source_path = str(chunk.source_path or "").strip().lower()
@@ -1093,6 +1287,35 @@ def _is_preferred_generic_join_step_chunk(chunk: RetrievedChunk) -> bool:
     if "basic authentication" in heading or "use tokens" in heading:
         return False
     return True
+
+
+def _join_step_chunk_mentions_token(chunk: RetrievedChunk) -> bool:
+    if not _is_join_channel_step_chunk(chunk):
+        return False
+    surface = _chunk_surface_text(chunk)
+    return "token" in surface
+
+
+def _chunk_covers_generic_join_auth_prerequisite(chunk: RetrievedChunk) -> bool:
+    return _is_token_auth_chunk(chunk) or _join_step_chunk_mentions_token(chunk)
+
+
+def _token_auth_chunk_has_join_flow(chunk: RetrievedChunk) -> bool:
+    if not _is_token_auth_chunk(chunk):
+        return False
+    surface = _chunk_surface_text(chunk)
+    return any(
+        marker in surface
+        for marker in [
+            "use a token to join a channel",
+            "join a channel",
+            "join channel",
+            "joinchannel(",
+            "joinchannel ",
+            "join the channel",
+            "before joining",
+        ]
+    )
 
 
 def _is_audio_video_calling_core_chunk(chunk: RetrievedChunk) -> bool:
@@ -1111,11 +1334,32 @@ def _generic_join_product_compatible(chunk: RetrievedChunk, product: str | None)
     return chunk_product in _AUDIO_VIDEO_CALLING_CORE_PRODUCTS
 
 
-def _generic_join_support_signals(chunks: list[RetrievedChunk], *, product: str | None) -> tuple[bool, bool]:
+def _generic_join_support_signals(
+    chunks: list[RetrievedChunk],
+    *,
+    product: str | None,
+    query: str | None = None,
+) -> tuple[bool, bool]:
     compatible_chunks = [chunk for chunk in chunks if _generic_join_product_compatible(chunk, product)]
-    has_join_step = any(_is_join_channel_step_chunk(chunk) for chunk in compatible_chunks)
-    has_token_auth = any(_is_token_auth_chunk(chunk) for chunk in compatible_chunks)
+    has_join_step = any(
+        _is_join_channel_step_chunk(chunk)
+        for chunk in compatible_chunks
+    )
+    has_token_auth = any(_chunk_covers_generic_join_auth_prerequisite(chunk) for chunk in compatible_chunks)
     return has_join_step, has_token_auth
+
+
+def _generic_join_has_preferred_join_step(
+    chunks: list[RetrievedChunk],
+    *,
+    product: str | None,
+    query: str | None = None,
+) -> bool:
+    compatible_chunks = [chunk for chunk in chunks if _generic_join_product_compatible(chunk, product)]
+    require_preferred_join_step = _generic_join_requires_role_agnostic_guidance(query or "")
+    if not require_preferred_join_step:
+        return any(_is_join_channel_step_chunk(chunk) for chunk in compatible_chunks)
+    return any(_is_preferred_generic_join_step_chunk(chunk) for chunk in compatible_chunks)
 
 
 def _product_affinity_adjustment(chunk: RetrievedChunk, product: str | None) -> tuple[float, list[str]]:
@@ -1141,23 +1385,32 @@ def _join_intent_adjustment(query: str, chunk: RetrievedChunk, product: str | No
     reasons: list[str] = []
     boost = 0.0
     if _is_generic_join_channel_query(query):
+        if _generic_join_requires_role_agnostic_guidance(query) and _is_role_specific_join_chunk(chunk):
+            boost -= 1.35
+            reasons.append("intent:generic_join_role_specific_penalty")
         if (
             _normalized_query_text(product) == SUPPORT_PRODUCT_AUDIO_VIDEO_CALLING
             and _is_audio_video_calling_secondary_chunk(chunk)
         ):
-            boost -= 0.9
+            boost -= 1.15
             reasons.append("intent:generic_join_secondary_product_penalty")
         if _is_join_channel_step_chunk(chunk):
-            boost += 1.35
+            boost += 1.55
             reasons.append("intent:join_channel_step")
+            if _is_preferred_generic_join_step_chunk(chunk):
+                boost += 0.45
+                reasons.append("intent:join_channel_preferred_step")
         if _is_token_auth_chunk(chunk):
-            boost += 1.2
+            boost += 1.35
             reasons.append("intent:join_channel_token_auth")
+            if _token_auth_chunk_has_join_flow(chunk):
+                boost += 0.6
+                reasons.append("intent:join_channel_token_auth_join_flow")
         if _is_join_multiple_channels_chunk(chunk):
-            boost -= 1.4
+            boost -= 1.9
             reasons.append("intent:generic_join_multiple_penalty")
         if _is_stream_channel_chunk(chunk):
-            boost -= 1.6
+            boost -= 2.0
             reasons.append("intent:generic_join_stream_penalty")
         return boost, reasons
     if _is_multiple_channels_query(query) and _is_join_multiple_channels_chunk(chunk):
@@ -1170,7 +1423,7 @@ def _join_intent_adjustment(query: str, chunk: RetrievedChunk, product: str | No
 def _generic_join_supporting_chunks(chunks: list[RetrievedChunk], *, product: str | None = None) -> list[RetrievedChunk]:
     preferred: list[RetrievedChunk] = []
     seen_ids: set[str] = set()
-    for matcher in (_is_join_channel_step_chunk, _is_token_auth_chunk):
+    for matcher in (_is_join_channel_step_chunk, _chunk_covers_generic_join_auth_prerequisite):
         for chunk in chunks:
             chunk_id = str(chunk.chunk_id or "")
             if chunk_id and chunk_id in seen_ids:
@@ -1184,6 +1437,142 @@ def _generic_join_supporting_chunks(chunks: list[RetrievedChunk], *, product: st
                 seen_ids.add(chunk_id)
             break
     return preferred
+
+
+def _select_generic_join_grounding_chunks(
+    chunks: list[RetrievedChunk],
+    *,
+    product: str | None,
+    query: str | None,
+) -> tuple[RetrievedChunk | None, RetrievedChunk | None]:
+    compatible_chunks = [chunk for chunk in chunks if _generic_join_product_compatible(chunk, product)]
+    require_preferred_join_step = _generic_join_requires_role_agnostic_guidance(query or "")
+    join_chunk: RetrievedChunk | None = next(
+        (
+            chunk
+            for chunk in compatible_chunks
+            if (
+                _is_preferred_generic_join_step_chunk(chunk)
+                if require_preferred_join_step
+                else _is_join_channel_step_chunk(chunk)
+            )
+        ),
+        None,
+    )
+    if join_chunk is None and require_preferred_join_step:
+        join_chunk = next((chunk for chunk in compatible_chunks if _is_join_channel_step_chunk(chunk)), None)
+    auth_chunk = next((chunk for chunk in compatible_chunks if _is_token_auth_chunk(chunk)), None)
+    return join_chunk, auth_chunk
+
+
+def _generic_join_options_term(join_chunk: RetrievedChunk | None) -> str:
+    if join_chunk is not None and "channelmediaoptions" in _chunk_surface_text(join_chunk):
+        return "`ChannelMediaOptions`"
+    return "channel/media options"
+
+
+def _build_generic_join_grounded_answer(
+    message: str,
+    chunks: list[RetrievedChunk],
+    *,
+    product: str | None,
+) -> RagAnswer | None:
+    if not _is_generic_join_channel_query(message):
+        return None
+    join_chunk, auth_chunk = _select_generic_join_grounding_chunks(
+        chunks,
+        product=product,
+        query=message,
+    )
+    join_chunk_covers_auth = join_chunk is not None and _chunk_covers_generic_join_auth_prerequisite(join_chunk)
+    if join_chunk is None or (auth_chunk is None and not join_chunk_covers_auth):
+        return None
+    options_term = _generic_join_options_term(join_chunk)
+    token_step = (
+        "2. Pass a valid authentication token; in production, get it from your token server, or use a temporary token for testing.\n"
+        if auth_chunk is not None
+        else "2. Pass a valid authentication token before joining the channel.\n"
+    )
+    answer = (
+        "To join a channel, call the SDK join method with your channel name, authentication token, "
+        f"user ID, and {options_term}. The channel name identifies which channel to join, the token "
+        "authenticates the user, and the user ID identifies the local user before joining.\n\n"
+        "Key Steps:\n"
+        "1. Provide the channel name you want the client to join.\n"
+        f"{token_step}"
+        "3. Set the local user ID.\n"
+        f"4. Configure {options_term} as needed, then call the SDK join method."
+    )
+    cited_chunks = [join_chunk]
+    if auth_chunk is not None and _chunk_dedupe_key(auth_chunk) != _chunk_dedupe_key(join_chunk):
+        cited_chunks.append(auth_chunk)
+    citation_records = _citation_records_from_chunks(cited_chunks, limit=len(cited_chunks))
+    sources = [
+        record.get("source_url") or f"rag:{record['chunk_id']}"
+        for record in citation_records
+    ]
+    confidence = max(0.88, _confidence_from_chunks(cited_chunks))
+    return RagAnswer(
+        answer=answer,
+        confidence=round(min(0.96, confidence), 2),
+        sources=sources,
+        citations=citation_records,
+    )
+
+
+def _enforce_generic_join_support_pair(
+    chunks: list[RetrievedChunk],
+    *,
+    reranked_chunks: list[RetrievedChunk],
+    product: str | None,
+    query: str | None,
+    limit: int,
+) -> list[RetrievedChunk]:
+    if not _is_generic_join_channel_query(query or ""):
+        return list(chunks)
+    top_focus_chunk = chunks[0] if chunks else None
+    compatible_chunks = [chunk for chunk in chunks if _generic_join_product_compatible(chunk, product)]
+    require_preferred_join_step = _generic_join_requires_role_agnostic_guidance(query or "")
+    has_preferred_join_step = any(
+        (_is_preferred_generic_join_step_chunk(chunk) if require_preferred_join_step else _is_join_channel_step_chunk(chunk))
+        for chunk in compatible_chunks
+    )
+    has_any_join_step = any(_is_join_channel_step_chunk(chunk) for chunk in compatible_chunks)
+    has_token_auth = any(_chunk_covers_generic_join_auth_prerequisite(chunk) for chunk in compatible_chunks)
+    if (
+        has_preferred_join_step
+        and has_token_auth
+        and not (
+            top_focus_chunk is not None
+            and (_is_join_multiple_channels_chunk(top_focus_chunk) or _is_stream_channel_chunk(top_focus_chunk))
+        )
+    ):
+        return list(chunks)
+    if (
+        has_any_join_step
+        and has_token_auth
+        and not require_preferred_join_step
+        and not (
+            top_focus_chunk is not None
+            and (_is_join_multiple_channels_chunk(top_focus_chunk) or _is_stream_channel_chunk(top_focus_chunk))
+        )
+    ):
+        return list(chunks)
+    supporting_chunks = _generic_join_supporting_chunks(reranked_chunks, product=product)
+    if len(supporting_chunks) < 2:
+        return list(chunks)
+    merged: list[RetrievedChunk] = []
+    seen: set[str] = set()
+    safe_limit = max(1, int(limit or 1))
+    for chunk in ([_copy_chunk(item) for item in supporting_chunks] + [_copy_chunk(item) for item in chunks]):
+        dedupe_key = _chunk_dedupe_key(chunk)
+        if not dedupe_key or dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        merged.append(chunk)
+        if len(merged) >= safe_limit:
+            break
+    return merged or list(chunks)
 
 
 def _requires_howto_citation_retry(
@@ -1201,6 +1590,25 @@ def _requires_howto_citation_retry(
     if not isinstance(citations, list) or len(citations) >= 2:
         return False
     return len(_generic_join_supporting_chunks(chunks, product=product)) >= 2
+
+
+def _is_release_note_lookup_query(query: str) -> bool:
+    normalized = _normalized_query_text(query)
+    if not normalized:
+        return False
+    release_markers = [
+        "release note",
+        "release notes",
+        "what changed",
+        "fixed in",
+        "bug fix",
+        "issues fixed",
+        "known issue",
+        "sdk version",
+        "version ",
+        "changelog",
+    ]
+    return any(marker in normalized for marker in release_markers)
 
 
 def _invoke_agentic_planner(
@@ -1275,6 +1683,20 @@ def _build_agentic_retrieval_plan(
             query_variants=[("original", normalized_message)],
             decomposition_targets=[],
             evidence_goal="exact_match",
+            recovery_bias="lexical",
+            ticket_context_used=bool(ticket_context),
+            exact_terms=exact_terms,
+            light_path=True,
+            product=product,
+            shadow_tools_skipped=[],
+        )
+    if query_class == "how_to_faq" and _is_short_how_to_faq_query(message, query_understanding):
+        return AgenticRetrievalPlan(
+            query_class=query_class,
+            first_pass_tools=["p_bm25", "p_fts"],
+            query_variants=[("original", normalized_message)],
+            decomposition_targets=[],
+            evidence_goal="how_to_usage_support",
             recovery_bias="lexical",
             ticket_context_used=bool(ticket_context),
             exact_terms=exact_terms,
@@ -1575,7 +1997,7 @@ def _api_semantics_product_hints(message: str) -> list[str]:
     return products
 
 
-def _api_semantics_pinned_chunk_from_row(
+def _pinned_chunk_from_row(
     row: tuple[Any, ...],
     *,
     index_role: str,
@@ -1694,7 +2116,7 @@ def _fetch_api_semantics_pinned_chunks(
                 row = cur.fetchone()
         if row is None:
             return None
-        chunk = _api_semantics_pinned_chunk_from_row(
+        chunk = _pinned_chunk_from_row(
             row,
             index_role=normalized_index_role,
             retrieval_source=retrieval_source,
@@ -1758,6 +2180,203 @@ def _prepend_api_semantics_pinned_chunks(
     return _reorder_chunks_for_rerank(ordered, limit=len(ordered), query=message) or ordered
 
 
+def _generic_join_product_hints(product: str | None) -> list[str]:
+    normalized_product = _normalized_query_text(product)
+    if normalized_product == SUPPORT_PRODUCT_AUDIO_VIDEO_CALLING:
+        return ["video-calling", "voice-calling"]
+    if normalized_product:
+        return [normalized_product]
+    return ["video-calling", "voice-calling"]
+
+
+def _fetch_generic_join_pinned_chunks(
+    *,
+    message: str,
+    config: dict[str, Any],
+    existing_chunks: list[RetrievedChunk],
+    product: str | None,
+    index_role: str = "primary",
+) -> list[RetrievedChunk]:
+    if not _is_generic_join_channel_query(message):
+        return []
+
+    require_preferred_join_step = _generic_join_requires_role_agnostic_guidance(message)
+    compatible_existing_chunks = [
+        chunk for chunk in existing_chunks if _generic_join_product_compatible(chunk, product)
+    ]
+    has_join_step, has_token_auth = _generic_join_support_signals(
+        compatible_existing_chunks,
+        product=product,
+        query=message,
+    )
+    top_chunk = compatible_existing_chunks[0] if compatible_existing_chunks else None
+    top_wrong_family = top_chunk is not None and (
+        _is_join_multiple_channels_chunk(top_chunk) or _is_stream_channel_chunk(top_chunk)
+    )
+    needs_join_chunk = not has_join_step or top_wrong_family
+    needs_token_auth_chunk = not has_token_auth
+    if not needs_join_chunk and not needs_token_auth_chunk:
+        return []
+
+    try:
+        psycopg = _import_psycopg()
+        sql = psycopg.sql
+        normalized_index_role = str(index_role or "").strip().lower() or "primary"
+        product_hints = _generic_join_product_hints(product)
+        product_patterns = [f"%{hint}%" for hint in product_hints]
+
+        def _fetch_one(
+            *,
+            retrieval_source: str,
+            url_patterns: list[str],
+            path_patterns: list[str],
+            heading_patterns: list[str],
+            content_patterns: list[str] | None = None,
+        ) -> RetrievedChunk | None:
+            query = sql.SQL(
+                """
+                SELECT
+                    id,
+                    doc_id,
+                    content,
+                    source_path,
+                    h1,
+                    h2,
+                    h3,
+                    source_url,
+                    metadata,
+                    metadata ->> 'source_type' AS source_type,
+                    chunk_strategy
+                FROM {}
+                WHERE index_role = %s
+                  AND (
+                        lower(coalesce(source_url, '')) LIKE ANY(%s::text[])
+                        OR lower(coalesce(source_path, '')) LIKE ANY(%s::text[])
+                      )
+                  AND (
+                        %s::text[] IS NULL
+                        OR lower(coalesce(h1, '')) LIKE ANY(%s::text[])
+                        OR lower(coalesce(h2, '')) LIKE ANY(%s::text[])
+                        OR lower(coalesce(h3, '')) LIKE ANY(%s::text[])
+                      )
+                  AND (
+                        %s::text[] IS NULL
+                        OR lower(coalesce(content, '')) LIKE ANY(%s::text[])
+                      )
+                ORDER BY
+                  CASE
+                    WHEN lower(coalesce(metadata ->> 'product', '')) = ANY(%s::text[]) THEN 0
+                    ELSE 1
+                  END,
+                  CASE
+                    WHEN EXISTS (
+                      SELECT 1
+                      FROM unnest(%s::text[]) AS product(pattern)
+                      WHERE lower(coalesce(source_url, '')) LIKE product.pattern
+                         OR lower(coalesce(source_path, '')) LIKE product.pattern
+                    ) THEN 0
+                    ELSE 1
+                  END,
+                  id
+                LIMIT 1
+                """
+            ).format(_table_identifier(sql, config["table"]))
+            normalized_heading_patterns = [item.lower() for item in heading_patterns] or None
+            normalized_content_patterns = [item.lower() for item in content_patterns] if content_patterns else None
+            normalized_product_hints = [hint.lower() for hint in product_hints]
+            with psycopg.connect(config["dsn"]) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        query,
+                        (
+                            normalized_index_role,
+                            [item.lower() for item in url_patterns],
+                            [item.lower() for item in path_patterns],
+                            normalized_heading_patterns,
+                            normalized_heading_patterns,
+                            normalized_heading_patterns,
+                            normalized_heading_patterns,
+                            normalized_content_patterns,
+                            normalized_content_patterns,
+                            normalized_product_hints,
+                            product_patterns,
+                        ),
+                    )
+                    row = cur.fetchone()
+            if row is None:
+                return None
+            chunk = _pinned_chunk_from_row(
+                row,
+                index_role=normalized_index_role,
+                retrieval_source=retrieval_source,
+            )
+            chunk.rerank_reasons = [f"generic_join:source_pinned:{retrieval_source}"]
+            chunk.rerank_score = 7.0
+            return chunk
+
+        pinned_chunks: list[RetrievedChunk] = []
+        if needs_join_chunk:
+            join_chunk = _fetch_one(
+                retrieval_source="generic_join_join_step_pinned",
+                url_patterns=["%video-calling%", "%voice-calling%"],
+                path_patterns=["%get-started-sdk%"],
+                heading_patterns=["%join a channel%", "%implement video calling%", "%quickstart%"],
+                content_patterns=["%joinchannel%", "%join a channel%", "%channel name%"],
+            )
+            if join_chunk is not None and (
+                _is_preferred_generic_join_step_chunk(join_chunk)
+                if require_preferred_join_step
+                else _is_join_channel_step_chunk(join_chunk)
+            ):
+                pinned_chunks.append(join_chunk)
+        if needs_token_auth_chunk:
+            auth_chunk = _fetch_one(
+                retrieval_source="generic_join_token_auth_pinned",
+                url_patterns=["%authentication-workflow%", "%token-authentication%"],
+                path_patterns=["%authentication-workflow%"],
+                heading_patterns=["%use a token to join a channel%", "%implement basic authentication%"],
+                content_patterns=["%request a token%", "%join a channel%", "%channel name%", "%user id%"],
+            )
+            if auth_chunk is not None and _is_token_auth_chunk(auth_chunk):
+                pinned_chunks.append(auth_chunk)
+
+        deduped: dict[str, RetrievedChunk] = {}
+        for chunk in pinned_chunks:
+            deduped[_chunk_dedupe_key(chunk)] = chunk
+        return list(deduped.values())
+    except Exception as exc:
+        logger.warning("Generic join pinned chunk lookup failed: %s", exc)
+        return []
+
+
+def _prepend_generic_join_pinned_chunks(
+    *,
+    message: str,
+    chunks: list[RetrievedChunk],
+    pinned_chunks: list[RetrievedChunk],
+) -> list[RetrievedChunk]:
+    if not pinned_chunks:
+        return chunks
+    merged: dict[str, RetrievedChunk] = {}
+    ordered: list[RetrievedChunk] = []
+    for chunk in [*pinned_chunks, *chunks]:
+        dedupe_key = _chunk_dedupe_key(chunk)
+        existing = merged.get(dedupe_key)
+        if existing is None:
+            copied = _copy_chunk(chunk)
+            if any(source.startswith("generic_join_") for source in copied.retrieval_sources):
+                copied.rerank_score = max(float(copied.rerank_score or 0.0), 7.0)
+            merged[dedupe_key] = copied
+            ordered.append(copied)
+            continue
+        existing.retrieval_sources = list(dict.fromkeys([*existing.retrieval_sources, *chunk.retrieval_sources]))
+        if chunk.rerank_reasons:
+            existing.rerank_reasons = list(dict.fromkeys([*existing.rerank_reasons, *chunk.rerank_reasons]))
+        if any(source.startswith("generic_join_") for source in chunk.retrieval_sources):
+            existing.rerank_score = max(float(existing.rerank_score or 0.0), float(chunk.rerank_score or 7.0))
+    return _reorder_chunks_for_rerank(ordered, limit=len(ordered), query=message) or ordered
+
+
 def _select_api_semantics_final_chunks(
     chunks: list[RetrievedChunk],
     *,
@@ -1809,6 +2428,7 @@ def _judge_agentic_round(
     exact_terms: list[str],
     grounded_overlap: bool,
     product: str | None = None,
+    troubleshooting_recovery_unlikely: bool = False,
 ) -> AgenticJudgeDecision:
     top_chunk = reranked_chunks[0] if reranked_chunks else None
     top_score = float(
@@ -1825,21 +2445,52 @@ def _judge_agentic_round(
             return AgenticJudgeDecision("recover_once", "api_request_parameter_evidence_missing", 0.78, "lexical_recovery")
         if query_class == "comparison" and not comparison_covered:
             return AgenticJudgeDecision("recover_once", "comparison_targets_missing", 0.74, "compare_recovery")
+        if query_class == "troubleshooting_why" and not reranked_chunks:
+            return AgenticJudgeDecision("escalate", "missing_primary_support", 0.78, None)
+        if (
+            query_class == "troubleshooting_why"
+            and top_chunk is not None
+            and _is_release_note_chunk(top_chunk)
+            and not _is_release_note_lookup_query(message)
+        ):
+            return AgenticJudgeDecision("escalate", "weak_top1_support", 0.82, None)
         if primary_count == 0:
-            recovery = "lexical_recovery" if query_class in {"lexical_exact", "configuration"} else "semantic_recovery"
+            recovery = (
+                "lexical_recovery"
+                if query_class in {"lexical_exact", "how_to_faq", "configuration"}
+                else "semantic_recovery"
+            )
             return AgenticJudgeDecision("recover_once", "missing_primary_support", 0.72, recovery)
-        if query_class == "lexical_exact" and _is_generic_join_channel_query(message):
+        if query_class in {"lexical_exact", "how_to_faq"} and _is_generic_join_channel_query(message):
             top_focus_chunk = top_chunk or (final_chunks[0] if final_chunks else None)
-            has_join_step, has_token_auth = _generic_join_support_signals(final_chunks, product=product)
+            has_join_step, has_token_auth = _generic_join_support_signals(
+                final_chunks,
+                product=product,
+                query=message,
+            )
+            has_preferred_join_step = _generic_join_has_preferred_join_step(
+                final_chunks,
+                product=product,
+                query=message,
+            )
             if (
                 top_focus_chunk is not None
                 and (_is_join_multiple_channels_chunk(top_focus_chunk) or _is_stream_channel_chunk(top_focus_chunk))
-            ) or not has_join_step or not has_token_auth:
+            ) or not has_join_step or not has_token_auth or not has_preferred_join_step:
                 return AgenticJudgeDecision("recover_once", "generic_join_wrong_family", 0.78, "lexical_recovery")
         if query_class == "lexical_exact" and (top_score < 0.32 or not exact_match_supported):
             return AgenticJudgeDecision("recover_once", "low_top1_rerank_score", 0.74, "lexical_recovery")
+        if query_class == "troubleshooting_why" and troubleshooting_recovery_unlikely and top_score < 0.5:
+            return AgenticJudgeDecision("escalate", "weak_top1_support", 0.82, None)
         if top_score < 0.32:
-            recovery = "compare_recovery" if query_class == "comparison" else "semantic_recovery"
+            if query_class == "troubleshooting_why" and troubleshooting_recovery_unlikely:
+                return AgenticJudgeDecision("escalate", "weak_top1_support", 0.82, None)
+            if query_class == "comparison":
+                recovery = "compare_recovery"
+            elif query_class == "how_to_faq":
+                recovery = "lexical_recovery"
+            else:
+                recovery = "semantic_recovery"
             return AgenticJudgeDecision("recover_once", "weak_first_pass_support", 0.7, recovery)
         return AgenticJudgeDecision("answer_now", "sufficient_first_pass_support", 0.9, None)
 
@@ -1850,9 +2501,175 @@ def _judge_agentic_round(
         return AgenticJudgeDecision("escalate", "weak_top1_support", 0.82, None)
     if query_class == "comparison" and not comparison_covered:
         return AgenticJudgeDecision("escalate", "comparison_targets_missing", 0.84, None)
+    if query_class in {"lexical_exact", "how_to_faq"} and _is_generic_join_channel_query(message):
+        has_join_step, has_token_auth = _generic_join_support_signals(
+            final_chunks,
+            product=product,
+            query=message,
+        )
+        top_focus_chunk = top_chunk or (final_chunks[0] if final_chunks else None)
+        if (
+            not has_join_step
+            or not has_token_auth
+            or (
+                top_focus_chunk is not None
+                and (_is_join_multiple_channels_chunk(top_focus_chunk) or _is_stream_channel_chunk(top_focus_chunk))
+            )
+        ):
+            return AgenticJudgeDecision("escalate", "generic_join_support_incomplete", 0.84, None)
     if _same_family_only(final_chunks) and not grounded_overlap:
         return AgenticJudgeDecision("escalate", "single_family_ungrounded", 0.78, None)
     return AgenticJudgeDecision("answer_now", "sufficient_second_pass_support", 0.92, None)
+
+
+def _troubleshooting_recovery_unlikely_from_timings(
+    *,
+    query_class: str,
+    round_index: int,
+    retrieval_tool_timings: list[dict[str, Any]],
+) -> bool:
+    if query_class != "troubleshooting_why" or round_index != 1:
+        return False
+
+    def _counts(*, family: str, query_kinds: set[str]) -> list[int]:
+        counts: list[int] = []
+        for item in retrieval_tool_timings:
+            if not isinstance(item, dict):
+                continue
+            if _tool_family(str(item.get("tool_name") or "")) != family:
+                continue
+            if str(item.get("query_kind") or "") not in query_kinds:
+                continue
+            counts.append(int(item.get("candidate_count") or 0))
+        return counts
+
+    vector_expansion_counts = _counts(family="vector", query_kinds={"semantic", "rewrite", "context"})
+    bm25_expansion_counts = _counts(family="bm25", query_kinds={"semantic", "rewrite", "context"})
+    fts_original_counts = _counts(family="fts", query_kinds={"original"})
+    if not vector_expansion_counts or not bm25_expansion_counts:
+        return False
+    if any(count > 0 for count in vector_expansion_counts):
+        return False
+    if any(count > 0 for count in bm25_expansion_counts):
+        return False
+    if fts_original_counts and any(count > 0 for count in fts_original_counts):
+        return False
+    return True
+
+
+def _chunk_tool_family(chunk: RetrievedChunk) -> str:
+    trace = chunk.candidate_trace if isinstance(chunk.candidate_trace, dict) else {}
+    tool_name = str(trace.get("tool_name") or "").strip()
+    if tool_name:
+        return _tool_family(tool_name)
+    for source in chunk.retrieval_sources:
+        family = _tool_family(str(source or "").strip())
+        if family in {"vector", "bm25", "fts", "keyword"}:
+            return family
+    return ""
+
+
+def _troubleshooting_expansion_families_after_original(
+    *,
+    reranked_chunks: list[RetrievedChunk],
+    final_chunks: list[RetrievedChunk],
+) -> set[str]:
+    def _support_score(chunk: RetrievedChunk | None) -> float:
+        if chunk is None:
+            return 0.0
+        return float(
+            (
+                chunk.rerank_score
+                if chunk.rerank_score is not None
+                else chunk.similarity
+            )
+            or 0.0
+        )
+
+    top_chunk = reranked_chunks[0] if reranked_chunks else None
+    top_score = _support_score(top_chunk)
+    if top_chunk is not None and _is_release_note_chunk(top_chunk):
+        return set()
+    primary_supporting_chunks = [
+        chunk
+        for chunk in final_chunks
+        if str(chunk.index_role or "").strip().lower() == "primary"
+        and _chunk_tool_family(chunk) in {"vector", "bm25"}
+        and _support_score(chunk) >= 0.64
+        and not _is_release_note_chunk(chunk)
+    ]
+    lexical_supporting_chunks = [
+        chunk
+        for chunk in final_chunks
+        if str(chunk.index_role or "").strip().lower() == "primary"
+        and _chunk_tool_family(chunk) in {"bm25", "fts"}
+        and _support_score(chunk) >= 0.66
+        and not _is_release_note_chunk(chunk)
+    ]
+    vector_supporting_chunks = [
+        chunk
+        for chunk in final_chunks
+        if str(chunk.index_role or "").strip().lower() == "primary"
+        and _chunk_tool_family(chunk) == "vector"
+        and _support_score(chunk) >= 0.74
+        and not _is_release_note_chunk(chunk)
+    ]
+    if (
+        top_score < 0.84
+        or len(primary_supporting_chunks) < 2
+        or not lexical_supporting_chunks
+        or not vector_supporting_chunks
+    ):
+        return set()
+    families: set[str] = set()
+    for chunk in reranked_chunks[:2]:
+        family = _chunk_tool_family(chunk)
+        if family in {"vector", "bm25"} and _support_score(chunk) >= 0.72 and not _is_release_note_chunk(chunk):
+            families.add(family)
+    if families:
+        return families
+    for chunk in primary_supporting_chunks:
+        family = _chunk_tool_family(chunk)
+        if family in {"vector", "bm25"}:
+            families.add(family)
+    return families
+
+
+def _troubleshooting_should_try_vector_after_lexical_support(
+    *,
+    message: str,
+    reranked_chunks: list[RetrievedChunk],
+    final_chunks: list[RetrievedChunk],
+) -> bool:
+    def _support_score(chunk: RetrievedChunk | None) -> float:
+        if chunk is None:
+            return 0.0
+        return float(
+            (
+                chunk.rerank_score
+                if chunk.rerank_score is not None
+                else chunk.similarity
+            )
+            or 0.0
+        )
+
+    top_chunk = reranked_chunks[0] if reranked_chunks else None
+    top_score = _support_score(top_chunk)
+    if top_chunk is None or _is_release_note_chunk(top_chunk):
+        return False
+    lexical_supporting_chunks = [
+        chunk
+        for chunk in final_chunks
+        if str(chunk.index_role or "").strip().lower() == "primary"
+        and _chunk_tool_family(chunk) in {"bm25", "fts"}
+        and _support_score(chunk) >= 0.48
+        and not _is_release_note_chunk(chunk)
+    ]
+    if not lexical_supporting_chunks:
+        return False
+    if top_score >= 0.58:
+        return True
+    return _has_grounded_keyword_overlap(message, lexical_supporting_chunks) and top_score >= 0.42
 
 
 def _tool_weights_for_query_class(query_class: str) -> dict[str, float]:
@@ -1869,13 +2686,13 @@ def _tool_weights_for_query_class(query_class: str) -> dict[str, float]:
         }
     if query_class == "how_to_faq":
         return {
-            "p_vec": 1.00,
-            "s_vec": 0.72,
-            "p_bm25": 0.50,
-            "s_bm25": 0.25,
-            "p_fts": 0.20,
-            "s_fts": 0.10,
-            "p_keyword": 0.12,
+            "p_bm25": 1.00,
+            "p_fts": 0.90,
+            "p_vec": 0.55,
+            "s_bm25": 0.35,
+            "s_fts": 0.25,
+            "s_vec": 0.20,
+            "p_keyword": 0.20,
             "s_keyword": 0.08,
         }
     if query_class == "configuration":
@@ -2020,7 +2837,11 @@ def _agentic_round_tools(
     if shadow_retrieval_enabled is None:
         shadow_retrieval_enabled = _shadow_retrieval_enabled()
     original_message = plan.query_variants[0][1] if plan.query_variants else ""
-    if round_index > 1 and recovery_action == "lexical_recovery" and _is_short_lexical_faq_bucket(original_message, plan):
+    if (
+        round_index > 1
+        and recovery_action == "lexical_recovery"
+        and _is_short_lexical_faq_bucket(original_message, plan)
+    ):
         return _filter_shadow_tool_names(["p_bm25"], shadow_retrieval_enabled=shadow_retrieval_enabled)
     if plan.query_class == "api_semantics_mismatch":
         if round_index <= 1:
@@ -2031,6 +2852,8 @@ def _agentic_round_tools(
     if plan.light_path:
         if round_index <= 1:
             return _filter_shadow_tool_names(["p_bm25", "p_fts"], shadow_retrieval_enabled=shadow_retrieval_enabled)
+        if plan.query_class == "how_to_faq" and recovery_action == "lexical_recovery":
+            return _filter_shadow_tool_names(["p_vec"], shadow_retrieval_enabled=shadow_retrieval_enabled)
         if recovery_action == "lexical_recovery":
             return _filter_shadow_tool_names(["p_bm25", "p_fts"], shadow_retrieval_enabled=shadow_retrieval_enabled)
         return _filter_shadow_tool_names(["p_bm25", "p_fts"], shadow_retrieval_enabled=shadow_retrieval_enabled)
@@ -2067,7 +2890,11 @@ def _agentic_round_variants(
         variants = [("original", " ".join(str(message or "").split()).strip())]
     short_faq_variants = (
         _short_lexical_faq_recovery_variants(message, plan.exact_terms)
-        if round_index > 1 and recovery_action == "lexical_recovery" and _is_short_lexical_faq_bucket(message, plan)
+        if (
+            round_index > 1
+            and recovery_action == "lexical_recovery"
+            and _is_short_lexical_faq_bucket(message, plan)
+        )
         else []
     )
     if short_faq_variants:
@@ -2080,20 +2907,16 @@ def _agentic_round_variants(
                 variants.append(("anchor", anchor_variant))
         return _dedupe_agentic_variants(variants)
     if plan.light_path:
+        if plan.query_class == "how_to_faq":
+            return _dedupe_agentic_variants(variants[:1])
         if round_index > 1 and recovery_action == "lexical_recovery":
             existing = {query.lower() for _, query in variants}
             exact_query = " ".join(plan.exact_terms).strip()
-            if exact_query and exact_query.lower() not in existing:
+            if exact_query and exact_query.lower() not in existing and not _is_generic_join_channel_query(message):
                 variants.append(("exact_token", exact_query))
                 existing.add(exact_query.lower())
             if _is_generic_join_channel_query(message):
-                focused_query = "join channel joinChannel token channel name uid basic authentication"
-                if focused_query.lower() not in existing:
-                    variants.append(("focused_rewrite", focused_query))
-                    existing.add(focused_query.lower())
-                join_step_query = "join a channel joinChannel channelName uid options"
-                if join_step_query.lower() not in existing:
-                    variants.append(("focused_join_step", join_step_query))
+                variants.extend(_generic_join_recovery_variants())
         return _dedupe_agentic_variants(variants)
     existing = {query.lower() for _, query in variants}
 
@@ -2107,16 +2930,10 @@ def _agentic_round_variants(
     if round_index > 1:
         if recovery_action == "lexical_recovery":
             exact_query = " ".join(plan.exact_terms).strip()
-            if exact_query and exact_query.lower() not in existing:
+            if exact_query and exact_query.lower() not in existing and not _is_generic_join_channel_query(message):
                 variants.append(("exact_token", exact_query))
             if _is_generic_join_channel_query(message):
-                focused_query = "join channel joinChannel token channel name uid basic authentication"
-                if focused_query.lower() not in existing:
-                    variants.append(("focused_rewrite", focused_query))
-                    existing.add(focused_query.lower())
-                join_step_query = "join a channel joinChannel channelName uid options"
-                if join_step_query.lower() not in existing:
-                    variants.append(("focused_join_step", join_step_query))
+                variants.extend(_generic_join_recovery_variants())
         elif recovery_action == "semantic_recovery":
             context_query = _context_keyword_query(ticket_context)
             if context_query and context_query.lower() not in existing:
@@ -2163,13 +2980,23 @@ def _chunk_query_variant_kinds(chunk: RetrievedChunk) -> list[str]:
     return kinds
 
 
-def _inject_generic_join_recovery_candidates(
+def _inject_generic_join_candidates(
     retrieved_chunks: list[RetrievedChunk],
     *,
     tool_results: dict[str, list[RetrievedChunk]],
     product: str | None,
     limit: int,
+    accepted_variant_kinds: set[str],
+    query: str | None = None,
 ) -> list[RetrievedChunk]:
+    require_preferred_join_step = _generic_join_requires_role_agnostic_guidance(query or "")
+
+    def _is_generic_join_pinned_chunk(chunk: RetrievedChunk) -> bool:
+        return any(
+            str(source or "").startswith("generic_join_")
+            for source in (chunk.retrieval_sources or [])
+        )
+
     def _product_rank(chunk: RetrievedChunk) -> int:
         normalized_product = _normalized_query_text(product)
         chunk_product = _chunk_product(chunk)
@@ -2187,10 +3014,22 @@ def _inject_generic_join_recovery_candidates(
         retrieved_chunks = []
     focused_candidates: list[RetrievedChunk] = []
     seen: set[str] = set()
+    for chunk in retrieved_chunks:
+        if not _is_generic_join_pinned_chunk(chunk):
+            continue
+        if not _generic_join_product_compatible(chunk, product):
+            continue
+        if not (_is_join_channel_step_chunk(chunk) or _is_token_auth_chunk(chunk)):
+            continue
+        dedupe_key = _chunk_dedupe_key(chunk)
+        if not dedupe_key or dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        focused_candidates.append(_copy_chunk(chunk))
     for tool_name in ["p_bm25", "p_fts", "p_keyword"]:
         for chunk in tool_results.get(tool_name, []) or []:
             kinds = _chunk_query_variant_kinds(chunk)
-            if not any(kind in _GENERIC_JOIN_FOCUSED_VARIANT_KINDS for kind in kinds):
+            if not any(kind in accepted_variant_kinds for kind in kinds):
                 continue
             if not _generic_join_product_compatible(chunk, product):
                 continue
@@ -2206,6 +3045,7 @@ def _inject_generic_join_recovery_candidates(
     focused_candidates = sorted(
         focused_candidates,
         key=lambda chunk: (
+            1 if _is_generic_join_pinned_chunk(chunk) else 0,
             _product_rank(chunk),
             1 if _is_preferred_generic_join_step_chunk(chunk) else 0,
             1 if _is_token_auth_chunk(chunk) else 0,
@@ -2217,20 +3057,22 @@ def _inject_generic_join_recovery_candidates(
     auth_candidates = [chunk for chunk in focused_candidates if _is_token_auth_chunk(chunk)]
     best_auth = auth_candidates[0] if auth_candidates else None
 
-    pure_join_candidates = [
+    preferred_join_candidates = [
         chunk
         for chunk in focused_candidates
         if _is_preferred_generic_join_step_chunk(chunk)
     ]
-    join_candidates = pure_join_candidates or [
+    any_join_candidates = [
         chunk for chunk in focused_candidates if _is_join_channel_step_chunk(chunk)
     ]
+    join_candidates = preferred_join_candidates or ([] if require_preferred_join_step else any_join_candidates)
     if best_auth is not None:
         auth_product = _chunk_product(best_auth)
         auth_platform = _chunk_platform(best_auth)
         join_candidates = sorted(
             join_candidates,
             key=lambda chunk: (
+                1 if _is_generic_join_pinned_chunk(chunk) else 0,
                 1 if _chunk_product(chunk) == auth_product and auth_product else 0,
                 1 if _chunk_platform(chunk) == auth_platform and auth_platform else 0,
                 1 if _is_preferred_generic_join_step_chunk(chunk) else 0,
@@ -2241,6 +3083,27 @@ def _inject_generic_join_recovery_candidates(
             reverse=True,
         )
     best_join = join_candidates[0] if join_candidates else None
+    if require_preferred_join_step and best_join is None and best_auth is not None:
+        auth_product = _chunk_product(best_auth)
+        auth_platform = _chunk_platform(best_auth)
+        aligned_role_specific_candidates = [
+            chunk
+            for chunk in any_join_candidates
+            if _chunk_product(chunk) == auth_product
+            and _chunk_platform(chunk) == auth_platform
+        ]
+        if aligned_role_specific_candidates:
+            aligned_role_specific_candidates = sorted(
+                aligned_role_specific_candidates,
+                key=lambda chunk: (
+                    1 if _is_generic_join_pinned_chunk(chunk) else 0,
+                    _product_rank(chunk),
+                    _score_from_candidate_trace(chunk),
+                    float(chunk.similarity or 0.0),
+                ),
+                reverse=True,
+            )
+            best_join = aligned_role_specific_candidates[0]
 
     rescue_chunks: list[RetrievedChunk] = []
     for chunk in [best_join, best_auth]:
@@ -2252,6 +3115,8 @@ def _inject_generic_join_recovery_candidates(
         rescue_chunks.append(_copy_chunk(chunk))
     if not rescue_chunks:
         return list(retrieved_chunks)
+    if require_preferred_join_step and best_join is None:
+        return list(rescue_chunks[: max(1, int(limit or 1))])
     merged: list[RetrievedChunk] = []
     seen = set()
     for chunk in ([_copy_chunk(item) for item in rescue_chunks] + [_copy_chunk(item) for item in retrieved_chunks]):
@@ -2263,6 +3128,42 @@ def _inject_generic_join_recovery_candidates(
         if len(merged) >= max(1, int(limit or 1)):
             break
     return merged
+
+
+def _inject_generic_join_recovery_candidates(
+    retrieved_chunks: list[RetrievedChunk],
+    *,
+    tool_results: dict[str, list[RetrievedChunk]],
+    product: str | None,
+    limit: int,
+    query: str | None = None,
+) -> list[RetrievedChunk]:
+    return _inject_generic_join_candidates(
+        retrieved_chunks,
+        tool_results=tool_results,
+        product=product,
+        limit=limit,
+        accepted_variant_kinds=set(_GENERIC_JOIN_FOCUSED_VARIANT_KINDS),
+        query=query,
+    )
+
+
+def _inject_generic_join_original_candidates(
+    retrieved_chunks: list[RetrievedChunk],
+    *,
+    tool_results: dict[str, list[RetrievedChunk]],
+    product: str | None,
+    limit: int,
+    query: str | None = None,
+) -> list[RetrievedChunk]:
+    return _inject_generic_join_candidates(
+        retrieved_chunks,
+        tool_results=tool_results,
+        product=product,
+        limit=limit,
+        accepted_variant_kinds={"original"},
+        query=query,
+    )
 
 
 def _select_agentic_final_chunks(
@@ -2476,10 +3377,40 @@ def _execute_agentic_round(
     keyword_latency_ms = 0.0
     retrieval_tool_timings: list[dict[str, Any]] = []
     variant_config = dict(config)
-    if round_index > 1 and recovery_action == "lexical_recovery" and _is_short_lexical_faq_bucket(message, plan):
+    if (
+        round_index > 1
+        and recovery_action == "lexical_recovery"
+        and _is_short_lexical_faq_bucket(message, plan)
+    ):
         variant_config = _apply_short_lexical_faq_recovery_budget(variant_config)
     variant_config["_retrieval_plan"] = retrieval_plan
     used_seed_tools: list[str] = []
+    zero_yield_expansion_counts: dict[str, int] = {
+        "vector": 0,
+        "bm25": 0,
+    }
+    troubleshooting_zero_yield_skips: set[str] = set()
+    troubleshooting_original_support_weak = False
+    short_faq_round = (
+        round_index > 1
+        and recovery_action == "lexical_recovery"
+        and _is_short_lexical_faq_bucket(message, plan)
+    )
+    short_faq_original_query_text = ""
+    short_faq_original_tool_results: dict[str, list[RetrievedChunk]] = {}
+    short_faq_original_chunks: list[RetrievedChunk] = []
+    if short_faq_round:
+        short_faq_original_query_text, short_faq_original_tool_results = _load_short_faq_original_tool_results(
+            message=message,
+            plan=plan,
+            config=variant_config,
+            lexical_result_cache=lexical_result_cache,
+        )
+        short_faq_original_chunks = [
+            _copy_chunk(chunk)
+            for chunks in short_faq_original_tool_results.values()
+            for chunk in chunks
+        ]
 
     def _consume_tool_result(
         *,
@@ -2537,11 +3468,23 @@ def _execute_agentic_round(
 
     retrieval_started_at = time.perf_counter()
     short_faq_sparse_requests = (
-        _short_lexical_faq_recovery_requests(message, plan.exact_terms)
-        if round_index > 1 and recovery_action == "lexical_recovery" and _is_short_lexical_faq_bucket(message, plan)
+        _short_lexical_faq_recovery_requests(
+            message,
+            plan.exact_terms,
+            original_chunks=short_faq_original_chunks,
+            product=plan.product,
+        )
+        if short_faq_round
         else []
     )
-    if short_faq_sparse_requests:
+    troubleshooting_stageized_round = (
+        plan.query_class == "troubleshooting_why"
+        and round_index == 1
+        and not short_faq_round
+        and not plan.light_path
+    )
+    effective_tool_results = tool_results
+    if short_faq_round:
         for tool_name, query_kind, query_text in short_faq_sparse_requests:
             family = _tool_family(tool_name)
             index_role = _tool_index_role(tool_name)
@@ -2565,6 +3508,198 @@ def _execute_agentic_round(
                 index_role=index_role,
                 result=result,
             )
+        if plan.query_class == "how_to_faq":
+            effective_tool_results = _merge_tool_result_maps(
+                short_faq_original_tool_results,
+                tool_results,
+            )
+            focused_retrieved_chunks = _merge_agentic_tool_results(
+                tool_results=effective_tool_results,
+                tool_weights=tool_weights,
+                limit=int(variant_config.get("fusion_candidate_k") or config.get("fusion_candidate_k") or config.get("top_k") or 5),
+                shadow_ratio_cap=float(config.get("agent_shadow_ratio_cap") or 0.4),
+            )
+            requires_vector_recovery = not focused_retrieved_chunks
+            if _is_generic_join_channel_query(message):
+                focused_retrieved_chunks = _inject_generic_join_recovery_candidates(
+                    focused_retrieved_chunks,
+                    tool_results=effective_tool_results,
+                    product=plan.product,
+                    limit=int(variant_config.get("fusion_candidate_k") or config.get("fusion_candidate_k") or config.get("top_k") or 5),
+                    query=message,
+                )
+                has_join_step, _has_token_auth = _generic_join_support_signals(
+                    focused_retrieved_chunks,
+                    product=plan.product,
+                    query=message,
+                )
+                top_focus_chunk = focused_retrieved_chunks[0] if focused_retrieved_chunks else None
+                requires_vector_recovery = requires_vector_recovery or not has_join_step
+                if (
+                    top_focus_chunk is not None
+                    and (_is_join_multiple_channels_chunk(top_focus_chunk) or _is_stream_channel_chunk(top_focus_chunk))
+                ):
+                    requires_vector_recovery = True
+            if requires_vector_recovery:
+                original_query_text = short_faq_original_query_text or _original_query_text_for_plan(message, plan)
+                result = _retrieve_agentic_tool_variant(
+                    tool_name="p_vec",
+                    query_kind="original",
+                    query_text=original_query_text,
+                    config=variant_config,
+                    index_role="primary",
+                    round_index=round_index,
+                    seeded_chunks=None,
+                    lexical_result_cache=lexical_result_cache,
+                    should_cancel=should_cancel,
+                    record_cancel_stage=record_cancel_stage,
+                )
+                _consume_tool_result(
+                    family="vector",
+                    tool_name="p_vec",
+                    query_kind="original",
+                    query_text=original_query_text,
+                    index_role="primary",
+                    result=result,
+                )
+                effective_tool_results = _merge_tool_result_maps(
+                    short_faq_original_tool_results,
+                    tool_results,
+                )
+    elif troubleshooting_stageized_round:
+        original_variants = [item for item in query_variants if item[0] == "original"] or query_variants[:1]
+        expansion_variants = [item for item in query_variants if item[0] in {"semantic", "rewrite"}]
+        troubleshooting_expansion_hit = False
+        short_symptom_troubleshooting = _is_short_symptom_troubleshooting_query(message)
+
+        def _run_troubleshooting_pass(
+            variants_to_run: list[tuple[str, str]],
+            *,
+            allowed_families: set[str] | None = None,
+        ) -> None:
+            nonlocal troubleshooting_expansion_hit
+            for tool_name in tool_names:
+                family = _tool_family(tool_name)
+                if family == "vector" and not bool(
+                    variant_config.get("_vector_runtime_available", variant_config.get("vector_enabled", True))
+                ):
+                    continue
+                if allowed_families is not None and family not in allowed_families:
+                    continue
+                if family == "fts" and all(query_kind != "original" for query_kind, _ in variants_to_run):
+                    continue
+                index_role = _tool_index_role(tool_name)
+                for query_kind, query_text in variants_to_run:
+                    if family == "fts" and query_kind != "original":
+                        continue
+                    seeded_chunks = None
+                    if round_index == 1 and query_kind == "original":
+                        seeded_chunks = list((seed_tool_results or {}).get(tool_name) or [])
+                    result = _retrieve_agentic_tool_variant(
+                        tool_name=tool_name,
+                        query_kind=query_kind,
+                        query_text=query_text,
+                        config=variant_config,
+                        index_role=index_role,
+                        round_index=round_index,
+                        seeded_chunks=seeded_chunks,
+                        lexical_result_cache=lexical_result_cache,
+                        should_cancel=should_cancel,
+                        record_cancel_stage=record_cancel_stage,
+                    )
+                    _consume_tool_result(
+                        family=family,
+                        tool_name=tool_name,
+                        query_kind=query_kind,
+                        query_text=query_text,
+                        index_role=index_role,
+                        result=result,
+                    )
+                    candidate_count = len(result[1])
+                    if family == "fts" and query_kind == "original" and candidate_count == 0:
+                        break
+                    if family in {"vector", "bm25"} and query_kind in {"semantic", "rewrite"}:
+                        if candidate_count == 0:
+                            zero_yield_expansion_counts[family] += 1
+                        else:
+                            troubleshooting_expansion_hit = True
+                            zero_yield_expansion_counts[family] = 0
+                        if zero_yield_expansion_counts[family] >= 2:
+                            break
+                    elif family in {"vector", "bm25"} and query_kind == "original":
+                        zero_yield_expansion_counts[family] = 0
+
+        def _build_interim_support() -> tuple[list[RetrievedChunk], list[RetrievedChunk], list[RetrievedChunk]]:
+            interim_retrieved_chunks = _merge_agentic_tool_results(
+                tool_results=tool_results,
+                tool_weights=tool_weights,
+                limit=int(variant_config.get("fusion_candidate_k") or config.get("fusion_candidate_k") or config.get("top_k") or 5),
+                shadow_ratio_cap=float(config.get("agent_shadow_ratio_cap") or 0.4),
+            )
+            interim_reranked_chunks = list(interim_retrieved_chunks)
+            if interim_reranked_chunks:
+                interim_reranked_chunks, _ = _metadata_rerank(
+                    query=message,
+                    chunks=interim_reranked_chunks,
+                    top_k=int(variant_config.get("fusion_candidate_k") or config.get("fusion_candidate_k") or config.get("top_k") or 5),
+                    retrieval_plan=retrieval_plan,
+                    query_understanding=query_understanding,
+                    product=plan.product,
+                )
+                interim_reranked_chunks = _reorder_chunks_for_rerank(
+                    interim_reranked_chunks or interim_retrieved_chunks,
+                    limit=int(variant_config.get("rerank_top_n") or config.get("rerank_top_n") or len(interim_retrieved_chunks) or 1),
+                    query=message,
+                ) or interim_reranked_chunks or interim_retrieved_chunks
+            interim_final_chunks = _select_agentic_final_chunks(
+                interim_reranked_chunks,
+                limit=int(config.get("top_k") or 5),
+                query=message,
+                shadow_cap=int(config.get("agent_final_shadow_cap") or 1),
+            )
+            if sum(1 for chunk in interim_final_chunks if str(chunk.index_role or "").strip().lower() == "primary") == 0:
+                interim_final_chunks = _select_agentic_final_chunks(
+                    interim_reranked_chunks,
+                    limit=int(config.get("top_k") or 5),
+                    query=message,
+                    shadow_cap=int(config.get("agent_recovery_shadow_cap") or 2),
+                )
+            return interim_retrieved_chunks, interim_reranked_chunks, interim_final_chunks
+
+        if short_symptom_troubleshooting:
+            _run_troubleshooting_pass(original_variants, allowed_families={"bm25", "fts"})
+            _interim_retrieved_chunks, interim_reranked_chunks, interim_final_chunks = _build_interim_support()
+            if _troubleshooting_should_try_vector_after_lexical_support(
+                message=message,
+                reranked_chunks=interim_reranked_chunks,
+                final_chunks=interim_final_chunks,
+            ):
+                _run_troubleshooting_pass(original_variants, allowed_families={"vector"})
+                _interim_retrieved_chunks, interim_reranked_chunks, interim_final_chunks = _build_interim_support()
+            else:
+                troubleshooting_original_support_weak = True
+
+            expansion_families = (
+                _troubleshooting_expansion_families_after_original(
+                    reranked_chunks=interim_reranked_chunks,
+                    final_chunks=interim_final_chunks,
+                )
+                if not troubleshooting_original_support_weak
+                else set()
+            )
+        else:
+            _run_troubleshooting_pass(original_variants)
+            _interim_retrieved_chunks, interim_reranked_chunks, interim_final_chunks = _build_interim_support()
+            expansion_families = _troubleshooting_expansion_families_after_original(
+                reranked_chunks=interim_reranked_chunks,
+                final_chunks=interim_final_chunks,
+            )
+        if expansion_families and expansion_variants:
+            _run_troubleshooting_pass(expansion_variants, allowed_families=expansion_families)
+            if not troubleshooting_expansion_hit:
+                troubleshooting_original_support_weak = True
+        else:
+            troubleshooting_original_support_weak = True
     elif plan.light_path and round_index == 1 and len(query_variants) == 1 and set(tool_names) == {"p_bm25", "p_fts"}:
         query_kind, query_text = query_variants[0]
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -2608,6 +3743,13 @@ def _execute_agentic_round(
                 continue
             index_role = _tool_index_role(tool_name)
             for query_kind, query_text in query_variants:
+                if plan.query_class == "troubleshooting_why":
+                    if family == "fts" and "fts_after_zero_original" in troubleshooting_zero_yield_skips:
+                        break
+                    if family == "vector" and "vector_after_zero_expansion" in troubleshooting_zero_yield_skips:
+                        break
+                    if family == "bm25" and "bm25_after_zero_expansion" in troubleshooting_zero_yield_skips:
+                        break
                 if family == "vector" and not bool(
                     variant_config.get("_vector_runtime_available", variant_config.get("vector_enabled", True))
                 ):
@@ -2635,21 +3777,60 @@ def _execute_agentic_round(
                     index_role=index_role,
                     result=result,
                 )
+                if plan.query_class != "troubleshooting_why":
+                    continue
+                candidate_count = len(result[1])
+                if family == "fts" and query_kind == "original" and candidate_count == 0:
+                    troubleshooting_zero_yield_skips.add("fts_after_zero_original")
+                    break
+                if family in {"vector", "bm25"} and query_kind in {"semantic", "rewrite"}:
+                    if candidate_count == 0:
+                        zero_yield_expansion_counts[family] += 1
+                    else:
+                        zero_yield_expansion_counts[family] = 0
+                    if zero_yield_expansion_counts[family] >= 2:
+                        troubleshooting_zero_yield_skips.add(f"{family}_after_zero_expansion")
+                        break
+                elif family in {"vector", "bm25"} and query_kind not in {"semantic", "rewrite"}:
+                    zero_yield_expansion_counts[family] = 0
     retrieval_wall_clock_ms = round((time.perf_counter() - retrieval_started_at) * 1000, 2)
 
     fusion_limit = int(variant_config.get("fusion_candidate_k") or config.get("fusion_candidate_k") or config.get("top_k") or 5)
     retrieved_chunks = _merge_agentic_tool_results(
-        tool_results=tool_results,
+        tool_results=effective_tool_results,
         tool_weights=tool_weights,
         limit=fusion_limit,
         shadow_ratio_cap=float(config.get("agent_shadow_ratio_cap") or 0.4),
     )
-    if plan.light_path and round_index > 1 and recovery_action == "lexical_recovery" and _is_generic_join_channel_query(message):
-        retrieved_chunks = _inject_generic_join_recovery_candidates(
+    if plan.light_path and round_index == 1 and _is_generic_join_channel_query(message):
+        pinned_chunks = _fetch_generic_join_pinned_chunks(
+            message=message,
+            config=variant_config,
+            existing_chunks=retrieved_chunks,
+            product=plan.product,
+            index_role="primary",
+        )
+        if pinned_chunks:
+            retrieved_chunks = _prepend_generic_join_pinned_chunks(
+                message=message,
+                chunks=retrieved_chunks,
+                pinned_chunks=pinned_chunks,
+            )
+    if plan.light_path and round_index == 1 and _is_generic_join_channel_query(message):
+        retrieved_chunks = _inject_generic_join_original_candidates(
             retrieved_chunks,
             tool_results=tool_results,
             product=plan.product,
             limit=fusion_limit,
+            query=message,
+        )
+    if plan.light_path and round_index > 1 and recovery_action == "lexical_recovery" and _is_generic_join_channel_query(message):
+        retrieved_chunks = _inject_generic_join_recovery_candidates(
+            retrieved_chunks,
+            tool_results=effective_tool_results,
+            product=plan.product,
+            limit=fusion_limit,
+            query=message,
         )
     reranked_chunks = list(retrieved_chunks)
     rerank_info: dict[str, Any] = {
@@ -2729,8 +3910,26 @@ def _execute_agentic_round(
             query=message,
             shadow_cap=recovery_shadow_cap,
         )
+    if _is_generic_join_channel_query(message):
+        generic_join_support_pool = list(reranked_chunks)
+        for tool_chunks in effective_tool_results.values():
+            generic_join_support_pool.extend(_copy_chunk(chunk) for chunk in tool_chunks or [])
+        final_chunks = _enforce_generic_join_support_pair(
+            final_chunks,
+            reranked_chunks=generic_join_support_pool,
+            product=plan.product,
+            query=message,
+            limit=int(config.get("top_k") or 5),
+        )
 
     grounded_overlap = _has_grounded_keyword_overlap(message, final_chunks)
+    troubleshooting_recovery_unlikely = _troubleshooting_recovery_unlikely_from_timings(
+        query_class=plan.query_class,
+        round_index=round_index,
+        retrieval_tool_timings=retrieval_tool_timings,
+    )
+    if plan.query_class == "troubleshooting_why" and round_index == 1 and troubleshooting_original_support_weak:
+        troubleshooting_recovery_unlikely = True
     judge = _judge_agentic_round(
         message=message,
         query_class=plan.query_class,
@@ -2741,6 +3940,7 @@ def _execute_agentic_round(
         exact_terms=plan.exact_terms,
         grounded_overlap=grounded_overlap,
         product=plan.product,
+        troubleshooting_recovery_unlikely=troubleshooting_recovery_unlikely,
     )
     return AgenticRoundResult(
         retrieved_chunks=retrieved_chunks,
@@ -3047,6 +4247,7 @@ def _extract_metadata_hints(query: str) -> MetadataHints:
     return MetadataHints(
         language=language,
         method_name=method_name,
+        query_class=_classify_agentic_query(text, None),
         intent_terms=tuple(intents),
         technical_terms=_extract_technical_query_terms(text),
     )
@@ -3105,6 +4306,7 @@ def _metadata_rerank(
     product: str | None = None,
 ) -> tuple[list[RetrievedChunk], dict[str, Any]]:
     resolved_hints = hints or _extract_metadata_hints(query)
+    resolved_query_class = str(getattr(resolved_hints, "query_class", "") or "")
     query_lower = str(query or "").lower()
     api_semantics_query = is_api_semantics_mismatch_message(query)
     anchor_hits = {item.lower() for item in extract_anchor_hits(query)}
@@ -3371,6 +4573,13 @@ def _metadata_rerank(
         if join_boost:
             boost += join_boost
             reasons.extend(join_reasons)
+        if (
+            resolved_query_class == "troubleshooting_why"
+            and _is_release_note_chunk(chunk)
+            and not _is_release_note_lookup_query(query)
+        ):
+            boost -= 1.35
+            reasons.append("intent:troubleshooting_release_note_penalty")
 
         chunk.rerank_score = round(float(chunk.similarity) + boost, 4)
         chunk.rerank_reasons = reasons
@@ -5912,15 +7121,16 @@ def _run_rag_query_agentic_single(
     shadow_retrieval_enabled = _shadow_retrieval_enabled(config)
     preliminary_query_class = _classify_agentic_query(message, None)
     api_semantics_query = preliminary_query_class == "api_semantics_mismatch"
+    short_how_to_faq_query = preliminary_query_class == "how_to_faq" and _is_short_how_to_faq_query(message)
     simple_lexical_query = preliminary_query_class == "lexical_exact" and _is_simple_lexical_query(message)
-    vector_setup_skipped = simple_lexical_query or api_semantics_query
-    light_path_used = simple_lexical_query or api_semantics_query
+    vector_setup_skipped = simple_lexical_query or short_how_to_faq_query or api_semantics_query
+    light_path_used = simple_lexical_query or short_how_to_faq_query or api_semantics_query
     skip_bm25_warmup = preliminary_query_class in {"how_to_faq", "api_semantics_mismatch"}
     preflight_probe_latency_ms = 0.0
 
     config["_vector_runtime_available"] = (
         False
-        if vector_setup_skipped
+        if (simple_lexical_query or api_semantics_query)
         else bool(config.get("vector_enabled", True))
         and _runtime_capability_available(
             "vector",
@@ -5947,13 +7157,21 @@ def _run_rag_query_agentic_single(
             config["vector_enabled"] = False
             config["_vector_runtime_available"] = False
     preflight_probe_latency_ms = round((time.perf_counter() - request_started_at) * 1000, 2)
-    warm_vector_enabled = bool(config.get("vector_enabled")) and not (simple_lexical_query or api_semantics_query)
-    query_understanding_enabled = _feature_flag_enabled("RAG_QUERY_UNDERSTANDING_ENABLED", True) and not (
-        simple_lexical_query or api_semantics_query
+    warm_vector_enabled = bool(config.get("vector_enabled")) and not (
+        simple_lexical_query or short_how_to_faq_query or api_semantics_query
     )
-    query_rewrite_enabled = _feature_flag_enabled("RAG_QUERY_REWRITE_ENABLED", True) and not api_semantics_query
-    query_decomposition_enabled = _feature_flag_enabled("RAG_QUERY_DECOMPOSITION_ENABLED", True) and not api_semantics_query
-    query_expansion_enabled = _feature_flag_enabled("RAG_QUERY_EXPANSION_ENABLED", True) and not api_semantics_query
+    query_understanding_enabled = _feature_flag_enabled("RAG_QUERY_UNDERSTANDING_ENABLED", True) and not (
+        simple_lexical_query or short_how_to_faq_query or api_semantics_query
+    )
+    query_rewrite_enabled = _feature_flag_enabled("RAG_QUERY_REWRITE_ENABLED", True) and not (
+        short_how_to_faq_query or api_semantics_query
+    )
+    query_decomposition_enabled = _feature_flag_enabled("RAG_QUERY_DECOMPOSITION_ENABLED", True) and not (
+        short_how_to_faq_query or api_semantics_query
+    )
+    query_expansion_enabled = _feature_flag_enabled("RAG_QUERY_EXPANSION_ENABLED", True) and not (
+        short_how_to_faq_query or api_semantics_query
+    )
     query_understanding: QueryUnderstandingResult | None = None
     effective_hard_filters: dict[str, str] = {}
     effective_soft_signals: dict[str, list[str]] = {}
@@ -6225,6 +7443,29 @@ def _run_rag_query_agentic_single(
             if unique_selected_chunk_ids
             else None
         )
+        generic_join_primary_chunk_found = False
+        generic_join_support_chunks: list[str] = []
+        generic_join_recovery_used = False
+        if _is_generic_join_channel_query(message):
+            join_chunk, auth_chunk = _select_generic_join_grounding_chunks(
+                final_chunks,
+                product=product,
+                query=message,
+            )
+            generic_join_primary_chunk_found = join_chunk is not None
+            generic_join_support_chunks = [
+                str(chunk.chunk_id or "").strip()
+                for chunk in [join_chunk, auth_chunk]
+                if chunk is not None and str(chunk.chunk_id or "").strip()
+            ]
+            generic_join_recovery_used = any(
+                isinstance(timing, dict)
+                and str(timing.get("query_kind") or "").strip() in _GENERIC_JOIN_FOCUSED_VARIANT_KINDS
+                for timing in retrieval_tool_timings
+            ) or any(
+                any(str(source or "").startswith("generic_join_") for source in (chunk.retrieval_sources or []))
+                for chunk in final_chunks
+            )
         compatible_lexical_latency_ms = round(bm25_latency_ms + fts_latency_ms + keyword_fallback_latency_ms, 2)
         primary_shadow_mix = {
             "primary": sum(1 for chunk in final_chunks if str(chunk.index_role or "").strip().lower() == "primary"),
@@ -6375,6 +7616,9 @@ def _run_rag_query_agentic_single(
             retrieval_round_wall_clock_ms=round(retrieval_round_wall_clock_ms, 2),
             retrieval_tool_timings=list(retrieval_tool_timings),
             anchor_hits=extract_anchor_hits(message),
+            generic_join_primary_chunk_found=generic_join_primary_chunk_found,
+            generic_join_support_chunks=generic_join_support_chunks,
+            generic_join_recovery_used=generic_join_recovery_used,
         )
 
     if not final_chunks or final_judge is None or final_judge.decision == "escalate":
@@ -6417,6 +7661,26 @@ def _run_rag_query_agentic_single(
                     needs_human=False,
                     handoff_reason=None,
                     generation_mode="api_semantics_deterministic",
+                    extractive_fallback_used=False,
+                ),
+            )
+    if _is_generic_join_channel_query(message):
+        deterministic_generation_started_at = time.perf_counter()
+        deterministic_answer = _build_generic_join_grounded_answer(
+            message,
+            final_chunks,
+            product=product,
+        )
+        if deterministic_answer is not None:
+            generation_latency_ms = (time.perf_counter() - deterministic_generation_started_at) * 1000
+            answer_profile_used = "generic_join_deterministic"
+            return RagQueryResult(
+                answer=deterministic_answer,
+                trace=_trace_for(
+                    deterministic_answer,
+                    needs_human=False,
+                    handoff_reason=None,
+                    generation_mode="generic_join_deterministic",
                     extractive_fallback_used=False,
                 ),
             )

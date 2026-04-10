@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import os
 import types
 import unittest
@@ -49,6 +50,12 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertFalse(hasattr(runtime, "CLIENT_TICKET_AGENT_RUNTIME_MODE_LEGACY"))
         self.assertFalse(hasattr(runtime, "CLIENT_TICKET_AGENT_RUNTIME_MODE_AGENT"))
         self.assertFalse(hasattr(runtime, "current_client_ticket_agent_runtime_mode"))
+
+    def test_runtime_route_timeout_default_is_eight_seconds(self) -> None:
+        from backend.services import client_ticket_agent_runtime as runtime
+
+        signature = inspect.signature(runtime.execute_client_ticket_agent_runtime)
+        self.assertEqual(signature.parameters["route_timeout_seconds"].default, 8.0)
 
     def test_build_execution_route_payload_exposes_retrieval_plan_snapshot_for_rag_answers(self) -> None:
         from backend.services.client_ticket_agent_runtime import build_execution_route_payload
@@ -344,6 +351,122 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertFalse(execution.result.needs_investigating)
         self.assertIn("omit `uid`", execution.result.answer)
         self.assertIn("does not create a persistent rule", execution.result.answer)
+        self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.review_agent.get("reason"), "low_risk_grounded_answer")
+
+    def test_short_how_to_faq_grounded_answer_skips_post_check_for_lexical_light_path(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        execution = execute_client_ticket_agent_runtime(
+            message="how to join channel",
+            ticket_id="TK-FAQ-LOW-RISK",
+            customer_id="C-001",
+            ticket_subject="Join channel",
+            ticket_context=[{"role": "customer", "content": "how to join channel"}],
+            product="audio_video_calling",
+            message_id="2026-04-09T00:00:00+00:00",
+            route_agent=lambda **_kwargs: SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                confidence=0.98,
+                reason="channel_joining_support",
+                matched_signals=["join channel"],
+                response_language="en",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+            ),
+            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                answer=(
+                    "To join a channel, call the SDK join-channel method with your channel name, token, "
+                    "user ID, and channel media options."
+                ),
+                confidence=0.77,
+                sources=[
+                    "https://docs.agora.io/en/voice-calling/get-started/get-started-sdk?platform=unity",
+                    "https://docs.agora.io/en/video-calling/get-started/get-started-sdk?platform=windows",
+                ],
+                citations=[
+                    {"chunk_id": "chunk-voice-join"},
+                    {"chunk_id": "chunk-video-join"},
+                ],
+                needs_engineer_guidance=False,
+                reason="grounded_answer",
+                evidence_summary={
+                    "quality_signals": {
+                        "query_class": "how_to_faq",
+                        "generation_mode": "structured_answer",
+                        "selected_doc_count": 2,
+                        "needs_human": False,
+                    }
+                },
+                packed_evidence=None,
+            ),
+            review_agent=lambda **_kwargs: self.fail("review agent should not run for low-risk how_to_faq answers"),
+            rag_canceler=None,
+        )
+
+        self.assertEqual(execution.result.workflow_action, "answer_customer")
+        self.assertFalse(execution.result.needs_investigating)
+        self.assertIn("join-channel method", execution.result.answer)
+        self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.review_agent.get("reason"), "low_risk_grounded_answer")
+
+    def test_short_how_to_faq_grounded_answer_skips_post_check_without_citations(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        execution = execute_client_ticket_agent_runtime(
+            message="how to join channel",
+            ticket_id="TK-FAQ-LOW-RISK-NO-CITE",
+            customer_id="C-001",
+            ticket_subject="Join channel",
+            ticket_context=[{"role": "customer", "content": "how to join channel"}],
+            product="audio_video_calling",
+            message_id="2026-04-09T00:00:00+00:00",
+            route_agent=lambda **_kwargs: SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                confidence=0.98,
+                reason="channel_joining_support",
+                matched_signals=["join channel"],
+                response_language="en",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+            ),
+            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                answer=(
+                    "To join a channel, call the SDK join-channel method with your channel name, token, "
+                    "user ID, and channel media options."
+                ),
+                confidence=0.77,
+                sources=[
+                    "https://docs.agora.io/en/voice-calling/get-started/get-started-sdk?platform=unity",
+                ],
+                citations=[],
+                needs_engineer_guidance=False,
+                reason="grounded_answer",
+                evidence_summary={
+                    "quality_signals": {
+                        "query_class": "how_to_faq",
+                        "generation_mode": "structured_answer",
+                        "selected_doc_count": 1,
+                        "needs_human": False,
+                    }
+                },
+                packed_evidence=None,
+            ),
+            review_agent=lambda **_kwargs: self.fail(
+                "review agent should not run for low-risk how_to_faq answers without citations"
+            ),
+            rag_canceler=None,
+        )
+
+        self.assertEqual(execution.result.workflow_action, "answer_customer")
+        self.assertFalse(execution.result.needs_investigating)
+        self.assertIn("join-channel method", execution.result.answer)
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
         self.assertEqual(execution.runtime_state.review_agent.get("reason"), "low_risk_grounded_answer")
 

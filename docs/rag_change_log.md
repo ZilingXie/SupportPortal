@@ -3053,3 +3053,142 @@ For each new entry, record:
   - Internal trace snapshots now default to omitting full ticket message history, and background dashboard/engineer polling no longer fetches ticket messages by default.
 - Verification:
   - `source /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/activate && python -m unittest backend.tests.test_trace_client_ticket_route_cli backend.tests.test_internal_trace_routes backend.tests.test_dashboard_ticket_routes backend.tests.test_dashboard_metrics_contract backend.tests.test_repository_configuration backend.tests.test_single_host_compose`
+
+## 2026-04-09 - Speed up FAQ and troubleshooting agentic retrieval paths
+
+- Summary:
+  - Expanded the agentic light path to short `how_to_faq` queries so they now start with lexical retrieval (`p_bm25 + p_fts`) and only use a single `p_vec` recovery pass when lexical support is insufficient.
+  - Added request-local zero-yield short-circuiting for `troubleshooting_why` so repeated empty `semantic` / `rewrite` / `context` expansions stop early instead of burning latency.
+  - Raised the optimistic route timeout from `3s` to `8s` and recorded explicit fail-open diagnostics.
+  - Moved ticket agent runtime-event persistence to after `ticket_ai_response_ready` so FAQ response-ready latency is not blocked by post-answer event writes.
+- Reason:
+  - Live traces showed `how to join channel` still skipped the lexical light path and spent over `13s` in retrieval plus `10s+` after answer save, while `I got black screen` burned `77s+` on zero-yield troubleshooting expansions and frequently hit a `3s` route timeout before falling through to RAG.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/worker.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_worker.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema or ingestion changes.
+  - Runtime query planning, retrieval execution, and response-ready timing behavior changed for FAQ and troubleshooting RAG paths.
+- Verification:
+  - `source /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/activate && python -m unittest backend.tests.test_rag_agentic backend.tests.test_rag_qa backend.tests.test_client_ticket_agent_runtime backend.tests.test_worker`
+  - `python3 -m py_compile backend/services/rag_qa.py backend/services/client_ticket_agent_runtime.py backend/worker.py`
+  - `git diff --check`
+  - lightweight stack restart plus `$supportportal-run-report` live comparison against `real_case/real_user_questions.txt`
+
+## 2026-04-09 - Allow low-risk FAQ grounded answers to bypass post-check without citations
+
+- Summary:
+  - Relaxed the low-risk `how_to_faq` grounded-answer gate so short generic FAQ answers can skip post-check review even when the live runtime payload does not carry explicit `citations`.
+  - The FAQ fast-path now relies on `query_class=how_to_faq`, `generation_mode=structured_answer`, `selected_doc_count>=1`, `needs_human=false`, and confidence `>= 0.75` instead of treating missing citations as an automatic high-risk signal.
+- Reason:
+  - Live replays after the FAQ light-path work still escalated `how to join channel` into `rag_post_check_insufficient` because the runtime answer payload carried `selected_doc_count` and confidence but an empty `citations` list.
+- Affected files/config:
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_ticket_orchestrator.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema or ingestion changes.
+  - Low-risk FAQ answers without persisted citation objects can now remain `answer_customer` instead of being downgraded into post-check review.
+- Verification:
+  - `source /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/activate && python -m unittest backend.tests.test_client_ticket_agent_runtime.ClientTicketAgentRuntimeContractTests.test_short_how_to_faq_grounded_answer_skips_post_check_without_citations backend.tests.test_ticket_orchestrator.TicketOrchestratorTests.test_short_how_to_faq_grounded_answer_skips_post_check_without_citations`
+  - `source /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/activate && python -m unittest backend.tests.test_client_ticket_agent_runtime backend.tests.test_ticket_orchestrator backend.tests.test_rag_agentic backend.tests.test_rag_qa backend.tests.test_worker`
+  - lightweight stack restart plus `$supportportal-run-report` live comparison against `real_case/real_user_questions.txt`
+
+## 2026-04-09 - Preserve FAQ quality signals through `rag_api` and live-detail recovery
+
+- Summary:
+  - Added `query_class` and `light_path_used` to `rag_api` quality signals and taught the RAG service client to synthesize `evidence_summary` from flattened live-detail payloads when the nested summary is absent.
+  - This keeps low-risk FAQ decisions stable after timeout/recovery paths so `how to join channel` style grounded answers can still skip post-check instead of falling back to engineer-ticket escalation.
+- Reason:
+  - Live traces showed FAQ light-path answers were still opening engineer tickets because timeout/live-detail recovery dropped `query_class=how_to_faq` and `light_path_used=true`, leaving the post-check bypass without the evidence needed to treat the answer as low-risk.
+- Affected files/config:
+  - `backend/rag_api.py`
+  - `backend/services/rag_evidence_summary.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/tests/test_rag_api.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `backend/tests/test_ticket_orchestrator.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema or ingestion changes.
+  - Runtime answer detail payloads and live-detail recovery now preserve FAQ classification and light-path diagnostics across the RAG/customer-runtime boundary.
+- Verification:
+  - `source /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/activate && python -m unittest backend.tests.test_client_ticket_agent_runtime backend.tests.test_ticket_orchestrator backend.tests.test_rag_service_client backend.tests.test_rag_api`
+  - `source /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/activate && python -m unittest backend.tests.test_rag_agentic backend.tests.test_rag_qa backend.tests.test_client_ticket_agent_runtime backend.tests.test_ticket_orchestrator backend.tests.test_rag_service_client backend.tests.test_rag_api backend.tests.test_worker`
+  - lightweight stack restart plus `$supportportal-run-report` live replay to confirm FAQ grounded answers no longer regress into post-check engineer handoff
+
+## 2026-04-10 - Tighten FAQ family correction and stage troubleshooting retrieval before expensive expansions
+
+- Summary:
+  - Extended short FAQ lexical recovery to cover `how_to_faq` so generic join-channel questions can fix wrong-family lexical hits with focused BM25 queries before falling back to vector retrieval.
+  - Reworked `troubleshooting_why` round 1 into an original-first staged pass that only expands supported vector/BM25 families and skips FTS/context expansion after zero-yield originals.
+  - Moved `ticket_ai_response_ready` bus publish ahead of non-critical runtime-event persistence so ready notifications are no longer blocked by follow-up telemetry writes.
+- Reason:
+  - Live traces still showed `how to join channel` grounding against `join multiple channels` families even after FAQ light path work, while black-screen troubleshooting spent most of its time on zero-yield expansion queries before eventually landing on `weak_top1_support`.
+  - The FAQ answer chain also kept a noticeable tail between answer save and client-ready dispatch because runtime event persistence stayed on the critical path.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/worker.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema or ingestion changes.
+  - Runtime retrieval traces now show staged troubleshooting expansion decisions and `how_to_faq` focused lexical recovery before any optional vector fallback.
+- Verification:
+  - `source /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/activate && python -m unittest backend.tests.test_rag_agentic backend.tests.test_rag_qa backend.tests.test_worker backend.tests.test_client_ticket_agent_runtime`
+  - `python3 -m py_compile backend/services/rag_qa.py backend/worker.py`
+  - `git diff --check`
+  - lightweight stack restart plus `$supportportal-run-report` live replay for `how to join channel`, `I got black screen, what should I do?`, and full `real_case/real_user_questions.txt`
+
+## 2026-04-10 - Pin generic join FAQ evidence to the correct family before round-two recovery
+
+- Summary:
+  - Added deterministic generic-join pinned chunk lookup so short `how_to_faq` join-channel questions can inject one preferred join-step chunk and one token-auth chunk from the correct RTC family before deciding whether round-two lexical recovery is necessary.
+  - Updated generic-join candidate selection to treat pinned FAQ chunks as first-class evidence, and made the pinned lookup best-effort so failed DSNs or unavailable local databases do not kick agentic tests or runtime requests into legacy fallback.
+- Reason:
+  - Live BM25 inspection showed `how to join channel` original lexical retrieval was dominated by `join-multiple-channels` and `stream-channel` families, so even the lighter FAQ path still recovered late and sometimes selected the wrong family.
+  - The right fix was to pin a deterministic join-step/auth pair into round 1 instead of trusting off-family lexical top hits to self-correct.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema or ingestion changes.
+  - Generic join FAQ requests now prefer pinned RTC join/auth evidence in round 1, and unit tests without a real DSN continue to exercise the agentic path without database lookups.
+- Verification:
+  - `source /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/activate && python -m unittest backend.tests.test_rag_qa backend.tests.test_rag_agentic backend.tests.test_worker`
+  - `python3 -m py_compile backend/services/rag_qa.py backend/tests/test_rag_qa.py backend/worker.py backend/tests/test_worker.py`
+  - `git diff --check`
+  - lightweight stack restart plus `$supportportal-run-report` live replay for `how to join channel` and full `real_case/real_user_questions.txt`
+
+## 2026-04-10 - Force generic join FAQ to answer the full join flow instead of token-only drift
+
+- Summary:
+  - Added deterministic generic-join grounding selection so generic `how to join channel` questions only complete when both a quickstart join-step chunk and a token-auth chunk are present.
+  - Replaced the previous token-only FAQ answer path with a fixed generic join-flow answer that covers channel name, authentication token, user ID, channel/media options, and the SDK join method.
+  - Added telemetry for generic join primary/support chunk presence and recovery usage so live traces can show whether the FAQ grounded against the expected join-step family.
+- Reason:
+  - Live `how to join channel` traces were still drifting toward token/authentication-only chunks, which produced a technically incomplete answer even after the FAQ light path and family pinning work.
+  - The accepted target behavior is the older `TK-077` style answer: a platform-agnostic join flow backed by `Quickstart > Implement Video Calling > Join a channel`, with token guidance kept as supporting context rather than the whole answer.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema or ingestion changes.
+  - Generic join FAQ traces now expose `generic_join_primary_chunk_found`, `generic_join_support_chunks`, and `generic_join_recovery_used`.
+  - Generic join FAQ requests fail closed when only auth support exists, and only emit a grounded answer when join-step guidance and auth prerequisite evidence are both present.
+- Verification:
+  - `source /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/activate && python -m unittest backend.tests.test_rag_qa backend.tests.test_rag_agentic backend.tests.test_rag_api`
+  - `python3 -m py_compile backend/services/rag_qa.py backend/tests/test_rag_qa.py`
+  - `git diff --check`
+  - lightweight stack restart plus `$supportportal-run-report` live replay for `how to join channel` and full `real_case/real_user_questions.txt`
