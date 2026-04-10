@@ -35,6 +35,8 @@ DEFAULT_QUERY_TIMEOUT_SECONDS = 45.0
 DEFAULT_COMPLETION_TIMEOUT_SECONDS = 90.0
 DEFAULT_DIRECT_PROBE_TIMEOUT_SECONDS = 30.0
 DEFAULT_POST_ANSWER_ARTIFACT_TIMEOUT_SECONDS = 15.0
+DEFAULT_POLL_INTERVAL_SECONDS = 2.0
+DEFAULT_EVENT_LIMIT = 80
 
 
 def create_ticket_repository():
@@ -231,9 +233,28 @@ def _is_timeout_error(exc: BaseException) -> bool:
     return "timeout" in _clean_text(exc).lower() or "timed out" in _clean_text(exc).lower()
 
 
-def _trace_snapshot_url(base_url: str, ticket_id: str, *, event_limit: int) -> str:
+def _trace_snapshot_url(
+    base_url: str,
+    ticket_id: str,
+    *,
+    event_limit: int,
+    message_created_at: str | None,
+    include_messages: bool,
+    message_limit: int,
+) -> str:
     quoted_ticket_id = urllib.parse.quote(str(ticket_id or "").strip(), safe="")
-    return _join_url(base_url, f"/internal/trace/tickets/{quoted_ticket_id}?event_limit={int(event_limit)}")
+    query = {
+        "event_limit": int(event_limit),
+        "include_messages": "true" if include_messages else "false",
+        "message_limit": int(message_limit),
+    }
+    normalized_message_created_at = _clean_text(message_created_at)
+    if normalized_message_created_at:
+        query["message_created_at"] = normalized_message_created_at
+    return _join_url(
+        base_url,
+        f"/internal/trace/tickets/{quoted_ticket_id}?{urllib.parse.urlencode(query)}",
+    )
 
 
 def fetch_trace_snapshot(
@@ -241,11 +262,21 @@ def fetch_trace_snapshot(
     base_url: str,
     ticket_id: str,
     event_limit: int,
+    message_created_at: str | None = None,
+    include_messages: bool = False,
+    message_limit: int = 0,
     timeout_seconds: float = 10.0,
 ) -> dict[str, Any] | None:
     try:
         return http_get_json(
-            _trace_snapshot_url(base_url, ticket_id, event_limit=event_limit),
+            _trace_snapshot_url(
+                base_url,
+                ticket_id,
+                event_limit=event_limit,
+                message_created_at=message_created_at,
+                include_messages=include_messages,
+                message_limit=message_limit,
+            ),
             timeout_seconds=timeout_seconds,
         )
     except RuntimeError as exc:
@@ -273,6 +304,7 @@ def wait_for_trace_completion(
                 base_url=base_url,
                 ticket_id=ticket_id,
                 event_limit=event_limit,
+                message_created_at=message_created_at,
                 timeout_seconds=max(min(float(poll_interval_seconds) * 4.0, 10.0), 1.0),
             )
         except Exception as exc:
@@ -282,12 +314,18 @@ def wait_for_trace_completion(
             raise
         if isinstance(snapshot, dict):
             latest_snapshot = snapshot
-            ticket = snapshot.get("ticket") if isinstance(snapshot.get("ticket"), dict) else {}
-            latest_final_assistant = _find_final_assistant_message(
-                ticket,
-                message_created_at=message_created_at,
-                message=message,
+            latest_final_assistant = (
+                dict(snapshot.get("final_assistant"))
+                if isinstance(snapshot.get("final_assistant"), dict)
+                else None
             )
+            if latest_final_assistant is None:
+                ticket = snapshot.get("ticket") if isinstance(snapshot.get("ticket"), dict) else {}
+                latest_final_assistant = _find_final_assistant_message(
+                    ticket,
+                    message_created_at=message_created_at,
+                    message=message,
+                )
             runtime_state = snapshot.get("runtime_state") if isinstance(snapshot.get("runtime_state"), dict) else {}
             if str(runtime_state.get("status") or "").strip().lower() == "completed" and latest_final_assistant is not None:
                 return latest_snapshot, latest_final_assistant, True
@@ -299,6 +337,7 @@ def wait_for_trace_artifacts(
     *,
     base_url: str,
     ticket_id: str,
+    message_created_at: str | None,
     event_limit: int,
     timeout_seconds: float,
     poll_interval_seconds: float,
@@ -331,6 +370,9 @@ def wait_for_trace_artifacts(
                 base_url=base_url,
                 ticket_id=ticket_id,
                 event_limit=event_limit,
+                message_created_at=message_created_at,
+                include_messages=False,
+                message_limit=0,
                 timeout_seconds=max(min(float(poll_interval_seconds) * 4.0, 10.0), 1.0),
             )
         except Exception as exc:
@@ -672,13 +714,19 @@ def build_trace_summary(
     ticket_events: list[dict[str, Any]],
     agent_events: list[dict[str, Any]],
     rag_run: dict[str, Any] | None,
+    final_assistant: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalized_ticket_events = _sorted_ticket_events(ticket_events)
-    final_assistant = _find_final_assistant_message(
-        ticket,
-        message_created_at=_clean_text(request_context.get("message_created_at")) or None,
-        message=_clean_text(request_context.get("message")),
-    ) or {}
+    final_assistant = (
+        dict(final_assistant)
+        if isinstance(final_assistant, dict)
+        else _find_final_assistant_message(
+            ticket,
+            message_created_at=_clean_text(request_context.get("message_created_at")) or None,
+            message=_clean_text(request_context.get("message")),
+        )
+        or {}
+    )
     run_id = _resolve_run_id(
         ticket=ticket,
         final_assistant=final_assistant,
@@ -1166,14 +1214,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--completion-timeout-seconds", type=float, default=DEFAULT_COMPLETION_TIMEOUT_SECONDS)
     parser.add_argument("--direct-probe-timeout-seconds", type=float, default=DEFAULT_DIRECT_PROBE_TIMEOUT_SECONDS)
     parser.add_argument("--timeout-seconds", type=float, default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--poll-interval-seconds", type=float, default=0.5)
+    parser.add_argument("--poll-interval-seconds", type=float, default=DEFAULT_POLL_INTERVAL_SECONDS)
     parser.add_argument("--rag-telemetry-timeout-seconds", type=float, default=6.0)
     parser.add_argument(
         "--post-answer-artifact-timeout-seconds",
         type=float,
         default=DEFAULT_POST_ANSWER_ARTIFACT_TIMEOUT_SECONDS,
     )
-    parser.add_argument("--event-limit", type=int, default=200)
+    parser.add_argument("--event-limit", type=int, default=DEFAULT_EVENT_LIMIT)
     parser.add_argument("--output-dir", default=str(DEFAULT_TRACE_OUTPUT_DIR))
     return parser
 
@@ -1215,6 +1263,7 @@ def main(argv: list[str] | None = None) -> int:
             ticket_events=[],
             agent_events=[],
             rag_run=None,
+            final_assistant=None,
         )
         artifact = build_trace_artifact(
             preflight={"health_error": _clean_text(exc) or str(exc)},
@@ -1295,6 +1344,7 @@ def main(argv: list[str] | None = None) -> int:
             ticket_events=[],
             agent_events=[],
             rag_run=None,
+            final_assistant=None,
         )
         artifact = build_trace_artifact(
             preflight=preflight,
@@ -1332,14 +1382,15 @@ def main(argv: list[str] | None = None) -> int:
         event_limit=max(int(args.event_limit), 20),
     )
     if isinstance(snapshot, dict):
-        snapshot = wait_for_trace_artifacts(
-            base_url=args.base_url,
-            ticket_id=ticket_id,
-            event_limit=max(int(args.event_limit), 20),
-            timeout_seconds=max(float(args.post_answer_artifact_timeout_seconds), 0.5),
-            poll_interval_seconds=args.poll_interval_seconds,
-            latest_snapshot=snapshot,
-        )
+            snapshot = wait_for_trace_artifacts(
+                base_url=args.base_url,
+                ticket_id=ticket_id,
+                message_created_at=message_created_at,
+                event_limit=max(int(args.event_limit), 20),
+                timeout_seconds=max(float(args.post_answer_artifact_timeout_seconds), 0.5),
+                poll_interval_seconds=args.poll_interval_seconds,
+                latest_snapshot=snapshot,
+            )
     if isinstance(snapshot, dict):
         ticket = snapshot.get("ticket") if isinstance(snapshot.get("ticket"), dict) else ticket
         ticket_events = list(snapshot.get("ticket_events") or []) if isinstance(snapshot.get("ticket_events"), list) else []
@@ -1350,10 +1401,14 @@ def main(argv: list[str] | None = None) -> int:
             message=message,
         )
         if final_assistant is None:
-            final_assistant = _find_final_assistant_message(
-                ticket,
-                message_created_at=request_context.get("message_created_at"),
-                message=message,
+            final_assistant = (
+                dict(snapshot.get("final_assistant"))
+                if isinstance(snapshot.get("final_assistant"), dict)
+                else _find_final_assistant_message(
+                    ticket,
+                    message_created_at=request_context.get("message_created_at"),
+                    message=message,
+                )
             )
     if not trace_completed:
         trace_status = "timeout_partial"
@@ -1372,6 +1427,7 @@ def main(argv: list[str] | None = None) -> int:
         ticket_events=ticket_events,
         agent_events=agent_events,
         rag_run=None,
+        final_assistant=final_assistant,
     )
     rag_run = wait_for_rag_query_run(
         request_id=preliminary_summary.get("raw_ids", {}).get("request_id"),
@@ -1386,6 +1442,7 @@ def main(argv: list[str] | None = None) -> int:
         ticket_events=ticket_events,
         agent_events=agent_events,
         rag_run=rag_run,
+        final_assistant=final_assistant,
     )
 
     artifact = build_trace_artifact(

@@ -309,6 +309,19 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertEqual(repository._pool_max_lifetime_seconds, 1800.0)
         self.assertEqual(repository._pool_max_idle_seconds, 300.0)
 
+    def test_ticket_repository_reads_application_name(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TICKET_DB_DSN": "postgresql://example",
+                "TICKET_DB_APPLICATION_NAME": "supportportal-api",
+            },
+            clear=True,
+        ):
+            repository = create_ticket_repository()
+        self.assertIsInstance(repository, PostgresTicketRepository)
+        self.assertEqual(repository._application_name, "supportportal-api")
+
     def test_ticket_repository_clamps_pool_timeout_to_connect_timeout(self) -> None:
         repository = PostgresTicketRepository(
             dsn="postgresql://example",
@@ -410,6 +423,28 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertEqual(connect_mock.call_count, 2)
         sleep_mock.assert_called_once_with(0.2)
 
+    def test_ticket_repository_connect_passes_application_name(self) -> None:
+        repository = PostgresTicketRepository(
+            dsn="postgresql://example",
+            application_name="supportportal-api",
+        )
+        sentinel_connection = _ReusableConnection(_ReusableCursor())
+        with patch(
+            "backend.repositories.ticket_repository.psycopg.connect",
+            return_value=sentinel_connection,
+        ) as connect_mock:
+            repository._connect()
+        self.assertEqual(connect_mock.call_args.kwargs["application_name"], "supportportal-api")
+
+    def test_ticket_repository_pool_factory_passes_application_name(self) -> None:
+        repository = PostgresTicketRepository(
+            dsn="postgresql://example",
+            application_name="supportportal-api",
+        )
+        with patch("backend.repositories.ticket_repository.ConnectionPool") as pool_cls:
+            repository._pool_factory()
+        self.assertEqual(pool_cls.call_args.kwargs["kwargs"]["application_name"], "supportportal-api")
+
     def test_ticket_repository_opens_new_connection_between_reads_without_pool(self) -> None:
         repository = PostgresTicketRepository(dsn="postgresql://example")
         first_connection = _ReusableConnection(_ReusableCursor(fetchall_results=[[]]))
@@ -454,6 +489,172 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertEqual(live_pool.close_calls, 1)
         self.assertTrue(live_pool.closed)
         self.assertIsNone(repository._pool)
+
+    def test_ticket_repository_trace_snapshot_uses_single_connection_and_returns_lightweight_ticket(self) -> None:
+        repository = PostgresTicketRepository(dsn="postgresql://example")
+        cursor = _ReusableCursor(
+            fetchall_results=[
+                [
+                    (
+                        "TK-TRACE-DB-001",
+                        "C-1",
+                        "requester-1",
+                        "trace test",
+                        "communicating",
+                        None,
+                        None,
+                        0,
+                        "audio_video_calling",
+                        None,
+                        {"status": "running", "active_run_id": "run-123"},
+                        "2026-04-09T10:00:00+00:00",
+                        "2026-04-09T10:00:05+00:00",
+                    )
+                ],
+                [
+                    ("TK-TRACE-DB-001", "ticket_ai_processing", {"created_at": "2026-04-09T10:00:01+00:00"}, "2026-04-09T10:00:01+00:00"),
+                ],
+                [
+                    ("TK-TRACE-DB-001", "2026-04-09T10:00:00+00:00", "run-123", "main_agent", "running", "started", {"created_at": "2026-04-09T10:00:01+00:00"}, "2026-04-09T10:00:01+00:00"),
+                ],
+            ],
+            fetchone_results=[
+                ("TK-TRACE-DB-001", "assistant", "Use joinChannel with a valid token.", "2026-04-09T10:00:03+00:00", None, None, None, None),
+            ],
+        )
+        connection = _ReusableConnection(cursor)
+        with patch(
+            "backend.repositories.ticket_repository.psycopg.connect",
+            return_value=connection,
+        ) as connect_mock:
+            snapshot = repository.get_trace_ticket_snapshot(
+                "TK-TRACE-DB-001",
+                message_created_at="2026-04-09T10:00:00+00:00",
+                include_messages=False,
+                message_limit=0,
+                event_limit=10,
+            )
+
+        self.assertEqual(connect_mock.call_count, 1)
+        self.assertEqual(snapshot["ticket"]["ticket_id"], "TK-TRACE-DB-001")
+        self.assertEqual(snapshot["ticket"]["messages"], [])
+        self.assertEqual(snapshot["runtime_state"]["active_run_id"], "run-123")
+        self.assertEqual(snapshot["final_assistant"]["content"], "Use joinChannel with a valid token.")
+        self.assertEqual(snapshot["ticket_events"][0]["event_type"], "ticket_ai_processing")
+
+    def test_ticket_repository_trace_snapshot_skips_full_message_fetch_when_messages_are_omitted(self) -> None:
+        repository = PostgresTicketRepository(dsn="postgresql://example")
+        dummy_conn = object()
+        row = (
+            "TK-TRACE-FAST-001",
+            "C-1",
+            "requester-1",
+            "trace test",
+            "communicating",
+            None,
+            None,
+            0,
+            "audio_video_calling",
+            None,
+            {"status": "running", "active_run_id": "run-123"},
+            "2026-04-09T10:00:00+00:00",
+            "2026-04-09T10:00:05+00:00",
+        )
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _label, op: op(dummy_conn),
+        ), patch.object(
+            repository,
+            "_fetch_ticket_rows",
+            return_value=[row],
+        ), patch.object(
+            repository,
+            "_fetch_messages",
+            side_effect=AssertionError("full message fetch should be skipped"),
+        ), patch.object(
+            repository,
+            "_fetch_trace_final_assistant_message",
+            return_value={
+                "role": "assistant",
+                "content": "Use joinChannel with a valid token.",
+                "created_at": "2026-04-09T10:00:03+00:00",
+            },
+        ), patch.object(
+            repository,
+            "_fetch_ticket_events_for_trace",
+            return_value=[],
+        ), patch.object(
+            repository,
+            "_fetch_ticket_agent_events_for_trace",
+            return_value=[],
+        ):
+            snapshot = repository.get_trace_ticket_snapshot(
+                "TK-TRACE-FAST-001",
+                message_created_at="2026-04-09T10:00:00+00:00",
+                include_messages=False,
+                message_limit=0,
+                event_limit=10,
+            )
+
+        self.assertEqual(snapshot["ticket"]["messages"], [])
+        self.assertEqual(snapshot["final_assistant"]["content"], "Use joinChannel with a valid token.")
+
+    def test_ticket_repository_list_engineer_cases_can_skip_investigation_messages(self) -> None:
+        repository = PostgresTicketRepository(dsn="postgresql://example")
+        dummy_conn = object()
+        engineer_row = (
+            "TK-ENG-001-1",
+            "TK-ENG-001",
+            1,
+            "Engineer case",
+            "investigating",
+            "worker_async_rag",
+            "rag_processing_timeout",
+            "",
+            None,
+            None,
+            None,
+            "2026-04-09T10:00:00+00:00",
+            "2026-04-09T10:05:00+00:00",
+            None,
+        )
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _label, op: op(dummy_conn),
+        ), patch.object(
+            repository,
+            "_fetch_engineer_case_rows",
+            return_value=[engineer_row],
+        ), patch.object(
+            repository,
+            "_fetch_engineer_case_messages",
+            side_effect=AssertionError("engineer case messages should be skipped"),
+        ), patch.object(
+            repository,
+            "_fetch_ticket_map",
+            return_value={
+                "TK-ENG-001": {
+                    "ticket_id": "TK-ENG-001",
+                    "customer_id": "C-1",
+                    "requester": "customer-1",
+                    "subject": "black screen",
+                    "status": "investigating",
+                    "created_at": "2026-04-09T10:00:00+00:00",
+                    "updated_at": "2026-04-09T10:05:00+00:00",
+                    "messages": [],
+                }
+            },
+        ):
+            payloads = repository.list_engineer_cases(
+                include_client_messages=False,
+                include_investigation_messages=False,
+            )
+
+        self.assertEqual(len(payloads), 1)
+        self.assertEqual(payloads[0]["engineer_case_id"], "TK-ENG-001-1")
+        self.assertEqual(payloads[0]["active_investigation"]["messages"], [])
 
     def test_ticket_repository_opens_new_connection_between_event_writes_without_pool(self) -> None:
         repository = PostgresTicketRepository(dsn="postgresql://example")

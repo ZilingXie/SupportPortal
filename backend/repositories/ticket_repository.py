@@ -393,6 +393,7 @@ class TicketRepository(Protocol):
         self,
         *,
         include_client_messages: bool = True,
+        include_investigation_messages: bool = True,
     ) -> list[dict[str, Any]]:
         ...
 
@@ -474,6 +475,17 @@ class TicketRepository(Protocol):
         ...
 
     def list_ticket_agent_events(self, ticket_id: str, limit: int = 100) -> list[dict[str, Any]]:
+        ...
+
+    def get_trace_ticket_snapshot(
+        self,
+        ticket_id: str,
+        *,
+        event_limit: int = 100,
+        message_created_at: str | None = None,
+        include_messages: bool = False,
+        message_limit: int = 0,
+    ) -> dict[str, Any] | None:
         ...
 
 
@@ -730,15 +742,19 @@ class InMemoryTicketRepository:
         self,
         *,
         include_client_messages: bool = True,
+        include_investigation_messages: bool = True,
     ) -> list[dict[str, Any]]:
         case_payloads: list[dict[str, Any]] = []
         for ticket_id in list(self._tickets):
             self._backfill_engineer_cases_from_legacy_ticket(ticket_id)
         for engineer_case in self._engineer_cases.values():
             client_ticket = self.get_ticket(str(engineer_case.get("client_ticket_id") or ""))
+            payload_engineer_case = copy.deepcopy(engineer_case)
+            if not include_investigation_messages:
+                payload_engineer_case["messages"] = []
             case_payloads.append(
                 _engineer_case_record_to_payload(
-                    engineer_case,
+                    payload_engineer_case,
                     client_ticket=client_ticket,
                     include_client_messages=include_client_messages,
                 )
@@ -981,6 +997,132 @@ class InMemoryTicketRepository:
         ]
         return [copy.deepcopy(item) for item in filtered[:safe_limit]]
 
+    def get_trace_ticket_snapshot(
+        self,
+        ticket_id: str,
+        *,
+        event_limit: int = 100,
+        message_created_at: str | None = None,
+        include_messages: bool = False,
+        message_limit: int = 0,
+    ) -> dict[str, Any] | None:
+        ticket = self.get_ticket(ticket_id)
+        if ticket is None:
+            return None
+        return _build_trace_ticket_snapshot_payload(
+            ticket=ticket,
+            ticket_events=self.list_ticket_events(ticket_id, limit=event_limit),
+            agent_events=self.list_ticket_agent_events(ticket_id, limit=event_limit),
+            message_created_at=message_created_at,
+            include_messages=include_messages,
+            message_limit=message_limit,
+        )
+
+
+def _find_trace_customer_message_index(
+    messages: list[dict[str, Any]],
+    *,
+    message_created_at: str | None,
+) -> int | None:
+    normalized_created_at = _clean_error_text(message_created_at)
+    if normalized_created_at:
+        for index, item in enumerate(messages):
+            if _normalize_role(item.get("role")) != "customer":
+                continue
+            if _clean_error_text(item.get("created_at")) == normalized_created_at:
+                return index
+    for index in range(len(messages) - 1, -1, -1):
+        if _normalize_role(messages[index].get("role")) == "customer":
+            return index
+    return None
+
+
+def _find_trace_final_assistant_message(
+    messages: list[dict[str, Any]],
+    *,
+    message_created_at: str | None,
+) -> dict[str, Any] | None:
+    customer_index = _find_trace_customer_message_index(
+        messages,
+        message_created_at=message_created_at,
+    )
+    if customer_index is None:
+        return None
+    final_assistant: dict[str, Any] | None = None
+    for item in messages[customer_index + 1 :]:
+        if _normalize_role(item.get("role")) != "assistant":
+            continue
+        if not _clean_error_text(item.get("content")):
+            continue
+        final_assistant = copy.deepcopy(item)
+    return final_assistant
+
+
+def _ticket_message_row_to_payload(row: tuple[Any, ...]) -> dict[str, Any]:
+    message: dict[str, Any] = {
+        "role": str(row[1]),
+        "content": str(row[2]),
+        "created_at": _to_iso(row[3]),
+    }
+    if row[4]:
+        message["sentiment_label"] = str(row[4])
+    if row[5]:
+        message["sources"] = row[5]
+    if row[6]:
+        message["citations"] = row[6]
+    if isinstance(row[7], dict):
+        for key, value in row[7].items():
+            normalized_key = str(key or "").strip()
+            if not normalized_key or normalized_key in message:
+                continue
+            message[normalized_key] = value
+    return message
+
+
+def _limit_trace_messages(messages: list[dict[str, Any]], *, message_limit: int) -> list[dict[str, Any]]:
+    if message_limit > 0:
+        return [copy.deepcopy(item) for item in messages[-message_limit:]]
+    return [copy.deepcopy(item) for item in messages]
+
+
+def _build_trace_ticket_snapshot_payload(
+    *,
+    ticket: dict[str, Any],
+    ticket_events: list[dict[str, Any]],
+    agent_events: list[dict[str, Any]],
+    message_created_at: str | None,
+    include_messages: bool,
+    message_limit: int,
+    final_assistant: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload_ticket = copy.deepcopy(ticket)
+    ticket_messages = payload_ticket.get("messages") if isinstance(payload_ticket.get("messages"), list) else []
+    resolved_final_assistant = (
+        copy.deepcopy(final_assistant)
+        if isinstance(final_assistant, dict)
+        else _find_trace_final_assistant_message(
+            ticket_messages,
+            message_created_at=message_created_at,
+        )
+    )
+    payload_ticket["messages"] = (
+        _limit_trace_messages(ticket_messages, message_limit=message_limit)
+        if include_messages
+        else []
+    )
+    runtime_state = (
+        copy.deepcopy(payload_ticket.get("client_agent_runtime_state"))
+        if isinstance(payload_ticket.get("client_agent_runtime_state"), dict)
+        else {}
+    )
+    return {
+        "ticket": payload_ticket,
+        "runtime_state": runtime_state,
+        "final_assistant": resolved_final_assistant,
+        "ticket_events": copy.deepcopy(ticket_events),
+        "agent_events": copy.deepcopy(agent_events),
+    }
+
 
 class PostgresTicketRepository:
     def __init__(
@@ -997,12 +1139,14 @@ class PostgresTicketRepository:
         pool_timeout_seconds: float = 5.0,
         pool_max_lifetime_seconds: float = 300.0,
         pool_max_idle_seconds: float = 60.0,
+        application_name: str | None = None,
     ) -> None:
         self._dsn = dsn.strip()
         self._schema = (schema or "supportportal").strip() or "supportportal"
         self._connect_timeout = _safe_positive_int(connect_timeout, 5)
         self._connect_retries = _safe_positive_int(connect_retries, 0)
         self._connect_retry_delay_seconds = _safe_positive_float(connect_retry_delay_seconds, 1.0)
+        self._application_name = str(application_name or "").strip() or None
         self._use_connection_pool = bool(use_connection_pool)
         self._pool_min_size = _safe_positive_int(pool_min_size, 1)
         self._pool_max_size = max(self._pool_min_size, _safe_positive_int(pool_max_size, 8))
@@ -1026,7 +1170,10 @@ class PostgresTicketRepository:
         last_error: Exception | None = None
         for attempt in range(1, attempts + 1):
             try:
-                connection = psycopg.connect(self._dsn, connect_timeout=self._connect_timeout)
+                connect_kwargs: dict[str, Any] = {"connect_timeout": self._connect_timeout}
+                if self._application_name:
+                    connect_kwargs["application_name"] = self._application_name
+                connection = psycopg.connect(self._dsn, **connect_kwargs)
                 connection.autocommit = True
                 return connection
             except (psycopg.OperationalError, psycopg.Error, OSError, TimeoutError) as exc:
@@ -1047,12 +1194,15 @@ class PostgresTicketRepository:
     def _pool_factory(self) -> Any:
         if ConnectionPool is None:
             raise RuntimeError("psycopg_pool is required when TICKET_DB connection pooling is enabled")
+        pool_kwargs: dict[str, Any] = {
+            "connect_timeout": self._connect_timeout,
+            "autocommit": True,
+        }
+        if self._application_name:
+            pool_kwargs["application_name"] = self._application_name
         return ConnectionPool(
             self._dsn,
-            kwargs={
-                "connect_timeout": self._connect_timeout,
-                "autocommit": True,
-            },
+            kwargs=pool_kwargs,
             min_size=self._pool_min_size,
             max_size=self._pool_max_size,
             check=ConnectionPool.check_connection,
@@ -1761,25 +1911,95 @@ class PostgresTicketRepository:
                 (ticket_ids,),
             )
             for row in cur.fetchall():
-                message: dict[str, Any] = {
-                    "role": str(row[1]),
-                    "content": str(row[2]),
-                    "created_at": _to_iso(row[3]),
-                }
-                if row[4]:
-                    message["sentiment_label"] = str(row[4])
-                if row[5]:
-                    message["sources"] = row[5]
-                if row[6]:
-                    message["citations"] = row[6]
-                if isinstance(row[7], dict):
-                    for key, value in row[7].items():
-                        normalized_key = str(key or "").strip()
-                        if not normalized_key or normalized_key in message:
-                            continue
-                        message[normalized_key] = value
-                grouped[str(row[0])].append(message)
+                grouped[str(row[0])].append(_ticket_message_row_to_payload(row))
         return grouped
+
+    def _fetch_recent_messages_for_trace(
+        self,
+        conn: psycopg.Connection[Any],
+        *,
+        ticket_id: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        safe_limit = _safe_positive_int(limit, 1)
+        with conn.cursor() as cur:
+            cur.execute(
+                sql.SQL(
+                    """
+                    SELECT ticket_id, role, content, created_at, sentiment_label, sources, citations, meta
+                    FROM (
+                        SELECT ticket_id, role, content, created_at, sentiment_label, sources, citations, meta, id
+                        FROM {}
+                        WHERE ticket_id = %s
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT %s
+                    ) recent
+                    ORDER BY created_at ASC, id ASC
+                    """
+                ).format(self._table("support_ticket_messages")),
+                (ticket_id, safe_limit),
+            )
+            return [_ticket_message_row_to_payload(row) for row in cur.fetchall()]
+
+    def _fetch_latest_customer_message_created_at_for_trace(
+        self,
+        conn: psycopg.Connection[Any],
+        *,
+        ticket_id: str,
+    ) -> str | None:
+        with conn.cursor() as cur:
+            cur.execute(
+                sql.SQL(
+                    """
+                    SELECT created_at
+                    FROM {}
+                    WHERE ticket_id = %s
+                      AND role = 'customer'
+                      AND btrim(content) <> ''
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT 1
+                    """
+                ).format(self._table("support_ticket_messages")),
+                (ticket_id,),
+            )
+            row = cur.fetchone()
+        return _to_iso(row[0]) if row is not None else None
+
+    def _fetch_trace_final_assistant_message(
+        self,
+        conn: psycopg.Connection[Any],
+        *,
+        ticket_id: str,
+        message_created_at: str | None,
+    ) -> dict[str, Any] | None:
+        lower_bound = _clean_error_text(message_created_at)
+        if not lower_bound:
+            lower_bound = _clean_error_text(
+                self._fetch_latest_customer_message_created_at_for_trace(
+                    conn,
+                    ticket_id=ticket_id,
+                )
+            )
+        if not lower_bound:
+            return None
+        with conn.cursor() as cur:
+            cur.execute(
+                sql.SQL(
+                    """
+                    SELECT ticket_id, role, content, created_at, sentiment_label, sources, citations, meta
+                    FROM {}
+                    WHERE ticket_id = %s
+                      AND role = 'assistant'
+                      AND btrim(content) <> ''
+                      AND created_at >= %s
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT 1
+                    """
+                ).format(self._table("support_ticket_messages")),
+                (ticket_id, lower_bound),
+            )
+            row = cur.fetchone()
+        return _ticket_message_row_to_payload(row) if row is not None else None
 
     def _fetch_investigations(
         self,
@@ -2045,6 +2265,72 @@ class PostgresTicketRepository:
             cur.execute(query, parameters)
             return cur.fetchall()
 
+    def _fetch_ticket_events_for_trace(
+        self,
+        conn: psycopg.Connection[Any],
+        *,
+        ticket_id: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        with conn.cursor() as cur:
+            cur.execute(
+                sql.SQL(
+                    """
+                    SELECT ticket_id, event_type, payload, created_at
+                    FROM {}
+                    WHERE ticket_id = %s
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT %s
+                    """
+                ).format(self._table("support_ticket_events")),
+                (ticket_id, limit),
+            )
+            rows = cur.fetchall()
+        return [
+            {
+                "ticket_id": str(row[0]) if row[0] is not None else None,
+                "event_type": str(row[1]),
+                "payload": row[2] if isinstance(row[2], dict) else {},
+                "created_at": _to_iso(row[3]),
+            }
+            for row in rows
+        ]
+
+    def _fetch_ticket_agent_events_for_trace(
+        self,
+        conn: psycopg.Connection[Any],
+        *,
+        ticket_id: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        with conn.cursor() as cur:
+            cur.execute(
+                sql.SQL(
+                    """
+                    SELECT ticket_id, message_id, run_id, agent_name, phase, event_type, payload, created_at
+                    FROM {}
+                    WHERE ticket_id = %s
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT %s
+                    """
+                ).format(self._table("support_ticket_agent_events")),
+                (ticket_id, limit),
+            )
+            rows = cur.fetchall()
+        return [
+            {
+                "ticket_id": str(row[0]) if row[0] is not None else None,
+                "message_id": str(row[1]) if row[1] is not None else None,
+                "run_id": str(row[2]),
+                "agent_name": str(row[3]),
+                "phase": str(row[4]),
+                "event_type": str(row[5]),
+                "payload": row[6] if isinstance(row[6], dict) else {},
+                "created_at": _to_iso(row[7]),
+            }
+            for row in rows
+        ]
+
     def _fetch_ticket_map(
         self,
         conn: psycopg.Connection[Any],
@@ -2092,6 +2378,56 @@ class PostgresTicketRepository:
 
     def list_tickets(self, include_messages: bool = True) -> list[dict[str, Any]]:
         return self._fetch_tickets(include_messages=include_messages)
+
+    def get_trace_ticket_snapshot(
+        self,
+        ticket_id: str,
+        *,
+        event_limit: int = 100,
+        message_created_at: str | None = None,
+        include_messages: bool = False,
+        message_limit: int = 0,
+    ) -> dict[str, Any] | None:
+        safe_event_limit = _safe_positive_int(event_limit, 100)
+        safe_message_limit = _safe_non_negative_int(message_limit, 0)
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            rows = self._fetch_ticket_rows(conn, ticket_ids=[ticket_id])
+            row = rows[0] if rows else None
+            if row is None:
+                return None
+            ticket_messages: list[dict[str, Any]]
+            if include_messages:
+                if safe_message_limit > 0:
+                    ticket_messages = self._fetch_recent_messages_for_trace(
+                        conn,
+                        ticket_id=ticket_id,
+                        limit=safe_message_limit,
+                    )
+                else:
+                    ticket_messages = self._fetch_messages(conn, [ticket_id]).get(ticket_id, [])
+            else:
+                ticket_messages = []
+            final_assistant = self._fetch_trace_final_assistant_message(
+                conn,
+                ticket_id=ticket_id,
+                message_created_at=message_created_at,
+            )
+            ticket = self._row_to_ticket(
+                row,
+                ticket_messages,
+            )
+            return _build_trace_ticket_snapshot_payload(
+                ticket=ticket,
+                ticket_events=self._fetch_ticket_events_for_trace(conn, ticket_id=ticket_id, limit=safe_event_limit),
+                agent_events=self._fetch_ticket_agent_events_for_trace(conn, ticket_id=ticket_id, limit=safe_event_limit),
+                message_created_at=message_created_at,
+                include_messages=include_messages,
+                message_limit=safe_message_limit,
+                final_assistant=final_assistant,
+            )
+
+        return self._run_with_connection_retry("get_trace_ticket_snapshot", _operation)
 
     def save_ticket(
         self,
@@ -2294,11 +2630,16 @@ class PostgresTicketRepository:
         self,
         *,
         include_client_messages: bool = True,
+        include_investigation_messages: bool = True,
     ) -> list[dict[str, Any]]:
         def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
             rows = self._fetch_engineer_case_rows(conn)
             case_ids = [str(row[0]) for row in rows]
-            message_map = self._fetch_engineer_case_messages(conn, case_ids)
+            message_map = (
+                self._fetch_engineer_case_messages(conn, case_ids)
+                if include_investigation_messages
+                else {}
+            )
             client_ticket_ids = sorted({str(row[1]) for row in rows})
             client_ticket_map = self._fetch_ticket_map(
                 conn,
@@ -2844,6 +3185,7 @@ def create_ticket_repository() -> TicketRepository:
         os.getenv("TICKET_DB_POOL_MAX_IDLE_SECONDS"),
         300.0,
     )
+    application_name = str(os.getenv("TICKET_DB_APPLICATION_NAME") or "").strip() or None
     return PostgresTicketRepository(
         dsn=dsn,
         schema=schema,
@@ -2856,4 +3198,5 @@ def create_ticket_repository() -> TicketRepository:
         pool_timeout_seconds=pool_timeout_seconds,
         pool_max_lifetime_seconds=pool_max_lifetime_seconds,
         pool_max_idle_seconds=pool_max_idle_seconds,
+        application_name=application_name,
     )

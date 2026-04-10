@@ -3029,6 +3029,31 @@ For each new entry, record:
   - `/tmp/supportportal-knowledge-ingestion-500-venv/bin/python -m py_compile backend/rag_api.py backend/tests/test_rag_api.py`
   - `git diff --check`
 
+## 2026-04-09 - Reduce Ticket DB read amplification for trace and dashboard polling
+
+- Summary:
+  - Added service-level Ticket DB connection identity via `TICKET_DB_APPLICATION_NAME` and tightened single-host compose pool defaults per service.
+  - Reworked `/internal/trace/tickets/{ticket_id}` to return a lightweight single-borrow snapshot with server-computed `final_assistant`.
+  - Lowered trace polling defaults and switched dashboard / engineer list routes to header-only ticket reads.
+- Reason:
+  - Route timing and answer-chain tracing were still distorting live results because trace polling and list endpoints created unnecessary Ticket DB borrow pressure, which amplified remote RDS TLS latency into real `PoolTimeout` bursts.
+- Affected files/config:
+  - `backend/repositories/ticket_repository.py`
+  - `backend/main.py`
+  - `scripts/trace_client_ticket_route.py`
+  - `deployment/docker-compose.single-host.yml`
+  - `backend/tests/test_trace_client_ticket_route_cli.py`
+  - `backend/tests/test_internal_trace_routes.py`
+  - `backend/tests/test_dashboard_ticket_routes.py`
+  - `backend/tests/test_dashboard_metrics_contract.py`
+  - `backend/tests/test_repository_configuration.py`
+  - `backend/tests/test_single_host_compose.py`
+- Data impact:
+  - No schema or vector-table changes.
+  - Internal trace snapshots now default to omitting full ticket message history, and background dashboard/engineer polling no longer fetches ticket messages by default.
+- Verification:
+  - `source /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/activate && python -m unittest backend.tests.test_trace_client_ticket_route_cli backend.tests.test_internal_trace_routes backend.tests.test_dashboard_ticket_routes backend.tests.test_dashboard_metrics_contract backend.tests.test_repository_configuration backend.tests.test_single_host_compose`
+
 ## 2026-04-09 - Speed up FAQ and troubleshooting agentic retrieval paths
 
 - Summary:

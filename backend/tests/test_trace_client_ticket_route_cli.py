@@ -25,6 +25,8 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
         self.assertEqual(args.completion_timeout_seconds, 90.0)
         self.assertEqual(args.direct_probe_timeout_seconds, 30.0)
         self.assertEqual(args.post_answer_artifact_timeout_seconds, 15.0)
+        self.assertEqual(args.poll_interval_seconds, 2.0)
+        self.assertEqual(args.event_limit, 80)
 
     def test_preflight_requires_healthy_service(self) -> None:
         module = _load_script_module()
@@ -395,6 +397,7 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
             snapshot = module.wait_for_trace_artifacts(
                 base_url="http://127.0.0.1:8080",
                 ticket_id="TK-TRACE-TIMEOUT",
+                message_created_at=None,
                 event_limit=20,
                 timeout_seconds=0.2,
                 poll_interval_seconds=0.05,
@@ -466,6 +469,49 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
         self.assertEqual(summary["raw_ids"]["request_id"], "rag-456")
         markdown = module.render_markdown_report(summary)
         self.assertIn("rag_internal_telemetry=missing", markdown)
+
+    def test_build_trace_summary_uses_explicit_final_assistant_when_ticket_messages_are_omitted(self) -> None:
+        module = _load_script_module()
+
+        summary = module.build_trace_summary(
+            ticket={
+                "ticket_id": "TK-TRACE-EXPLICIT",
+                "customer_id": "C-TRACE-EXPLICIT",
+                "product": "audio_video_calling",
+                "client_agent_runtime_state": {
+                    "active_run_id": "run-explicit",
+                    "workflow_action": "answer_customer",
+                    "status": "completed",
+                },
+                "messages": [],
+            },
+            request_context={
+                "ticket_id": "TK-TRACE-EXPLICIT",
+                "customer_id": "C-TRACE-EXPLICIT",
+                "product": "audio_video_calling",
+                "message": "how to join channel",
+                "message_created_at": "2026-04-04T00:00:01+00:00",
+                "question_started_at": "2026-04-04T00:00:00+00:00",
+                "ack_received_at": "2026-04-04T00:00:00.300000+00:00",
+            },
+            ack_payload={"ack_text": "Got it", "latency_ms": 300.0},
+            query_payload={"processing_mode": "main_agent_async", "queued_for_ai": True},
+            ticket_events=[],
+            agent_events=[],
+            rag_run=None,
+            final_assistant={
+                "role": "assistant",
+                "content": "Use joinChannel with a valid token.",
+                "created_at": "2026-04-04T00:00:04+00:00",
+                "answer_route": "rag",
+                "route_reason": "grounded_answer",
+                "workflow_action": "answer_customer",
+            },
+        )
+
+        self.assertEqual(summary["final_result"]["answer_route"], "rag")
+        self.assertEqual(summary["final_result"]["route_reason"], "grounded_answer")
+        self.assertIn("joinChannel", summary["final_result"]["answer"])
 
     def test_build_trace_summary_flags_incomplete_post_answer_artifacts_when_response_ready_is_missing(self) -> None:
         module = _load_script_module()

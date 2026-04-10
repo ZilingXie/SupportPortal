@@ -2466,22 +2466,20 @@ def list_client_tickets(
 def get_internal_trace_ticket_snapshot(
     ticket_id: str,
     event_limit: int = Query(default=100, ge=1, le=500),
+    message_created_at: str | None = Query(default=None),
+    include_messages: bool = Query(default=False),
+    message_limit: int = Query(default=0, ge=0, le=200),
 ) -> dict[str, Any]:
-    ticket = ticket_repository.get_ticket(ticket_id)
-    if ticket is None:
-        raise HTTPException(status_code=404, detail="Ticket not found")
-    runtime_state = (
-        copy.deepcopy(ticket.get("client_agent_runtime_state"))
-        if isinstance(ticket.get("client_agent_runtime_state"), dict)
-        else {}
+    snapshot = ticket_repository.get_trace_ticket_snapshot(
+        ticket_id,
+        event_limit=event_limit,
+        message_created_at=str(message_created_at or "").strip() or None,
+        include_messages=bool(include_messages),
+        message_limit=message_limit,
     )
-    return {
-        "ticket": ticket,
-        "runtime_state": runtime_state,
-        "final_assistant": _latest_assistant_message_for_ticket(ticket),
-        "ticket_events": ticket_repository.list_ticket_events(ticket_id, limit=event_limit),
-        "agent_events": ticket_repository.list_ticket_agent_events(ticket_id, limit=event_limit),
-    }
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    return snapshot
 
 
 @app.get("/api/dashboard/tickets")
@@ -2492,7 +2490,7 @@ def list_dashboard_tickets(
     ),
 ) -> dict[str, Any]:
     normalized_filter = normalize_ticket_status(status)
-    all_tickets = ticket_repository.list_tickets(include_messages=True)
+    all_tickets = ticket_repository.list_tickets(include_messages=False)
     filtered_tickets: list[dict[str, Any]] = []
     for ticket in all_tickets:
         if normalize_ticket_status(ticket.get("status")) != normalized_filter:
@@ -2537,7 +2535,10 @@ def get_dashboard_ticket_summary(ticket_id: str) -> dict[str, Any]:
 def list_tickets(
     status: str = Query(default="open", pattern="^(open|all|resolved|communicating|escalated|investigating)$"),
 ) -> dict[str, Any]:
-    all_cases = ticket_repository.list_engineer_cases(include_client_messages=True)
+    all_cases = ticket_repository.list_engineer_cases(
+        include_client_messages=False,
+        include_investigation_messages=False,
+    )
     filtered_cases: list[dict[str, Any]] = []
     for engineer_case in all_cases:
         if ticket_matches_status_filter(engineer_case, status):
@@ -3032,7 +3033,7 @@ async def confirm_investigation_reply(
 
 @app.get("/api/dashboard/metrics")
 def dashboard_metrics() -> dict[str, Any]:
-    tickets = ticket_repository.list_tickets(include_messages=True)
+    tickets = ticket_repository.list_tickets(include_messages=False)
     recent_event_rows = ticket_repository.list_events(limit=240)
     recent_events = normalize_ticket_dashboard_events(recent_event_rows)
     return build_ticket_dashboard_metrics(tickets, recent_events)
