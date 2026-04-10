@@ -23,6 +23,7 @@ from backend.services.rag_qa import (
     _build_agentic_retrieval_plan,
     _execute_agentic_round,
     _generation_chunk_limit_for_agentic_query,
+    _inject_generic_join_original_candidates,
     _inject_generic_join_recovery_candidates,
     _is_join_channel_step_chunk,
     _is_token_auth_chunk,
@@ -559,7 +560,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(result.trace.generation_mode, "api_semantics_deterministic")
         self.assertIn("omit `uid`", result.answer.answer)
 
-    def test_build_agentic_retrieval_plan_uses_vector_first_pass_for_short_how_to_faq(self) -> None:
+    def test_build_agentic_retrieval_plan_uses_lexical_light_path_for_short_how_to_faq(self) -> None:
         with patch.dict(os.environ, {"RAG_SHADOW_RETRIEVAL_ENABLED": "true"}, clear=False):
             plan = _build_agentic_retrieval_plan(
                 message="how to join channel",
@@ -569,8 +570,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
 
         self.assertEqual(plan.query_class, "how_to_faq")
-        self.assertEqual(plan.first_pass_tools, ["p_vec", "s_vec"])
+        self.assertEqual(plan.first_pass_tools, ["p_bm25", "p_fts"])
         self.assertEqual(plan.query_variants, [("original", "how to join channel")])
+        self.assertTrue(plan.light_path)
 
     def test_tool_order_for_query_class_skips_shadow_tools_when_disabled(self) -> None:
         with patch.dict(os.environ, {"RAG_SHADOW_RETRIEVAL_ENABLED": "false"}, clear=False):
@@ -590,8 +592,661 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
 
         self.assertEqual(plan.query_class, "how_to_faq")
-        self.assertEqual(plan.first_pass_tools, ["p_vec"])
+        self.assertEqual(plan.first_pass_tools, ["p_bm25", "p_fts"])
         self.assertEqual(plan.query_variants, [("original", "how to join channel")])
+        self.assertTrue(plan.light_path)
+
+    def test_execute_agentic_round_short_circuits_zero_yield_troubleshooting_expansions(self) -> None:
+        plan = AgenticRetrievalPlan(
+            query_class="troubleshooting_why",
+            first_pass_tools=["p_vec", "p_bm25", "p_fts"],
+            query_variants=[
+                ("original", "black screen"),
+                ("semantic", "ios black screen"),
+                ("rewrite", "remote video black"),
+                ("context", "app black screen after join"),
+            ],
+            decomposition_targets=[],
+            evidence_goal="causal_grounding",
+            recovery_bias="semantic",
+            ticket_context_used=True,
+            exact_terms=["black", "screen"],
+            light_path=False,
+            product="audio_video_calling",
+        )
+        retrieval_plan = RetrievalPlan(semantic_query="black screen")
+        vec_chunk = RetrievedChunk(
+            chunk_id="vec-black",
+            text="Black screen can happen when remote video is not decoded.",
+            source_path="official/black-screen.md",
+            similarity=0.91,
+        )
+        bm25_chunk = RetrievedChunk(
+            chunk_id="bm25-black",
+            text="Check whether remote video is published and subscribed correctly.",
+            source_path="official/troubleshooting.md",
+            similarity=0.72,
+            index_role="primary",
+        )
+
+        def _vector_side_effect(query_text: str, *_args, **_kwargs):
+            if query_text == "black screen":
+                return [vec_chunk]
+            if query_text in {"ios black screen", "remote video black"}:
+                return []
+            raise AssertionError(f"vector retrieval should have short-circuited before query={query_text!r}")
+
+        def _bm25_side_effect(query_text: str, *_args, **_kwargs):
+            if query_text == "black screen":
+                return [bm25_chunk]
+            if query_text in {"ios black screen", "remote video black"}:
+                return []
+            raise AssertionError(f"bm25 retrieval should have short-circuited before query={query_text!r}")
+
+        def _fts_side_effect(query_text: str, *_args, **_kwargs):
+            if query_text == "black screen":
+                return []
+            raise AssertionError(f"fts retrieval should have short-circuited before query={query_text!r}")
+
+        with patch.object(rag_qa, "_metadata_rerank", return_value=([vec_chunk, bm25_chunk], {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None})), patch.object(
+            rag_qa,
+            "_rerank_chunks",
+            return_value=[vec_chunk, bm25_chunk],
+        ), patch.object(
+            rag_qa,
+            "_retrieve_chunks",
+            side_effect=_vector_side_effect,
+        ), patch.object(
+            rag_qa,
+            "_retrieve_bm25_chunks",
+            side_effect=_bm25_side_effect,
+        ), patch.object(
+            rag_qa,
+            "_retrieve_fts_chunks",
+            side_effect=_fts_side_effect,
+        ):
+            round_result = _execute_agentic_round(
+                message="I got black screen, what should I do?",
+                config=self._base_config(),
+                plan=plan,
+                round_index=1,
+                retrieval_plan=retrieval_plan,
+                query_understanding=None,
+                ticket_context=[{"role": "customer", "content": "I got black screen, what should I do?"}],
+            )
+
+        timings = [
+            (str(item.get("tool_name")), str(item.get("query_kind")))
+            for item in round_result.retrieval_tool_timings
+            if isinstance(item, dict)
+        ]
+        self.assertIn(("p_vec", "original"), timings)
+        self.assertIn(("p_vec", "semantic"), timings)
+        self.assertIn(("p_vec", "rewrite"), timings)
+        self.assertNotIn(("p_vec", "context"), timings)
+        self.assertIn(("p_bm25", "original"), timings)
+        self.assertIn(("p_bm25", "semantic"), timings)
+        self.assertIn(("p_bm25", "rewrite"), timings)
+        self.assertNotIn(("p_bm25", "context"), timings)
+        self.assertIn(("p_fts", "original"), timings)
+        self.assertNotIn(("p_fts", "semantic"), timings)
+        self.assertNotIn(("p_fts", "rewrite"), timings)
+        self.assertNotIn(("p_fts", "context"), timings)
+
+    def test_execute_agentic_round_escalates_when_troubleshooting_expansions_are_all_zero_yield(self) -> None:
+        plan = AgenticRetrievalPlan(
+            query_class="troubleshooting_why",
+            first_pass_tools=["p_vec", "p_bm25", "p_fts"],
+            query_variants=[
+                ("original", "black screen"),
+                ("semantic", "ios black screen"),
+                ("rewrite", "remote video black"),
+                ("context", "app black screen after join"),
+            ],
+            decomposition_targets=[],
+            evidence_goal="causal_grounding",
+            recovery_bias="semantic",
+            ticket_context_used=True,
+            exact_terms=["black", "screen"],
+            light_path=False,
+            product="audio_video_calling",
+        )
+        retrieval_plan = RetrievalPlan(semantic_query="black screen")
+        weak_chunk = RetrievedChunk(
+            chunk_id="weak-black",
+            text="Remote video can appear black if decode or subscribe state is incorrect.",
+            source_path="official/black-screen.md",
+            similarity=0.28,
+            index_role="primary",
+        )
+
+        def _vector_side_effect(query_text: str, *_args, **_kwargs):
+            if query_text == "black screen":
+                return [weak_chunk]
+            if query_text in {"ios black screen", "remote video black"}:
+                return []
+            raise AssertionError(f"vector retrieval should have short-circuited before query={query_text!r}")
+
+        def _bm25_side_effect(query_text: str, *_args, **_kwargs):
+            if query_text == "black screen":
+                return [weak_chunk]
+            if query_text in {"ios black screen", "remote video black"}:
+                return []
+            raise AssertionError(f"bm25 retrieval should have short-circuited before query={query_text!r}")
+
+        def _fts_side_effect(query_text: str, *_args, **_kwargs):
+            if query_text == "black screen":
+                return []
+            raise AssertionError(f"fts retrieval should have short-circuited before query={query_text!r}")
+
+        with patch.object(
+            rag_qa,
+            "_metadata_rerank",
+            return_value=([weak_chunk], {"post_rerank_count": 1, "hints": {}, "applied_filter": False, "filter_type": None}),
+        ), patch.object(
+            rag_qa,
+            "_rerank_chunks",
+            return_value=[weak_chunk],
+        ), patch.object(
+            rag_qa,
+            "_retrieve_chunks",
+            side_effect=_vector_side_effect,
+        ), patch.object(
+            rag_qa,
+            "_retrieve_bm25_chunks",
+            side_effect=_bm25_side_effect,
+        ), patch.object(
+            rag_qa,
+            "_retrieve_fts_chunks",
+            side_effect=_fts_side_effect,
+        ):
+            round_result = _execute_agentic_round(
+                message="I got black screen, what should I do?",
+                config=self._base_config(),
+                plan=plan,
+                round_index=1,
+                retrieval_plan=retrieval_plan,
+                query_understanding=None,
+                ticket_context=[{"role": "customer", "content": "I got black screen, what should I do?"}],
+            )
+
+        self.assertEqual(round_result.judge.decision, "escalate")
+        self.assertEqual(round_result.judge.reason, "weak_top1_support")
+
+    def test_execute_agentic_round_skips_troubleshooting_expansions_when_original_support_is_weak(self) -> None:
+        plan = AgenticRetrievalPlan(
+            query_class="troubleshooting_why",
+            first_pass_tools=["p_vec", "p_bm25", "p_fts"],
+            query_variants=[
+                ("original", "black screen"),
+                ("semantic", "ios black screen"),
+                ("rewrite", "remote video black"),
+                ("context", "app black screen after join"),
+            ],
+            decomposition_targets=[],
+            evidence_goal="causal_grounding",
+            recovery_bias="semantic",
+            ticket_context_used=True,
+            exact_terms=["black", "screen"],
+            light_path=False,
+            product="audio_video_calling",
+        )
+        retrieval_plan = RetrievalPlan(semantic_query="black screen")
+        weak_vec_chunk = RetrievedChunk(
+            chunk_id="weak-vec",
+            text="Remote video can look black when rendering is not ready.",
+            source_path="official/black-screen-vector.md",
+            similarity=0.28,
+            index_role="primary",
+        )
+        weak_bm25_chunk = RetrievedChunk(
+            chunk_id="weak-bm25",
+            text="Black screen can happen after join in some cases.",
+            source_path="official/black-screen-bm25.md",
+            similarity=0.27,
+            index_role="primary",
+        )
+
+        def _vector_side_effect(query_text: str, *_args, **_kwargs):
+            if query_text == "black screen":
+                return [weak_vec_chunk]
+            raise AssertionError(f"vector expansions should not run for weak original support: {query_text!r}")
+
+        def _bm25_side_effect(query_text: str, *_args, **_kwargs):
+            if query_text == "black screen":
+                return [weak_bm25_chunk]
+            raise AssertionError(f"bm25 expansions should not run for weak original support: {query_text!r}")
+
+        def _fts_side_effect(query_text: str, *_args, **_kwargs):
+            if query_text == "black screen":
+                return []
+            raise AssertionError(f"fts expansions should not run for weak original support: {query_text!r}")
+
+        with patch.object(
+            rag_qa,
+            "_metadata_rerank",
+            return_value=([weak_vec_chunk, weak_bm25_chunk], {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None}),
+        ), patch.object(
+            rag_qa,
+            "_rerank_chunks",
+            return_value=[weak_vec_chunk, weak_bm25_chunk],
+        ), patch.object(
+            rag_qa,
+            "_retrieve_chunks",
+            side_effect=_vector_side_effect,
+        ), patch.object(
+            rag_qa,
+            "_retrieve_bm25_chunks",
+            side_effect=_bm25_side_effect,
+        ), patch.object(
+            rag_qa,
+            "_retrieve_fts_chunks",
+            side_effect=_fts_side_effect,
+        ):
+            round_result = _execute_agentic_round(
+                message="I got black screen, what should I do?",
+                config=self._base_config(),
+                plan=plan,
+                round_index=1,
+                retrieval_plan=retrieval_plan,
+                query_understanding=None,
+                ticket_context=[{"role": "customer", "content": "I got black screen, what should I do?"}],
+            )
+
+        timings = [
+            (str(item.get("tool_name")), str(item.get("query_kind")))
+            for item in round_result.retrieval_tool_timings
+            if isinstance(item, dict)
+        ]
+        self.assertEqual(
+            timings,
+            [
+                ("p_bm25", "original"),
+                ("p_fts", "original"),
+            ],
+        )
+        self.assertEqual(round_result.judge.decision, "escalate")
+        self.assertEqual(round_result.judge.reason, "weak_top1_support")
+
+    def test_execute_agentic_round_skips_troubleshooting_expansions_when_original_support_is_not_near_hit(self) -> None:
+        plan = AgenticRetrievalPlan(
+            query_class="troubleshooting_why",
+            first_pass_tools=["p_vec", "p_bm25", "p_fts"],
+            query_variants=[
+                ("original", "black screen"),
+                ("semantic", "ios black screen"),
+                ("rewrite", "remote video black"),
+                ("context", "app black screen after join"),
+            ],
+            decomposition_targets=[],
+            evidence_goal="causal_grounding",
+            recovery_bias="semantic",
+            ticket_context_used=True,
+            exact_terms=["black", "screen"],
+            light_path=False,
+            product="audio_video_calling",
+        )
+        retrieval_plan = RetrievalPlan(semantic_query="black screen")
+        vec_chunk = RetrievedChunk(
+            chunk_id="near-hit-vec",
+            text="Remote video can look black when rendering state is not ready.",
+            source_path="official/black-screen-vector.md",
+            similarity=0.41,
+            index_role="primary",
+        )
+        bm25_chunk = RetrievedChunk(
+            chunk_id="near-hit-bm25",
+            text="A black screen may happen after join when rendering has not initialized.",
+            source_path="official/black-screen-bm25.md",
+            similarity=0.39,
+            index_role="primary",
+        )
+
+        def _vector_side_effect(query_text: str, *_args, **_kwargs):
+            if query_text == "black screen":
+                return [vec_chunk]
+            raise AssertionError(f"vector expansions should not run for non-near-hit original support: {query_text!r}")
+
+        def _bm25_side_effect(query_text: str, *_args, **_kwargs):
+            if query_text == "black screen":
+                return [bm25_chunk]
+            raise AssertionError(f"bm25 expansions should not run for non-near-hit original support: {query_text!r}")
+
+        def _fts_side_effect(query_text: str, *_args, **_kwargs):
+            if query_text == "black screen":
+                return []
+            raise AssertionError(f"fts expansions should not run for non-near-hit original support: {query_text!r}")
+
+        with patch.object(
+            rag_qa,
+            "_metadata_rerank",
+            return_value=([vec_chunk, bm25_chunk], {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None}),
+        ), patch.object(
+            rag_qa,
+            "_rerank_chunks",
+            return_value=[vec_chunk, bm25_chunk],
+        ), patch.object(
+            rag_qa,
+            "_retrieve_chunks",
+            side_effect=_vector_side_effect,
+        ), patch.object(
+            rag_qa,
+            "_retrieve_bm25_chunks",
+            side_effect=_bm25_side_effect,
+        ), patch.object(
+            rag_qa,
+            "_retrieve_fts_chunks",
+            side_effect=_fts_side_effect,
+        ):
+            round_result = _execute_agentic_round(
+                message="I got black screen, what should I do?",
+                config=self._base_config(),
+                plan=plan,
+                round_index=1,
+                retrieval_plan=retrieval_plan,
+                query_understanding=None,
+                ticket_context=[{"role": "customer", "content": "I got black screen, what should I do?"}],
+            )
+
+        timings = [
+            (str(item.get("tool_name")), str(item.get("query_kind")))
+            for item in round_result.retrieval_tool_timings
+            if isinstance(item, dict)
+        ]
+        self.assertEqual(
+            timings,
+            [
+                ("p_bm25", "original"),
+                ("p_fts", "original"),
+            ],
+        )
+        self.assertEqual(round_result.judge.decision, "escalate")
+        self.assertEqual(round_result.judge.reason, "weak_top1_support")
+
+    def test_execute_agentic_round_skips_troubleshooting_expansions_without_lexical_support_after_original(self) -> None:
+        plan = AgenticRetrievalPlan(
+            query_class="troubleshooting_why",
+            first_pass_tools=["p_vec", "p_bm25", "p_fts"],
+            query_variants=[
+                ("original", "black screen"),
+                ("semantic", "ios black screen"),
+                ("rewrite", "remote video black"),
+                ("context", "app black screen after join"),
+            ],
+            decomposition_targets=[],
+            evidence_goal="causal_grounding",
+            recovery_bias="semantic",
+            ticket_context_used=True,
+            exact_terms=["black", "screen"],
+            light_path=False,
+            product="audio_video_calling",
+        )
+        retrieval_plan = RetrievalPlan(semantic_query="black screen")
+        vec_chunk = RetrievedChunk(
+            chunk_id="vec-black",
+            text="Remote video can appear black when render or decode is blocked.",
+            source_path="official/black-screen-vector.md",
+            similarity=0.91,
+            index_role="primary",
+            retrieval_sources=["p_vec"],
+        )
+        vec_semantic_chunk = RetrievedChunk(
+            chunk_id="vec-black-semantic",
+            text="Check whether remote rendering is blocked by subscription or decoder state.",
+            source_path="official/black-screen-vector-semantic.md",
+            similarity=0.88,
+            index_role="primary",
+            retrieval_sources=["p_vec"],
+        )
+
+        def _vector_side_effect(query_text: str, *_args, **_kwargs):
+            if query_text == "black screen":
+                return [vec_chunk]
+            if query_text == "ios black screen":
+                return [vec_semantic_chunk]
+            if query_text == "remote video black":
+                return []
+            raise AssertionError(f"vector context expansion should not run in troubleshooting round 1: {query_text!r}")
+
+        def _bm25_side_effect(query_text: str, *_args, **_kwargs):
+            if query_text == "black screen":
+                return []
+            raise AssertionError(f"bm25 expansions should not run without original bm25 support: {query_text!r}")
+
+        def _fts_side_effect(query_text: str, *_args, **_kwargs):
+            if query_text == "black screen":
+                return []
+            raise AssertionError(f"fts expansions should not run beyond original in troubleshooting round 1: {query_text!r}")
+
+        with patch.object(
+            rag_qa,
+            "_metadata_rerank",
+            return_value=([vec_chunk, vec_semantic_chunk], {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None}),
+        ), patch.object(
+            rag_qa,
+            "_rerank_chunks",
+            return_value=[vec_chunk, vec_semantic_chunk],
+        ), patch.object(
+            rag_qa,
+            "_retrieve_chunks",
+            side_effect=_vector_side_effect,
+        ), patch.object(
+            rag_qa,
+            "_retrieve_bm25_chunks",
+            side_effect=_bm25_side_effect,
+        ), patch.object(
+            rag_qa,
+            "_retrieve_fts_chunks",
+            side_effect=_fts_side_effect,
+        ):
+            round_result = _execute_agentic_round(
+                message="I got black screen, what should I do?",
+                config=self._base_config(),
+                plan=plan,
+                round_index=1,
+                retrieval_plan=retrieval_plan,
+                query_understanding=None,
+                ticket_context=[{"role": "customer", "content": "I got black screen, what should I do?"}],
+            )
+
+        timings = [
+            (str(item.get("tool_name")), str(item.get("query_kind")))
+            for item in round_result.retrieval_tool_timings
+            if isinstance(item, dict)
+        ]
+        self.assertEqual(
+            timings,
+            [
+                ("p_bm25", "original"),
+                ("p_fts", "original"),
+            ],
+        )
+
+    def test_execute_agentic_round_escalates_when_supported_troubleshooting_expansions_add_no_new_hits(self) -> None:
+        plan = AgenticRetrievalPlan(
+            query_class="troubleshooting_why",
+            first_pass_tools=["p_vec", "p_bm25", "p_fts"],
+            query_variants=[
+                ("original", "black screen"),
+                ("semantic", "ios black screen"),
+                ("rewrite", "remote video black"),
+                ("context", "app black screen after join"),
+            ],
+            decomposition_targets=[],
+            evidence_goal="causal_grounding",
+            recovery_bias="semantic",
+            ticket_context_used=True,
+            exact_terms=["black", "screen"],
+            light_path=False,
+            product="audio_video_calling",
+        )
+        retrieval_plan = RetrievalPlan(semantic_query="black screen")
+        vec_chunk = RetrievedChunk(
+            chunk_id="vec-black",
+            text="Remote video can appear black when render or decode is blocked.",
+            source_path="official/black-screen-vector.md",
+            similarity=0.31,
+            index_role="primary",
+        )
+        bm25_chunk = RetrievedChunk(
+            chunk_id="bm25-black",
+            text="Check publish and subscribe state for black screen troubleshooting.",
+            source_path="official/black-screen-bm25.md",
+            similarity=0.30,
+            index_role="primary",
+        )
+
+        def _vector_side_effect(query_text: str, *_args, **_kwargs):
+            if query_text == "black screen":
+                return [vec_chunk]
+            if query_text in {"ios black screen", "remote video black"}:
+                return []
+            raise AssertionError(f"unexpected vector troubleshooting query: {query_text!r}")
+
+        def _bm25_side_effect(query_text: str, *_args, **_kwargs):
+            if query_text == "black screen":
+                return [bm25_chunk]
+            if query_text in {"ios black screen", "remote video black"}:
+                return []
+            raise AssertionError(f"unexpected bm25 troubleshooting query: {query_text!r}")
+
+        def _fts_side_effect(query_text: str, *_args, **_kwargs):
+            if query_text == "black screen":
+                return []
+            raise AssertionError(f"fts expansions should not run beyond original in troubleshooting round 1: {query_text!r}")
+
+        with patch.object(
+            rag_qa,
+            "_metadata_rerank",
+            return_value=([vec_chunk, bm25_chunk], {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None}),
+        ), patch.object(
+            rag_qa,
+            "_rerank_chunks",
+            return_value=[vec_chunk, bm25_chunk],
+        ), patch.object(
+            rag_qa,
+            "_retrieve_chunks",
+            side_effect=_vector_side_effect,
+        ), patch.object(
+            rag_qa,
+            "_retrieve_bm25_chunks",
+            side_effect=_bm25_side_effect,
+        ), patch.object(
+            rag_qa,
+            "_retrieve_fts_chunks",
+            side_effect=_fts_side_effect,
+        ):
+            round_result = _execute_agentic_round(
+                message="I got black screen, what should I do?",
+                config=self._base_config(),
+                plan=plan,
+                round_index=1,
+                retrieval_plan=retrieval_plan,
+                query_understanding=None,
+                ticket_context=[{"role": "customer", "content": "I got black screen, what should I do?"}],
+            )
+
+        self.assertEqual(round_result.judge.decision, "escalate")
+        self.assertEqual(round_result.judge.reason, "weak_top1_support")
+
+    def test_execute_agentic_round_skips_troubleshooting_expansions_when_original_support_is_release_note_dominated(self) -> None:
+        plan = AgenticRetrievalPlan(
+            query_class="troubleshooting_why",
+            first_pass_tools=["p_vec", "p_bm25", "p_fts"],
+            query_variants=[
+                ("original", "black screen"),
+                ("semantic", "ios black screen"),
+                ("rewrite", "remote video black"),
+                ("context", "app black screen after join"),
+            ],
+            decomposition_targets=[],
+            evidence_goal="causal_grounding",
+            recovery_bias="semantic",
+            ticket_context_used=True,
+            exact_terms=["black", "screen"],
+            light_path=False,
+            product="audio_video_calling",
+        )
+        retrieval_plan = RetrievalPlan(semantic_query="black screen")
+        release_vec_chunk = RetrievedChunk(
+            chunk_id="release-vec",
+            text="Release notes: fixed an issue where a remote user could occasionally see a black screen.",
+            source_path="official/video-calling_release-notes_android.md",
+            similarity=0.91,
+            index_role="primary",
+            retrieval_sources=["p_vec"],
+            metadata={"product": "video-calling", "source_family": "video-calling/release-notes"},
+        )
+        release_bm25_chunk = RetrievedChunk(
+            chunk_id="release-bm25",
+            text="Issues fixed: resolved black screen after join in some scenarios.",
+            source_path="official/voice-calling_release-notes_ios.md",
+            similarity=0.89,
+            index_role="primary",
+            retrieval_sources=["p_bm25"],
+            metadata={"product": "voice-calling", "source_family": "voice-calling/release-notes"},
+        )
+
+        def _vector_side_effect(query_text: str, *_args, **_kwargs):
+            if query_text == "black screen":
+                return [release_vec_chunk]
+            raise AssertionError(f"vector expansions should not run for release-note dominated support: {query_text!r}")
+
+        def _bm25_side_effect(query_text: str, *_args, **_kwargs):
+            if query_text == "black screen":
+                return [release_bm25_chunk]
+            raise AssertionError(f"bm25 expansions should not run for release-note dominated support: {query_text!r}")
+
+        def _fts_side_effect(query_text: str, *_args, **_kwargs):
+            if query_text == "black screen":
+                return []
+            raise AssertionError(f"fts expansions should not run beyond original for release-note dominated support: {query_text!r}")
+
+        with patch.object(
+            rag_qa,
+            "_metadata_rerank",
+            return_value=([release_vec_chunk, release_bm25_chunk], {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None}),
+        ), patch.object(
+            rag_qa,
+            "_rerank_chunks",
+            return_value=[release_vec_chunk, release_bm25_chunk],
+        ), patch.object(
+            rag_qa,
+            "_retrieve_chunks",
+            side_effect=_vector_side_effect,
+        ), patch.object(
+            rag_qa,
+            "_retrieve_bm25_chunks",
+            side_effect=_bm25_side_effect,
+        ), patch.object(
+            rag_qa,
+            "_retrieve_fts_chunks",
+            side_effect=_fts_side_effect,
+        ):
+            round_result = _execute_agentic_round(
+                message="I got black screen, what should I do?",
+                config=self._base_config(),
+                plan=plan,
+                round_index=1,
+                retrieval_plan=retrieval_plan,
+                query_understanding=None,
+                ticket_context=[{"role": "customer", "content": "I got black screen, what should I do?"}],
+            )
+
+        timings = [
+            (str(item.get("tool_name")), str(item.get("query_kind")))
+            for item in round_result.retrieval_tool_timings
+            if isinstance(item, dict)
+        ]
+        self.assertEqual(
+            timings,
+            [
+                ("p_bm25", "original"),
+                ("p_fts", "original"),
+            ],
+        )
+        self.assertEqual(round_result.judge.decision, "escalate")
+        self.assertEqual(round_result.judge.reason, "weak_top1_support")
 
     def test_build_agentic_retrieval_plan_keeps_lean_first_pass_for_exact_error_lookup(self) -> None:
         plan = _build_agentic_retrieval_plan(
@@ -667,8 +1322,11 @@ The documentation states that time: 0 means the rule is applied permanently. How
         )
 
         self.assertNotIn(("original", "how to join channel"), variants)
-        self.assertIn(("exact_token", "join channel"), variants)
-        self.assertIn(("focused_join_step", "join a channel joinChannel channelName uid options"), variants)
+        self.assertNotIn(("exact_token", "join channel"), variants)
+        self.assertIn(
+            ("focused_join_step", "join a channel joinChannel channelName uid token appid quickstart get started"),
+            variants,
+        )
         self.assertIn(
             ("focused_rewrite", "join channel joinChannel token channel name uid basic authentication"),
             variants,
@@ -1279,7 +1937,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             normalized = " ".join(str(query or "").split()).strip().lower()
             if normalized == "join channel":
                 return [join_chunk]
-            if "joinchannel channelname uid options" in normalized:
+            if "joinchannel channelname uid token appid quickstart get started" in normalized:
                 return [join_chunk]
             return [auth_chunk]
 
@@ -1328,16 +1986,18 @@ The documentation states that time: 0 means the rule is applied permanently. How
             bm25_calls,
             [
                 ("join channel", 12),
-                ("join a channel joinChannel channelName uid options", 8),
-                ("join channel joinChannel token channel name uid basic authentication", 8),
             ],
         )
-        cached_exact_token_timing = next(
-            timing
-            for timing in round_two.retrieval_tool_timings
-            if timing.get("tool_name") == "p_bm25" and timing.get("query_kind") == "exact_token"
+        self.assertEqual([chunk.chunk_id for chunk in round_one.final_chunks[:2]], ["join-android", "auth-android"])
+        self.assertEqual(round_two.final_chunks, [])
+        self.assertEqual(round_two.retrieval_tool_timings, [])
+        self.assertFalse(
+            any(
+                timing.get("tool_name") == "p_bm25" and timing.get("query_kind") in {"exact_token", "focused_rewrite"}
+                for timing in round_two.retrieval_tool_timings
+                if isinstance(timing, dict)
+            )
         )
-        self.assertTrue(cached_exact_token_timing.get("used_cached_tool"))
 
     def test_inject_generic_join_recovery_candidates_prefers_coherent_video_calling_pair(self) -> None:
         auth_android = RetrievedChunk(
@@ -1367,7 +2027,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             candidate_trace={
                 "tool_name": "p_bm25",
                 "query_kind": "focused_join_step",
-                "query_variants": [{"kind": "focused_join_step", "query": "join a channel joinChannel channelName uid options"}],
+                "query_variants": [{"kind": "focused_join_step", "query": "join a channel joinChannel channelName uid token appid quickstart get started"}],
                 "raw_score": 21.26,
                 "bm25_score": 21.26,
                 "index_role": "primary",
@@ -1384,7 +2044,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             candidate_trace={
                 "tool_name": "p_bm25",
                 "query_kind": "focused_join_step",
-                "query_variants": [{"kind": "focused_join_step", "query": "join a channel joinChannel channelName uid options"}],
+                "query_variants": [{"kind": "focused_join_step", "query": "join a channel joinChannel channelName uid token appid quickstart get started"}],
                 "raw_score": 24.5,
                 "bm25_score": 24.5,
                 "index_role": "primary",
@@ -1396,9 +2056,128 @@ The documentation states that time: 0 means the rule is applied permanently. How
             tool_results={"p_bm25": [auth_android, join_macos_voice, join_android], "p_fts": [], "p_keyword": []},
             product="audio_video_calling",
             limit=3,
+            query="how to join channel",
         )
 
         self.assertEqual([chunk.chunk_id for chunk in rescued[:2]], ["join-android-video", "auth-android-video"])
+
+    def test_inject_generic_join_original_candidates_prefers_role_agnostic_join_step(self) -> None:
+        auth_android = RetrievedChunk(
+            chunk_id="auth-android-video",
+            text="Use a token to join a channel on Android.",
+            source_path="official/authentication-workflow_android.md",
+            similarity=0.95,
+            index_role="primary",
+            retrieval_sources=["p_bm25"],
+            candidate_trace={
+                "tool_name": "p_bm25",
+                "query_kind": "original",
+                "query_variants": [{"kind": "original", "query": "how to join channel"}],
+                "raw_score": 24.1,
+                "bm25_score": 24.1,
+                "index_role": "primary",
+            },
+            metadata={"product": "video-calling", "platform": "android", "use_case": "basic_authentication"},
+        )
+        join_broadcast_ios = RetrievedChunk(
+            chunk_id="join-broadcast-ios",
+            text="Set options.clientRoleType = .broadcaster and call joinChannel(byToken: token, channelId: channelName).",
+            source_path="official/get-started-sdk_ios.md",
+            similarity=0.99,
+            index_role="primary",
+            retrieval_sources=["p_bm25"],
+            candidate_trace={
+                "tool_name": "p_bm25",
+                "query_kind": "original",
+                "query_variants": [{"kind": "original", "query": "how to join channel"}],
+                "raw_score": 26.0,
+                "bm25_score": 26.0,
+                "index_role": "primary",
+            },
+            metadata={"product": "video-calling", "platform": "ios"},
+            h1="Quickstart",
+            h2="Implement Video Calling",
+            h3="Join a channel",
+        )
+        join_react_video = RetrievedChunk(
+            chunk_id="join-react-video",
+            text="To join a channel, use the useJoin hook with appid, channel, and token.",
+            source_path="official/get-started-sdk_react-js.md",
+            similarity=0.92,
+            index_role="primary",
+            retrieval_sources=["p_bm25"],
+            candidate_trace={
+                "tool_name": "p_bm25",
+                "query_kind": "original",
+                "query_variants": [{"kind": "original", "query": "how to join channel"}],
+                "raw_score": 21.4,
+                "bm25_score": 21.4,
+                "index_role": "primary",
+            },
+            metadata={"product": "video-calling", "platform": "react-js"},
+            h1="Quickstart",
+            h2="Join a channel",
+            h3="React",
+        )
+
+        rescued = _inject_generic_join_original_candidates(
+            [join_broadcast_ios],
+            tool_results={"p_bm25": [join_broadcast_ios, auth_android, join_react_video], "p_fts": [], "p_keyword": []},
+            product="audio_video_calling",
+            limit=3,
+            query="how to join channel",
+        )
+
+        self.assertEqual([chunk.chunk_id for chunk in rescued[:2]], ["join-react-video", "auth-android-video"])
+
+    def test_inject_generic_join_recovery_candidates_does_not_pair_auth_with_role_specific_join_for_generic_query(self) -> None:
+        auth_android = RetrievedChunk(
+            chunk_id="auth-android-video",
+            text="Use a token to join a channel on Android.",
+            source_path="official/authentication-workflow_android.md",
+            similarity=1.0,
+            index_role="primary",
+            retrieval_sources=["p_bm25"],
+            candidate_trace={
+                "tool_name": "p_bm25",
+                "query_kind": "focused_rewrite",
+                "query_variants": [{"kind": "focused_rewrite", "query": "join channel joinChannel token channel name uid basic authentication"}],
+                "raw_score": 27.67,
+                "bm25_score": 27.67,
+                "index_role": "primary",
+            },
+            metadata={"product": "video-calling", "platform": "android", "use_case": "basic_authentication"},
+        )
+        join_broadcast_ios = RetrievedChunk(
+            chunk_id="join-broadcast-ios",
+            text="Set options.clientRoleType = .broadcaster and call joinChannel(byToken: token, channelId: channelName).",
+            source_path="official/get-started-sdk_ios.md",
+            similarity=0.99,
+            index_role="primary",
+            retrieval_sources=["p_bm25"],
+            candidate_trace={
+                "tool_name": "p_bm25",
+                "query_kind": "focused_join_step",
+                "query_variants": [{"kind": "focused_join_step", "query": "join a channel joinChannel channelName uid token appid quickstart get started"}],
+                "raw_score": 26.0,
+                "bm25_score": 26.0,
+                "index_role": "primary",
+            },
+            metadata={"product": "video-calling", "platform": "ios"},
+            h1="Quickstart",
+            h2="Implement Video Calling",
+            h3="Join a channel",
+        )
+
+        rescued = _inject_generic_join_recovery_candidates(
+            [join_broadcast_ios],
+            tool_results={"p_bm25": [auth_android, join_broadcast_ios], "p_fts": [], "p_keyword": []},
+            product="audio_video_calling",
+            limit=3,
+            query="how to join channel",
+        )
+
+        self.assertEqual([chunk.chunk_id for chunk in rescued], ["auth-android-video"])
 
     def test_token_auth_chunk_detection_does_not_classify_quickstart_join_step_as_auth(self) -> None:
         auth_android = RetrievedChunk(
@@ -1447,6 +2226,72 @@ The documentation states that time: 0 means the rule is applied permanently. How
             decomposition_targets=[],
             exact_terms=["join", "channel"],
             grounded_overlap=True,
+        )
+
+        self.assertEqual(decision.decision, "recover_once")
+        self.assertEqual(decision.reason, "generic_join_wrong_family")
+        self.assertEqual(decision.recovery_action, "lexical_recovery")
+
+    def test_judge_agentic_round_recovers_when_how_to_faq_generic_join_top_family_is_stream_channel(self) -> None:
+        stream_chunk = RetrievedChunk(
+            chunk_id="stream-join",
+            text="Use a random user ID to join a stream channel.",
+            source_path="official/stream-channel_macos.md",
+            similarity=0.88,
+            index_role="primary",
+            rerank_score=0.84,
+            h1="Stream channels",
+            h2="Implement communication in a stream channel",
+            h3="Join a stream channel",
+            metadata={
+                "product": "signaling",
+                "source_family": "signaling/stream-channel",
+            },
+        )
+
+        decision = _judge_agentic_round(
+            message="how to join channel",
+            query_class="how_to_faq",
+            round_index=1,
+            reranked_chunks=[stream_chunk],
+            final_chunks=[stream_chunk],
+            decomposition_targets=[],
+            exact_terms=["join", "channel"],
+            grounded_overlap=True,
+            product="audio_video_calling",
+        )
+
+        self.assertEqual(decision.decision, "recover_once")
+        self.assertEqual(decision.reason, "generic_join_wrong_family")
+        self.assertEqual(decision.recovery_action, "lexical_recovery")
+
+    def test_judge_agentic_round_recovers_when_generic_join_step_chunk_mentions_token_but_lacks_explicit_auth_support(self) -> None:
+        join_chunk = RetrievedChunk(
+            chunk_id="join-android",
+            text="Call joinChannel(token, channelName, uid, options) to join a channel.",
+            source_path="official/get-started-sdk_android.md",
+            similarity=0.91,
+            index_role="primary",
+            rerank_score=0.89,
+            h1="Quickstart",
+            h2="Implement Video Calling",
+            h3="Join a channel",
+            metadata={
+                "product": "video-calling",
+                "platform": "android",
+            },
+        )
+
+        decision = _judge_agentic_round(
+            message="how to join channel",
+            query_class="how_to_faq",
+            round_index=1,
+            reranked_chunks=[join_chunk],
+            final_chunks=[join_chunk],
+            decomposition_targets=[],
+            exact_terms=["join", "channel"],
+            grounded_overlap=True,
+            product="audio_video_calling",
         )
 
         self.assertEqual(decision.decision, "recover_once")

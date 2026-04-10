@@ -81,6 +81,8 @@ def _trace(
     handoff_reason: str | None = None,
     generation_mode: str = "structured_answer",
     extractive_fallback_used: bool = False,
+    query_class: str = "how_to_faq",
+    light_path_used: bool = True,
 ) -> RagQueryTrace:
     return RagQueryTrace(
         query_type="how_to",
@@ -159,6 +161,8 @@ def _trace(
                 "cited_in_answer": True,
             }
         ],
+        query_class=query_class,
+        light_path_used=light_path_used,
     )
 
 
@@ -222,6 +226,30 @@ class RagApiTests(unittest.TestCase):
             "chunk_count": 3 if status == "completed" else 0,
             "error_message": error_message,
         }
+
+    def test_internal_query_answer_includes_query_class_and_light_path_in_quality_signals(self) -> None:
+        repository = _TrackingKnowledgeRepository()
+        client = self._client(repository)
+        with patch("backend.rag_api.run_rag_query", return_value=_answer_result()):
+            response = client.post(
+                "/internal/rag/query",
+                headers={"Authorization": "Bearer test-token"},
+                json={
+                    "question": "how to join channel",
+                    "request_id": "rag-test-howto-quality-signals",
+                    "ticket_id": "TK-TEST",
+                    "customer_id": "C-TEST",
+                    "product": "audio_video_calling",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        quality_signals = dict((payload.get("evidence_summary") or {}).get("quality_signals") or {})
+        self.assertEqual(quality_signals.get("query_class"), "how_to_faq")
+        self.assertTrue(quality_signals.get("light_path_used"))
+        self.assertEqual(quality_signals.get("generation_mode"), "structured_answer")
+        self.assertEqual(quality_signals.get("selected_doc_count"), 1)
 
     def _direct_ingest_result(
         self,

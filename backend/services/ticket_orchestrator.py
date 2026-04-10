@@ -120,6 +120,10 @@ def _is_generic_grounded_rag_answer_candidate(
         return False
     if str(quality_signals.get("generation_mode") or "").strip().lower() != "structured_answer":
         return False
+    if str(quality_signals.get("query_class") or "").strip().lower() == "how_to_faq":
+        if _quality_signal_int(quality_signals.get("selected_doc_count")) < 1:
+            return False
+        return float(skill_result.confidence or 0.0) >= 0.75
     if _quality_signal_float(quality_signals.get("top1_similarity_score")) < 0.9:
         return False
     if _quality_signal_int(quality_signals.get("selected_doc_count")) < 1:

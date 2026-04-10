@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+import os
 import types
 import unittest
 from unittest.mock import patch
@@ -28,10 +30,13 @@ def _resolution(
     *,
     action: str = "rag",
     needs_engineer_guidance: bool = False,
+    confidence: float = 0.88,
+    query_class: str | None = None,
+    top1_similarity_score: float = 0.95,
 ) -> SupportResolution:
     return SupportResolution(
         answer="Use the token server sample.",
-        confidence=0.88,
+        confidence=confidence,
         sources=["https://docs.agora.io/en/video-calling/token-authentication"],
         citations=[
             {
@@ -53,11 +58,12 @@ def _resolution(
         matched_signals=["token"] if action == "rag" else ["ceo"],
         evidence_summary={
             "quality_signals": {
+                "query_class": query_class,
                 "generation_mode": "structured_answer",
                 "selected_doc_count": 1,
                 "citation_coverage_ratio": 1.0,
-                "top1_similarity_score": 0.95,
-                "avg_selected_similarity_score": 0.95,
+                "top1_similarity_score": top1_similarity_score,
+                "avg_selected_similarity_score": top1_similarity_score,
                 "handoff_reason": None,
                 "needs_human": False,
             },
@@ -68,7 +74,7 @@ def _resolution(
                     "source_path": "official/token-authentication.md",
                     "source_url": "https://docs.agora.io/en/video-calling/token-authentication",
                     "text_excerpt": "Set a token server before joining the channel.",
-                    "similarity": 0.95,
+                    "similarity": top1_similarity_score,
                     "cited_in_answer": True,
                 }
             ],
@@ -79,6 +85,16 @@ def _resolution(
 
 
 class TicketOrchestratorTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._original_openai_api_key = os.environ.get("OPENAI_API_KEY")
+        os.environ.pop("OPENAI_API_KEY", None)
+
+    def tearDown(self) -> None:
+        if self._original_openai_api_key is None:
+            os.environ.pop("OPENAI_API_KEY", None)
+        else:
+            os.environ["OPENAI_API_KEY"] = self._original_openai_api_key
+
     def test_orchestrator_forwards_selected_product_to_router_and_resolution_builder(self) -> None:
         captured_resolution_kwargs: dict[str, object] = {}
 
@@ -383,6 +399,52 @@ class TicketOrchestratorTests(unittest.TestCase):
         self.assertFalse(execution.needs_investigating)
         self.assertEqual(execution.next_status, COMMUNICATING_STATUS)
         self.assertIsNone(execution.investigation_reason)
+
+    def test_short_how_to_faq_grounded_answer_skips_post_check_with_lexical_confidence(self) -> None:
+        with patch(
+            "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency"
+        ) as sufficiency_mock:
+            execution = orchestrate_ticket_execution(
+                "how to join channel",
+                decision=_decision("rag"),
+                resolution_builder=lambda *_args, **_kwargs: _resolution(
+                    action="rag",
+                    confidence=0.77,
+                    query_class="how_to_faq",
+                    top1_similarity_score=0.0,
+                ),
+            )
+
+        self.assertFalse(execution.needs_investigating)
+        self.assertEqual(execution.next_status, COMMUNICATING_STATUS)
+        self.assertIsNone(execution.investigation_reason)
+        sufficiency_mock.assert_not_called()
+
+    def test_short_how_to_faq_grounded_answer_skips_post_check_without_citations(self) -> None:
+        with patch(
+            "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency"
+        ) as sufficiency_mock:
+            def _resolution_without_citations(*_args, **_kwargs) -> SupportResolution:
+                return replace(
+                    _resolution(
+                        action="rag",
+                        confidence=0.77,
+                        query_class="how_to_faq",
+                        top1_similarity_score=0.0,
+                    ),
+                    citations=[],
+                )
+
+            execution = orchestrate_ticket_execution(
+                "how to join channel",
+                decision=_decision("rag"),
+                resolution_builder=_resolution_without_citations,
+            )
+
+        self.assertFalse(execution.needs_investigating)
+        self.assertEqual(execution.next_status, COMMUNICATING_STATUS)
+        self.assertIsNone(execution.investigation_reason)
+        sufficiency_mock.assert_not_called()
 
     def test_non_rag_action_skips_post_check(self) -> None:
         with patch(
