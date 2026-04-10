@@ -2265,7 +2265,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(decision.reason, "generic_join_wrong_family")
         self.assertEqual(decision.recovery_action, "lexical_recovery")
 
-    def test_judge_agentic_round_recovers_when_generic_join_step_chunk_mentions_token_but_lacks_explicit_auth_support(self) -> None:
+    def test_judge_agentic_round_accepts_generic_join_step_chunk_that_already_covers_auth_prerequisite(self) -> None:
         join_chunk = RetrievedChunk(
             chunk_id="join-android",
             text="Call joinChannel(token, channelName, uid, options) to join a channel.",
@@ -2294,9 +2294,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
             product="audio_video_calling",
         )
 
-        self.assertEqual(decision.decision, "recover_once")
-        self.assertEqual(decision.reason, "generic_join_wrong_family")
-        self.assertEqual(decision.recovery_action, "lexical_recovery")
+        self.assertEqual(decision.decision, "answer_now")
+        self.assertEqual(decision.reason, "sufficient_first_pass_support")
+        self.assertIsNone(decision.recovery_action)
 
     def test_judge_agentic_round_recovers_when_generic_join_query_lacks_core_rtc_join_support(self) -> None:
         token_chunk = RetrievedChunk(

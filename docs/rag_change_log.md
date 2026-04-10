@@ -3144,3 +3144,26 @@ For each new entry, record:
   - `python3 -m py_compile backend/services/rag_qa.py backend/tests/test_rag_qa.py backend/worker.py backend/tests/test_worker.py`
   - `git diff --check`
   - lightweight stack restart plus `$supportportal-run-report` live replay for `how to join channel` and full `real_case/real_user_questions.txt`
+
+## 2026-04-10 - Force generic join FAQ to answer the full join flow instead of token-only drift
+
+- Summary:
+  - Added deterministic generic-join grounding selection so generic `how to join channel` questions only complete when both a quickstart join-step chunk and a token-auth chunk are present.
+  - Replaced the previous token-only FAQ answer path with a fixed generic join-flow answer that covers channel name, authentication token, user ID, channel/media options, and the SDK join method.
+  - Added telemetry for generic join primary/support chunk presence and recovery usage so live traces can show whether the FAQ grounded against the expected join-step family.
+- Reason:
+  - Live `how to join channel` traces were still drifting toward token/authentication-only chunks, which produced a technically incomplete answer even after the FAQ light path and family pinning work.
+  - The accepted target behavior is the older `TK-077` style answer: a platform-agnostic join flow backed by `Quickstart > Implement Video Calling > Join a channel`, with token guidance kept as supporting context rather than the whole answer.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema or ingestion changes.
+  - Generic join FAQ traces now expose `generic_join_primary_chunk_found`, `generic_join_support_chunks`, and `generic_join_recovery_used`.
+  - Generic join FAQ requests fail closed when only auth support exists, and only emit a grounded answer when join-step guidance and auth prerequisite evidence are both present.
+- Verification:
+  - `source /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/activate && python -m unittest backend.tests.test_rag_qa backend.tests.test_rag_agentic backend.tests.test_rag_api`
+  - `python3 -m py_compile backend/services/rag_qa.py backend/tests/test_rag_qa.py`
+  - `git diff --check`
+  - lightweight stack restart plus `$supportportal-run-report` live replay for `how to join channel` and full `real_case/real_user_questions.txt`
