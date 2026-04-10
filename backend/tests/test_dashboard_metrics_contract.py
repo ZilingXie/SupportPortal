@@ -126,7 +126,7 @@ class DashboardMetricsContractTests(unittest.TestCase):
     def test_dashboard_metrics_route_uses_ticket_ops_helper(self) -> None:
         main_source = Path("backend/main.py").read_text(encoding="utf-8")
         self.assertIn("build_ticket_dashboard_metrics", main_source)
-        self.assertIn("ticket_repository.list_tickets(include_messages=True)", main_source)
+        self.assertIn("ticket_repository.list_tickets(include_messages=False)", main_source)
 
 
 if __name__ == "__main__":

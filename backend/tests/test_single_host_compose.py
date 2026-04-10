@@ -30,11 +30,15 @@ class SingleHostComposeTests(unittest.TestCase):
             api_block,
         )
         self.assertIn(
-            "TICKET_DB_POOL_MIN_SIZE: ${TICKET_DB_POOL_MIN_SIZE:-1}",
+            "TICKET_DB_APPLICATION_NAME: ${TICKET_DB_APPLICATION_NAME:-supportportal-api}",
             api_block,
         )
         self.assertIn(
-            "TICKET_DB_POOL_MAX_SIZE: ${TICKET_DB_POOL_MAX_SIZE:-8}",
+            "TICKET_DB_POOL_MIN_SIZE: ${TICKET_DB_POOL_MIN_SIZE:-3}",
+            api_block,
+        )
+        self.assertIn(
+            "TICKET_DB_POOL_MAX_SIZE: ${TICKET_DB_POOL_MAX_SIZE:-4}",
             api_block,
         )
         self.assertIn(
@@ -51,6 +55,18 @@ class SingleHostComposeTests(unittest.TestCase):
         )
         self.assertIn(
             "WORKER_CONCURRENCY: ${WORKER_QUERY_CONCURRENCY:-2}",
+            worker_block,
+        )
+        self.assertIn(
+            "TICKET_DB_APPLICATION_NAME: ${TICKET_DB_APPLICATION_NAME:-supportportal-worker-query}",
+            worker_block,
+        )
+        self.assertIn(
+            "TICKET_DB_POOL_MIN_SIZE: ${TICKET_DB_POOL_MIN_SIZE:-2}",
+            worker_block,
+        )
+        self.assertIn(
+            "TICKET_DB_POOL_MAX_SIZE: ${TICKET_DB_POOL_MAX_SIZE:-4}",
             worker_block,
         )
         self.assertIn(
@@ -71,6 +87,18 @@ class SingleHostComposeTests(unittest.TestCase):
 
         self.assertIn(
             "WORKER_TASK_TYPES: ${WORKER_AUX_TASK_TYPES:-ticket_message_sentiment}",
+            worker_block,
+        )
+        self.assertIn(
+            "TICKET_DB_APPLICATION_NAME: ${TICKET_DB_APPLICATION_NAME:-supportportal-worker-aux}",
+            worker_block,
+        )
+        self.assertIn(
+            "TICKET_DB_POOL_MIN_SIZE: ${TICKET_DB_POOL_MIN_SIZE:-1}",
+            worker_block,
+        )
+        self.assertIn(
+            "TICKET_DB_POOL_MAX_SIZE: ${TICKET_DB_POOL_MAX_SIZE:-2}",
             worker_block,
         )
         self.assertIn(

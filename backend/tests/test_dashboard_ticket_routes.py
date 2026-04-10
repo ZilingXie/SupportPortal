@@ -13,6 +13,31 @@ import backend.main as main
 from backend.repositories.ticket_repository import InMemoryTicketRepository
 
 
+class _CapturingTicketRepository(InMemoryTicketRepository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.last_list_tickets_include_messages: bool | None = None
+        self.last_list_engineer_cases_include_client_messages: bool | None = None
+        self.last_list_engineer_cases_include_investigation_messages: bool | None = None
+
+    def list_tickets(self, include_messages: bool = True) -> list[dict[str, object]]:
+        self.last_list_tickets_include_messages = include_messages
+        return super().list_tickets(include_messages=include_messages)
+
+    def list_engineer_cases(
+        self,
+        *,
+        include_client_messages: bool = True,
+        include_investigation_messages: bool = True,
+    ) -> list[dict[str, object]]:
+        self.last_list_engineer_cases_include_client_messages = include_client_messages
+        self.last_list_engineer_cases_include_investigation_messages = include_investigation_messages
+        return super().list_engineer_cases(
+            include_client_messages=include_client_messages,
+            include_investigation_messages=include_investigation_messages,
+        )
+
+
 class DashboardTicketRouteTests(unittest.TestCase):
     def setUp(self) -> None:
         self.repository = InMemoryTicketRepository()
@@ -108,6 +133,47 @@ class DashboardTicketRouteTests(unittest.TestCase):
         self.assertEqual(match["status"], "communicating")
         self.assertEqual(match["engineer_case_count"], 0)
         self.assertIsNone(match["active_engineer_case_id"])
+
+    def test_dashboard_ticket_list_uses_header_only_ticket_reads(self) -> None:
+        repository = _CapturingTicketRepository()
+        repository.initialize()
+        main.ticket_repository = repository
+        self.repository = repository
+        self._seed_ticket(
+            ticket_id="TK-DASH-LIGHT-001",
+            subject="header only",
+            status="communicating",
+        )
+
+        response = self.client.get("/api/dashboard/tickets?status=communicating")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertFalse(repository.last_list_tickets_include_messages)
+
+    def test_engineer_ticket_list_uses_header_only_client_ticket_reads(self) -> None:
+        repository = _CapturingTicketRepository()
+        repository.initialize()
+        main.ticket_repository = repository
+        self.repository = repository
+        self._seed_ticket(
+            ticket_id="TK-ENG-LIGHT-001",
+            subject="needs engineer",
+            status="investigating",
+        )
+        self._seed_engineer_case(
+            engineer_case_id="TK-ENG-LIGHT-001-1",
+            client_ticket_id="TK-ENG-LIGHT-001",
+            status="investigating",
+            investigation_state="active",
+            updated_at="2026-04-08T03:07:00+00:00",
+            case_sequence=1,
+        )
+
+        response = self.client.get("/api/engineer/tickets?status=all")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertFalse(repository.last_list_engineer_cases_include_client_messages)
+        self.assertFalse(repository.last_list_engineer_cases_include_investigation_messages)
 
     def test_dashboard_investigating_list_uses_one_row_per_client_ticket_and_detail_returns_all_sub_tickets(self) -> None:
         self._seed_ticket(
