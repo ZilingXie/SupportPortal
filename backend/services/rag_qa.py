@@ -325,6 +325,9 @@ class RagQueryTrace:
     deadline_exhausted: bool = False
     anchor_hits: list[str] = field(default_factory=list)
     timeout_stage: str | None = None
+    generic_join_primary_chunk_found: bool = False
+    generic_join_support_chunks: list[str] = field(default_factory=list)
+    generic_join_recovery_used: bool = False
 
 
 @dataclass
@@ -1293,6 +1296,10 @@ def _join_step_chunk_mentions_token(chunk: RetrievedChunk) -> bool:
     return "token" in surface
 
 
+def _chunk_covers_generic_join_auth_prerequisite(chunk: RetrievedChunk) -> bool:
+    return _is_token_auth_chunk(chunk) or _join_step_chunk_mentions_token(chunk)
+
+
 def _token_auth_chunk_has_join_flow(chunk: RetrievedChunk) -> bool:
     if not _is_token_auth_chunk(chunk):
         return False
@@ -1334,14 +1341,25 @@ def _generic_join_support_signals(
     query: str | None = None,
 ) -> tuple[bool, bool]:
     compatible_chunks = [chunk for chunk in chunks if _generic_join_product_compatible(chunk, product)]
-    require_preferred_join_step = _generic_join_requires_role_agnostic_guidance(query or "")
-    auth_join_flow = any(_token_auth_chunk_has_join_flow(chunk) for chunk in compatible_chunks)
     has_join_step = any(
-        (_is_preferred_generic_join_step_chunk(chunk) if require_preferred_join_step else _is_join_channel_step_chunk(chunk))
+        _is_join_channel_step_chunk(chunk)
         for chunk in compatible_chunks
-    ) or auth_join_flow
-    has_token_auth = any(_is_token_auth_chunk(chunk) for chunk in compatible_chunks)
+    )
+    has_token_auth = any(_chunk_covers_generic_join_auth_prerequisite(chunk) for chunk in compatible_chunks)
     return has_join_step, has_token_auth
+
+
+def _generic_join_has_preferred_join_step(
+    chunks: list[RetrievedChunk],
+    *,
+    product: str | None,
+    query: str | None = None,
+) -> bool:
+    compatible_chunks = [chunk for chunk in chunks if _generic_join_product_compatible(chunk, product)]
+    require_preferred_join_step = _generic_join_requires_role_agnostic_guidance(query or "")
+    if not require_preferred_join_step:
+        return any(_is_join_channel_step_chunk(chunk) for chunk in compatible_chunks)
+    return any(_is_preferred_generic_join_step_chunk(chunk) for chunk in compatible_chunks)
 
 
 def _product_affinity_adjustment(chunk: RetrievedChunk, product: str | None) -> tuple[float, list[str]]:
@@ -1405,7 +1423,7 @@ def _join_intent_adjustment(query: str, chunk: RetrievedChunk, product: str | No
 def _generic_join_supporting_chunks(chunks: list[RetrievedChunk], *, product: str | None = None) -> list[RetrievedChunk]:
     preferred: list[RetrievedChunk] = []
     seen_ids: set[str] = set()
-    for matcher in (_is_join_channel_step_chunk, _is_token_auth_chunk):
+    for matcher in (_is_join_channel_step_chunk, _chunk_covers_generic_join_auth_prerequisite):
         for chunk in chunks:
             chunk_id = str(chunk.chunk_id or "")
             if chunk_id and chunk_id in seen_ids:
@@ -1421,6 +1439,87 @@ def _generic_join_supporting_chunks(chunks: list[RetrievedChunk], *, product: st
     return preferred
 
 
+def _select_generic_join_grounding_chunks(
+    chunks: list[RetrievedChunk],
+    *,
+    product: str | None,
+    query: str | None,
+) -> tuple[RetrievedChunk | None, RetrievedChunk | None]:
+    compatible_chunks = [chunk for chunk in chunks if _generic_join_product_compatible(chunk, product)]
+    require_preferred_join_step = _generic_join_requires_role_agnostic_guidance(query or "")
+    join_chunk: RetrievedChunk | None = next(
+        (
+            chunk
+            for chunk in compatible_chunks
+            if (
+                _is_preferred_generic_join_step_chunk(chunk)
+                if require_preferred_join_step
+                else _is_join_channel_step_chunk(chunk)
+            )
+        ),
+        None,
+    )
+    if join_chunk is None and require_preferred_join_step:
+        join_chunk = next((chunk for chunk in compatible_chunks if _is_join_channel_step_chunk(chunk)), None)
+    auth_chunk = next((chunk for chunk in compatible_chunks if _is_token_auth_chunk(chunk)), None)
+    return join_chunk, auth_chunk
+
+
+def _generic_join_options_term(join_chunk: RetrievedChunk | None) -> str:
+    if join_chunk is not None and "channelmediaoptions" in _chunk_surface_text(join_chunk):
+        return "`ChannelMediaOptions`"
+    return "channel/media options"
+
+
+def _build_generic_join_grounded_answer(
+    message: str,
+    chunks: list[RetrievedChunk],
+    *,
+    product: str | None,
+) -> RagAnswer | None:
+    if not _is_generic_join_channel_query(message):
+        return None
+    join_chunk, auth_chunk = _select_generic_join_grounding_chunks(
+        chunks,
+        product=product,
+        query=message,
+    )
+    join_chunk_covers_auth = join_chunk is not None and _chunk_covers_generic_join_auth_prerequisite(join_chunk)
+    if join_chunk is None or (auth_chunk is None and not join_chunk_covers_auth):
+        return None
+    options_term = _generic_join_options_term(join_chunk)
+    token_step = (
+        "2. Pass a valid authentication token; in production, get it from your token server, or use a temporary token for testing.\n"
+        if auth_chunk is not None
+        else "2. Pass a valid authentication token before joining the channel.\n"
+    )
+    answer = (
+        "To join a channel, call the SDK join method with your channel name, authentication token, "
+        f"user ID, and {options_term}. The channel name identifies which channel to join, the token "
+        "authenticates the user, and the user ID identifies the local user before joining.\n\n"
+        "Key Steps:\n"
+        "1. Provide the channel name you want the client to join.\n"
+        f"{token_step}"
+        "3. Set the local user ID.\n"
+        f"4. Configure {options_term} as needed, then call the SDK join method."
+    )
+    cited_chunks = [join_chunk]
+    if auth_chunk is not None and _chunk_dedupe_key(auth_chunk) != _chunk_dedupe_key(join_chunk):
+        cited_chunks.append(auth_chunk)
+    citation_records = _citation_records_from_chunks(cited_chunks, limit=len(cited_chunks))
+    sources = [
+        record.get("source_url") or f"rag:{record['chunk_id']}"
+        for record in citation_records
+    ]
+    confidence = max(0.88, _confidence_from_chunks(cited_chunks))
+    return RagAnswer(
+        answer=answer,
+        confidence=round(min(0.96, confidence), 2),
+        sources=sources,
+        citations=citation_records,
+    )
+
+
 def _enforce_generic_join_support_pair(
     chunks: list[RetrievedChunk],
     *,
@@ -1434,14 +1533,25 @@ def _enforce_generic_join_support_pair(
     top_focus_chunk = chunks[0] if chunks else None
     compatible_chunks = [chunk for chunk in chunks if _generic_join_product_compatible(chunk, product)]
     require_preferred_join_step = _generic_join_requires_role_agnostic_guidance(query or "")
-    has_explicit_join_step = any(
+    has_preferred_join_step = any(
         (_is_preferred_generic_join_step_chunk(chunk) if require_preferred_join_step else _is_join_channel_step_chunk(chunk))
         for chunk in compatible_chunks
     )
-    has_token_auth = any(_is_token_auth_chunk(chunk) for chunk in compatible_chunks)
+    has_any_join_step = any(_is_join_channel_step_chunk(chunk) for chunk in compatible_chunks)
+    has_token_auth = any(_chunk_covers_generic_join_auth_prerequisite(chunk) for chunk in compatible_chunks)
     if (
-        has_explicit_join_step
+        has_preferred_join_step
         and has_token_auth
+        and not (
+            top_focus_chunk is not None
+            and (_is_join_multiple_channels_chunk(top_focus_chunk) or _is_stream_channel_chunk(top_focus_chunk))
+        )
+    ):
+        return list(chunks)
+    if (
+        has_any_join_step
+        and has_token_auth
+        and not require_preferred_join_step
         and not (
             top_focus_chunk is not None
             and (_is_join_multiple_channels_chunk(top_focus_chunk) or _is_stream_channel_chunk(top_focus_chunk))
@@ -2209,13 +2319,14 @@ def _fetch_generic_join_pinned_chunks(
             join_chunk = _fetch_one(
                 retrieval_source="generic_join_join_step_pinned",
                 url_patterns=["%video-calling%", "%voice-calling%"],
-                path_patterns=["%get-started-sdk%", "%authentication-workflow%"],
+                path_patterns=["%get-started-sdk%"],
                 heading_patterns=["%join a channel%", "%implement video calling%", "%quickstart%"],
                 content_patterns=["%joinchannel%", "%join a channel%", "%channel name%"],
             )
             if join_chunk is not None and (
-                _is_join_channel_step_chunk(join_chunk)
-                or (require_preferred_join_step and _token_auth_chunk_has_join_flow(join_chunk))
+                _is_preferred_generic_join_step_chunk(join_chunk)
+                if require_preferred_join_step
+                else _is_join_channel_step_chunk(join_chunk)
             ):
                 pinned_chunks.append(join_chunk)
         if needs_token_auth_chunk:
@@ -2357,10 +2468,15 @@ def _judge_agentic_round(
                 product=product,
                 query=message,
             )
+            has_preferred_join_step = _generic_join_has_preferred_join_step(
+                final_chunks,
+                product=product,
+                query=message,
+            )
             if (
                 top_focus_chunk is not None
                 and (_is_join_multiple_channels_chunk(top_focus_chunk) or _is_stream_channel_chunk(top_focus_chunk))
-            ) or not has_join_step or not has_token_auth:
+            ) or not has_join_step or not has_token_auth or not has_preferred_join_step:
                 return AgenticJudgeDecision("recover_once", "generic_join_wrong_family", 0.78, "lexical_recovery")
         if query_class == "lexical_exact" and (top_score < 0.32 or not exact_match_supported):
             return AgenticJudgeDecision("recover_once", "low_top1_rerank_score", 0.74, "lexical_recovery")
@@ -7327,6 +7443,29 @@ def _run_rag_query_agentic_single(
             if unique_selected_chunk_ids
             else None
         )
+        generic_join_primary_chunk_found = False
+        generic_join_support_chunks: list[str] = []
+        generic_join_recovery_used = False
+        if _is_generic_join_channel_query(message):
+            join_chunk, auth_chunk = _select_generic_join_grounding_chunks(
+                final_chunks,
+                product=product,
+                query=message,
+            )
+            generic_join_primary_chunk_found = join_chunk is not None
+            generic_join_support_chunks = [
+                str(chunk.chunk_id or "").strip()
+                for chunk in [join_chunk, auth_chunk]
+                if chunk is not None and str(chunk.chunk_id or "").strip()
+            ]
+            generic_join_recovery_used = any(
+                isinstance(timing, dict)
+                and str(timing.get("query_kind") or "").strip() in _GENERIC_JOIN_FOCUSED_VARIANT_KINDS
+                for timing in retrieval_tool_timings
+            ) or any(
+                any(str(source or "").startswith("generic_join_") for source in (chunk.retrieval_sources or []))
+                for chunk in final_chunks
+            )
         compatible_lexical_latency_ms = round(bm25_latency_ms + fts_latency_ms + keyword_fallback_latency_ms, 2)
         primary_shadow_mix = {
             "primary": sum(1 for chunk in final_chunks if str(chunk.index_role or "").strip().lower() == "primary"),
@@ -7477,6 +7616,9 @@ def _run_rag_query_agentic_single(
             retrieval_round_wall_clock_ms=round(retrieval_round_wall_clock_ms, 2),
             retrieval_tool_timings=list(retrieval_tool_timings),
             anchor_hits=extract_anchor_hits(message),
+            generic_join_primary_chunk_found=generic_join_primary_chunk_found,
+            generic_join_support_chunks=generic_join_support_chunks,
+            generic_join_recovery_used=generic_join_recovery_used,
         )
 
     if not final_chunks or final_judge is None or final_judge.decision == "escalate":
@@ -7519,6 +7661,26 @@ def _run_rag_query_agentic_single(
                     needs_human=False,
                     handoff_reason=None,
                     generation_mode="api_semantics_deterministic",
+                    extractive_fallback_used=False,
+                ),
+            )
+    if _is_generic_join_channel_query(message):
+        deterministic_generation_started_at = time.perf_counter()
+        deterministic_answer = _build_generic_join_grounded_answer(
+            message,
+            final_chunks,
+            product=product,
+        )
+        if deterministic_answer is not None:
+            generation_latency_ms = (time.perf_counter() - deterministic_generation_started_at) * 1000
+            answer_profile_used = "generic_join_deterministic"
+            return RagQueryResult(
+                answer=deterministic_answer,
+                trace=_trace_for(
+                    deterministic_answer,
+                    needs_human=False,
+                    handoff_reason=None,
+                    generation_mode="generic_join_deterministic",
                     extractive_fallback_used=False,
                 ),
             )

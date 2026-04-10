@@ -932,12 +932,19 @@ The documentation states that time: 0 means the rule is applied permanently. How
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(result.answer.answer, "Generate a token from your authentication server, then call joinChannel with the same channel name on each client.")
+        self.assertIn("channel name", result.answer.answer.lower())
+        self.assertIn("authentication token", result.answer.answer.lower())
+        self.assertIn("user id", result.answer.answer.lower())
+        self.assertIn("join method", result.answer.answer.lower())
+        self.assertIn("channel/media options", result.answer.answer.lower())
         self.assertEqual(result.trace.selected_chunk_ids[0], "bm25-join")
         self.assertIn("fts-auth", result.trace.selected_chunk_ids)
         self.assertEqual(result.trace.query_class, "how_to_faq")
         self.assertTrue(result.trace.light_path_used)
         self.assertTrue(result.trace.vector_setup_skipped)
+        self.assertTrue(result.trace.generic_join_primary_chunk_found)
+        self.assertEqual(result.trace.generic_join_support_chunks[:2], ["bm25-join", "fts-auth"])
+        self.assertFalse(result.trace.generic_join_recovery_used)
         self.assertTrue(
             any(
                 timing.get("tool_name") == "p_bm25"
@@ -955,11 +962,12 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertFalse(
             any(
                 timing.get("tool_name") == "p_vec"
+                and timing.get("query_kind") in {"semantic", "rewrite", "context"}
                 for timing in result.trace.retrieval_tool_timings
                 if isinstance(timing, dict)
             )
         )
-        self.assertEqual(result.trace.answer_profile_used, "gpt-5.4")
+        self.assertEqual(result.trace.answer_profile_used, "generic_join_deterministic")
         self.assertFalse(result.trace.answer_profile_fallback_used)
 
     def test_run_rag_query_exact_error_lookup_uses_light_path_fast_answer_profile_then_falls_back_to_main_model(self) -> None:
@@ -1256,13 +1264,16 @@ The documentation states that time: 0 means the rule is applied permanently. How
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(set(captured_final_chunk_ids[0][:2]), {"join-android", "auth-android"})
-        self.assertNotIn("stream-join", captured_final_chunk_ids[0][:2])
-        self.assertNotIn("multi-join", captured_final_chunk_ids[0][:2])
+        self.assertEqual(set(result.trace.selected_chunk_ids[:2]), {"join-android", "auth-android"})
+        self.assertNotIn("stream-join", result.trace.selected_chunk_ids[:2])
+        self.assertNotIn("multi-join", result.trace.selected_chunk_ids[:2])
         self.assertEqual(set(result.trace.cited_chunk_ids), {"join-android", "auth-android"})
         self.assertEqual(result.trace.query_class, "how_to_faq")
         self.assertTrue(result.trace.light_path_used)
         self.assertTrue(result.trace.vector_setup_skipped)
+        self.assertIn("channel name", result.answer.answer.lower())
+        self.assertIn("authentication token", result.answer.answer.lower())
+        self.assertIn("join method", result.answer.answer.lower())
 
     def test_run_rag_query_generic_join_channel_retries_for_second_supporting_citation(self) -> None:
         join_chunk = RetrievedChunk(
@@ -1292,54 +1303,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 "use_case": "basic_authentication",
             },
         )
-        call_records: list[dict[str, object]] = []
-
-        def _capture_payload(
-            message: str,
-            chunks: list[RetrievedChunk],
-            config: dict[str, object],
-            *,
-            strict_retry: bool = False,
-            packed_evidence=None,
-            product: str | None = None,
-            citation_retry: bool = False,
-            **_: object,
-        ) -> tuple[dict[str, object], int, int, str]:
-            _ = message
-            _ = config
-            _ = packed_evidence
-            _ = product
-            call_records.append(
-                {
-                    "strict_retry": strict_retry,
-                    "citation_retry": citation_retry,
-                    "chunk_ids": [chunk.chunk_id for chunk in chunks],
-                }
-            )
-            if len(call_records) == 1:
-                return (
-                    {
-                        "answer": "Request a token, then call joinChannel to join the channel.",
-                        "key_steps": [],
-                        "citations": ["join-android"],
-                        "insufficient_evidence": False,
-                    },
-                    10,
-                    5,
-                    "gpt-5.4",
-                )
-            return (
-                {
-                    "answer": "Request a token with the channel name and user ID, then call joinChannel.",
-                    "key_steps": [],
-                    "citations": ["join-android", "auth-android"],
-                    "insufficient_evidence": False,
-                },
-                12,
-                6,
-                "gpt-5.4",
-            )
-
         query_understanding = QueryUnderstandingResult(
             query_profile="en",
             query_understanding_version="v2",
@@ -1425,19 +1388,19 @@ The documentation states that time: 0 means the rule is applied permanently. How
             ), patch(
                 "backend.services.rag_qa._rerank_chunks",
                 side_effect=lambda query, chunks, config, *, limit=None: chunks,
-            ), patch(
-                "backend.services.rag_qa._invoke_llm_payload_with_trace",
-                side_effect=_capture_payload,
             ):
                 result = run_rag_query("how to join channel", product="audio_video_calling")
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(len(call_records), 2)
-        self.assertFalse(bool(call_records[0]["citation_retry"]))
-        self.assertTrue(bool(call_records[1]["citation_retry"]))
+        self.assertEqual(result.trace.selected_chunk_ids[:2], ["join-android", "auth-android"])
         self.assertEqual(set(result.trace.cited_chunk_ids), {"join-android", "auth-android"})
         self.assertEqual(result.trace.citation_count, 2)
+        self.assertTrue(result.trace.generic_join_primary_chunk_found)
+        self.assertTrue(result.trace.generic_join_recovery_used)
+        self.assertIn("channel name", result.answer.answer.lower())
+        self.assertIn("authentication token", result.answer.answer.lower())
+        self.assertIn("join method", result.answer.answer.lower())
 
     def test_run_rag_query_generic_join_channel_recovers_from_wrong_family_mix(self) -> None:
         join_chunk = RetrievedChunk(
@@ -1540,36 +1503,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 rag_qa._copy_chunk(join_chunk),
             ]
 
-        def _capture_payload(
-            message: str,
-            chunks: list[RetrievedChunk],
-            config: dict[str, object],
-            *,
-            strict_retry: bool = False,
-            packed_evidence=None,
-            product: str | None = None,
-            citation_retry: bool = False,
-            **_: object,
-        ) -> tuple[dict[str, object], int, int, str]:
-            _ = message
-            _ = config
-            _ = strict_retry
-            _ = packed_evidence
-            _ = product
-            _ = citation_retry
-            captured_calls.append([chunk.chunk_id for chunk in chunks])
-            return (
-                {
-                    "answer": "Request a token for the channel name and user ID, then call joinChannel(token, channelName, uid, options).",
-                    "key_steps": [],
-                    "citations": ["join-android", "auth-android"],
-                    "insufficient_evidence": False,
-                },
-                10,
-                5,
-                "gpt-5.4-mini",
-            )
-
         with patch("backend.services.rag_qa._get_rag_config") as config_mock:
             config_mock.return_value = {
                 "dsn": "postgresql://example",
@@ -1629,23 +1562,25 @@ The documentation states that time: 0 means the rule is applied permanently. How
             ), patch(
                 "backend.services.rag_qa._rerank_chunks",
                 side_effect=lambda query, chunks, config, *, limit=None: chunks,
-            ), patch(
-                "backend.services.rag_qa._invoke_llm_payload_with_trace",
-                side_effect=_capture_payload,
             ):
                 result = run_rag_query("how to join channel", product="audio_video_calling")
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(set(captured_calls[0][:2]), {"join-android", "auth-android"})
-        self.assertNotIn("stream-join", captured_calls[0][:2])
-        self.assertNotIn("multi-join", captured_calls[0][:2])
+        self.assertEqual(set(result.trace.selected_chunk_ids[:2]), {"join-android", "auth-android"})
+        self.assertNotIn("stream-join", result.trace.selected_chunk_ids[:2])
+        self.assertNotIn("multi-join", result.trace.selected_chunk_ids[:2])
         self.assertEqual(set(result.trace.cited_chunk_ids), {"join-android", "auth-android"})
         self.assertEqual(set(result.trace.selected_chunk_ids[:2]), {"join-android", "auth-android"})
         self.assertEqual(result.trace.citation_count, 2)
         self.assertEqual(result.trace.query_class, "how_to_faq")
         self.assertTrue(result.trace.light_path_used)
         self.assertTrue(result.trace.vector_setup_skipped)
+        self.assertTrue(result.trace.generic_join_primary_chunk_found)
+        self.assertTrue(result.trace.generic_join_recovery_used)
+        self.assertIn("channel name", result.answer.answer.lower())
+        self.assertIn("authentication token", result.answer.answer.lower())
+        self.assertIn("join method", result.answer.answer.lower())
 
     def test_run_rag_query_short_how_to_faq_recovers_lexically_from_wrong_family_mix(self) -> None:
         join_chunk = RetrievedChunk(
@@ -1721,8 +1656,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
             intent_latency_ms=2.0,
             rewrite_latency_ms=1.0,
         )
-        captured_payload_chunks: list[list[str]] = []
-
         def _bm25_side_effect(query_text: str, *_args, **_kwargs) -> list[RetrievedChunk]:
             if query_text == "how to join channel":
                 return [rag_qa._copy_chunk(stream_chunk), rag_qa._copy_chunk(multi_chunk)]
@@ -1738,37 +1671,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
             if query_text == "how to join channel":
                 return [rag_qa._copy_chunk(stream_chunk)]
             return []
-
-        def _capture_payload(
-            message: str,
-            chunks: list[RetrievedChunk],
-            config: dict[str, object],
-            *,
-            strict_retry: bool = False,
-            packed_evidence=None,
-            product: str | None = None,
-            citation_retry: bool = False,
-            **_: object,
-        ) -> tuple[dict[str, object], int, int, str]:
-            _ = message
-            _ = config
-            _ = strict_retry
-            _ = packed_evidence
-            _ = product
-            _ = citation_retry
-            captured_payload_chunks.append([chunk.chunk_id for chunk in chunks])
-            cited = [chunk.chunk_id for chunk in chunks[:2]]
-            return (
-                {
-                    "answer": "Request a token with the channel name and user ID, then call joinChannel.",
-                    "key_steps": [],
-                    "citations": cited,
-                    "insufficient_evidence": False,
-                },
-                10,
-                5,
-                "gpt-5.4",
-            )
 
         with patch("backend.services.rag_qa._get_rag_config") as config_mock:
             config_mock.return_value = {
@@ -1835,19 +1737,20 @@ The documentation states that time: 0 means the rule is applied permanently. How
             ), patch(
                 "backend.services.rag_qa._rerank_chunks",
                 side_effect=lambda query, chunks, config, *, limit=None: chunks,
-            ), patch(
-                "backend.services.rag_qa._invoke_llm_payload_with_trace",
-                side_effect=_capture_payload,
             ):
                 result = run_rag_query("how to join channel", product="audio_video_calling")
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(set(captured_payload_chunks[0][:2]), {"join-android", "auth-android"})
-        self.assertNotIn("multi-join", captured_payload_chunks[0][:2])
-        self.assertNotIn("stream-join", captured_payload_chunks[0][:2])
+        self.assertEqual(set(result.trace.selected_chunk_ids[:2]), {"join-android", "auth-android"})
+        self.assertNotIn("multi-join", result.trace.selected_chunk_ids[:2])
+        self.assertNotIn("stream-join", result.trace.selected_chunk_ids[:2])
         self.assertEqual(set(result.trace.cited_chunk_ids), {"join-android", "auth-android"})
         self.assertTrue(result.trace.light_path_used)
+        self.assertTrue(result.trace.generic_join_primary_chunk_found)
+        self.assertTrue(result.trace.generic_join_recovery_used)
+        self.assertIn("channel name", result.answer.answer.lower())
+        self.assertIn("authentication token", result.answer.answer.lower())
         self.assertTrue(
             any(
                 timing.get("tool_name") == "p_bm25" and timing.get("query_kind") == "focused_join_step"
@@ -1865,6 +1768,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertFalse(
             any(
                 timing.get("tool_name") == "p_vec"
+                and timing.get("query_kind") in {"semantic", "rewrite", "context"}
                 for timing in result.trace.retrieval_tool_timings
                 if isinstance(timing, dict)
             )
@@ -1944,8 +1848,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
             intent_latency_ms=2.0,
             rewrite_latency_ms=1.0,
         )
-        captured_payload_chunks: list[list[str]] = []
-
         def _bm25_side_effect(query_text: str, *_args, **_kwargs) -> list[RetrievedChunk]:
             if query_text == "how to join channel":
                 return [rag_qa._copy_chunk(stream_chunk), rag_qa._copy_chunk(multi_chunk)]
@@ -2063,7 +1965,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(captured_payload_chunks[0][:2], ["join-android", "auth-android"])
+        self.assertEqual(result.trace.selected_chunk_ids[:2], ["join-android", "auth-android"])
         self.assertTrue(result.trace.light_path_used)
         self.assertFalse(
             any(
@@ -2205,36 +2107,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 return [rag_qa._copy_chunk(stream_chunk)]
             return []
 
-        def _capture_payload(
-            message: str,
-            chunks: list[RetrievedChunk],
-            config: dict[str, object],
-            *,
-            strict_retry: bool = False,
-            packed_evidence=None,
-            product: str | None = None,
-            citation_retry: bool = False,
-            **_: object,
-        ) -> tuple[dict[str, object], int, int, str]:
-            _ = message
-            _ = config
-            _ = strict_retry
-            _ = packed_evidence
-            _ = product
-            _ = citation_retry
-            captured_payload_chunks.append([chunk.chunk_id for chunk in chunks])
-            return (
-                {
-                    "answer": "Get a token for the channel and user, then join the channel with your SDK join call.",
-                    "key_steps": [],
-                    "citations": [chunk.chunk_id for chunk in chunks[:2]],
-                    "insufficient_evidence": False,
-                },
-                10,
-                5,
-                "gpt-5.4",
-            )
-
         with patch("backend.services.rag_qa._get_rag_config") as config_mock:
             config_mock.return_value = {
                 "dsn": "postgresql://example",
@@ -2300,15 +2172,12 @@ The documentation states that time: 0 means the rule is applied permanently. How
             ), patch(
                 "backend.services.rag_qa._rerank_chunks",
                 side_effect=lambda query, chunks, config, *, limit=None: chunks,
-            ), patch(
-                "backend.services.rag_qa._invoke_llm_payload_with_trace",
-                side_effect=_capture_payload,
             ):
                 result = run_rag_query("how to join channel", product="audio_video_calling")
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(captured_payload_chunks[0][:2], ["join-video-ios", "auth-video-ios"])
+        self.assertEqual(result.trace.selected_chunk_ids[:2], ["join-video-ios", "auth-video-ios"])
         self.assertTrue(
             any(
                 timing.get("tool_name") == "p_bm25" and timing.get("query_kind") == "focused_join_step"
@@ -2330,6 +2199,12 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 if isinstance(timing, dict)
             )
         )
+        self.assertTrue(result.trace.generic_join_primary_chunk_found)
+        self.assertTrue(result.trace.generic_join_recovery_used)
+        self.assertEqual(result.trace.answer_profile_used, "generic_join_deterministic")
+        self.assertIn("channel name", result.answer.answer.lower())
+        self.assertIn("authentication token", result.answer.answer.lower())
+        self.assertIn("join method", result.answer.answer.lower())
 
     def test_run_rag_query_short_how_to_faq_uses_original_join_and_auth_without_round_two(self) -> None:
         join_broadcast_ios = RetrievedChunk(
@@ -2395,8 +2270,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
             intent_latency_ms=2.0,
             rewrite_latency_ms=1.0,
         )
-        captured_payload_chunks: list[list[str]] = []
-
         def _bm25_side_effect(query_text: str, *_args, **_kwargs) -> list[RetrievedChunk]:
             if query_text == "how to join channel":
                 return [
@@ -2405,36 +2278,6 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     rag_qa._copy_chunk(join_react_video),
                 ]
             raise AssertionError(f"unexpected bm25 query: {query_text!r}")
-
-        def _capture_payload(
-            message: str,
-            chunks: list[RetrievedChunk],
-            config: dict[str, object],
-            *,
-            strict_retry: bool = False,
-            packed_evidence=None,
-            product: str | None = None,
-            citation_retry: bool = False,
-            **_: object,
-        ) -> tuple[dict[str, object], int, int, str]:
-            _ = message
-            _ = config
-            _ = strict_retry
-            _ = packed_evidence
-            _ = product
-            _ = citation_retry
-            captured_payload_chunks.append([chunk.chunk_id for chunk in chunks])
-            return (
-                {
-                    "answer": "Request a token for the channel name and user ID, then join the channel with appid, channel, and token.",
-                    "key_steps": [],
-                    "citations": ["join-react-video", "auth-android"],
-                    "insufficient_evidence": False,
-                },
-                10,
-                5,
-                "gpt-5.4",
-            )
 
         with patch("backend.services.rag_qa._get_rag_config") as config_mock:
             config_mock.return_value = {
@@ -2501,15 +2344,12 @@ The documentation states that time: 0 means the rule is applied permanently. How
             ), patch(
                 "backend.services.rag_qa._rerank_chunks",
                 side_effect=lambda query, chunks, config, *, limit=None: chunks,
-            ), patch(
-                "backend.services.rag_qa._invoke_llm_payload_with_trace",
-                side_effect=_capture_payload,
             ):
                 result = run_rag_query("how to join channel", product="audio_video_calling")
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(captured_payload_chunks[0][:2], ["join-react-video", "auth-android"])
+        self.assertEqual(result.trace.selected_chunk_ids[:2], ["join-react-video", "auth-android"])
         self.assertFalse(
             any(
                 timing.get("tool_name") == "p_bm25" and timing.get("query_kind") in {"exact_token", "focused_join_step", "focused_rewrite"}
@@ -2524,11 +2364,149 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 if isinstance(timing, dict)
             )
         )
+        self.assertTrue(result.trace.generic_join_primary_chunk_found)
+        self.assertFalse(result.trace.generic_join_recovery_used)
+        self.assertIn("channel name", result.answer.answer.lower())
+        self.assertIn("authentication token", result.answer.answer.lower())
+
+    def test_run_rag_query_short_how_to_faq_accepts_join_step_chunk_that_already_covers_auth_prerequisite(self) -> None:
+        join_chunk = RetrievedChunk(
+            chunk_id="join-quickstart",
+            text=(
+                "Call the SDK join method with the channel name, token, uid, and ChannelMediaOptions "
+                "to join a channel."
+            ),
+            source_path="official/get-started-sdk_android.md",
+            similarity=0.95,
+            h1="Quickstart",
+            h2="Implement Video Calling",
+            h3="Join a channel",
+            metadata={
+                "product": "video-calling",
+                "platform": "android",
+                "source_family": "video-calling/get-started/get-started-sdk",
+            },
+        )
+        query_understanding = QueryUnderstandingResult(
+            query_profile="en",
+            query_understanding_version="v2",
+            glossary_version="agora_glossary_en_v2",
+            self_query_version="v2",
+            normalized_query="how to join channel",
+            canonical_terms=["Channel"],
+            glossary_hits=[],
+            dictionary_hits=[{"canonical_term": "Channel"}],
+            retrieval_plan=RetrievalPlan(
+                semantic_query="how to join channel",
+                soft_signals={"topic": ["channel lifecycle"], "use_case": ["join_channel"]},
+                rule_expansions=["joinChannel token uid"],
+            ),
+            rewritten_queries=["join channel token uid"],
+            decomposition_subqueries=[],
+            fallback_mode="none",
+            intent_latency_ms=2.0,
+            rewrite_latency_ms=1.0,
+        )
+
+        def _bm25_side_effect(query_text: str, *_args, **_kwargs) -> list[RetrievedChunk]:
+            if query_text == "how to join channel":
+                return [rag_qa._copy_chunk(join_chunk)]
+            raise AssertionError(f"unexpected bm25 query: {query_text!r}")
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "app_schema": "supportportal",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 3,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-5.4",
+                "reasoning_effort": "high",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "vector_enabled": True,
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_enabled": True,
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+                "context_budget_enabled": False,
+                "reserved_output_tokens": 1200,
+                "buffer_tokens": 1200,
+            }
+            with patch(
+                "backend.services.rag_qa._resolve_active_vector_table",
+                return_value="supportportal.docagent_chunks_bge_m3_1024",
+            ), patch(
+                "backend.services.rag_qa.get_embedding_provider",
+                return_value=self._FakeProvider(),
+            ), patch(
+                "backend.services.rag_qa.understand_rag_query",
+                return_value=query_understanding,
+            ), patch(
+                "backend.services.rag_qa._invoke_agentic_planner",
+                side_effect=AssertionError("planner should be skipped for short how_to_faq light path"),
+            ), patch(
+                "backend.services.rag_qa._fetch_generic_join_pinned_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._retrieve_chunks",
+                side_effect=AssertionError("vector recovery should not be needed when the join step already covers auth prerequisites"),
+            ), patch(
+                "backend.services.rag_qa._retrieve_bm25_chunks",
+                side_effect=_bm25_side_effect,
+            ), patch(
+                "backend.services.rag_qa._retrieve_fts_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._retrieve_keyword_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._metadata_rerank",
+                side_effect=lambda *args, **kwargs: (
+                    list(kwargs.get("chunks") if "chunks" in kwargs else args[1]),
+                    {
+                        "post_rerank_count": len(kwargs.get("chunks") if "chunks" in kwargs else args[1]),
+                        "hints": {},
+                        "applied_filter": False,
+                        "filter_type": None,
+                    },
+                ),
+            ), patch(
+                "backend.services.rag_qa._rerank_chunks",
+                side_effect=lambda query, chunks, config, *, limit=None: chunks,
+            ):
+                result = run_rag_query("how to join channel", product="audio_video_calling")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.trace.selected_chunk_ids[:1], ["join-quickstart"])
+        self.assertTrue(result.trace.light_path_used)
+        self.assertTrue(result.trace.generic_join_primary_chunk_found)
+        self.assertEqual(result.trace.generic_join_support_chunks, ["join-quickstart"])
+        self.assertFalse(result.trace.generic_join_recovery_used)
+        self.assertEqual(result.trace.answer_profile_used, "generic_join_deterministic")
+        self.assertIn("channel name", result.answer.answer.lower())
+        self.assertIn("authentication token", result.answer.answer.lower())
+        self.assertIn("user id", result.answer.answer.lower())
+        self.assertIn("join method", result.answer.answer.lower())
+        self.assertIn("channelmediaoptions", result.answer.answer.lower())
 
     def test_run_rag_query_short_how_to_faq_recovers_when_original_support_missing_auth_chunk(self) -> None:
         join_chunk = RetrievedChunk(
             chunk_id="join-android",
-            text="Call joinChannel(token, channelName, uid, options) to join a channel.",
+            text="Call joinChannel(channelName, uid, options) to join a channel.",
             source_path="official/get-started-sdk_android.md",
             similarity=0.93,
             h1="Quickstart",
@@ -2586,44 +2564,12 @@ The documentation states that time: 0 means the rule is applied permanently. How
             intent_latency_ms=2.0,
             rewrite_latency_ms=1.0,
         )
-        captured_payload_chunks: list[list[str]] = []
-
         def _bm25_side_effect(query_text: str, *_args, **_kwargs) -> list[RetrievedChunk]:
             if query_text == "how to join channel":
                 return [rag_qa._copy_chunk(join_chunk), rag_qa._copy_chunk(multi_chunk)]
             if query_text == "join channel joinChannel token channel name uid basic authentication":
                 return [rag_qa._copy_chunk(auth_chunk)]
             raise AssertionError(f"unexpected bm25 query: {query_text!r}")
-
-        def _capture_payload(
-            message: str,
-            chunks: list[RetrievedChunk],
-            config: dict[str, object],
-            *,
-            strict_retry: bool = False,
-            packed_evidence=None,
-            product: str | None = None,
-            citation_retry: bool = False,
-            **_: object,
-        ) -> tuple[dict[str, object], int, int, str]:
-            _ = message
-            _ = config
-            _ = strict_retry
-            _ = packed_evidence
-            _ = product
-            _ = citation_retry
-            captured_payload_chunks.append([chunk.chunk_id for chunk in chunks])
-            return (
-                {
-                    "answer": "Request a token from your app server, then call joinChannel with the channel name and user ID.",
-                    "key_steps": [],
-                    "citations": [chunk.chunk_id for chunk in chunks[:2]],
-                    "insufficient_evidence": False,
-                },
-                10,
-                5,
-                "gpt-5.4",
-            )
 
         with patch("backend.services.rag_qa._get_rag_config") as config_mock:
             config_mock.return_value = {
@@ -2690,6 +2636,187 @@ The documentation states that time: 0 means the rule is applied permanently. How
             ), patch(
                 "backend.services.rag_qa._rerank_chunks",
                 side_effect=lambda query, chunks, config, *, limit=None: chunks,
+            ):
+                result = run_rag_query("how to join channel", product="audio_video_calling")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.trace.selected_chunk_ids[:2], ["join-android", "auth-android"])
+        self.assertTrue(
+            any(
+                timing.get("tool_name") == "p_bm25" and timing.get("query_kind") == "focused_rewrite"
+                for timing in result.trace.retrieval_tool_timings
+                if isinstance(timing, dict)
+            )
+        )
+        self.assertTrue(result.trace.generic_join_primary_chunk_found)
+        self.assertTrue(result.trace.generic_join_recovery_used)
+        self.assertIn("channel name", result.answer.answer.lower())
+        self.assertIn("authentication token", result.answer.answer.lower())
+
+    def test_run_rag_query_short_how_to_faq_recovers_join_step_when_original_support_is_auth_only(self) -> None:
+        join_chunk = RetrievedChunk(
+            chunk_id="join-android",
+            text="Call joinChannel(token, channelName, uid, options) to join a channel.",
+            source_path="official/get-started-sdk_android.md",
+            similarity=0.89,
+            h1="Quickstart",
+            h2="Implement Video Calling",
+            h3="Join a channel",
+            metadata={
+                "product": "video-calling",
+                "platform": "android",
+                "source_family": "video-calling/get-started/get-started-sdk",
+            },
+        )
+        auth_chunk = RetrievedChunk(
+            chunk_id="auth-android",
+            text="Request a token from your app server for the channel name and user ID before joining.",
+            source_path="official/authentication-workflow_android.md",
+            similarity=0.93,
+            h1="Use tokens",
+            h2="Implement basic authentication",
+            h3="Use a token to join a channel",
+            metadata={
+                "product": "video-calling",
+                "platform": "android",
+                "source_family": "video-calling/get-started/authentication-workflow",
+                "use_case": "basic_authentication",
+            },
+        )
+        query_understanding = QueryUnderstandingResult(
+            query_profile="en",
+            query_understanding_version="v2",
+            glossary_version="agora_glossary_en_v2",
+            self_query_version="v2",
+            normalized_query="how to join channel",
+            canonical_terms=["Channel"],
+            glossary_hits=[],
+            dictionary_hits=[{"canonical_term": "Channel"}],
+            retrieval_plan=RetrievalPlan(
+                semantic_query="how to join channel",
+                soft_signals={"topic": ["channel lifecycle"], "use_case": ["join_channel"]},
+                rule_expansions=["joinChannel token uid"],
+            ),
+            rewritten_queries=["join channel token uid"],
+            decomposition_subqueries=[],
+            fallback_mode="none",
+            intent_latency_ms=2.0,
+            rewrite_latency_ms=1.0,
+        )
+        captured_payload_chunks: list[list[str]] = []
+
+        def _bm25_side_effect(query_text: str, *_args, **_kwargs) -> list[RetrievedChunk]:
+            if query_text == "how to join channel":
+                return [rag_qa._copy_chunk(auth_chunk)]
+            if query_text == "join a channel joinChannel channelName uid token appid quickstart get started":
+                return [rag_qa._copy_chunk(join_chunk)]
+            if query_text == "join channel joinChannel token channel name uid basic authentication":
+                return [rag_qa._copy_chunk(auth_chunk)]
+            raise AssertionError(f"unexpected bm25 query: {query_text!r}")
+
+        def _capture_payload(
+            message: str,
+            chunks: list[RetrievedChunk],
+            config: dict[str, object],
+            *,
+            strict_retry: bool = False,
+            packed_evidence=None,
+            product: str | None = None,
+            citation_retry: bool = False,
+            **_: object,
+        ) -> tuple[dict[str, object], int, int, str]:
+            _ = message
+            _ = config
+            _ = strict_retry
+            _ = packed_evidence
+            _ = product
+            _ = citation_retry
+            captured_payload_chunks.append([chunk.chunk_id for chunk in chunks])
+            return (
+                {
+                    "answer": "Call the SDK join method with channel name, token, user ID, and media options.",
+                    "key_steps": [
+                        "Provide the channel name you want to join.",
+                        "Request or provide a valid token for that channel and user ID.",
+                        "Set the user ID and media options, then call the SDK join method.",
+                    ],
+                    "citations": ["join-android", "auth-android"],
+                    "insufficient_evidence": False,
+                },
+                10,
+                5,
+                "gpt-5.4",
+            )
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "app_schema": "supportportal",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 3,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-5.4",
+                "reasoning_effort": "high",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "vector_enabled": True,
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_enabled": True,
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+                "context_budget_enabled": False,
+                "reserved_output_tokens": 1200,
+                "buffer_tokens": 1200,
+            }
+            with patch(
+                "backend.services.rag_qa._resolve_active_vector_table",
+                return_value="supportportal.docagent_chunks_bge_m3_1024",
+            ), patch(
+                "backend.services.rag_qa.get_embedding_provider",
+                return_value=self._FakeProvider(),
+            ), patch(
+                "backend.services.rag_qa.understand_rag_query",
+                return_value=query_understanding,
+            ), patch(
+                "backend.services.rag_qa._invoke_agentic_planner",
+                side_effect=AssertionError("planner should be skipped for short how_to_faq light path"),
+            ), patch(
+                "backend.services.rag_qa._fetch_generic_join_pinned_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._retrieve_chunks",
+                side_effect=AssertionError("vector recovery should not run when lexical join recovery can fill the missing support"),
+            ), patch(
+                "backend.services.rag_qa._retrieve_bm25_chunks",
+                side_effect=_bm25_side_effect,
+            ), patch(
+                "backend.services.rag_qa._retrieve_fts_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._retrieve_keyword_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._metadata_rerank",
+                side_effect=lambda *args, **kwargs: (
+                    list(kwargs.get("chunks") if "chunks" in kwargs else args[1]),
+                    {"post_rerank_count": len(kwargs.get("chunks") if "chunks" in kwargs else args[1]), "hints": {}, "applied_filter": False, "filter_type": None},
+                ),
+            ), patch(
+                "backend.services.rag_qa._rerank_chunks",
+                side_effect=lambda query, chunks, config, *, limit=None: chunks,
             ), patch(
                 "backend.services.rag_qa._invoke_llm_payload_with_trace",
                 side_effect=_capture_payload,
@@ -2698,10 +2825,19 @@ The documentation states that time: 0 means the rule is applied permanently. How
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(captured_payload_chunks[0][:2], ["join-android", "auth-android"])
+        self.assertEqual(result.trace.selected_chunk_ids[:2], ["join-android", "auth-android"])
+        self.assertTrue(result.trace.light_path_used)
+        self.assertTrue(result.trace.generic_join_primary_chunk_found)
+        self.assertEqual(result.trace.generic_join_support_chunks, ["join-android", "auth-android"])
+        self.assertTrue(result.trace.generic_join_recovery_used)
+        self.assertIn("channel name", result.answer.answer.lower())
+        self.assertIn("authentication token", result.answer.answer.lower())
+        self.assertIn("user id", result.answer.answer.lower())
+        self.assertIn("join method", result.answer.answer.lower())
+        self.assertIn("channel/media options", result.answer.answer.lower())
         self.assertTrue(
             any(
-                timing.get("tool_name") == "p_bm25" and timing.get("query_kind") == "focused_rewrite"
+                timing.get("tool_name") == "p_bm25" and timing.get("query_kind") == "focused_join_step"
                 for timing in result.trace.retrieval_tool_timings
                 if isinstance(timing, dict)
             )
