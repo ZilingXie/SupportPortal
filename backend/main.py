@@ -2926,6 +2926,11 @@ async def post_investigation_message(
         "ticket_id": str(engineer_case.get("engineer_case_id") or ticket_id),
         "status": ticket["status"],
         "active_investigation": result.get("active_investigation"),
+        "engineer_agent_state": (
+            case_context.get("engineer_agent_state")
+            if isinstance(case_context.get("engineer_agent_state"), dict)
+            else None
+        ),
         "updated_at": ticket["updated_at"],
     }
 
@@ -2953,6 +2958,19 @@ async def confirm_investigation_reply(
         ).strip()
         if not draft_customer_reply:
             raise HTTPException(status_code=400, detail="A draft customer reply is required before approval.")
+        reply_readiness = (
+            (engineer_case_payload.get("engineer_agent_state") or {}).get("reply_readiness")
+            if isinstance(engineer_case_payload.get("engineer_agent_state"), dict)
+            else None
+        )
+        if not (
+            isinstance(reply_readiness, dict)
+            and bool(reply_readiness.get("ready_for_customer_reply"))
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="A backend-validated customer reply is required before approval.",
+            )
 
     engineer_case = _engineer_case_payload_to_record(engineer_case_payload)
     case_context = build_engineer_case_context(ticket, engineer_case)
@@ -3027,6 +3045,11 @@ async def confirm_investigation_reply(
         "status": engineer_case["status"],
         "active_investigation": result.get("active_investigation"),
         "closed_investigation": result.get("closed_investigation"),
+        "engineer_agent_state": (
+            case_context.get("engineer_agent_state")
+            if isinstance(case_context.get("engineer_agent_state"), dict)
+            else None
+        ),
         "updated_at": ticket["updated_at"],
     }
 

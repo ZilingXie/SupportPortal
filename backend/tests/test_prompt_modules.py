@@ -258,12 +258,14 @@ class PromptModuleTests(unittest.TestCase):
 
         self.assertEqual(
             ENGINEER_INVESTIGATION_REPLY_PROMPT_VERSION,
-            "engineer-investigation-reply-v1",
+            "engineer-investigation-reply-v2",
         )
         self.assertIn("## Role", system_prompt)
         self.assertIn("Return strict JSON only", system_prompt)
         self.assertIn('"state"', system_prompt)
         self.assertIn('"draft_customer_reply"', system_prompt)
+        self.assertIn('"reply_readiness"', system_prompt)
+        self.assertIn('"proof_anchors"', system_prompt)
         self.assertIn("## Latest Customer Message", user_prompt)
         self.assertIn("## Current Investigation Thread", user_prompt)
         self.assertIn("## Ticket-Level Agent State", user_prompt)

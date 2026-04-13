@@ -103,6 +103,99 @@ def _client_intake_summary(ticket: dict[str, Any]) -> str:
     return "; ".join(segments)
 
 
+def _client_intake_known_information(ticket: dict[str, Any]) -> dict[str, str]:
+    state = ticket.get("client_intake_state")
+    if not isinstance(state, dict):
+        return {}
+    known_information = state.get("known_information")
+    if not isinstance(known_information, dict):
+        return {}
+    normalized: dict[str, str] = {}
+    for key in ("issue_symptom", "channel_name", "problematic_uid", "issue_timestamp", "sid"):
+        value = _compact_text(known_information.get(key))
+        if value:
+            normalized[key] = value
+    return normalized
+
+
+def _opening_issue_search_text(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", _compact_text(value).lower()).strip()
+
+
+def _customer_note_addendum(customer_issue: str, intake_known_information: dict[str, str]) -> str:
+    note = _compact_text(customer_issue)
+    if not note:
+        return ""
+
+    normalized_note = _opening_issue_search_text(note)
+    if not normalized_note:
+        return ""
+
+    remaining = f" {normalized_note} "
+    field_aliases = {
+        "issue_symptom": ["symptom", "issue", "problem", "black screen"],
+        "channel_name": ["channel name", "channel"],
+        "problematic_uid": ["problematic uid", "uid", "user id", "user"],
+        "issue_timestamp": ["issue timestamp", "timestamp", "time", "happened", "occurred"],
+        "sid": ["sid", "call id", "session id", "session"],
+    }
+
+    for key, value in intake_known_information.items():
+        search_value = _opening_issue_search_text(value)
+        if search_value:
+            remaining = remaining.replace(f" {search_value} ", " ")
+        for alias in field_aliases.get(key, []):
+            alias_text = _opening_issue_search_text(alias)
+            if alias_text:
+                remaining = remaining.replace(f" {alias_text} ", " ")
+
+    for stop_word in (
+        "is",
+        "was",
+        "are",
+        "were",
+        "and",
+        "or",
+        "the",
+        "a",
+        "an",
+        "it",
+        "this",
+        "that",
+        "on",
+        "at",
+        "in",
+        "of",
+        "to",
+        "for",
+        "with",
+        "after",
+        "before",
+        "during",
+        "my",
+        "our",
+    ):
+        remaining = remaining.replace(f" {stop_word} ", " ")
+
+    collapsed_remaining = _compact_text(remaining)
+    return note if collapsed_remaining else ""
+
+
+def _build_opening_issue_summary(ticket: dict[str, Any]) -> str:
+    customer_issue = latest_customer_message(ticket) or ticket.get("subject") or "Unknown customer issue"
+    intake_known_information = _client_intake_known_information(ticket)
+    intake_summary = _client_intake_summary(ticket)
+    if not intake_summary:
+        return _truncate_text(customer_issue, _MAX_OPENING_CONTEXT_ISSUE_CHARS)
+    customer_note_addendum = _customer_note_addendum(customer_issue, intake_known_information)
+    if not customer_note_addendum:
+        return _truncate_text(intake_summary, _MAX_OPENING_CONTEXT_ISSUE_CHARS)
+    return _truncate_text(
+        f"{intake_summary}. Customer note: {customer_note_addendum}",
+        _MAX_OPENING_CONTEXT_ISSUE_CHARS,
+    )
+
+
 def _latest_rag_assistant_message(ticket: dict[str, Any]) -> dict[str, Any] | None:
     messages = ticket.get("messages", [])
     if not isinstance(messages, list):
@@ -126,16 +219,7 @@ def build_investigation_opening_context(
     citations: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     normalized_reason = _compact_text(trigger_reason).lower()
-    latest_customer = _truncate_text(
-        latest_customer_message(ticket) or ticket.get("subject") or "Unknown customer issue",
-        _MAX_OPENING_CONTEXT_ISSUE_CHARS,
-    )
-    intake_summary = _client_intake_summary(ticket)
-    if intake_summary:
-        latest_customer = _truncate_text(
-            f"{latest_customer}. Collected customer intake: {intake_summary}",
-            _MAX_OPENING_CONTEXT_ISSUE_CHARS,
-        )
+    latest_customer = _build_opening_issue_summary(ticket)
 
     normalized_answer = _compact_text(rag_answer)
     normalized_sources = _limited_sources(sources)

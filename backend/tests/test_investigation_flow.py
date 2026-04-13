@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 import backend.main as main
 from backend.repositories.ticket_repository import InMemoryTicketRepository
+from backend.services.investigation_flow import build_investigation_opening_context
 from backend.services.llm_factory import LlmInvocationError, LlmTextResult
 from backend.services.rag_service_client import RagTicketAnswerDetail
 from backend.services.support_router import SupportResolution
@@ -46,6 +47,45 @@ def _rag_route_decision(*, reason: str = "technical_docs_match") -> main.Support
         execution_action="rag",
         tooling_profile="agora_docs_only",
     )
+
+
+def _reply_readiness(
+    *,
+    has_conclusion: bool = True,
+    has_proof: bool = True,
+    has_solution_or_next_step: bool = True,
+    conclusion_summary: str = "The issue reproduces on Android 14 with SDK 4.2.1.",
+    proof_summary: str = "The engineer reproduced the issue on Android 14 with SDK 4.2.1 only.",
+    proof_anchors: list[str] | None = None,
+    solution_or_next_step: str = "Please upgrade to SDK 4.2.2 and retry token renewal.",
+    blockers: list[str] | None = None,
+    critique: str = "The current evidence supports a customer-safe reply.",
+    ready_for_customer_reply: bool | None = None,
+) -> dict[str, object]:
+    normalized_anchors = list(proof_anchors or ["Android 14", "SDK 4.2.1"])
+    normalized_blockers = list(blockers or [])
+    if ready_for_customer_reply is None:
+        ready_for_customer_reply = bool(
+            has_conclusion
+            and has_proof
+            and has_solution_or_next_step
+            and conclusion_summary
+            and proof_summary
+            and solution_or_next_step
+            and not normalized_blockers
+        )
+    return {
+        "has_conclusion": has_conclusion,
+        "has_proof": has_proof,
+        "has_solution_or_next_step": has_solution_or_next_step,
+        "conclusion_summary": conclusion_summary,
+        "proof_summary": proof_summary,
+        "proof_anchors": normalized_anchors,
+        "solution_or_next_step": solution_or_next_step,
+        "blockers": normalized_blockers,
+        "critique": critique,
+        "ready_for_customer_reply": ready_for_customer_reply,
+    }
 
 
 class InvestigationFlowTests(unittest.TestCase):
@@ -1130,6 +1170,49 @@ class InvestigationFlowTests(unittest.TestCase):
         event_types = [item["event_type"] for item in self.repository.list_ticket_events("TK-INV-100")]
         self.assertIn("ticket_investigation_started", event_types)
 
+    def test_build_investigation_opening_context_prefers_structured_intake_without_duplicate_customer_facts(self) -> None:
+        ticket = self._seed_ticket(
+            ticket_id="TK-INV-OPENING-DEDUP",
+            subject="Black screen issue",
+            product="audio_video_calling",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "channel is zilingtest, and uid is 2. it happened on 3/5 12:00",
+                    "created_at": "2026-03-29T09:00:00+00:00",
+                }
+            ],
+            client_intake_state={
+                "phase": "ready_for_engineer_ticket",
+                "product": "audio_video_calling",
+                "issue_mode": "investigation",
+                "known_information": {
+                    "issue_symptom": "black screen issue",
+                    "channel_name": "zilingtest",
+                    "problematic_uid": "2",
+                    "issue_timestamp": "3/5 12:00",
+                },
+                "missing_information": [],
+                "ready_for_engineer_ticket": True,
+                "last_updated_at": "2026-03-29T09:00:00+00:00",
+            },
+        )
+
+        opening = build_investigation_opening_context(
+            ticket,
+            trigger_reason="rag_insufficient_evidence",
+        )
+
+        self.assertIsNotNone(opening)
+        issue_summary = str((opening or {}).get("issue_summary") or "")
+        self.assertIn("issue symptom=black screen issue", issue_summary)
+        self.assertIn("channel name=zilingtest", issue_summary)
+        self.assertIn("problematic uid=2", issue_summary)
+        self.assertIn("issue timestamp=3/5 12:00", issue_summary)
+        self.assertNotIn("Collected customer intake", issue_summary)
+        self.assertEqual(issue_summary.count("zilingtest"), 1)
+        self.assertEqual(issue_summary.count("3/5 12:00"), 1)
+
     def test_ticket_query_escalation_persists_ticket_level_handoff_and_agent_state(self) -> None:
         resolution = SupportResolution(
             answer="Please upgrade to SDK 4.2.2 and retry token renewal.",
@@ -1277,6 +1360,8 @@ class InvestigationFlowTests(unittest.TestCase):
             agent_state["next_request_for_engineer"],
             "Please confirm the exact SDK version and whether Android 14 is the only affected platform.",
         )
+        self.assertIsInstance(agent_state.get("reply_readiness"), dict)
+        self.assertFalse(agent_state["reply_readiness"]["ready_for_customer_reply"])
 
     def test_customer_follow_up_during_investigation_keeps_same_thread_and_clears_confirmation(self) -> None:
         self._seed_ticket(
@@ -2513,6 +2598,20 @@ class InvestigationFlowTests(unittest.TestCase):
                 "state": "awaiting_confirmation",
                 "message": "I have enough information now. Please confirm this draft before I reply to the customer.",
                 "draft_customer_reply": "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                "engineer_agent_state": {
+                    "phase": "awaiting_confirmation",
+                    "issue_understanding": "Android 14 token renewal fails on SDK 4.2.1.",
+                    "knowledge_summary": "Client AI found token-authentication guidance but no Android 14-specific fix.",
+                    "why_not_solved": "The engineer confirmed the reproduction scope and safe customer guidance.",
+                    "goal": "Send a safe customer reply that scopes the issue to Android 14 on SDK 4.2.1.",
+                    "known_facts": ["Issue reproduces on Android 14 with SDK 4.2.1."],
+                    "missing_information": [],
+                    "next_request_for_engineer": "Approve the prepared customer reply.",
+                    "resolution_hypothesis": "Upgrading to SDK 4.2.2 should resolve the issue.",
+                    "ready_to_reply": True,
+                    "reply_readiness": _reply_readiness(),
+                    "last_refreshed_at": "2026-03-29T09:04:00+00:00",
+                },
             },
         ), patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
@@ -2573,6 +2672,18 @@ class InvestigationFlowTests(unittest.TestCase):
           "state": "awaiting_confirmation",
           "message": "I drafted a customer follow-up asking for the missing channel name. Please confirm whether it is ready to send.",
           "draft_customer_reply": "Could you please share the channel name with us for further investigation?",
+          "reply_readiness": {
+            "has_conclusion": true,
+            "has_proof": true,
+            "has_solution_or_next_step": true,
+            "conclusion_summary": "The investigation still lacks the channel name required to isolate the black-screen session.",
+            "proof_summary": "The current investigation thread and handoff packet still list the channel name as missing.",
+            "proof_anchors": ["Channel name"],
+            "solution_or_next_step": "Ask the customer to share the channel name for further investigation.",
+            "blockers": [],
+            "critique": "The current evidence supports a customer-safe follow-up that asks for the missing channel name.",
+            "ready_for_customer_reply": true
+          },
           "engineer_agent_state": {
             "phase": "awaiting_confirmation",
             "issue_understanding": "The customer sees a black screen after joining the call.",
@@ -2618,8 +2729,211 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(latest_message.get("meta", {}).get("scenario"), "engineer_investigation_reply")
         self.assertEqual(latest_message.get("meta", {}).get("model"), "gpt-5.4")
         self.assertEqual(latest_message.get("meta", {}).get("reasoning_effort"), "medium")
-        self.assertEqual(latest_message.get("meta", {}).get("prompt_version"), "engineer-investigation-reply-v1")
+        self.assertEqual(latest_message.get("meta", {}).get("prompt_version"), "engineer-investigation-reply-v2")
         self.assertEqual(latest_message.get("meta", {}).get("generation_status"), "succeeded")
+        self.assertTrue(payload["engineer_agent_state"]["reply_readiness"]["ready_for_customer_reply"])
+        self.assertEqual(
+            payload["engineer_agent_state"]["reply_readiness"]["proof_anchors"],
+            ["Channel name"],
+        )
+
+    def test_engineer_internal_message_requires_explicit_proof_before_awaiting_confirmation(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-INV-LLM-NOPROOF",
+            subject="Black screen after joining the call",
+            status="investigating",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "I got a black screen after joining the call.",
+                    "created_at": "2026-03-29T09:00:00+00:00",
+                },
+                {
+                    "role": "assistant",
+                    "content": "I've opened an engineer ticket and we're investigating further.",
+                    "created_at": "2026-03-29T09:01:00+00:00",
+                },
+            ],
+            active_investigation={
+                "id": "INV-LLM-NOPROOF",
+                "state": "active",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "support_query",
+                "draft_customer_reply": None,
+                "final_confirmation_requested_at": None,
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:00:00+00:00",
+                "messages": [
+                    {
+                        "id": "INV-LLM-NOPROOF-m1",
+                        "role": "engineer_ai",
+                        "content": "Please confirm the exact reproduction scope first.",
+                        "created_at": "2026-03-29T09:00:00+00:00",
+                    }
+                ],
+            },
+        )
+
+        llm_text = """
+        {
+          "state": "awaiting_confirmation",
+          "message": "We have enough to respond. I drafted a customer reply that points to a codec mismatch.",
+          "draft_customer_reply": "Our investigation suggests the audience could not decode the stream. Please try another video codec and test again.",
+          "reply_readiness": {
+            "has_conclusion": true,
+            "has_proof": false,
+            "has_solution_or_next_step": true,
+            "conclusion_summary": "The audience could not decode the video stream.",
+            "proof_summary": "",
+            "proof_anchors": [],
+            "solution_or_next_step": "Ask the customer to switch to a different video codec and retest.",
+            "blockers": ["Explicit proof is still missing."],
+            "critique": "The engineer gave a codec conclusion without citing logs, reproduction evidence, or a doc path.",
+            "ready_for_customer_reply": true
+          },
+          "engineer_agent_state": {
+            "phase": "awaiting_confirmation",
+            "issue_understanding": "The customer sees a black screen after joining the call.",
+            "knowledge_summary": "The engineer suspects a decode failure on the audience side.",
+            "why_not_solved": "The engineer conclusion is not backed by explicit technical evidence yet.",
+            "goal": "Collect the missing proof before replying to the customer.",
+            "known_facts": [
+              "Customer reported a black screen after joining the call."
+            ],
+            "missing_information": [
+              "Explicit proof for the decode-failure conclusion"
+            ],
+            "next_request_for_engineer": "Approve the prepared customer reply if it is safe to send.",
+            "resolution_hypothesis": "A codec mismatch may be causing the black screen.",
+            "ready_to_reply": true,
+            "last_refreshed_at": "2026-03-29T09:04:00+00:00"
+          }
+        }
+        """
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "backend.services.engineer_agent.invoke_responses_text",
+            return_value=LlmTextResult(text=llm_text, model_name="gpt-5.4"),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/engineer/tickets/TK-INV-LLM-NOPROOF-1/investigation/messages",
+                json={
+                    "engineer_id": "eng",
+                    "message": "it's due to audience wasnt able to decode the video stream, ask the cx to change a differnent video codec",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["active_investigation"]["state"], "active")
+        self.assertEqual(payload["active_investigation"]["draft_customer_reply"], "")
+        self.assertFalse(payload["engineer_agent_state"]["reply_readiness"]["ready_for_customer_reply"])
+        self.assertFalse(payload["engineer_agent_state"]["reply_readiness"]["has_proof"])
+        self.assertTrue(
+            any(
+                "proof" in item.lower()
+                for item in payload["engineer_agent_state"]["reply_readiness"]["blockers"]
+            )
+        )
+        latest_message = payload["active_investigation"]["messages"][-1]
+        self.assertIn("proof", latest_message["content"].lower())
+
+    def test_engineer_internal_message_rejects_unverifiable_proof_anchors(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-INV-LLM-BADANCHOR",
+            subject="Black screen after joining the call",
+            status="investigating",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "I got a black screen after joining the call.",
+                    "created_at": "2026-03-29T09:00:00+00:00",
+                },
+                {
+                    "role": "assistant",
+                    "content": "I've opened an engineer ticket and we're investigating further.",
+                    "created_at": "2026-03-29T09:01:00+00:00",
+                },
+            ],
+            active_investigation={
+                "id": "INV-LLM-BADANCHOR",
+                "state": "active",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "support_query",
+                "draft_customer_reply": None,
+                "final_confirmation_requested_at": None,
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:00:00+00:00",
+                "messages": [
+                    {
+                        "id": "INV-LLM-BADANCHOR-m1",
+                        "role": "engineer_ai",
+                        "content": "Please confirm the exact reproduction scope first.",
+                        "created_at": "2026-03-29T09:00:00+00:00",
+                    }
+                ],
+            },
+        )
+
+        llm_text = """
+        {
+          "state": "awaiting_confirmation",
+          "message": "The evidence is enough now. Please confirm this customer reply.",
+          "draft_customer_reply": "Our investigation suggests the audience could not decode the stream. Please try another video codec and test again.",
+          "reply_readiness": {
+            "has_conclusion": true,
+            "has_proof": true,
+            "has_solution_or_next_step": true,
+            "conclusion_summary": "The audience could not decode the video stream.",
+            "proof_summary": "The investigation log shows an audience-side decode failure.",
+            "proof_anchors": ["agoraapi.log shows decode failed on audience device"],
+            "solution_or_next_step": "Ask the customer to switch to a different video codec and retest.",
+            "blockers": [],
+            "critique": "The current evidence supports the codec workaround.",
+            "ready_for_customer_reply": true
+          },
+          "engineer_agent_state": {
+            "phase": "awaiting_confirmation",
+            "issue_understanding": "The customer sees a black screen after joining the call.",
+            "knowledge_summary": "The engineer suspects a decode failure on the audience side.",
+            "why_not_solved": "The customer-safe answer still needs engineer confirmation.",
+            "goal": "Send the codec workaround to the customer.",
+            "known_facts": [
+              "Customer reported a black screen after joining the call."
+            ],
+            "missing_information": [],
+            "next_request_for_engineer": "Approve the prepared customer reply if it is safe to send.",
+            "resolution_hypothesis": "A codec mismatch may be causing the black screen.",
+            "ready_to_reply": true,
+            "last_refreshed_at": "2026-03-29T09:04:00+00:00"
+          }
+        }
+        """
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "backend.services.engineer_agent.invoke_responses_text",
+            return_value=LlmTextResult(text=llm_text, model_name="gpt-5.4"),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/engineer/tickets/TK-INV-LLM-BADANCHOR-1/investigation/messages",
+                json={
+                    "engineer_id": "eng",
+                    "message": "it's due to audience wasnt able to decode the video stream, ask the cx to change a differnent video codec",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["active_investigation"]["state"], "active")
+        self.assertEqual(payload["active_investigation"]["draft_customer_reply"], "")
+        self.assertFalse(payload["engineer_agent_state"]["reply_readiness"]["ready_for_customer_reply"])
+        self.assertFalse(payload["engineer_agent_state"]["reply_readiness"]["has_proof"])
+        self.assertTrue(
+            any(
+                "anchor" in item.lower()
+                for item in payload["engineer_agent_state"]["reply_readiness"]["blockers"]
+            )
+        )
 
     def test_engineer_internal_message_fail_closes_when_investigation_reply_model_output_is_invalid(self) -> None:
         self._seed_ticket(
@@ -2710,6 +3024,7 @@ class InvestigationFlowTests(unittest.TestCase):
                     "next_request_for_engineer": "Approve the prepared customer reply.",
                     "resolution_hypothesis": "Upgrading to SDK 4.2.2 should resolve the issue.",
                     "ready_to_reply": True,
+                    "reply_readiness": _reply_readiness(),
                     "last_refreshed_at": "2026-03-29T09:04:00+00:00",
                 },
             },
@@ -2773,6 +3088,62 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400, response.text)
         self.assertIn("draft customer reply", response.text.lower())
 
+    def test_confirmation_approve_requires_backend_validated_reply_readiness(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-INV-APPROVE-NOREADY",
+            status="investigating",
+            active_investigation={
+                "id": "INV-APPROVE-NOREADY",
+                "state": "awaiting_confirmation",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "support_query",
+                "draft_customer_reply": "Please upgrade to SDK 4.2.2 and retry token renewal.",
+                "final_confirmation_requested_at": "2026-03-29T09:03:00+00:00",
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:03:00+00:00",
+                "messages": [
+                    {
+                        "id": "INV-APPROVE-NOREADY-m1",
+                        "role": "engineer_ai",
+                        "content": "Please confirm whether this wording is ready to send.",
+                        "created_at": "2026-03-29T09:03:00+00:00",
+                    }
+                ],
+            },
+            engineer_agent_state={
+                "phase": "awaiting_confirmation",
+                "issue_understanding": "Token renew callback does not fire.",
+                "knowledge_summary": "Client AI found generic token-renewal guidance.",
+                "why_not_solved": "The current draft has not passed the readiness gate.",
+                "goal": "Collect the missing proof before replying to the customer.",
+                "known_facts": ["SDK 4.2.2 is the recommended fix."],
+                "missing_information": ["Explicit proof"],
+                "next_request_for_engineer": "Please add explicit proof before approving the reply.",
+                "resolution_hypothesis": "Upgrading to SDK 4.2.2 should resolve the callback failure.",
+                "ready_to_reply": False,
+                "reply_readiness": _reply_readiness(
+                    has_proof=False,
+                    proof_summary="",
+                    proof_anchors=[],
+                    blockers=["Explicit proof is still missing."],
+                    critique="The current draft has no explicit proof yet.",
+                    ready_for_customer_reply=False,
+                ),
+                "last_refreshed_at": "2026-03-29T09:03:00+00:00",
+            },
+        )
+
+        response = self.client.post(
+            "/api/engineer/tickets/TK-INV-APPROVE-NOREADY-1/investigation/confirmation",
+            json={
+                "engineer_id": "eng",
+                "decision": "approve",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("validated customer reply", response.text.lower())
+
     def test_confirmation_approve_sends_customer_reply_and_closes_investigation(self) -> None:
         self._seed_ticket(
             ticket_id="TK-INV-103",
@@ -2826,6 +3197,7 @@ class InvestigationFlowTests(unittest.TestCase):
                 "next_request_for_engineer": "Approve the prepared customer reply.",
                 "resolution_hypothesis": "Upgrading to SDK 4.2.2 should resolve the callback failure.",
                 "ready_to_reply": True,
+                "reply_readiness": _reply_readiness(),
                 "last_refreshed_at": "2026-03-29T09:03:00+00:00",
             },
         )
@@ -2896,6 +3268,24 @@ class InvestigationFlowTests(unittest.TestCase):
                 "state": "awaiting_confirmation",
                 "message": "Revised draft is ready. Please confirm whether this wording is safe to send.",
                 "draft_customer_reply": "Please upgrade to SDK 4.2.2 and clear the local token cache before retrying.",
+                "engineer_agent_state": {
+                    "phase": "awaiting_confirmation",
+                    "issue_understanding": "Token renew callback does not fire.",
+                    "knowledge_summary": "Client AI found generic token-renewal guidance.",
+                    "why_not_solved": "The revised reply is ready for engineer confirmation.",
+                    "goal": "Get approval on the revised customer-safe reply.",
+                    "known_facts": ["Upgrade to SDK 4.2.2 is still required."],
+                    "missing_information": [],
+                    "next_request_for_engineer": "Approve the prepared customer reply.",
+                    "resolution_hypothesis": "Clearing the local token cache may help after the SDK upgrade.",
+                    "ready_to_reply": True,
+                    "reply_readiness": _reply_readiness(
+                        proof_anchors=["SDK 4.2.2", "token cache"],
+                        proof_summary="The engineer confirmed the SDK-specific fix and added a local cache-clear step.",
+                        solution_or_next_step="Please upgrade to SDK 4.2.2 and clear the local token cache before retrying.",
+                    ),
+                    "last_refreshed_at": "2026-03-29T09:04:00+00:00",
+                },
             },
         ), patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
