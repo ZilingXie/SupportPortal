@@ -118,6 +118,22 @@ class DashboardUiContractTests(unittest.TestCase):
         self.assertIn('aria-expanded="true"', source)
         self.assertNotIn("Priority Breakdown", source)
         self.assertNotIn(">Urgent<", source)
+
+    def test_dashboard_role_labels_split_public_and_internal_identities(self) -> None:
+        source = Path("ui/dashboard-ui/index.html").read_text(encoding="utf-8")
+        js_source = Path("ui/dashboard-ui/app.js").read_text(encoding="utf-8")
+        css = Path("ui/dashboard-ui/styles.css").read_text(encoding="utf-8")
+        role_label_block = self._extract_js_function_block(js_source, "function roleLabel(role) {")
+
+        self.assertIn('const PUBLIC_ASSISTANT_DISPLAY_NAME = "Sid";', js_source)
+        self.assertIn('const ENGINEER_AI_DISPLAY_NAME = "Case Buddy";', js_source)
+        self.assertIn('const ENGINEER_DISPLAY_NAME = "jack";', js_source)
+        self.assertIn("return PUBLIC_ASSISTANT_DISPLAY_NAME;", role_label_block)
+        self.assertIn("return ENGINEER_AI_DISPLAY_NAME;", role_label_block)
+        self.assertIn("return ENGINEER_DISPLAY_NAME;", role_label_block)
+        self.assertNotIn('return "AI";', role_label_block)
+        self.assertNotIn('return "Engineer AI";', role_label_block)
+        self.assertNotIn('return "Engineer";', role_label_block)
         self.assertNotIn("Live Ticket Feed", source)
         self.assertNotIn("Live Stream", source)
         self.assertNotIn("RAG Workbench", source)

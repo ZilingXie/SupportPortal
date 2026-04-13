@@ -582,7 +582,7 @@ class ClientUiContractTests(unittest.TestCase):
                 if (initialHtml.includes("Describe your technical issue and Concierge AI will start with the most likely next step.")) {
                   throw new Error("Empty draft session should not render the removed hero description.");
                 }
-                if (!initialHtml.includes('class="message-author">Concierge AI</span>')) {
+                if (!initialHtml.includes('class="message-author">Sid</span>')) {
                   throw new Error("Welcome bubble should still use the assistant identity.");
                 }
                 if (initialHtml.includes('<span class="ticket-product-kicker">Select Product</span>')) {
@@ -619,6 +619,45 @@ class ClientUiContractTests(unittest.TestCase):
                 const syncedDraft = getTicketById(draft.id);
                 if (!syncedDraft || (syncedDraft.messages || []).length !== 0) {
                   throw new Error("Backend sync should not turn the welcome bubble into a durable assistant message.");
+                }
+              """
+            )
+        )
+
+    def test_client_public_assistant_messages_render_sid_identity(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const ticket = createTicket(state.user.id);
+                updateTicketProduct(ticket.id, "audio_video_calling");
+                updateTicketStatus(ticket.id, "communicating");
+                saveTicketMessages(ticket.id, [
+                  {
+                    id: "msg-1",
+                    role: "user",
+                    content: "How do I join a channel?",
+                    createdAt: "2026-04-10T02:00:00.000Z",
+                  },
+                  {
+                    id: "msg-2",
+                    role: "assistant",
+                    content: "Use the same channel name on both clients to join the same session.",
+                    createdAt: "2026-04-10T02:01:00.000Z",
+                  },
+                ]);
+
+                state.view = "chat-ticket";
+                state.activeTicketId = ticket.id;
+
+                const html = renderChatTicket();
+                if (!html.includes('class="message-author">Sid</span>')) {
+                  throw new Error("Public assistant replies should render the Sid identity.");
+                }
+                if (html.includes('class="message-author">Concierge AI</span>')) {
+                  throw new Error("Public assistant replies should no longer render Concierge AI as the message author.");
                 }
               """
             )

@@ -6,6 +6,7 @@ const TICKETS_KEY = "helpdesk_tickets";
 const COUNTER_KEY = "helpdesk_ticket_counter";
 const MAX_RECENT = 5;
 const DEFAULT_CLIENT_ACK_FALLBACK_TIMEOUT_MS = 5000;
+const PUBLIC_ASSISTANT_NAME = "Sid";
 const NEW_SESSION_WELCOME_TEXT =
   "Thank you for contacting Agora Support! We’re here to help. Before we begin, please select the product you need support with.";
 const STATUS_FOLLOWUP_MARKERS = [
@@ -432,7 +433,7 @@ function renderNewSessionWelcomeBubble() {
         <div class="msg-column">
           <div class="message-meta">
             <span class="avatar assistant"><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span></span>
-            <span class="message-author">Concierge AI</span>
+            <span class="message-author">${escapeHtml(PUBLIC_ASSISTANT_NAME)}</span>
           </div>
           <div class="bubble assistant"><div>${escapeHtml(NEW_SESSION_WELCOME_TEXT)}</div></div>
         </div>
@@ -1838,7 +1839,7 @@ function renderChatTicket() {
                           ? state.user.name
                           : role === "engineer"
                           ? "Engineer"
-                          : "Concierge AI";
+                          : PUBLIC_ASSISTANT_NAME;
                       const metaTime = formatDate(message.createdAt || new Date().toISOString());
                       return `
                 <article class="msg-row ${tone === "user" ? "user" : ""}">
