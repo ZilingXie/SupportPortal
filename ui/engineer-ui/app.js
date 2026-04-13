@@ -192,6 +192,12 @@ function applyInvestigationResponseToSelectedTicket(ticketId, payload) {
           ),
         ]
       : existingHistory;
+    const nextEngineerAgentState =
+      payload.engineer_agent_state === undefined
+        ? selectedTicket.engineer_agent_state
+        : payload.engineer_agent_state && typeof payload.engineer_agent_state === "object"
+        ? payload.engineer_agent_state
+        : null;
     selectedTicket = {
       ...selectedTicket,
       status: payload.status ?? selectedTicket.status,
@@ -200,6 +206,7 @@ function applyInvestigationResponseToSelectedTicket(ticketId, payload) {
         payload.active_investigation === undefined
           ? selectedTicket.active_investigation
           : payload.active_investigation,
+      engineer_agent_state: nextEngineerAgentState,
       investigation_history: nextHistory,
     };
     if (normalizeStatusValue(selectedTicket.status) === "resolved") {
@@ -217,6 +224,7 @@ function applyInvestigationResponseToSelectedTicket(ticketId, payload) {
         status: selectedTicket.status,
         updated_at: selectedTicket.updated_at,
         active_investigation: selectedTicket.active_investigation,
+        engineer_agent_state: nextEngineerAgentState,
         investigation_history: nextHistory,
       };
     }
@@ -732,6 +740,22 @@ function getEngineerAgentState(ticket) {
     : null;
 }
 
+function getReplyReadiness(ticket) {
+  const agentState = getEngineerAgentState(ticket);
+  return agentState?.reply_readiness && typeof agentState.reply_readiness === "object"
+    ? agentState.reply_readiness
+    : null;
+}
+
+function hasValidatedInvestigationApproval(ticket, activeInvestigation) {
+  const draftCustomerReply = String(activeInvestigation?.draft_customer_reply || "").trim();
+  return Boolean(
+    activeInvestigation &&
+      draftCustomerReply &&
+      getReplyReadiness(ticket)?.ready_for_customer_reply === true
+  );
+}
+
 function latestInvestigationUpdate(ticket) {
   const activeInvestigation = getActiveInvestigation(ticket);
   if (activeInvestigation) {
@@ -761,24 +785,130 @@ function getInvestigationApprovalUiState(ticket, activeInvestigation, investigat
     return { showApprovalBlock: false, decisionIndex: -1 };
   }
 
-  const draftCustomerReply = String(activeInvestigation?.draft_customer_reply || "").trim();
-  const normalizedState = String(activeInvestigation?.state || "").trim().toLowerCase();
-  const agentState = getEngineerAgentState(ticket);
-  const agentPhase = String(agentState?.phase || "").trim().toLowerCase();
-  const readyToReply = agentState?.ready_to_reply === true;
   const fallbackEngineerAiIndex = findLatestEngineerAiMessageIndex(investigationMessages);
   const suppressApprovalBlock = options?.suppressApprovalBlock === true;
-  const showApprovalBlock =
-    !suppressApprovalBlock &&
-    (normalizedState === "awaiting_confirmation" ||
-      agentPhase === "awaiting_confirmation" ||
-      readyToReply ||
-      Boolean(draftCustomerReply));
+  const showApprovalBlock = !suppressApprovalBlock && hasValidatedInvestigationApproval(ticket, activeInvestigation);
 
   return {
     showApprovalBlock,
     decisionIndex: showApprovalBlock ? fallbackEngineerAiIndex : -1,
   };
+}
+
+function renderReplyReadinessReviewHtml(ticket, activeInvestigation) {
+  const replyReadiness = getReplyReadiness(ticket);
+  if (!activeInvestigation || !replyReadiness) {
+    return "";
+  }
+
+  const blockers = Array.isArray(replyReadiness.blockers)
+    ? replyReadiness.blockers.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  const proofAnchors = Array.isArray(replyReadiness.proof_anchors)
+    ? replyReadiness.proof_anchors.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  const conclusionSummary = String(replyReadiness.conclusion_summary || "").trim();
+  const proofSummary = String(replyReadiness.proof_summary || "").trim();
+  const solutionSummary = String(replyReadiness.solution_or_next_step || "").trim();
+  const critique = String(replyReadiness.critique || "").trim();
+  const checks = [
+    {
+      label: "Conclusion",
+      passed: replyReadiness.has_conclusion === true,
+    },
+    {
+      label: "Proof",
+      passed: replyReadiness.has_proof === true,
+    },
+    {
+      label: "Solution / Next Step",
+      passed: replyReadiness.has_solution_or_next_step === true,
+    },
+  ];
+
+  return `
+    <section class="panel-card detail-readiness-review">
+      <div class="panel-card-head">
+        <div>
+          <p class="panel-card-kicker">Internal Review</p>
+          <h3 class="panel-card-title">Readiness Review</h3>
+        </div>
+        <span class="detail-readiness-pill ${
+          replyReadiness.ready_for_customer_reply === true ? "is-ready" : "is-blocked"
+        }">
+          ${replyReadiness.ready_for_customer_reply === true ? "Validated" : "Needs Follow-up"}
+        </span>
+      </div>
+      <div class="detail-readiness-checks" aria-label="Reply readiness checks">
+        ${checks
+          .map(
+            (item) => `
+              <div class="detail-readiness-check ${item.passed ? "is-passed" : "is-missing"}">
+                <span class="detail-readiness-check-dot" aria-hidden="true"></span>
+                <span>${escapeHtml(item.label)}</span>
+              </div>
+            `
+          )
+          .join("")}
+      </div>
+      <div class="detail-readiness-fields">
+        <div class="detail-readiness-field">
+          <p class="detail-readiness-field-label">Conclusion</p>
+          <p class="detail-readiness-field-value">${formatMultiline(
+            conclusionSummary || "Conclusion not extracted yet."
+          )}</p>
+        </div>
+        <div class="detail-readiness-field">
+          <p class="detail-readiness-field-label">Proof</p>
+          <p class="detail-readiness-field-value">${formatMultiline(
+            proofSummary || "Proof still missing."
+          )}</p>
+        </div>
+        <div class="detail-readiness-field">
+          <p class="detail-readiness-field-label">Solution / Next Step</p>
+          <p class="detail-readiness-field-value">${formatMultiline(
+            solutionSummary || "No actionable next step captured yet."
+          )}</p>
+        </div>
+      </div>
+      ${
+        proofAnchors.length
+          ? `
+        <div class="detail-readiness-field">
+          <p class="detail-readiness-field-label">Proof Anchors</p>
+          <div class="detail-readiness-anchor-list">
+            ${proofAnchors
+              .map((anchor) => `<span class="detail-readiness-anchor">${escapeHtml(anchor)}</span>`)
+              .join("")}
+          </div>
+        </div>
+      `
+          : ""
+      }
+      ${
+        blockers.length
+          ? `
+        <div class="detail-readiness-alert">
+          <p class="detail-readiness-field-label">Current Blockers</p>
+          <ul class="detail-readiness-list">
+            ${blockers.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+          </ul>
+        </div>
+      `
+          : ""
+      }
+      ${
+        critique
+          ? `
+        <div class="detail-readiness-alert detail-readiness-alert-critique">
+          <p class="detail-readiness-field-label">Critique</p>
+          <p class="detail-readiness-field-value">${formatMultiline(critique)}</p>
+        </div>
+      `
+          : ""
+      }
+    </section>
+  `;
 }
 
 function investigationStateLabel(value) {
@@ -1315,6 +1445,10 @@ function buildLocalSummaryFallback(ticket) {
       ? agentState.missing_information
           .map((item) => String(item || "").trim())
           .filter(Boolean)
+      : Array.isArray(agentState.reply_readiness?.blockers)
+      ? agentState.reply_readiness.blockers
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
       : [];
     const summaryLines = [
       `Current understanding: ${String(agentState.issue_understanding || "Not available yet.").trim() || "Not available yet."}`,
@@ -1749,12 +1883,7 @@ function renderInvestigationDecisionHtml({
   controlsDisabled,
 }) {
   return `
-    <div class="detail-investigation-draft">
-      <p class="detail-investigation-draft-label">Draft Customer Reply</p>
-      <div class="detail-investigation-draft-body">${formatMultiline(
-        draftCustomerReply || "Draft reply is not ready yet."
-      )}</div>
-    </div>
+    ${renderInvestigationDraftPreviewHtml({ draftCustomerReply })}
     <div class="detail-investigation-inline-actions">
       <button
         type="button"
@@ -1766,11 +1895,22 @@ function renderInvestigationDecisionHtml({
   `;
 }
 
+function renderInvestigationDraftPreviewHtml({ draftCustomerReply }) {
+  return `
+    <div class="detail-investigation-draft">
+      <p class="detail-investigation-draft-label">Draft Customer Reply</p>
+      <div class="detail-investigation-draft-body">${formatMultiline(
+        draftCustomerReply || "Draft reply is not ready yet."
+      )}</div>
+    </div>
+  `;
+}
+
 function renderInvestigationComposerHtml({ draft, controlsDisabled, reviseMode, approvalMode = false }) {
   const revisionMode = reviseMode || approvalMode;
   const placeholder = revisionMode
     ? `If the draft needs changes, tell ${ENGINEER_AI_DISPLAY_NAME} what to revise before replying to the customer...`
-    : `Share the next technical detail for ${ENGINEER_AI_DISPLAY_NAME}...`;
+    : `Share the next technical detail for ${ENGINEER_AI_DISPLAY_NAME}. Include your conclusion, proof, and solution or next step when you have them...`;
   const submitLabel = revisionMode ? "Send Revision Note" : "Send Update";
 
   return `
@@ -1999,9 +2139,11 @@ function renderTicketDetailView() {
   const approvalUiState = getInvestigationApprovalUiState(ticket, activeInvestigation, investigationMessages, {
     suppressApprovalBlock: hasPendingLocalInvestigationReply(ticketId),
   });
+  const replyReadinessReviewHtml = renderReplyReadinessReviewHtml(ticket, activeInvestigation);
   const showInlineConfirmation = approvalUiState.showApprovalBlock;
   const showInvestigationComposer = Boolean(activeInvestigation);
   const draftCustomerReply = String(displayInvestigation?.draft_customer_reply || "").trim();
+  const showDraftPreview = Boolean(activeInvestigation && draftCustomerReply && !showInlineConfirmation);
   const controlsDisabled = tellAiSubmitting;
   const messages = Array.isArray(ticket.messages) ? ticket.messages : [];
 
@@ -2072,12 +2214,15 @@ function renderTicketDetailView() {
           }
           ${
             showInvestigationComposer
-              ? renderInvestigationComposerHtml({
+              ? `
+            ${showDraftPreview ? renderInvestigationDraftPreviewHtml({ draftCustomerReply }) : ""}
+            ${renderInvestigationComposerHtml({
                   draft: tellAiDraft,
                   controlsDisabled,
                   reviseMode: investigationReviseMode,
                   approvalMode: approvalUiState.showApprovalBlock,
-                })
+                })}
+          `
               : ""
           }
         </section>
@@ -2092,6 +2237,8 @@ function renderTicketDetailView() {
             </div>
             ${renderConversationHtml(messages)}
           </section>
+
+          ${replyReadinessReviewHtml}
 
           <section class="panel-card">
             <div class="panel-card-head">
@@ -2265,7 +2412,8 @@ async function refreshSelectedTicket(options = {}) {
     }
     selectedTicket = nextTicket;
     const refreshedInvestigation = getActiveInvestigation(selectedTicket);
-    if (String(refreshedInvestigation?.state || "").toLowerCase() !== "awaiting_confirmation") {
+    const refreshedMessages = Array.isArray(refreshedInvestigation?.messages) ? refreshedInvestigation.messages : [];
+    if (!getInvestigationApprovalUiState(selectedTicket, refreshedInvestigation, refreshedMessages).showApprovalBlock) {
       investigationReviseMode = false;
     }
     if (selectedTicket) {
@@ -2585,7 +2733,16 @@ async function handleDetailClick(event) {
   }
 
   if (action === "approve-investigation") {
-    if (!getActiveInvestigation(selectedTicket)) {
+    const activeInvestigation = getActiveInvestigation(selectedTicket);
+    if (!activeInvestigation) {
+      return;
+    }
+    const approvalUiState = getInvestigationApprovalUiState(
+      selectedTicket,
+      activeInvestigation,
+      Array.isArray(activeInvestigation?.messages) ? activeInvestigation.messages : []
+    );
+    if (!approvalUiState.showApprovalBlock) {
       return;
     }
     button.disabled = true;

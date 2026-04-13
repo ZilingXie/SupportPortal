@@ -779,6 +779,22 @@ class EngineerUiContractTests(unittest.TestCase):
                       },
                     ],
                   },
+                  engineer_agent_state: {
+                    phase: "awaiting_confirmation",
+                    ready_to_reply: true,
+                    reply_readiness: {
+                      has_conclusion: true,
+                      has_proof: true,
+                      has_solution_or_next_step: true,
+                      conclusion_summary: "Android 14 with SDK 4.2.1 reproduces the token renew failure.",
+                      proof_summary: "The engineer reproduced the issue on Android 14 with SDK 4.2.1 only.",
+                      proof_anchors: ["Android 14", "SDK 4.2.1"],
+                      solution_or_next_step: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                      blockers: [],
+                      critique: "The current evidence supports the customer-safe SDK upgrade guidance.",
+                      ready_for_customer_reply: true,
+                    },
+                  },
                   investigation_history: [
                     {
                       id: "INV-DETAIL-0",
@@ -921,13 +937,13 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
-    def test_engineer_detail_derives_approval_block_from_agent_state_and_shows_placeholder_when_draft_is_missing(self) -> None:
+    def test_engineer_detail_derives_approval_block_from_validated_readiness_when_state_lags(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
                 """
-                selectedTicketId = "TK-DETAIL-AGENT-PHASE";
+                selectedTicketId = "TK-DETAIL-READINESS";
                 selectedTicket = {
-                  ticket_id: "TK-DETAIL-AGENT-PHASE",
+                  ticket_id: "TK-DETAIL-READINESS",
                   subject: "Android 14 token renew regression",
                   requester: "user-7",
                   status: "investigating",
@@ -941,11 +957,11 @@ class EngineerUiContractTests(unittest.TestCase):
                     },
                   ],
                   active_investigation: {
-                    id: "INV-DETAIL-AGENT-PHASE",
+                    id: "INV-DETAIL-READINESS",
                     state: "active",
                     trigger_reason: "rag_insufficient_evidence",
                     trigger_source: "support_query",
-                    draft_customer_reply: "",
+                    draft_customer_reply: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
                     final_confirmation_requested_at: null,
                     opened_at: "2026-03-24T08:01:00+00:00",
                     updated_at: "2026-03-24T09:05:00+00:00",
@@ -967,6 +983,18 @@ class EngineerUiContractTests(unittest.TestCase):
                     goal: "Get engineer approval on the prepared answer.",
                     missing_information: [],
                     next_request_for_engineer: "Approve the prepared customer reply.",
+                    reply_readiness: {
+                      has_conclusion: true,
+                      has_proof: true,
+                      has_solution_or_next_step: true,
+                      conclusion_summary: "Android 14 with SDK 4.2.1 reproduces the token renew failure.",
+                      proof_summary: "The engineer reproduced the issue on Android 14 with SDK 4.2.1 only.",
+                      proof_anchors: ["Android 14", "SDK 4.2.1"],
+                      solution_or_next_step: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                      blockers: [],
+                      critique: "The current evidence supports the customer-safe SDK upgrade guidance.",
+                      ready_for_customer_reply: true,
+                    },
                     last_refreshed_at: "2026-03-24T09:05:00+00:00",
                   },
                 };
@@ -975,13 +1003,13 @@ class EngineerUiContractTests(unittest.TestCase):
 
                 const html = renderTicketDetailView();
                 if (!html.includes("Approve Reply")) {{
-                  throw new Error("Engineer thread should derive the approval block from engineer_agent_state when the investigation state has not caught up yet.");
+                  throw new Error("Engineer thread should derive the approval block from backend-validated reply readiness when the investigation state has not caught up yet.");
                 }}
                 if (html.includes("Ask AI to Revise")) {{
                   throw new Error("Approval-derived states should not render a separate revise button.");
                 }}
-                if (!html.includes("Draft reply is not ready yet.")) {{
-                  throw new Error("Engineer thread should render a visible placeholder instead of leaving an empty draft area.");
+                if (!html.includes("Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.")) {{
+                  throw new Error("Engineer thread should render the backend-validated customer draft.");
                 }}
                 if (!html.includes('id="detail-investigation-input"')) {{
                   throw new Error("Approval-derived states should keep the composer visible for direct revision notes.");
@@ -990,7 +1018,7 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
-    def test_engineer_detail_uses_draft_presence_for_approval_block_without_fixed_confirmation_copy(self) -> None:
+    def test_engineer_detail_requires_validated_readiness_before_showing_approve_reply(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
                 """
@@ -1027,16 +1055,102 @@ class EngineerUiContractTests(unittest.TestCase):
                       },
                     ],
                   },
+                  engineer_agent_state: {
+                    phase: "gather_missing_inputs",
+                    ready_to_reply: false,
+                    reply_readiness: {
+                      has_conclusion: true,
+                      has_proof: false,
+                      has_solution_or_next_step: true,
+                      conclusion_summary: "The current investigation suspects a black-screen decode issue.",
+                      proof_summary: "",
+                      proof_anchors: [],
+                      solution_or_next_step: "Ask the customer to share the channel name for further investigation.",
+                      blockers: ["Explicit proof is still missing."],
+                      critique: "The draft is not yet backed by explicit proof.",
+                      ready_for_customer_reply: false,
+                    },
+                  },
                 };
                 selectedTicketSummary = "A customer-safe follow-up draft is prepared.";
                 selectedTicketNextAction = "Approve the prepared reply if it is safe.";
 
                 const html = renderTicketDetailView();
-                if (!html.includes("Approve Reply")) {{
-                  throw new Error("Engineer thread should derive the approval block from draft presence even when the confirmation copy changes.");
+                if (html.includes("Approve Reply")) {{
+                  throw new Error("Engineer thread should not expose approval actions from draft presence alone when reply readiness is incomplete.");
                 }}
                 if (!html.includes("Could you please share the channel name with us for further investigation?")) {{
                   throw new Error("Engineer thread should still render the prepared customer draft.");
+                }}
+              """
+            )
+        )
+
+    def test_engineer_detail_renders_reply_readiness_review_block(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                selectedTicketId = "TK-DETAIL-READINESS-BLOCK";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-READINESS-BLOCK",
+                  subject: "Black screen after join",
+                  requester: "user-9",
+                  status: "investigating",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [
+                    {
+                      role: "customer",
+                      content: "I got black screen after joining the call.",
+                      created_at: "2026-03-24T08:00:00+00:00",
+                    },
+                  ],
+                  active_investigation: {
+                    id: "INV-DETAIL-READINESS-BLOCK",
+                    state: "active",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "",
+                    final_confirmation_requested_at: null,
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:05:00+00:00",
+                    messages: [],
+                  },
+                  engineer_agent_state: {
+                    phase: "gather_missing_inputs",
+                    ready_to_reply: false,
+                    reply_readiness: {
+                      has_conclusion: true,
+                      has_proof: false,
+                      has_solution_or_next_step: true,
+                      conclusion_summary: "The audience may not be able to decode the current video stream.",
+                      proof_summary: "",
+                      proof_anchors: [],
+                      solution_or_next_step: "Ask the engineer to provide the log evidence or reproduction result before replying.",
+                      blockers: ["Explicit proof is still missing."],
+                      critique: "The current conclusion is plausible but not yet backed by logs, reproduction evidence, or a cited doc path.",
+                      ready_for_customer_reply: false,
+                    },
+                  },
+                };
+                selectedTicketSummary = "The current draft still needs proof.";
+                selectedTicketNextAction = "Collect explicit proof before replying.";
+
+                const html = renderTicketDetailView();
+                if (!html.includes("Readiness Review")) {{
+                  throw new Error("Engineer detail should render the reply readiness review block.");
+                }}
+                if (!html.includes("Conclusion")) {{
+                  throw new Error("Readiness review should show the conclusion check.");
+                }}
+                if (!html.includes("Solution / Next Step")) {{
+                  throw new Error("Readiness review should show the solution-or-next-step check.");
+                }}
+                if (!html.includes("Explicit proof is still missing.")) {{
+                  throw new Error("Readiness review should surface current blockers.");
+                }}
+                if (!html.includes("not yet backed by logs")) {{
+                  throw new Error("Readiness review should surface the critique text.");
                 }}
               """
             )
@@ -1327,6 +1441,22 @@ class EngineerUiContractTests(unittest.TestCase):
                       },
                     ],
                   },
+                  engineer_agent_state: {
+                    phase: "awaiting_confirmation",
+                    ready_to_reply: true,
+                    reply_readiness: {
+                      has_conclusion: true,
+                      has_proof: true,
+                      has_solution_or_next_step: true,
+                      conclusion_summary: "Android 14 with SDK 4.2.1 reproduces the token renew failure.",
+                      proof_summary: "The engineer reproduced the issue on Android 14 with SDK 4.2.1 only.",
+                      proof_anchors: ["Android 14", "SDK 4.2.1"],
+                      solution_or_next_step: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                      blockers: [],
+                      critique: "The current evidence supports the customer-safe SDK upgrade guidance.",
+                      ready_for_customer_reply: true,
+                    },
+                  },
                   investigation_history: [],
                   engineer_request_records: [],
                 };
@@ -1564,6 +1694,22 @@ class EngineerUiContractTests(unittest.TestCase):
                       },
                     ],
                   },
+                  engineer_agent_state: {
+                    phase: "awaiting_confirmation",
+                    ready_to_reply: true,
+                    reply_readiness: {
+                      has_conclusion: true,
+                      has_proof: true,
+                      has_solution_or_next_step: true,
+                      conclusion_summary: "Android 14 with SDK 4.2.1 reproduces the token renew failure.",
+                      proof_summary: "The engineer reproduced the issue on Android 14 with SDK 4.2.1 only.",
+                      proof_anchors: ["Android 14", "SDK 4.2.1"],
+                      solution_or_next_step: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                      blockers: [],
+                      critique: "The current evidence supports the customer-safe SDK upgrade guidance.",
+                      ready_for_customer_reply: true,
+                    },
+                  },
                   investigation_history: [],
                   engineer_request_records: [],
                 };
@@ -1769,6 +1915,22 @@ class EngineerUiContractTests(unittest.TestCase):
                         created_at: "2026-03-24T09:05:00+00:00",
                       },
                     ],
+                  },
+                  engineer_agent_state: {
+                    phase: "awaiting_confirmation",
+                    ready_to_reply: true,
+                    reply_readiness: {
+                      has_conclusion: true,
+                      has_proof: true,
+                      has_solution_or_next_step: true,
+                      conclusion_summary: "Android 14 with SDK 4.2.1 reproduces the token renew failure.",
+                      proof_summary: "The engineer reproduced the issue on Android 14 with SDK 4.2.1 only.",
+                      proof_anchors: ["Android 14", "SDK 4.2.1"],
+                      solution_or_next_step: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                      blockers: [],
+                      critique: "The current evidence supports the customer-safe SDK upgrade guidance.",
+                      ready_for_customer_reply: true,
+                    },
                   },
                   investigation_history: [],
                   engineer_request_records: [],

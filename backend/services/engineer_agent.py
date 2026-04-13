@@ -45,6 +45,222 @@ def _clean_list(value: Any) -> list[str]:
     return [item for item in items if item]
 
 
+def _default_reply_readiness() -> dict[str, Any]:
+    return {
+        "has_conclusion": False,
+        "has_proof": False,
+        "has_solution_or_next_step": False,
+        "conclusion_summary": "",
+        "proof_summary": "",
+        "proof_anchors": [],
+        "solution_or_next_step": "",
+        "blockers": [],
+        "critique": "",
+        "ready_for_customer_reply": False,
+    }
+
+
+def _normalize_search_text(value: Any) -> str:
+    lowered = _clean_text(value).lower()
+    return re.sub(r"[^a-z0-9]+", " ", lowered).strip()
+
+
+def _append_corpus_text(items: list[str], value: Any) -> None:
+    text = _clean_text(value)
+    if text:
+        items.append(text)
+
+
+def _reply_readiness_search_corpus(
+    ticket: dict[str, Any],
+    investigation: dict[str, Any],
+    handoff_packet: dict[str, Any] | None,
+    *,
+    engineer_message: str | None = None,
+    revision_note: str | None = None,
+) -> str:
+    corpus_items: list[str] = []
+    _append_corpus_text(corpus_items, engineer_message)
+    _append_corpus_text(corpus_items, revision_note)
+
+    for message in list(investigation.get("messages") or [])[-_MAX_SUMMARY_MESSAGES:]:
+        if isinstance(message, dict):
+            _append_corpus_text(corpus_items, message.get("content"))
+
+    for message in list(ticket.get("messages") or [])[-_MAX_SUMMARY_MESSAGES:]:
+        if isinstance(message, dict):
+            _append_corpus_text(corpus_items, message.get("content"))
+
+    packet = handoff_packet if isinstance(handoff_packet, dict) else {}
+    _append_corpus_text(corpus_items, packet.get("latest_customer_message"))
+    _append_corpus_text(corpus_items, packet.get("latest_client_ai_reply"))
+    _append_corpus_text(corpus_items, packet.get("conversation_summary"))
+    _append_corpus_text(corpus_items, packet.get("unresolved_reason"))
+
+    route_summary = packet.get("route_summary") if isinstance(packet.get("route_summary"), dict) else {}
+    for key in (
+        "answer_route",
+        "scope_label",
+        "route_family",
+        "execution_action",
+        "tooling_profile",
+        "route_reason",
+    ):
+        _append_corpus_text(corpus_items, route_summary.get(key))
+
+    rag_result = packet.get("rag_result") if isinstance(packet.get("rag_result"), dict) else {}
+    _append_corpus_text(corpus_items, rag_result.get("candidate_answer"))
+    for source in list(rag_result.get("sources") or []):
+        _append_corpus_text(corpus_items, source)
+    for citation in list(rag_result.get("citations") or []):
+        if not isinstance(citation, dict):
+            continue
+        for key in ("chunk_id", "source_path", "heading", "source_url", "title", "label"):
+            _append_corpus_text(corpus_items, citation.get(key))
+
+    client_intake_state = (
+        packet.get("client_intake_state") if isinstance(packet.get("client_intake_state"), dict) else {}
+    )
+    for key in ("phase", "product", "issue_mode"):
+        _append_corpus_text(corpus_items, client_intake_state.get(key))
+    known_information = (
+        client_intake_state.get("known_information")
+        if isinstance(client_intake_state.get("known_information"), dict)
+        else {}
+    )
+    for key, value in known_information.items():
+        _append_corpus_text(corpus_items, key)
+        _append_corpus_text(corpus_items, value)
+    for item in list(client_intake_state.get("missing_information") or []):
+        _append_corpus_text(corpus_items, item)
+
+    return " || ".join(_normalize_search_text(item) for item in corpus_items if _normalize_search_text(item))
+
+
+def _proof_anchors_verified(
+    proof_anchors: list[str],
+    *,
+    ticket: dict[str, Any],
+    investigation: dict[str, Any],
+    handoff_packet: dict[str, Any] | None,
+    engineer_message: str | None = None,
+    revision_note: str | None = None,
+) -> bool:
+    anchors = [anchor for anchor in _clean_list(proof_anchors) if len(_normalize_search_text(anchor)) >= 3]
+    if not anchors:
+        return False
+    search_corpus = _reply_readiness_search_corpus(
+        ticket,
+        investigation,
+        handoff_packet,
+        engineer_message=engineer_message,
+        revision_note=revision_note,
+    )
+    if not search_corpus:
+        return False
+    return all(_normalize_search_text(anchor) in search_corpus for anchor in anchors)
+
+
+def _normalize_reply_readiness(
+    value: dict[str, Any] | None,
+    *,
+    ticket: dict[str, Any],
+    investigation: dict[str, Any],
+    handoff_packet: dict[str, Any] | None,
+    engineer_message: str | None = None,
+    revision_note: str | None = None,
+) -> dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    conclusion_summary = _clean_text(raw.get("conclusion_summary"))
+    proof_summary = _clean_text(raw.get("proof_summary"))
+    proof_anchors = _clean_list(raw.get("proof_anchors"))
+    solution_or_next_step = _clean_text(raw.get("solution_or_next_step"))
+    blockers = _clean_list(raw.get("blockers"))
+    critique = _clean_text(raw.get("critique"))
+    anchors_verified = _proof_anchors_verified(
+        proof_anchors,
+        ticket=ticket,
+        investigation=investigation,
+        handoff_packet=handoff_packet,
+        engineer_message=engineer_message,
+        revision_note=revision_note,
+    )
+
+    has_conclusion = bool((raw.get("has_conclusion") or conclusion_summary) and conclusion_summary)
+    has_solution_or_next_step = bool(
+        (raw.get("has_solution_or_next_step") or solution_or_next_step) and solution_or_next_step
+    )
+    has_proof = bool((raw.get("has_proof") or proof_summary or proof_anchors) and proof_summary and anchors_verified)
+
+    if not has_conclusion:
+        blockers.append("Explicit conclusion is missing.")
+    if not has_proof:
+        blockers.append(
+            "Explicit proof is missing or not verifiable. Add a reproduction result, log/error, config/version difference, or doc path."
+        )
+    if proof_anchors and not anchors_verified:
+        blockers.append("Proof anchors could not be verified against the engineer update or handoff evidence.")
+    if not has_solution_or_next_step:
+        blockers.append("Explicit solution or next step is missing.")
+
+    deduped_blockers: list[str] = []
+    seen_blockers: set[str] = set()
+    for blocker in blockers:
+        normalized = _clean_text(blocker)
+        if not normalized or normalized in seen_blockers:
+            continue
+        seen_blockers.add(normalized)
+        deduped_blockers.append(normalized)
+
+    if not critique and deduped_blockers:
+        critique = deduped_blockers[0]
+
+    ready_for_customer_reply = bool(
+        has_conclusion
+        and has_proof
+        and has_solution_or_next_step
+        and not deduped_blockers
+        and bool(raw.get("ready_for_customer_reply"))
+    )
+
+    return {
+        "has_conclusion": has_conclusion,
+        "has_proof": has_proof,
+        "has_solution_or_next_step": has_solution_or_next_step,
+        "conclusion_summary": conclusion_summary,
+        "proof_summary": proof_summary,
+        "proof_anchors": proof_anchors if anchors_verified else [],
+        "solution_or_next_step": solution_or_next_step,
+        "blockers": deduped_blockers,
+        "critique": critique,
+        "ready_for_customer_reply": ready_for_customer_reply,
+    }
+
+
+def _build_reply_readiness_followup_message(
+    reply_readiness: dict[str, Any],
+    *,
+    engineer_thread_language_hint: str,
+) -> str:
+    blockers = _clean_list(reply_readiness.get("blockers"))
+    critique = _clean_text(reply_readiness.get("critique"))
+    if engineer_thread_language_hint == "zh":
+        details = "；".join(blockers) if blockers else "请补充明确结论、proof，以及 solution 或 next step。"
+        if critique:
+            return f"我还不能整理出可安全发送给客户的回复。请先补充：{details} 当前审阅意见：{critique}"
+        return f"我还不能整理出可安全发送给客户的回复。请先补充：{details}"
+
+    details = "; ".join(blockers) if blockers else (
+        "explicit conclusion, explicit proof, and an explicit solution or next step"
+    )
+    if critique:
+        return (
+            "I can't prepare a customer-safe reply yet. "
+            f"Please add: {details} Current critique: {critique}"
+        )
+    return f"I can't prepare a customer-safe reply yet. Please add: {details}"
+
+
 def _extract_json_dict(text: str) -> dict[str, Any] | None:
     raw = str(text or "").strip()
     if not raw:
@@ -193,6 +409,11 @@ def _summarize_handoff_packet(handoff_packet: dict[str, Any] | None) -> str:
 
 def _summarize_agent_state(state: dict[str, Any] | None) -> str:
     agent_state = state if isinstance(state, dict) else {}
+    reply_readiness = (
+        agent_state.get("reply_readiness")
+        if isinstance(agent_state.get("reply_readiness"), dict)
+        else _default_reply_readiness()
+    )
     summary = {
         "phase": _clean_text(agent_state.get("phase")),
         "issue_understanding": _truncate_text(agent_state.get("issue_understanding")),
@@ -204,6 +425,13 @@ def _summarize_agent_state(state: dict[str, Any] | None) -> str:
         "next_request_for_engineer": _truncate_text(agent_state.get("next_request_for_engineer")),
         "resolution_hypothesis": _truncate_text(agent_state.get("resolution_hypothesis")),
         "ready_to_reply": bool(agent_state.get("ready_to_reply")),
+        "reply_readiness": {
+            "has_conclusion": bool(reply_readiness.get("has_conclusion")),
+            "has_proof": bool(reply_readiness.get("has_proof")),
+            "has_solution_or_next_step": bool(reply_readiness.get("has_solution_or_next_step")),
+            "blockers": _clean_list(reply_readiness.get("blockers"))[:4],
+            "ready_for_customer_reply": bool(reply_readiness.get("ready_for_customer_reply")),
+        },
         "last_refreshed_at": _clean_text(agent_state.get("last_refreshed_at")),
     }
     return json.dumps(summary, ensure_ascii=False, sort_keys=True)
@@ -219,7 +447,7 @@ def _investigation_reply_extra_payload() -> dict[str, Any]:
                 "schema": {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": ["state", "message", "draft_customer_reply", "engineer_agent_state"],
+                    "required": ["state", "message", "draft_customer_reply", "reply_readiness", "engineer_agent_state"],
                     "properties": {
                         "state": {
                             "type": "string",
@@ -227,6 +455,34 @@ def _investigation_reply_extra_payload() -> dict[str, Any]:
                         },
                         "message": {"type": "string"},
                         "draft_customer_reply": {"type": "string"},
+                        "reply_readiness": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": [
+                                "has_conclusion",
+                                "has_proof",
+                                "has_solution_or_next_step",
+                                "conclusion_summary",
+                                "proof_summary",
+                                "proof_anchors",
+                                "solution_or_next_step",
+                                "blockers",
+                                "critique",
+                                "ready_for_customer_reply",
+                            ],
+                            "properties": {
+                                "has_conclusion": {"type": "boolean"},
+                                "has_proof": {"type": "boolean"},
+                                "has_solution_or_next_step": {"type": "boolean"},
+                                "conclusion_summary": {"type": "string"},
+                                "proof_summary": {"type": "string"},
+                                "proof_anchors": {"type": "array", "items": {"type": "string"}},
+                                "solution_or_next_step": {"type": "string"},
+                                "blockers": {"type": "array", "items": {"type": "string"}},
+                                "critique": {"type": "string"},
+                                "ready_for_customer_reply": {"type": "boolean"},
+                            },
+                        },
                         "engineer_agent_state": {
                             "type": "object",
                             "additionalProperties": False,
@@ -318,6 +574,7 @@ def _fail_closed_investigation_reply_turn(
         "state": _ACTIVE_STATE,
         "message": message,
         "draft_customer_reply": "",
+        "reply_readiness": copy.deepcopy(agent_state.get("reply_readiness") or _default_reply_readiness()),
         "engineer_agent_state": agent_state,
         "message_meta": _investigation_reply_message_meta(
             generation_status="failed",
@@ -340,6 +597,11 @@ def _generate_investigation_reply_turn(
     profile = resolve_model_profile(ENGINEER_INVESTIGATION_REPLY_SCENARIO)
     model_name = profile.model
     reasoning_effort = profile.reasoning_effort
+    engineer_thread_language_hint = _engineer_thread_language_hint(
+        investigation,
+        engineer_message=engineer_message,
+        revision_note=revision_note,
+    )
     if not profile.api_key:
         return _fail_closed_investigation_reply_turn(
             ticket,
@@ -354,11 +616,7 @@ def _generate_investigation_reply_turn(
     system_prompt = build_engineer_investigation_reply_system_prompt()
     user_prompt = build_engineer_investigation_reply_user_prompt(
         customer_language_hint=_customer_language_hint(ticket),
-        engineer_thread_language_hint=_engineer_thread_language_hint(
-            investigation,
-            engineer_message=engineer_message,
-            revision_note=revision_note,
-        ),
+        engineer_thread_language_hint=engineer_thread_language_hint,
         latest_customer_message=latest_customer_message(ticket),
         latest_public_assistant_reply=latest_public_assistant_message(ticket),
         ticket_conversation_summary=_build_conversation_summary(ticket, max_messages=_MAX_SUMMARY_MESSAGES),
@@ -430,6 +688,23 @@ def _generate_investigation_reply_turn(
         draft_customer_reply = ""
 
     raw_agent_state = parsed.get("engineer_agent_state") if isinstance(parsed.get("engineer_agent_state"), dict) else {}
+    reply_readiness = _normalize_reply_readiness(
+        parsed.get("reply_readiness") if isinstance(parsed.get("reply_readiness"), dict) else None,
+        ticket=ticket,
+        investigation=investigation,
+        handoff_packet=handoff_packet,
+        engineer_message=engineer_message,
+        revision_note=revision_note,
+    )
+    raw_agent_state["reply_readiness"] = reply_readiness
+    if next_state == _AWAITING_CONFIRMATION_STATE and not reply_readiness.get("ready_for_customer_reply"):
+        next_state = _ACTIVE_STATE
+        draft_customer_reply = ""
+        message = _build_reply_readiness_followup_message(
+            reply_readiness,
+            engineer_thread_language_hint=engineer_thread_language_hint,
+        )
+
     agent_state = normalize_engineer_agent_state(
         raw_agent_state,
         ticket=ticket,
@@ -442,7 +717,13 @@ def _generate_investigation_reply_turn(
         if next_state == _AWAITING_CONFIRMATION_STATE
         else _clean_text(raw_agent_state.get("phase")) or "gather_missing_inputs"
     )
-    agent_state["ready_to_reply"] = next_state == _AWAITING_CONFIRMATION_STATE
+    if next_state == _ACTIVE_STATE and reply_readiness.get("blockers"):
+        agent_state["phase"] = "gather_missing_inputs"
+        agent_state["missing_information"] = list(reply_readiness.get("blockers") or [])
+    agent_state["reply_readiness"] = reply_readiness
+    agent_state["ready_to_reply"] = bool(
+        next_state == _AWAITING_CONFIRMATION_STATE and reply_readiness.get("ready_for_customer_reply")
+    )
     agent_state["next_request_for_engineer"] = (
         _clean_text(raw_agent_state.get("next_request_for_engineer"))
         or (
@@ -459,6 +740,7 @@ def _generate_investigation_reply_turn(
         "state": next_state,
         "message": message,
         "draft_customer_reply": draft_customer_reply,
+        "reply_readiness": reply_readiness,
         "engineer_agent_state": agent_state,
         "message_meta": _investigation_reply_message_meta(
             generation_status="succeeded",
@@ -756,7 +1038,8 @@ def fallback_engineer_agent_state(
         "missing_information": missing_information,
         "next_request_for_engineer": next_request,
         "resolution_hypothesis": resolution_hypothesis,
-        "ready_to_reply": bool(existing.get("ready_to_reply")) or ready_to_reply,
+        "ready_to_reply": False,
+        "reply_readiness": _default_reply_readiness(),
         "last_refreshed_at": _clean_text(existing.get("last_refreshed_at")) or now_value,
     }
 
@@ -792,12 +1075,24 @@ def normalize_engineer_agent_state(
             or fallback["next_request_for_engineer"],
             "resolution_hypothesis": _clean_text(value.get("resolution_hypothesis"))
             or fallback["resolution_hypothesis"],
-            "ready_to_reply": bool(value.get("ready_to_reply")) or ready_to_reply,
             "last_refreshed_at": _clean_text(value.get("last_refreshed_at")) or now_value,
         }
     )
+    merged["reply_readiness"] = _normalize_reply_readiness(
+        value.get("reply_readiness") if isinstance(value.get("reply_readiness"), dict) else None,
+        ticket=ticket,
+        investigation=ticket.get("active_investigation") if isinstance(ticket.get("active_investigation"), dict) else {},
+        handoff_packet=handoff_packet,
+    )
+    if merged["reply_readiness"].get("blockers"):
+        merged["missing_information"] = list(merged["reply_readiness"].get("blockers") or [])
+    merged["ready_to_reply"] = bool(
+        ready_to_reply and merged["reply_readiness"].get("ready_for_customer_reply")
+    )
     if merged["ready_to_reply"] and merged["phase"] == "gather_missing_inputs":
         merged["phase"] = "awaiting_confirmation"
+    if not merged["ready_to_reply"] and merged["reply_readiness"].get("blockers") and merged["phase"] == "awaiting_confirmation":
+        merged["phase"] = "gather_missing_inputs"
     return merged
 
 

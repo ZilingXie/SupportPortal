@@ -861,6 +861,32 @@ For each new entry, record:
   - `git diff --check`
 
 - Date: 2026-04-13
+- Area or subsystem: Engineer investigation reply drafting and approval gate
+- Prompt or model version: `engineer-investigation-reply-v2`
+- Summary: Tightened the engineer investigation reply prompt to require an explicit `reply_readiness` review object, then wired backend/UI approval gating to that validated readiness so customer drafts only become approvable when conclusion, proof, and solution-or-next-step are all explicit and internally supported.
+- Reason: `TK-085-1` showed that Engineer AI could over-trust vague engineer conclusions, prematurely move to approval, and duplicate intake facts in the opening handoff without enough internal evidence.
+- Affected files or config:
+  - `backend/services/prompts/engineer_investigation_reply.py`
+  - `backend/services/engineer_agent.py`
+  - `backend/services/investigation_flow.py`
+  - `backend/main.py`
+  - `ui/engineer-ui/app.js`
+  - `ui/engineer-ui/styles.css`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_engineer_ui_contract.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Engineer reply turns must now return structured readiness fields for conclusion, proof, proof anchors, and solution-or-next-step before the backend will allow `awaiting_confirmation`.
+  - If proof is missing, proof anchors are unverifiable, or no actionable next step exists, Engineer AI falls back to `active`, clears the customer draft, and explicitly asks the engineer for the missing evidence.
+  - The engineer UI now shows approval controls only when backend-validated readiness is true, while still surfacing the current draft, critique, blockers, and extracted conclusion/proof/action review details.
+  - Investigation opening summaries now prefer structured intake facts and only append customer-note text when it contributes information not already captured by intake.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_prompt_modules.py backend/tests/test_investigation_flow.py backend/tests/test_engineer_ui_contract.py`
+  - `node --check ui/engineer-ui/app.js`
+  - `python3 -m py_compile backend/main.py backend/services/engineer_agent.py backend/services/investigation_flow.py backend/services/prompts/engineer_investigation_reply.py`
+
+- Date: 2026-04-13
 - Area or subsystem: Client grounded-answer guardrail and rendered references
 - Prompt or model version: `client-grounded-answer-reference-guard-v1`
 - Summary: Tightened the customer-answer guardrail so uncited technical replies from review/intake can no longer be sent as if they were grounded answers, and updated the client reply formatting contract to emit Markdown-friendly grounded answers with a bottom `References` section.
