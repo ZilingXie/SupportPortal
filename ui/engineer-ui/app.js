@@ -233,6 +233,12 @@ function applyInvestigationResponseToSelectedTicket(ticketId, payload) {
   clearLocalInvestigationThreadState(normalizedTicketId);
 }
 
+function applySuccessfulInvestigationSendResponse(ticketId, payload) {
+  applyInvestigationResponseToSelectedTicket(ticketId, payload);
+  tellAiSubmitting = false;
+  renderTicketDetail();
+}
+
 function userInitial(username) {
   const value = String(username || "").trim();
   if (!value) {
@@ -2713,8 +2719,7 @@ async function handleDetailClick(event) {
           responsePayload = await submitInvestigationMessage(requestTicketId, cleaned);
         }
       }
-      applyInvestigationResponseToSelectedTicket(requestTicketId, responsePayload);
-      renderTicketDetail();
+      applySuccessfulInvestigationSendResponse(requestTicketId, responsePayload);
       try {
         await loadTickets({ refreshDetail: false });
         await refreshSelectedTicket({ silent: true });
