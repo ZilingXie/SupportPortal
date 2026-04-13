@@ -413,7 +413,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
         self.assertEqual(execution.runtime_state.review_agent.get("reason"), "low_risk_grounded_answer")
 
-    def test_short_how_to_faq_grounded_answer_skips_post_check_without_citations(self) -> None:
+    def test_short_how_to_faq_grounded_answer_without_citations_does_not_answer_customer(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
 
         execution = execute_client_ticket_agent_runtime(
@@ -458,17 +458,19 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 },
                 packed_evidence=None,
             ),
-            review_agent=lambda **_kwargs: self.fail(
-                "review agent should not run for low-risk how_to_faq answers without citations"
-            ),
+            review_agent=lambda **_kwargs: {
+                "decision": "approve_answer",
+                "reason": "review_passed",
+                "confidence": 0.92,
+            },
             rag_canceler=None,
         )
 
-        self.assertEqual(execution.result.workflow_action, "answer_customer")
-        self.assertFalse(execution.result.needs_investigating)
-        self.assertIn("join-channel method", execution.result.answer)
-        self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
-        self.assertEqual(execution.runtime_state.review_agent.get("reason"), "low_risk_grounded_answer")
+        self.assertNotEqual(execution.result.workflow_action, "answer_customer")
+        self.assertNotIn("join-channel method", execution.result.answer)
+        self.assertFalse(execution.result.citations)
+        self.assertEqual(execution.runtime_state.review_agent.get("status"), "completed")
+        self.assertNotEqual(execution.runtime_state.review_agent.get("reason"), "low_risk_grounded_answer")
 
     def test_rag_extractive_fallback_routes_into_answer_mode_clarification(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
@@ -531,6 +533,64 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn("What are you trying to achieve", execution.result.answer)
         self.assertEqual(execution.runtime_state.review_agent.get("decision"), "clarify_customer_for_intake")
 
+    def test_rag_insufficient_evidence_discards_technical_clarify_reply_without_citations(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        execution = execute_client_ticket_agent_runtime(
+            message="How do I join channel?",
+            ticket_id="TK-RAG-FAQ-NO-CITE-CLARIFY",
+            customer_id="C-001",
+            ticket_subject="Join channel",
+            ticket_context=[{"role": "customer", "content": "How do I join channel?"}],
+            product="audio_video_calling",
+            message_id="2026-04-04T00:00:00+00:00",
+            route_agent=lambda **_kwargs: SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                confidence=0.94,
+                reason="technical_question",
+                matched_signals=["join channel"],
+                response_language="en",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+            ),
+            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                answer="I couldn't find enough information in the docs alone.",
+                confidence=0.41,
+                sources=[],
+                citations=[],
+                needs_engineer_guidance=True,
+                reason="rag_insufficient_evidence",
+                evidence_summary={
+                    "quality_signals": {
+                        "generation_mode": "insufficient_evidence",
+                        "extractive_fallback_used": False,
+                        "needs_human": True,
+                    }
+                },
+                packed_evidence=None,
+            ),
+            review_agent=lambda **_kwargs: TroubleshootingIntakeResult(
+                issue_mode="answer",
+                known_information={},
+                missing_information=["desired_outcome", "blocked_step_or_error"],
+                ready_for_engineer_ticket=False,
+                customer_reply=(
+                    "To join a channel in Agora Video Calling, call joinChannel with your token, "
+                    "channel name, uid, and options."
+                ),
+            ),
+            rag_canceler=None,
+        )
+
+        self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
+        self.assertIn("I couldn't verify a grounded answer", execution.result.answer)
+        self.assertIn("What are you trying to achieve?", execution.result.answer)
+        self.assertNotIn("call joinChannel", execution.result.answer)
+        self.assertFalse(execution.result.citations)
+
     def test_grounded_answer_with_extractive_fallback_signal_never_skips_review(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
 
@@ -576,12 +636,15 @@ The documentation states that time: 0 means the rule is applied permanently. How
             rag_canceler=None,
         )
 
-        self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
+        self.assertEqual(execution.result.workflow_action, "answer_customer")
         self.assertEqual(execution.result.investigation_reason, "rag_post_check_insufficient")
+        self.assertEqual(execution.result.route_reason, "grounded_answer")
+        self.assertTrue(execution.result.citations)
+        self.assertIn("please share what you're trying to achieve", execution.result.answer.lower())
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "completed")
-        self.assertEqual(execution.runtime_state.review_agent.get("decision"), "open_engineer_ticket")
+        self.assertEqual(execution.runtime_state.review_agent.get("decision"), "answer_customer")
 
-    def test_troubleshooting_postcheck_rejection_routes_into_intake_clarification(self) -> None:
+    def test_troubleshooting_postcheck_rejection_preserves_cited_answer_with_follow_up(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
 
         review_modes: list[str] = []
@@ -646,7 +709,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         )
 
         self.assertEqual(review_modes, ["grounded_postcheck", "pre_engineer_intake"])
-        self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
+        self.assertEqual(execution.result.workflow_action, "answer_customer")
         self.assertFalse(execution.result.needs_investigating)
         self.assertEqual(execution.result.investigation_reason, "rag_post_check_insufficient")
         self.assertEqual(
@@ -657,7 +720,87 @@ The documentation states that time: 0 means the rule is applied permanently. How
             execution.result.client_intake_state["pending_investigation_reason"],
             "rag_post_check_insufficient",
         )
-        self.assertEqual(execution.runtime_state.review_agent.get("decision"), "clarify_customer_for_intake")
+        self.assertEqual(execution.result.route_reason, "grounded_answer")
+        self.assertEqual(execution.result.citations, [{"chunk_id": "chunk-black-screen"}])
+        self.assertIn("Check whether the remote user is publishing video", execution.result.answer)
+        self.assertIn("If the issue continues, please share", execution.result.answer)
+        self.assertEqual(execution.runtime_state.review_agent.get("decision"), "answer_customer")
+
+    def test_cited_feature_enable_postcheck_rejection_answers_customer_before_follow_up(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        review_modes: list[str] = []
+
+        def _review_agent(**kwargs: object) -> object:
+            mode = str(kwargs.get("mode") or "")
+            review_modes.append(mode)
+            if mode == "grounded_postcheck":
+                return {"decision": "open_engineer_ticket", "reason": "review_insufficient", "confidence": 0.61}
+            self.fail(f"unexpected review mode {mode!r}")
+
+        execution = execute_client_ticket_agent_runtime(
+            message="how to enable the dual stream",
+            ticket_id="TK-RISK-DUAL-1",
+            customer_id="C-001",
+            ticket_subject="Dual stream",
+            ticket_context=[{"role": "customer", "content": "how to enable the dual stream"}],
+            product="audio_video_calling",
+            message_id="2026-04-13T00:00:00+00:00",
+            client_intake_state={
+                "phase": "gather_customer_inputs",
+                "product": "audio_video_calling",
+                "issue_mode": "answer",
+                "known_information": {},
+                "missing_information": ["desired_outcome", "blocked_step_or_error"],
+                "ready_for_engineer_ticket": False,
+                "last_updated_at": "2026-04-13T00:00:00+00:00",
+            },
+            route_agent=lambda **_kwargs: SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                confidence=0.95,
+                reason="technical_question",
+                matched_signals=["dual stream"],
+                response_language="en",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+            ),
+            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                answer="Call `client.enableDualStream()` before remote users subscribe to the low stream.",
+                confidence=0.9,
+                sources=["https://docs.agora.io/en/video-calling/advanced-features/media-stream-fallback?platform=web"],
+                citations=[{"chunk_id": "chunk-dual-stream"}],
+                needs_engineer_guidance=False,
+                reason="grounded_answer",
+                evidence_summary={
+                    "quality_signals": {
+                        "query_class": "configuration",
+                        "generation_mode": "structured_answer",
+                        "selected_doc_count": 2,
+                        "top1_similarity_score": 0.94,
+                        "needs_human": False,
+                    }
+                },
+                packed_evidence=None,
+            ),
+            review_agent=_review_agent,
+            rag_canceler=None,
+        )
+
+        self.assertEqual(review_modes, ["grounded_postcheck"])
+        self.assertEqual(execution.result.workflow_action, "answer_customer")
+        self.assertEqual(execution.result.route_reason, "grounded_answer")
+        self.assertEqual(execution.result.citations, [{"chunk_id": "chunk-dual-stream"}])
+        self.assertEqual(execution.result.client_intake_state["issue_mode"], "answer")
+        self.assertEqual(
+            execution.result.client_intake_state["missing_information"],
+            ["desired_outcome", "blocked_step_or_error"],
+        )
+        self.assertIn("Call `client.enableDualStream()`", execution.result.answer)
+        self.assertIn("please share what you're trying to achieve", execution.result.answer.lower())
+        self.assertEqual(execution.runtime_state.review_agent.get("decision"), "answer_customer")
 
     def test_ready_intake_follow_up_reuses_pending_investigation_reason(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime

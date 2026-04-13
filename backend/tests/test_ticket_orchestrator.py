@@ -145,10 +145,11 @@ class TicketOrchestratorTests(unittest.TestCase):
                 ),
             )
 
-        self.assertTrue(execution.needs_investigating)
-        self.assertEqual(execution.next_status, INVESTIGATING_STATUS)
+        self.assertFalse(execution.needs_investigating)
+        self.assertEqual(execution.next_status, COMMUNICATING_STATUS)
         self.assertEqual(execution.execution_action, "rag")
         self.assertEqual(execution.investigation_reason, "rag_insufficient_evidence")
+        self.assertEqual(execution.workflow_action, "clarify_customer_for_intake")
         sufficiency_mock.assert_not_called()
 
     def test_rag_insufficiency_for_troubleshooting_missing_fields_clarifies_customer(self) -> None:
@@ -348,6 +349,7 @@ class TicketOrchestratorTests(unittest.TestCase):
         self.assertFalse(execution.needs_investigating)
         self.assertEqual(execution.next_status, COMMUNICATING_STATUS)
         self.assertIsNone(execution.investigation_reason)
+        self.assertEqual(execution.workflow_action, "answer_customer")
         sufficiency_mock.assert_not_called()
 
     def test_rag_answer_runs_post_check_and_investigates_when_rejected(self) -> None:
@@ -365,10 +367,13 @@ class TicketOrchestratorTests(unittest.TestCase):
                 resolution_builder=lambda *_args, **_kwargs: _resolution(action="rag"),
             )
 
-        self.assertTrue(execution.needs_investigating)
-        self.assertEqual(execution.next_status, INVESTIGATING_STATUS)
+        self.assertFalse(execution.needs_investigating)
+        self.assertEqual(execution.next_status, COMMUNICATING_STATUS)
         self.assertEqual(execution.execution_action, "rag")
         self.assertEqual(execution.investigation_reason, "rag_post_check_insufficient")
+        self.assertEqual(execution.workflow_action, "answer_customer")
+        self.assertEqual(execution.route_reason, "grounded_answer")
+        self.assertIn("please share what you're trying to achieve", execution.answer.lower())
 
     def test_rag_post_check_error_falls_back_to_investigating(self) -> None:
         with patch(
@@ -381,9 +386,12 @@ class TicketOrchestratorTests(unittest.TestCase):
                 resolution_builder=lambda *_args, **_kwargs: _resolution(action="rag"),
             )
 
-        self.assertTrue(execution.needs_investigating)
-        self.assertEqual(execution.next_status, INVESTIGATING_STATUS)
+        self.assertFalse(execution.needs_investigating)
+        self.assertEqual(execution.next_status, COMMUNICATING_STATUS)
         self.assertEqual(execution.investigation_reason, "rag_post_check_error")
+        self.assertEqual(execution.workflow_action, "answer_customer")
+        self.assertEqual(execution.route_reason, "grounded_answer")
+        self.assertIn("please share what you're trying to achieve", execution.answer.lower())
 
     def test_generic_grounded_how_to_question_keeps_answer_when_post_check_errors(self) -> None:
         with patch(
@@ -418,6 +426,7 @@ class TicketOrchestratorTests(unittest.TestCase):
         self.assertFalse(execution.needs_investigating)
         self.assertEqual(execution.next_status, COMMUNICATING_STATUS)
         self.assertIsNone(execution.investigation_reason)
+        self.assertEqual(execution.workflow_action, "answer_customer")
         sufficiency_mock.assert_not_called()
 
     def test_short_how_to_faq_grounded_answer_skips_post_check_without_citations(self) -> None:
@@ -443,7 +452,8 @@ class TicketOrchestratorTests(unittest.TestCase):
 
         self.assertFalse(execution.needs_investigating)
         self.assertEqual(execution.next_status, COMMUNICATING_STATUS)
-        self.assertIsNone(execution.investigation_reason)
+        self.assertEqual(execution.investigation_reason, "rag_post_check_insufficient")
+        self.assertEqual(execution.workflow_action, "clarify_customer_for_intake")
         sufficiency_mock.assert_not_called()
 
     def test_non_rag_action_skips_post_check(self) -> None:

@@ -16,6 +16,7 @@ from backend.services.investigation_flow import (
     INVESTIGATING_STATUS,
     normalize_ticket_status,
 )
+from backend.services.support_products import get_support_product_label, list_support_product_field_labels
 from backend.services.support_router import SupportResolution, SupportRouteDecision
 from backend.services.troubleshooting_intake import TroubleshootingIntakeResult, build_client_intake_state
 
@@ -43,6 +44,29 @@ _TROUBLESHOOTING_SIGNAL_RE = re.compile(
     re.IGNORECASE,
 )
 _GENERIC_HOW_TO_RE = re.compile(r"^\s*(how\s+(?:do\s+i\s+)?(?:to|can\s+i)|what\s+is|what\s+are)\b", re.IGNORECASE)
+_ANSWER_MODE_REQUIRED_FIELDS = ("desired_outcome", "blocked_step_or_error")
+_STRUCTURED_TECHNICAL_REPLY_RE = re.compile(
+    r"```|(^|\n)\s*\d+\.\s+|(^|\n)\s*[-*]\s+|\bjoinchannel\b|\bsetclientrole\b|\bengine\.\w+\b|"
+    r"\btrack\.\w+\b|\bcall\s+the\s+sdk\b",
+    re.IGNORECASE,
+)
+_CLARIFY_REPLY_MARKERS = (
+    "what are you trying to achieve",
+    "what error or blocker are you seeing",
+    "what error are you seeing",
+    "what blocker are you seeing",
+    "what are you seeing",
+    "please share",
+    "please confirm",
+    "could you share",
+    "can you share",
+    "can you confirm",
+    "which step",
+    "platform or sdk",
+    "docs page",
+    "api version",
+    "api semantics",
+)
 
 
 def _utc_now() -> str:
@@ -67,6 +91,215 @@ def _safe_nonnegative_int(value: Any, default: int = 0) -> int:
     except (TypeError, ValueError):
         return default
     return parsed if parsed >= 0 else default
+
+
+def _normalize_answer_mode_known_information(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    normalized: dict[str, str] = {}
+    for field_name in _ANSWER_MODE_REQUIRED_FIELDS:
+        clean_value = _clean_text(value.get(field_name))
+        if clean_value:
+            normalized[field_name] = clean_value
+    return normalized
+
+
+def _build_answer_mode_customer_reply(
+    *,
+    known_information: dict[str, str],
+    missing_information: list[str],
+) -> str:
+    prompts: list[str] = []
+    if "desired_outcome" in missing_information:
+        prompts.append("What are you trying to achieve?")
+    if "blocked_step_or_error" in missing_information:
+        prompts.append("What error or blocker are you seeing?")
+    if not prompts:
+        return ""
+    prefix = "I couldn't verify a grounded answer from the current support evidence."
+    if known_information:
+        summaries: list[str] = []
+        desired_outcome = _clean_text(known_information.get("desired_outcome"))
+        blocked_step_or_error = _clean_text(known_information.get("blocked_step_or_error"))
+        if desired_outcome:
+            summaries.append(f"desired outcome is {desired_outcome}")
+        if blocked_step_or_error:
+            summaries.append(f"blocked step or error is {blocked_step_or_error}")
+        if summaries:
+            return f"Known so far: {'; '.join(summaries)}. {prefix} {' '.join(prompts)}".strip()
+    return f"{prefix} {' '.join(prompts)}".strip()
+
+
+def _build_answer_mode_review_result_from_state(
+    *,
+    current_state: dict[str, Any] | None,
+) -> TroubleshootingIntakeResult:
+    known_information = _normalize_answer_mode_known_information((current_state or {}).get("known_information"))
+    missing_information = [
+        field_name for field_name in _ANSWER_MODE_REQUIRED_FIELDS if not _clean_text(known_information.get(field_name))
+    ]
+    ready_for_engineer_ticket = not missing_information and bool(known_information)
+    return TroubleshootingIntakeResult(
+        issue_mode="answer",
+        known_information=known_information,
+        missing_information=missing_information,
+        ready_for_engineer_ticket=ready_for_engineer_ticket,
+        customer_reply=""
+        if ready_for_engineer_ticket
+        else _build_answer_mode_customer_reply(
+            known_information=known_information,
+            missing_information=missing_information,
+        ),
+    )
+
+
+def _is_safe_answer_mode_clarify_reply(text: str) -> bool:
+    cleaned = _clean_text(text)
+    if not cleaned:
+        return False
+    lowered = cleaned.lower()
+    if _STRUCTURED_TECHNICAL_REPLY_RE.search(cleaned):
+        return False
+    if any(marker in lowered for marker in _CLARIFY_REPLY_MARKERS):
+        return True
+    return "?" in cleaned
+
+
+def _sanitize_insufficient_review_result(
+    review_result: TroubleshootingIntakeResult,
+    *,
+    current_state: dict[str, Any] | None,
+) -> TroubleshootingIntakeResult:
+    if review_result.issue_mode != "answer":
+        return review_result
+    known_information = _normalize_answer_mode_known_information(review_result.known_information)
+    for field_name, field_value in _normalize_answer_mode_known_information((current_state or {}).get("known_information")).items():
+        known_information.setdefault(field_name, field_value)
+    missing_information = [
+        field_name for field_name in _ANSWER_MODE_REQUIRED_FIELDS if not _clean_text(known_information.get(field_name))
+    ]
+    ready_for_engineer_ticket = not missing_information and bool(known_information)
+    customer_reply = _clean_text(review_result.customer_reply)
+    if ready_for_engineer_ticket:
+        customer_reply = ""
+    elif not _is_safe_answer_mode_clarify_reply(customer_reply):
+        customer_reply = _build_answer_mode_customer_reply(
+            known_information=known_information,
+            missing_information=missing_information,
+        )
+    return TroubleshootingIntakeResult(
+        issue_mode="answer",
+        known_information=known_information,
+        missing_information=missing_information,
+        ready_for_engineer_ticket=ready_for_engineer_ticket,
+        customer_reply=customer_reply,
+    )
+
+
+def _has_cited_grounded_answer(resolution: SupportResolution) -> bool:
+    return bool(_clean_text(resolution.answer) and list(resolution.citations))
+
+
+def _join_labels(labels: list[str]) -> str:
+    if not labels:
+        return ""
+    if len(labels) == 1:
+        return labels[0]
+    if len(labels) == 2:
+        return f"{labels[0]} and {labels[1]}"
+    return f"{', '.join(labels[:-1])}, and {labels[-1]}"
+
+
+def _build_answer_mode_follow_up(missing_information: list[str]) -> str:
+    prompts: list[str] = []
+    if "desired_outcome" in missing_information:
+        prompts.append("what you're trying to achieve")
+    if "blocked_step_or_error" in missing_information:
+        prompts.append("the exact error or blocker you're seeing")
+    if not prompts:
+        return ""
+    return (
+        "If you need a platform-specific example or this still isn't working, "
+        f"please share {_join_labels(prompts)}."
+    )
+
+
+def _build_investigation_follow_up(
+    *,
+    product: str | None,
+    missing_information: list[str],
+) -> str:
+    missing_labels = list_support_product_field_labels(missing_information)
+    if not missing_labels:
+        return ""
+    product_label = get_support_product_label(product) or "Agora"
+    return (
+        f"If the issue continues, please share {_join_labels(missing_labels)} "
+        f"so I can narrow down the {product_label} investigation."
+    )
+
+
+def _build_cited_answer_follow_up(
+    review_result: TroubleshootingIntakeResult,
+    *,
+    product: str | None,
+) -> str:
+    missing_information = [
+        str(field_name or "").strip().lower()
+        for field_name in list(review_result.missing_information or [])
+        if str(field_name or "").strip()
+    ]
+    if not missing_information or review_result.ready_for_engineer_ticket:
+        return ""
+    if str(review_result.issue_mode or "").strip().lower() == "answer":
+        return _build_answer_mode_follow_up(missing_information)
+    return _build_investigation_follow_up(
+        product=product,
+        missing_information=missing_information,
+    )
+
+
+def _build_cited_answer_execution_result(
+    *,
+    review_result: TroubleshootingIntakeResult,
+    resolution: SupportResolution,
+    product: str | None,
+    investigation_reason: str,
+    current_state: dict[str, Any] | None = None,
+) -> TicketExecutionResult:
+    if str(review_result.issue_mode or "").strip().lower() == "answer":
+        review_result = _sanitize_insufficient_review_result(
+            review_result,
+            current_state=current_state,
+        )
+    pending_investigation_reason = _resolve_pending_investigation_reason(
+        current_state=current_state,
+        investigation_reason=investigation_reason,
+    )
+    next_client_intake_state = build_client_intake_state(
+        review_result,
+        product=product,
+        pending_investigation_reason=pending_investigation_reason,
+    )
+    follow_up = _build_cited_answer_follow_up(
+        review_result,
+        product=product,
+    )
+    answer_text = str(resolution.answer or "").strip()
+    if follow_up:
+        answer_text = f"{answer_text}\n\n{follow_up}"
+    cited_resolution = replace(
+        resolution,
+        answer=answer_text,
+        route_reason="grounded_answer",
+    )
+    return _build_ticket_execution_result(
+        resolution=cited_resolution,
+        needs_investigating=False,
+        workflow_action=WORKFLOW_ACTION_ANSWER_CUSTOMER,
+        investigation_reason=pending_investigation_reason,
+        client_intake_state=next_client_intake_state,
+    )
 
 
 @dataclass(frozen=True)
@@ -467,6 +700,8 @@ def _is_high_risk_grounded_answer(
             return True
         if _safe_nonnegative_int(quality_signals.get("selected_doc_count"), 0) < 1:
             return True
+        if not resolution.citations:
+            return True
         return float(resolution.confidence or 0.0) < 0.75
     if _TROUBLESHOOTING_SIGNAL_RE.search(_clean_text(message).lower()):
         return True
@@ -543,6 +778,10 @@ def _handle_insufficient_review(
     investigation_reason: str,
     current_state: dict[str, Any] | None = None,
 ) -> TicketExecutionResult:
+    review_result = _sanitize_insufficient_review_result(
+        review_result,
+        current_state=current_state,
+    )
     pending_investigation_reason = _resolve_pending_investigation_reason(
         current_state=current_state,
         investigation_reason=investigation_reason,
@@ -1076,6 +1315,9 @@ def execute_client_ticket_agent_runtime(
                     if callable(review_agent)
                     else {"decision": "approve_answer", "reason": "review_skipped", "confidence": 0.0}
                 )
+                if decision == "approve_answer" and not rag_resolution.citations:
+                    decision = "open_engineer_ticket"
+                    reason = "missing_citations"
                 if decision == "approve_answer":
                     result = _build_ticket_execution_result(
                         resolution=rag_resolution,
@@ -1088,10 +1330,75 @@ def execute_client_ticket_agent_runtime(
                         if reason == "review_error"
                         else RAG_POST_CHECK_INSUFFICIENT_REASON
                     )
-                    if _is_troubleshooting_intake_candidate(
+                    troubleshooting_candidate = _is_troubleshooting_intake_candidate(
                         message=message,
                         client_intake_state=client_intake_state,
-                    ):
+                    )
+                    if _has_cited_grounded_answer(rag_resolution):
+                        if troubleshooting_candidate:
+                            _mark_agent_summary(
+                                review_summary,
+                                phase="running",
+                                status="running",
+                                decision="pre_engineer_intake",
+                                reason=investigation_reason,
+                            )
+                            _append_event(
+                                agent_events,
+                                ticket_id=ticket_id,
+                                message_id=message_id,
+                                run_id=run_id,
+                                agent_name=AGENT_NAME_REVIEW,
+                                phase="running",
+                                event_type="started",
+                                payload={"mode": "pre_engineer_intake", "investigation_reason": investigation_reason},
+                            )
+                            review_result = review_agent(
+                                mode="pre_engineer_intake",
+                                message=message,
+                                product=product,
+                                ticket_subject=ticket_subject,
+                                ticket_context=ticket_context,
+                                current_state=client_intake_state,
+                                route_decision=effective_route_decision,
+                                resolution=rag_resolution,
+                                rag_result={
+                                    "reason": investigation_reason,
+                                    "answer": rag_resolution.answer,
+                                    "evidence_summary": dict(rag_resolution.evidence_summary or {}) or {},
+                                    "packed_evidence": dict(rag_resolution.packed_evidence or {}) or {},
+                                },
+                            ) if callable(review_agent) else TroubleshootingIntakeResult(
+                                issue_mode="answer",
+                                known_information={},
+                                missing_information=[],
+                                ready_for_engineer_ticket=False,
+                                customer_reply="",
+                            )
+                            if not isinstance(review_result, TroubleshootingIntakeResult):
+                                raise TypeError("review agent must return TroubleshootingIntakeResult for pre_engineer_intake")
+                        else:
+                            review_result = _build_answer_mode_review_result_from_state(
+                                current_state=client_intake_state,
+                            )
+                        result = _build_cited_answer_execution_result(
+                            review_result=review_result,
+                            resolution=rag_resolution,
+                            product=product,
+                            investigation_reason=investigation_reason,
+                            current_state=client_intake_state,
+                        )
+                    elif not rag_resolution.citations and not troubleshooting_candidate:
+                        result = _handle_insufficient_review(
+                            review_result=_build_answer_mode_review_result_from_state(
+                                current_state=client_intake_state,
+                            ),
+                            resolution=rag_resolution,
+                            product=product,
+                            investigation_reason=investigation_reason,
+                            current_state=client_intake_state,
+                        )
+                    elif troubleshooting_candidate:
                         _mark_agent_summary(
                             review_summary,
                             phase="running",

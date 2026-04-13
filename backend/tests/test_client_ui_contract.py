@@ -1237,6 +1237,73 @@ class ClientUiContractTests(unittest.TestCase):
                 if (!html.includes("engineer ticket for this issue")) {
                   throw new Error("Later durable assistant reply should remain visible.");
                 }
+                """
+            )
+        )
+
+    def test_client_chat_renders_markdown_code_blocks_and_references_for_grounded_answer(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const ticket = createTicket(state.user.id);
+                state.view = "chat-ticket";
+                state.activeTicketId = ticket.id;
+                updateTicketStatus(ticket.id, "communicating");
+                saveTicketMessages(ticket.id, [
+                  {
+                    id: "msg-user-1",
+                    role: "user",
+                    content: "how to join channel",
+                    createdAt: "2026-04-13T06:00:51.182857Z",
+                  },
+                  {
+                    id: "msg-assistant-1",
+                    role: "assistant",
+                    content: [
+                      "To join a channel, call the SDK join method with your channel name, authentication token, user ID, and channel/media options.",
+                      "",
+                      "Key Steps:",
+                      "1. Provide the channel name you want the client to join.",
+                      "2. Pass a valid authentication token from your token server.",
+                      "3. Set the local user ID.",
+                      "",
+                      "```kotlin",
+                      "val channelId = \\\"demo-room\\\"",
+                      "val uid = 0",
+                      "engine.joinChannel(token, channelId, uid, option)",
+                      "```",
+                    ].join("\\n"),
+                    createdAt: "2026-04-13T06:01:56.666315Z",
+                    citations: [
+                      {
+                        chunk_id: "chunk-join-auth",
+                        source_url: "https://docs.agora.io/en/video-calling/token-authentication/authentication-workflow?platform=android",
+                        source_path: "official/authentication-workflow_android.md",
+                        heading: "Use a token to join a channel",
+                      },
+                    ],
+                    sources: [
+                      "https://docs.agora.io/en/video-calling/token-authentication/authentication-workflow?platform=android",
+                    ],
+                  },
+                ]);
+
+                const html = renderChatTicket();
+                if (!html.includes("<ol>")) {
+                  throw new Error("Grounded assistant markdown should render ordered lists.");
+                }
+                if (!html.includes("<pre><code")) {
+                  throw new Error("Grounded assistant markdown should render fenced code blocks.");
+                }
+                if (!html.includes("References")) {
+                  throw new Error("Grounded assistant answers should render a References section.");
+                }
+                if (!html.includes('href="https://docs.agora.io/en/video-calling/token-authentication/authentication-workflow?platform=android"')) {
+                  throw new Error("Grounded assistant answers should render clickable reference links.");
+                }
               """
             )
         )

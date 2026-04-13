@@ -2408,8 +2408,8 @@ async def create_or_update_ticket(
         "ticket_id": ticket_id,
         "answer": response_answer,
         "confidence": 0.0,
-        "sources": [],
-        "citations": [],
+        "sources": list(follow_up_sources),
+        "citations": [dict(item) for item in follow_up_citations],
         "sentiment": {
             "label": None,
             "raw_label": None,

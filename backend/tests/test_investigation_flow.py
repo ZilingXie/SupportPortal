@@ -467,8 +467,31 @@ class InvestigationFlowTests(unittest.TestCase):
             ),
         ), patch.object(
             main,
-            "resolve_support_message",
-            return_value=_resolution(needs_engineer_guidance=True),
+            "execute_client_ticket_agent_runtime",
+            return_value=types.SimpleNamespace(
+                result=types.SimpleNamespace(
+                    answer="I couldn't verify a grounded answer from the current support evidence.",
+                    confidence=0.4,
+                    sources=[],
+                    citations=[],
+                    needs_investigating=True,
+                    next_status="investigating",
+                    answer_route="rag",
+                    scope_label="agora_technical",
+                    route_family="agora_docs_rag",
+                    execution_action="rag",
+                    tooling_profile="agora_docs_only",
+                    route_reason="rag_insufficient_evidence",
+                    route_confidence=0.92,
+                    search_used=False,
+                    matched_signals=["black screen"],
+                    investigation_reason="rag_insufficient_evidence",
+                    evidence_summary={"quality_signals": {"needs_human": True}},
+                    packed_evidence=None,
+                    workflow_action="open_engineer_ticket",
+                    client_intake_state=None,
+                ),
+            ),
         ), patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
                 "/api/tickets/query",
@@ -2134,6 +2157,105 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(enqueue_mock.await_count, 1)
         self.assertEqual(fallback_mock.await_count, 1)
+
+    def test_ticket_query_sync_grounded_answer_returns_sources_and_citations_in_initial_response(self) -> None:
+        resolution = SupportResolution(
+            answer="Use joinChannel with the same channel name, token, uid, and options.",
+            confidence=0.91,
+            sources=["https://docs.agora.io/en/video-calling/token-authentication/authentication-workflow?platform=android"],
+            citations=[
+                {
+                    "chunk_id": "chunk-join-auth",
+                    "source_path": "official/authentication-workflow_android.md",
+                    "heading": "Use a token to join a channel",
+                    "source_url": "https://docs.agora.io/en/video-calling/token-authentication/authentication-workflow?platform=android",
+                }
+            ],
+            needs_engineer_guidance=False,
+            answer_route="rag",
+            scope_label="agora_technical",
+            route_reason="grounded_answer",
+            route_confidence=0.94,
+            search_used=False,
+            evidence_summary={
+                "quality_signals": {
+                    "generation_mode": "structured_answer",
+                    "selected_doc_count": 1,
+                    "needs_human": False,
+                }
+            },
+        )
+        with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
+            "OPTIMISTIC_PARALLEL_ROUTE_ENABLED",
+            False,
+            create=True,
+        ), patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="Got it, let me check this for you.",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main,
+            "execute_client_ticket_agent_runtime",
+            return_value=types.SimpleNamespace(
+                result=types.SimpleNamespace(
+                    answer=resolution.answer,
+                    confidence=resolution.confidence,
+                    sources=list(resolution.sources),
+                    citations=[dict(item) for item in resolution.citations],
+                    needs_investigating=False,
+                    next_status="communicating",
+                    answer_route="rag",
+                    scope_label="agora_technical",
+                    route_family="agora_docs_rag",
+                    execution_action="rag",
+                    tooling_profile="agora_docs_only",
+                    route_reason="grounded_answer",
+                    route_confidence=0.95,
+                    search_used=False,
+                    matched_signals=["join channel"],
+                    investigation_reason=None,
+                    evidence_summary=resolution.evidence_summary,
+                    packed_evidence=resolution.packed_evidence,
+                    workflow_action="answer_customer",
+                    client_intake_state=None,
+                ),
+            ),
+        ), patch.object(
+            main.task_queue,
+            "enqueue",
+            AsyncMock(return_value=False),
+        ), patch.object(
+            main,
+            "_apply_deferred_message_sentiment_tag",
+            AsyncMock(),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-QUERY-CITATION-001",
+                    "customer_id": "C-001",
+                    "product": "audio_video_calling",
+                    "message": "how to join channel",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["answer_route"], "rag")
+        self.assertEqual(
+            payload["sources"],
+            ["https://docs.agora.io/en/video-calling/token-authentication/authentication-workflow?platform=android"],
+        )
+        self.assertEqual(payload["citations"][0]["chunk_id"], "chunk-join-auth")
 
     def test_ticket_query_post_rag_check_rejection_starts_investigation(self) -> None:
         resolution = SupportResolution(

@@ -3192,3 +3192,62 @@ For each new entry, record:
   - `python3 -m py_compile backend/services/rag_qa.py backend/tests/test_rag_qa.py`
   - `git diff --check`
   - lightweight stack restart plus `$supportportal-run-report` live replay for `how to join channel` and full `real_case/real_user_questions.txt`
+
+## 2026-04-13 - Fail closed on uncited technical replies and accept authoritative auth chunks for generic join grounding
+
+- Summary:
+  - Tightened the client answer-chain guardrail so `rag_insufficient_evidence` and post-check flows no longer pass through technical-looking customer replies unless the final grounded answer carries citations.
+  - Relaxed generic `how to join channel` evidence acceptance so one authoritative token-authentication chunk that already contains the concrete join flow can satisfy both auth prerequisite support and join-step grounding.
+  - Upgraded the grounded generic join answer shape to preserve one cited authoritative code example when the winning chunk includes runnable join code.
+- Reason:
+  - Live `TK-087` traces showed the customer receiving a polished technical answer with no `sources/citations` because review/intake generated a customer-facing reply after `rag_insufficient_evidence`.
+  - The same live traces showed `how to join channel` landing on the official token-authentication join-flow chunk but still failing closed as `generic_join_support_incomplete`, which blocked a grounded FAQ answer even though the evidence was sufficient.
+- Affected files/config:
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/services/rag_qa.py`
+  - `backend/main.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_ticket_orchestrator.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema or ingestion changes.
+  - Runtime customer replies now fail closed to deterministic clarification or handoff text when citations are missing, and grounded generic-join FAQ traces can complete from a single authoritative auth chunk when it already contains the actual join flow.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_client_ticket_agent_runtime backend.tests.test_investigation_flow backend.tests.test_rag_qa backend.tests.test_rag_agentic backend.tests.test_client_ui_contract backend.tests.test_ticket_orchestrator`
+  - `python3 -m py_compile backend/services/client_ticket_agent_runtime.py backend/services/rag_qa.py backend/main.py`
+  - `node --check ui/client-ui/app.js`
+  - `git diff --check`
+  - lightweight stack rebuild in the official `deployment` local-lightweight profile plus `$supportportal-run-report` live replay against `real_case/real_user_questions.txt`, with `how to join channel` now returning `answer_route=rag`, `route_reason=grounded_answer`, and non-empty citations in `/tmp/supportportal-traces/TK-TRACE-07855E45E3.json`
+
+## 2026-04-13 - Prioritize cited grounded answers and align dual-stream serving with authoritative enablement evidence
+
+- Summary:
+  - Added cited-answer precedence in the client answer chain so grounded RAG answers with non-empty citations are answered to the customer first, even when troubleshooting or feature-enable flows still need one small follow-up field.
+  - Expanded dual-stream retrieval and metadata rerank so `how to enable the dual stream` can promote authoritative Web enablement chunks instead of glossary-only hits, and emit the deterministic grounded answer shape directly on the main serving path.
+  - Normalized live-detail recovery so grounded answers recovered from telemetry keep `route_reason=grounded_answer` whenever citations are present.
+- Reason:
+  - Live traces showed `how to enable the dual stream` could succeed in direct probes while the main customer path still fell back to `clarify_customer_for_intake`, because retrieval/rerank favored generic glossary chunks and the runtime let insufficient-evidence follow-up logic override cited answers.
+  - The accepted customer contract is now citation-first: if the online RAG answer is grounded and cited, reply with it first and only append one minimal clarification sentence afterward when more context is still useful.
+- Affected files/config:
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_ticket_orchestrator.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema or ingestion changes.
+  - Runtime answer-chain state now preserves cited grounded answers as the customer-facing reply, while keeping missing troubleshooting/intake fields in agent state for the next turn.
+  - Dual-stream FAQ traces now surface authoritative enablement chunks and deterministic grounded citations in the primary serving path instead of only in diagnostic direct probes.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_rag_service_client backend.tests.test_client_ticket_agent_runtime backend.tests.test_ticket_orchestrator backend.tests.test_rag_agentic backend.tests.test_rag_qa`
+  - `python3 -m py_compile backend/services/rag_qa.py backend/services/rag_service_client.py backend/tests/test_rag_agentic.py backend/tests/test_rag_qa.py backend/tests/test_rag_service_client.py`
+  - `curl -sS http://127.0.0.1:8080/health`
+  - direct internal RAG probe `direct-probe-dual-stream-20260413-k`, which returned `decision=answer`, `reason=grounded_answer`, `answer_profile_used=dual_stream_deterministic`, and non-empty citations for the official media-stream-fallback guide
+  - `$supportportal-run-report --message "how to enable the dual stream"` producing `/tmp/supportportal-traces/TK-TRACE-E7E1A61DB2.json` with `answer_route=rag`, `route_reason=grounded_answer`, `workflow_action=answer_customer`, and two citations
+  - `$supportportal-run-report` against `real_case/real_user_questions.txt`, with `/tmp/supportportal-traces/TK-TRACE-BC63976623.json` preserving cited grounded `how to join channel` behavior and `/tmp/supportportal-traces/TK-TRACE-5B23410A88.json` confirming cited grounded `how to enable the dual stream`

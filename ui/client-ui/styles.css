@@ -1623,8 +1623,53 @@ html.material-symbols-pending .material-symbols-outlined {
   background: #fff;
 }
 
+.message-markdown {
+  display: grid;
+  gap: 14px;
+}
+
+.message-markdown p {
+  margin: 0;
+}
+
+.message-markdown ol,
+.message-markdown ul {
+  margin: 0;
+  padding-left: 22px;
+  display: grid;
+  gap: 10px;
+}
+
+.message-markdown li {
+  padding-left: 4px;
+}
+
+.message-markdown pre {
+  margin: 0;
+  padding: 16px 18px;
+  border-radius: 18px;
+  background: rgba(12, 18, 68, 0.92);
+  color: rgba(246, 248, 255, 0.96);
+  overflow-x: auto;
+  line-height: 1.6;
+}
+
+.message-markdown code {
+  font-family: "SFMono-Regular", "SF Mono", "Roboto Mono", Menlo, monospace;
+  font-size: 12px;
+}
+
+.message-markdown :not(pre) > code {
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.58);
+  color: #16203a;
+}
+
 .citations {
   margin-top: 18px;
+  display: grid;
+  gap: 10px;
 }
 
 .citation-title {
@@ -1636,29 +1681,36 @@ html.material-symbols-pending .material-symbols-outlined {
 }
 
 .citation-list {
-  margin-top: 10px;
-  display: flex;
-  flex-wrap: wrap;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
   gap: 8px;
 }
 
-.citation-pill {
-  min-height: 28px;
-  padding: 0 10px;
-  border-radius: 10px;
-  display: inline-flex;
-  align-items: center;
+.citation-item {
+  margin: 0;
+}
+
+.citation-link {
+  display: block;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.56);
   color: #343d96;
-  background: var(--secondary-fixed);
   box-shadow: 0 8px 18px rgba(52, 61, 150, 0.08);
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
   text-decoration: none;
 }
 
-a.citation-pill:hover {
-  background: #cfd3ff;
+.citation-link.is-static {
+  color: var(--ink);
+}
+
+a.citation-link:hover {
+  background: #dbe4ff;
 }
 
 .thinking-line {

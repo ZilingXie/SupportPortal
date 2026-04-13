@@ -831,6 +831,57 @@ For each new entry, record:
   - `node --check ui/client-ui/app.js`
   - `git diff --check`
 
+- Date: 2026-04-13
+- Area or subsystem: Client grounded-answer guardrail and rendered references
+- Prompt or model version: `client-grounded-answer-reference-guard-v1`
+- Summary: Tightened the customer-answer guardrail so uncited technical replies from review/intake can no longer be sent as if they were grounded answers, and updated the client reply formatting contract to emit Markdown-friendly grounded answers with a bottom `References` section.
+- Reason: `TK-087` showed that the runtime could surface a review/intake-generated technical reply with no citations, and the client bubble rendered numbered steps and code fences as plain text even when the answer content itself was acceptable.
+- Affected files or config:
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/main.py`
+  - `ui/client-ui/app.js`
+  - `ui/client-ui/styles.css`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_client_ui_contract.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_ticket_orchestrator.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Customer-visible technical answers now require non-empty citations; otherwise the runtime falls back to explicit clarification or handoff wording instead of a docs-like answer.
+  - The initial `/api/tickets/query` response now includes grounded `sources/citations` immediately when the answer is available, so the client does not flash an uncited first paint.
+  - Client assistant bubbles render a safe Markdown subset for paragraphs, numbered lists, bullet lists, inline code, and fenced code blocks, and citations render as one-per-line links under a `References` heading.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_client_ticket_agent_runtime backend.tests.test_investigation_flow backend.tests.test_rag_qa backend.tests.test_rag_agentic backend.tests.test_client_ui_contract backend.tests.test_ticket_orchestrator`
+  - `python3 -m py_compile backend/services/client_ticket_agent_runtime.py backend/services/rag_qa.py backend/main.py`
+  - `node --check ui/client-ui/app.js`
+  - `git diff --check`
+  - lightweight stack rebuild in the official `deployment` local-lightweight profile plus `$supportportal-run-report` live replay against `real_case/real_user_questions.txt`, with `how to join channel` now returning a cited grounded answer and code block formatting in `/tmp/supportportal-traces/TK-TRACE-07855E45E3.json`
+
+- Date: 2026-04-13
+- Area or subsystem: Client citation-first answer chain for grounded FAQs and troubleshooting
+- Prompt or model version: `client-cited-answer-precedence-v1`
+- Summary: Changed the customer reply policy so grounded answers with non-empty citations are answered first and any remaining diagnostic question is appended as one deterministic follow-up sentence, instead of letting review/intake clarification override the cited answer.
+- Reason: `how to enable the dual stream` and similar cases could already ground against authoritative docs in diagnostics, but the main runtime still prioritized clarification workflow branches and suppressed the cited customer answer.
+- Affected files or config:
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_ticket_orchestrator.py`
+  - `backend/tests/test_rag_agentic.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - If the online RAG resolution has a non-empty answer and non-empty `citations`, the customer now receives that grounded answer even when troubleshooting or feature-enable flows still want one small follow-up field.
+  - Any extra customer prompt after a cited answer is appended as one short deterministic sentence, not generated free-form as a second technical answer.
+  - Uncited or insufficient resolutions still fail closed to pure clarification or handoff wording and cannot masquerade as grounded documentation-backed answers.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_rag_service_client backend.tests.test_client_ticket_agent_runtime backend.tests.test_ticket_orchestrator backend.tests.test_rag_agentic backend.tests.test_rag_qa`
+  - `python3 -m py_compile backend/services/rag_qa.py backend/services/rag_service_client.py backend/tests/test_rag_agentic.py backend/tests/test_rag_qa.py backend/tests/test_rag_service_client.py`
+  - `$supportportal-run-report --message "how to enable the dual stream"` with `/tmp/supportportal-traces/TK-TRACE-E7E1A61DB2.json` showing `answer_route=rag`, `route_reason=grounded_answer`, `workflow_action=answer_customer`, and non-empty citations
+  - `$supportportal-run-report` against `real_case/real_user_questions.txt`, with `/tmp/supportportal-traces/TK-TRACE-BC63976623.json` and `/tmp/supportportal-traces/TK-TRACE-5B23410A88.json` confirming cited grounded answers for both `how to join channel` and `how to enable the dual stream`
+
 - Date: 2026-04-08
 - Area or subsystem: Docs/API semantics answer generation
 - Prompt or model version: `rag-answer-api-semantics-deterministic-v1`
