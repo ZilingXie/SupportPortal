@@ -59,8 +59,8 @@ export function ChatSidebar() {
             <Monitor className="h-4 w-4" />
           </div>
           <div className="flex flex-col">
-            <span className="text-sm font-semibold text-sidebar-foreground">IT HelpDesk</span>
-            <span className="text-xs text-sidebar-foreground/60">Support Portal</span>
+            <span className="text-sm font-semibold text-sidebar-foreground">Sid</span>
+            <span className="text-xs text-sidebar-foreground/60">Client Workspace</span>
           </div>
         </div>
         <Button

@@ -20,6 +20,9 @@ const ticketVolumeEl = document.getElementById("ticket-volume");
 const resolutionRateEl = document.getElementById("resolution-rate");
 const sentimentAlertsEl = document.getElementById("sentiment-alerts");
 const waitingForEngineerEl = document.getElementById("waiting-for-engineer");
+const PUBLIC_ASSISTANT_DISPLAY_NAME = "Sid";
+const ENGINEER_AI_DISPLAY_NAME = "Case Buddy";
+const ENGINEER_DISPLAY_NAME = "jack";
 const queueHealthTitleEl = document.getElementById("queue-health-title");
 const queueHealthDetailEl = document.getElementById("queue-health-detail");
 const openTicketCountEl = document.getElementById("open-ticket-count");
@@ -315,13 +318,13 @@ function roleLabel(role) {
     return "Customer";
   }
   if (normalized === "assistant") {
-    return "AI";
+    return PUBLIC_ASSISTANT_DISPLAY_NAME;
   }
   if (normalized === "engineer_ai") {
-    return "Engineer AI";
+    return ENGINEER_AI_DISPLAY_NAME;
   }
   if (normalized === "engineer") {
-    return "Engineer";
+    return ENGINEER_DISPLAY_NAME;
   }
   return "System";
 }

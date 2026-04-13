@@ -9,8 +9,8 @@ const _geist = Geist({ subsets: ["latin"] })
 const _geistMono = Geist_Mono({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "IT HelpDesk - IT Operations Support Portal",
-  description: "Intelligent IT operations support platform with 24/7 AI assistant",
+  title: "Sid - Technical Support",
+  description: "Sid is the client technical support workspace with AI-guided intake.",
 }
 
 export default function RootLayout({

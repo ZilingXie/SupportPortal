@@ -265,7 +265,7 @@ class ClientAckRequest(BaseModel):
 
 class TicketActionRequest(BaseModel):
     action: str = Field(pattern="^(processing|resolved|investigate|reopen)$")
-    engineer_id: str = Field(default="eng")
+    engineer_id: str = Field(default="Jack")
     note: str | None = None
 
 class ReviewSampleUpdateRequest(BaseModel):
@@ -304,12 +304,12 @@ class BenchmarkSessionRunRequest(BaseModel):
 
 
 class InvestigationMessageRequest(BaseModel):
-    engineer_id: str = Field(default="eng")
+    engineer_id: str = Field(default="Jack")
     message: str = Field(min_length=1, max_length=4000)
 
 
 class InvestigationConfirmationRequest(BaseModel):
-    engineer_id: str = Field(default="eng")
+    engineer_id: str = Field(default="Jack")
     decision: str = Field(pattern="^(approve|revise)$")
     note: str | None = Field(default=None, max_length=4000)
 

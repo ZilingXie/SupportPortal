@@ -76,6 +76,11 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(payload["app_build"]["ref"], "abc123def456")
         self.assertEqual(payload["app_build"]["built_at"], "2026-04-08T08:00:00Z")
 
+    def test_engineer_request_models_default_to_jack(self) -> None:
+        self.assertEqual(main.TicketActionRequest(action="investigate").engineer_id, "Jack")
+        self.assertEqual(main.InvestigationMessageRequest(message="share logs").engineer_id, "Jack")
+        self.assertEqual(main.InvestigationConfirmationRequest(decision="approve").engineer_id, "Jack")
+
     def _seed_ticket(
         self,
         *,
@@ -2724,7 +2729,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(latest_message.get("meta", {}).get("scenario"), "engineer_investigation_reply")
         self.assertEqual(latest_message.get("meta", {}).get("model"), "gpt-5.4")
         self.assertEqual(latest_message.get("meta", {}).get("reasoning_effort"), "medium")
-        self.assertEqual(latest_message.get("meta", {}).get("prompt_version"), "engineer-investigation-reply-v1")
+        self.assertEqual(latest_message.get("meta", {}).get("prompt_version"), "engineer-investigation-reply-v2")
         self.assertEqual(latest_message.get("meta", {}).get("generation_status"), "succeeded")
 
     def test_engineer_internal_message_fail_closes_when_investigation_reply_model_output_is_invalid(self) -> None:
@@ -3066,7 +3071,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertIn("Current understanding: Android 14 token renewal still fails", payload["summary"])
-        self.assertIn("Why client AI could not solve it", payload["summary"])
+        self.assertIn("Why Sid could not solve it", payload["summary"])
         self.assertEqual(
             payload["next_action_needed"],
             "Please confirm the exact SDK version and whether Android 14 is the only affected platform.",
