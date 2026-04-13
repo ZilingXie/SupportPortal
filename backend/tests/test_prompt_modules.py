@@ -244,10 +244,10 @@ class PromptModuleTests(unittest.TestCase):
             customer_language_hint="en",
             latest_customer_message="I got a black screen after joining the call.",
             latest_public_assistant_reply="I've opened an engineer ticket and we're investigating.",
-            ticket_conversation_summary="Customer: black screen after join | Client AI: opened engineer ticket",
+            ticket_conversation_summary="Customer: black screen after join | Sid: opened engineer ticket",
             investigation_thread_summary=(
-                "Engineer AI: Please confirm the reproduction scope first. | "
-                "Engineer: you need to get the channel name"
+                "Case Buddy: Please confirm the reproduction scope first. | "
+                "jack: you need to get the channel name"
             ),
             handoff_packet_summary="unresolved_reason=rag_post_check_insufficient; product=audio_video_calling",
             agent_state_summary="phase=gather_missing_inputs; next_request_for_engineer=Confirm the missing channel name.",
@@ -261,6 +261,8 @@ class PromptModuleTests(unittest.TestCase):
             "engineer-investigation-reply-v2",
         )
         self.assertIn("## Role", system_prompt)
+        self.assertIn("You are Case Buddy inside an internal support investigation workflow.", system_prompt)
+        self.assertIn("If the customer-facing draft self-refers, use Sid as the assistant name.", system_prompt)
         self.assertIn("Return strict JSON only", system_prompt)
         self.assertIn('"state"', system_prompt)
         self.assertIn('"draft_customer_reply"', system_prompt)

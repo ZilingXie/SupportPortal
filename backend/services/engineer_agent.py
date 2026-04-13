@@ -21,6 +21,9 @@ _ACTIVE_STATE = "active"
 _AWAITING_CONFIRMATION_STATE = "awaiting_confirmation"
 _MAX_SUMMARY_MESSAGES = 8
 _MAX_SUMMARY_TEXT_CHARS = 280
+_PUBLIC_ASSISTANT_NAME = "Sid"
+_ENGINEER_NAME = "jack"
+_ENGINEER_AI_NAME = "Case Buddy"
 
 
 def _truncate_text(value: Any, max_chars: int = _MAX_SUMMARY_TEXT_CHARS) -> str:
@@ -282,11 +285,11 @@ def _role_label(role: str) -> str:
     if normalized == "customer":
         return "Customer"
     if normalized == "assistant":
-        return "Client AI"
+        return _PUBLIC_ASSISTANT_NAME
     if normalized == "engineer":
-        return "Engineer"
+        return _ENGINEER_NAME
     if normalized == "engineer_ai":
-        return "Engineer AI"
+        return _ENGINEER_AI_NAME
     return normalized.title() or "System"
 
 
@@ -324,7 +327,7 @@ def _build_conversation_summary(ticket: dict[str, Any], *, max_messages: int = 6
         if not content:
             continue
         role = str(message.get("role") or "system").strip().lower()
-        label = "Customer" if role == "customer" else "Client AI" if role == "assistant" else role.title()
+        label = "Customer" if role == "customer" else _PUBLIC_ASSISTANT_NAME if role == "assistant" else _role_label(role)
         recent_lines.append(f"{label}: {content}")
     return " | ".join(recent_lines)
 
@@ -912,13 +915,13 @@ def build_engineer_handoff_packet(
 def _why_not_solved_text(unresolved_reason: str) -> str:
     normalized = _clean_text(unresolved_reason).lower()
     if normalized == "rag_service_error":
-        return "The RAG service failed before it could return a grounded answer, so client AI could not respond safely."
+        return f"The RAG service failed before it could return a grounded answer, so {_PUBLIC_ASSISTANT_NAME} could not respond safely."
     if normalized == "rag_unavailable":
-        return "The RAG service was unavailable, so client AI could not retrieve a grounded answer for the customer."
+        return f"The RAG service was unavailable, so {_PUBLIC_ASSISTANT_NAME} could not retrieve a grounded answer for the customer."
     if normalized == "rag_processing_timeout":
         return (
             "The RAG service stayed healthy, but the request timed out before it produced a grounded answer, "
-            "so client AI could not respond safely."
+            f"so {_PUBLIC_ASSISTANT_NAME} could not respond safely."
         )
     if normalized == "rag_post_check_insufficient":
         return (
@@ -930,8 +933,8 @@ def _why_not_solved_text(unresolved_reason: str) -> str:
     if normalized == "customer_follow_up":
         return "The customer added new context, so the previous draft is no longer safe to send."
     if normalized == "engineer_investigate":
-        return "Client AI needs manual engineer validation before it can reply safely."
-    return "Client AI could not gather enough grounded evidence to answer the customer safely."
+        return f"{_PUBLIC_ASSISTANT_NAME} needs manual engineer validation before it can reply safely."
+    return f"{_PUBLIC_ASSISTANT_NAME} could not gather enough grounded evidence to answer the customer safely."
 
 
 def _default_known_facts(ticket: dict[str, Any], handoff_packet: dict[str, Any]) -> list[str]:
@@ -943,7 +946,7 @@ def _default_known_facts(ticket: dict[str, Any], handoff_packet: dict[str, Any])
     if isinstance(rag_result, dict):
         candidate = _clean_text(rag_result.get("candidate_answer"))
         if candidate:
-            facts.append(f"Client AI candidate answer: {candidate}")
+            facts.append(f"{_PUBLIC_ASSISTANT_NAME} candidate answer: {candidate}")
         source_count = len(list(rag_result.get("sources") or []))
         citation_count = len(list(rag_result.get("citations") or []))
         if source_count or citation_count:
@@ -1002,9 +1005,9 @@ def fallback_engineer_agent_state(
     knowledge_summary = (
         _clean_text(existing.get("knowledge_summary"))
         or (
-            f"Client AI produced a candidate answer: {_clean_text(rag_result.get('candidate_answer'))}"
+            f"{_PUBLIC_ASSISTANT_NAME} produced a candidate answer: {_clean_text(rag_result.get('candidate_answer'))}"
             if _clean_text(rag_result.get("candidate_answer"))
-            else "Client AI has limited grounded knowledge for this issue."
+            else f"{_PUBLIC_ASSISTANT_NAME} has limited grounded knowledge for this issue."
         )
     )
     why_not_solved = _clean_text(existing.get("why_not_solved")) or _why_not_solved_text(
@@ -1113,7 +1116,7 @@ def build_engineer_agent_brief(ticket: dict[str, Any]) -> tuple[str, str]:
     summary_parts = [
         f"Current understanding: {_clean_text(state.get('issue_understanding')) or 'Not available yet.'}",
         f"Current knowledge: {_clean_text(state.get('knowledge_summary')) or 'Not available yet.'}",
-        f"Why client AI could not solve it: {_clean_text(state.get('why_not_solved')) or 'Not available yet.'}",
+        f"Why {_PUBLIC_ASSISTANT_NAME} could not solve it: {_clean_text(state.get('why_not_solved')) or 'Not available yet.'}",
         f"Goal: {_clean_text(state.get('goal')) or 'Not available yet.'}",
     ]
     if missing_information:
@@ -1172,7 +1175,7 @@ def default_engineer_agent_turn(
         [
             f"Current understanding: {agent_state['issue_understanding']}",
             f"Current knowledge: {agent_state['knowledge_summary']}",
-            f"Why client AI could not solve it: {agent_state['why_not_solved']}",
+            f"Why {_PUBLIC_ASSISTANT_NAME} could not solve it: {agent_state['why_not_solved']}",
             f"Goal: {agent_state['goal']}",
             f"Next request: {agent_state['next_request_for_engineer']}",
         ]

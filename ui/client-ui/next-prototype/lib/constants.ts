@@ -17,7 +17,7 @@ export const TICKET_STATUS_CONFIG: Record<
 }
 
 export const DEMO_USERS = [
-  { id: "user-1", name: "Admin", email: "admin", password: "admin" },
+  { id: "user-1", username: "Zac", name: "Zac", email: "zac@example.com", password: "Zac" },
 ]
 
 export const IT_SUPPORT_SYSTEM_PROMPT = `You are a professional IT operations technical support engineer named "IT Support Assistant". Your responsibilities include:

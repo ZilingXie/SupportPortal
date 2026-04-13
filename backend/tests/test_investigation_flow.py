@@ -116,6 +116,11 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(payload["app_build"]["ref"], "abc123def456")
         self.assertEqual(payload["app_build"]["built_at"], "2026-04-08T08:00:00Z")
 
+    def test_engineer_request_models_default_to_jack(self) -> None:
+        self.assertEqual(main.TicketActionRequest(action="investigate").engineer_id, "Jack")
+        self.assertEqual(main.InvestigationMessageRequest(message="share logs").engineer_id, "Jack")
+        self.assertEqual(main.InvestigationConfirmationRequest(decision="approve").engineer_id, "Jack")
+
     def _seed_ticket(
         self,
         *,
@@ -268,6 +273,14 @@ class InvestigationFlowTests(unittest.TestCase):
                 {"role": "assistant", "content": "Certainly—I've received your request and will have it checked for you."},
             ],
             client_intake_state={"phase": "gather_customer_inputs"},
+            latest_assistant_message={
+                "role": "assistant",
+                "content": "Use joinChannel with the same channel name and token.",
+                "workflow_action": "answer_customer",
+                "answer_route": "rag",
+                "route_reason": "grounded_answer",
+            },
+            current_ticket_status="communicating",
             ticket_updated_at="2026-04-05T00:00:01+00:00",
         )
 
@@ -287,6 +300,104 @@ class InvestigationFlowTests(unittest.TestCase):
             ],
         )
         self.assertEqual(task["client_intake_state"], {"phase": "gather_customer_inputs"})
+        self.assertEqual(
+            task["latest_assistant_message"],
+            {
+                "role": "assistant",
+                "content": "Use joinChannel with the same channel name and token.",
+                "workflow_action": "answer_customer",
+                "answer_route": "rag",
+                "route_reason": "grounded_answer",
+            },
+        )
+        self.assertEqual(task["current_ticket_status"], "communicating")
+
+    def test_ticket_query_customer_resolved_confirmation_returns_resolved_and_records_auto_close_event(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-RESOLVE-API-1",
+            subject="Join channel",
+            status="communicating",
+            product="audio_video_calling",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "how to join channel",
+                    "created_at": "2026-04-13T09:00:00+00:00",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Use joinChannel with the same channel name and token.",
+                    "created_at": "2026-04-13T09:01:00+00:00",
+                    "workflow_action": "answer_customer",
+                    "answer_route": "rag",
+                    "route_reason": "grounded_answer",
+                    "execution_action": "rag",
+                },
+            ],
+        )
+
+        with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            True,
+        ), patch.object(
+            main,
+            "OPTIMISTIC_PARALLEL_ROUTE_ENABLED",
+            True,
+            create=True,
+        ), patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="Got it, let me check this for you.",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main,
+            "decide_support_route",
+            side_effect=AssertionError("route agent should not run for resolved confirmation"),
+        ), patch.object(
+            main,
+            "_build_rag_answer_detail",
+            side_effect=AssertionError("rag agent should not run for resolved confirmation"),
+        ), patch.object(
+            main,
+            "_enqueue_or_defer_message_sentiment_tag",
+            AsyncMock(return_value=False),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-RESOLVE-API-1",
+                    "customer_id": "C-001",
+                    "product": "audio_video_calling",
+                    "message": "got it, thanks",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "resolved")
+        self.assertTrue(payload["ai_replied"])
+        self.assertFalse(payload["queued_for_ai"])
+        self.assertEqual(payload["answer_route"], "workflow")
+        self.assertEqual(payload["route_reason"], "customer_confirmed_resolved")
+        self.assertFalse(payload["citations"])
+        self.assertIn("I'll mark this case as resolved", payload["answer"])
+
+        stored = self.repository.get_ticket("TK-RESOLVE-API-1")
+        self.assertIsNotNone(stored)
+        assert stored is not None
+        self.assertEqual(stored["status"], "resolved")
+        self.assertEqual(stored["messages"][-1]["workflow_action"], "resolve_ticket")
+        self.assertEqual(stored["messages"][-1]["answer_route"], "workflow")
+        self.assertEqual(stored["messages"][-1]["route_reason"], "customer_confirmed_resolved")
+        self.assertFalse(stored["messages"][-1].get("citations"))
+
+        event_types = [item["event_type"] for item in self.repository.list_ticket_events("TK-RESOLVE-API-1")]
+        self.assertIn("ticket_updated", event_types)
+        self.assertIn("ticket_auto_resolved_by_customer_confirmation", event_types)
 
     def test_health_reports_shared_ticket_and_rag_database_warning_when_dsns_match(self) -> None:
         with patch.dict(
@@ -3350,7 +3461,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertIn("Current understanding: Android 14 token renewal still fails", payload["summary"])
-        self.assertIn("Why client AI could not solve it", payload["summary"])
+        self.assertIn("Why Sid could not solve it", payload["summary"])
         self.assertEqual(
             payload["next_action_needed"],
             "Please confirm the exact SDK version and whether Android 14 is the only affected platform.",

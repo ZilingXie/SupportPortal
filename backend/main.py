@@ -69,6 +69,7 @@ from backend.services.client_ticket_agent_runtime import (
     TicketExecutionResult,
     build_execution_route_payload,
     execute_client_ticket_agent_runtime,
+    is_customer_resolved_confirmation_candidate,
     resolve_next_ticket_status,
 )
 from backend.services.app_build import get_app_build_info
@@ -264,7 +265,7 @@ class ClientAckRequest(BaseModel):
 
 class TicketActionRequest(BaseModel):
     action: str = Field(pattern="^(processing|resolved|investigate|reopen)$")
-    engineer_id: str = Field(default="eng")
+    engineer_id: str = Field(default="Jack")
     note: str | None = None
 
 class ReviewSampleUpdateRequest(BaseModel):
@@ -303,12 +304,12 @@ class BenchmarkSessionRunRequest(BaseModel):
 
 
 class InvestigationMessageRequest(BaseModel):
-    engineer_id: str = Field(default="eng")
+    engineer_id: str = Field(default="Jack")
     message: str = Field(min_length=1, max_length=4000)
 
 
 class InvestigationConfirmationRequest(BaseModel):
-    engineer_id: str = Field(default="eng")
+    engineer_id: str = Field(default="Jack")
     decision: str = Field(pattern="^(approve|revise)$")
     note: str | None = Field(default=None, max_length=4000)
 
@@ -1304,6 +1305,8 @@ def build_query_task(
     product: str | None = None,
     route_context_tail: list[dict[str, str]] | None = None,
     client_intake_state: dict[str, Any] | None = None,
+    latest_assistant_message: dict[str, Any] | None = None,
+    current_ticket_status: str | None = None,
     ticket_updated_at: str | None = None,
     load_ticket_ms: float | None = None,
     save_ticket_ms: float | None = None,
@@ -1335,6 +1338,16 @@ def build_query_task(
         ]
     if isinstance(client_intake_state, dict):
         task["client_intake_state"] = copy.deepcopy(client_intake_state)
+    if isinstance(latest_assistant_message, dict):
+        task["latest_assistant_message"] = {
+            "role": str(latest_assistant_message.get("role", "assistant")).strip().lower() or "assistant",
+            "content": " ".join(str(latest_assistant_message.get("content", "")).split()).strip(),
+            "workflow_action": str(latest_assistant_message.get("workflow_action") or "").strip(),
+            "answer_route": str(latest_assistant_message.get("answer_route") or "").strip(),
+            "route_reason": str(latest_assistant_message.get("route_reason") or "").strip(),
+        }
+    if current_ticket_status:
+        task["current_ticket_status"] = normalize_ticket_status(current_ticket_status)
     if ticket_updated_at:
         task["ticket_updated_at"] = str(ticket_updated_at).strip()
     if load_ticket_ms is not None:
@@ -1724,6 +1737,29 @@ def _latest_assistant_message_for_ticket(ticket: dict[str, Any]) -> dict[str, An
     return None
 
 
+def _build_ticket_auto_resolved_by_customer_confirmation_event(
+    *,
+    ticket_id: str,
+    status: str,
+    message_created_at: str | None,
+    answer_created_at: str | None,
+) -> dict[str, Any]:
+    return {
+        "event": "ticket_auto_resolved_by_customer_confirmation",
+        "ticket_id": ticket_id,
+        "status": normalize_ticket_status(status),
+        "workflow_action": "resolve_ticket",
+        "answer_route": "workflow",
+        "route_family": "ticket_resolution",
+        "execution_action": "resolve_ticket",
+        "tooling_profile": "deterministic_resolution",
+        "route_reason": "customer_confirmed_resolved",
+        "message_created_at": str(message_created_at or "").strip() or None,
+        "assistant_message_created_at": str(answer_created_at or "").strip() or None,
+        "created_at": now_iso(),
+    }
+
+
 def _build_dashboard_ticket_payload(
     ticket: dict[str, Any],
     *,
@@ -2034,6 +2070,14 @@ async def create_or_update_ticket(
     }
     ensure_ticket_defaults(ticket)
     initial_message_count = len(ticket.get("messages", []))
+    customer_message = request.message.strip()
+    ticket_status_before_customer_message = normalize_ticket_status(ticket.get("status"))
+    latest_assistant_message = _latest_assistant_message_for_ticket(ticket)
+    customer_resolved_confirmation_candidate = is_customer_resolved_confirmation_candidate(
+        customer_message,
+        latest_assistant_message=latest_assistant_message,
+        current_ticket_status=ticket_status_before_customer_message,
+    )
 
     ticket["customer_id"] = request.customer_id
     ticket["requester"] = (
@@ -2061,7 +2105,6 @@ async def create_or_update_ticket(
         ticket["status"] = COMMUNICATING_STATUS
 
     timestamp = now_iso()
-    customer_message = request.message.strip()
     ticket["messages"].append(
         {
             "role": "customer",
@@ -2097,7 +2140,11 @@ async def create_or_update_ticket(
     execution: TicketExecutionResult | None = None
 
     active_engineer_case_payload = _active_engineer_case_payload(ticket)
-    main_agent_async_eligible = active_engineer_case_payload is None and _main_agent_async_enabled()
+    main_agent_async_eligible = (
+        active_engineer_case_payload is None
+        and _main_agent_async_enabled()
+        and not customer_resolved_confirmation_candidate
+    )
     if not main_agent_async_eligible:
         initial_ack = build_initial_ack(customer_message)
         ack_source = str(getattr(initial_ack, "source", "") or "server_ack").strip() or "server_ack"
@@ -2135,6 +2182,8 @@ async def create_or_update_ticket(
                 product=ticket.get("product"),
                 message_id=timestamp,
                 client_intake_state=ticket.get("client_intake_state"),
+                latest_assistant_message=latest_assistant_message,
+                current_ticket_status=ticket_status_before_customer_message,
                 route_agent=decide_support_route,
                 route_executor=resolve_support_message,
                 rag_agent=lambda **kwargs: _build_rag_answer_detail(
@@ -2291,6 +2340,8 @@ async def create_or_update_ticket(
                     if isinstance(ticket.get("client_intake_state"), dict)
                     else None
                 ),
+                latest_assistant_message=latest_assistant_message,
+                current_ticket_status=ticket_status_before_customer_message,
                 ticket_updated_at=str(ticket.get("updated_at") or "").strip() or None,
                 load_ticket_ms=load_ticket_ms,
                 save_ticket_ms=save_ticket_ms,
@@ -2355,6 +2406,24 @@ async def create_or_update_ticket(
         ["client"],
         build_client_sync_event(ticket, event["event"], customer_message[:200]),
     )
+    if execution is not None and str(getattr(execution, "workflow_action", "") or "").strip() == "resolve_ticket":
+        auto_resolved_event = _build_ticket_auto_resolved_by_customer_confirmation_event(
+            ticket_id=ticket_id,
+            status=ticket["status"],
+            message_created_at=timestamp,
+            answer_created_at=(
+                str(ticket["messages"][-1].get("created_at") or "").strip()
+                if isinstance(ticket.get("messages"), list) and ticket.get("messages")
+                else None
+            ),
+        )
+        await async_to_thread(
+            ticket_repository.record_event,
+            ticket_id,
+            auto_resolved_event["event"],
+            auto_resolved_event,
+        )
+        await dispatch_event(["engineer", "dashboard"], auto_resolved_event)
     if investigation_result is not None:
         await _record_and_dispatch_investigation_event(
             ticket,

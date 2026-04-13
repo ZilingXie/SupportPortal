@@ -113,7 +113,8 @@ class ClientUiContractTests(unittest.TestCase):
         css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
 
         self.assertIn('<html lang="en" class="material-symbols-pending">', html)
-        self.assertIn("Concierge AI", html)
+        self.assertIn("Sid", html)
+        self.assertNotIn("Concierge AI", html)
         self.assertIn("Manrope", html)
         self.assertIn(
             'href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Inter:wght@400;500;600;700&display=swap"',
@@ -140,6 +141,9 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn('./app.js?v=20260405-product-select-overlay-1', html)
         self.assertIn("AI-SOLVING", app_source)
         self.assertIn("Session History", app_source)
+        self.assertIn("Sid", app_source)
+        self.assertIn("zac@example.com", app_source)
+        self.assertNotIn("Concierge AI", app_source)
         self.assertIn('navigate("/chat");', app_source)
         self.assertIn('<span class="sidebar-nav-label">New Session</span>', app_source)
         self.assertNotIn('aria-label="New session"', app_source)
@@ -170,6 +174,54 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn('font-family: "Material Symbols Outlined";', css)
         self.assertIn("html.material-symbols-pending .material-symbols-outlined", css)
         self.assertIn("visibility: hidden;", css)
+
+    def test_client_login_uses_zac_credentials_and_identity(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                const success = login("Zac", "Zac");
+                if (!success) {
+                  throw new Error("Expected Zac / Zac to authenticate.");
+                }
+                if (success.name !== "Zac") {
+                  throw new Error(`Expected Zac display name, got ${success.name}.`);
+                }
+                if (success.email !== "zac@example.com") {
+                  throw new Error(`Expected zac@example.com identity, got ${success.email}.`);
+                }
+                if (login("admin", "admin") !== null) {
+                  throw new Error("Legacy admin / admin credentials should no longer authenticate.");
+                }
+                const stored = JSON.parse(localStorage.getItem("helpdesk_auth_user") || "null");
+                if (!stored || stored.name !== "Zac" || stored.email !== "zac@example.com") {
+                  throw new Error(`Expected Zac identity to persist, got ${JSON.stringify(stored)}.`);
+                }
+                """
+            )
+        )
+
+    def test_client_restore_clears_legacy_admin_session(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                const legacyUsers = [
+                  { id: "user-1", name: "Admin", email: "admin" },
+                  { id: "user-1", name: "Admin", email: "admin@example.com" },
+                ];
+
+                for (const legacyUser of legacyUsers) {
+                  localStorage.setItem("helpdesk_auth_user", JSON.stringify(legacyUser));
+                  const restored = getCurrentUser();
+                  if (restored !== null) {
+                    throw new Error(`Legacy Admin session should be rejected, got ${JSON.stringify(restored)}.`);
+                  }
+                  if (localStorage.getItem("helpdesk_auth_user") !== null) {
+                    throw new Error("Legacy Admin session should be cleared from localStorage.");
+                  }
+                }
+                """
+            )
+        )
 
     def test_client_shows_investigating_status_without_leaking_internal_thread(self) -> None:
         self.run_client_app_script(
@@ -582,7 +634,7 @@ class ClientUiContractTests(unittest.TestCase):
                 if (initialHtml.includes("Describe your technical issue and Concierge AI will start with the most likely next step.")) {
                   throw new Error("Empty draft session should not render the removed hero description.");
                 }
-                if (!initialHtml.includes('class="message-author">Concierge AI</span>')) {
+                if (!initialHtml.includes('class="message-author">Sid</span>')) {
                   throw new Error("Welcome bubble should still use the assistant identity.");
                 }
                 if (initialHtml.includes('<span class="ticket-product-kicker">Select Product</span>')) {
@@ -619,6 +671,45 @@ class ClientUiContractTests(unittest.TestCase):
                 const syncedDraft = getTicketById(draft.id);
                 if (!syncedDraft || (syncedDraft.messages || []).length !== 0) {
                   throw new Error("Backend sync should not turn the welcome bubble into a durable assistant message.");
+                }
+              """
+            )
+        )
+
+    def test_client_public_assistant_messages_render_sid_identity(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const ticket = createTicket(state.user.id);
+                updateTicketProduct(ticket.id, "audio_video_calling");
+                updateTicketStatus(ticket.id, "communicating");
+                saveTicketMessages(ticket.id, [
+                  {
+                    id: "msg-1",
+                    role: "user",
+                    content: "How do I join a channel?",
+                    createdAt: "2026-04-10T02:00:00.000Z",
+                  },
+                  {
+                    id: "msg-2",
+                    role: "assistant",
+                    content: "Use the same channel name on both clients to join the same session.",
+                    createdAt: "2026-04-10T02:01:00.000Z",
+                  },
+                ]);
+
+                state.view = "chat-ticket";
+                state.activeTicketId = ticket.id;
+
+                const html = renderChatTicket();
+                if (!html.includes('class="message-author">Sid</span>')) {
+                  throw new Error("Public assistant replies should render the Sid identity.");
+                }
+                if (html.includes('class="message-author">Concierge AI</span>')) {
+                  throw new Error("Public assistant replies should no longer render Concierge AI as the message author.");
                 }
               """
             )

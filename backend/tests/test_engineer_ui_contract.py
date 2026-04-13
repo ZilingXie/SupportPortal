@@ -148,6 +148,15 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
         self.assertIn("./styles.css?v=20260405-engineer-approve-close-readonly-1", html)
         self.assertIn('./app.js?v=20260405-engineer-approve-close-readonly-1', html)
+        self.assertIn('const LOGIN_USER = "Jack";', app_source)
+        self.assertIn('const LOGIN_PASS = "jack";', app_source)
+        self.assertIn('const ENGINEER_ID = "Jack";', app_source)
+        self.assertIn('const ENGINEER_DISPLAY_NAME = "jack";', app_source)
+        self.assertIn('const ENGINEER_AI_DISPLAY_NAME = "Case Buddy";', app_source)
+        self.assertIn('const PUBLIC_ASSISTANT_DISPLAY_NAME = "Sid";', app_source)
+        self.assertIn("Jack / jack", html)
+        self.assertIn("Case Buddy", app_source)
+        self.assertIn("return ENGINEER_DISPLAY_NAME;", app_source)
         self.assertIn("function parseRoute()", app_source)
         self.assertIn('path.startsWith("/tickets/")', app_source)
         self.assertIn("function renderTicketPoolView()", app_source)
@@ -1458,7 +1467,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!approvalHtml.includes('id="detail-investigation-input"')) {{
                   throw new Error("Approval state should keep the main investigation composer visible.");
                 }}
-                if (!approvalHtml.includes("If the draft needs changes, tell Engineer AI what to revise before replying to the customer")) {{
+                if (!approvalHtml.includes("If the draft needs changes, tell Case Buddy what to revise before replying to the customer")) {{
                   throw new Error("Approval state should explain that the composer sends revision notes directly.");
                 }}
                 if (!approvalHtml.includes('aria-label="Send Revision Note"')) {{
@@ -1547,7 +1556,7 @@ class EngineerUiContractTests(unittest.TestCase):
                   investigation_history: [],
                   engineer_request_records: [],
                 };
-                selectedTicketSummary = "Engineer AI needs one more technical detail.";
+                selectedTicketSummary = "Case Buddy needs one more technical detail.";
                 selectedTicketNextAction = "Share the latest Android logcat excerpt.";
 
                 let resolveFetch = null;
@@ -1580,13 +1589,19 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!optimisticHtml.includes("Reproduces on Android 14 with SDK 4.2.1. Logcat shows token expired.")) {
                   throw new Error("Engineer thread should immediately show the optimistic engineer message.");
                 }
+                if (!optimisticHtml.includes(">jack<")) {
+                  throw new Error("Optimistic engineer messages should render the jack label in the internal thread.");
+                }
+                if (!optimisticHtml.includes(">Case Buddy<")) {
+                  throw new Error("Internal engineer-thread AI messages should render the Case Buddy label.");
+                }
                 if (!optimisticHtml.includes("message-item-pending-ai")) {
                   throw new Error("Engineer thread should render an Engineer AI placeholder bubble while waiting.");
                 }
                 if (!optimisticHtml.includes("detail-thinking-dots")) {
                   throw new Error("Engineer AI placeholder bubble should show the loading-dot animation.");
                 }
-                if (!optimisticHtml.includes("Engineer AI is reviewing your update")) {
+                if (!optimisticHtml.includes("Case Buddy is reviewing your update")) {
                   throw new Error("Engineer AI placeholder bubble should explain that a reply is pending.");
                 }
                 if (tellAiDraft !== "") {
@@ -1639,6 +1654,9 @@ class EngineerUiContractTests(unittest.TestCase):
                 }
                 if (!settledHtml.includes("Thanks. Please also confirm whether clearing the cached token changes the behavior.")) {
                   throw new Error("Engineer thread should replace the placeholder with the durable Engineer AI reply.");
+                }
+                if (!settledHtml.includes(">Case Buddy<")) {
+                  throw new Error("Durable internal AI replies should keep the Case Buddy label.");
                 }
               """
             )
@@ -1730,6 +1748,9 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!optimisticHtml.includes("Mention clearing cached auth data before retrying.")) {
                   throw new Error("Approval-state revision notes should also render optimistically in the thread.");
                 }
+                if (!optimisticHtml.includes(">jack<")) {
+                  throw new Error("Approval-state revision notes should keep the jack label.");
+                }
                 if (!optimisticHtml.includes("message-item-pending-ai")) {
                   throw new Error("Approval-state revision sends should show the Engineer AI placeholder bubble.");
                 }
@@ -1816,7 +1837,7 @@ class EngineerUiContractTests(unittest.TestCase):
                   investigation_history: [],
                   engineer_request_records: [],
                 };
-                selectedTicketSummary = "Engineer AI needs one more technical detail.";
+                selectedTicketSummary = "Case Buddy needs one more technical detail.";
                 selectedTicketNextAction = "Share the latest Android logcat excerpt.";
 
                 fetchJson = async () => {
@@ -1844,10 +1865,13 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!failedHtml.includes("Logcat now shows auth timeout before channel join.")) {
                   throw new Error("Failed sends should keep the optimistic engineer message in the thread.");
                 }
+                if (!failedHtml.includes(">jack<")) {
+                  throw new Error("Failed sends should keep the jack label on the optimistic engineer message.");
+                }
                 if (failedHtml.includes("message-item-pending-ai")) {
                   throw new Error("Failed sends should remove the pending Engineer AI placeholder bubble.");
                 }
-                if (!failedHtml.includes("Engineer AI update failed: Request failed with status 500")) {
+                if (!failedHtml.includes("Case Buddy update failed: Request failed with status 500")) {
                   throw new Error("Failed sends should append an inline system error message to the thread.");
                 }
                 if (tellAiDraft !== "Logcat now shows auth timeout before channel join.") {
