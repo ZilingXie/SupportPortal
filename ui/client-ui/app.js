@@ -2,11 +2,11 @@ const appRoot = document.getElementById("app");
 const toastRoot = document.getElementById("toast-root");
 
 const AUTH_KEY = "helpdesk_auth_user";
+const CLIENT_ASSISTANT_NAME = "Sid";
 const TICKETS_KEY = "helpdesk_tickets";
 const COUNTER_KEY = "helpdesk_ticket_counter";
 const MAX_RECENT = 5;
 const DEFAULT_CLIENT_ACK_FALLBACK_TIMEOUT_MS = 5000;
-const PUBLIC_ASSISTANT_NAME = "Sid";
 const NEW_SESSION_WELCOME_TEXT =
   "Thank you for contacting Agora Support! We’re here to help. Before we begin, please select the product you need support with.";
 const STATUS_FOLLOWUP_MARKERS = [
@@ -34,7 +34,15 @@ const LEGACY_REASSURANCE_MESSAGES = new Set([
 ]);
 const CJK_RE = /[\u4e00-\u9fff]/;
 
-const DEMO_USERS = [{ id: "user-1", name: "Admin", email: "admin", password: "admin" }];
+const DEMO_USERS = [
+  {
+    id: "user-1",
+    username: "Zac",
+    name: "Zac",
+    email: "zac@example.com",
+    password: "Zac",
+  },
+];
 const ENGINEER_ASSISTANCE_WAIT_TEXT = "Estimate waiting time: 3 hours";
 
 const STATUS_CONFIG = {
@@ -342,23 +350,33 @@ function toast(message, kind = "") {
 function getCurrentUser() {
   try {
     const raw = localStorage.getItem(AUTH_KEY);
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    const matchedUser = DEMO_USERS.find(
+      (user) =>
+        user.id === parsed?.id &&
+        user.name === parsed?.name &&
+        user.email === parsed?.email
+    );
+    if (!matchedUser) {
+      localStorage.removeItem(AUTH_KEY);
+      return null;
+    }
+    return { id: matchedUser.id, name: matchedUser.name, email: matchedUser.email };
   } catch {
+    localStorage.removeItem(AUTH_KEY);
     return null;
   }
 }
 
-function login(email, password) {
-  const normalizedEmail = String(email || "").trim().toLowerCase();
+function login(username, password) {
+  const normalizedUsername = String(username || "").trim().toLowerCase();
   const normalizedPassword = String(password || "").trim();
-  if (normalizedEmail === "admin" && normalizedPassword === "admin") {
-    const fallback = DEMO_USERS[0];
-    const userData = { id: fallback.id, name: fallback.name, email: fallback.email };
-    localStorage.setItem(AUTH_KEY, JSON.stringify(userData));
-    return userData;
-  }
   const match = DEMO_USERS.find(
-    (user) => user.email.toLowerCase() === normalizedEmail && user.password === normalizedPassword
+    (user) =>
+      user.username.toLowerCase() === normalizedUsername && user.password === normalizedPassword
   );
   if (!match) {
     return null;
@@ -433,7 +451,7 @@ function renderNewSessionWelcomeBubble() {
         <div class="msg-column">
           <div class="message-meta">
             <span class="avatar assistant"><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span></span>
-            <span class="message-author">${escapeHtml(PUBLIC_ASSISTANT_NAME)}</span>
+            <span class="message-author">${CLIENT_ASSISTANT_NAME}</span>
           </div>
           <div class="bubble assistant"><div>${escapeHtml(NEW_SESSION_WELCOME_TEXT)}</div></div>
         </div>
@@ -1486,7 +1504,7 @@ function renderLogin() {
             </div>
             <div>
               <p class="brand-kicker">Client Workspace</p>
-              <h1>Concierge AI</h1>
+              <h1>${CLIENT_ASSISTANT_NAME}</h1>
             </div>
           </div>
           <p class="auth-copy">
@@ -1513,7 +1531,7 @@ function renderLogin() {
         <section class="panel auth-panel">
           <div class="panel-header">
             <h2 class="panel-title">Sign In</h2>
-            <p class="panel-desc">Enter your credentials to access Concierge AI.</p>
+            <p class="panel-desc">Enter your credentials to access ${CLIENT_ASSISTANT_NAME}.</p>
           </div>
           <div class="panel-body">
             <form id="login-form" class="stack">
@@ -1524,11 +1542,11 @@ function renderLogin() {
               }
               <div class="field">
                 <label for="username">Username</label>
-                <input class="input" id="username" name="username" type="text" placeholder="admin" required />
+                <input class="input" id="username" name="username" type="text" placeholder="Zac" required />
               </div>
               <div class="field">
                 <label for="password">Password</label>
-                <input class="input" id="password" name="password" type="password" placeholder="admin" required />
+                <input class="input" id="password" name="password" type="password" placeholder="Zac" required />
               </div>
               <button class="btn btn-primary w-full" type="submit" ${
                 state.isSubmittingLogin ? "disabled" : ""
@@ -1541,7 +1559,7 @@ function renderLogin() {
       </div>
       <section class="demo-box">
         <div><strong>Demo Account</strong></div>
-        <div>Username: admin / Password: admin</div>
+        <div>Username: Zac / Password: Zac</div>
       </section>
     </div>
   `;
@@ -1638,7 +1656,7 @@ function renderAuthedShell() {
               <span class="material-symbols-outlined" aria-hidden="true">support_agent</span>
             </div>
             <div class="sidebar-brand-title">
-              <span class="line-1">Concierge AI</span>
+              <span class="line-1">${CLIENT_ASSISTANT_NAME}</span>
               <span class="line-2">Client Workspace</span>
             </div>
           </div>
@@ -1670,7 +1688,7 @@ function renderTopbar() {
   return `
     <header class="topbar">
       <div class="topbar-copy">
-        <h2>Concierge AI</h2>
+        <h2>${CLIENT_ASSISTANT_NAME}</h2>
         <p>Technical Support</p>
       </div>
       <div class="topbar-meta">
@@ -1770,7 +1788,7 @@ function renderChatHome() {
         <div class="bot-mark">
           <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
         </div>
-        <p class="welcome-kicker">Concierge AI</p>
+        <p class="welcome-kicker">${CLIENT_ASSISTANT_NAME}</p>
         <h1 class="welcome-title">Technical support with a calmer, source-aware workspace.</h1>
         <p class="welcome-desc">
           Start a new session to describe an issue, continue an active ticket, or return to a previous
@@ -1839,7 +1857,7 @@ function renderChatTicket() {
                           ? state.user.name
                           : role === "engineer"
                           ? "Engineer"
-                          : PUBLIC_ASSISTANT_NAME;
+                          : CLIENT_ASSISTANT_NAME;
                       const metaTime = formatDate(message.createdAt || new Date().toISOString());
                       return `
                 <article class="msg-row ${tone === "user" ? "user" : ""}">

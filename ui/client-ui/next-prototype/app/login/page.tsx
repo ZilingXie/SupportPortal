@@ -39,15 +39,15 @@ export default function LoginPage() {
             <Monitor className="h-6 w-6" />
           </div>
           <div className="text-center">
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">IT HelpDesk</h1>
-            <p className="text-sm text-muted-foreground">IT Operations Support Portal</p>
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">Sid</h1>
+            <p className="text-sm text-muted-foreground">Technical Support</p>
           </div>
         </div>
 
         <Card>
           <CardHeader className="pb-4">
             <CardTitle className="text-lg">Sign In</CardTitle>
-            <CardDescription>Enter your credentials to access the system</CardDescription>
+            <CardDescription>Enter your credentials to access Sid</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
@@ -62,7 +62,7 @@ export default function LoginPage() {
                 <Input
                   id="username"
                   type="text"
-                  placeholder="admin"
+                  placeholder="Zac"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   required
@@ -73,7 +73,7 @@ export default function LoginPage() {
                 <Input
                   id="password"
                   type="password"
-                  placeholder="admin"
+                  placeholder="Zac"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
@@ -89,7 +89,7 @@ export default function LoginPage() {
         <div className="rounded-lg border bg-muted/50 p-4">
           <p className="mb-2 text-xs font-medium text-muted-foreground">Demo Account</p>
           <div className="flex flex-col gap-1 text-xs text-muted-foreground">
-            <span>Username: admin / Password: admin</span>
+            <span>Username: Zac / Password: Zac</span>
           </div>
         </div>
       </div>
