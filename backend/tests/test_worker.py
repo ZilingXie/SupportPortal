@@ -474,6 +474,17 @@ class WorkerResilienceTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(kwargs["client_intake_state"], {"phase": "gather_customer_inputs"})
+            self.assertEqual(
+                kwargs["latest_assistant_message"],
+                {
+                    "role": "assistant",
+                    "content": "Use joinChannel with the same channel name and token.",
+                    "workflow_action": "answer_customer",
+                    "answer_route": "rag",
+                    "route_reason": "grounded_answer",
+                },
+            )
+            self.assertEqual(kwargs["current_ticket_status"], "communicating")
             return execution
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
@@ -509,6 +520,14 @@ class WorkerResilienceTests(unittest.TestCase):
                         {"role": "assistant", "content": "I am checking the knowledge base for you now."},
                     ],
                     "client_intake_state": {"phase": "gather_customer_inputs"},
+                    "latest_assistant_message": {
+                        "role": "assistant",
+                        "content": "Use joinChannel with the same channel name and token.",
+                        "workflow_action": "answer_customer",
+                        "answer_route": "rag",
+                        "route_reason": "grounded_answer",
+                    },
+                    "current_ticket_status": "communicating",
                     "ticket_updated_at": "2026-03-22T00:00:00+00:00",
                 },
             )
