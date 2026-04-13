@@ -217,7 +217,7 @@ def map_live_detail_payload_to_ticket_answer_detail(payload: dict[str, Any]) -> 
         sources=[str(source) for source in sources if str(source).strip()],
         citations=[item for item in citations if isinstance(item, dict)],
         needs_engineer_guidance=False,
-        reason="recovered_live_detail",
+        reason="grounded_answer" if any(isinstance(item, dict) for item in citations) else "recovered_live_detail",
         evidence_summary=evidence_summary,
         packed_evidence=packed_evidence,
     )

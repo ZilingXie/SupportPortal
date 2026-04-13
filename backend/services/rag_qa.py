@@ -743,8 +743,21 @@ def _build_query_variants(
     decomposition_enabled: bool,
 ) -> list[tuple[str, str]]:
     variants: list[tuple[str, str]] = [("original", str(message or "").strip())]
+    for query in _dual_stream_query_expansions(message):
+        variants.append(("rule", query))
     if understanding is None:
-        return [(kind, query) for kind, query in variants if query]
+        deduped: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for kind, query in variants:
+            normalized = " ".join(query.split()).strip()
+            if not normalized:
+                continue
+            key = normalized.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append((kind, normalized))
+        return deduped
 
     semantic_query = understanding.semantic_query.strip()
     if semantic_query:
@@ -801,6 +814,8 @@ def _classify_agentic_query(
         return "comparison"
     if is_api_semantics_mismatch_message(message):
         return "api_semantics_mismatch"
+    if _is_dual_stream_enable_query(message):
+        return "configuration"
     if _is_how_to_faq_query(message, understanding):
         return "how_to_faq"
     if understanding is not None:
@@ -1303,19 +1318,33 @@ def _chunk_covers_generic_join_auth_prerequisite(chunk: RetrievedChunk) -> bool:
 def _token_auth_chunk_has_join_flow(chunk: RetrievedChunk) -> bool:
     if not _is_token_auth_chunk(chunk):
         return False
-    surface = _chunk_surface_text(chunk)
-    return any(
-        marker in surface
+    text = " ".join(str(part or "").strip().lower() for part in [chunk.text] if str(part or "").strip())
+    if not text:
+        return False
+    has_join_invocation = any(
+        marker in text
         for marker in [
-            "use a token to join a channel",
-            "join a channel",
-            "join channel",
             "joinchannel(",
             "joinchannel ",
+            "call the sdk join method",
+            "join method",
             "join the channel",
-            "before joining",
         ]
     )
+    has_join_parameters = (
+        any(marker in text for marker in ["channel name", "channel id", "channelid"])
+        and any(marker in text for marker in ["user id", "uid"])
+    )
+    has_code_example = "```" in str(chunk.text or "")
+    return has_join_invocation or (has_join_parameters and has_code_example)
+
+
+def _chunk_covers_generic_join_step(chunk: RetrievedChunk) -> bool:
+    return _is_join_channel_step_chunk(chunk) or _token_auth_chunk_has_join_flow(chunk)
+
+
+def _chunk_has_preferred_generic_join_step(chunk: RetrievedChunk) -> bool:
+    return _is_preferred_generic_join_step_chunk(chunk) or _token_auth_chunk_has_join_flow(chunk)
 
 
 def _is_audio_video_calling_core_chunk(chunk: RetrievedChunk) -> bool:
@@ -1341,10 +1370,7 @@ def _generic_join_support_signals(
     query: str | None = None,
 ) -> tuple[bool, bool]:
     compatible_chunks = [chunk for chunk in chunks if _generic_join_product_compatible(chunk, product)]
-    has_join_step = any(
-        _is_join_channel_step_chunk(chunk)
-        for chunk in compatible_chunks
-    )
+    has_join_step = any(_chunk_covers_generic_join_step(chunk) for chunk in compatible_chunks)
     has_token_auth = any(_chunk_covers_generic_join_auth_prerequisite(chunk) for chunk in compatible_chunks)
     return has_join_step, has_token_auth
 
@@ -1358,8 +1384,8 @@ def _generic_join_has_preferred_join_step(
     compatible_chunks = [chunk for chunk in chunks if _generic_join_product_compatible(chunk, product)]
     require_preferred_join_step = _generic_join_requires_role_agnostic_guidance(query or "")
     if not require_preferred_join_step:
-        return any(_is_join_channel_step_chunk(chunk) for chunk in compatible_chunks)
-    return any(_is_preferred_generic_join_step_chunk(chunk) for chunk in compatible_chunks)
+        return any(_chunk_covers_generic_join_step(chunk) for chunk in compatible_chunks)
+    return any(_chunk_has_preferred_generic_join_step(chunk) for chunk in compatible_chunks)
 
 
 def _product_affinity_adjustment(chunk: RetrievedChunk, product: str | None) -> tuple[float, list[str]]:
@@ -1394,10 +1420,10 @@ def _join_intent_adjustment(query: str, chunk: RetrievedChunk, product: str | No
         ):
             boost -= 1.15
             reasons.append("intent:generic_join_secondary_product_penalty")
-        if _is_join_channel_step_chunk(chunk):
+        if _chunk_covers_generic_join_step(chunk):
             boost += 1.55
             reasons.append("intent:join_channel_step")
-            if _is_preferred_generic_join_step_chunk(chunk):
+            if _chunk_has_preferred_generic_join_step(chunk):
                 boost += 0.45
                 reasons.append("intent:join_channel_preferred_step")
         if _is_token_auth_chunk(chunk):
@@ -1423,7 +1449,7 @@ def _join_intent_adjustment(query: str, chunk: RetrievedChunk, product: str | No
 def _generic_join_supporting_chunks(chunks: list[RetrievedChunk], *, product: str | None = None) -> list[RetrievedChunk]:
     preferred: list[RetrievedChunk] = []
     seen_ids: set[str] = set()
-    for matcher in (_is_join_channel_step_chunk, _chunk_covers_generic_join_auth_prerequisite):
+    for matcher in (_chunk_covers_generic_join_step, _chunk_covers_generic_join_auth_prerequisite):
         for chunk in chunks:
             chunk_id = str(chunk.chunk_id or "")
             if chunk_id and chunk_id in seen_ids:
@@ -1452,15 +1478,15 @@ def _select_generic_join_grounding_chunks(
             chunk
             for chunk in compatible_chunks
             if (
-                _is_preferred_generic_join_step_chunk(chunk)
+                _chunk_has_preferred_generic_join_step(chunk)
                 if require_preferred_join_step
-                else _is_join_channel_step_chunk(chunk)
+                else _chunk_covers_generic_join_step(chunk)
             )
         ),
         None,
     )
     if join_chunk is None and require_preferred_join_step:
-        join_chunk = next((chunk for chunk in compatible_chunks if _is_join_channel_step_chunk(chunk)), None)
+        join_chunk = next((chunk for chunk in compatible_chunks if _chunk_covers_generic_join_step(chunk)), None)
     auth_chunk = next((chunk for chunk in compatible_chunks if _is_token_auth_chunk(chunk)), None)
     return join_chunk, auth_chunk
 
@@ -1469,6 +1495,209 @@ def _generic_join_options_term(join_chunk: RetrievedChunk | None) -> str:
     if join_chunk is not None and "channelmediaoptions" in _chunk_surface_text(join_chunk):
         return "`ChannelMediaOptions`"
     return "channel/media options"
+
+
+def _extract_authoritative_code_block(chunk: RetrievedChunk | None) -> str | None:
+    if chunk is None:
+        return None
+    match = re.search(r"```([A-Za-z0-9_+-]*)\n(.*?)```", str(chunk.text or ""), flags=re.DOTALL)
+    if not match:
+        return None
+    language = str(match.group(1) or "").strip()
+    body = str(match.group(2) or "").strip("\n")
+    if not body:
+        return None
+    fence = f"```{language}" if language else "```"
+    return f"{fence}\n{body}\n```"
+
+
+def _is_dual_stream_enable_query(message: str) -> bool:
+    lower = _normalized_query_text(message)
+    if not lower:
+        return False
+    if not any(marker in lower for marker in ["dual stream", "dual-stream"]):
+        return False
+    if any(
+        marker in lower
+        for marker in ["error", "issue", "problem", "failed", "failure", "why ", "black screen", "no video"]
+    ):
+        return False
+    return any(
+        marker in lower
+        for marker in ["how to", "how do i", "enable", "configure", "turn on", "use"]
+    )
+
+
+def _dual_stream_query_expansions(message: str) -> list[str]:
+    if not _is_dual_stream_enable_query(message):
+        return []
+    lower = _normalized_query_text(message)
+    expansions = [
+        "enable dual stream enableDualStream setDualStreamMode low stream media stream fallback",
+        "client enableDualStream low stream subscription media stream fallback",
+    ]
+    if any(marker in lower for marker in ["web", "javascript", "js"]):
+        expansions.insert(0, "web client enableDualStream low stream media stream fallback")
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for query in expansions:
+        normalized = " ".join(str(query or "").split()).strip()
+        if not normalized:
+            continue
+        key = normalized.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(normalized)
+    return deduped
+
+
+def _chunk_mentions_dual_stream(chunk: RetrievedChunk) -> bool:
+    surface = _chunk_surface_text(chunk)
+    return any(
+        marker in surface
+        for marker in [
+            "dual stream",
+            "dual-stream",
+            "enabledualstream",
+            "enabledualstreammode",
+            "setdualstreammode",
+        ]
+    )
+
+
+def _chunk_covers_dual_stream_enablement(chunk: RetrievedChunk) -> bool:
+    surface = _chunk_surface_text(chunk)
+    if any(
+        marker in surface
+        for marker in [
+            "enabledualstream",
+            "client.enabledualstream",
+            "enabledualstreammode",
+            "setdualstreammode",
+            "enable dual-stream mode",
+            "enable dual stream mode",
+        ]
+    ):
+        return True
+    if not _chunk_mentions_dual_stream(chunk):
+        return False
+    if any(
+        marker in surface
+        for marker in [
+            "subscribe to the low stream",
+            "subscribe to the low video stream",
+            "low-quality video stream",
+            "low stream",
+        ]
+    ):
+        return True
+    return "media stream fallback" in surface or ("stream fallback" in surface and "fallback" in surface)
+
+
+def _is_dual_stream_support_chunk(chunk: RetrievedChunk) -> bool:
+    if not _chunk_mentions_dual_stream(chunk):
+        return False
+    surface = _chunk_surface_text(chunk)
+    return "glossary" in surface or "reference/glossary" in surface or "dual-stream mode" in surface
+
+
+def _dual_stream_intent_adjustment(query: str, chunk: RetrievedChunk, product: str | None) -> tuple[float, list[str]]:
+    if not _is_dual_stream_enable_query(query):
+        return 0.0, []
+    reasons: list[str] = []
+    boost = 0.0
+    surface = _chunk_surface_text(chunk)
+    source_path_lower = str(chunk.source_path or "").strip().lower()
+    source_url_lower = str(chunk.source_url or "").strip().lower()
+    if _chunk_covers_dual_stream_enablement(chunk):
+        boost += 2.6
+        reasons.append("intent:dual_stream_enablement")
+        if any(marker in surface for marker in ["enabledualstream", "enabledualstreammode", "setdualstreammode"]):
+            boost += 0.85
+            reasons.append("intent:dual_stream_api_call")
+        if any(
+            marker in source_path_lower or marker in source_url_lower or marker in surface
+            for marker in ["media-stream-fallback", "media stream fallback", "stream fallback"]
+        ):
+            boost += 0.85
+            reasons.append("intent:dual_stream_fallback_doc")
+        if not _generic_join_product_compatible(chunk, product):
+            boost -= 1.2
+            reasons.append("intent:dual_stream_product_penalty")
+        return boost, reasons
+    if _is_dual_stream_support_chunk(chunk):
+        boost += 0.35
+        reasons.append("intent:dual_stream_support")
+        if "glossary" in source_path_lower or "glossary" in source_url_lower:
+            boost -= 1.55
+            reasons.append("intent:dual_stream_glossary_penalty")
+    return boost, reasons
+
+
+def _select_dual_stream_grounding_chunks(
+    chunks: list[RetrievedChunk],
+    *,
+    product: str | None,
+) -> tuple[RetrievedChunk | None, RetrievedChunk | None]:
+    compatible_chunks = [chunk for chunk in chunks if _generic_join_product_compatible(chunk, product)]
+    candidates = compatible_chunks or list(chunks)
+    action_chunk = next((chunk for chunk in candidates if _chunk_covers_dual_stream_enablement(chunk)), None)
+    support_chunk = next(
+        (
+            chunk
+            for chunk in candidates
+            if action_chunk is not None
+            and _chunk_dedupe_key(chunk) != _chunk_dedupe_key(action_chunk)
+            and _is_dual_stream_support_chunk(chunk)
+        ),
+        None,
+    )
+    return action_chunk, support_chunk
+
+
+def _build_dual_stream_grounded_answer(
+    message: str,
+    chunks: list[RetrievedChunk],
+    *,
+    product: str | None,
+) -> RagAnswer | None:
+    if not _is_dual_stream_enable_query(message):
+        return None
+    action_chunk, support_chunk = _select_dual_stream_grounding_chunks(
+        chunks,
+        product=product,
+    )
+    if action_chunk is None:
+        return None
+    action_surface = _chunk_surface_text(action_chunk)
+    api_name = "`client.enableDualStream()`" if "client.enabledualstream" in action_surface else "`enableDualStream()`"
+    cited_chunks = [action_chunk]
+    if support_chunk is not None:
+        cited_chunks.append(support_chunk)
+    example_code_block = _extract_authoritative_code_block(action_chunk)
+    answer_lines = [
+        f"To enable dual-stream mode, use {api_name} as described in the available Agora documentation.",
+        "",
+        "Key Steps:",
+        "1. Enable dual-stream mode on the publishing client before subscribers switch between the high and low video streams.",
+        "2. Keep the publisher sending video so the SDK can provide both stream layers.",
+        "3. Configure your low-stream subscription or media stream fallback behavior as needed for your app.",
+    ]
+    if example_code_block:
+        answer_lines.extend(["", "Reference Example:", example_code_block])
+    citation_records = _citation_records_from_chunks(cited_chunks, limit=len(cited_chunks))
+    sources = [
+        record.get("source_url") or f"rag:{record['chunk_id']}"
+        for record in citation_records
+    ]
+    confidence = max(0.9, _confidence_from_chunks(cited_chunks))
+    return RagAnswer(
+        answer="\n".join(answer_lines),
+        confidence=round(min(0.96, confidence), 2),
+        sources=sources,
+        citations=citation_records,
+    )
 
 
 def _build_generic_join_grounded_answer(
@@ -1493,19 +1722,36 @@ def _build_generic_join_grounded_answer(
         if auth_chunk is not None
         else "2. Pass a valid authentication token before joining the channel.\n"
     )
-    answer = (
-        "To join a channel, call the SDK join method with your channel name, authentication token, "
-        f"user ID, and {options_term}. The channel name identifies which channel to join, the token "
-        "authenticates the user, and the user ID identifies the local user before joining.\n\n"
-        "Key Steps:\n"
-        "1. Provide the channel name you want the client to join.\n"
-        f"{token_step}"
-        "3. Set the local user ID.\n"
-        f"4. Configure {options_term} as needed, then call the SDK join method."
-    )
     cited_chunks = [join_chunk]
     if auth_chunk is not None and _chunk_dedupe_key(auth_chunk) != _chunk_dedupe_key(join_chunk):
         cited_chunks.append(auth_chunk)
+    example_code_block = next(
+        (
+            block
+            for block in (
+                _extract_authoritative_code_block(join_chunk),
+                _extract_authoritative_code_block(auth_chunk),
+            )
+            if block
+        ),
+        None,
+    )
+    answer_lines = [
+        (
+            "To join a channel, call the SDK join method with your channel name, authentication token, "
+            f"user ID, and {options_term}. The channel name identifies which channel to join, the token "
+            "authenticates the user, and the user ID identifies the local user before joining."
+        ),
+        "",
+        "Key Steps:",
+        "1. Provide the channel name you want the client to join.",
+        token_step.strip(),
+        "3. Set the local user ID.",
+        f"4. Configure {options_term} as needed, then call the SDK join method.",
+    ]
+    if example_code_block:
+        answer_lines.extend(["", "Reference Example:", example_code_block])
+    answer = "\n".join(answer_lines)
     citation_records = _citation_records_from_chunks(cited_chunks, limit=len(cited_chunks))
     sources = [
         record.get("source_url") or f"rag:{record['chunk_id']}"
@@ -1534,10 +1780,10 @@ def _enforce_generic_join_support_pair(
     compatible_chunks = [chunk for chunk in chunks if _generic_join_product_compatible(chunk, product)]
     require_preferred_join_step = _generic_join_requires_role_agnostic_guidance(query or "")
     has_preferred_join_step = any(
-        (_is_preferred_generic_join_step_chunk(chunk) if require_preferred_join_step else _is_join_channel_step_chunk(chunk))
+        (_chunk_has_preferred_generic_join_step(chunk) if require_preferred_join_step else _chunk_covers_generic_join_step(chunk))
         for chunk in compatible_chunks
     )
-    has_any_join_step = any(_is_join_channel_step_chunk(chunk) for chunk in compatible_chunks)
+    has_any_join_step = any(_chunk_covers_generic_join_step(chunk) for chunk in compatible_chunks)
     has_token_auth = any(_chunk_covers_generic_join_auth_prerequisite(chunk) for chunk in compatible_chunks)
     if (
         has_preferred_join_step
@@ -1770,6 +2016,10 @@ def _build_agentic_retrieval_plan(
                 if isinstance(item, (list, tuple)) and len(item) >= 2 and str(item[1]).strip()
             ]
             if query_variants:
+                for specialized_query in _dual_stream_query_expansions(message):
+                    normalized = " ".join(str(specialized_query or "").split()).strip()
+                    if normalized and normalized.lower() not in {item[1].lower() for item in query_variants}:
+                        query_variants.append(("rule", normalized))
                 return AgenticRetrievalPlan(
                     query_class=query_class,
                     first_pass_tools=first_pass_tools or list(default_tool_order),
@@ -1817,6 +2067,10 @@ def _build_agentic_retrieval_plan(
                 normalized = " ".join(str(subquery or "").split()).strip()
                 if normalized and normalized.lower() not in {item[1].lower() for item in query_variants}:
                     query_variants.append(("decomposition", normalized))
+    for specialized_query in _dual_stream_query_expansions(message):
+        normalized = " ".join(str(specialized_query or "").split()).strip()
+        if normalized and normalized.lower() not in {item[1].lower() for item in query_variants}:
+            query_variants.append(("rule", normalized))
     decomposition_targets = _extract_comparison_targets(message) if query_class == "comparison" else []
     return AgenticRetrievalPlan(
         query_class=query_class,
@@ -2324,9 +2578,9 @@ def _fetch_generic_join_pinned_chunks(
                 content_patterns=["%joinchannel%", "%join a channel%", "%channel name%"],
             )
             if join_chunk is not None and (
-                _is_preferred_generic_join_step_chunk(join_chunk)
+                _chunk_has_preferred_generic_join_step(join_chunk)
                 if require_preferred_join_step
-                else _is_join_channel_step_chunk(join_chunk)
+                else _chunk_covers_generic_join_step(join_chunk)
             ):
                 pinned_chunks.append(join_chunk)
         if needs_token_auth_chunk:
@@ -3019,7 +3273,7 @@ def _inject_generic_join_candidates(
             continue
         if not _generic_join_product_compatible(chunk, product):
             continue
-        if not (_is_join_channel_step_chunk(chunk) or _is_token_auth_chunk(chunk)):
+        if not (_chunk_covers_generic_join_step(chunk) or _is_token_auth_chunk(chunk)):
             continue
         dedupe_key = _chunk_dedupe_key(chunk)
         if not dedupe_key or dedupe_key in seen:
@@ -3033,7 +3287,7 @@ def _inject_generic_join_candidates(
                 continue
             if not _generic_join_product_compatible(chunk, product):
                 continue
-            if not (_is_join_channel_step_chunk(chunk) or _is_token_auth_chunk(chunk)):
+            if not (_chunk_covers_generic_join_step(chunk) or _is_token_auth_chunk(chunk)):
                 continue
             dedupe_key = _chunk_dedupe_key(chunk)
             if not dedupe_key or dedupe_key in seen:
@@ -4573,6 +4827,10 @@ def _metadata_rerank(
         if join_boost:
             boost += join_boost
             reasons.extend(join_reasons)
+        dual_stream_boost, dual_stream_reasons = _dual_stream_intent_adjustment(query, chunk, product)
+        if dual_stream_boost:
+            boost += dual_stream_boost
+            reasons.extend(dual_stream_reasons)
         if (
             resolved_query_class == "troubleshooting_why"
             and _is_release_note_chunk(chunk)
@@ -7661,6 +7919,26 @@ def _run_rag_query_agentic_single(
                     needs_human=False,
                     handoff_reason=None,
                     generation_mode="api_semantics_deterministic",
+                    extractive_fallback_used=False,
+                ),
+            )
+    if _is_dual_stream_enable_query(message):
+        deterministic_generation_started_at = time.perf_counter()
+        deterministic_answer = _build_dual_stream_grounded_answer(
+            message,
+            final_chunks,
+            product=product,
+        )
+        if deterministic_answer is not None:
+            generation_latency_ms = (time.perf_counter() - deterministic_generation_started_at) * 1000
+            answer_profile_used = "dual_stream_deterministic"
+            return RagQueryResult(
+                answer=deterministic_answer,
+                trace=_trace_for(
+                    deterministic_answer,
+                    needs_human=False,
+                    handoff_reason=None,
+                    generation_mode="dual_stream_deterministic",
                     extractive_fallback_used=False,
                 ),
             )

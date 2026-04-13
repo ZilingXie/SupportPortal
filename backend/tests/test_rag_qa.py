@@ -279,6 +279,47 @@ The documentation states that time: 0 means the rule is applied permanently. How
 
         self.assertEqual(reranked[0].chunk_id, "create-rules-request")
 
+    def test_metadata_rerank_prefers_dual_stream_enablement_chunk_over_glossary(self) -> None:
+        glossary_chunk = RetrievedChunk(
+            chunk_id="dual-stream-glossary",
+            text=(
+                "In the dual-stream mode, the Video SDK simultaneously transmits a higher-resolution "
+                "video stream along with an additional low-resolution, low bitrate video stream."
+            ),
+            source_path="official/glossary.md",
+            source_url="https://docs.agora.io/en/video-calling/reference/glossary",
+            similarity=0.91,
+            metadata={
+                "product": "video-calling",
+                "section_path": ["Glossary", "D", "Dual-stream mode"],
+            },
+        )
+        enablement_chunk = RetrievedChunk(
+            chunk_id="dual-stream-web",
+            text=(
+                "Call `client.enableDualStream()` before remote users switch between the high and low streams. "
+                "Use media stream fallback as needed for low-stream subscription behavior."
+            ),
+            source_path="official/media-stream-fallback_web.md",
+            source_url="https://docs.agora.io/en/video-calling/advanced-features/media-stream-fallback?platform=web",
+            similarity=0.63,
+            metadata={
+                "product": "video-calling",
+                "section_path": ["Media stream fallback", "Implement media stream fallback", "Enable dual-stream mode"],
+            },
+        )
+
+        reranked, info = rag_qa._metadata_rerank(
+            query="how to enable the dual stream",
+            chunks=[glossary_chunk, enablement_chunk],
+            top_k=2,
+            product="audio_video_calling",
+        )
+
+        self.assertEqual(reranked[0].chunk_id, "dual-stream-web")
+        self.assertIn("intent:dual_stream_enablement", info["candidate_reasons"]["dual-stream-web"])
+        self.assertIn("intent:dual_stream_glossary_penalty", info["candidate_reasons"]["dual-stream-glossary"])
+
     def test_rrf_merge_dedupes_and_limits_results(self) -> None:
         shared = RetrievedChunk(
             chunk_id="shared",
@@ -2502,6 +2543,280 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn("user id", result.answer.answer.lower())
         self.assertIn("join method", result.answer.answer.lower())
         self.assertIn("channelmediaoptions", result.answer.answer.lower())
+
+    def test_run_rag_query_short_how_to_faq_accepts_token_auth_chunk_that_already_covers_join_flow(self) -> None:
+        auth_join_chunk = RetrievedChunk(
+            chunk_id="auth-join-android",
+            text=(
+                "Use a token to join a channel. "
+                "Request a token from your app server for the channel name and user ID before joining. "
+                "```kotlin\n"
+                "val channelId = \"demo-room\"\n"
+                "val uid = 0\n"
+                "val token = getToken(channelId, uid)\n"
+                "engine.joinChannel(token, channelId, uid, option)\n"
+                "```"
+            ),
+            source_path="official/authentication-workflow_android.md",
+            similarity=0.95,
+            h1="Use tokens",
+            h2="Implement basic authentication",
+            h3="Use a token to join a channel",
+            metadata={
+                "product": "video-calling",
+                "platform": "android",
+                "source_family": "video-calling/get-started/authentication-workflow",
+                "use_case": "basic_authentication",
+            },
+        )
+        query_understanding = QueryUnderstandingResult(
+            query_profile="en",
+            query_understanding_version="v2",
+            glossary_version="agora_glossary_en_v2",
+            self_query_version="v2",
+            normalized_query="how to join channel",
+            canonical_terms=["Channel"],
+            glossary_hits=[],
+            dictionary_hits=[{"canonical_term": "Channel"}],
+            retrieval_plan=RetrievalPlan(
+                semantic_query="how to join channel",
+                soft_signals={"topic": ["channel lifecycle"], "use_case": ["join_channel"]},
+                rule_expansions=["joinChannel token uid"],
+            ),
+            rewritten_queries=["join channel token uid"],
+            decomposition_subqueries=[],
+            fallback_mode="none",
+            intent_latency_ms=2.0,
+            rewrite_latency_ms=1.0,
+        )
+
+        def _bm25_side_effect(query_text: str, *_args, **_kwargs) -> list[RetrievedChunk]:
+            if query_text == "how to join channel":
+                return [rag_qa._copy_chunk(auth_join_chunk)]
+            raise AssertionError(f"unexpected bm25 query: {query_text!r}")
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "app_schema": "supportportal",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 3,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-5.4",
+                "reasoning_effort": "high",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "vector_enabled": True,
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_enabled": True,
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+                "context_budget_enabled": False,
+                "reserved_output_tokens": 1200,
+                "buffer_tokens": 1200,
+            }
+            with patch(
+                "backend.services.rag_qa._resolve_active_vector_table",
+                return_value="supportportal.docagent_chunks_bge_m3_1024",
+            ), patch(
+                "backend.services.rag_qa.get_embedding_provider",
+                return_value=self._FakeProvider(),
+            ), patch(
+                "backend.services.rag_qa.understand_rag_query",
+                return_value=query_understanding,
+            ), patch(
+                "backend.services.rag_qa._invoke_agentic_planner",
+                side_effect=AssertionError("planner should be skipped for short how_to_faq light path"),
+            ), patch(
+                "backend.services.rag_qa._fetch_generic_join_pinned_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._retrieve_chunks",
+                side_effect=AssertionError("vector recovery should not be needed when the auth chunk already covers the join flow"),
+            ), patch(
+                "backend.services.rag_qa._retrieve_bm25_chunks",
+                side_effect=_bm25_side_effect,
+            ), patch(
+                "backend.services.rag_qa._retrieve_fts_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._retrieve_keyword_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._metadata_rerank",
+                side_effect=lambda *args, **kwargs: (
+                    list(kwargs.get("chunks") if "chunks" in kwargs else args[1]),
+                    {
+                        "post_rerank_count": len(kwargs.get("chunks") if "chunks" in kwargs else args[1]),
+                        "hints": {},
+                        "applied_filter": False,
+                        "filter_type": None,
+                    },
+                ),
+            ), patch(
+                "backend.services.rag_qa._rerank_chunks",
+                side_effect=lambda query, chunks, config, *, limit=None: chunks,
+            ), patch(
+                "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                side_effect=AssertionError("generic_join deterministic path should not call the llm when one auth chunk already covers the join flow"),
+            ):
+                result = run_rag_query("how to join channel", product="audio_video_calling")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.trace.selected_chunk_ids[:1], ["auth-join-android"])
+        self.assertEqual(result.trace.answer_profile_used, "generic_join_deterministic")
+        self.assertFalse(result.trace.needs_human)
+        self.assertEqual(result.trace.handoff_reason, None)
+        self.assertEqual(result.answer.citations[0]["chunk_id"], "auth-join-android")
+        self.assertIn("```kotlin", result.answer.answer)
+        self.assertIn("join a channel", result.answer.answer.lower())
+
+    def test_run_rag_query_dual_stream_enable_query_returns_grounded_answer_with_citations(self) -> None:
+        dual_stream_chunk = RetrievedChunk(
+            chunk_id="dual-stream-web",
+            text=(
+                "Call `client.enableDualStream()` to enable dual-stream mode for the local video stream.\n\n"
+                "```javascript\nawait client.enableDualStream();\n```\n\n"
+                "After enabling dual-stream mode, configure your low-stream subscription or stream fallback logic."
+            ),
+            source_path="official/media-stream-fallback_web.md",
+            source_url="https://docs.agora.io/en/video-calling/advanced-features/media-stream-fallback?platform=web",
+            similarity=0.96,
+            h1="Media stream fallback",
+            h2="Implement media stream fallback",
+            h3="Enable dual-stream mode",
+            metadata={
+                "product": "video-calling",
+                "source_family": "video-calling/advanced-features/media-stream-fallback",
+            },
+        )
+        glossary_chunk = RetrievedChunk(
+            chunk_id="dual-stream-glossary",
+            text="Dual-stream mode lets a sender publish both a high-quality and a low-quality video stream.",
+            source_path="official/glossary.md",
+            source_url="https://docs.agora.io/en/video-calling/reference/glossary",
+            similarity=0.9,
+            h1="Glossary",
+            h2="D",
+            h3="Dual-stream mode",
+            metadata={
+                "product": "video-calling",
+                "source_family": "video-calling/reference/glossary",
+            },
+        )
+        query_understanding = QueryUnderstandingResult(
+            query_profile="en",
+            query_understanding_version="v2",
+            glossary_version="agora_glossary_en_v2",
+            self_query_version="v2",
+            normalized_query="how to enable the dual stream",
+            canonical_terms=["Dual-stream mode"],
+            glossary_hits=[{"canonical_term": "Dual-stream mode"}],
+            dictionary_hits=[],
+            retrieval_plan=RetrievalPlan(
+                semantic_query="how to enable the dual stream",
+                soft_signals={"topic": ["stream configuration"], "use_case": ["dual_stream"]},
+                rule_expansions=["enable dual stream enableDualStream low stream"],
+            ),
+            rewritten_queries=["enable dual stream enableDualStream low stream"],
+            decomposition_subqueries=[],
+            fallback_mode="none",
+            intent_latency_ms=2.0,
+            rewrite_latency_ms=1.0,
+        )
+
+        def _bm25_side_effect(query_text: str, *_args, **_kwargs) -> list[RetrievedChunk]:
+            normalized = " ".join(str(query_text or "").split()).lower()
+            if normalized == "how to enable the dual stream":
+                return [rag_qa._copy_chunk(glossary_chunk)]
+            if "media stream fallback" in normalized or "enabledualstream" in normalized or "setdualstreammode" in normalized:
+                return [rag_qa._copy_chunk(dual_stream_chunk), rag_qa._copy_chunk(glossary_chunk)]
+            raise AssertionError(f"unexpected bm25 query: {query_text!r}")
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "app_schema": "supportportal",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 3,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-5.4",
+                "reasoning_effort": "high",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "vector_enabled": True,
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_enabled": True,
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+                "context_budget_enabled": False,
+                "reserved_output_tokens": 1200,
+                "buffer_tokens": 1200,
+            }
+            with patch(
+                "backend.services.rag_qa._resolve_active_vector_table",
+                return_value="supportportal.docagent_chunks_bge_m3_1024",
+            ), patch(
+                "backend.services.rag_qa.get_embedding_provider",
+                return_value=self._FakeProvider(),
+            ), patch(
+                "backend.services.rag_qa.understand_rag_query",
+                return_value=query_understanding,
+            ), patch(
+                "backend.services.rag_qa._retrieve_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._retrieve_bm25_chunks",
+                side_effect=_bm25_side_effect,
+            ), patch(
+                "backend.services.rag_qa._retrieve_fts_chunks",
+                return_value=[rag_qa._copy_chunk(glossary_chunk)],
+            ), patch(
+                "backend.services.rag_qa._retrieve_keyword_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._rerank_chunks",
+                side_effect=lambda query, chunks, config, *, limit=None: chunks,
+            ), patch(
+                "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                side_effect=AssertionError("dual-stream deterministic path should not call the llm when authoritative support is available"),
+            ):
+                result = run_rag_query("how to enable the dual stream", product="audio_video_calling")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.trace.query_class, "configuration")
+        self.assertEqual(result.trace.answer_profile_used, "dual_stream_deterministic")
+        self.assertFalse(result.trace.needs_human)
+        self.assertEqual(result.trace.handoff_reason, None)
+        self.assertEqual(result.answer.citations[0]["chunk_id"], "dual-stream-web")
+        self.assertIn("client.enableDualStream()", result.answer.answer)
+        self.assertIn("```javascript", result.answer.answer)
 
     def test_run_rag_query_short_how_to_faq_recovers_when_original_support_missing_auth_chunk(self) -> None:
         join_chunk = RetrievedChunk(

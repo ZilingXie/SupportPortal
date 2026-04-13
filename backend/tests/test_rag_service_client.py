@@ -178,6 +178,44 @@ class RagServiceClientTests(unittest.TestCase):
         self.assertEqual(selected_contexts[0]["chunk_id"], "chunk-1")
         self.assertTrue(selected_contexts[0]["cited_in_answer"])
 
+    def test_map_live_detail_payload_with_citations_uses_grounded_answer_reason(self) -> None:
+        detail = map_live_detail_payload_to_ticket_answer_detail(
+            {
+                "primary": {
+                    "answer": "Call client.enableDualStream() before subscribers switch to the low stream.",
+                    "confidence_score": 0.9,
+                    "needs_human": False,
+                    "answer_sources": ["https://docs.agora.io/en/video-calling/advanced-features/media-stream-fallback?platform=web"],
+                    "answer_citations": [
+                        {
+                            "chunk_id": "chunk-dual",
+                            "source_path": "official/media-stream-fallback_web.md",
+                            "source_url": "https://docs.agora.io/en/video-calling/advanced-features/media-stream-fallback?platform=web",
+                            "heading": "Media stream fallback > Implement media stream fallback",
+                        }
+                    ],
+                    "generation_mode": "dual_stream_deterministic",
+                    "selected_doc_count": 1,
+                    "selected_contexts": [
+                        {
+                            "chunk_id": "chunk-dual",
+                            "heading": "Media stream fallback > Implement media stream fallback",
+                            "source_path": "official/media-stream-fallback_web.md",
+                            "source_url": "https://docs.agora.io/en/video-calling/advanced-features/media-stream-fallback?platform=web",
+                            "text_excerpt": "Call client.enableDualStream() before subscribers switch to the low stream.",
+                            "similarity": 0.98,
+                        }
+                    ],
+                    "cited_chunk_ids": ["chunk-dual"],
+                }
+            }
+        )
+
+        self.assertIsNotNone(detail)
+        assert detail is not None
+        self.assertEqual(detail.reason, "grounded_answer")
+        self.assertEqual(detail.citations[0]["chunk_id"], "chunk-dual")
+
     def test_probe_health_returns_disabled_without_base_url(self) -> None:
         client = RagServiceClient(base_url="")
         payload = client.probe_health()

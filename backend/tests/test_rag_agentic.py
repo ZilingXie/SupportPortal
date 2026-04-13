@@ -150,6 +150,23 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(len(plan.query_variants), 1)
         self.assertTrue(plan.light_path)
 
+    def test_build_agentic_retrieval_plan_adds_dual_stream_rule_variants(self) -> None:
+        with patch("backend.services.rag_qa._invoke_agentic_planner", return_value=None):
+            plan = _build_agentic_retrieval_plan(
+                message="how to enable the dual stream",
+                top_k=5,
+                query_understanding=None,
+                ticket_context=None,
+            )
+
+        self.assertEqual(plan.query_class, "configuration")
+        self.assertTrue(
+            any(kind == "rule" and "enableDualStream" in query for kind, query in plan.query_variants)
+        )
+        self.assertTrue(
+            any(kind == "rule" and "media stream fallback" in query for kind, query in plan.query_variants)
+        )
+
     def test_apply_api_semantics_latency_budget_caps_bm25_candidate_window(self) -> None:
         adjusted = _apply_api_semantics_latency_budget(
             {

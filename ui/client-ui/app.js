@@ -162,6 +162,104 @@ function formatMultilineText(value) {
   return escapeHtml(value).replaceAll("\n", "<br>");
 }
 
+function renderInlineMarkdown(value) {
+  const text = String(value ?? "");
+  const parts = [];
+  const inlineCodePattern = /`([^`\n]+)`/g;
+  let lastIndex = 0;
+  let match = inlineCodePattern.exec(text);
+  while (match) {
+    parts.push(escapeHtml(text.slice(lastIndex, match.index)));
+    parts.push(`<code>${escapeHtml(match[1])}</code>`);
+    lastIndex = match.index + match[0].length;
+    match = inlineCodePattern.exec(text);
+  }
+  parts.push(escapeHtml(text.slice(lastIndex)));
+  return parts.join("");
+}
+
+function isOrderedListLine(line) {
+  return /^\s*\d+\.\s+/.test(String(line || ""));
+}
+
+function isUnorderedListLine(line) {
+  return /^\s*[-*]\s+/.test(String(line || ""));
+}
+
+function renderMarkdownMessage(value) {
+  const lines = String(value ?? "").replace(/\r\n?/g, "\n").split("\n");
+  const html = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const currentLine = lines[index];
+    const trimmedLine = currentLine.trim();
+    if (!trimmedLine) {
+      index += 1;
+      continue;
+    }
+
+    const fenceMatch = trimmedLine.match(/^```([A-Za-z0-9_+-]*)\s*$/);
+    if (fenceMatch) {
+      const language = String(fenceMatch[1] || "").trim().toLowerCase();
+      const codeLines = [];
+      index += 1;
+      while (index < lines.length && !lines[index].trim().match(/^```/)) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+      if (index < lines.length) {
+        index += 1;
+      }
+      const languageAttr = language ? ` class="language-${escapeHtml(language)}"` : "";
+      html.push(`<pre><code${languageAttr}>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+      continue;
+    }
+
+    if (isOrderedListLine(trimmedLine)) {
+      const items = [];
+      while (index < lines.length && isOrderedListLine(lines[index])) {
+        items.push(lines[index].replace(/^\s*\d+\.\s+/, ""));
+        index += 1;
+      }
+      html.push(
+        `<ol>${items
+          .map((item) => `<li>${renderInlineMarkdown(item.trim())}</li>`)
+          .join("")}</ol>`
+      );
+      continue;
+    }
+
+    if (isUnorderedListLine(trimmedLine)) {
+      const items = [];
+      while (index < lines.length && isUnorderedListLine(lines[index])) {
+        items.push(lines[index].replace(/^\s*[-*]\s+/, ""));
+        index += 1;
+      }
+      html.push(
+        `<ul>${items
+          .map((item) => `<li>${renderInlineMarkdown(item.trim())}</li>`)
+          .join("")}</ul>`
+      );
+      continue;
+    }
+
+    const paragraphLines = [];
+    while (index < lines.length) {
+      const line = lines[index];
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.match(/^```/) || isOrderedListLine(trimmed) || isUnorderedListLine(trimmed)) {
+        break;
+      }
+      paragraphLines.push(trimmed);
+      index += 1;
+    }
+    html.push(`<p>${paragraphLines.map((line) => renderInlineMarkdown(line)).join("<br>")}</p>`);
+  }
+
+  return html.join("");
+}
+
 function normalizeCitationItem(item) {
   const sourcePathRaw = String(item?.sourcePath ?? item?.source_path ?? "").trim();
   const sourceUrl =
@@ -202,25 +300,32 @@ function renderCitationsHtml(citations) {
         ? escapeHtml(citation.sourcePath)
         : `Reference ${index + 1}`;
       if (citation.sourceUrl) {
-        return `<a class="citation-pill" href="${escapeHtml(citation.sourceUrl)}" target="_blank" rel="noopener noreferrer">${heading}</a>`;
+        return `<li class="citation-item"><a class="citation-link" href="${escapeHtml(citation.sourceUrl)}" target="_blank" rel="noopener noreferrer">${heading}</a></li>`;
       }
-      return `<span class="citation-pill">${heading}</span>`;
+      return `<li class="citation-item"><span class="citation-link is-static">${heading}</span></li>`;
     })
     .join("");
   return `
     <div class="citations">
-      <div class="citation-title">Source Context</div>
-      <div class="citation-list">${items}</div>
+      <div class="citation-title">References</div>
+      <ul class="citation-list">${items}</ul>
     </div>
   `;
 }
 
 function renderMessageBody(message) {
-  const base = `<div>${formatMultilineText(message.content || "")}</div>`;
+  const normalizedCitations = normalizeCitations({
+    citations: Array.isArray(message?.citations) ? message.citations : [],
+    sources: Array.isArray(message?.sources) ? message.sources : [],
+  });
+  const base =
+    message.role === "assistant"
+      ? `<div class="message-markdown">${renderMarkdownMessage(message.content || "")}</div>`
+      : `<div>${formatMultilineText(message.content || "")}</div>`;
   if (message.role !== "assistant") {
     return base;
   }
-  return `${base}${renderCitationsHtml(message.citations || [])}`;
+  return `${base}${renderCitationsHtml(normalizedCitations)}`;
 }
 
 function toast(message, kind = "") {
