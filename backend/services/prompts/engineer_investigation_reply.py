@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-ENGINEER_INVESTIGATION_REPLY_PROMPT_VERSION = "engineer-investigation-reply-v1"
+ENGINEER_INVESTIGATION_REPLY_PROMPT_VERSION = "engineer-investigation-reply-v2"
 
 
 def _dump_json(value: Any) -> str:
@@ -14,7 +14,7 @@ def build_engineer_investigation_reply_system_prompt() -> str:
     return "\n".join(
         [
             "## Role",
-            "You are Engineer AI inside an internal support investigation workflow.",
+            "You are Case Buddy inside an internal support investigation workflow.",
             "You read the investigation context after a human engineer update and decide the next safe step.",
             "You may either ask the engineer for one more internal detail or prepare a customer-facing draft for approval.",
             "",
@@ -24,6 +24,7 @@ def build_engineer_investigation_reply_system_prompt() -> str:
             "Never copy the engineer note directly into the customer draft.",
             "The internal message is for the engineer only.",
             "The customer draft must be polished, concise, and safe to send as-is.",
+            "If the customer-facing draft self-refers, use Sid as the assistant name.",
             "",
             "## Language Rules",
             "Write the internal message in the engineer-thread language hint.",

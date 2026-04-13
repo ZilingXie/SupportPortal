@@ -12,6 +12,35 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-04-13 - engineer identity refresh for Case Buddy, Jack, and Sid
+
+- Area or subsystem: Engineer investigation reply persona and cross-surface assistant naming
+- Prompt or model version: `engineer-investigation-reply-v2`
+- Summary: Renamed the internal engineer-thread AI persona from `Engineer AI` to `Case Buddy`, aligned the engineer demo identity and default `engineer_id` to `Jack`, and renamed every public customer-thread `assistant` author label to `Sid` across client, engineer, and dashboard surfaces.
+- Reason: The engineer workflow needed clearer role separation between the internal investigation assistant, the logged-in engineer identity, and the public-facing support assistant so the UI and prompt persona stop mixing `Engineer AI`, generic `AI`, and `Engineer`.
+- Affected files or config:
+  - `ui/engineer-ui/app.js`
+  - `ui/engineer-ui/index.html`
+  - `ui/dashboard-ui/app.js`
+  - `ui/client-ui/app.js`
+  - `backend/main.py`
+  - `backend/services/engineer_agent.py`
+  - `backend/services/prompts/engineer_investigation_reply.py`
+  - `backend/tests/test_client_ui_contract.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_engineer_ui_contract.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Internal engineer-thread messages now render `Case Buddy` for `engineer_ai` and `jack` for `engineer`, while the engineer login/demo identity shows `Jack / jack` and engineer actions default to `engineer_id=Jack`.
+  - Public customer-thread `assistant` messages now render as `Sid` in client chat, engineer-side `Customer Timeline`, and dashboard ticket detail message cards.
+  - The dedicated engineer investigation reply prompt now uses the `Case Buddy` persona and explicitly tells the model to self-reference as `Sid` if a customer-facing draft names the assistant.
+- Verification:
+  - `node --check ui/client-ui/app.js && node --check ui/dashboard-ui/app.js && node --check ui/engineer-ui/app.js`
+  - `python3 -m py_compile backend/main.py backend/services/engineer_agent.py backend/services/prompts/engineer_investigation_reply.py backend/tests/test_client_ui_contract.py backend/tests/test_dashboard_ui_contract.py backend/tests/test_engineer_ui_contract.py backend/tests/test_prompt_modules.py backend/tests/test_investigation_flow.py`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_client_ui_contract backend.tests.test_dashboard_ui_contract backend.tests.test_engineer_ui_contract backend.tests.test_prompt_modules backend.tests.test_investigation_flow -q`
+
 ## 2026-04-08 - real_case batch diagnostics become the default local SupportPortal verification flow
 
 - Area or subsystem: Agent workflow and local SupportPortal diagnostic skills

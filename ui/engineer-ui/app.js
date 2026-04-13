@@ -1,7 +1,10 @@
 const AUTH_KEY = "engineer_portal_auth";
-const LOGIN_USER = "eng";
-const LOGIN_PASS = "eng";
-const ENGINEER_ID = "eng";
+const LOGIN_USER = "Jack";
+const LOGIN_PASS = "jack";
+const ENGINEER_ID = "Jack";
+const ENGINEER_DISPLAY_NAME = "jack";
+const ENGINEER_AI_DISPLAY_NAME = "Case Buddy";
+const PUBLIC_ASSISTANT_DISPLAY_NAME = "Sid";
 
 const loginScreenEl = document.getElementById("login-screen");
 const engineerScreenEl = document.getElementById("engineer-screen");
@@ -135,7 +138,7 @@ function startLocalInvestigationOptimisticSend(ticketId, engineerMessage) {
       {
         id: nextLocalInvestigationMessageId("engineer-ai"),
         role: "engineer_ai",
-        content: "Engineer AI is reviewing your update...",
+        content: `${ENGINEER_AI_DISPLAY_NAME} is reviewing your update...`,
         created_at: createdAt,
         is_pending_ai: true,
       },
@@ -158,7 +161,7 @@ function failLocalInvestigationOptimisticSend(ticketId, errorMessage) {
       {
         id: nextLocalInvestigationMessageId("system"),
         role: "system",
-        content: `Engineer AI update failed: ${cleanedError}`,
+        content: `${ENGINEER_AI_DISPLAY_NAME} update failed: ${cleanedError}`,
         created_at: new Date().toISOString(),
         is_local_error: true,
       },
@@ -609,13 +612,13 @@ function roleLabel(role) {
     return "Customer";
   }
   if (role === "engineer_ai") {
-    return "Engineer AI";
+    return ENGINEER_AI_DISPLAY_NAME;
   }
   if (role === "assistant") {
-    return "AI";
+    return PUBLIC_ASSISTANT_DISPLAY_NAME;
   }
   if (role === "engineer") {
-    return "Engineer";
+    return ENGINEER_DISPLAY_NAME;
   }
   return "System";
 }
@@ -1766,8 +1769,8 @@ function renderInvestigationDecisionHtml({
 function renderInvestigationComposerHtml({ draft, controlsDisabled, reviseMode, approvalMode = false }) {
   const revisionMode = reviseMode || approvalMode;
   const placeholder = revisionMode
-    ? "If the draft needs changes, tell Engineer AI what to revise before replying to the customer..."
-    : "Share the next technical detail for Engineer AI...";
+    ? `If the draft needs changes, tell ${ENGINEER_AI_DISPLAY_NAME} what to revise before replying to the customer...`
+    : `Share the next technical detail for ${ENGINEER_AI_DISPLAY_NAME}...`;
   const submitLabel = revisionMode ? "Send Revision Note" : "Send Update";
 
   return `
@@ -1888,7 +1891,7 @@ function renderConversationHtml(messages, options = {}) {
                     ? `
                       <span class="detail-thinking-dots" aria-hidden="true"><span></span><span></span><span></span></span>
                       <span class="detail-thinking-label">${escapeHtml(
-                        String(message.content || "Engineer AI is reviewing your update...")
+                        String(message.content || `${ENGINEER_AI_DISPLAY_NAME} is reviewing your update...`)
                       )}</span>
                     `
                     : formatMultiline(String(message.content || ""))
@@ -2357,7 +2360,7 @@ async function updateTicketStatus(ticketId, action) {
 async function submitInvestigationMessage(ticketId, messageText) {
   const cleaned = String(messageText || "").trim();
   if (!cleaned) {
-    window.alert("Please enter the next technical detail for Engineer AI.");
+    window.alert(`Please enter the next technical detail for ${ENGINEER_AI_DISPLAY_NAME}.`);
     return;
   }
   return await fetchJson(`/api/engineer/tickets/${encodeURIComponent(ticketId)}/investigation/messages`, {
@@ -2532,12 +2535,12 @@ async function handleDetailClick(event) {
 
   if (action === "send-tell-ai") {
     if (!getActiveInvestigation(selectedTicket)) {
-      window.alert("Start an investigation before sending a note to Engineer AI.");
+      window.alert(`Start an investigation before sending a note to ${ENGINEER_AI_DISPLAY_NAME}.`);
       return;
     }
     const cleaned = tellAiDraft.trim();
     if (!cleaned) {
-      window.alert("Please enter the next message for Engineer AI.");
+      window.alert(`Please enter the next message for ${ENGINEER_AI_DISPLAY_NAME}.`);
       return;
     }
     const requestTicketId = selectedTicketId;
@@ -2891,7 +2894,7 @@ async function handleLoginSubmit(event) {
   const password = String(formData.get("password") || "").trim();
 
   if (username !== LOGIN_USER || password !== LOGIN_PASS) {
-    loginErrorEl.textContent = "Invalid credentials. Use eng / eng.";
+    loginErrorEl.textContent = "Invalid credentials. Use Jack / jack.";
     return;
   }
 

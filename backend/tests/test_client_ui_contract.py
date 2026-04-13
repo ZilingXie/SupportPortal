@@ -676,6 +676,45 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_client_public_assistant_messages_render_sid_identity(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const ticket = createTicket(state.user.id);
+                updateTicketProduct(ticket.id, "audio_video_calling");
+                updateTicketStatus(ticket.id, "communicating");
+                saveTicketMessages(ticket.id, [
+                  {
+                    id: "msg-1",
+                    role: "user",
+                    content: "How do I join a channel?",
+                    createdAt: "2026-04-10T02:00:00.000Z",
+                  },
+                  {
+                    id: "msg-2",
+                    role: "assistant",
+                    content: "Use the same channel name on both clients to join the same session.",
+                    createdAt: "2026-04-10T02:01:00.000Z",
+                  },
+                ]);
+
+                state.view = "chat-ticket";
+                state.activeTicketId = ticket.id;
+
+                const html = renderChatTicket();
+                if (!html.includes('class="message-author">Sid</span>')) {
+                  throw new Error("Public assistant replies should render the Sid identity.");
+                }
+                if (html.includes('class="message-author">Concierge AI</span>')) {
+                  throw new Error("Public assistant replies should no longer render Concierge AI as the message author.");
+                }
+              """
+            )
+        )
+
     def test_client_new_session_hides_transient_welcome_bubble_after_first_user_message(self) -> None:
         self.run_client_app_script(
             textwrap.dedent(
