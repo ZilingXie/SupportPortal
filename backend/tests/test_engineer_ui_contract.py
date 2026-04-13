@@ -1662,6 +1662,119 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_engineer_detail_unlocks_approve_reply_before_background_refresh_finishes(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                routeState.view = "detail";
+                selectedTicketId = "TK-DETAIL-APPROVE-UNLOCK";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-APPROVE-UNLOCK",
+                  subject: "Black screen after join",
+                  requester: "user-8",
+                  status: "investigating",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: {
+                    id: "INV-DETAIL-APPROVE-UNLOCK",
+                    state: "active",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "",
+                    final_confirmation_requested_at: null,
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-APPROVE-UNLOCK-m1",
+                        role: "engineer_ai",
+                        content: "Please share the latest SDK logs and your reproduction result.",
+                        created_at: "2026-03-24T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+                selectedTicketSummary = "Case Buddy still needs technical evidence.";
+                selectedTicketNextAction = "Share the latest logs.";
+
+                tellAiSubmitting = true;
+                applySuccessfulInvestigationSendResponse("TK-DETAIL-APPROVE-UNLOCK", {
+                  ticket_id: "TK-DETAIL-APPROVE-UNLOCK",
+                  status: "investigating",
+                  updated_at: "2026-03-24T09:11:00+00:00",
+                  active_investigation: {
+                    id: "INV-DETAIL-APPROVE-UNLOCK",
+                    state: "awaiting_confirmation",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "Thanks for waiting. We checked the SDK logs and found that the affected camera was not producing any video frames at that time. Please try another capture device and test again.",
+                    final_confirmation_requested_at: "2026-03-24T09:11:00+00:00",
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:11:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-APPROVE-UNLOCK-m1",
+                        role: "engineer_ai",
+                        content: "Please share the latest SDK logs and your reproduction result.",
+                        created_at: "2026-03-24T09:05:00+00:00",
+                      },
+                      {
+                        id: "INV-DETAIL-APPROVE-UNLOCK-m2",
+                        role: "engineer",
+                        content: "The SDK logs show the camera never produced any video frames, so the black screen is expected.",
+                        created_at: "2026-03-24T09:10:30+00:00",
+                      },
+                      {
+                        id: "INV-DETAIL-APPROVE-UNLOCK-m3",
+                        role: "engineer_ai",
+                        content: "We now have a usable conclusion, proof, and customer-safe next step.",
+                        created_at: "2026-03-24T09:11:00+00:00",
+                      },
+                    ],
+                  },
+                  engineer_agent_state: {
+                    phase: "awaiting_confirmation",
+                    ready_to_reply: true,
+                    reply_readiness: {
+                      has_conclusion: true,
+                      has_proof: true,
+                      has_solution_or_next_step: true,
+                      conclusion_summary: "The affected camera was not producing video frames.",
+                      proof_summary: "The SDK logs show no captured video frames for the affected user.",
+                      proof_anchors: ["camera", "video frames"],
+                      solution_or_next_step: "Ask the customer to switch to another capture device and retest.",
+                      blockers: [],
+                      critique: "The current evidence supports the customer-safe camera troubleshooting reply.",
+                      ready_for_customer_reply: true,
+                    },
+                  },
+                });
+
+                const pendingRefreshHtml = workspaceRegionEl.innerHTML;
+                if (!pendingRefreshHtml.includes("Approve Reply")) {
+                  throw new Error("The approve action should appear as soon as the investigation reply payload arrives.");
+                }
+                if (!pendingRefreshHtml.includes("Thanks for waiting. We checked the SDK logs")) {
+                  throw new Error("The customer draft should render before the background refresh finishes.");
+                }
+                const approveButtonIndex = pendingRefreshHtml.indexOf('data-detail-action="approve-investigation"');
+                if (approveButtonIndex === -1) {
+                  throw new Error("The approve button should be present once the reply payload is applied.");
+                }
+                const approveButtonMarkup = pendingRefreshHtml.slice(approveButtonIndex, approveButtonIndex + 220);
+                if (approveButtonMarkup.includes("disabled")) {
+                  throw new Error("The approve button should unlock immediately after the reply payload arrives, even while background refresh is still pending.");
+                }
+                if (tellAiSubmitting) {
+                  throw new Error("The immediate UI lock should clear before the background ticket refresh starts.");
+                }
+              """
+            )
+        )
+
     def test_engineer_detail_approval_revision_send_uses_same_optimistic_thread_flow(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
