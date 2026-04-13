@@ -101,6 +101,228 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(payload["retrieval_plan_snapshot"]["query_class"], "how_to_faq")
         self.assertEqual(payload["retrieval_plan_snapshot"]["open_diagnosis_target"], "rag-abc123")
 
+    def test_resolved_confirmation_short_circuits_before_route_agent_and_marks_ticket_resolved(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        execution = execute_client_ticket_agent_runtime(
+            message="got it, thanks",
+            ticket_id="TK-RESOLVE-1",
+            customer_id="C-001",
+            ticket_subject="Join channel",
+            ticket_context=[
+                {"role": "customer", "content": "how to join channel"},
+                {
+                    "role": "assistant",
+                    "content": "Use joinChannel with the same channel name and token.",
+                },
+            ],
+            product="audio_video_calling",
+            message_id="2026-04-13T01:00:00+00:00",
+            latest_assistant_message={
+                "role": "assistant",
+                "content": "Use joinChannel with the same channel name and token.",
+                "workflow_action": "answer_customer",
+                "answer_route": "rag",
+                "route_reason": "grounded_answer",
+                "execution_action": "rag",
+            },
+            current_ticket_status="communicating",
+            route_agent=lambda **_kwargs: self.fail("route agent should not run for resolved confirmation"),
+            route_executor=lambda **_kwargs: self.fail("route executor should not run for resolved confirmation"),
+            rag_agent=lambda **_kwargs: self.fail("rag agent should not run for resolved confirmation"),
+            review_agent=lambda **_kwargs: self.fail("review agent should not run for resolved confirmation"),
+            rag_canceler=None,
+        )
+
+        self.assertEqual(execution.result.workflow_action, "resolve_ticket")
+        self.assertEqual(execution.result.next_status, "resolved")
+        self.assertEqual(execution.result.answer_route, "workflow")
+        self.assertEqual(execution.result.route_family, "ticket_resolution")
+        self.assertEqual(execution.result.execution_action, "resolve_ticket")
+        self.assertEqual(execution.result.tooling_profile, "deterministic_resolution")
+        self.assertEqual(execution.result.route_reason, "customer_confirmed_resolved")
+        self.assertFalse(execution.result.sources)
+        self.assertFalse(execution.result.citations)
+        self.assertFalse(execution.result.needs_investigating)
+        self.assertIn("I'll mark this case as resolved", execution.result.answer)
+        self.assertEqual(execution.runtime_state.route_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.rag_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
+
+    def test_resolved_confirmation_returns_chinese_resolution_message(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        execution = execute_client_ticket_agent_runtime(
+            message="明白了，谢谢",
+            ticket_id="TK-RESOLVE-ZH-1",
+            customer_id="C-001",
+            ticket_subject="Join channel",
+            ticket_context=[
+                {"role": "customer", "content": "how to join channel"},
+                {
+                    "role": "assistant",
+                    "content": "Use joinChannel with the same channel name and token.",
+                },
+            ],
+            product="audio_video_calling",
+            message_id="2026-04-13T01:05:00+00:00",
+            latest_assistant_message={
+                "role": "assistant",
+                "content": "Use joinChannel with the same channel name and token.",
+                "workflow_action": "answer_customer",
+                "answer_route": "rag",
+                "route_reason": "grounded_answer",
+                "execution_action": "rag",
+            },
+            current_ticket_status="communicating",
+            route_agent=lambda **_kwargs: self.fail("route agent should not run for resolved confirmation"),
+            route_executor=lambda **_kwargs: self.fail("route executor should not run for resolved confirmation"),
+            rag_agent=lambda **_kwargs: self.fail("rag agent should not run for resolved confirmation"),
+            review_agent=lambda **_kwargs: self.fail("review agent should not run for resolved confirmation"),
+            rag_canceler=None,
+        )
+
+        self.assertEqual(execution.result.workflow_action, "resolve_ticket")
+        self.assertEqual(execution.result.next_status, "resolved")
+        self.assertIn("我会将这个工单标记为已解决", execution.result.answer)
+
+    def test_resolved_confirmation_requires_previous_substantive_answer(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        route_called: list[bool] = []
+
+        execution = execute_client_ticket_agent_runtime(
+            message="thanks",
+            ticket_id="TK-RESOLVE-NO-ANSWER-1",
+            customer_id="C-001",
+            ticket_subject="Join channel",
+            ticket_context=[
+                {"role": "customer", "content": "how to join channel"},
+                {
+                    "role": "assistant",
+                    "content": "What error or blocker are you seeing?",
+                },
+            ],
+            product="audio_video_calling",
+            message_id="2026-04-13T01:10:00+00:00",
+            latest_assistant_message={
+                "role": "assistant",
+                "content": "What error or blocker are you seeing?",
+                "workflow_action": "clarify_customer_for_intake",
+                "answer_route": "rag",
+                "route_reason": "rag_insufficient_evidence",
+                "execution_action": "rag",
+            },
+            current_ticket_status="communicating",
+            route_agent=lambda **_kwargs: route_called.append(True) or SupportRouteDecision(
+                scope_label="small_talk",
+                route="refuse",
+                confidence=0.91,
+                reason="small_talk_detected",
+                matched_signals=["thanks"],
+                response_language="en",
+                route_family="general_chat",
+                execution_action="refuse",
+                tooling_profile="no_agora_docs_refusal",
+            ),
+            route_executor=lambda **_kwargs: SupportResolution(
+                answer="I'm Agora's support AI and mainly answer Agora-related questions.",
+                confidence=0.82,
+                sources=[],
+                citations=[],
+                needs_engineer_guidance=False,
+                answer_route="refuse",
+                scope_label="small_talk",
+                route_reason="small_talk_detected",
+                route_confidence=0.91,
+                search_used=False,
+                matched_signals=["thanks"],
+                route_family="general_chat",
+                execution_action="refuse",
+                tooling_profile="no_agora_docs_refusal",
+            ),
+            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                answer="",
+                confidence=0.0,
+                sources=[],
+                citations=[],
+                needs_engineer_guidance=True,
+                reason="rag_unavailable",
+                evidence_summary=None,
+                packed_evidence=None,
+            ),
+            review_agent=None,
+            rag_canceler=None,
+        )
+
+        self.assertTrue(route_called)
+        self.assertNotEqual(execution.result.workflow_action, "resolve_ticket")
+        self.assertEqual(execution.result.answer_route, "refuse")
+
+    def test_resolved_confirmation_rejects_remaining_problem_signals(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        route_called: list[bool] = []
+
+        execution = execute_client_ticket_agent_runtime(
+            message="thanks, but still not working",
+            ticket_id="TK-RESOLVE-STILL-1",
+            customer_id="C-001",
+            ticket_subject="Join channel",
+            ticket_context=[
+                {"role": "customer", "content": "how to join channel"},
+                {
+                    "role": "assistant",
+                    "content": "Use joinChannel with the same channel name and token.",
+                },
+            ],
+            product="audio_video_calling",
+            message_id="2026-04-13T01:15:00+00:00",
+            latest_assistant_message={
+                "role": "assistant",
+                "content": "Use joinChannel with the same channel name and token.",
+                "workflow_action": "answer_customer",
+                "answer_route": "rag",
+                "route_reason": "grounded_answer",
+                "execution_action": "rag",
+            },
+            current_ticket_status="communicating",
+            route_agent=lambda **_kwargs: route_called.append(True) or SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                confidence=0.95,
+                reason="technical_question",
+                matched_signals=["still not working"],
+                response_language="en",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+            ),
+            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                answer="Please share the exact error or blocker you're seeing.",
+                confidence=0.41,
+                sources=[],
+                citations=[],
+                needs_engineer_guidance=True,
+                reason="rag_insufficient_evidence",
+                evidence_summary={"quality_signals": {"needs_human": True}},
+                packed_evidence=None,
+            ),
+            review_agent=lambda **_kwargs: TroubleshootingIntakeResult(
+                issue_mode="answer",
+                known_information={},
+                missing_information=["desired_outcome", "blocked_step_or_error"],
+                ready_for_engineer_ticket=False,
+                customer_reply="What are you trying to achieve? What error or blocker are you seeing?",
+            ),
+            rag_canceler=None,
+        )
+
+        self.assertTrue(route_called)
+        self.assertNotEqual(execution.result.workflow_action, "resolve_ticket")
+        self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
+
     def test_non_rag_route_skips_review_and_cancels_rag(self) -> None:
         from backend.services.client_ticket_agent_runtime import (
             AGENT_NAME_RAG,

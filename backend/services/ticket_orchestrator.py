@@ -359,6 +359,8 @@ def orchestrate_ticket_execution(
     ticket_context: list[dict[str, str]] | None = None,
     product: str | None = None,
     client_intake_state: dict[str, Any] | None = None,
+    latest_assistant_message: dict[str, Any] | None = None,
+    current_ticket_status: str | None = None,
     decision: SupportRouteDecision | None = None,
     resolution_builder: Callable[..., SupportResolution],
 ) -> TicketExecutionResult:
@@ -395,6 +397,8 @@ def orchestrate_ticket_execution(
         product=product,
         message_id=None,
         client_intake_state=client_intake_state,
+        latest_assistant_message=latest_assistant_message,
+        current_ticket_status=current_ticket_status,
         route_agent=_route_agent,
         route_executor=_route_executor,
         rag_agent=_rag_agent,

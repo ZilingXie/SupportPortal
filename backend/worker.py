@@ -384,6 +384,8 @@ def _execute_agent_runtime_ticket_query(
     message_created_at: str,
     product: str | None = None,
     client_intake_state: dict[str, object] | None = None,
+    latest_assistant_message: dict[str, Any] | None = None,
+    current_ticket_status: str | None = None,
 ) -> tuple[TicketExecutionResult, dict[str, Any]]:
     runtime_execution = execute_client_ticket_agent_runtime(
         customer_message,
@@ -394,6 +396,8 @@ def _execute_agent_runtime_ticket_query(
         product=product,
         message_id=message_created_at,
         client_intake_state=client_intake_state,
+        latest_assistant_message=latest_assistant_message,
+        current_ticket_status=current_ticket_status,
         route_agent=decide_support_route,
         route_executor=resolve_support_message,
         rag_agent=lambda **kwargs: _fetch_rag_answer_detail_for_worker(
@@ -513,6 +517,8 @@ def _execute_parallel_ticket_query(
     message_created_at: str,
     product: str | None = None,
     client_intake_state: dict[str, object] | None = None,
+    latest_assistant_message: dict[str, Any] | None = None,
+    current_ticket_status: str | None = None,
 ) -> tuple[TicketExecutionResult, dict[str, Any]]:
     return _execute_agent_runtime_ticket_query(
         customer_message,
@@ -523,6 +529,8 @@ def _execute_parallel_ticket_query(
         message_created_at=message_created_at,
         product=product,
         client_intake_state=client_intake_state,
+        latest_assistant_message=latest_assistant_message,
+        current_ticket_status=current_ticket_status,
     )
 
 
@@ -536,6 +544,8 @@ def _orchestrate_worker_support_message(
     message_created_at: str = "",
     product: str | None = None,
     client_intake_state: dict[str, object] | None = None,
+    latest_assistant_message: dict[str, Any] | None = None,
+    current_ticket_status: str | None = None,
 ) -> tuple[TicketExecutionResult, dict[str, Any]]:
     if OPTIMISTIC_PARALLEL_ROUTE_ENABLED:
         return _execute_parallel_ticket_query(
@@ -547,6 +557,8 @@ def _orchestrate_worker_support_message(
             message_created_at=message_created_at,
             product=product,
             client_intake_state=client_intake_state,
+            latest_assistant_message=latest_assistant_message,
+            current_ticket_status=current_ticket_status,
         )
     execution, diagnostics = _execute_agent_runtime_ticket_query(
         customer_message,
@@ -557,6 +569,8 @@ def _orchestrate_worker_support_message(
         message_created_at=message_created_at,
         product=product,
         client_intake_state=client_intake_state,
+        latest_assistant_message=latest_assistant_message,
+        current_ticket_status=current_ticket_status,
     )
     diagnostics["parallel_mode"] = "main_agent"
     return execution, diagnostics
@@ -693,6 +707,42 @@ def _task_route_context(task: dict[str, Any]) -> list[dict[str, str]]:
             continue
         normalized.append({"role": role, "content": content})
     return normalized
+
+
+def _task_latest_assistant_message(task: dict[str, Any]) -> dict[str, Any] | None:
+    message = task.get("latest_assistant_message")
+    if not isinstance(message, dict):
+        return None
+    return {
+        "role": str(message.get("role", "assistant")).strip().lower() or "assistant",
+        "content": " ".join(str(message.get("content", "")).split()).strip(),
+        "workflow_action": str(message.get("workflow_action") or "").strip(),
+        "answer_route": str(message.get("answer_route") or "").strip(),
+        "route_reason": str(message.get("route_reason") or "").strip(),
+    }
+
+
+def _build_worker_auto_resolved_by_customer_confirmation_event(
+    *,
+    ticket_id: str,
+    status: str,
+    message_created_at: str | None,
+    answer_created_at: str | None,
+) -> dict[str, Any]:
+    return {
+        "event": "ticket_auto_resolved_by_customer_confirmation",
+        "ticket_id": ticket_id,
+        "status": normalize_ticket_status(status),
+        "workflow_action": "resolve_ticket",
+        "answer_route": "workflow",
+        "route_family": "ticket_resolution",
+        "execution_action": "resolve_ticket",
+        "tooling_profile": "deterministic_resolution",
+        "route_reason": "customer_confirmed_resolved",
+        "message_created_at": str(message_created_at or "").strip() or None,
+        "assistant_message_created_at": str(answer_created_at or "").strip() or None,
+        "created_at": now_iso(),
+    }
 
 
 def _is_task_cancelled(ticket_id: str, message_created_at: str) -> bool:
@@ -858,6 +908,8 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
             if isinstance(task.get("client_intake_state"), dict)
             else None
         ),
+        latest_assistant_message=_task_latest_assistant_message(task),
+        current_ticket_status=str(task.get("current_ticket_status") or "").strip() or None,
     )
     main_agent_completed_at = now_iso()
     main_agent_total_ms = _duration_between_timestamps_ms(
@@ -1138,6 +1190,22 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         "record_ticket_agent_runtime_events",
         lambda: _record_ticket_agent_runtime_events(execution),
     )
+    if str(getattr(execution, "workflow_action", "") or "").strip() == "resolve_ticket":
+        auto_resolved_event = _build_worker_auto_resolved_by_customer_confirmation_event(
+            ticket_id=ticket_id,
+            status=ticket["status"],
+            message_created_at=message_created_at,
+            answer_created_at=answer_saved_at,
+        )
+        _call_ticket_repository(
+            "record_event",
+            lambda: ticket_repository.record_event(
+                ticket_id,
+                auto_resolved_event["event"],
+                auto_resolved_event,
+            ),
+        )
+        _publish(bus, ["engineer", "dashboard"], auto_resolved_event)
     if investigation_result is not None:
         investigation_event = _build_worker_investigation_event(
             ticket,
