@@ -2097,26 +2097,57 @@ function renderInvestigationHistoryHtml(historyItems) {
   `;
 }
 
-function renderTicketDetailView() {
-  if (!selectedTicketId) {
-    return '<div class="empty-state">Select a ticket to open the active workspace.</div>';
-  }
+function isTextComposerElement(element) {
+  return Boolean(
+    element &&
+      typeof element === "object" &&
+      typeof element.focus === "function" &&
+      typeof element.value === "string"
+  );
+}
 
-  if (detailLoading) {
-    return `
-      <section class="ticket-workspace">
-        <section class="detail-loading" role="status" aria-live="polite" aria-busy="true">
-          <span class="loading-spinner" aria-hidden="true"></span>
-          <p>Loading ticket workspace...</p>
-        </section>
-      </section>
-    `;
+function captureComposerPreservationState(element) {
+  if (!isTextComposerElement(element) || document.activeElement !== element || element.disabled) {
+    return null;
   }
+  return {
+    selectionStart:
+      typeof element.selectionStart === "number" ? element.selectionStart : element.value.length,
+    selectionEnd:
+      typeof element.selectionEnd === "number" ? element.selectionEnd : element.value.length,
+    selectionDirection:
+      typeof element.selectionDirection === "string" ? element.selectionDirection : "none",
+    scrollTop: typeof element.scrollTop === "number" ? element.scrollTop : 0,
+  };
+}
 
-  if (!selectedTicket) {
-    return '<div class="empty-state">Ticket detail is unavailable.</div>';
+function restoreComposerPreservationState(element, snapshot) {
+  if (!isTextComposerElement(element) || !snapshot || element.disabled) {
+    return;
   }
+  try {
+    element.focus({ preventScroll: true });
+  } catch {
+    element.focus();
+  }
+  if (typeof element.setSelectionRange === "function") {
+    element.setSelectionRange(
+      snapshot.selectionStart,
+      snapshot.selectionEnd,
+      snapshot.selectionDirection || "none"
+    );
+  }
+  if (typeof snapshot.scrollTop === "number" && typeof element.scrollTop === "number") {
+    element.scrollTop = snapshot.scrollTop;
+  }
+}
 
+function getActiveInvestigationComposerElement() {
+  const input = document.getElementById("detail-investigation-input");
+  return isTextComposerElement(input) ? input : null;
+}
+
+function buildTicketDetailViewState() {
   const ticket = selectedTicket;
   const ticketId = String(ticket.ticket_id || selectedTicketId || "-");
   const clientTicketId = String(ticket?.client_ticket_ref?.ticket_id || ticket?.client_ticket_id || "").trim();
@@ -2147,112 +2178,222 @@ function renderTicketDetailView() {
     openingCaseBuddyMessageIndex >= 0
       ? buildCaseBuddyOpeningRequestSections(ticket, investigationMessages[openingCaseBuddyMessageIndex]?.content)
       : [];
-  const replyReadinessReviewHtml = renderReplyReadinessReviewHtml(ticket, activeInvestigation);
-  const showInlineConfirmation = approvalUiState.showApprovalBlock;
-  const showInvestigationComposer = Boolean(activeInvestigation);
-  const draftCustomerReply = String(displayInvestigation?.draft_customer_reply || "").trim();
-  const showDraftPreview = Boolean(activeInvestigation && draftCustomerReply && !showInlineConfirmation);
-  const controlsDisabled = tellAiSubmitting;
-  const messages = Array.isArray(ticket.messages) ? ticket.messages : [];
 
+  return {
+    ticket,
+    ticketId,
+    clientTicketId,
+    clientTicketSubject,
+    status,
+    requester,
+    activeInvestigation,
+    displayInvestigation,
+    investigationState,
+    investigationMessages,
+    approvalUiState,
+    openingCaseBuddyMessageIndex,
+    structuredCaseBuddySections,
+    replyReadinessReviewHtml: renderReplyReadinessReviewHtml(ticket, activeInvestigation),
+    showInlineConfirmation: approvalUiState.showApprovalBlock,
+    showInvestigationComposer: Boolean(activeInvestigation),
+    draftCustomerReply: String(displayInvestigation?.draft_customer_reply || "").trim(),
+    controlsDisabled: tellAiSubmitting,
+    messages: Array.isArray(ticket.messages) ? ticket.messages : [],
+  };
+}
+
+function renderTicketDetailHeaderHtml(viewState) {
   return `
-    <section class="ticket-workspace">
-      <header class="workspace-header">
-        <div class="workspace-header-top">
-          <div class="workspace-header-toolbar-start">
-            <button class="btn btn-ghost" type="button" data-detail-action="back-to-pool">Back to Pool</button>
-            <div class="workspace-header-badges">
-              <span class="status-badge ${statusClass(status)}">${escapeHtml(statusLabel(status))}</span>
-            </div>
-          </div>
-          <div class="workspace-header-toolbar-end">
-            <span class="workspace-eyebrow">Ticket #${escapeHtml(ticketId)}</span>
-            <div class="workspace-header-actions">
-              <button class="btn btn-outline" type="button" data-detail-action="refresh-ticket">Sync Ticket</button>
-            </div>
+    <header class="workspace-header">
+      <div class="workspace-header-top">
+        <div class="workspace-header-toolbar-start">
+          <button class="btn btn-ghost" type="button" data-detail-action="back-to-pool">Back to Pool</button>
+          <div class="workspace-header-badges">
+            <span class="status-badge ${statusClass(viewState.status)}">${escapeHtml(
+              statusLabel(viewState.status)
+            )}</span>
           </div>
         </div>
-
-        <div class="workspace-header-main">
-          <div class="workspace-header-copy">
-            <h2 class="workspace-ticket-title">${escapeHtml(
-              String(ticket.title || ticket.subject || "(No subject)")
-            )}</h2>
-            <div class="workspace-header-meta">
-              ${
-                clientTicketId
-                  ? `<span>Client Ticket ${escapeHtml(clientTicketId)}${
-                      clientTicketSubject ? ` · ${escapeHtml(clientTicketSubject)}` : ""
-                    }</span>`
-                  : ""
-              }
-              <span>Requester ${escapeHtml(requester)}</span>
-              <span>Created ${escapeHtml(formatDateTime(ticket.created_at))}</span>
-              <span>Updated ${escapeHtml(formatDateTime(ticket.updated_at))}</span>
-            </div>
+        <div class="workspace-header-toolbar-end">
+          <span class="workspace-eyebrow">Ticket #${escapeHtml(viewState.ticketId)}</span>
+          <div class="workspace-header-actions">
+            <button class="btn btn-outline" type="button" data-detail-action="refresh-ticket">Sync Ticket</button>
           </div>
         </div>
-      </header>
+      </div>
 
+      <div class="workspace-header-main">
+        <div class="workspace-header-copy">
+          <h2 class="workspace-ticket-title">${escapeHtml(
+            String(viewState.ticket.title || viewState.ticket.subject || "(No subject)")
+          )}</h2>
+          <div class="workspace-header-meta">
+            ${
+              viewState.clientTicketId
+                ? `<span>Client Ticket ${escapeHtml(viewState.clientTicketId)}${
+                    viewState.clientTicketSubject ? ` · ${escapeHtml(viewState.clientTicketSubject)}` : ""
+                  }</span>`
+                : ""
+            }
+            <span>Requester ${escapeHtml(viewState.requester)}</span>
+            <span>Created ${escapeHtml(formatDateTime(viewState.ticket.created_at))}</span>
+            <span>Updated ${escapeHtml(formatDateTime(viewState.ticket.updated_at))}</span>
+          </div>
+        </div>
+      </div>
+    </header>
+  `;
+}
+
+function renderTicketDetailConversationStaticHtml(viewState) {
+  return `
+    <div class="panel-card-head">
+      <div>
+        <p class="panel-card-kicker">Engineer Ticket</p>
+        <h3 class="panel-card-title">Engineer Ticket Thread</h3>
+        ${
+          viewState.displayInvestigation
+            ? `<p class="mode-switch-hint">State: ${escapeHtml(
+                investigationStateLabel(viewState.displayInvestigation.state)
+              )}</p>`
+            : ""
+        }
+      </div>
+    </div>
+    ${
+      viewState.investigationMessages.length
+        ? renderConversationHtml(viewState.investigationMessages, {
+            compactThread: true,
+            inlineDecisionIndex: viewState.showInlineConfirmation
+              ? viewState.approvalUiState.decisionIndex
+              : -1,
+            showInlineConfirmation:
+              viewState.showInlineConfirmation && viewState.approvalUiState.decisionIndex >= 0,
+            draftCustomerReply: viewState.draftCustomerReply,
+            controlsDisabled: viewState.controlsDisabled,
+            structuredCaseBuddyMessageIndex: viewState.openingCaseBuddyMessageIndex,
+            structuredCaseBuddySections: viewState.structuredCaseBuddySections,
+          })
+        : '<div class="empty-state">No open engineer ticket yet.</div>'
+    }
+    ${
+      viewState.showInvestigationComposer &&
+      viewState.draftCustomerReply &&
+      !viewState.showInlineConfirmation
+        ? renderInvestigationDraftPreviewHtml({ draftCustomerReply: viewState.draftCustomerReply })
+        : ""
+    }
+  `;
+}
+
+function renderTicketDetailComposerShellHtml(viewState) {
+  if (!viewState.showInvestigationComposer) {
+    return "";
+  }
+  return renderInvestigationComposerHtml({
+    draft: tellAiDraft,
+    controlsDisabled: viewState.controlsDisabled,
+    reviseMode: investigationReviseMode,
+    approvalMode: viewState.approvalUiState.showApprovalBlock,
+  });
+}
+
+function renderTicketDetailInsightPanelHtml(viewState) {
+  return `
+    <section class="panel-card">
+      <div class="panel-card-head">
+        <div>
+          <p class="panel-card-kicker">Customer Timeline</p>
+          <h3 class="panel-card-title">Customer Timeline</h3>
+        </div>
+      </div>
+      ${renderConversationHtml(viewState.messages)}
+    </section>
+
+    ${viewState.replyReadinessReviewHtml}
+  `;
+}
+
+function renderTicketDetailViewFromState(viewState) {
+  return `
+    <section class="ticket-workspace" data-detail-ticket-id="${escapeHtml(viewState.ticketId)}">
+      <div data-detail-section="header">${renderTicketDetailHeaderHtml(viewState)}</div>
       <div class="workspace-layout">
-        <section class="panel-card conversation-panel conversation-panel-compact-thread">
-          <div class="panel-card-head">
-            <div>
-              <p class="panel-card-kicker">Engineer Ticket</p>
-              <h3 class="panel-card-title">Engineer Ticket Thread</h3>
-              ${
-                displayInvestigation
-                  ? `<p class="mode-switch-hint">State: ${escapeHtml(
-                      investigationStateLabel(displayInvestigation.state)
-                    )}</p>`
-                  : ""
-              }
-            </div>
+        <section
+          class="panel-card conversation-panel conversation-panel-compact-thread"
+          data-detail-section="investigation-panel"
+        >
+          <div data-detail-section="investigation-static">
+            ${renderTicketDetailConversationStaticHtml(viewState)}
           </div>
-          ${
-            investigationMessages.length
-              ? renderConversationHtml(investigationMessages, {
-                  compactThread: true,
-                  inlineDecisionIndex: showInlineConfirmation ? approvalUiState.decisionIndex : -1,
-                  showInlineConfirmation: showInlineConfirmation && approvalUiState.decisionIndex >= 0,
-                  draftCustomerReply,
-                  controlsDisabled,
-                  structuredCaseBuddyMessageIndex: openingCaseBuddyMessageIndex,
-                  structuredCaseBuddySections,
-                })
-              : '<div class="empty-state">No open engineer ticket yet.</div>'
-          }
-          ${
-            showInvestigationComposer
-              ? `
-            ${showDraftPreview ? renderInvestigationDraftPreviewHtml({ draftCustomerReply }) : ""}
-            ${renderInvestigationComposerHtml({
-                  draft: tellAiDraft,
-                  controlsDisabled,
-                  reviseMode: investigationReviseMode,
-                  approvalMode: approvalUiState.showApprovalBlock,
-                })}
-          `
-              : ""
-          }
+          <div data-detail-section="investigation-composer-shell">
+            ${renderTicketDetailComposerShellHtml(viewState)}
+          </div>
         </section>
 
-        <aside class="insight-panel">
-          <section class="panel-card">
-            <div class="panel-card-head">
-              <div>
-                <p class="panel-card-kicker">Customer Timeline</p>
-                <h3 class="panel-card-title">Customer Timeline</h3>
-              </div>
-            </div>
-            ${renderConversationHtml(messages)}
-          </section>
-
-          ${replyReadinessReviewHtml}
+        <aside class="insight-panel" data-detail-section="insight">
+          ${renderTicketDetailInsightPanelHtml(viewState)}
         </aside>
       </div>
     </section>
   `;
+}
+
+function shouldPreserveInvestigationComposerOnRender(viewState) {
+  if (!viewState?.showInvestigationComposer || viewState.controlsDisabled) {
+    return false;
+  }
+  return Boolean(captureComposerPreservationState(getActiveInvestigationComposerElement()));
+}
+
+function patchTicketDetailWhilePreservingComposer(viewState) {
+  if (!workspaceRegionEl || typeof workspaceRegionEl.querySelector !== "function") {
+    return false;
+  }
+  const workspace = workspaceRegionEl.querySelector(".ticket-workspace");
+  if (!workspace || typeof workspace.querySelector !== "function") {
+    return false;
+  }
+  const workspaceTicketId = normalizeDetailTicketId(workspace.dataset?.detailTicketId || "");
+  if (workspaceTicketId && workspaceTicketId !== normalizeDetailTicketId(viewState.ticketId)) {
+    return false;
+  }
+  const headerRegion = workspace.querySelector('[data-detail-section="header"]');
+  const staticRegion = workspace.querySelector('[data-detail-section="investigation-static"]');
+  const insightRegion = workspace.querySelector('[data-detail-section="insight"]');
+  if (!headerRegion || !staticRegion || !insightRegion) {
+    return false;
+  }
+  const composer = getActiveInvestigationComposerElement();
+  const snapshot = captureComposerPreservationState(composer);
+  headerRegion.innerHTML = renderTicketDetailHeaderHtml(viewState);
+  staticRegion.innerHTML = renderTicketDetailConversationStaticHtml(viewState);
+  insightRegion.innerHTML = renderTicketDetailInsightPanelHtml(viewState);
+  restoreComposerPreservationState(composer, snapshot);
+  return true;
+}
+
+function renderTicketDetailView() {
+  if (!selectedTicketId) {
+    return '<div class="empty-state">Select a ticket to open the active workspace.</div>';
+  }
+
+  if (detailLoading) {
+    return `
+      <section class="ticket-workspace">
+        <section class="detail-loading" role="status" aria-live="polite" aria-busy="true">
+          <span class="loading-spinner" aria-hidden="true"></span>
+          <p>Loading ticket workspace...</p>
+        </section>
+      </section>
+    `;
+  }
+
+  if (!selectedTicket) {
+    return '<div class="empty-state">Ticket detail is unavailable.</div>';
+  }
+
+  return renderTicketDetailViewFromState(buildTicketDetailViewState());
 }
 
 function focusInvestigationComposerInput(retries = 8) {
@@ -2310,7 +2451,15 @@ function renderTicketDetail() {
     return;
   }
   renderWorkspaceChrome();
-  workspaceRegionEl.innerHTML = renderTicketDetailView();
+  if (!selectedTicketId || detailLoading || !selectedTicket) {
+    workspaceRegionEl.innerHTML = renderTicketDetailView();
+    return;
+  }
+  const viewState = buildTicketDetailViewState();
+  if (shouldPreserveInvestigationComposerOnRender(viewState) && patchTicketDetailWhilePreservingComposer(viewState)) {
+    return;
+  }
+  workspaceRegionEl.innerHTML = renderTicketDetailViewFromState(viewState);
 }
 
 function redirectOpenTicketToPool() {
@@ -2908,6 +3057,34 @@ function closeSocket() {
   }
 }
 
+function shouldRefreshSelectedTicketForRealtimePayload(payload) {
+  if (!payload || typeof payload !== "object") {
+    return false;
+  }
+  const selectedIds = new Set(
+    [
+      selectedTicketId,
+      routeState.ticketId,
+      selectedTicket?.ticket_id,
+      selectedTicket?.client_ticket_id,
+      selectedTicket?.client_ticket_ref?.ticket_id,
+    ]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+  );
+  if (!selectedIds.size) {
+    return false;
+  }
+  const payloadIds = [
+    payload.ticket_id,
+    payload.client_ticket_id,
+    payload.engineer_case_id,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  return payloadIds.some((value) => selectedIds.has(value));
+}
+
 function setupWebSocket() {
   if (!isAuthenticated()) {
     return;
@@ -2922,9 +3099,19 @@ function setupWebSocket() {
     setRealtimeStatus("Realtime: connected");
   };
 
-  socket.onmessage = async () => {
+  socket.onmessage = async (event) => {
+    let payload = null;
     try {
-      await loadTickets({ refreshDetail: true });
+      payload = JSON.parse(String(event?.data || ""));
+    } catch {
+      payload = null;
+    }
+    const refreshSelectedDetail = shouldRefreshSelectedTicketForRealtimePayload(payload);
+    try {
+      await loadTickets({ refreshDetail: false });
+      if (refreshSelectedDetail) {
+        await refreshSelectedTicket({ silent: true });
+      }
     } catch (error) {
       showBoardError(`Failed to refresh tickets: ${error.message}`);
     }

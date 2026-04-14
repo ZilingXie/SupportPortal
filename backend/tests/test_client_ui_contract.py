@@ -138,7 +138,7 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
         self.assertIn("./styles.css?v=20260413-client-sid-zac-1", html)
-        self.assertIn('./app.js?v=20260413-client-sid-zac-1', html)
+        self.assertIn('./app.js?v=20260414-client-composer-focus-1', html)
         self.assertIn("AI-SOLVING", app_source)
         self.assertIn("Session History", app_source)
         self.assertIn("Sid", app_source)
@@ -2034,6 +2034,218 @@ class ClientUiContractTests(unittest.TestCase):
                 flushFrames();
                 if (currentChatMain.scrollTop !== 420) {
                   throw new Error(`Expected requested scroll-to-latest to land at 420, got ${currentChatMain.scrollTop}.`);
+                }
+              """
+            )
+        )
+
+    def test_client_chat_same_ticket_refresh_preserves_active_second_round_composer(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                const queuedFrames = [];
+                globalThis.requestAnimationFrame = (callback) => {
+                  queuedFrames.push(callback);
+                  return queuedFrames.length;
+                };
+
+                const flushFrames = () => {
+                  while (queuedFrames.length > 0) {
+                    const callback = queuedFrames.shift();
+                    callback();
+                  }
+                };
+
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const ticket = createTicket(state.user.id);
+                saveTicketMessages(ticket.id, [
+                  {
+                    id: "msg-1",
+                    role: "assistant",
+                    content: "First answer",
+                    createdAt: "2026-04-14T10:00:00.000Z",
+                  },
+                ]);
+
+                const shellRegions = {
+                  '[data-authed-region="sidebar-nav"]': { innerHTML: "" },
+                  '[data-authed-region="sidebar-content"]': { innerHTML: "" },
+                  '[data-authed-region="sidebar-footer"]': { innerHTML: "" },
+                  '[data-authed-region="topbar"]': { innerHTML: "" },
+                  '[data-authed-region="context"]': { innerHTML: "" },
+                };
+                let currentChatMain = null;
+                let currentChatInput = null;
+                let currentChatForm = null;
+                let activeElement = null;
+                let messagesRegion = { innerHTML: "" };
+                let noteRegion = { innerHTML: "" };
+                let actionRegion = { innerHTML: "" };
+                let chatRoot = null;
+                const renderHeights = [];
+                const makeTextarea = () => ({
+                  value: "",
+                  disabled: false,
+                  selectionStart: 0,
+                  selectionEnd: 0,
+                  selectionDirection: "none",
+                  scrollTop: 0,
+                  addEventListener() {},
+                  focus() {
+                    activeElement = this;
+                  },
+                  blur() {
+                    if (activeElement === this) {
+                      activeElement = null;
+                    }
+                  },
+                  setSelectionRange(start, end, direction = "none") {
+                    this.selectionStart = start;
+                    this.selectionEnd = end;
+                    this.selectionDirection = direction;
+                  },
+                });
+                const mainRegion = {
+                  querySelector(selector) {
+                    if (selector === ".chat-root") {
+                      return chatRoot;
+                    }
+                    if (selector === ".chat-main") {
+                      return currentChatMain;
+                    }
+                    if (selector === "#chat-input") {
+                      return currentChatInput;
+                    }
+                    if (selector === "#chat-input-form") {
+                      return currentChatForm;
+                    }
+                    return null;
+                  },
+                };
+                Object.defineProperty(mainRegion, "innerHTML", {
+                  get() {
+                    return this._html || "";
+                  },
+                  set(value) {
+                    this._html = value;
+                    currentChatMain = {
+                      scrollTop: currentChatMain?.scrollTop || 0,
+                      scrollHeight: renderHeights.shift() ?? 0,
+                    };
+                    messagesRegion = { innerHTML: value };
+                    noteRegion = { innerHTML: "" };
+                    actionRegion = { innerHTML: "" };
+                    currentChatForm = {
+                      addEventListener() {},
+                      requestSubmit() {},
+                    };
+                    if (value.includes('id="chat-input"')) {
+                      chatRoot = {
+                        dataset: { chatTicketId: ticket.id },
+                        querySelector(selector) {
+                          if (selector === '[data-chat-section="messages"]') {
+                            return messagesRegion;
+                          }
+                          if (selector === '[data-chat-section="composer-note"]') {
+                            return noteRegion;
+                          }
+                          if (selector === '[data-chat-section="composer-action"]') {
+                            return actionRegion;
+                          }
+                          return null;
+                        },
+                      };
+                      currentChatInput = makeTextarea();
+                      currentChatInput.value = state.inputDraft || "";
+                      if (activeElement && activeElement !== currentChatInput) {
+                        activeElement = null;
+                      }
+                    } else {
+                      chatRoot = null;
+                      currentChatInput = null;
+                      activeElement = null;
+                    }
+                  },
+                });
+                shellRegions['[data-authed-region="main"]'] = mainRegion;
+
+                const shell = {
+                  querySelector(selector) {
+                    return shellRegions[selector] || null;
+                  },
+                };
+
+                document.getElementById = (id) => {
+                  if (id === "app") {
+                    return appRoot;
+                  }
+                  if (id === "chat-input-form") {
+                    return currentChatForm;
+                  }
+                  if (id === "chat-input") {
+                    return currentChatInput;
+                  }
+                  return null;
+                };
+                Object.defineProperty(document, "activeElement", {
+                  configurable: true,
+                  get() {
+                    return activeElement;
+                  },
+                });
+                appRoot.querySelectorAll = () => [];
+                appRoot.querySelector = (selector) => {
+                  if (selector === ".app-shell") {
+                    return shell;
+                  }
+                  if (selector === ".chat-main") {
+                    return currentChatMain;
+                  }
+                  return null;
+                };
+
+                window.location.hash = `#/chat/${ticket.id}`;
+
+                renderHeights.push(180);
+                render();
+                flushFrames();
+
+                state.inputDraft = "第二轮 follow-up message";
+                currentChatInput.value = state.inputDraft;
+                currentChatInput.focus();
+                currentChatInput.setSelectionRange(5, 5, "none");
+                currentChatInput.scrollTop = 14;
+                const originalInput = currentChatInput;
+
+                saveTicketMessages(ticket.id, [
+                  ...getTicketById(ticket.id).messages,
+                  {
+                    id: "msg-2",
+                    role: "assistant",
+                    content: "Background refresh reply",
+                    createdAt: "2026-04-14T10:01:00.000Z",
+                  },
+                ]);
+                renderHeights.push(240);
+                render();
+                flushFrames();
+
+                if (currentChatInput !== originalInput) {
+                  throw new Error("Same-ticket refresh should preserve the active chat composer instance.");
+                }
+                if (document.activeElement !== currentChatInput) {
+                  throw new Error("Same-ticket refresh should keep focus on the active chat composer.");
+                }
+                if (currentChatInput.selectionStart !== 5 || currentChatInput.selectionEnd !== 5) {
+                  throw new Error("Same-ticket refresh should preserve the chat composer cursor position.");
+                }
+                if (currentChatInput.scrollTop !== 14) {
+                  throw new Error("Same-ticket refresh should preserve the chat composer scroll position.");
+                }
+                if (currentChatInput.value !== "第二轮 follow-up message") {
+                  throw new Error("Same-ticket refresh should preserve the in-progress second-round draft.");
                 }
               """
             )
