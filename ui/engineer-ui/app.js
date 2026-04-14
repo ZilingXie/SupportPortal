@@ -942,42 +942,100 @@ function getInvestigationApprovalUiState(ticket, activeInvestigation, investigat
   };
 }
 
-function renderReplyReadinessSummaryHtml(ticket, displayInvestigation) {
-  const replyReadiness = getReplyReadiness(ticket);
-  if (!displayInvestigation) {
+function renderReplyReadinessReviewHtml(ticket, activeInvestigation) {
+  if (!activeInvestigation) {
     return "";
   }
 
-  const summaryItems = [
+  const replyReadiness = getReplyReadiness(ticket) || {};
+  const blockers = Array.isArray(replyReadiness.blockers)
+    ? replyReadiness.blockers.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  const conclusionSummary = String(replyReadiness.conclusion_summary || "").trim();
+  const proofSummary = String(replyReadiness.proof_summary || "").trim();
+  const solutionSummary = String(replyReadiness.solution_or_next_step || "").trim();
+  const critique = String(replyReadiness.critique || "").trim();
+  const checks = [
     {
       label: "Conclusion",
-      ready: replyReadiness?.has_conclusion === true,
+      passed: replyReadiness.has_conclusion === true,
     },
     {
       label: "Proof",
-      ready: replyReadiness?.has_proof === true,
+      passed: replyReadiness.has_proof === true,
     },
     {
-      label: "Next Step",
-      ready: replyReadiness?.has_solution_or_next_step === true,
+      label: "Solution / Next Step",
+      passed: replyReadiness.has_solution_or_next_step === true,
     },
   ];
 
   return `
-    <div class="detail-readiness-summary" aria-label="Reply readiness summary">
-      <div class="detail-readiness-summary-bubble">
-        ${summaryItems
+    <section class="panel-card detail-readiness-review">
+      <div class="panel-card-head">
+        <div>
+          <p class="panel-card-kicker">Internal Review</p>
+          <h3 class="panel-card-title">Readiness Review</h3>
+        </div>
+        <span class="detail-readiness-pill ${
+          replyReadiness.ready_for_customer_reply === true ? "is-ready" : "is-blocked"
+        }">
+          ${replyReadiness.ready_for_customer_reply === true ? "Validated" : "Needs Follow-up"}
+        </span>
+      </div>
+      <div class="detail-readiness-checks" aria-label="Reply readiness checks">
+        ${checks
           .map(
             (item) => `
-              <div class="detail-readiness-summary-segment ${item.ready ? "is-ready" : "is-missing"}">
-                <span class="detail-readiness-summary-dot" aria-hidden="true"></span>
-                <p class="detail-readiness-summary-label">${escapeHtml(item.label)}</p>
+              <div class="detail-readiness-check ${item.passed ? "is-passed" : "is-missing"}">
+                <span class="detail-readiness-check-dot" aria-hidden="true"></span>
+                <span>${escapeHtml(item.label)}</span>
               </div>
             `
           )
           .join("")}
       </div>
-    </div>
+      <div class="detail-readiness-fields">
+        <div class="detail-readiness-field">
+          <p class="detail-readiness-field-label">Conclusion</p>
+          <p class="detail-readiness-field-value">${formatMultiline(
+            conclusionSummary || "Conclusion not extracted yet."
+          )}</p>
+        </div>
+        <div class="detail-readiness-field">
+          <p class="detail-readiness-field-label">Proof</p>
+          <p class="detail-readiness-field-value">${formatMultiline(proofSummary || "Proof still missing.")}</p>
+        </div>
+        <div class="detail-readiness-field">
+          <p class="detail-readiness-field-label">Solution / Next Step</p>
+          <p class="detail-readiness-field-value">${formatMultiline(
+            solutionSummary || "No actionable next step captured yet."
+          )}</p>
+        </div>
+      </div>
+      ${
+        blockers.length
+          ? `
+        <div class="detail-readiness-alert">
+          <p class="detail-readiness-field-label">Current Blockers</p>
+          <ul class="detail-readiness-list">
+            ${blockers.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+          </ul>
+        </div>
+      `
+          : ""
+      }
+      ${
+        critique
+          ? `
+        <div class="detail-readiness-alert detail-readiness-alert-critique">
+          <p class="detail-readiness-field-label">Critique</p>
+          <p class="detail-readiness-field-value">${formatMultiline(critique)}</p>
+        </div>
+      `
+          : ""
+      }
+    </section>
   `;
 }
 
@@ -2156,7 +2214,7 @@ function buildTicketDetailViewState() {
     approvalUiState,
     openingCaseBuddyMessageIndex,
     structuredCaseBuddySections,
-    replyReadinessSummaryHtml: renderReplyReadinessSummaryHtml(ticket, displayInvestigation),
+    replyReadinessReviewHtml: renderReplyReadinessReviewHtml(ticket, activeInvestigation),
     showInlineConfirmation: approvalUiState.showApprovalBlock,
     showInvestigationComposer: Boolean(activeInvestigation) && !pendingLocalApproval,
     showInvestigationDraftPreview:
@@ -2212,12 +2270,11 @@ function renderTicketDetailHeaderHtml(viewState) {
 
 function renderTicketDetailConversationStaticHtml(viewState) {
   return `
-    <div class="panel-card-head detail-thread-head">
-      <div class="detail-thread-head-copy">
+    <div class="panel-card-head">
+      <div>
         <p class="panel-card-kicker">Engineer Ticket</p>
         <h3 class="panel-card-title">Engineer Ticket Thread</h3>
       </div>
-      ${viewState.replyReadinessSummaryHtml}
     </div>
     ${
       viewState.investigationMessages.length
@@ -2266,6 +2323,7 @@ function renderTicketDetailInsightPanelHtml(viewState) {
       </div>
       ${renderConversationHtml(viewState.messages)}
     </section>
+    ${viewState.replyReadinessReviewHtml}
   `;
 }
 
