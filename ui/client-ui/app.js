@@ -7,8 +7,6 @@ const TICKETS_KEY = "helpdesk_tickets";
 const COUNTER_KEY = "helpdesk_ticket_counter";
 const MAX_RECENT = 5;
 const DEFAULT_CLIENT_ACK_FALLBACK_TIMEOUT_MS = 5000;
-const NEW_SESSION_WELCOME_TEXT =
-  "Thank you for contacting Agora Support! We’re here to help. Before we begin, please select the product you need support with.";
 const STATUS_FOLLOWUP_MARKERS = [
   "any update",
   "status update",
@@ -444,7 +442,13 @@ function buildStaticClientAck(message) {
     : "Got it, let me check this for you.";
 }
 
+function buildNewSessionWelcomeText(userName) {
+  const greetingName = String(userName || "").trim() || "there";
+  return `Hi ${greetingName}, I'm ${CLIENT_ASSISTANT_NAME}, Agora's intelligent support assistant. I'm here to help you with Agora-related technical issues. Before we begin, please select the product you need support with.`;
+}
+
 function renderNewSessionWelcomeBubble() {
+  const welcomeText = buildNewSessionWelcomeText(state.user?.name);
   return `
     <div class="empty-chat-welcome">
       <article class="msg-row">
@@ -453,7 +457,7 @@ function renderNewSessionWelcomeBubble() {
             <span class="avatar assistant"><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span></span>
             <span class="message-author">${CLIENT_ASSISTANT_NAME}</span>
           </div>
-          <div class="bubble assistant"><div>${escapeHtml(NEW_SESSION_WELCOME_TEXT)}</div></div>
+          <div class="bubble assistant"><div>${escapeHtml(welcomeText)}</div></div>
         </div>
       </article>
     </div>
