@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -16,6 +17,10 @@ from backend.services.llm_profiles import (
 
 class LlmInvocationError(RuntimeError):
     pass
+
+
+LOGGER = logging.getLogger(__name__)
+_RETRYABLE_HTTP_STATUS_CODES = frozenset({408, 409, 429, 500, 502, 503, 504})
 
 
 @dataclass(frozen=True)
@@ -105,6 +110,32 @@ def _is_model_unavailable(error_payload: str) -> bool:
     return "model_not_found" in lowered or "does not exist" in lowered or "not available" in lowered
 
 
+def _retry_budget(profile: ModelProfile) -> int:
+    return max(0, int(profile.max_retries))
+
+
+def _should_retry_http_error(code: int) -> bool:
+    return code in _RETRYABLE_HTTP_STATUS_CODES or code >= 500
+
+
+def _log_retry(
+    *,
+    profile: ModelProfile,
+    model_name: str,
+    attempt_number: int,
+    error: BaseException,
+) -> None:
+    total_attempts = _retry_budget(profile) + 1
+    LOGGER.warning(
+        "Retrying LLM request for scenario=%s model=%s after failed attempt %s/%s: %s",
+        profile.scenario,
+        model_name,
+        attempt_number,
+        total_attempts,
+        error,
+    )
+
+
 def _responses_request(
     *,
     profile: ModelProfile,
@@ -158,6 +189,7 @@ def invoke_responses_text(
 
     for model_name in profile.candidate_models():
         temperature = profile.temperature
+        retry_attempts = 0
         while True:
             request = _responses_request(
                 profile=profile,
@@ -178,8 +210,26 @@ def invoke_responses_text(
                     continue
                 if _is_model_unavailable(lowered):
                     break
+                if _should_retry_http_error(exc.code) and retry_attempts < _retry_budget(profile):
+                    retry_attempts += 1
+                    _log_retry(
+                        profile=profile,
+                        model_name=model_name,
+                        attempt_number=retry_attempts,
+                        error=exc,
+                    )
+                    continue
                 raise LlmInvocationError(f"{profile.scenario}_request_failed: {exc}") from exc
             except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+                if retry_attempts < _retry_budget(profile):
+                    retry_attempts += 1
+                    _log_retry(
+                        profile=profile,
+                        model_name=model_name,
+                        attempt_number=retry_attempts,
+                        error=exc,
+                    )
+                    continue
                 raise LlmInvocationError(f"{profile.scenario}_request_failed: {exc}") from exc
 
             payload = raw_payload if isinstance(raw_payload, dict) else {}
@@ -238,6 +288,7 @@ def invoke_chat_text(
 
     for model_name in profile.candidate_models():
         temperature = profile.temperature
+        retry_attempts = 0
         while True:
             request = _chat_request(
                 profile=profile,
@@ -257,8 +308,26 @@ def invoke_chat_text(
                     continue
                 if _is_model_unavailable(lowered):
                     break
+                if _should_retry_http_error(exc.code) and retry_attempts < _retry_budget(profile):
+                    retry_attempts += 1
+                    _log_retry(
+                        profile=profile,
+                        model_name=model_name,
+                        attempt_number=retry_attempts,
+                        error=exc,
+                    )
+                    continue
                 raise LlmInvocationError(f"{profile.scenario}_request_failed: {exc}") from exc
             except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+                if retry_attempts < _retry_budget(profile):
+                    retry_attempts += 1
+                    _log_retry(
+                        profile=profile,
+                        model_name=model_name,
+                        attempt_number=retry_attempts,
+                        error=exc,
+                    )
+                    continue
                 raise LlmInvocationError(f"{profile.scenario}_request_failed: {exc}") from exc
 
             payload = raw_payload if isinstance(raw_payload, dict) else {}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import types
 import unittest
@@ -3134,6 +3135,104 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(latest_message.get("meta", {}).get("scenario"), "engineer_investigation_reply")
         self.assertEqual(latest_message.get("meta", {}).get("generation_status"), "failed")
         self.assertTrue(str(latest_message.get("meta", {}).get("error") or "").strip())
+
+    def test_engineer_internal_message_retries_transport_timeout_before_succeeding(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-INV-LLM-RETRY-102",
+            status="investigating",
+            active_investigation={
+                "id": "INV-LLM-RETRY-102",
+                "state": "active",
+                "trigger_reason": "rag_post_check_insufficient",
+                "trigger_source": "support_query",
+                "draft_customer_reply": None,
+                "final_confirmation_requested_at": None,
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:00:00+00:00",
+                "messages": [
+                    {
+                        "id": "INV-LLM-RETRY-102-m1",
+                        "role": "engineer_ai",
+                        "content": "Please confirm the exact reproduction scope first.",
+                        "created_at": "2026-03-29T09:00:00+00:00",
+                    }
+                ],
+            },
+        )
+
+        llm_text = {
+            "state": "awaiting_confirmation",
+            "message": "We have enough information now. I drafted a customer follow-up asking for the missing channel name.",
+            "draft_customer_reply": "Could you please share the channel name with us for further investigation?",
+            "reply_readiness": {
+                "has_conclusion": True,
+                "has_proof": True,
+                "has_solution_or_next_step": True,
+                "conclusion_summary": "The missing channel name is the only blocker before a customer-safe reply can proceed.",
+                "proof_summary": "The issue is reproducible but the channel name is still missing.",
+                "proof_anchors": ["Channel name"],
+                "solution_or_next_step": "Ask the customer for the missing channel name.",
+                "blockers": [],
+                "critique": "The customer follow-up is grounded in the missing technical detail.",
+                "ready_for_customer_reply": True,
+            },
+            "engineer_agent_state": {
+                "phase": "awaiting_confirmation",
+                "issue_understanding": "The problem still needs the channel name before the customer-safe reply can be confirmed.",
+                "knowledge_summary": "The customer follow-up should collect the missing channel name.",
+                "why_not_solved": "The channel name is still missing, so the current evidence is incomplete.",
+                "goal": "Collect the missing channel name required for the customer-safe reply.",
+                "known_facts": [
+                    "The customer reported a black screen issue.",
+                    "The current investigation still needs the channel name.",
+                ],
+                "missing_information": ["Channel name"],
+                "next_request_for_engineer": "Approve the prepared customer reply if it is safe to send.",
+                "resolution_hypothesis": "The next useful step is to collect the channel name.",
+                "ready_to_reply": True,
+                "last_refreshed_at": "2026-03-29T09:04:00+00:00",
+            },
+        }
+        attempts = 0
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self) -> bytes:
+                return json.dumps({"output_text": json.dumps(llm_text)}).encode("utf-8")
+
+        def _fake_urlopen(request, timeout):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise TimeoutError("The read operation timed out")
+            return _FakeResponse()
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "backend.services.llm_factory.urllib.request.urlopen",
+            side_effect=_fake_urlopen,
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/engineer/tickets/TK-INV-LLM-RETRY-102-1/investigation/messages",
+                json={
+                    "engineer_id": "eng",
+                    "message": "you need to get the channel name",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(attempts, 2)
+        payload = response.json()
+        self.assertEqual(payload["active_investigation"]["state"], "awaiting_confirmation")
+        latest_message = payload["active_investigation"]["messages"][-1]
+        self.assertEqual(latest_message["role"], "engineer_ai")
+        self.assertEqual(latest_message.get("meta", {}).get("generation_status"), "succeeded")
+        self.assertIn("customer follow-up asking for the missing channel name", latest_message["content"])
+        self.assertNotIn("couldn't prepare a customer-safe reply", latest_message["content"].lower())
 
     def test_investigation_events_include_agent_summary_fields(self) -> None:
         self._seed_ticket(
