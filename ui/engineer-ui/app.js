@@ -881,6 +881,97 @@ function withFallbackItems(items, fallback) {
   return fallback ? [fallback] : [];
 }
 
+function normalizeCaseBuddyFactText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function escapeRegExp(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractStructuredCurrentIssueFact(value) {
+  const normalized = normalizeCaseBuddyFactText(value);
+  if (!normalized) {
+    return null;
+  }
+
+  const matchers = [
+    {
+      kind: "channel",
+      pattern: /^(?:customer reported\s+)?channel(?: name)?(?: is)?\s+(.+)$/,
+    },
+    {
+      kind: "uid",
+      pattern: /^(?:problematic\s+)?uid(?: is)?\s+(.+)$/,
+    },
+    {
+      kind: "timestamp",
+      pattern: /^(?:issue\s+time(?:stamp)?|timestamp)(?: is)?(?: around)?\s+(.+)$/,
+    },
+    {
+      kind: "symptom",
+      pattern: /^(?:issue\s+symptom|symptom)(?: is)?\s+(.+)$/,
+    },
+  ];
+
+  for (const matcher of matchers) {
+    const match = normalized.match(matcher.pattern);
+    const payload = match?.[1]?.trim();
+    if (payload) {
+      return { kind: matcher.kind, payload };
+    }
+  }
+
+  return null;
+}
+
+function isCurrentIssueFactCoveredBySummary(issueUnderstanding, fact) {
+  const normalizedIssue = normalizeCaseBuddyFactText(issueUnderstanding);
+  if (!normalizedIssue) {
+    return false;
+  }
+
+  const structuredFact = extractStructuredCurrentIssueFact(fact);
+  if (!structuredFact) {
+    return false;
+  }
+
+  const payloadPattern = escapeRegExp(structuredFact.payload);
+  switch (structuredFact.kind) {
+    case "channel":
+      return (
+        new RegExp(`\\bchannel\\s+${payloadPattern}\\b`).test(normalizedIssue) ||
+        new RegExp(`\\b${payloadPattern}\\b`).test(normalizedIssue)
+      );
+    case "uid":
+      return (
+        new RegExp(`\\buid\\s+${payloadPattern}\\b`).test(normalizedIssue) ||
+        new RegExp(`\\buser\\s+id\\s+${payloadPattern}\\b`).test(normalizedIssue)
+      );
+    case "timestamp":
+    case "symptom":
+      return normalizedIssue.includes(structuredFact.payload);
+    default:
+      return false;
+  }
+}
+
+function buildCaseBuddyCurrentIssueItems(agentState) {
+  const issueUnderstanding = String(agentState?.issue_understanding || "").trim();
+  const knownFacts = Array.isArray(agentState?.known_facts) ? agentState.known_facts : [];
+  if (!issueUnderstanding) {
+    return withFallbackItems(knownFacts, CASE_BUDDY_CURRENT_ISSUE_FALLBACK);
+  }
+
+  const filteredKnownFacts = knownFacts.filter(
+    (fact) => !isCurrentIssueFactCoveredBySummary(issueUnderstanding, fact)
+  );
+  return withFallbackItems([issueUnderstanding, ...filteredKnownFacts], CASE_BUDDY_CURRENT_ISSUE_FALLBACK);
+}
+
 function findOpeningCaseBuddyMessageIndex(messages) {
   const items = Array.isArray(messages) ? messages : [];
   for (let index = 0; index < items.length; index += 1) {
@@ -902,10 +993,7 @@ function buildCaseBuddyOpeningRequestSections(ticket, rawMessage = "") {
     return [
       {
         title: "Current issue",
-        items: withFallbackItems(
-          [agentState.issue_understanding, ...(Array.isArray(agentState.known_facts) ? agentState.known_facts : [])],
-          CASE_BUDDY_CURRENT_ISSUE_FALLBACK
-        ),
+        items: buildCaseBuddyCurrentIssueItems(agentState),
       },
       {
         title: "Why Sid couldn't solve it",
