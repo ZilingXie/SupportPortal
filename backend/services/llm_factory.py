@@ -187,7 +187,11 @@ def invoke_responses_text(
     if not profile.api_key:
         raise LlmInvocationError(f"{profile.scenario}_missing_api_key")
 
-    for model_name in profile.candidate_models():
+    candidate_models = profile.candidate_models()
+    last_error: LlmInvocationError | None = None
+
+    for candidate_index, model_name in enumerate(candidate_models):
+        has_next_model = candidate_index < len(candidate_models) - 1
         temperature = profile.temperature
         retry_attempts = 0
         while True:
@@ -219,7 +223,11 @@ def invoke_responses_text(
                         error=exc,
                     )
                     continue
-                raise LlmInvocationError(f"{profile.scenario}_request_failed: {exc}") from exc
+                current_error = LlmInvocationError(f"{profile.scenario}_request_failed: {exc}")
+                if has_next_model and _should_retry_http_error(exc.code):
+                    last_error = current_error
+                    break
+                raise current_error from exc
             except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
                 if retry_attempts < _retry_budget(profile):
                     retry_attempts += 1
@@ -230,7 +238,11 @@ def invoke_responses_text(
                         error=exc,
                     )
                     continue
-                raise LlmInvocationError(f"{profile.scenario}_request_failed: {exc}") from exc
+                current_error = LlmInvocationError(f"{profile.scenario}_request_failed: {exc}")
+                if has_next_model:
+                    last_error = current_error
+                    break
+                raise current_error from exc
 
             payload = raw_payload if isinstance(raw_payload, dict) else {}
             text = _responses_text(payload)
@@ -243,6 +255,8 @@ def invoke_responses_text(
                 raw_payload=payload,
             )
 
+    if last_error is not None:
+        raise last_error
     raise LlmInvocationError(f"{profile.scenario}_no_available_model")
 
 
