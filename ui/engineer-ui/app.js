@@ -113,6 +113,43 @@ function hasPendingLocalInvestigationReply(ticketId) {
   return Boolean(localState?.pendingAi);
 }
 
+function hasPendingLocalInvestigationApproval(ticketId) {
+  const localState = getLocalInvestigationThreadState(ticketId);
+  return Boolean(localState?.pendingApproval);
+}
+
+function startLocalInvestigationPendingApproval(ticketId) {
+  const normalizedTicketId = normalizeDetailTicketId(ticketId);
+  if (!normalizedTicketId) {
+    return;
+  }
+  const existingState = getLocalInvestigationThreadState(normalizedTicketId);
+  localInvestigationThreadState = {
+    ticketId: normalizedTicketId,
+    pendingAi: existingState?.pendingAi === true,
+    pendingApproval: true,
+    messages: Array.isArray(existingState?.messages) ? existingState.messages : [],
+  };
+}
+
+function clearLocalInvestigationPendingApproval(ticketId) {
+  const normalizedTicketId = normalizeDetailTicketId(ticketId);
+  const existingState = getLocalInvestigationThreadState(normalizedTicketId);
+  if (!existingState?.pendingApproval) {
+    return;
+  }
+  const preservedMessages = Array.isArray(existingState.messages) ? existingState.messages : [];
+  if (!preservedMessages.length && existingState.pendingAi !== true) {
+    clearLocalInvestigationThreadState(normalizedTicketId);
+    return;
+  }
+  localInvestigationThreadState = {
+    ...existingState,
+    pendingApproval: false,
+    messages: preservedMessages,
+  };
+}
+
 function startLocalInvestigationOptimisticSend(ticketId, engineerMessage) {
   const normalizedTicketId = normalizeDetailTicketId(ticketId);
   const cleaned = String(engineerMessage || "").trim();
@@ -2151,9 +2188,12 @@ function buildTicketDetailViewState() {
       ]
     : [];
   const investigationMessages = mergeInvestigationMessagesWithLocalState(ticketId, durableInvestigationMessages);
+  const pendingLocalReply = hasPendingLocalInvestigationReply(ticketId);
+  const pendingLocalApproval = hasPendingLocalInvestigationApproval(ticketId);
   const approvalUiState = getInvestigationApprovalUiState(ticket, activeInvestigation, investigationMessages, {
-    suppressApprovalBlock: hasPendingLocalInvestigationReply(ticketId),
+    suppressApprovalBlock: pendingLocalReply || pendingLocalApproval,
   });
+  const draftCustomerReply = String(displayInvestigation?.draft_customer_reply || "").trim();
   const openingCaseBuddyMessageIndex = findOpeningCaseBuddyMessageIndex(investigationMessages);
   const structuredCaseBuddySections =
     openingCaseBuddyMessageIndex >= 0
@@ -2176,8 +2216,10 @@ function buildTicketDetailViewState() {
     structuredCaseBuddySections,
     replyReadinessReviewHtml: renderReplyReadinessReviewHtml(ticket, activeInvestigation),
     showInlineConfirmation: approvalUiState.showApprovalBlock,
-    showInvestigationComposer: Boolean(activeInvestigation),
-    draftCustomerReply: String(displayInvestigation?.draft_customer_reply || "").trim(),
+    showInvestigationComposer: Boolean(activeInvestigation) && !pendingLocalApproval,
+    showInvestigationDraftPreview:
+      Boolean(activeInvestigation) && Boolean(draftCustomerReply) && !approvalUiState.showApprovalBlock,
+    draftCustomerReply,
     controlsDisabled: tellAiSubmitting,
     messages: Array.isArray(ticket.messages) ? ticket.messages : [],
   };
@@ -2251,9 +2293,7 @@ function renderTicketDetailConversationStaticHtml(viewState) {
         : '<div class="empty-state">No open engineer ticket yet.</div>'
     }
     ${
-      viewState.showInvestigationComposer &&
-      viewState.draftCustomerReply &&
-      !viewState.showInlineConfirmation
+      viewState.showInvestigationDraftPreview
         ? renderInvestigationDraftPreviewHtml({ draftCustomerReply: viewState.draftCustomerReply })
         : ""
     }
@@ -2800,6 +2840,7 @@ async function handleDetailClick(event) {
     }
     button.disabled = true;
     tellAiSubmitting = true;
+    startLocalInvestigationPendingApproval(selectedTicketId);
     renderTicketDetail();
     try {
       const responsePayload = await submitInvestigationConfirmation(selectedTicketId, "approve");
@@ -2811,6 +2852,7 @@ async function handleDetailClick(event) {
       await loadTickets({ refreshDetail: false });
       await refreshSelectedTicket({ silent: true });
     } catch (error) {
+      clearLocalInvestigationPendingApproval(selectedTicketId);
       window.alert(`Approve reply failed: ${error.message}`);
       await refreshSelectedTicket({ silent: true });
     } finally {
