@@ -881,6 +881,25 @@ For each new entry, record:
   - `node --check ui/client-ui/app.js`
   - `git diff --check`
 
+- Date: 2026-04-14
+- Area or subsystem: Engineer investigation reply gating
+- Prompt or model version: `engineer-investigation-reply-v3`
+- Summary: Relaxed the engineer investigation reply gate so verified symptom-level evidence plus a conservative workaround can move to approval, while still rejecting customer drafts that overstate an unconfirmed root cause.
+- Reason: `TK-106-1` showed that the previous gate treated optional root-cause classification and environment diagnostics as hard blockers even when the logs already supported a safe symptom-level customer reply.
+- Affected files or config:
+  - `backend/services/prompts/engineer_investigation_reply.py`
+  - `backend/services/engineer_agent.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Engineer AI can now approve a customer-safe draft when the engineer provides traceable logs/errors, a symptom-level conclusion, and a conservative workaround or retest step, even if the exact root-cause category is still unconfirmed.
+  - Optional diagnostics such as browser/OS/version, surrounding log context, permission status, and later root-cause classification are tracked as advisory follow-ups instead of hard blockers when the reply stays at symptom level.
+  - If a symptom-scope draft or conclusion overstates the root cause, the backend forces the investigation back to `active` and asks the engineer to rewrite it at symptom level.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_investigation_flow.py backend/tests/test_prompt_modules.py backend/tests/test_llm_profiles.py`
+  - `python3 -m py_compile backend/services/engineer_agent.py backend/services/prompts/engineer_investigation_reply.py backend/tests/test_investigation_flow.py backend/tests/test_prompt_modules.py backend/tests/test_llm_profiles.py`
+
 - Date: 2026-04-13
 - Area or subsystem: Engineer investigation reply drafting and approval gate
 - Prompt or model version: `engineer-investigation-reply-v2`
