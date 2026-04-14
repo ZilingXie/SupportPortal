@@ -138,7 +138,7 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
         self.assertIn("./styles.css?v=20260413-client-sid-zac-1", html)
-        self.assertIn('./app.js?v=20260414-client-composer-focus-1', html)
+        self.assertIn('./app.js?v=20260414-client-sid-welcome-1', html)
         self.assertIn("AI-SOLVING", app_source)
         self.assertIn("Session History", app_source)
         self.assertIn("Sid", app_source)
@@ -614,16 +614,29 @@ class ClientUiContractTests(unittest.TestCase):
         self.run_client_app_script(
             textwrap.dedent(
                 """
-                state.user = { id: "user-1", name: "Admin", email: "admin" };
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
                 localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
 
                 const draft = getOrCreateDraftTicket(state.user.id);
                 state.view = "chat-ticket";
                 state.activeTicketId = draft.id;
+                const personalizedGreeting = "Hi Zac";
+                const sidIntro = "I&#39;m Sid, Agora&#39;s intelligent support assistant.";
+                const helpPrompt = "I&#39;m here to help you with Agora-related technical issues. Before we begin, please select the product you need support with.";
+                const alternateGreeting = "Hi Taylor";
 
                 const initialHtml = renderChatTicket();
-                if (!initialHtml.includes("Thank you for contacting Agora Support! We’re here to help. Before we begin, please select the product you need support with.")) {
-                  throw new Error("Empty draft session should render the fixed welcome bubble.");
+                if (!initialHtml.includes(personalizedGreeting)) {
+                  throw new Error("Empty draft session should render the personalized welcome bubble.");
+                }
+                if (!initialHtml.includes(sidIntro)) {
+                  throw new Error("Empty draft session should introduce Sid in the welcome bubble.");
+                }
+                if (!initialHtml.includes(helpPrompt)) {
+                  throw new Error("Empty draft session should retain the product selection prompt.");
+                }
+                if (initialHtml.includes(alternateGreeting)) {
+                  throw new Error("Welcome bubble should use the current signed-in user's name, not a hard-coded greeting.");
                 }
                 if (initialHtml.includes('<div class="bot-mark">')) {
                   throw new Error("Empty draft session should not render the removed hero icon.");
@@ -650,6 +663,20 @@ class ClientUiContractTests(unittest.TestCase):
                   throw new Error("Empty draft session should render the product selector directly below the welcome bubble.");
                 }
 
+                state.user = { id: "user-2", name: "Taylor", email: "taylor@example.com" };
+                const secondDraft = getOrCreateDraftTicket(state.user.id);
+                state.activeTicketId = secondDraft.id;
+                const secondHtml = renderChatTicket();
+                if (!secondHtml.includes(alternateGreeting) || !secondHtml.includes(sidIntro) || !secondHtml.includes(helpPrompt)) {
+                  throw new Error("Welcome bubble should refresh to match the current signed-in user's display name.");
+                }
+                if (secondHtml.includes(personalizedGreeting)) {
+                  throw new Error("Welcome bubble should not keep the previous user's greeting.");
+                }
+
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                state.activeTicketId = draft.id;
+
                 const draftAfterRender = getTicketById(draft.id);
                 if (!draftAfterRender || (draftAfterRender.messages || []).length !== 0) {
                   throw new Error("Rendering the welcome bubble must not append durable ticket messages.");
@@ -664,8 +691,8 @@ class ClientUiContractTests(unittest.TestCase):
                 await syncTicketsFromBackend({ silent: true });
 
                 const syncedHtml = renderChatTicket();
-                if (!syncedHtml.includes("Thank you for contacting Agora Support! We’re here to help. Before we begin, please select the product you need support with.")) {
-                  throw new Error("Backend sync should not remove the transient welcome bubble from an empty draft.");
+                if (!syncedHtml.includes(personalizedGreeting) || !syncedHtml.includes(sidIntro) || !syncedHtml.includes(helpPrompt)) {
+                  throw new Error("Backend sync should not remove the personalized transient welcome bubble from an empty draft.");
                 }
 
                 const syncedDraft = getTicketById(draft.id);
@@ -738,8 +765,33 @@ class ClientUiContractTests(unittest.TestCase):
                 updateTicketStatus(draft.id, "communicating");
 
                 const html = renderChatTicket();
-                if (html.includes("Thank you for contacting Agora Support! How may I help you today?")) {
+                if (html.includes("Hi Zac")) {
                   throw new Error("Welcome bubble should disappear after the first real user message.");
+                }
+              """
+            )
+        )
+
+    def test_client_new_session_welcome_falls_back_to_hi_there_when_user_name_missing(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "", email: "zac@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const draft = getOrCreateDraftTicket(state.user.id);
+                state.view = "chat-ticket";
+                state.activeTicketId = draft.id;
+
+                const html = renderChatTicket();
+                if (!html.includes("Hi there")) {
+                  throw new Error("Welcome bubble should fall back to 'Hi there' when the user name is missing.");
+                }
+                if (!html.includes("I&#39;m Sid, Agora&#39;s intelligent support assistant.")) {
+                  throw new Error("Fallback welcome should still introduce Sid.");
+                }
+                if (html.includes("Hi undefined") || html.includes("Hi null")) {
+                  throw new Error("Welcome bubble should never render an undefined or null user name.");
                 }
               """
             )
