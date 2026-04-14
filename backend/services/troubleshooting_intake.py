@@ -52,6 +52,11 @@ _PROBLEMATIC_UID_RE = re.compile(
     re.IGNORECASE,
 )
 _SID_RE = re.compile(r"\bsid\s*(?:is|=|:)\s*([A-Za-z0-9_.-]+)\b", re.IGNORECASE)
+_MONTH_NAME_PATTERN = (
+    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|"
+    r"sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+)
+_DATE_COMPONENT_PATTERN = rf"(?:[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}|[0-9]{{1,2}}/[0-9]{{1,2}}|{_MONTH_NAME_PATTERN}\s+[0-9]{{1,2}}(?:st|nd|rd|th)?)"
 _TIMESTAMP_RE = re.compile(
     r"\b(?:timestamp(?:\s*is)?|time(?:\s*is)?|happened at|occurred at|at)\s+"
     r"([0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9:.+-]+Z?)\b",
@@ -62,8 +67,8 @@ _BARE_ISO_TIMESTAMP_RE = re.compile(
     re.IGNORECASE,
 )
 _FULL_TIMESTAMP_COMPONENT_RE = re.compile(
-    r"\b(?P<date>[0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{1,2}/[0-9]{1,2})"
-    r"(?:\s+(?:at|around|about|approximately|approx))?\s+"
+    rf"\b(?P<date>{_DATE_COMPONENT_PATTERN})"
+    r"(?:,)?(?:\s+(?:at|around|about|approximately|approx))?\s+"
     r"(?P<time>[0-9]{1,2}(?::[0-9]{2})?\s*(?:[ap]\.?m\.?)?)"
     r"(?:\s+(?P<timezone>(?:UTC|GMT)\s*[+-]\s*[0-9]{1,2}(?::?\d{2})?))?",
     re.IGNORECASE,
@@ -75,7 +80,7 @@ _TIME_WITH_TIMEZONE_RE = re.compile(
     r"(?P<timezone>(?:UTC|GMT)\s*[+-]\s*[0-9]{1,2}(?::?\d{2})?)\b",
     re.IGNORECASE,
 )
-_DATE_ONLY_RE = re.compile(r"\b(?P<date>[0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{1,2}/[0-9]{1,2})\b")
+_DATE_ONLY_RE = re.compile(rf"\b(?P<date>{_DATE_COMPONENT_PATTERN})\b", re.IGNORECASE)
 _TIME_ONLY_RE = re.compile(
     r"\b(?:happened\s+(?:at|around)\s+|occurred\s+(?:at|around)\s+|timestamp(?:\s*is)?\s+|"
     r"time(?:\s*is)?\s+|at\s+|around\s+)"
@@ -83,6 +88,24 @@ _TIME_ONLY_RE = re.compile(
     re.IGNORECASE,
 )
 _TIMEZONE_RE = re.compile(r"\b(?P<timezone>(?:UTC|GMT)\s*[+-]\s*[0-9]{1,2}(?::?\d{2})?)\b", re.IGNORECASE)
+_MONTH_NAME_TO_NUMBER = {
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "may": 5,
+    "jun": 6,
+    "jul": 7,
+    "aug": 8,
+    "sep": 9,
+    "oct": 10,
+    "nov": 11,
+    "dec": 12,
+}
+_MONTH_NAME_DATE_RE = re.compile(
+    rf"(?P<month>{_MONTH_NAME_PATTERN})\s+(?P<day>[0-9]{{1,2}})(?:st|nd|rd|th)?",
+    re.IGNORECASE,
+)
 _ANSWER_MODE_REQUIRED_FIELDS = ("desired_outcome", "blocked_step_or_error")
 _ANSWER_GOAL_HINT_RE = re.compile(
     r"\b(?:trying to|try to|want to|need to|would like to|looking to|aim(?:ing)? to|attempt(?:ing)? to)\s+"
@@ -185,7 +208,7 @@ def _normalize_iso_timestamp(value: str) -> str | None:
 
 
 def _normalize_date_component(value: str, *, reference_year: int) -> str | None:
-    clean_value = _clean_text(value)
+    clean_value = _clean_text(value).replace(",", "")
     if not clean_value:
         return None
     if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", clean_value):
@@ -198,6 +221,18 @@ def _normalize_date_component(value: str, *, reference_year: int) -> str | None:
     if slash_match:
         month = int(slash_match.group(1))
         day = int(slash_match.group(2))
+        try:
+            datetime(reference_year, month, day)
+        except ValueError:
+            return None
+        return f"{reference_year:04d}-{month:02d}-{day:02d}"
+    natural_match = _MONTH_NAME_DATE_RE.fullmatch(clean_value)
+    if natural_match:
+        month_key = natural_match.group("month").lower()[:3]
+        month = _MONTH_NAME_TO_NUMBER.get(month_key)
+        day = int(natural_match.group("day"))
+        if month is None:
+            return None
         try:
             datetime(reference_year, month, day)
         except ValueError:

@@ -3285,3 +3285,27 @@ For each new entry, record:
   - official `deployment` local-lightweight stack live replay in temporary sync mode (`async_query_enabled=false`) using `TK-096-SYNC-VERIFY-3`, where the second customer follow-up returned `please share the issue timezone`, the third follow-up returned `workflow_action=open_engineer_ticket`, `route_reason=investigation_intake_complete`, and runtime state showed `route_agent/rag_agent/review_agent` all `skipped`
   - engineer ticket `TK-096-SYNC-VERIFY-3-1` opening context now states that the customer already provided the required investigation details and no longer frames the handoff as a RAG timeout
   - `$supportportal-run-report` attempts in the current environment produced `/tmp/supportportal-traces/TK-TRACE-0FAF8D24EC.json` (successful grounded black-screen answer, `route_reason=grounded_answer`, `question_to_final_answer_ms=88261.91`) plus timeout artifacts such as `/tmp/supportportal-traces/TK-TRACE-E9AB2A6ABC.json` and `/tmp/supportportal-traces/TK-TRACE-6E722C1019.json`, which indicate the existing trace wrapper/direct-probe environment remains noisy outside this intake fix
+
+## 2026-04-14 - Recognize month-name investigation dates in deterministic intake
+
+- Summary:
+  - Extended deterministic troubleshooting-intake date parsing so follow-up timestamps like `April 3rd 12pm utc+8` count as complete investigation timestamps instead of leaving the date missing.
+  - Normalized English month-name dates into the same `YYYY-MM-DD` intake format already used for slash dates and ISO dates, preserving the existing `time` and `timezone` merge behavior.
+- Reason:
+  - Live `TK-097` behavior showed `channel name: zilingtest,uid:1, happened on April 3rd 12pm utc+8` still triggered `please share the issue date`, even though the customer had already provided a full date, time, and timezone.
+  - The deterministic parser only recognized `YYYY-MM-DD` and `M/D`, so it extracted `time=12:00pm` and `timezone=UTC+8` but dropped the month-name date entirely.
+- Affected files/config:
+  - `backend/services/troubleshooting_intake.py`
+  - `backend/tests/test_troubleshooting_intake.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, embedding, or vector-index changes.
+  - Investigation intake now recognizes English month-name dates with ordinal suffixes and normalizes them into persisted `issue_timestamp_parts.date` values.
+- Verification:
+  - `python -m unittest backend.tests.test_troubleshooting_intake.TroubleshootingIntakeTests.test_month_name_date_with_ordinal_counts_as_complete_issue_timestamp` first failed before the parser change with `missing_information=['issue_timestamp']`, then passed after the fix.
+  - `python -m unittest backend.tests.test_troubleshooting_intake backend.tests.test_client_ticket_agent_runtime`
+  - `python -m py_compile backend/services/troubleshooting_intake.py`
+  - `git diff --check`
+  - `podman run --rm -v /Users/xieziling/.config/superpowers/worktrees/SupportPortal/tk-097-month-name-date:/app -w /app localhost/supportportal-app:latest python -m unittest backend.tests.test_troubleshooting_intake backend.tests.test_client_ticket_agent_runtime`
+  - official `deployment` local-lightweight stack rebuild from the task worktree, followed by live replay on `TK-097-MONTHNAME-VERIFY-1`, where `channel name: zilingtest,uid:1, happened on April 3rd 12pm utc+8` returned `workflow_action=open_engineer_ticket`, `route_reason=investigation_intake_complete`, and runtime state showed `route_agent/rag_agent/review_agent` all `skipped`
+  - required `$supportportal-run-report` batch against `real_case/real_user_questions.txt` produced fresh traces including `/tmp/supportportal-traces/TK-TRACE-DF489F252E.json` (`how to join channel`, `trace_status=ok`, `route_reason=grounded_answer`), `/tmp/supportportal-traces/TK-TRACE-B656AE1B96.json` (`I got black screen, what should I do?`, `trace_status=ok`, `route_reason=grounded_answer`), plus `/tmp/supportportal-traces/TK-TRACE-33D0132A7E.json` and `/tmp/supportportal-traces/TK-TRACE-CC3CB99FEC.json` as `timeout_partial`; the batch stalled on the final long API-semantics case in this environment, so verification uses the completed traces as partial run-report evidence rather than a fully printed aggregate report
