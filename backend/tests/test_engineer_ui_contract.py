@@ -146,8 +146,8 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260414-engineer-readiness-single-bubble-1", html)
-        self.assertIn('./app.js?v=20260414-engineer-readiness-single-bubble-1', html)
+        self.assertIn("./styles.css?v=20260414-engineer-internal-review-sidebar-1", html)
+        self.assertIn('./app.js?v=20260414-engineer-internal-review-sidebar-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
@@ -1247,7 +1247,7 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
-    def test_engineer_detail_moves_readiness_summary_into_thread_header(self) -> None:
+    def test_engineer_detail_moves_internal_review_into_sidebar(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
                 """
@@ -1298,25 +1298,6 @@ class EngineerUiContractTests(unittest.TestCase):
                 selectedTicketNextAction = "Collect explicit proof before replying.";
 
                 const html = renderTicketDetailView();
-                if (html.includes("Internal Review")) {{
-                  throw new Error("Engineer detail should stop rendering the Internal Review section.");
-                }}
-                if (html.includes("Readiness Review")) {{
-                  throw new Error("Engineer detail should stop rendering the standalone Readiness Review section.");
-                }}
-                if (html.includes("Needs Follow-up")) {{
-                  throw new Error("Engineer detail should hide the readiness status pill in detail view.");
-                }}
-                if (html.includes("Current Blockers")) {{
-                  throw new Error("Engineer detail should hide readiness blockers in detail view.");
-                }}
-                if (html.includes("Critique")) {{
-                  throw new Error("Engineer detail should hide readiness critique in detail view.");
-                }}
-                if (html.includes("Proof Anchors")) {{
-                  throw new Error("Engineer detail should hide proof anchors in detail view.");
-                }}
-
                 const engineerIndex = html.indexOf("Engineer Ticket Thread");
                 const customerIndex = html.indexOf("Customer Timeline");
                 if (engineerIndex === -1 || customerIndex === -1 || engineerIndex > customerIndex) {{
@@ -1325,55 +1306,58 @@ class EngineerUiContractTests(unittest.TestCase):
                 const engineerThreadSection = html.slice(engineerIndex, customerIndex);
                 const customerTimelineSection = html.slice(customerIndex);
 
-                if (!engineerThreadSection.includes('class="detail-readiness-summary"')) {{
-                  throw new Error("Engineer thread header should render the compact readiness summary.");
+                if (engineerThreadSection.includes('class="detail-readiness-summary"')) {{
+                  throw new Error("Engineer thread header should stop rendering the compact readiness summary.");
                 }}
                 if (html.includes("State:")) {{
                   throw new Error("Engineer detail should stop rendering the thread state line.");
                 }}
-                if (!engineerThreadSection.includes("Conclusion")) {{
-                  throw new Error("Engineer thread header should render the conclusion status card.");
+                if (customerTimelineSection.includes('class="detail-readiness-summary"')) {{
+                  throw new Error("Customer timeline sidebar should not render the compact readiness summary.");
                 }}
-                if (!engineerThreadSection.includes("Proof")) {{
-                  throw new Error("Engineer thread header should render the proof status card.");
+                if (!customerTimelineSection.includes("Internal Review")) {{
+                  throw new Error("Engineer detail should render the Internal Review section below the customer timeline.");
                 }}
-                if (!engineerThreadSection.includes("Next Step")) {{
-                  throw new Error("Engineer thread header should render the next-step status card.");
+                if (!customerTimelineSection.includes("Readiness Review")) {{
+                  throw new Error("Internal Review should render the Readiness Review title.");
                 }}
-                if ((engineerThreadSection.match(/detail-readiness-summary-bubble/g) || []).length !== 1) {{
-                  throw new Error("Engineer thread header should render one readiness bubble.");
+                if (!customerTimelineSection.includes("Needs Follow-up")) {{
+                  throw new Error("Internal Review should surface the readiness status pill when reply is not ready.");
                 }}
-                const readySegments = (engineerThreadSection.match(/detail-readiness-summary-segment is-ready/g) || []).length;
-                const missingSegments = (engineerThreadSection.match(/detail-readiness-summary-segment is-missing/g) || []).length;
+                if (!customerTimelineSection.includes("Current Blockers")) {{
+                  throw new Error("Internal Review should render blockers when they are present.");
+                }}
+                if (!customerTimelineSection.includes("Critique")) {{
+                  throw new Error("Internal Review should render critique when it is present.");
+                }}
+                const readySegments = (customerTimelineSection.match(/detail-readiness-check is-passed/g) || []).length;
+                const missingSegments = (customerTimelineSection.match(/detail-readiness-check is-missing/g) || []).length;
                 if (readySegments !== 2) {{
-                  throw new Error("Engineer thread header should render two ready readiness segments when conclusion and next step are present.");
+                  throw new Error("Internal Review should render two passing checks when conclusion and next step are present.");
                 }}
                 if (missingSegments !== 1) {{
-                  throw new Error("Engineer thread header should render one missing readiness segment when proof is absent.");
+                  throw new Error("Internal Review should render one missing check when proof is absent.");
                 }}
-                if ((engineerThreadSection.match(/detail-readiness-summary-dot/g) || []).length !== 3) {{
-                  throw new Error("Each readiness segment should render a status dot.");
+                if ((customerTimelineSection.match(/detail-readiness-check-dot/g) || []).length !== 3) {{
+                  throw new Error("Each readiness check should render a status dot.");
                 }}
-                if (engineerThreadSection.includes("The audience may not be able to decode the current video stream.")) {{
-                  throw new Error("Engineer thread header should no longer render the conclusion summary text.");
+                if (!customerTimelineSection.includes("The audience may not be able to decode the current video stream.")) {{
+                  throw new Error("Internal Review should render the conclusion summary.");
                 }}
-                if (engineerThreadSection.includes("Proof still missing.")) {{
-                  throw new Error("Engineer thread header should no longer render proof fallback copy.");
+                if (!customerTimelineSection.includes("Proof still missing.")) {{
+                  throw new Error("Internal Review should render proof fallback copy when proof summary is missing.");
                 }}
-                if (engineerThreadSection.includes("Ask the engineer to provide the log evidence or reproduction result before replying.")) {{
-                  throw new Error("Engineer thread header should no longer render next-step summary text.");
+                if (!customerTimelineSection.includes("Ask the engineer to provide the log evidence or reproduction result before replying.")) {{
+                  throw new Error("Internal Review should render the next-step summary.");
                 }}
-                if (customerTimelineSection.includes('class="detail-readiness-summary"')) {{
-                  throw new Error("Customer timeline sidebar should no longer render readiness summary content.");
-                }}
-                if (customerTimelineSection.includes("The audience may not be able to decode the current video stream.")) {{
-                  throw new Error("Customer timeline sidebar should only show customer timeline content.");
+                if (customerTimelineSection.includes("Proof Anchors")) {{
+                  throw new Error("Internal Review should not surface proof anchors in the restored sidebar layout.");
                 }}
               """
             )
         )
 
-    def test_engineer_detail_readiness_summary_renders_missing_state_without_copy(self) -> None:
+    def test_engineer_detail_internal_review_renders_missing_state_with_fallback_copy(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
                 """
@@ -1419,33 +1403,43 @@ class EngineerUiContractTests(unittest.TestCase):
                 const engineerIndex = html.indexOf("Engineer Ticket Thread");
                 const customerIndex = html.indexOf("Customer Timeline");
                 const engineerThreadSection = html.slice(engineerIndex, customerIndex);
+                const customerTimelineSection = html.slice(customerIndex);
 
-                if ((engineerThreadSection.match(/detail-readiness-summary-bubble/g) || []).length !== 1) {{
-                  throw new Error("Engineer thread header should still render one readiness bubble when all values are missing.");
+                if (engineerThreadSection.includes('class="detail-readiness-summary"')) {{
+                  throw new Error("Engineer thread header should stop rendering readiness summary cards.");
                 }}
-                if ((engineerThreadSection.match(/detail-readiness-summary-segment is-missing/g) || []).length !== 3) {{
-                  throw new Error("All readiness segments should render as missing when every readiness boolean is false.");
+                if (!customerTimelineSection.includes("Internal Review")) {{
+                  throw new Error("Internal Review should still render when all readiness values are missing.");
                 }}
-                if (engineerThreadSection.includes("Conclusion not extracted yet.")) {{
-                  throw new Error("Conclusion card should not render fallback body copy.");
+                if ((customerTimelineSection.match(/detail-readiness-check is-missing/g) || []).length !== 3) {{
+                  throw new Error("All readiness checks should render as missing when every readiness boolean is false.");
                 }}
-                if (engineerThreadSection.includes("Proof still missing.")) {{
-                  throw new Error("Proof card should not render fallback body copy.");
+                if (!customerTimelineSection.includes("Conclusion not extracted yet.")) {{
+                  throw new Error("Internal Review should render the conclusion fallback copy.");
                 }}
-                if (engineerThreadSection.includes("No actionable next step captured yet.")) {{
-                  throw new Error("Next-step card should not render fallback body copy.");
+                if (!customerTimelineSection.includes("Proof still missing.")) {{
+                  throw new Error("Internal Review should render the proof fallback copy.");
                 }}
-                if (html.includes("logs://alpha")) {{
-                  throw new Error("Engineer detail should not surface proof anchors after the relayout.");
+                if (!customerTimelineSection.includes("No actionable next step captured yet.")) {{
+                  throw new Error("Internal Review should render the next-step fallback copy.");
                 }}
-                if (html.includes("The engineer reply did not provide enough detail.")) {{
-                  throw new Error("Engineer detail should not surface critique copy after the relayout.");
+                if (!customerTimelineSection.includes("Current Blockers")) {{
+                  throw new Error("Internal Review should render blockers when they are present.");
+                }}
+                if (!customerTimelineSection.includes("Critique")) {{
+                  throw new Error("Internal Review should render critique when it is present.");
+                }}
+                if (!customerTimelineSection.includes("The engineer reply did not provide enough detail.")) {{
+                  throw new Error("Internal Review should render the critique body.");
+                }}
+                if (customerTimelineSection.includes("logs://alpha")) {{
+                  throw new Error("Internal Review should not surface proof anchors in the restored sidebar layout.");
                 }}
               """
             )
         )
 
-    def test_engineer_detail_readiness_summary_defaults_to_missing_when_readiness_is_absent(self) -> None:
+    def test_engineer_detail_internal_review_defaults_to_missing_when_readiness_is_absent(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
                 """
@@ -1479,15 +1473,25 @@ class EngineerUiContractTests(unittest.TestCase):
                 const engineerIndex = html.indexOf("Engineer Ticket Thread");
                 const customerIndex = html.indexOf("Customer Timeline");
                 const engineerThreadSection = html.slice(engineerIndex, customerIndex);
+                const customerTimelineSection = html.slice(customerIndex);
 
-                if (!engineerThreadSection.includes('class="detail-readiness-summary"')) {{
-                  throw new Error("Engineer thread header should still render readiness cards when readiness data is absent.");
+                if (engineerThreadSection.includes('class="detail-readiness-summary"')) {{
+                  throw new Error("Engineer thread header should not render readiness cards when the review lives in the sidebar.");
                 }}
-                if ((engineerThreadSection.match(/detail-readiness-summary-bubble/g) || []).length !== 1) {{
-                  throw new Error("Engineer thread header should render one readiness bubble when readiness data is absent.");
+                if (!customerTimelineSection.includes("Internal Review")) {{
+                  throw new Error("Internal Review should still render when readiness data is absent.");
                 }}
-                if ((engineerThreadSection.match(/detail-readiness-summary-segment is-missing/g) || []).length !== 3) {{
-                  throw new Error("Absent readiness data should default all three readiness segments to missing.");
+                if ((customerTimelineSection.match(/detail-readiness-check is-missing/g) || []).length !== 3) {{
+                  throw new Error("Absent readiness data should default all three readiness checks to missing.");
+                }}
+                if (!customerTimelineSection.includes("Conclusion not extracted yet.")) {{
+                  throw new Error("Absent readiness data should default the conclusion field copy.");
+                }}
+                if (!customerTimelineSection.includes("Proof still missing.")) {{
+                  throw new Error("Absent readiness data should default the proof field copy.");
+                }}
+                if (!customerTimelineSection.includes("No actionable next step captured yet.")) {{
+                  throw new Error("Absent readiness data should default the next-step field copy.");
                 }}
               """
             )
