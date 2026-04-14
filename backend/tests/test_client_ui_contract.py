@@ -1341,6 +1341,209 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_client_realtime_ready_keeps_visible_ack_until_durable_reply_syncs(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+                render = () => {};
+
+                let lastSocket = null;
+                WebSocket = function WebSocket() {
+                  lastSocket = this;
+                  this.readyState = 1;
+                  this.close = () => {};
+                  this.send = () => {};
+                };
+                WebSocket.OPEN = 1;
+
+                const ticket = createTicket(state.user.id);
+                updateTicketProduct(ticket.id, "audio_video_calling");
+                saveTicketMessages(ticket.id, [
+                  {
+                    id: "msg-user-1",
+                    role: "user",
+                    content: "how to join channel",
+                    createdAt: "2026-04-05T04:00:00.000Z",
+                  },
+                ]);
+
+                state.view = "chat-ticket";
+                state.activeTicketId = ticket.id;
+                state.isSending = true;
+                state.pendingTicketId = ticket.id;
+                state.pendingUserMessageId = "msg-user-1";
+                state.pendingAsyncTicketId = ticket.id;
+                state.pendingAsyncMessageCreatedAt = "2026-04-05T04:00:00.000Z";
+                setTransientClientAck(ticket.id, "I got your message and I am checking it now.", {
+                  source: "client_model",
+                });
+
+                let syncCalls = 0;
+                syncTicketsFromBackend = async () => {
+                  syncCalls += 1;
+                  if (syncCalls === 1) {
+                    saveTicketMessages(ticket.id, [
+                      {
+                        id: "msg-user-1",
+                        role: "user",
+                        content: "how to join channel",
+                        createdAt: "2026-04-05T04:00:00.000Z",
+                      },
+                    ]);
+                    return;
+                  }
+                  saveTicketMessages(ticket.id, [
+                    {
+                      id: "msg-user-1",
+                      role: "user",
+                      content: "how to join channel",
+                      createdAt: "2026-04-05T04:00:00.000Z",
+                    },
+                    {
+                      id: "msg-assistant-1",
+                      role: "assistant",
+                      content: "Use joinChannel with the same channel name and token.",
+                      createdAt: "2026-04-05T04:00:05.000Z",
+                    },
+                  ]);
+                };
+
+                const initialHtml = renderChatTicket();
+                if (!initialHtml.includes("I got your message and I am checking it now.")) {
+                  throw new Error("Expected the visible stage-1 ack before the realtime ready event.");
+                }
+
+                setupClientRealtimeConnection();
+                if (!lastSocket || typeof lastSocket.onmessage !== "function") {
+                  throw new Error("Expected realtime connection setup to register an onmessage handler.");
+                }
+
+                await lastSocket.onmessage({
+                  data: JSON.stringify({
+                    event: "ticket_ai_response_ready",
+                    ticket_id: ticket.id,
+                    customer_id: state.user.id,
+                  }),
+                });
+
+                if (!state.isSending || state.pendingAsyncTicketId !== ticket.id) {
+                  throw new Error("Ready event without a durable reply should keep the async waiting state active.");
+                }
+                if (!getTransientClientAck(ticket.id)) {
+                  throw new Error("Visible stage-1 ack should stay mounted until the durable reply is actually available.");
+                }
+                const waitingHtml = renderChatTicket();
+                if (!waitingHtml.includes("I got your message and I am checking it now.")) {
+                  throw new Error("Ready event should not create a blank chat gap before the durable reply renders.");
+                }
+                if (!waitingHtml.includes("AI is cross-referencing system health logs")) {
+                  throw new Error("Waiting indicator should remain visible while the durable reply is still missing.");
+                }
+                if (!waitingHtml.includes("checking the knowledge base... click stop to interrupt.")) {
+                  throw new Error("Composer waiting note should remain visible while the durable reply is still missing.");
+                }
+                if (waitingHtml.includes("Use joinChannel with the same channel name and token.")) {
+                  throw new Error("First ready event should not invent a durable reply before backend sync has it.");
+                }
+
+                await lastSocket.onmessage({
+                  data: JSON.stringify({
+                    event: "ticket_ai_response_ready",
+                    ticket_id: ticket.id,
+                    customer_id: state.user.id,
+                  }),
+                });
+
+                if (state.isSending || state.pendingAsyncTicketId) {
+                  throw new Error("Pending async state should clear once the durable reply is actually available.");
+                }
+                if (getTransientClientAck(ticket.id)) {
+                  throw new Error("Transient ack should disappear after the durable reply becomes renderable.");
+                }
+                const resolvedHtml = renderChatTicket();
+                if (!resolvedHtml.includes("Use joinChannel with the same channel name and token.")) {
+                  throw new Error("Durable reply should render after the sync that finally includes it.");
+                }
+                if (resolvedHtml.includes("I got your message and I am checking it now.")) {
+                  throw new Error("Stage-1 ack should disappear after the durable reply takes over.");
+                }
+              """
+            )
+        )
+
+    def test_client_realtime_generation_stopped_clears_visible_ack_without_leaving_it_stuck(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+                render = () => {};
+
+                let lastSocket = null;
+                WebSocket = function WebSocket() {
+                  lastSocket = this;
+                  this.readyState = 1;
+                  this.close = () => {};
+                  this.send = () => {};
+                };
+                WebSocket.OPEN = 1;
+
+                const ticket = createTicket(state.user.id);
+                updateTicketProduct(ticket.id, "audio_video_calling");
+                saveTicketMessages(ticket.id, [
+                  {
+                    id: "msg-user-1",
+                    role: "user",
+                    content: "how to join channel",
+                    createdAt: "2026-04-05T04:00:00.000Z",
+                  },
+                ]);
+
+                state.view = "chat-ticket";
+                state.activeTicketId = ticket.id;
+                state.isSending = true;
+                state.pendingTicketId = ticket.id;
+                state.pendingUserMessageId = "msg-user-1";
+                state.pendingAsyncTicketId = ticket.id;
+                state.pendingAsyncMessageCreatedAt = "2026-04-05T04:00:00.000Z";
+                setTransientClientAck(ticket.id, "I got your message and I am checking it now.", {
+                  source: "client_model",
+                });
+
+                syncTicketsFromBackend = async () => {};
+
+                setupClientRealtimeConnection();
+                if (!lastSocket || typeof lastSocket.onmessage !== "function") {
+                  throw new Error("Expected realtime connection setup to register an onmessage handler.");
+                }
+
+                await lastSocket.onmessage({
+                  data: JSON.stringify({
+                    event: "ticket_ai_generation_stopped",
+                    ticket_id: ticket.id,
+                    customer_id: state.user.id,
+                  }),
+                });
+
+                if (state.isSending || state.pendingAsyncTicketId || state.pendingTicketId) {
+                  throw new Error("Generation stopped should clear the pending async request state.");
+                }
+                if (getTransientClientAck(ticket.id)) {
+                  throw new Error("Generation stopped should clear the visible stage-1 ack.");
+                }
+                const html = renderChatTicket();
+                if (html.includes("I got your message and I am checking it now.")) {
+                  throw new Error("Generation stopped should not leave the reassurance bubble stuck in the transcript.");
+                }
+                if (html.includes("AI is cross-referencing system health logs")) {
+                  throw new Error("Generation stopped should remove the waiting indicator.");
+                }
+              """
+            )
+        )
+
     def test_client_chat_hides_legacy_assistant_reassurance_when_a_later_reply_exists(self) -> None:
         self.run_client_app_script(
             textwrap.dedent(

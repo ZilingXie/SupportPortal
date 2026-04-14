@@ -703,6 +703,30 @@ function isTicketAwaitingDurableReply(ticket) {
   return isTicketSending(ticket?.id) && !ticketHasAssistantReply(ticket);
 }
 
+function reconcilePendingAsyncStateAfterSync(options = {}) {
+  const currentPendingTicketId = String(state.pendingAsyncTicketId || "").trim();
+  const normalizedTicketId = String(options?.ticketId || currentPendingTicketId || "").trim();
+  if (!normalizedTicketId) {
+    return false;
+  }
+  if (currentPendingTicketId && currentPendingTicketId !== normalizedTicketId) {
+    return false;
+  }
+
+  const eventName = String(options?.eventName || "").trim().toLowerCase();
+  if (eventName === "ticket_ai_generation_stopped") {
+    clearPendingRequestState();
+    return true;
+  }
+
+  const pendingTicket = getTicketById(normalizedTicketId);
+  if (!pendingTicket || ticketHasAssistantReply(pendingTicket)) {
+    clearPendingRequestState();
+    return true;
+  }
+  return false;
+}
+
 function ensurePendingStatusPolling() {
   if (
     pendingStatusPollTimer ||
@@ -721,10 +745,7 @@ function ensurePendingStatusPolling() {
 
     syncTicketsFromBackend({ silent: true })
       .then(() => {
-        const pendingTicket = getTicketById(state.pendingAsyncTicketId);
-        if (!pendingTicket || ticketHasAssistantReply(pendingTicket)) {
-          clearPendingRequestState();
-        }
+        reconcilePendingAsyncStateAfterSync({ ticketId: state.pendingAsyncTicketId });
         render();
       })
       .catch(() => {
@@ -790,7 +811,12 @@ function setupClientRealtimeConnection() {
       eventTicketId === state.pendingAsyncTicketId &&
       (eventName === "ticket_ai_response_ready" || eventName === "ticket_ai_generation_stopped")
     ) {
-      clearPendingRequestState();
+      await syncTicketsFromBackend({ silent: true });
+      reconcilePendingAsyncStateAfterSync({ ticketId: eventTicketId, eventName });
+      if (state.user) {
+        render();
+      }
+      return;
     }
     await syncTicketsFromBackend({ silent: true });
     if (state.user) {
