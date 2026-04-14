@@ -1544,6 +1544,244 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_client_sync_preserves_pending_follow_up_customer_message_until_backend_catches_up(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+                render = () => {};
+                requestChatScrollToBottom = () => {};
+                ensurePendingStatusPolling = () => {};
+                AbortController = class AbortController {
+                  constructor() {
+                    this.signal = { aborted: false };
+                  }
+                  abort() {
+                    this.signal.aborted = true;
+                  }
+                };
+
+                const ticket = createTicket(state.user.id);
+                updateTicketProduct(ticket.id, "audio_video_calling");
+                updateTicketTitle(ticket.id, "how to join channel");
+                updateTicketStatus(ticket.id, "communicating");
+                saveTicketMessages(ticket.id, [
+                  {
+                    id: "msg-user-1",
+                    role: "user",
+                    content: "how to join channel",
+                    createdAt: "2026-04-05T04:00:00.000Z",
+                  },
+                  {
+                    id: "msg-assistant-1",
+                    role: "assistant",
+                    content: "Use joinChannel with the same channel name and token.",
+                    createdAt: "2026-04-05T04:00:05.000Z",
+                  },
+                ]);
+
+                state.view = "chat-ticket";
+                state.activeTicketId = ticket.id;
+
+                let ticketSyncCallCount = 0;
+                fetch = (url, options = undefined) => {
+                  if (url === "/api/client/ack") {
+                    return new Promise(() => {});
+                  }
+                  if (url === "/api/tickets/query") {
+                    return Promise.resolve({
+                      ok: true,
+                      json: async () => ({
+                        ticket_id: ticket.id,
+                        answer: "",
+                        ai_replied: false,
+                        queued_for_ai: true,
+                        queued_message_created_at: "2026-04-05T04:01:00.000Z",
+                        ack_source: "client_model",
+                        processing_mode: "main_agent_async",
+                        status: "communicating",
+                      }),
+                    });
+                  }
+                  if (url === `/api/tickets?customer_id=${encodeURIComponent(state.user.id)}&status=all`) {
+                    ticketSyncCallCount += 1;
+                    if (ticketSyncCallCount === 1) {
+                      return Promise.resolve({
+                        ok: true,
+                        json: async () => ({
+                          tickets: [
+                            {
+                              ticket_id: ticket.id,
+                              customer_id: state.user.id,
+                              subject: "how to join channel",
+                              status: "communicating",
+                              product: "audio_video_calling",
+                              created_at: "2026-04-05T04:00:00.000Z",
+                              updated_at: "2026-04-05T04:00:05.000Z",
+                              messages: [
+                                {
+                                  role: "customer",
+                                  content: "how to join channel",
+                                  created_at: "2026-04-05T04:00:00.000Z",
+                                },
+                                {
+                                  role: "assistant",
+                                  content: "Use joinChannel with the same channel name and token.",
+                                  created_at: "2026-04-05T04:00:05.000Z",
+                                },
+                              ],
+                            },
+                          ],
+                        }),
+                      });
+                    }
+                    if (ticketSyncCallCount === 2) {
+                      return Promise.resolve({
+                        ok: true,
+                        json: async () => ({
+                          tickets: [
+                            {
+                              ticket_id: ticket.id,
+                              customer_id: state.user.id,
+                              subject: "how to join channel",
+                              status: "communicating",
+                              product: "audio_video_calling",
+                              created_at: "2026-04-05T04:00:00.000Z",
+                              updated_at: "2026-04-05T04:01:00.000Z",
+                              messages: [
+                                {
+                                  role: "customer",
+                                  content: "how to join channel",
+                                  created_at: "2026-04-05T04:00:00.000Z",
+                                },
+                                {
+                                  role: "assistant",
+                                  content: "Use joinChannel with the same channel name and token.",
+                                  created_at: "2026-04-05T04:00:05.000Z",
+                                },
+                                {
+                                  role: "customer",
+                                  content: "what about token renewal",
+                                  created_at: "2026-04-05T04:01:00.000Z",
+                                },
+                              ],
+                            },
+                          ],
+                        }),
+                      });
+                    }
+                    return Promise.resolve({
+                      ok: true,
+                      json: async () => ({
+                        tickets: [
+                          {
+                            ticket_id: ticket.id,
+                            customer_id: state.user.id,
+                            subject: "how to join channel",
+                            status: "communicating",
+                            product: "audio_video_calling",
+                            created_at: "2026-04-05T04:00:00.000Z",
+                            updated_at: "2026-04-05T04:01:05.000Z",
+                            messages: [
+                              {
+                                role: "customer",
+                                content: "how to join channel",
+                                created_at: "2026-04-05T04:00:00.000Z",
+                              },
+                              {
+                                role: "assistant",
+                                content: "Use joinChannel with the same channel name and token.",
+                                created_at: "2026-04-05T04:00:05.000Z",
+                              },
+                              {
+                                role: "customer",
+                                content: "what about token renewal",
+                                created_at: "2026-04-05T04:01:00.000Z",
+                              },
+                              {
+                                role: "assistant",
+                                content: "Check the token expiry callback and renewal timing.",
+                                created_at: "2026-04-05T04:01:05.000Z",
+                              },
+                            ],
+                          },
+                        ],
+                      }),
+                    });
+                  }
+                  throw new Error(`Unexpected fetch call to ${url}`);
+                };
+
+                await handleSendMessage("what about token renewal");
+
+                const afterStaleSync = getTicketById(ticket.id);
+                if (!afterStaleSync) {
+                  throw new Error("Expected ticket to remain available after the stale sync.");
+                }
+                const staleFollowUps = afterStaleSync.messages.filter(
+                  (message) => message.role === "user" && message.content === "what about token renewal"
+                );
+                if (staleFollowUps.length !== 1) {
+                  throw new Error("Stale sync should preserve the just-sent follow-up customer message.");
+                }
+                if (ticketHasAssistantReply(afterStaleSync)) {
+                  throw new Error("Stale sync should still treat the newest follow-up customer turn as pending.");
+                }
+                const staleHtml = renderChatTicket();
+                if (!staleHtml.includes("what about token renewal")) {
+                  throw new Error("The just-sent follow-up should stay visible after a stale sync response.");
+                }
+                if (staleHtml.includes("Check the token expiry callback and renewal timing.")) {
+                  throw new Error("Stale sync should not invent the final assistant reply.");
+                }
+
+                await syncTicketsFromBackend({ silent: true });
+
+                const afterCatchUpSync = getTicketById(ticket.id);
+                const catchUpFollowUps = afterCatchUpSync.messages.filter(
+                  (message) => message.role === "user" && message.content === "what about token renewal"
+                );
+                if (catchUpFollowUps.length !== 1) {
+                  throw new Error("Backend catch-up sync should replace the optimistic customer turn without duplicating it.");
+                }
+                if (catchUpFollowUps[0].createdAt !== "2026-04-05T04:01:00.000Z") {
+                  throw new Error("Once backend catches up, the persisted customer timestamp should become canonical.");
+                }
+                const catchUpHtml = renderChatTicket();
+                if (!catchUpHtml.includes("what about token renewal")) {
+                  throw new Error("Backend catch-up sync should keep the follow-up customer message visible.");
+                }
+
+                await syncTicketsFromBackend({ silent: true });
+
+                const afterFinalSync = getTicketById(ticket.id);
+                const finalFollowUps = afterFinalSync.messages.filter(
+                  (message) => message.role === "user" && message.content === "what about token renewal"
+                );
+                if (finalFollowUps.length !== 1) {
+                  throw new Error("Final sync should still show only one copy of the follow-up customer message.");
+                }
+                if (
+                  !afterFinalSync.messages.some(
+                    (message) =>
+                      message.role === "assistant" &&
+                      message.content === "Check the token expiry callback and renewal timing."
+                  )
+                ) {
+                  throw new Error("Final sync should render the durable assistant reply.");
+                }
+                const finalHtml = renderChatTicket();
+                if (!finalHtml.includes("what about token renewal")) {
+                  throw new Error("The follow-up customer message should remain visible alongside the final reply.");
+                }
+                if (!finalHtml.includes("Check the token expiry callback and renewal timing.")) {
+                  throw new Error("The final durable assistant reply should render after backend catch-up.");
+                }
+              """
+            )
+        )
+
     def test_client_chat_hides_legacy_assistant_reassurance_when_a_later_reply_exists(self) -> None:
         self.run_client_app_script(
             textwrap.dedent(
