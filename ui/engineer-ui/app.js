@@ -905,119 +905,41 @@ function getInvestigationApprovalUiState(ticket, activeInvestigation, investigat
   };
 }
 
-function renderReplyReadinessReviewHtml(ticket, activeInvestigation) {
+function renderReplyReadinessSummaryHtml(ticket, activeInvestigation) {
   const replyReadiness = getReplyReadiness(ticket);
   if (!activeInvestigation || !replyReadiness) {
     return "";
   }
 
-  const blockers = Array.isArray(replyReadiness.blockers)
-    ? replyReadiness.blockers.map((item) => String(item || "").trim()).filter(Boolean)
-    : [];
-  const proofAnchors = Array.isArray(replyReadiness.proof_anchors)
-    ? replyReadiness.proof_anchors.map((item) => String(item || "").trim()).filter(Boolean)
-    : [];
-  const conclusionSummary = String(replyReadiness.conclusion_summary || "").trim();
-  const proofSummary = String(replyReadiness.proof_summary || "").trim();
-  const solutionSummary = String(replyReadiness.solution_or_next_step || "").trim();
-  const critique = String(replyReadiness.critique || "").trim();
-  const checks = [
+  const summaryItems = [
     {
       label: "Conclusion",
-      passed: replyReadiness.has_conclusion === true,
+      value: String(replyReadiness.conclusion_summary || "").trim() || "Conclusion not extracted yet.",
     },
     {
       label: "Proof",
-      passed: replyReadiness.has_proof === true,
+      value: String(replyReadiness.proof_summary || "").trim() || "Proof still missing.",
     },
     {
       label: "Solution / Next Step",
-      passed: replyReadiness.has_solution_or_next_step === true,
+      value:
+        String(replyReadiness.solution_or_next_step || "").trim() || "No actionable next step captured yet.",
     },
   ];
 
   return `
-    <section class="panel-card detail-readiness-review">
-      <div class="panel-card-head">
-        <div>
-          <p class="panel-card-kicker">Internal Review</p>
-          <h3 class="panel-card-title">Readiness Review</h3>
-        </div>
-        <span class="detail-readiness-pill ${
-          replyReadiness.ready_for_customer_reply === true ? "is-ready" : "is-blocked"
-        }">
-          ${replyReadiness.ready_for_customer_reply === true ? "Validated" : "Needs Follow-up"}
-        </span>
-      </div>
-      <div class="detail-readiness-checks" aria-label="Reply readiness checks">
-        ${checks
-          .map(
-            (item) => `
-              <div class="detail-readiness-check ${item.passed ? "is-passed" : "is-missing"}">
-                <span class="detail-readiness-check-dot" aria-hidden="true"></span>
-                <span>${escapeHtml(item.label)}</span>
-              </div>
-            `
-          )
-          .join("")}
-      </div>
-      <div class="detail-readiness-fields">
-        <div class="detail-readiness-field">
-          <p class="detail-readiness-field-label">Conclusion</p>
-          <p class="detail-readiness-field-value">${formatMultiline(
-            conclusionSummary || "Conclusion not extracted yet."
-          )}</p>
-        </div>
-        <div class="detail-readiness-field">
-          <p class="detail-readiness-field-label">Proof</p>
-          <p class="detail-readiness-field-value">${formatMultiline(
-            proofSummary || "Proof still missing."
-          )}</p>
-        </div>
-        <div class="detail-readiness-field">
-          <p class="detail-readiness-field-label">Solution / Next Step</p>
-          <p class="detail-readiness-field-value">${formatMultiline(
-            solutionSummary || "No actionable next step captured yet."
-          )}</p>
-        </div>
-      </div>
-      ${
-        proofAnchors.length
-          ? `
-        <div class="detail-readiness-field">
-          <p class="detail-readiness-field-label">Proof Anchors</p>
-          <div class="detail-readiness-anchor-list">
-            ${proofAnchors
-              .map((anchor) => `<span class="detail-readiness-anchor">${escapeHtml(anchor)}</span>`)
-              .join("")}
-          </div>
-        </div>
-      `
-          : ""
-      }
-      ${
-        blockers.length
-          ? `
-        <div class="detail-readiness-alert">
-          <p class="detail-readiness-field-label">Current Blockers</p>
-          <ul class="detail-readiness-list">
-            ${blockers.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
-          </ul>
-        </div>
-      `
-          : ""
-      }
-      ${
-        critique
-          ? `
-        <div class="detail-readiness-alert detail-readiness-alert-critique">
-          <p class="detail-readiness-field-label">Critique</p>
-          <p class="detail-readiness-field-value">${formatMultiline(critique)}</p>
-        </div>
-      `
-          : ""
-      }
-    </section>
+    <div class="detail-readiness-summary" aria-label="Reply readiness summary">
+      ${summaryItems
+        .map(
+          (item) => `
+            <article class="detail-readiness-summary-card">
+              <p class="detail-readiness-summary-label">${escapeHtml(item.label)}</p>
+              <p class="detail-readiness-summary-value">${formatMultiline(item.value)}</p>
+            </article>
+          `
+        )
+        .join("")}
+    </div>
   `;
 }
 
@@ -2193,7 +2115,7 @@ function buildTicketDetailViewState() {
     approvalUiState,
     openingCaseBuddyMessageIndex,
     structuredCaseBuddySections,
-    replyReadinessReviewHtml: renderReplyReadinessReviewHtml(ticket, activeInvestigation),
+    replyReadinessSummaryHtml: renderReplyReadinessSummaryHtml(ticket, activeInvestigation),
     showInlineConfirmation: approvalUiState.showApprovalBlock,
     showInvestigationComposer: Boolean(activeInvestigation),
     draftCustomerReply: String(displayInvestigation?.draft_customer_reply || "").trim(),
@@ -2247,8 +2169,8 @@ function renderTicketDetailHeaderHtml(viewState) {
 
 function renderTicketDetailConversationStaticHtml(viewState) {
   return `
-    <div class="panel-card-head">
-      <div>
+    <div class="panel-card-head detail-thread-head">
+      <div class="detail-thread-head-copy">
         <p class="panel-card-kicker">Engineer Ticket</p>
         <h3 class="panel-card-title">Engineer Ticket Thread</h3>
         ${
@@ -2259,6 +2181,7 @@ function renderTicketDetailConversationStaticHtml(viewState) {
             : ""
         }
       </div>
+      ${viewState.replyReadinessSummaryHtml}
     </div>
     ${
       viewState.investigationMessages.length
@@ -2309,8 +2232,6 @@ function renderTicketDetailInsightPanelHtml(viewState) {
       </div>
       ${renderConversationHtml(viewState.messages)}
     </section>
-
-    ${viewState.replyReadinessReviewHtml}
   `;
 }
 
