@@ -882,6 +882,27 @@ For each new entry, record:
   - `git diff --check`
 
 - Date: 2026-04-14
+- Area or subsystem: Engineer investigation reply gate
+- Prompt or model version: `engineer-investigation-reply-v4`
+- Summary: Relaxed the engineer investigation gate so symptom-level customer replies can move to approval when there is verifiable proof plus a concrete next step, even if the engineer did not provide an explicit conclusion.
+- Reason: The previous gate treated `conclusion` as a universal hard blocker, which kept symptom-level workaround replies in `active` even when the evidence and customer-safe action were already sufficient.
+- Affected files or config:
+  - `backend/services/prompts/engineer_investigation_reply.py`
+  - `backend/services/engineer_agent.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - `proof + next step` is now enough to approve a symptom-level customer draft when the proof anchors are verifiable and the wording stays conservative.
+  - Missing `conclusion` no longer blocks symptom-level approval by itself.
+  - Root-cause replies still require explicit, defensible conclusion wording and will fail closed if a no-conclusion draft overstates the root cause.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_investigation_flow.py backend/tests/test_prompt_modules.py`
+  - `python3 -m py_compile backend/services/engineer_agent.py backend/services/prompts/engineer_investigation_reply.py backend/tests/test_investigation_flow.py backend/tests/test_prompt_modules.py`
+  - `git diff --check`
+  - `python3 /Users/xieziling/.codex/skills/supportportal-run-report/scripts/run_supportportal_run_report.py`
+
+- Date: 2026-04-14
 - Area or subsystem: Engineer investigation reply gating
 - Prompt or model version: `engineer-investigation-reply-v3`
 - Summary: Relaxed the engineer investigation reply gate so verified symptom-level evidence plus a conservative workaround can move to approval, while still rejecting customer drafts that overstate an unconfirmed root cause.

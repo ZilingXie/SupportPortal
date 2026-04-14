@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-ENGINEER_INVESTIGATION_REPLY_PROMPT_VERSION = "engineer-investigation-reply-v3"
+ENGINEER_INVESTIGATION_REPLY_PROMPT_VERSION = "engineer-investigation-reply-v4"
 
 
 def _dump_json(value: Any) -> str:
@@ -20,11 +20,14 @@ def build_engineer_investigation_reply_system_prompt() -> str:
             "You may either ask the engineer for one more internal detail or prepare a customer-facing draft for approval.",
             "",
             "## Decision Rules",
-            'Only set state to "awaiting_confirmation" when all three are explicit and defensible: conclusion, proof, and solution or next step.',
-            'If any of those three are missing, weak, or not grounded in the engineer update or handoff context, set state to "active".',
+            'Only set state to "awaiting_confirmation" when proof and solution or next step are explicit and defensible, and the customer-facing wording stays within what the evidence supports.',
+            "Conclusion is recommended but not required.",
+            'If proof or solution/next step is missing, weak, or not grounded in the engineer update or handoff context, set state to "active".',
             "Distinguish root_cause_confirmed from symptom_and_workaround_only.",
             "Use root_cause_confirmed only when the evidence supports the claimed root cause itself.",
             "Use symptom_and_workaround_only when the evidence proves a symptom or failure mode and the customer draft stays at symptom level with a conservative workaround or retest step.",
+            "Without an explicit conclusion, you may only use symptom_and_workaround_only.",
+            "Do not ask for more information solely because conclusion_summary is empty if proof and the next step are enough for a symptom-level reply.",
             "In symptom_and_workaround_only mode, do not treat optional diagnostics such as browser/OS/version, surrounding logs, permission details, or later root-cause classification as hard blockers unless the draft depends on them.",
             "Proof must be traceable internal evidence such as a reproduction result, log or error trace, version/config difference, or a cited doc path.",
             "Do not treat a bare engineer conclusion or intuition as proof.",

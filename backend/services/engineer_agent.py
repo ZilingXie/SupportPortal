@@ -289,15 +289,12 @@ def _normalize_reply_readiness(
 
     reply_scope = raw_scope
     if not reply_scope:
-        reply_scope = (
-            _REPLY_SCOPE_ROOT_CAUSE_CONFIRMED
-            if has_conclusion
-            and has_proof
-            and has_solution_or_next_step
-            and not blockers
-            and bool(raw.get("ready_for_customer_reply"))
-            else _REPLY_SCOPE_NEEDS_MORE_EVIDENCE
-        )
+        if has_proof and has_solution_or_next_step and not blockers and bool(raw.get("ready_for_customer_reply")):
+            reply_scope = (
+                _REPLY_SCOPE_ROOT_CAUSE_CONFIRMED if has_conclusion else _REPLY_SCOPE_SYMPTOM_AND_WORKAROUND_ONLY
+            )
+        else:
+            reply_scope = _REPLY_SCOPE_NEEDS_MORE_EVIDENCE
 
     if reply_scope == _REPLY_SCOPE_SYMPTOM_AND_WORKAROUND_ONLY:
         hard_blockers: list[str] = []
@@ -308,8 +305,6 @@ def _normalize_reply_readiness(
                 hard_blockers.append(blocker)
         blockers = hard_blockers
 
-    if not has_conclusion:
-        blockers.append("Explicit conclusion is missing.")
     if not has_proof:
         blockers.append(
             "Explicit proof is missing or not verifiable. Add a reproduction result, log/error, config/version difference, or doc path."
@@ -319,12 +314,18 @@ def _normalize_reply_readiness(
     if not has_solution_or_next_step:
         blockers.append("Explicit solution or next step is missing.")
 
-    if (
-        reply_scope == _REPLY_SCOPE_SYMPTOM_AND_WORKAROUND_ONLY
-        and (
-            _contains_strong_root_cause_claim(conclusion_summary)
-            or _contains_strong_root_cause_claim(draft_customer_reply)
+    strong_root_cause_claim = bool(
+        _contains_strong_root_cause_claim(conclusion_summary)
+        or _contains_strong_root_cause_claim(draft_customer_reply)
+    )
+    if not has_conclusion and reply_scope == _REPLY_SCOPE_ROOT_CAUSE_CONFIRMED:
+        blockers.append(
+            "Without an explicit conclusion, the reply must stay at symptom level instead of claiming a confirmed root cause."
         )
+
+    if (
+        (reply_scope == _REPLY_SCOPE_SYMPTOM_AND_WORKAROUND_ONLY and strong_root_cause_claim)
+        or (not has_conclusion and strong_root_cause_claim)
     ):
         blockers.append(
             "Customer-facing wording overstates the root cause. Keep the conclusion and draft at symptom level unless the root cause is confirmed."
@@ -337,10 +338,10 @@ def _normalize_reply_readiness(
         critique = deduped_blockers[0]
 
     ready_for_customer_reply = bool(
-        has_conclusion
-        and has_proof
+        has_proof
         and has_solution_or_next_step
         and reply_scope in {_REPLY_SCOPE_ROOT_CAUSE_CONFIRMED, _REPLY_SCOPE_SYMPTOM_AND_WORKAROUND_ONLY}
+        and (has_conclusion or reply_scope == _REPLY_SCOPE_SYMPTOM_AND_WORKAROUND_ONLY)
         and not deduped_blockers
         and bool(raw.get("ready_for_customer_reply"))
     )
@@ -369,13 +370,17 @@ def _build_reply_readiness_followup_message(
     blockers = _clean_list(reply_readiness.get("blockers"))
     critique = _clean_text(reply_readiness.get("critique"))
     if engineer_thread_language_hint == "zh":
-        details = "；".join(blockers) if blockers else "请补充明确结论、proof，以及 solution 或 next step。"
+        details = (
+            "；".join(blockers)
+            if blockers
+            else "请补充可验证的 proof 和明确的 solution 或 next step；如果根因未确认，请把客户回复保持在症状级。"
+        )
         if critique:
             return f"我还不能整理出可安全发送给客户的回复。请先补充：{details} 当前审阅意见：{critique}"
         return f"我还不能整理出可安全发送给客户的回复。请先补充：{details}"
 
     details = "; ".join(blockers) if blockers else (
-        "explicit conclusion, explicit proof, and an explicit solution or next step"
+        "verifiable proof and an explicit solution or next step; if the root cause is not confirmed, keep the customer-facing wording at symptom level"
     )
     if critique:
         return (
