@@ -1478,6 +1478,11 @@ html.material-symbols-pending .material-symbols-outlined {
   gap: 14px;
 }
 
+.detail-conversation-static {
+  display: grid;
+  gap: 16px;
+}
+
 .tell-ai-composer,
 .takeover-composer {
   display: grid;

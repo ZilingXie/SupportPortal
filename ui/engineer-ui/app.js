@@ -2310,7 +2310,7 @@ function renderTicketDetailViewFromState(viewState) {
           class="panel-card conversation-panel conversation-panel-compact-thread"
           data-detail-section="investigation-panel"
         >
-          <div data-detail-section="investigation-static">
+          <div class="detail-conversation-static" data-detail-section="investigation-static">
             ${renderTicketDetailConversationStaticHtml(viewState)}
           </div>
           <div data-detail-section="investigation-composer-shell">
