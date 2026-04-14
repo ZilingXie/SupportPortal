@@ -146,8 +146,8 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260414-engineer-readiness-single-bubble-1", html)
-        self.assertIn('./app.js?v=20260414-engineer-readiness-single-bubble-1', html)
+        self.assertIn("./styles.css?v=20260414-engineer-approve-submit-hide-1", html)
+        self.assertIn('./app.js?v=20260414-engineer-approve-submit-hide-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
@@ -2571,6 +2571,250 @@ class EngineerUiContractTests(unittest.TestCase):
                 }
                 if (!failedHtml.includes(">Logcat now shows auth timeout before channel join.<")) {
                   throw new Error("Failed sends should re-render the composer with the restored draft.");
+                }
+              """
+            )
+        )
+
+    def test_engineer_detail_approve_action_hides_controls_while_request_is_pending(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                routeState.view = "detail";
+                selectedTicketId = "TK-DETAIL-APPROVE-PENDING";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-APPROVE-PENDING",
+                  subject: "Android 14 token renew regression",
+                  requester: "user-7",
+                  status: "investigating",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: {
+                    id: "INV-DETAIL-APPROVE-PENDING",
+                    state: "awaiting_confirmation",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                    final_confirmation_requested_at: "2026-03-24T09:05:00+00:00",
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-APPROVE-PENDING-m1",
+                        role: "engineer_ai",
+                        content: "I have enough information now. Please confirm this draft before I reply to the customer.",
+                        created_at: "2026-03-24T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  engineer_agent_state: {
+                    phase: "awaiting_confirmation",
+                    ready_to_reply: true,
+                    reply_readiness: {
+                      has_conclusion: true,
+                      has_proof: true,
+                      has_solution_or_next_step: true,
+                      conclusion_summary: "Android 14 with SDK 4.2.1 reproduces the token renew failure.",
+                      proof_summary: "The engineer reproduced the issue on Android 14 with SDK 4.2.1 only.",
+                      proof_anchors: ["Android 14", "SDK 4.2.1"],
+                      solution_or_next_step: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                      blockers: [],
+                      critique: "The current evidence supports the customer-safe SDK upgrade guidance.",
+                      ready_for_customer_reply: true,
+                    },
+                  },
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+                selectedTicketSummary = "Customer-facing answer is drafted and waiting for engineer confirmation.";
+                selectedTicketNextAction = "Approve the prepared reply or ask the AI to revise it.";
+
+                const initialHtml = renderTicketDetailView();
+                if (!initialHtml.includes("Approve Reply")) {
+                  throw new Error("Awaiting-confirmation state should still render the approve button before submission.");
+                }
+                if (!initialHtml.includes('id="detail-investigation-input"')) {
+                  throw new Error("Awaiting-confirmation state should still render the revision composer before submission.");
+                }
+
+                let resolveFetch = null;
+                let capturedUrl = null;
+                let capturedOptions = null;
+                fetchJson = async (url, options = undefined) => {
+                  capturedUrl = url;
+                  capturedOptions = options;
+                  return await new Promise((resolve) => {
+                    resolveFetch = resolve;
+                  });
+                };
+                loadTickets = async () => {};
+                refreshSelectedTicket = async () => {};
+
+                const approveButton = {
+                  dataset: { detailAction: "approve-investigation" },
+                  disabled: false,
+                };
+                const approveTarget = {
+                  closest(selector) {
+                    if (selector === "button[data-detail-action]") {
+                      return approveButton;
+                    }
+                    return null;
+                  },
+                };
+
+                const approvePromise = handleDetailClick({ target: approveTarget });
+                const pendingHtml = workspaceRegionEl.innerHTML;
+                if (capturedUrl !== "/api/engineer/tickets/TK-DETAIL-APPROVE-PENDING/investigation/confirmation") {
+                  throw new Error("Approve should call the investigation confirmation endpoint.");
+                }
+                const parsedBody = JSON.parse(capturedOptions.body);
+                if (parsedBody.decision !== "approve") {
+                  throw new Error("Approve should still submit decision=approve while pending.");
+                }
+                if (pendingHtml.includes("Approve Reply")) {
+                  throw new Error("Pending approve should hide the inline approve button immediately.");
+                }
+                if (pendingHtml.includes('id="detail-investigation-input"')) {
+                  throw new Error("Pending approve should hide the composer immediately.");
+                }
+                if (!pendingHtml.includes("Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.")) {
+                  throw new Error("Pending approve should keep the draft preview visible.");
+                }
+                if (!tellAiSubmitting) {
+                  throw new Error("Pending approve should still mark the UI as submitting.");
+                }
+
+                resolveFetch({
+                  ticket_id: "TK-DETAIL-APPROVE-PENDING",
+                  status: "resolved",
+                  active_investigation: null,
+                  closed_investigation: {
+                    id: "INV-DETAIL-APPROVE-PENDING",
+                    state: "closed",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                    final_confirmation_requested_at: null,
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:11:00+00:00",
+                    closed_at: "2026-03-24T09:11:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-APPROVE-PENDING-m1",
+                        role: "engineer_ai",
+                        content: "I have enough information now. Please confirm this draft before I reply to the customer.",
+                        created_at: "2026-03-24T09:05:00+00:00",
+                      },
+                      {
+                        id: "INV-DETAIL-APPROVE-PENDING-m2",
+                        role: "engineer",
+                        content: "Approved final reply.",
+                        created_at: "2026-03-24T09:11:00+00:00",
+                      },
+                    ],
+                  },
+                  updated_at: "2026-03-24T09:11:00+00:00",
+                });
+                await approvePromise;
+              """
+            )
+        )
+
+    def test_engineer_detail_approve_failure_restores_hidden_controls(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                routeState.view = "detail";
+                selectedTicketId = "TK-DETAIL-APPROVE-FAIL";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-APPROVE-FAIL",
+                  subject: "Android 14 token renew regression",
+                  requester: "user-7",
+                  status: "investigating",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: {
+                    id: "INV-DETAIL-APPROVE-FAIL",
+                    state: "awaiting_confirmation",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                    final_confirmation_requested_at: "2026-03-24T09:05:00+00:00",
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-APPROVE-FAIL-m1",
+                        role: "engineer_ai",
+                        content: "I have enough information now. Please confirm this draft before I reply to the customer.",
+                        created_at: "2026-03-24T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  engineer_agent_state: {
+                    phase: "awaiting_confirmation",
+                    ready_to_reply: true,
+                    reply_readiness: {
+                      has_conclusion: true,
+                      has_proof: true,
+                      has_solution_or_next_step: true,
+                      conclusion_summary: "Android 14 with SDK 4.2.1 reproduces the token renew failure.",
+                      proof_summary: "The engineer reproduced the issue on Android 14 with SDK 4.2.1 only.",
+                      proof_anchors: ["Android 14", "SDK 4.2.1"],
+                      solution_or_next_step: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                      blockers: [],
+                      critique: "The current evidence supports the customer-safe SDK upgrade guidance.",
+                      ready_for_customer_reply: true,
+                    },
+                  },
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+                selectedTicketSummary = "Customer-facing answer is drafted and waiting for engineer confirmation.";
+                selectedTicketNextAction = "Approve the prepared reply or ask the AI to revise it.";
+
+                let alertMessage = null;
+                window.alert = (message) => {
+                  alertMessage = message;
+                };
+                fetchJson = async () => {
+                  throw new Error("Request failed with status 500");
+                };
+                loadTickets = async () => {};
+                refreshSelectedTicket = async () => {};
+
+                const approveButton = {
+                  dataset: { detailAction: "approve-investigation" },
+                  disabled: false,
+                };
+                const approveTarget = {
+                  closest(selector) {
+                    if (selector === "button[data-detail-action]") {
+                      return approveButton;
+                    }
+                    return null;
+                  },
+                };
+
+                await handleDetailClick({ target: approveTarget });
+                const failedHtml = workspaceRegionEl.innerHTML;
+                if (!failedHtml.includes("Approve Reply")) {
+                  throw new Error("Failed approve should restore the approve button.");
+                }
+                if (!failedHtml.includes('id="detail-investigation-input"')) {
+                  throw new Error("Failed approve should restore the composer.");
+                }
+                if (!failedHtml.includes("Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.")) {
+                  throw new Error("Failed approve should keep the draft preview visible.");
+                }
+                if (alertMessage !== "Approve reply failed: Request failed with status 500") {
+                  throw new Error("Failed approve should keep the existing failure alert copy.");
+                }
+                if (tellAiSubmitting) {
+                  throw new Error("Failed approve should clear the submitting lock.");
                 }
               """
             )
