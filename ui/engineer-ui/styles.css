@@ -1480,7 +1480,26 @@ html.material-symbols-pending .material-symbols-outlined {
 
 .detail-conversation-static {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 16px;
+  min-height: 0;
+}
+
+.detail-conversation-thread-body {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 14px;
+  min-height: 0;
+}
+
+.detail-timeline-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.detail-timeline-body {
+  display: grid;
+  min-height: 0;
 }
 
 .tell-ai-composer,
@@ -1549,6 +1568,11 @@ html.material-symbols-pending .material-symbols-outlined {
   max-height: none;
   overflow-y: auto;
   justify-content: flex-start;
+}
+
+.detail-timeline-panel .message-list {
+  min-height: 0;
+  max-height: none;
 }
 
 .message-item {
@@ -2209,6 +2233,34 @@ html.material-symbols-pending .material-symbols-outlined {
 
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+@media (min-width: 1181px) {
+  .workspace-layout {
+    height: clamp(580px, 68vh, 820px);
+  }
+
+  .conversation-panel,
+  .insight-panel {
+    height: 100%;
+    min-height: 0;
+  }
+
+  .insight-panel {
+    grid-template-rows: minmax(0, 1fr) auto;
+    align-content: stretch;
+  }
+
+  .detail-timeline-panel,
+  .detail-timeline-body,
+  .detail-timeline-panel .message-list {
+    height: 100%;
+    min-height: 0;
+  }
+
+  .detail-timeline-panel .message-list {
+    max-height: none;
+  }
 }
 
 @media (max-width: 1180px) {
