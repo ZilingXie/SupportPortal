@@ -2088,6 +2088,23 @@ function renderInvestigationDraftPreviewHtml({ draftCustomerReply }) {
   `;
 }
 
+function renderInvestigationClosingStateHtml() {
+  return `
+    <section
+      class="detail-investigation-closing-state"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <span class="loading-spinner loading-spinner-sm" aria-hidden="true"></span>
+      <div class="detail-investigation-closing-copy">
+        <strong>Approving Reply</strong>
+        <p>Sending the approved customer reply and closing this engineer ticket...</p>
+      </div>
+    </section>
+  `;
+}
+
 function renderInvestigationComposerHtml({ draft, controlsDisabled, reviseMode, approvalMode = false }) {
   const revisionMode = reviseMode || approvalMode;
   const placeholder = revisionMode
@@ -2364,6 +2381,7 @@ function buildTicketDetailViewState() {
   const investigationMessages = mergeInvestigationMessagesWithLocalState(ticketId, durableInvestigationMessages);
   const pendingLocalReply = hasPendingLocalInvestigationReply(ticketId);
   const pendingLocalApproval = hasPendingLocalInvestigationApproval(ticketId);
+  const showApproveInFlightState = pendingLocalApproval;
   const approvalUiState = getInvestigationApprovalUiState(ticket, activeInvestigation, investigationMessages, {
     suppressApprovalBlock: pendingLocalReply || pendingLocalApproval,
   });
@@ -2388,11 +2406,15 @@ function buildTicketDetailViewState() {
     approvalUiState,
     openingCaseBuddyMessageIndex,
     structuredCaseBuddySections,
-    replyReadinessReviewHtml: renderReplyReadinessReviewHtml(ticket, activeInvestigation),
+    replyReadinessReviewHtml: showApproveInFlightState ? "" : renderReplyReadinessReviewHtml(ticket, activeInvestigation),
     showInlineConfirmation: approvalUiState.showApprovalBlock,
-    showInvestigationComposer: Boolean(activeInvestigation) && !pendingLocalApproval,
+    showApproveInFlightState,
+    showInvestigationComposer: Boolean(activeInvestigation) && !showApproveInFlightState,
     showInvestigationDraftPreview:
-      Boolean(activeInvestigation) && Boolean(draftCustomerReply) && !approvalUiState.showApprovalBlock,
+      Boolean(activeInvestigation) &&
+      Boolean(draftCustomerReply) &&
+      !approvalUiState.showApprovalBlock &&
+      !showApproveInFlightState,
     draftCustomerReply,
     controlsDisabled: tellAiSubmitting,
     messages: Array.isArray(ticket.messages) ? ticket.messages : [],
@@ -2480,6 +2502,9 @@ function renderTicketDetailConversationBodyHtml(viewState) {
 }
 
 function renderTicketDetailComposerShellHtml(viewState) {
+  if (viewState.showApproveInFlightState) {
+    return renderInvestigationClosingStateHtml();
+  }
   if (!viewState.showInvestigationComposer) {
     return "";
   }
