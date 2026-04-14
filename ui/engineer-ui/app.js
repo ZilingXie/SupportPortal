@@ -2250,6 +2250,11 @@ function renderTicketDetailConversationStaticHtml(viewState) {
         <h3 class="panel-card-title">Engineer Ticket Thread</h3>
       </div>
     </div>
+  `;
+}
+
+function renderTicketDetailConversationBodyHtml(viewState) {
+  return `
     ${
       viewState.investigationMessages.length
         ? renderConversationHtml(viewState.investigationMessages, {
@@ -2288,14 +2293,16 @@ function renderTicketDetailComposerShellHtml(viewState) {
 
 function renderTicketDetailInsightPanelHtml(viewState) {
   return `
-    <section class="panel-card">
+    <section class="panel-card detail-timeline-panel">
       <div class="panel-card-head">
         <div>
           <p class="panel-card-kicker">Customer Timeline</p>
           <h3 class="panel-card-title">Customer Timeline</h3>
         </div>
       </div>
-      ${renderConversationHtml(viewState.messages)}
+      <div class="detail-timeline-body">
+        ${renderConversationHtml(viewState.messages)}
+      </div>
     </section>
     ${viewState.replyReadinessReviewHtml}
   `;
@@ -2312,6 +2319,9 @@ function renderTicketDetailViewFromState(viewState) {
         >
           <div class="detail-conversation-static" data-detail-section="investigation-static">
             ${renderTicketDetailConversationStaticHtml(viewState)}
+          </div>
+          <div class="detail-conversation-thread-body" data-detail-section="investigation-thread-body">
+            ${renderTicketDetailConversationBodyHtml(viewState)}
           </div>
           <div data-detail-section="investigation-composer-shell">
             ${renderTicketDetailComposerShellHtml(viewState)}
@@ -2347,14 +2357,16 @@ function patchTicketDetailWhilePreservingComposer(viewState) {
   }
   const headerRegion = workspace.querySelector('[data-detail-section="header"]');
   const staticRegion = workspace.querySelector('[data-detail-section="investigation-static"]');
+  const threadBodyRegion = workspace.querySelector('[data-detail-section="investigation-thread-body"]');
   const insightRegion = workspace.querySelector('[data-detail-section="insight"]');
-  if (!headerRegion || !staticRegion || !insightRegion) {
+  if (!headerRegion || !staticRegion || !threadBodyRegion || !insightRegion) {
     return false;
   }
   const composer = getActiveInvestigationComposerElement();
   const snapshot = captureComposerPreservationState(composer);
   headerRegion.innerHTML = renderTicketDetailHeaderHtml(viewState);
   staticRegion.innerHTML = renderTicketDetailConversationStaticHtml(viewState);
+  threadBodyRegion.innerHTML = renderTicketDetailConversationBodyHtml(viewState);
   insightRegion.innerHTML = renderTicketDetailInsightPanelHtml(viewState);
   restoreComposerPreservationState(composer, snapshot);
   return true;
