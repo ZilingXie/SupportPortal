@@ -12,6 +12,31 @@ For each new entry, record:
 
 ## 2026-04-09 - Trace snapshot endpoint and Ticket DB pool hardening
 
+## 2026-04-15 - Restore grounded black-screen guidance for short symptom troubleshooting
+
+- Summary:
+  - Restored the customer-facing black-screen guidance path for short symptom questions such as `I got black screen, what should I do?`, so supported FAQ plus release-note evidence can produce a cited grounded answer instead of falling straight into investigation intake.
+  - Added a deterministic black-screen guidance answer profile that cites the available release-note fix entry plus the FAQ family chunk when both support the response, while keeping root-cause / investigation-style black-screen questions on the stricter escalation path.
+- Reason:
+  - `TK-112` regressed from the previous release-note-based black-screen guidance answer to `clarify_customer_for_intake`, even though the available support corpus still contained the relevant black-screen fix evidence and FAQ entry.
+  - The post-`922cf62` judge treated release-note-led black-screen support as `weak_top1_support`, which over-penalized short symptom-recovery questions that are better answered with actionable docs guidance first.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No ingestion, schema, embedding, vector-table, or document resets.
+  - This is a retrieval/judge-answering behavior change only: short action-oriented black-screen questions can now resolve through the new deterministic grounded-answer path when both FAQ and release-note support are present, while explicit root-cause/investigation phrasing still escalates on weak evidence.
+- Verification:
+  - `podman run --rm -v /Users/xieziling/.config/superpowers/worktrees/SupportPortal/tk-112-black-screen-answer:/app -w /app localhost/supportportal-app:latest python -m unittest backend.tests.test_rag_qa.RagQaHybridTests.test_run_rag_query_short_black_screen_guidance_uses_deterministic_answer_profile backend.tests.test_rag_qa.RagQaHybridTests.test_judge_agentic_round_short_black_screen_question_allows_release_note_guidance backend.tests.test_rag_qa.RagQaHybridTests.test_judge_agentic_round_root_cause_black_screen_question_still_rejects_release_note_only_top_chunk backend.tests.test_rag_qa.RagQaHybridTests.test_execute_agentic_round_short_symptom_troubleshooting_skips_vector_original_when_lexical_support_is_weak backend.tests.test_client_ticket_agent_runtime.ClientTicketAgentRuntimeContractTests.test_troubleshooting_postcheck_rejection_preserves_cited_answer_with_follow_up`
+  - `podman exec deploymentlw_rag_api_1 sh -lc "python - <<'PY' ... run_rag_query('i got black screen! what should i do?', product='audio_video_calling') ... PY"` returned `generation_mode=black_screen_guidance_deterministic`, `answer_profile_used=black_screen_guidance_deterministic`, `trace_needs_human=false`, and `citations=2`.
+  - Required `$supportportal-run-report` batch completed against the auxiliary live stack at `http://127.0.0.1:18081` using the current worktree code, producing `/tmp/tk112_run_report.md` with `case_count=5`, `success_count=5`, and these key artifacts:
+    - `/tmp/supportportal-traces/TK-TRACE-A43B7AA993.json`: `how to join channel` -> `case_status=ok`, `workflow_action=answer_customer`, `route_reason=grounded_answer`
+    - `/tmp/supportportal-traces/TK-TRACE-EF5F0D95B4.json`: `how to enable the dual stream` -> `case_status=ok`, `workflow_action=answer_customer`, `route_reason=grounded_answer`
+    - `/tmp/supportportal-traces/TK-TRACE-27F1290AD5.json`: `I got black screen, what should I do?` -> `case_status=timeout_partial`, but the best available customer reply came from `ticket_message`, `workflow_action=answer_customer`, `route_reason=grounded_answer`, `answer_route=rag`, and the final answer contained 2 citations plus release-note and FAQ guidance
+    - `/tmp/supportportal-traces/TK-TRACE-33C5641A3B.json`: the long-form pricing case remained `timeout_partial` with `predicted_clarify`, showing the batch still preserves current slow-case behavior outside this black-screen fix
+    - `/tmp/supportportal-traces/TK-TRACE-D1DA0372C4.json`: the Ban User Privileges API semantics case finished as `timeout_partial`, but still produced `reply_source=ticket_message`, `workflow_action=answer_customer`, `route_reason=grounded_answer`
+
 - Summary: Hardened Postgres ticket-repository pool defaults and timeout classification, added an internal ticket-trace snapshot endpoint, and taught the client-route tracing/report scripts to produce partial artifacts for slow cases instead of failing before artifact creation.
 - Reason: `supportportal-route-timing-report` and `supportportal-answer-chain-report` were failing on host-local `psycopg_pool.PoolTimeout` rather than exposing the real admission-vs-final-answer latency of live SupportPortal tickets, and the default Ticket DB pool settings were too aggressive for RDS TLS connection jitter.
 - Affected files or config:
