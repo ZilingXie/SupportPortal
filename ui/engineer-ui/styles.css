@@ -1782,11 +1782,12 @@ html.material-symbols-pending .material-symbols-outlined {
 }
 
 .detail-readiness-summary-card {
-  display: grid;
-  align-content: start;
-  gap: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
-  padding: 14px 16px;
+  min-height: 54px;
+  padding: 12px 14px;
   border-radius: 18px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(239, 244, 251, 0.92)),
@@ -1794,21 +1795,47 @@ html.material-symbols-pending .material-symbols-outlined {
   box-shadow: inset 0 0 0 1px rgba(110, 120, 130, 0.08);
 }
 
+.detail-readiness-summary-card.is-ready {
+  background: rgba(216, 242, 220, 0.88);
+  box-shadow: inset 0 0 0 1px rgba(47, 111, 68, 0.12);
+}
+
+.detail-readiness-summary-card.is-missing {
+  background: rgba(255, 239, 224, 0.92);
+  box-shadow: inset 0 0 0 1px rgba(159, 93, 18, 0.12);
+}
+
+.detail-readiness-summary-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: currentColor;
+}
+
+.detail-readiness-summary-card.is-ready .detail-readiness-summary-dot {
+  color: #2f6f44;
+}
+
+.detail-readiness-summary-card.is-missing .detail-readiness-summary-dot {
+  color: var(--warning);
+}
+
 .detail-readiness-summary-label {
   margin: 0;
-  color: var(--ink-muted);
-  font-size: 11px;
+  color: var(--ink-soft);
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
-.detail-readiness-summary-value {
-  margin: 0;
-  color: var(--ink);
-  font-size: 13px;
-  line-height: 1.55;
-  overflow-wrap: anywhere;
+.detail-readiness-summary-card.is-ready .detail-readiness-summary-label {
+  color: #185a2a;
+}
+
+.detail-readiness-summary-card.is-missing .detail-readiness-summary-label {
+  color: #8a4f12;
 }
 
 .message-references {
