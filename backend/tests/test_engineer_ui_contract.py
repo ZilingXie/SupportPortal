@@ -146,8 +146,8 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260414-engineer-detail-ui-tightening-1", html)
-        self.assertIn('./app.js?v=20260414-engineer-detail-ui-tightening-1', html)
+        self.assertIn("./styles.css?v=20260414-engineer-detail-gap-parity-1", html)
+        self.assertIn('./app.js?v=20260414-engineer-detail-gap-parity-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
@@ -727,6 +727,19 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn(".detail-thinking-dots", css)
         self.assertIn(".detail-thinking-label", css)
 
+        static_marker = ".detail-conversation-static {"
+        static_start = css.find(static_marker)
+        self.assertNotEqual(
+            static_start,
+            -1,
+            msg="Engineer detail should wrap the investigation static region in a dedicated spacing container.",
+        )
+        static_end = css.find("}", static_start)
+        self.assertNotEqual(static_end, -1, msg="Detail conversation static wrapper block should be closed.")
+        static_block = css[static_start:static_end]
+        self.assertIn("display: grid;", static_block)
+        self.assertIn("gap: 16px;", static_block)
+
     def test_engineer_detail_prioritizes_internal_investigation_workspace_and_confirmation(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
@@ -900,6 +913,9 @@ class EngineerUiContractTests(unittest.TestCase):
                 const engineerThreadSection = html.slice(internalIndex, customerIndex);
                 if (!engineerThreadSection.includes('message-list message-list-compact-thread')) {{
                   throw new Error("Engineer ticket thread should use the compact detail conversation layout.");
+                }}
+                if (!html.includes('class="detail-conversation-static" data-detail-section="investigation-static"')) {{
+                  throw new Error("Engineer ticket thread should wrap its static header and messages in the shared spacing container.");
                 }}
                 const customerTimelineSection = html.slice(customerIndex);
                 if (customerTimelineSection.includes('message-list message-list-compact-thread')) {{
