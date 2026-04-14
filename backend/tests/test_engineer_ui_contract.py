@@ -1700,6 +1700,92 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_case_buddy_current_issue_filters_redundant_structured_facts(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                const sections = buildCaseBuddyOpeningRequestSections({
+                  status: "investigating",
+                  engineer_agent_state: {
+                    phase: "awaiting_confirmation",
+                    issue_understanding: "Camera/video capture failure reported for channel zilingtest, uid 2, around 2026-04-04 12:00 UTC+8.",
+                    knowledge_summary: "Web SDK logs point to local capture failure.",
+                    why_not_solved: "The exact root cause category is still unconfirmed.",
+                    goal: "Confirm the symptom-level draft is safe to send.",
+                    known_facts: [
+                      "Customer reported channel zilingtest",
+                      "Problematic uid is 2",
+                      "Issue time is around 2026-04-04 12:00 UTC+8",
+                      'Web SDK log for uid 2 says "[websdk] no capture video frame"',
+                    ],
+                    missing_information: [],
+                    next_request_for_engineer: "Approve the prepared symptom-level customer reply if it is safe to send.",
+                    resolution_hypothesis: "The local capture path failed.",
+                    ready_to_reply: true,
+                    last_refreshed_at: "2026-04-14T09:10:00+00:00",
+                  },
+                });
+
+                if (!Array.isArray(sections) || sections.length !== 3) {
+                  throw new Error("Structured Case Buddy requests should still return three sections after dedupe.");
+                }
+                if (!sections[0].items.includes("Camera/video capture failure reported for channel zilingtest, uid 2, around 2026-04-04 12:00 UTC+8.")) {
+                  throw new Error("Current issue should keep the issue_understanding summary.");
+                }
+                if (sections[0].items.includes("Customer reported channel zilingtest")) {
+                  throw new Error("Current issue should hide a redundant channel fact already covered by issue_understanding.");
+                }
+                if (sections[0].items.includes("Problematic uid is 2")) {
+                  throw new Error("Current issue should hide a redundant uid fact already covered by issue_understanding.");
+                }
+                if (sections[0].items.includes("Issue time is around 2026-04-04 12:00 UTC+8")) {
+                  throw new Error("Current issue should hide a redundant timestamp fact already covered by issue_understanding.");
+                }
+                if (!sections[0].items.includes('Web SDK log for uid 2 says "[websdk] no capture video frame"')) {
+                  throw new Error("Current issue should keep non-redundant technical evidence.");
+                }
+              """
+            )
+        )
+
+    def test_case_buddy_current_issue_keeps_known_facts_without_issue_summary(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                const sections = buildCaseBuddyOpeningRequestSections({
+                  status: "investigating",
+                  engineer_agent_state: {
+                    phase: "gather_missing_inputs",
+                    issue_understanding: "",
+                    knowledge_summary: "The handoff still needs the confirmed session details.",
+                    why_not_solved: "The current evidence is incomplete.",
+                    goal: "Collect the next missing technical detail.",
+                    known_facts: [
+                      "Customer reported channel zilingtest",
+                      "Problematic uid is 2",
+                      "Issue time is around 2026-04-04 12:00 UTC+8",
+                    ],
+                    missing_information: ["Exact SDK version"],
+                    next_request_for_engineer: "Confirm the exact SDK version.",
+                    resolution_hypothesis: "",
+                    ready_to_reply: false,
+                    last_refreshed_at: "2026-04-14T09:12:00+00:00",
+                  },
+                });
+
+                if (!sections[0].items.includes("Customer reported channel zilingtest")) {
+                  throw new Error("Current issue should keep known_facts when issue_understanding is missing.");
+                }
+                if (!sections[0].items.includes("Problematic uid is 2")) {
+                  throw new Error("Current issue should keep uid facts when there is no issue_understanding summary.");
+                }
+                if (!sections[0].items.includes("Issue time is around 2026-04-04 12:00 UTC+8")) {
+                  throw new Error("Current issue should keep timestamp facts when there is no issue_understanding summary.");
+                }
+              """
+            )
+        )
+
     def test_engineer_detail_shows_closed_investigation_thread_without_composer(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
