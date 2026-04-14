@@ -93,7 +93,7 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(engineer_investigation_reply.api_mode, "openai_responses")
         self.assertEqual(engineer_investigation_reply.model, "gpt-5.4")
         self.assertEqual(engineer_investigation_reply.reasoning_effort, "medium")
-        self.assertEqual(engineer_investigation_reply.fallback_models, ())
+        self.assertEqual(engineer_investigation_reply.fallback_models, ("gpt-5.4-mini",))
 
         self.assertEqual(ingestion.provider, "openai")
         self.assertEqual(ingestion.api_mode, "openai_chat")
