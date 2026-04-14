@@ -146,8 +146,8 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260414-engineer-detail-gap-parity-1", html)
-        self.assertIn('./app.js?v=20260414-engineer-detail-gap-parity-1', html)
+        self.assertIn("./styles.css?v=20260414-engineer-detail-fixed-column-height-1", html)
+        self.assertIn('./app.js?v=20260414-engineer-detail-fixed-column-height-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
@@ -739,6 +739,72 @@ class EngineerUiContractTests(unittest.TestCase):
         static_block = css[static_start:static_end]
         self.assertIn("display: grid;", static_block)
         self.assertIn("gap: 16px;", static_block)
+        self.assertIn("min-height: 0;", static_block)
+
+        thread_body_marker = ".detail-conversation-thread-body {"
+        thread_body_start = css.find(thread_body_marker)
+        self.assertNotEqual(
+            thread_body_start,
+            -1,
+            msg="Engineer detail should expose a dedicated scroll body wrapper inside the fixed-height thread card.",
+        )
+        thread_body_end = css.find("}", thread_body_start)
+        self.assertNotEqual(thread_body_end, -1, msg="Detail conversation thread body block should be closed.")
+        thread_body_block = css[thread_body_start:thread_body_end]
+        self.assertIn("min-height: 0;", thread_body_block)
+
+        timeline_panel_marker = ".detail-timeline-panel {"
+        timeline_panel_start = css.find(timeline_panel_marker)
+        self.assertNotEqual(
+            timeline_panel_start,
+            -1,
+            msg="Engineer detail should scope the customer timeline card for fixed-height desktop layout.",
+        )
+        timeline_panel_end = css.find("}", timeline_panel_start)
+        self.assertNotEqual(timeline_panel_end, -1, msg="Detail timeline panel block should be closed.")
+        timeline_panel_block = css[timeline_panel_start:timeline_panel_end]
+        self.assertIn("grid-template-rows: auto minmax(0, 1fr);", timeline_panel_block)
+
+        timeline_body_marker = ".detail-timeline-body {"
+        timeline_body_start = css.find(timeline_body_marker)
+        self.assertNotEqual(
+            timeline_body_start,
+            -1,
+            msg="Engineer detail should expose a dedicated customer timeline body wrapper for scrolling.",
+        )
+        timeline_body_end = css.find("}", timeline_body_start)
+        self.assertNotEqual(timeline_body_end, -1, msg="Detail timeline body block should be closed.")
+        timeline_body_block = css[timeline_body_start:timeline_body_end]
+        self.assertIn("min-height: 0;", timeline_body_block)
+
+        desktop_media_marker = "@media (min-width: 1181px) {"
+        desktop_media_start = css.find(desktop_media_marker)
+        self.assertNotEqual(
+            desktop_media_start,
+            -1,
+            msg="Engineer detail fixed-height rules should be scoped to the desktop two-column layout.",
+        )
+        mobile_media_start = css.find("@media (max-width: 1180px) {", desktop_media_start)
+        self.assertNotEqual(
+            mobile_media_start,
+            -1,
+            msg="Engineer detail should keep the existing single-column mobile/tablet breakpoint after desktop sizing is added.",
+        )
+        desktop_block = css[desktop_media_start:mobile_media_start]
+        self.assertIn("height: clamp(580px, 68vh, 820px);", desktop_block)
+        self.assertIn(".workspace-layout {", desktop_block)
+        self.assertIn(".conversation-panel,", desktop_block)
+        self.assertIn(".insight-panel {", desktop_block)
+        self.assertIn(".detail-timeline-panel .message-list {", desktop_block)
+        self.assertIn("max-height: none;", desktop_block)
+
+        base_layout_end = css.find("}", css.find(".workspace-layout {"))
+        base_layout_block = css[css.find(".workspace-layout {"):base_layout_end]
+        self.assertNotIn(
+            "height: clamp(580px, 68vh, 820px);",
+            base_layout_block,
+            msg="Desktop fixed-height sizing should not leak into the base or mobile layout rules.",
+        )
 
     def test_engineer_detail_prioritizes_internal_investigation_workspace_and_confirmation(self) -> None:
         self.run_engineer_app_script(
@@ -917,9 +983,18 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!html.includes('class="detail-conversation-static" data-detail-section="investigation-static"')) {{
                   throw new Error("Engineer ticket thread should wrap its static header and messages in the shared spacing container.");
                 }}
+                if (!engineerThreadSection.includes('class="detail-conversation-thread-body"')) {{
+                  throw new Error("Engineer ticket thread should isolate its scrollable body from the fixed header and composer.");
+                }}
                 const customerTimelineSection = html.slice(customerIndex);
                 if (customerTimelineSection.includes('message-list message-list-compact-thread')) {{
                   throw new Error("Customer timeline should not inherit the compact engineer thread layout.");
+                }}
+                if (!html.includes('class="panel-card detail-timeline-panel"')) {{
+                  throw new Error("Customer timeline should use the dedicated fixed-height timeline card wrapper.");
+                }}
+                if (!customerTimelineSection.includes('class="detail-timeline-body"')) {{
+                  throw new Error("Customer timeline should isolate its scroll body from the fixed-height sidebar stack.");
                 }}
                 if (html.includes("AI Summary")) {{
                   throw new Error("Detail workspace should merge the AI summary into the Case Buddy request instead of rendering a separate summary card.");
@@ -2208,6 +2283,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 let workspaceRoot = null;
                 let headerRegion = { innerHTML: "" };
                 let staticRegion = { innerHTML: "" };
+                let threadBodyRegion = { innerHTML: "" };
                 let insightRegion = { innerHTML: "" };
                 const createComposer = () => ({
                   value: tellAiDraft,
@@ -2262,6 +2338,7 @@ class EngineerUiContractTests(unittest.TestCase):
                     this._html = value;
                     headerRegion = { innerHTML: value };
                     staticRegion = { innerHTML: value };
+                    threadBodyRegion = { innerHTML: value };
                     insightRegion = { innerHTML: value };
                     if (value.includes('id="detail-investigation-input"')) {
                       workspaceRoot = {
@@ -2272,6 +2349,9 @@ class EngineerUiContractTests(unittest.TestCase):
                           }
                           if (selector === '[data-detail-section="investigation-static"]') {
                             return staticRegion;
+                          }
+                          if (selector === '[data-detail-section="investigation-thread-body"]') {
+                            return threadBodyRegion;
                           }
                           if (selector === '[data-detail-section="insight"]') {
                             return insightRegion;
