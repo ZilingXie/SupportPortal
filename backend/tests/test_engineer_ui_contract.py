@@ -146,8 +146,8 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260414-engineer-detail-fixed-right-sidebar-sections-1", html)
-        self.assertIn('./app.js?v=20260414-engineer-detail-fixed-right-sidebar-sections-1', html)
+        self.assertIn("./styles.css?v=20260414-engineer-case-buddy-timeout-recovery-1", html)
+        self.assertIn('./app.js?v=20260414-engineer-case-buddy-timeout-recovery-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
@@ -2156,8 +2156,10 @@ class EngineerUiContractTests(unittest.TestCase):
 
                 let resolveFetch = null;
                 let capturedUrl = null;
+                let capturedOptions = null;
                 fetchJson = async (url, options = undefined) => {
                   capturedUrl = url;
+                  capturedOptions = options;
                   return await new Promise((resolve) => {
                     resolveFetch = resolve;
                   });
@@ -2204,6 +2206,9 @@ class EngineerUiContractTests(unittest.TestCase):
                 }
                 if (capturedUrl !== "/api/engineer/tickets/TK-DETAIL-OPT/investigation/messages") {
                   throw new Error("Optimistic engineer sends should still call the investigation messages endpoint.");
+                }
+                if (capturedOptions?.timeoutMs !== 100000) {
+                  throw new Error("Send Update should use the extended 100s Case Buddy timeout budget.");
                 }
 
                 resolveFetch({
@@ -2697,6 +2702,9 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (capturedUrl !== "/api/engineer/tickets/TK-DETAIL-REV-OPT/investigation/confirmation") {
                   throw new Error("Approval-state optimistic sends should still target the confirmation endpoint.");
                 }
+                if (capturedOptions?.timeoutMs !== 100000) {
+                  throw new Error("Revision sends should also use the extended 100s Case Buddy timeout budget.");
+                }
                 const parsedBody = JSON.parse(capturedOptions.body);
                 if (parsedBody.decision !== "revise") {
                   throw new Error("Approval-state optimistic sends should still submit decision=revise.");
@@ -2824,6 +2832,261 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_engineer_detail_refresh_clears_local_pending_state_when_durable_action_matches(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                routeState.view = "detail";
+                selectedTicketId = "TK-DETAIL-RECONCILE";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-RECONCILE",
+                  subject: "Android 14 token renew regression",
+                  requester: "user-7",
+                  status: "investigating",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: {
+                    id: "INV-DETAIL-RECONCILE",
+                    state: "active",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "",
+                    final_confirmation_requested_at: null,
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-RECONCILE-m1",
+                        role: "engineer_ai",
+                        content: "Please share the Android version and latest logcat excerpt.",
+                        created_at: "2026-03-24T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+                selectedTicketSummary = "Case Buddy needs one more technical detail.";
+                selectedTicketNextAction = "Share the latest Android logcat excerpt.";
+
+                localInvestigationThreadState = {
+                  ticketId: "TK-DETAIL-RECONCILE",
+                  pendingAi: true,
+                  pendingAction: "investigation_message",
+                  pendingNote: "Logcat now shows auth timeout before channel join.",
+                  submittedAt: "2026-03-24T09:10:30+00:00",
+                  messages: [
+                    {
+                      id: "local-engineer-1",
+                      role: "engineer",
+                      content: "Logcat now shows auth timeout before channel join.",
+                      created_at: "2026-03-24T09:10:30+00:00",
+                      is_optimistic_local: true,
+                    },
+                    {
+                      id: "local-engineer-ai-1",
+                      role: "engineer_ai",
+                      content: "Case Buddy is reviewing your update...",
+                      created_at: "2026-03-24T09:10:30+00:00",
+                      is_pending_ai: true,
+                    },
+                  ],
+                };
+
+                fetchJson = async (url) => {
+                  if (url === "/api/engineer/tickets/TK-DETAIL-RECONCILE") {
+                    return {
+                      ticket: {
+                        ...selectedTicket,
+                        updated_at: "2026-03-24T09:11:00+00:00",
+                        last_engineer_action: {
+                          action: "investigation_message",
+                          note: "Logcat now shows auth timeout before channel join.",
+                          created_at: "2026-03-24T09:11:00+00:00",
+                          engineer_id: "Jack",
+                        },
+                        active_investigation: {
+                          ...selectedTicket.active_investigation,
+                          updated_at: "2026-03-24T09:11:00+00:00",
+                          messages: [
+                            ...selectedTicket.active_investigation.messages,
+                            {
+                              id: "INV-DETAIL-RECONCILE-m2",
+                              role: "engineer",
+                              content: "Logcat now shows auth timeout before channel join.",
+                              created_at: "2026-03-24T09:10:30+00:00",
+                            },
+                            {
+                              id: "INV-DETAIL-RECONCILE-m3",
+                              role: "engineer_ai",
+                              content: "Thanks. Please also confirm whether clearing the cached token changes the behavior.",
+                              created_at: "2026-03-24T09:11:00+00:00",
+                            },
+                          ],
+                        },
+                      },
+                    };
+                  }
+                  throw new Error(`Unexpected URL: ${url}`);
+                };
+
+                await refreshSelectedTicket({ silent: true, showLoading: false });
+                const refreshedHtml = workspaceRegionEl.innerHTML;
+                if (refreshedHtml.includes("message-item-pending-ai")) {
+                  throw new Error("Durable detail refresh should clear the local pending AI placeholder once the backend action matches.");
+                }
+                if (!refreshedHtml.includes("Thanks. Please also confirm whether clearing the cached token changes the behavior.")) {
+                  throw new Error("Durable detail refresh should show the backend Engineer AI reply after reconciliation.");
+                }
+                if (localInvestigationThreadState !== null) {
+                  throw new Error("Durable detail refresh should clear the local pending investigation state after reconciliation.");
+                }
+              """
+            )
+        )
+
+    def test_engineer_detail_timeout_recovers_without_inline_failure_after_durable_refresh(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                routeState.view = "detail";
+                selectedTicketId = "TK-DETAIL-TIMEOUT-RECOVER";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-TIMEOUT-RECOVER",
+                  subject: "Android 14 token renew regression",
+                  requester: "user-7",
+                  status: "investigating",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: {
+                    id: "INV-DETAIL-TIMEOUT-RECOVER",
+                    state: "active",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "",
+                    final_confirmation_requested_at: null,
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-TIMEOUT-RECOVER-m1",
+                        role: "engineer_ai",
+                        content: "Please share the Android version and latest logcat excerpt.",
+                        created_at: "2026-03-24T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+                selectedTicketSummary = "Case Buddy needs one more technical detail.";
+                selectedTicketNextAction = "Share the latest Android logcat excerpt.";
+                const durableActionAt = new Date(Date.now() + 1000).toISOString();
+
+                setTimeout = (callback) => {
+                  callback();
+                  return 1;
+                };
+                clearTimeout = () => {};
+
+                let loadCalls = 0;
+                let detailRefreshCalls = 0;
+                let capturedOptions = null;
+                loadTickets = async (options = {}) => {
+                  loadCalls += 1;
+                  if (options.refreshDetail !== false) {
+                    throw new Error("Timeout recovery should refresh the pool without forcing detail refresh from loadTickets.");
+                  }
+                };
+
+                fetchJson = async (url, options = undefined) => {
+                  if (url === "/api/engineer/tickets/TK-DETAIL-TIMEOUT-RECOVER/investigation/messages") {
+                    capturedOptions = options;
+                    throw new Error("Request timed out after 100s");
+                  }
+                  if (url === "/api/engineer/tickets/TK-DETAIL-TIMEOUT-RECOVER") {
+                    detailRefreshCalls += 1;
+                    return {
+                      ticket: {
+                        ...selectedTicket,
+                        updated_at: "2026-03-24T09:11:00+00:00",
+                        last_engineer_action: {
+                          action: "investigation_message",
+                          note: "Logcat now shows auth timeout before channel join.",
+                          created_at: durableActionAt,
+                          engineer_id: "Jack",
+                        },
+                        active_investigation: {
+                          ...selectedTicket.active_investigation,
+                          updated_at: durableActionAt,
+                          messages: [
+                            ...selectedTicket.active_investigation.messages,
+                            {
+                              id: "INV-DETAIL-TIMEOUT-RECOVER-m2",
+                              role: "engineer",
+                              content: "Logcat now shows auth timeout before channel join.",
+                              created_at: durableActionAt,
+                            },
+                            {
+                              id: "INV-DETAIL-TIMEOUT-RECOVER-m3",
+                              role: "engineer_ai",
+                              content: "Thanks. Please also confirm whether clearing the cached token changes the behavior.",
+                              created_at: durableActionAt,
+                            },
+                          ],
+                        },
+                      },
+                    };
+                  }
+                  throw new Error(`Unexpected URL: ${url}`);
+                };
+
+                tellAiDraft = "Logcat now shows auth timeout before channel join.";
+                const sendButton = {
+                  dataset: { detailAction: "send-tell-ai" },
+                  disabled: false,
+                };
+                const sendTarget = {
+                  closest(selector) {
+                    if (selector === "button[data-detail-action]") {
+                      return sendButton;
+                    }
+                    return null;
+                  },
+                };
+
+                await handleDetailClick({ target: sendTarget });
+                const recoveredHtml = workspaceRegionEl.innerHTML;
+                if (capturedOptions?.timeoutMs !== 100000) {
+                  throw new Error("Timeout recovery should keep using the extended 100s Case Buddy timeout budget.");
+                }
+                if (loadCalls < 1) {
+                  throw new Error("Timeout recovery should trigger at least one silent pool refresh attempt.");
+                }
+                if (detailRefreshCalls < 1) {
+                  throw new Error("Timeout recovery should re-fetch the selected ticket detail.");
+                }
+                if (recoveredHtml.includes("Case Buddy update failed:")) {
+                  throw new Error("Recovered timeout sends should not append the inline Case Buddy failure message.");
+                }
+                if (recoveredHtml.includes("message-item-pending-ai")) {
+                  throw new Error("Recovered timeout sends should clear the pending AI placeholder once durable success is found.");
+                }
+                if (!recoveredHtml.includes("Thanks. Please also confirm whether clearing the cached token changes the behavior.")) {
+                  throw new Error("Recovered timeout sends should render the durable Engineer AI reply.");
+                }
+                if (tellAiDraft !== "") {
+                  throw new Error("Recovered timeout sends should keep the composer cleared after durable success.");
+                }
+                if (localInvestigationThreadState !== null) {
+                  throw new Error("Recovered timeout sends should clear the local pending state after durable success.");
+                }
+              """
+            )
+        )
+
     def test_engineer_detail_approve_action_hides_controls_while_request_is_pending(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
@@ -2916,6 +3179,9 @@ class EngineerUiContractTests(unittest.TestCase):
                 const pendingHtml = workspaceRegionEl.innerHTML;
                 if (capturedUrl !== "/api/engineer/tickets/TK-DETAIL-APPROVE-PENDING/investigation/confirmation") {
                   throw new Error("Approve should call the investigation confirmation endpoint.");
+                }
+                if (capturedOptions?.timeoutMs !== 25000) {
+                  throw new Error("Approve Reply should keep the short timeout budget instead of the 100s AI-turn timeout.");
                 }
                 const parsedBody = JSON.parse(capturedOptions.body);
                 if (parsedBody.decision !== "approve") {

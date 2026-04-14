@@ -50,7 +50,10 @@ const POOL_STATUS_RANK = {
   open: 0,
 };
 const DEFAULT_FETCH_TIMEOUT_MS = 25000;
-const TELL_AI_FETCH_TIMEOUT_MS = 70000;
+const INVESTIGATION_APPROVE_FETCH_TIMEOUT_MS = DEFAULT_FETCH_TIMEOUT_MS;
+const INVESTIGATION_AI_TURN_FETCH_TIMEOUT_MS = 100000;
+const INVESTIGATION_TIMEOUT_RECOVERY_WINDOW_MS = 15000;
+const INVESTIGATION_TIMEOUT_RECOVERY_POLL_MS = 1500;
 const TICKET_POOL_VIEW_STORAGE_KEY = "engineer_ticket_pool_view_mode";
 
 const FILTER_KEYS = [];
@@ -118,6 +121,105 @@ function hasPendingLocalInvestigationApproval(ticketId) {
   return Boolean(localState?.pendingApproval);
 }
 
+function normalizeLocalInvestigationPendingAction(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "investigation_revise" || normalized === "investigation_message" ? normalized : "";
+}
+
+function normalizeIsoTimestamp(value) {
+  const parsed = Date.parse(String(value || "").trim());
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+function isInvestigationTimeoutErrorMessage(message) {
+  return String(message || "").trim().toLowerCase().includes("request timed out after");
+}
+
+function reconcileDurableInvestigationState(ticketId, ticket) {
+  const normalizedTicketId = normalizeDetailTicketId(ticketId);
+  const localState = getLocalInvestigationThreadState(normalizedTicketId);
+  if (!localState?.pendingAi || !ticket || typeof ticket !== "object") {
+    return false;
+  }
+
+  const pendingAction = normalizeLocalInvestigationPendingAction(localState.pendingAction);
+  const pendingNote = String(localState.pendingNote || "").trim();
+  const submittedAt = normalizeIsoTimestamp(localState.submittedAt);
+  const lastEngineerAction =
+    ticket.last_engineer_action && typeof ticket.last_engineer_action === "object"
+      ? ticket.last_engineer_action
+      : null;
+  if (!pendingAction || !pendingNote || !lastEngineerAction) {
+    return false;
+  }
+
+  const durableAction = normalizeLocalInvestigationPendingAction(lastEngineerAction.action);
+  const durableNote = String(lastEngineerAction.note || "").trim();
+  const durableCreatedAt = normalizeIsoTimestamp(lastEngineerAction.created_at);
+  const hasMatchingDurableAction =
+    durableAction === pendingAction &&
+    durableNote === pendingNote &&
+    Number.isFinite(submittedAt) &&
+    Number.isFinite(durableCreatedAt) &&
+    durableCreatedAt >= submittedAt;
+
+  if (!hasMatchingDurableAction) {
+    return false;
+  }
+
+  clearLocalInvestigationThreadState(normalizedTicketId);
+  return true;
+}
+
+function delay(ms) {
+  const timeoutMs = Number.isFinite(Number(ms)) ? Math.max(0, Number(ms)) : 0;
+  return new Promise((resolve) => {
+    setTimeout(resolve, timeoutMs);
+  });
+}
+
+async function recoverTimedOutInvestigationSend(ticketId) {
+  const normalizedTicketId = normalizeDetailTicketId(ticketId);
+  if (!normalizedTicketId || !getLocalInvestigationThreadState(normalizedTicketId)) {
+    return false;
+  }
+
+  const attemptCount = Math.max(
+    1,
+    Math.ceil(INVESTIGATION_TIMEOUT_RECOVERY_WINDOW_MS / INVESTIGATION_TIMEOUT_RECOVERY_POLL_MS)
+  );
+
+  for (let attempt = 0; attempt < attemptCount; attempt += 1) {
+    if (!getLocalInvestigationThreadState(normalizedTicketId)) {
+      return true;
+    }
+    if (routeState.view !== "detail" || normalizeDetailTicketId(selectedTicketId) !== normalizedTicketId) {
+      return true;
+    }
+
+    try {
+      await loadTickets({ refreshDetail: false });
+    } catch {
+      // Keep polling the selected ticket detail until the recovery window expires.
+    }
+
+    try {
+      await refreshSelectedTicket({ silent: true, showLoading: false });
+    } catch {
+      // Keep polling the selected ticket detail until the recovery window expires.
+    }
+
+    if (!getLocalInvestigationThreadState(normalizedTicketId)) {
+      return true;
+    }
+    if (attempt < attemptCount - 1) {
+      await delay(INVESTIGATION_TIMEOUT_RECOVERY_POLL_MS);
+    }
+  }
+
+  return !getLocalInvestigationThreadState(normalizedTicketId);
+}
+
 function startLocalInvestigationPendingApproval(ticketId) {
   const normalizedTicketId = normalizeDetailTicketId(ticketId);
   if (!normalizedTicketId) {
@@ -128,6 +230,9 @@ function startLocalInvestigationPendingApproval(ticketId) {
     ticketId: normalizedTicketId,
     pendingAi: existingState?.pendingAi === true,
     pendingApproval: true,
+    pendingAction: existingState?.pendingAction,
+    pendingNote: existingState?.pendingNote,
+    submittedAt: existingState?.submittedAt,
     messages: Array.isArray(existingState?.messages) ? existingState.messages : [],
   };
 }
@@ -150,7 +255,7 @@ function clearLocalInvestigationPendingApproval(ticketId) {
   };
 }
 
-function startLocalInvestigationOptimisticSend(ticketId, engineerMessage) {
+function startLocalInvestigationOptimisticSend(ticketId, engineerMessage, pendingAction = "investigation_message") {
   const normalizedTicketId = normalizeDetailTicketId(ticketId);
   const cleaned = String(engineerMessage || "").trim();
   if (!normalizedTicketId || !cleaned) {
@@ -163,6 +268,10 @@ function startLocalInvestigationOptimisticSend(ticketId, engineerMessage) {
   localInvestigationThreadState = {
     ticketId: normalizedTicketId,
     pendingAi: true,
+    pendingApproval: false,
+    pendingAction: normalizeLocalInvestigationPendingAction(pendingAction) || "investigation_message",
+    pendingNote: cleaned,
+    submittedAt: createdAt,
     messages: [
       ...existingMessages,
       {
@@ -193,6 +302,7 @@ function failLocalInvestigationOptimisticSend(ticketId, errorMessage) {
   localInvestigationThreadState = {
     ticketId: normalizedTicketId,
     pendingAi: false,
+    pendingApproval: false,
     messages: [
       ...localState.messages.filter((message) => message?.is_pending_ai !== true),
       {
@@ -2589,6 +2699,7 @@ async function refreshSelectedTicket(options = {}) {
       return;
     }
     selectedTicket = nextTicket;
+    reconcileDurableInvestigationState(requestedTicketId, selectedTicket);
     const refreshedInvestigation = getActiveInvestigation(selectedTicket);
     const refreshedMessages = Array.isArray(refreshedInvestigation?.messages) ? refreshedInvestigation.messages : [];
     if (!getInvestigationApprovalUiState(selectedTicket, refreshedInvestigation, refreshedMessages).showApprovalBlock) {
@@ -2685,11 +2796,16 @@ async function submitInvestigationMessage(ticketId, messageText) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message: cleaned, engineer_id: ENGINEER_ID }),
-    timeoutMs: TELL_AI_FETCH_TIMEOUT_MS,
+    timeoutMs: INVESTIGATION_AI_TURN_FETCH_TIMEOUT_MS,
   });
 }
 
-async function submitInvestigationConfirmation(ticketId, decision, note = "") {
+async function submitInvestigationConfirmation(ticketId, decision, note = "", options = {}) {
+  const timeoutMsCandidate = Number(options.timeoutMs);
+  const timeoutMs =
+    Number.isFinite(timeoutMsCandidate) && timeoutMsCandidate > 0
+      ? timeoutMsCandidate
+      : INVESTIGATION_APPROVE_FETCH_TIMEOUT_MS;
   return await fetchJson(`/api/engineer/tickets/${encodeURIComponent(ticketId)}/investigation/confirmation`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -2698,7 +2814,7 @@ async function submitInvestigationConfirmation(ticketId, decision, note = "") {
       note: String(note || "").trim() || undefined,
       engineer_id: ENGINEER_ID,
     }),
-    timeoutMs: TELL_AI_FETCH_TIMEOUT_MS,
+    timeoutMs,
   });
 }
 
@@ -2862,22 +2978,29 @@ async function handleDetailClick(event) {
       return;
     }
     const requestTicketId = selectedTicketId;
+    const activeInvestigation = getActiveInvestigation(selectedTicket);
+    const approvalUiState = getInvestigationApprovalUiState(
+      selectedTicket,
+      activeInvestigation,
+      Array.isArray(activeInvestigation?.messages) ? activeInvestigation.messages : []
+    );
+    const isRevisionFlow = Boolean(investigationReviseMode || approvalUiState.showApprovalBlock);
     button.disabled = true;
-    startLocalInvestigationOptimisticSend(requestTicketId, cleaned);
+    startLocalInvestigationOptimisticSend(
+      requestTicketId,
+      cleaned,
+      isRevisionFlow ? "investigation_revise" : "investigation_message"
+    );
     tellAiDraft = "";
     tellAiSubmitting = true;
     renderTicketDetail();
     try {
-      const activeInvestigation = getActiveInvestigation(selectedTicket);
-      const approvalUiState = getInvestigationApprovalUiState(
-        selectedTicket,
-        activeInvestigation,
-        Array.isArray(activeInvestigation?.messages) ? activeInvestigation.messages : []
-      );
       let responsePayload = null;
       if (activeInvestigation) {
-        if (investigationReviseMode || approvalUiState.showApprovalBlock) {
-          responsePayload = await submitInvestigationConfirmation(requestTicketId, "revise", cleaned);
+        if (isRevisionFlow) {
+          responsePayload = await submitInvestigationConfirmation(requestTicketId, "revise", cleaned, {
+            timeoutMs: INVESTIGATION_AI_TURN_FETCH_TIMEOUT_MS,
+          });
           investigationReviseMode = false;
         } else {
           responsePayload = await submitInvestigationMessage(requestTicketId, cleaned);
@@ -2891,8 +3014,14 @@ async function handleDetailClick(event) {
         // Keep the immediate optimistic replacement even if the background refresh fails.
       }
     } catch (error) {
-      failLocalInvestigationOptimisticSend(requestTicketId, error.message);
-      tellAiDraft = cleaned;
+      let recovered = false;
+      if (isInvestigationTimeoutErrorMessage(error?.message)) {
+        recovered = await recoverTimedOutInvestigationSend(requestTicketId);
+      }
+      if (!recovered) {
+        failLocalInvestigationOptimisticSend(requestTicketId, error.message);
+        tellAiDraft = cleaned;
+      }
     } finally {
       tellAiSubmitting = false;
       renderTicketDetail();
