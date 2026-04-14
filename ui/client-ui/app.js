@@ -1008,6 +1008,53 @@ function normalizeBackendTicket(ticket) {
   };
 }
 
+function getPendingLocalUserMessageForSync(localTicket) {
+  const pendingTicketId = String(state.pendingAsyncTicketId || state.pendingTicketId || "").trim();
+  const localTicketId = String(localTicket?.id || "").trim();
+  const pendingUserId = String(state.pendingUserMessageId || "").trim();
+  if (!pendingTicketId || !localTicketId || pendingTicketId !== localTicketId || !pendingUserId) {
+    return null;
+  }
+  return (
+    (Array.isArray(localTicket?.messages) ? localTicket.messages : []).find(
+      (message) =>
+        String(message?.id || "").trim() === pendingUserId &&
+        String(message?.role || "").toLowerCase() === "user"
+    ) || null
+  );
+}
+
+function remoteTicketHasPersistedPendingCustomerTurn(remoteTicket) {
+  const pendingCreatedAt = String(state.pendingAsyncMessageCreatedAt || "").trim();
+  if (!pendingCreatedAt) {
+    return false;
+  }
+  return (Array.isArray(remoteTicket?.messages) ? remoteTicket.messages : []).some(
+    (message) =>
+      String(message?.role || "").toLowerCase() === "user" &&
+      String(message?.createdAt || "").trim() === pendingCreatedAt
+  );
+}
+
+function mergePendingLocalUserMessageIntoRemoteTicket(remoteTicket, localTicket) {
+  const pendingLocalMessage = getPendingLocalUserMessageForSync(localTicket);
+  if (!pendingLocalMessage || remoteTicketHasPersistedPendingCustomerTurn(remoteTicket)) {
+    return remoteTicket;
+  }
+  const remoteMessages = Array.isArray(remoteTicket?.messages) ? remoteTicket.messages : [];
+  if (
+    remoteMessages.some(
+      (message) => String(message?.id || "").trim() === String(pendingLocalMessage?.id || "").trim()
+    )
+  ) {
+    return remoteTicket;
+  }
+  return {
+    ...remoteTicket,
+    messages: [...remoteMessages, pendingLocalMessage],
+  };
+}
+
 async function syncTicketsFromBackend(options = {}) {
   const { silent = false } = options;
   if (!state.user?.id) {
@@ -1027,13 +1074,24 @@ async function syncTicketsFromBackend(options = {}) {
       .filter(Boolean);
 
     const allLocal = getAllTickets();
+    const localTicketsById = new Map(
+      allLocal
+        .filter((ticket) => String(ticket?.userId || "").trim() === String(state.user.id || "").trim())
+        .map((ticket) => [String(ticket.id || "").trim(), ticket])
+    );
+    const mergedMapped = mapped.map((remoteTicket) =>
+      mergePendingLocalUserMessageIntoRemoteTicket(
+        remoteTicket,
+        localTicketsById.get(String(remoteTicket?.id || "").trim()) || null
+      )
+    );
     const otherUsersLocal = allLocal.filter((ticket) => ticket.userId !== state.user.id);
     const preservedDrafts = allLocal.filter(
       (ticket) =>
         isReusableDraftTicket(ticket, state.user.id) &&
-        !mapped.some((remoteTicket) => remoteTicket.id === ticket.id)
+        !mergedMapped.some((remoteTicket) => remoteTicket.id === ticket.id)
     );
-    saveAllTickets([...otherUsersLocal, ...mapped, ...preservedDrafts]);
+    saveAllTickets([...otherUsersLocal, ...mergedMapped, ...preservedDrafts]);
   } catch (error) {
     if (!silent) {
       toast(`Failed to sync sessions from backend: ${error.message}`, "error");
