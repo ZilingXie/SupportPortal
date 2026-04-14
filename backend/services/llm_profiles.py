@@ -408,7 +408,7 @@ def resolve_model_profile(
             temperature=0.0,
             timeout_seconds=_safe_positive_float_env("ENGINEER_INVESTIGATION_REPLY_TIMEOUT_SECONDS", 20.0),
             max_retries=_safe_int_env("ENGINEER_INVESTIGATION_REPLY_MAX_RETRIES", 1),
-            fallback_models=(),
+            fallback_models=("gpt-5.4-mini",),
         )
     if scenario == KNOWLEDGE_INGESTION_SCENARIO:
         return ModelProfile(

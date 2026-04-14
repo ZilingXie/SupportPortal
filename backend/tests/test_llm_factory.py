@@ -38,6 +38,26 @@ class LlmFactoryTests(unittest.TestCase):
             max_retries=max_retries,
         )
 
+    def _profile_with_fallback(
+        self,
+        *,
+        api_mode: str,
+        max_retries: int = 1,
+        fallback_models: tuple[str, ...] = ("gpt-5.4-mini",),
+    ) -> ModelProfile:
+        return ModelProfile(
+            scenario="test_scenario",
+            provider="openai",
+            model="gpt-5.4",
+            api_mode=api_mode,
+            api_key="test-key",
+            reasoning_effort="medium",
+            temperature=0.0,
+            timeout_seconds=20.0,
+            max_retries=max_retries,
+            fallback_models=fallback_models,
+        )
+
     def test_invoke_responses_text_retries_timeout_once_before_success(self) -> None:
         attempts = 0
 
@@ -85,6 +105,33 @@ class LlmFactoryTests(unittest.TestCase):
         self.assertEqual(attempts, 2)
         self.assertIn("test_scenario_request_failed", str(context.exception))
         self.assertIn("The read operation timed out", str(context.exception))
+
+    def test_invoke_responses_text_falls_back_to_next_model_after_retryable_timeout_budget_is_exhausted(self) -> None:
+        attempts: list[str] = []
+
+        def _fake_urlopen(request, timeout):
+            payload = json.loads(request.data.decode("utf-8"))
+            model_name = payload["model"]
+            attempts.append(model_name)
+            if model_name == "gpt-5.4":
+                raise TimeoutError("The read operation timed out")
+            return _FakeResponse(
+                {
+                    "output_text": "Recovered on fallback.",
+                    "usage": {"input_tokens": 7, "output_tokens": 3},
+                }
+            )
+
+        with patch("backend.services.llm_factory.urllib.request.urlopen", side_effect=_fake_urlopen):
+            result = invoke_responses_text(
+                profile=self._profile_with_fallback(api_mode=OPENAI_RESPONSES_API),
+                system_prompt="system",
+                user_prompt="user",
+            )
+
+        self.assertEqual(attempts, ["gpt-5.4", "gpt-5.4", "gpt-5.4-mini"])
+        self.assertEqual(result.text, "Recovered on fallback.")
+        self.assertEqual(result.model_name, "gpt-5.4-mini")
 
     def test_invoke_responses_text_does_not_retry_non_retryable_http_error(self) -> None:
         attempts = 0

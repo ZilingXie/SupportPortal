@@ -12,6 +12,27 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-04-14 - engineer investigation reply transport fallback
+
+- Area or subsystem: Engineer investigation reply model fallback
+- Prompt or model version: `engineer-investigation-reply-v2`
+- Summary: Added transport-failure model fallback for engineer investigation reply generation so the scene now retries `gpt-5.4` and then degrades to `gpt-5.4-mini` before fail-closing the engineer turn.
+- Reason: Engineers were still hitting the generic `I couldn't prepare a customer-safe reply...` fallback when the primary investigation-reply model timed out, even though the request content was valid and a smaller fallback model could still complete the structured reply.
+- Affected files or config:
+  - `backend/services/llm_factory.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/tests/test_llm_factory.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - `engineer_investigation_reply` now tries `gpt-5.4-mini` after the primary `gpt-5.4` candidate exhausts its retry budget on retryable transport or server-side failures.
+  - Engineer investigation turns should surface a normal drafted reply more often during transient model instability instead of immediately falling back to the generic fail-closed message.
+  - Non-retryable request errors and genuinely unavailable fallback models still fail closed.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_llm_profiles.py backend/tests/test_llm_factory.py backend/tests/test_investigation_flow.py`
+  - Added regression coverage for both direct `llm_factory` fallback-on-timeout behavior and the end-to-end engineer investigation message path.
+
 ## 2026-04-13 - engineer identity refresh for Case Buddy, Jack, and Sid
 
 - Area or subsystem: Engineer investigation reply persona and cross-surface assistant naming
