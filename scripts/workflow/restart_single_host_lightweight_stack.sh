@@ -34,6 +34,8 @@ set +a
 [[ -n "${TICKET_DB_DSN:-}" ]] || die "TICKET_DB_DSN is required in $env_file"
 [[ -n "${PGVECTOR_DSN:-}" ]] || die "PGVECTOR_DSN is required in $env_file"
 
+"$SCRIPT_DIR/ensure_local_db_relay.sh"
+
 export APP_BUILD_REF
 export APP_BUILD_TIME
 APP_BUILD_REF="$(git rev-parse --short=12 HEAD)"
