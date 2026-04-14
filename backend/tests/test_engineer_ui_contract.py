@@ -146,8 +146,8 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260405-engineer-approve-close-readonly-1", html)
-        self.assertIn('./app.js?v=20260405-engineer-approve-close-readonly-1', html)
+        self.assertIn("./styles.css?v=20260414-engineer-case-buddy-merged-request-1", html)
+        self.assertIn('./app.js?v=20260414-engineer-case-buddy-merged-request-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
@@ -161,7 +161,9 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('path.startsWith("/tickets/")', app_source)
         self.assertIn("function renderTicketPoolView()", app_source)
         self.assertIn("function renderTicketDetailView()", app_source)
-        self.assertIn("Next Action Needed", app_source)
+        self.assertIn("Current issue", app_source)
+        self.assertIn("Why Sid couldn't solve it", app_source)
+        self.assertIn("Action needed", app_source)
         self.assertIn("Engineer Ticket Command", html)
         self.assertIn("Start Investigation", app_source)
         self.assertNotIn("Open Workspace", app_source)
@@ -704,7 +706,7 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertNotIn(
             "align-self: start;",
             block,
-            msg="Compact thread panel should not shrink the entire Engineer Ticket card away from the AI Summary bottom edge.",
+            msg="Compact thread panel should keep the engineer thread stretched even after the standalone summary card is removed.",
         )
         list_marker = ".conversation-panel-compact-thread .message-list-compact-thread {"
         list_start = css.find(list_marker)
@@ -781,6 +783,18 @@ class EngineerUiContractTests(unittest.TestCase):
                   },
                   engineer_agent_state: {
                     phase: "awaiting_confirmation",
+                    issue_understanding: "Android 14 token renew callback fails on SDK 4.2.1.",
+                    knowledge_summary: "The regression reproduces on Android 14 and the draft upgrade guidance is ready for final review.",
+                    why_not_solved: "Sid did not have reproducible platform-scoped evidence before the engineer confirmed Android 14 plus SDK 4.2.1.",
+                    known_facts: [
+                      "Customer reported token renew callback failures on Android 14.",
+                      "The engineer reproduced the issue on Android 14 with SDK 4.2.1 only.",
+                    ],
+                    missing_information: [
+                      "Confirm the customer can upgrade to SDK 4.2.2.",
+                    ],
+                    next_request_for_engineer: "Confirm the customer can upgrade to SDK 4.2.2 before approving the reply.",
+                    resolution_hypothesis: "Upgrading to SDK 4.2.2 should resolve the regression.",
                     ready_to_reply: true,
                     reply_readiness: {
                       has_conclusion: true,
@@ -810,8 +824,6 @@ class EngineerUiContractTests(unittest.TestCase):
                   ],
                   engineer_request_records: [],
                 };
-                selectedTicketSummary = "Customer-facing answer is drafted and waiting for engineer confirmation.";
-                selectedTicketNextAction = "Approve the prepared reply or ask the AI to revise it.";
 
                 const html = renderTicketDetailView();
                 const headerTopStart = html.indexOf('class="workspace-header-top"');
@@ -893,21 +905,41 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (customerTimelineSection.includes('message-list message-list-compact-thread')) {{
                   throw new Error("Customer timeline should not inherit the compact engineer thread layout.");
                 }}
-                const summaryIndex = html.indexOf("AI Summary");
-                if (summaryIndex === -1) {{
-                  throw new Error("Detail workspace should still render the AI Summary card.");
+                if (html.includes("AI Summary")) {{
+                  throw new Error("Detail workspace should merge the AI summary into the Case Buddy request instead of rendering a separate summary card.");
                 }}
-                const summarySection = html.slice(summaryIndex);
-                if (summarySection.includes("Back to Communicating")) {{
-                  throw new Error("AI Summary should no longer render the resume communicating button.");
+                if (!engineerThreadSection.includes("case-buddy-request-sections")) {{
+                  throw new Error("The opening Case Buddy request should render the merged structured request layout.");
                 }}
-                if (summarySection.includes("Resolve Ticket")) {{
-                  throw new Error("AI Summary should no longer render the resolve button.");
+                if (!engineerThreadSection.includes("Current issue")) {{
+                  throw new Error("The merged Case Buddy request should render the Current issue section.");
+                }}
+                if (!engineerThreadSection.includes("Why Sid couldn't solve it")) {{
+                  throw new Error("The merged Case Buddy request should render the Why Sid couldn't solve it section.");
+                }}
+                if (!engineerThreadSection.includes("Action needed")) {{
+                  throw new Error("The merged Case Buddy request should render the Action needed section.");
+                }}
+                if (!/Current issue[\\s\\S]*?<ul[\\s\\S]*?<li>Android 14 token renew callback fails on SDK 4\\.2\\.1\\.<\\/li>[\\s\\S]*?<li>Customer reported token renew callback failures on Android 14\\.<\\/li>[\\s\\S]*?<li>The engineer reproduced the issue on Android 14 with SDK 4\\.2\\.1 only\\.<\\/li>/m.test(engineerThreadSection)) {{
+                  throw new Error("Current issue should render issue understanding and known facts as bullet points.");
+                }}
+                if (!/Why Sid couldn't solve it[\\s\\S]*?<ul[\\s\\S]*?<li>Sid did not have reproducible platform-scoped evidence before the engineer confirmed Android 14 plus SDK 4\\.2\\.1\\.<\\/li>/m.test(engineerThreadSection)) {{
+                  throw new Error("Why Sid couldn't solve it should render the engineer agent explanation as a bullet point.");
+                }}
+                if (!/Action needed[\\s\\S]*?<ul[\\s\\S]*?<li>Confirm the customer can upgrade to SDK 4\\.2\\.2 before approving the reply\\.<\\/li>[\\s\\S]*?<li>Confirm the customer can upgrade to SDK 4\\.2\\.2\\.<\\/li>/m.test(engineerThreadSection)) {{
+                  throw new Error("Action needed should render the next request and missing information as bullet points.");
+                }}
+                if (engineerThreadSection.includes("Current understanding:")) {{
+                  throw new Error("The merged opening request should no longer show the old summary-style Current understanding label.");
                 }}
                 const decisionIndex = engineerThreadSection.indexOf("I drafted a customer follow-up asking whether the issue is limited to Android 14. Please confirm whether it is ready to send.");
                 const inlineActionsIndex = engineerThreadSection.indexOf("detail-investigation-inline-actions");
                 if (decisionIndex === -1 || inlineActionsIndex === -1 || inlineActionsIndex < decisionIndex) {{
                   throw new Error("Inline confirmation actions should appear after the final Engineer AI message.");
+                }}
+                const mergedRequestIndex = engineerThreadSection.indexOf("case-buddy-request-sections");
+                if (mergedRequestIndex === -1 || mergedRequestIndex > decisionIndex) {{
+                  throw new Error("Only the opening Case Buddy request should use the merged structured layout.");
                 }}
                 const draftIndex = engineerThreadSection.indexOf("detail-investigation-draft");
                 const approveIndex = engineerThreadSection.indexOf("Approve Reply");
@@ -932,6 +964,135 @@ class EngineerUiContractTests(unittest.TestCase):
                 }}
                 if (engineerThreadSection.includes("Resolve Ticket")) {{
                   throw new Error("Approval state should not render the resolve action.");
+                }}
+              """
+            )
+        )
+
+    def test_engineer_detail_merges_legacy_engineer_request_into_structured_case_buddy_block(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                routeState.view = "detail";
+                selectedTicketId = "TK-DETAIL-LEGACY";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-LEGACY",
+                  subject: "Black screen happened on March 4th",
+                  requester: "user-9",
+                  status: "investigating",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: {
+                    id: "INV-DETAIL-LEGACY",
+                    state: "active",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "",
+                    final_confirmation_requested_at: null,
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-LEGACY-m1",
+                        role: "engineer_ai",
+                        content: "Engineer Request:\\nIssue: black screen happened on march 4th at 12pm\\nAction Needed: check backend log regarding black screen issue",
+                        created_at: "2026-03-24T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+
+                const html = renderTicketDetailView();
+                if (!html.includes("Current issue")) {{
+                  throw new Error("Legacy engineer request text should still render the Current issue section.");
+                }}
+                if (!html.includes("Why Sid couldn't solve it")) {{
+                  throw new Error("Legacy engineer request text should still render the Why Sid couldn't solve it section.");
+                }}
+                if (!html.includes("Action needed")) {{
+                  throw new Error("Legacy engineer request text should still render the Action needed section.");
+                }}
+                if (!html.includes("<li>black screen happened on march 4th at 12pm</li>")) {{
+                  throw new Error("Legacy engineer request issue text should become a bullet in the Current issue section.");
+                }}
+                if (!html.includes("<li>check backend log regarding black screen issue</li>")) {{
+                  throw new Error("Legacy engineer request action text should become a bullet in the Action needed section.");
+                }}
+                if (!html.includes("<li>Sid still lacks verifiable evidence, so it is not yet safe to send a customer reply.</li>")) {{
+                  throw new Error("Legacy engineer request rendering should supply the deterministic Why Sid fallback bullet.");
+                }}
+                if (html.includes("Engineer Request:")) {{
+                  throw new Error("Legacy engineer request text should be replaced by the merged structured Case Buddy block.");
+                }}
+              """
+            )
+        )
+
+    def test_engineer_detail_refresh_does_not_call_summary_endpoint(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                routeState.view = "detail";
+                selectedTicketId = "TK-DETAIL-NO-SUMMARY";
+                const requestedUrls = [];
+                fetchJson = async (url) => {
+                  requestedUrls.push(url);
+                  if (url === "/api/engineer/tickets/TK-DETAIL-NO-SUMMARY") {
+                    return {
+                      ticket: {
+                        ticket_id: "TK-DETAIL-NO-SUMMARY",
+                        subject: "Black screen after join",
+                        requester: "user-10",
+                        status: "investigating",
+                        created_at: "2026-03-24T08:00:00+00:00",
+                        updated_at: "2026-03-24T09:10:00+00:00",
+                        messages: [],
+                        active_investigation: {
+                          id: "INV-DETAIL-NO-SUMMARY",
+                          state: "active",
+                          trigger_reason: "rag_insufficient_evidence",
+                          trigger_source: "support_query",
+                          draft_customer_reply: "",
+                          final_confirmation_requested_at: null,
+                          opened_at: "2026-03-24T08:01:00+00:00",
+                          updated_at: "2026-03-24T09:05:00+00:00",
+                          messages: [
+                            {
+                              id: "INV-DETAIL-NO-SUMMARY-m1",
+                              role: "engineer_ai",
+                              content: "Please share the latest backend logs for the black screen session.",
+                              created_at: "2026-03-24T09:05:00+00:00",
+                            },
+                          ],
+                        },
+                        engineer_agent_state: {
+                          phase: "gather_missing_inputs",
+                          issue_understanding: "Black screen happens immediately after join.",
+                          known_facts: ["The issue happened after the customer joined the channel."],
+                          why_not_solved: "Sid does not yet have backend logs or a reproducible failure trace.",
+                          missing_information: ["Backend logs for the affected session"],
+                          next_request_for_engineer: "Check the backend logs for the affected session.",
+                          ready_to_reply: false,
+                        },
+                        investigation_history: [],
+                      },
+                    };
+                  }
+                  throw new Error(`Unexpected URL: ${url}`);
+                };
+
+                await refreshSelectedTicket({ silent: true, showLoading: false });
+                await Promise.resolve();
+                await Promise.resolve();
+
+                if (requestedUrls.includes("/api/engineer/tickets/TK-DETAIL-NO-SUMMARY/summary")) {{
+                  throw new Error("Engineer detail refresh should no longer request the summary endpoint.");
+                }}
+                if (!workspaceRegionEl.innerHTML.includes("Current issue")) {{
+                  throw new Error("Engineer detail refresh should still render the merged Case Buddy request from the ticket payload.");
                 }}
               """
             )
@@ -1156,11 +1317,11 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
-    def test_engineer_local_summary_fallback_prefers_agent_brief_when_available(self) -> None:
+    def test_case_buddy_opening_request_sections_prefer_agent_state_when_available(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
                 """
-                const fallback = buildLocalSummaryFallback({
+                const sections = buildCaseBuddyOpeningRequestSections({
                   status: "investigating",
                   messages: [
                     {
@@ -1184,17 +1345,32 @@ class EngineerUiContractTests(unittest.TestCase):
                   },
                 });
 
-                if (!fallback.summary.includes("Current understanding: Android 14 token renewal still fails after the customer upgraded the SDK.")) {
-                  throw new Error("Local summary fallback should surface the agent issue understanding.");
+                if (!Array.isArray(sections) || sections.length !== 3) {
+                  throw new Error("Structured Case Buddy requests should return the three merged sections.");
                 }
-                if (!fallback.summary.includes("Goal: Confirm the exact SDK version and whether Android 14 is the only affected platform.")) {
-                  throw new Error("Local summary fallback should surface the current agent goal.");
+                if (sections[0].title !== "Current issue") {
+                  throw new Error("The first merged section should be Current issue.");
                 }
-                if (!fallback.summary.includes("Why client AI could not solve it: The current evidence does not prove the exact SDK regression boundary.")) {
-                  throw new Error("Local summary fallback should explain why the client AI is blocked.");
+                if (!sections[0].items.includes("Android 14 token renewal still fails after the customer upgraded the SDK.")) {
+                  throw new Error("Current issue should include the agent issue understanding.");
                 }
-                if (fallback.nextAction !== "Please confirm the exact SDK version and whether Android 14 is the only affected platform.") {
-                  throw new Error("Local summary fallback should use the agent next request as the next action.");
+                if (!sections[0].items.includes("Customer already upgraded the SDK.")) {
+                  throw new Error("Current issue should include known facts.");
+                }
+                if (sections[1].title !== "Why Sid couldn't solve it") {
+                  throw new Error("The second merged section should explain why Sid could not solve it.");
+                }
+                if (!sections[1].items.includes("The current evidence does not prove the exact SDK regression boundary.")) {
+                  throw new Error("The Why Sid section should use the agent why_not_solved field.");
+                }
+                if (sections[2].title !== "Action needed") {
+                  throw new Error("The third merged section should be Action needed.");
+                }
+                if (!sections[2].items.includes("Please confirm the exact SDK version and whether Android 14 is the only affected platform.")) {
+                  throw new Error("Action needed should include the agent next request.");
+                }
+                if (!sections[2].items.includes("Exact SDK version") || !sections[2].items.includes("Cross-platform reproduction scope")) {
+                  throw new Error("Action needed should include the remaining missing information bullets.");
                 }
               """
             )

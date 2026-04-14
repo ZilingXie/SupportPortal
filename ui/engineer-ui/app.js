@@ -5,6 +5,9 @@ const ENGINEER_ID = "Jack";
 const ENGINEER_DISPLAY_NAME = "jack";
 const ENGINEER_AI_DISPLAY_NAME = "Case Buddy";
 const PUBLIC_ASSISTANT_DISPLAY_NAME = "Sid";
+const CASE_BUDDY_CURRENT_ISSUE_FALLBACK = "The current issue summary is still being clarified.";
+const CASE_BUDDY_WHY_FALLBACK = "Sid still lacks verifiable evidence, so it is not yet safe to send a customer reply.";
+const CASE_BUDDY_ACTION_FALLBACK = "Review the current evidence and decide the next technical check.";
 
 const loginScreenEl = document.getElementById("login-screen");
 const engineerScreenEl = document.getElementById("engineer-screen");
@@ -22,8 +25,6 @@ let tickets = [];
 let boardLoading = false;
 let selectedTicketId = null;
 let selectedTicket = null;
-let selectedTicketSummary = "";
-let selectedTicketNextAction = "";
 let detailLoading = false;
 let tellAiDraft = "";
 let investigationReviseMode = false;
@@ -35,7 +36,6 @@ let heartbeatTimer = null;
 let reconnectTimer = null;
 let storageMode = "unknown";
 let logoutLoading = false;
-const ticketSummaryCache = new Map();
 const routeState = {
   view: "pool",
   ticketId: null,
@@ -209,11 +209,6 @@ function applyInvestigationResponseToSelectedTicket(ticketId, payload) {
       engineer_agent_state: nextEngineerAgentState,
       investigation_history: nextHistory,
     };
-    if (normalizeStatusValue(selectedTicket.status) === "resolved") {
-      const fallback = buildLocalSummaryFallback(selectedTicket);
-      selectedTicketSummary = fallback.summary;
-      selectedTicketNextAction = fallback.nextAction;
-    }
 
     const ticketIndex = tickets.findIndex(
       (ticket) => normalizeDetailTicketId(ticket?.ticket_id) === normalizedTicketId
@@ -714,6 +709,115 @@ function parseEngineerRequest(rawValue) {
     action,
     formatted: `Engineer Request:\nIssue: ${issue || "N/A"}\nAction Needed: ${action || "N/A"}`,
   };
+}
+
+function dedupeTextItems(items) {
+  const seen = new Set();
+  return (Array.isArray(items) ? items : [])
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .filter((item) => {
+      const key = item.toLowerCase();
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+}
+
+function withFallbackItems(items, fallback) {
+  const normalized = dedupeTextItems(items);
+  if (normalized.length) {
+    return normalized;
+  }
+  return fallback ? [fallback] : [];
+}
+
+function findOpeningCaseBuddyMessageIndex(messages) {
+  const items = Array.isArray(messages) ? messages : [];
+  for (let index = 0; index < items.length; index += 1) {
+    const message = items[index];
+    if (String(message?.role || "").trim().toLowerCase() !== "engineer_ai") {
+      continue;
+    }
+    if (message?.is_pending_ai === true) {
+      continue;
+    }
+    return index;
+  }
+  return -1;
+}
+
+function buildCaseBuddyOpeningRequestSections(ticket, rawMessage = "") {
+  const agentState = getEngineerAgentState(ticket);
+  if (agentState) {
+    return [
+      {
+        title: "Current issue",
+        items: withFallbackItems(
+          [agentState.issue_understanding, ...(Array.isArray(agentState.known_facts) ? agentState.known_facts : [])],
+          CASE_BUDDY_CURRENT_ISSUE_FALLBACK
+        ),
+      },
+      {
+        title: "Why Sid couldn't solve it",
+        items: withFallbackItems([agentState.why_not_solved], CASE_BUDDY_WHY_FALLBACK),
+      },
+      {
+        title: "Action needed",
+        items: withFallbackItems(
+          [
+            agentState.next_request_for_engineer,
+            ...(Array.isArray(agentState.missing_information) ? agentState.missing_information : []),
+          ],
+          CASE_BUDDY_ACTION_FALLBACK
+        ),
+      },
+    ];
+  }
+
+  const parsedRequest = parseEngineerRequest(rawMessage);
+  return [
+    {
+      title: "Current issue",
+      items: withFallbackItems(
+        [parsedRequest.issue || String(rawMessage || "").trim()],
+        CASE_BUDDY_CURRENT_ISSUE_FALLBACK
+      ),
+    },
+    {
+      title: "Why Sid couldn't solve it",
+      items: [CASE_BUDDY_WHY_FALLBACK],
+    },
+    {
+      title: "Action needed",
+      items: withFallbackItems([parsedRequest.action], CASE_BUDDY_ACTION_FALLBACK),
+    },
+  ];
+}
+
+function renderCaseBuddyRequestSectionsHtml(sections) {
+  const items = Array.isArray(sections) ? sections : [];
+  if (!items.length) {
+    return "";
+  }
+  return `
+    <div class="case-buddy-request-sections">
+      ${items
+        .map(
+          (section) => `
+            <section class="case-buddy-request-section">
+              <p class="case-buddy-request-title">${String(section?.title || "")}</p>
+              <ul class="case-buddy-request-list">
+                ${withFallbackItems(section?.items, "").map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+              </ul>
+            </section>
+          `
+        )
+        .join("")}
+    </div>
+  `;
 }
 
 function getActiveInvestigation(ticket) {
@@ -1384,23 +1488,6 @@ function setRealtimeStatus(text) {
   wsStatusEl.textContent = `${text}${suffix}`;
 }
 
-function summaryCacheKey(ticket) {
-  const messageCount = Array.isArray(ticket?.messages) ? ticket.messages.length : 0;
-  const investigationUpdatedAt = String(
-    ticket?.active_investigation?.updated_at || ticket?.active_investigation?.opened_at || ""
-  );
-  const agentUpdatedAt = String(ticket?.engineer_agent_state?.last_refreshed_at || "");
-  const handoffUpdatedAt = String(ticket?.engineer_handoff_packet?.updated_at || "");
-  return [
-    String(ticket?.updated_at || ""),
-    String(ticket?.status || ""),
-    String(messageCount),
-    investigationUpdatedAt,
-    agentUpdatedAt,
-    handoffUpdatedAt,
-  ].join("|");
-}
-
 function applyLocalTicketPatch(ticketId, patch) {
   const normalizedId = String(ticketId || "").trim();
   if (!normalizedId || !patch || typeof patch !== "object") {
@@ -1420,107 +1507,6 @@ function applyLocalTicketPatch(ticketId, patch) {
   ) {
     selectedTicket = { ...selectedTicket, ...patch };
   }
-}
-
-function refreshSelectedSummaryPreview(ticketId) {
-  const normalizedId = String(ticketId || "").trim();
-  if (
-    !normalizedId ||
-    !selectedTicket ||
-    String(selectedTicket.ticket_id || selectedTicketId || "").trim() !== normalizedId
-  ) {
-    return;
-  }
-
-  selectedTicketSummary = "Generating AI summary for this ticket...";
-  selectedTicketNextAction = "Determining next action needed...";
-  ticketSummaryCache.delete(normalizedId);
-}
-
-function buildLocalSummaryFallback(ticket) {
-  const status = statusLabel(normalizeStatusValue(ticket?.status || "open"));
-  const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
-  const activeInvestigation = getActiveInvestigation(ticket);
-  const agentState =
-    ticket?.engineer_agent_state && typeof ticket.engineer_agent_state === "object"
-      ? ticket.engineer_agent_state
-      : null;
-
-  if (agentState) {
-    const missingInformation = Array.isArray(agentState.missing_information)
-      ? agentState.missing_information
-          .map((item) => String(item || "").trim())
-          .filter(Boolean)
-      : Array.isArray(agentState.reply_readiness?.blockers)
-      ? agentState.reply_readiness.blockers
-          .map((item) => String(item || "").trim())
-          .filter(Boolean)
-      : [];
-    const summaryLines = [
-      `Current understanding: ${String(agentState.issue_understanding || "Not available yet.").trim() || "Not available yet."}`,
-      `Current knowledge: ${String(agentState.knowledge_summary || "Not available yet.").trim() || "Not available yet."}`,
-      `Why client AI could not solve it: ${String(agentState.why_not_solved || "Not available yet.").trim() || "Not available yet."}`,
-      `Goal: ${String(agentState.goal || "Not available yet.").trim() || "Not available yet."}`,
-    ];
-    if (missingInformation.length) {
-      summaryLines.push(`Still missing: ${missingInformation.join("; ")}`);
-    }
-    return {
-      summary: summaryLines.join(" "),
-      nextAction:
-        String(agentState.next_request_for_engineer || "").trim() ||
-        "Continue the engineer ticket and collect the next missing detail.",
-    };
-  }
-
-  let latestCustomer = "";
-  let latestAssistant = "";
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const item = messages[index];
-    const role = String(item?.role || "").toLowerCase();
-    const content = String(item?.content || "").trim();
-    if (!content) {
-      continue;
-    }
-    if (!latestCustomer && role === "customer") {
-      latestCustomer = content;
-    }
-    if (!latestAssistant && role === "assistant") {
-      latestAssistant = content;
-    }
-    if (latestCustomer && latestAssistant) {
-      break;
-    }
-  }
-
-  const summaryLines = [`Ticket is currently ${status}.`];
-  if (latestCustomer) {
-    summaryLines.push(`Latest customer request: ${latestCustomer.slice(0, 220)}`);
-  }
-  if (latestAssistant) {
-    summaryLines.push(`Latest AI response: ${latestAssistant.slice(0, 220)}`);
-  }
-  if (activeInvestigation) {
-    summaryLines.push(
-      `Engineer ticket is ${investigationStateLabel(activeInvestigation.state).toLowerCase()}.`
-    );
-    const latestInternal = latestInvestigationUpdate(ticket);
-    if (latestInternal) {
-      summaryLines.push(`Latest engineer ticket update: ${latestInternal.slice(0, 220)}`);
-    }
-  }
-
-  const nextAction =
-    activeInvestigation
-      ? "Continue the engineer ticket, confirm the next missing detail, or approve the prepared customer reply."
-      : latestCustomer || latestAssistant
-      ? "Review the latest messages and either continue communicating, start an investigation, or resolve the ticket."
-      : "Collect initial issue details from the customer and define the first troubleshooting step.";
-
-  return {
-    summary: summaryLines.join(" "),
-    nextAction,
-  };
 }
 
 function isAuthenticated() {
@@ -1876,8 +1862,6 @@ function resetDetailWorkspaceState() {
   clearLocalInvestigationThreadState();
   selectedTicketId = null;
   selectedTicket = null;
-  selectedTicketSummary = "";
-  selectedTicketNextAction = "";
   detailLoading = false;
   tellAiDraft = "";
   investigationReviseMode = false;
@@ -2005,6 +1989,12 @@ function renderConversationHtml(messages, options = {}) {
   const showInlineConfirmation = Boolean(options.showInlineConfirmation);
   const draftCustomerReply = String(options.draftCustomerReply || "").trim();
   const controlsDisabled = Boolean(options.controlsDisabled);
+  const structuredCaseBuddyMessageIndex = Number.isInteger(options.structuredCaseBuddyMessageIndex)
+    ? options.structuredCaseBuddyMessageIndex
+    : -1;
+  const structuredCaseBuddySections = Array.isArray(options.structuredCaseBuddySections)
+    ? options.structuredCaseBuddySections
+    : [];
 
   return `
     <div class="message-list${compactThread ? " message-list-compact-thread" : ""}">
@@ -2018,6 +2008,11 @@ function renderConversationHtml(messages, options = {}) {
             role === "customer" ? normalizeMessageSentimentLabel(message.sentiment_label) : "";
           const shouldRenderDecision =
             showInlineConfirmation && inlineDecisionIndex === index && role === "engineer_ai";
+          const shouldRenderStructuredCaseBuddyRequest =
+            compactThread &&
+            role === "engineer_ai" &&
+            structuredCaseBuddyMessageIndex === index &&
+            structuredCaseBuddySections.length > 0;
           return `
             <article class="message-item ${roleClass(role)}${isPendingAi ? " message-item-pending-ai" : ""}${isLocalError ? " message-item-local-error" : ""}">
               <header>
@@ -2031,7 +2026,7 @@ function renderConversationHtml(messages, options = {}) {
                 </div>
                 <span class="message-time">${escapeHtml(createdAt)}</span>
               </header>
-              <div class="message-content${isPendingAi ? " message-content-pending-ai" : ""}">
+              <div class="message-content${isPendingAi ? " message-content-pending-ai" : ""}${shouldRenderStructuredCaseBuddyRequest ? " message-content-structured" : ""}">
                 ${
                   isPendingAi
                     ? `
@@ -2040,6 +2035,8 @@ function renderConversationHtml(messages, options = {}) {
                         String(message.content || `${ENGINEER_AI_DISPLAY_NAME} is reviewing your update...`)
                       )}</span>
                     `
+                    : shouldRenderStructuredCaseBuddyRequest
+                    ? renderCaseBuddyRequestSectionsHtml(structuredCaseBuddySections)
                     : formatMultiline(String(message.content || ""))
                 }
               </div>
@@ -2145,6 +2142,11 @@ function renderTicketDetailView() {
   const approvalUiState = getInvestigationApprovalUiState(ticket, activeInvestigation, investigationMessages, {
     suppressApprovalBlock: hasPendingLocalInvestigationReply(ticketId),
   });
+  const openingCaseBuddyMessageIndex = findOpeningCaseBuddyMessageIndex(investigationMessages);
+  const structuredCaseBuddySections =
+    openingCaseBuddyMessageIndex >= 0
+      ? buildCaseBuddyOpeningRequestSections(ticket, investigationMessages[openingCaseBuddyMessageIndex]?.content)
+      : [];
   const replyReadinessReviewHtml = renderReplyReadinessReviewHtml(ticket, activeInvestigation);
   const showInlineConfirmation = approvalUiState.showApprovalBlock;
   const showInvestigationComposer = Boolean(activeInvestigation);
@@ -2215,6 +2217,8 @@ function renderTicketDetailView() {
                   showInlineConfirmation: showInlineConfirmation && approvalUiState.decisionIndex >= 0,
                   draftCustomerReply,
                   controlsDisabled,
+                  structuredCaseBuddyMessageIndex: openingCaseBuddyMessageIndex,
+                  structuredCaseBuddySections,
                 })
               : '<div class="empty-state">No open engineer ticket yet.</div>'
           }
@@ -2245,20 +2249,6 @@ function renderTicketDetailView() {
           </section>
 
           ${replyReadinessReviewHtml}
-
-          <section class="panel-card">
-            <div class="panel-card-head">
-              <div>
-                <p class="panel-card-kicker">AI Summary</p>
-                <h3 class="panel-card-title">Next Action Needed</h3>
-              </div>
-            </div>
-            <p class="summary-text">${formatMultiline(selectedTicketSummary || "Generating summary...")}</p>
-            <p class="summary-next-title">Next Action Needed</p>
-            <p class="summary-text">${formatMultiline(
-              selectedTicketNextAction || "Analyzing next action needed..."
-            )}</p>
-          </section>
         </aside>
       </div>
     </section>
@@ -2335,66 +2325,10 @@ function redirectOpenTicketToPool() {
   );
 }
 
-async function refreshSelectedSummary(options = {}) {
-  const { silent = true } = options;
-  if (!selectedTicketId || !selectedTicket) {
-    return;
-  }
-
-  const requestedTicketId = selectedTicketId;
-  const cacheKey = summaryCacheKey(selectedTicket);
-  const cached = ticketSummaryCache.get(requestedTicketId);
-  if (cached && cached.cacheKey === cacheKey) {
-    selectedTicketSummary = cached.summary;
-    selectedTicketNextAction = cached.nextAction;
-    renderTicketDetail();
-    return;
-  }
-
-  try {
-    const payload = await fetchJson(
-      `/api/engineer/tickets/${encodeURIComponent(requestedTicketId)}/summary`
-    );
-    if (selectedTicketId !== requestedTicketId) {
-      return;
-    }
-    const summary = String(payload?.summary || "").trim();
-    const nextAction = String(payload?.next_action_needed || "").trim();
-    if (!summary || !nextAction) {
-      const fallback = buildLocalSummaryFallback(selectedTicket);
-      selectedTicketSummary = fallback.summary;
-      selectedTicketNextAction = fallback.nextAction;
-      renderTicketDetail();
-      return;
-    }
-    selectedTicketSummary = summary;
-    selectedTicketNextAction = nextAction;
-    ticketSummaryCache.set(requestedTicketId, {
-      cacheKey,
-      summary,
-      nextAction,
-    });
-    renderTicketDetail();
-  } catch (error) {
-    if (selectedTicketId !== requestedTicketId) {
-      return;
-    }
-    const fallback = buildLocalSummaryFallback(selectedTicket);
-    selectedTicketSummary = fallback.summary;
-    selectedTicketNextAction = fallback.nextAction;
-    renderTicketDetail();
-    if (!silent) {
-      window.alert(`Summary generation failed: ${error.message}`);
-    }
-  }
-}
-
 async function refreshSelectedTicket(options = {}) {
   const { silent = false, showLoading = false } = options;
   if (!selectedTicketId) {
     selectedTicket = null;
-    selectedTicketSummary = "";
-    selectedTicketNextAction = "";
     detailLoading = false;
     renderTicketDetail();
     return;
@@ -2422,19 +2356,11 @@ async function refreshSelectedTicket(options = {}) {
     if (!getInvestigationApprovalUiState(selectedTicket, refreshedInvestigation, refreshedMessages).showApprovalBlock) {
       investigationReviseMode = false;
     }
-    if (selectedTicket) {
-      selectedTicketSummary = "Generating AI summary for this ticket...";
-      selectedTicketNextAction = "Determining next action needed...";
-    } else {
-      selectedTicketSummary = "";
-      selectedTicketNextAction = "";
+    if (!selectedTicket) {
       investigationReviseMode = false;
     }
     detailLoading = false;
     renderTicketDetail();
-    refreshSelectedSummary({ silent: true }).catch(() => {
-      // Keep local summary if async summary fails.
-    });
   } catch (error) {
     if (selectedTicketId !== requestedTicketId) {
       return;
