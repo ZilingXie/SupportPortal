@@ -146,8 +146,8 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260414-engineer-case-buddy-timeout-recovery-1", html)
-        self.assertIn('./app.js?v=20260414-engineer-case-buddy-timeout-recovery-1', html)
+        self.assertIn("./styles.css?v=20260414-engineer-approve-reply-overlap-fix-1", html)
+        self.assertIn('./app.js?v=20260414-engineer-approve-reply-overlap-fix-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
@@ -157,6 +157,13 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn("Jack / jack", html)
         self.assertIn("Case Buddy", app_source)
         self.assertIn("return ENGINEER_DISPLAY_NAME;", app_source)
+        self.assertIn("detail-investigation-closing-state", app_source)
+        self.assertIn("Approving Reply", app_source)
+        self.assertIn(
+            "Sending the approved customer reply and closing this engineer ticket...",
+            app_source,
+        )
+        self.assertIn(".detail-investigation-closing-state {", css)
         self.assertIn("function parseRoute()", app_source)
         self.assertIn('path.startsWith("/tickets/")', app_source)
         self.assertIn("function renderTicketPoolView()", app_source)
@@ -3193,8 +3200,20 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (pendingHtml.includes('id="detail-investigation-input"')) {
                   throw new Error("Pending approve should hide the composer immediately.");
                 }
-                if (!pendingHtml.includes("Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.")) {
-                  throw new Error("Pending approve should keep the draft preview visible.");
+                if (pendingHtml.includes("Draft Customer Reply")) {
+                  throw new Error("Pending approve should not keep the standalone draft preview visible.");
+                }
+                if (pendingHtml.includes("Readiness Review")) {
+                  throw new Error("Pending approve should hide the internal review while the reply is being approved.");
+                }
+                if (!pendingHtml.includes("detail-investigation-closing-state")) {
+                  throw new Error("Pending approve should render the closing-state marker.");
+                }
+                if (!pendingHtml.includes("Approving Reply")) {
+                  throw new Error("Pending approve should show the closing-state title.");
+                }
+                if (!pendingHtml.includes("Sending the approved customer reply and closing this engineer ticket...")) {
+                  throw new Error("Pending approve should show the closing-state explanation.");
                 }
                 if (!tellAiSubmitting) {
                   throw new Error("Pending approve should still mark the UI as submitting.");
@@ -3323,6 +3342,12 @@ class EngineerUiContractTests(unittest.TestCase):
                 }
                 if (!failedHtml.includes("Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.")) {
                   throw new Error("Failed approve should keep the draft preview visible.");
+                }
+                if (!failedHtml.includes("Readiness Review")) {
+                  throw new Error("Failed approve should restore the internal review.");
+                }
+                if (failedHtml.includes("detail-investigation-closing-state")) {
+                  throw new Error("Failed approve should remove the temporary closing-state marker.");
                 }
                 if (alertMessage !== "Approve reply failed: Request failed with status 500") {
                   throw new Error("Failed approve should keep the existing failure alert copy.");
@@ -3464,6 +3489,9 @@ class EngineerUiContractTests(unittest.TestCase):
                 }}
                 if (html.includes('id="detail-investigation-input"')) {{
                   throw new Error("Approve flow should hide the composer after the investigation is closed.");
+                }}
+                if (html.includes("detail-investigation-closing-state")) {{
+                  throw new Error("Approve flow should not keep the temporary closing-state marker once the ticket is closed.");
                 }}
                 if (!html.includes("Resolved")) {{
                   throw new Error("Approve flow should move the engineer case into the resolved state.");
