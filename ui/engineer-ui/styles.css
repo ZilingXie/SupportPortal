@@ -1521,6 +1521,10 @@ html.material-symbols-pending .material-symbols-outlined {
   gap: 14px;
 }
 
+.insight-panel {
+  align-content: start;
+}
+
 .message-list {
   max-height: 68vh;
   padding-right: 4px;
@@ -1637,6 +1641,41 @@ html.material-symbols-pending .material-symbols-outlined {
   color: var(--ink);
   font-size: 14px;
   line-height: 1.65;
+}
+
+.message-content-structured {
+  display: block;
+}
+
+.case-buddy-request-sections {
+  display: grid;
+  gap: 14px;
+}
+
+.case-buddy-request-section {
+  display: grid;
+  gap: 8px;
+}
+
+.case-buddy-request-title {
+  margin: 0;
+  color: var(--ink-soft);
+  font-family: "Manrope", sans-serif;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.case-buddy-request-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 8px;
+}
+
+.case-buddy-request-list li {
+  color: var(--ink);
 }
 
 .message-content-pending-ai {
