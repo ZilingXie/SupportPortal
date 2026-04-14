@@ -146,8 +146,8 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260414-engineer-detail-sidebar-regression-fix-1", html)
-        self.assertIn('./app.js?v=20260414-engineer-detail-sidebar-regression-fix-1', html)
+        self.assertIn("./styles.css?v=20260414-engineer-detail-fixed-right-sidebar-sections-1", html)
+        self.assertIn('./app.js?v=20260414-engineer-detail-fixed-right-sidebar-sections-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
@@ -777,6 +777,45 @@ class EngineerUiContractTests(unittest.TestCase):
         timeline_body_block = css[timeline_body_start:timeline_body_end]
         self.assertIn("min-height: 0;", timeline_body_block)
 
+        readiness_body_marker = ".detail-readiness-body {"
+        readiness_body_start = css.find(readiness_body_marker)
+        self.assertNotEqual(
+            readiness_body_start,
+            -1,
+            msg="Internal Review should expose a dedicated scroll body wrapper below its fixed header.",
+        )
+        readiness_body_end = css.find("}", readiness_body_start)
+        self.assertNotEqual(readiness_body_end, -1, msg="Detail readiness body block should be closed.")
+        readiness_body_block = css[readiness_body_start:readiness_body_end]
+        self.assertIn("display: grid;", readiness_body_block)
+        self.assertIn("gap: 14px;", readiness_body_block)
+        self.assertIn("min-height: 0;", readiness_body_block)
+
+        desktop_media_marker = "@media (min-width: 1181px) {"
+        desktop_media_start = css.find(desktop_media_marker)
+        self.assertNotEqual(
+            desktop_media_start,
+            -1,
+            msg="Engineer detail fixed right-sidebar sections should be scoped to the desktop two-column layout.",
+        )
+        mobile_media_start = css.find("@media (max-width: 1180px) {", desktop_media_start)
+        self.assertNotEqual(
+            mobile_media_start,
+            -1,
+            msg="Engineer detail should keep the existing single-column mobile/tablet breakpoint after desktop sidebar sizing is added.",
+        )
+        desktop_block = css[desktop_media_start:mobile_media_start]
+        self.assertIn(".detail-timeline-panel {", desktop_block)
+        self.assertIn("height: 360px;", desktop_block)
+        self.assertIn(".detail-readiness-review {", desktop_block)
+        self.assertIn("height: 420px;", desktop_block)
+        self.assertIn("grid-template-rows: auto minmax(0, 1fr);", desktop_block)
+        self.assertIn(".detail-timeline-panel .message-list {", desktop_block)
+        self.assertIn("overflow-y: auto;", desktop_block)
+        self.assertIn("scrollbar-gutter: stable;", desktop_block)
+        self.assertIn("overscroll-behavior: contain;", desktop_block)
+        self.assertIn(".detail-readiness-body {", desktop_block)
+
         self.assertNotIn(
             "height: clamp(580px, 68vh, 820px);",
             css,
@@ -991,6 +1030,9 @@ class EngineerUiContractTests(unittest.TestCase):
                 const readinessReviewIndex = html.indexOf('class="panel-card detail-readiness-review"');
                 if (timelinePanelIndex === -1 || readinessReviewIndex === -1 || readinessReviewIndex < timelinePanelIndex) {{
                   throw new Error("Internal Review should remain a natural-flow sibling after the customer timeline card.");
+                }}
+                if (!customerTimelineSection.includes('class="detail-readiness-body"')) {{
+                  throw new Error("Internal Review should expose a dedicated scroll body wrapper below the fixed header.");
                 }}
                 if (html.includes("AI Summary")) {{
                   throw new Error("Detail workspace should merge the AI summary into the Case Buddy request instead of rendering a separate summary card.");
