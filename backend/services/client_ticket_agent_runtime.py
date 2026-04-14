@@ -15,11 +15,16 @@ from backend.services.investigation_flow import (
     ESCALATED_STATUS,
     INVESTIGATING_STATUS,
     RESOLVED_STATUS,
+    default_public_investigation_reply,
     normalize_ticket_status,
 )
 from backend.services.support_products import get_support_product_label, list_support_product_field_labels
 from backend.services.support_router import SupportResolution, SupportRouteDecision
-from backend.services.troubleshooting_intake import TroubleshootingIntakeResult, build_client_intake_state
+from backend.services.troubleshooting_intake import (
+    TroubleshootingIntakeResult,
+    build_client_intake_state,
+    evaluate_troubleshooting_intake,
+)
 
 CLIENT_TICKET_AGENT_RUNTIME_VERSION = "client_ticket_agents_v1"
 RAG_INSUFFICIENT_EVIDENCE_REASON = "rag_insufficient_evidence"
@@ -30,6 +35,7 @@ RAG_POST_CHECK_INSUFFICIENT_REASON = "rag_post_check_insufficient"
 RAG_POST_CHECK_ERROR_REASON = "rag_post_check_error"
 DEADLINE_EXHAUSTED_REASON = "deadline_exhausted"
 ROUTE_TIMEOUT_REASON = "route_timeout"
+INVESTIGATION_INTAKE_COMPLETE_REASON = "investigation_intake_complete"
 WORKFLOW_ACTION_ANSWER_CUSTOMER = "answer_customer"
 WORKFLOW_ACTION_CLARIFY_CUSTOMER_FOR_INTAKE = "clarify_customer_for_intake"
 WORKFLOW_ACTION_OPEN_ENGINEER_TICKET = "open_engineer_ticket"
@@ -910,9 +916,31 @@ def _normalize_investigation_reason(value: Any) -> str:
         RAG_POST_CHECK_ERROR_REASON,
         DEADLINE_EXHAUSTED_REASON,
         ROUTE_TIMEOUT_REASON,
+        INVESTIGATION_INTAKE_COMPLETE_REASON,
     }:
         return normalized
     return RAG_INSUFFICIENT_EVIDENCE_REASON
+
+
+def _build_intake_complete_investigation_resolution(message: str) -> SupportResolution:
+    return SupportResolution(
+        answer=default_public_investigation_reply(message),
+        confidence=1.0,
+        sources=[],
+        citations=[],
+        needs_engineer_guidance=True,
+        answer_route="workflow",
+        scope_label="agora_technical",
+        route_family="investigation_intake",
+        execution_action="open_engineer_ticket",
+        tooling_profile="deterministic_intake",
+        route_reason=INVESTIGATION_INTAKE_COMPLETE_REASON,
+        route_confidence=1.0,
+        search_used=False,
+        matched_signals=[INVESTIGATION_INTAKE_COMPLETE_REASON],
+        evidence_summary={"diagnostics": {"intake_short_circuit": True}},
+        packed_evidence=None,
+    )
 
 
 def _handle_insufficient_review(
@@ -1013,6 +1041,36 @@ def _merge_rag_resolution_diagnostics(
         if value is not None:
             merged[key] = value
     return merged
+
+
+def _evaluate_investigation_intake_short_circuit(
+    *,
+    message: str,
+    product: str | None,
+    ticket_subject: str | None,
+    ticket_context: list[dict[str, str]] | None,
+    current_state: dict[str, Any] | None,
+    message_id: str | None,
+) -> TroubleshootingIntakeResult | None:
+    deterministic_review = evaluate_troubleshooting_intake(
+        message=message,
+        product=product,
+        ticket_subject=ticket_subject,
+        ticket_context=ticket_context,
+        current_state=current_state,
+        rag_result={
+            "reason": RAG_INSUFFICIENT_EVIDENCE_REASON,
+            "answer": "",
+            "evidence_summary": {},
+        },
+        message_created_at=message_id,
+        deterministic_only=True,
+    )
+    if deterministic_review.issue_mode != "investigation":
+        return None
+    if not deterministic_review.ready_for_engineer_ticket:
+        return None
+    return deterministic_review
 
 
 def execute_client_ticket_agent_runtime(
@@ -1154,6 +1212,133 @@ def execute_client_ticket_agent_runtime(
                 "workflow_action": result.workflow_action,
                 "route_reason": result.route_reason,
                 "next_status": result.next_status,
+            },
+        )
+        runtime_state = ClientTicketAgentRuntimeState(
+            runtime_version=CLIENT_TICKET_AGENT_RUNTIME_VERSION,
+            active_run_id=run_id,
+            product=_clean_text(product) or None,
+            message_id=_clean_text(message_id) or None,
+            workflow_action=result.workflow_action,
+            main_agent=dict(main_summary),
+            route_agent=dict(route_summary),
+            rag_agent=dict(rag_summary),
+            review_agent=dict(review_summary),
+            status="completed",
+            updated_at=_utc_now(),
+            completed_at=_utc_now(),
+        )
+        result = _attach_runtime_metadata(
+            result,
+            run_id=run_id,
+            runtime_state=runtime_state,
+            agent_events=agent_events,
+        )
+        return ClientTicketAgentRuntimeExecution(
+            result=result,
+            runtime_state=runtime_state,
+            agent_events=agent_events,
+            diagnostics=diagnostics,
+        )
+    intake_short_circuit_result = None
+    if _is_troubleshooting_intake_candidate(
+        message=message,
+        client_intake_state=client_intake_state,
+    ):
+        intake_short_circuit_result = _evaluate_investigation_intake_short_circuit(
+            message=message,
+            product=product,
+            ticket_subject=ticket_subject,
+            ticket_context=ticket_context,
+            current_state=client_intake_state,
+            message_id=message_id,
+        )
+    if intake_short_circuit_result is not None:
+        diagnostics["investigation_intake_short_circuit"] = True
+        _mark_agent_summary(
+            route_summary,
+            phase="skipped",
+            status="skipped",
+            decision="skipped",
+            reason=INVESTIGATION_INTAKE_COMPLETE_REASON,
+        )
+        _append_event(
+            agent_events,
+            ticket_id=ticket_id,
+            message_id=message_id,
+            run_id=run_id,
+            agent_name=AGENT_NAME_ROUTE,
+            phase="skipped",
+            event_type="skipped",
+            payload={"reason": INVESTIGATION_INTAKE_COMPLETE_REASON},
+        )
+        _mark_agent_summary(
+            rag_summary,
+            phase="skipped",
+            status="skipped",
+            decision="skipped",
+            reason=INVESTIGATION_INTAKE_COMPLETE_REASON,
+            extra={"request_id": rag_request_id},
+        )
+        _append_event(
+            agent_events,
+            ticket_id=ticket_id,
+            message_id=message_id,
+            run_id=run_id,
+            agent_name=AGENT_NAME_RAG,
+            phase="skipped",
+            event_type="skipped",
+            payload={"reason": INVESTIGATION_INTAKE_COMPLETE_REASON, "request_id": rag_request_id},
+        )
+        _mark_agent_summary(
+            review_summary,
+            phase="skipped",
+            status="skipped",
+            decision="skipped",
+            reason=INVESTIGATION_INTAKE_COMPLETE_REASON,
+        )
+        _append_event(
+            agent_events,
+            ticket_id=ticket_id,
+            message_id=message_id,
+            run_id=run_id,
+            agent_name=AGENT_NAME_REVIEW,
+            phase="skipped",
+            event_type="skipped",
+            payload={"reason": INVESTIGATION_INTAKE_COMPLETE_REASON},
+        )
+        next_client_intake_state = build_client_intake_state(
+            intake_short_circuit_result,
+            product=product,
+            now_value=message_id,
+            pending_investigation_reason=INVESTIGATION_INTAKE_COMPLETE_REASON,
+        )
+        result = _build_ticket_execution_result(
+            resolution=_build_intake_complete_investigation_resolution(message),
+            needs_investigating=True,
+            workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
+            investigation_reason=INVESTIGATION_INTAKE_COMPLETE_REASON,
+            client_intake_state=next_client_intake_state,
+        )
+        _mark_agent_summary(
+            main_summary,
+            phase="completed",
+            status="completed",
+            decision=result.workflow_action,
+            reason=result.route_reason,
+        )
+        _append_event(
+            agent_events,
+            ticket_id=ticket_id,
+            message_id=message_id,
+            run_id=run_id,
+            agent_name=AGENT_NAME_MAIN,
+            phase="completed",
+            event_type="workflow_decided",
+            payload={
+                "workflow_action": result.workflow_action,
+                "route_reason": result.route_reason,
+                "client_intake_ready_for_engineer_ticket": True,
             },
         )
         runtime_state = ClientTicketAgentRuntimeState(
@@ -1486,6 +1671,7 @@ def execute_client_ticket_agent_runtime(
                     ticket_subject=ticket_subject,
                     ticket_context=ticket_context,
                     current_state=client_intake_state,
+                    message_created_at=message_id,
                     route_decision=effective_route_decision,
                     resolution=rag_resolution,
                     rag_result={
@@ -1561,6 +1747,7 @@ def execute_client_ticket_agent_runtime(
                         ticket_subject=ticket_subject,
                         ticket_context=ticket_context,
                         current_state=client_intake_state,
+                        message_created_at=message_id,
                         route_decision=effective_route_decision,
                         resolution=rag_resolution,
                         rag_result={
@@ -1618,6 +1805,7 @@ def execute_client_ticket_agent_runtime(
                                 ticket_subject=ticket_subject,
                                 ticket_context=ticket_context,
                                 current_state=client_intake_state,
+                                message_created_at=message_id,
                                 route_decision=effective_route_decision,
                                 resolution=rag_resolution,
                                 rag_result={
@@ -1681,6 +1869,7 @@ def execute_client_ticket_agent_runtime(
                             ticket_subject=ticket_subject,
                             ticket_context=ticket_context,
                             current_state=client_intake_state,
+                            message_created_at=message_id,
                             route_decision=effective_route_decision,
                             resolution=rag_resolution,
                             rag_result={

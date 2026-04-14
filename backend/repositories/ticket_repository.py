@@ -126,6 +126,15 @@ def _normalize_client_intake_state(value: Any) -> dict[str, Any] | None:
     else:
         normalized["missing_information"] = []
     normalized["ready_for_engineer_ticket"] = bool(normalized.get("ready_for_engineer_ticket"))
+    issue_timestamp_parts = normalized.get("issue_timestamp_parts")
+    if isinstance(issue_timestamp_parts, dict):
+        normalized["issue_timestamp_parts"] = {
+            str(key or "").strip().lower(): " ".join(str(item or "").split()).strip()
+            for key, item in issue_timestamp_parts.items()
+            if str(key or "").strip() and " ".join(str(item or "").split()).strip()
+        }
+    else:
+        normalized["issue_timestamp_parts"] = {}
     normalized["last_updated_at"] = (
         _to_iso(normalized.get("last_updated_at"))
         if normalized.get("last_updated_at") is not None

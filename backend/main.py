@@ -466,6 +466,7 @@ def _run_client_ticket_review_agent(
     route_decision: SupportRouteDecision,
     resolution: SupportResolution,
     rag_result: dict[str, Any] | None,
+    message_created_at: str | None = None,
 ) -> Any:
     if mode in {"rag_insufficient_evidence", "pre_engineer_intake"}:
         return evaluate_troubleshooting_intake(
@@ -475,6 +476,7 @@ def _run_client_ticket_review_agent(
             ticket_context=ticket_context,
             current_state=current_state,
             rag_result=rag_result,
+            message_created_at=message_created_at,
         )
 
     skill_result = SimpleNamespace(
