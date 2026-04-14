@@ -905,25 +905,24 @@ function getInvestigationApprovalUiState(ticket, activeInvestigation, investigat
   };
 }
 
-function renderReplyReadinessSummaryHtml(ticket, activeInvestigation) {
+function renderReplyReadinessSummaryHtml(ticket, displayInvestigation) {
   const replyReadiness = getReplyReadiness(ticket);
-  if (!activeInvestigation || !replyReadiness) {
+  if (!displayInvestigation) {
     return "";
   }
 
   const summaryItems = [
     {
       label: "Conclusion",
-      value: String(replyReadiness.conclusion_summary || "").trim() || "Conclusion not extracted yet.",
+      ready: replyReadiness?.has_conclusion === true,
     },
     {
       label: "Proof",
-      value: String(replyReadiness.proof_summary || "").trim() || "Proof still missing.",
+      ready: replyReadiness?.has_proof === true,
     },
     {
-      label: "Solution / Next Step",
-      value:
-        String(replyReadiness.solution_or_next_step || "").trim() || "No actionable next step captured yet.",
+      label: "Next Step",
+      ready: replyReadiness?.has_solution_or_next_step === true,
     },
   ];
 
@@ -932,9 +931,9 @@ function renderReplyReadinessSummaryHtml(ticket, activeInvestigation) {
       ${summaryItems
         .map(
           (item) => `
-            <article class="detail-readiness-summary-card">
+            <article class="detail-readiness-summary-card ${item.ready ? "is-ready" : "is-missing"}">
+              <span class="detail-readiness-summary-dot" aria-hidden="true"></span>
               <p class="detail-readiness-summary-label">${escapeHtml(item.label)}</p>
-              <p class="detail-readiness-summary-value">${formatMultiline(item.value)}</p>
             </article>
           `
         )
@@ -2115,7 +2114,7 @@ function buildTicketDetailViewState() {
     approvalUiState,
     openingCaseBuddyMessageIndex,
     structuredCaseBuddySections,
-    replyReadinessSummaryHtml: renderReplyReadinessSummaryHtml(ticket, activeInvestigation),
+    replyReadinessSummaryHtml: renderReplyReadinessSummaryHtml(ticket, displayInvestigation),
     showInlineConfirmation: approvalUiState.showApprovalBlock,
     showInvestigationComposer: Boolean(activeInvestigation),
     draftCustomerReply: String(displayInvestigation?.draft_customer_reply || "").trim(),
@@ -2173,13 +2172,6 @@ function renderTicketDetailConversationStaticHtml(viewState) {
       <div class="detail-thread-head-copy">
         <p class="panel-card-kicker">Engineer Ticket</p>
         <h3 class="panel-card-title">Engineer Ticket Thread</h3>
-        ${
-          viewState.displayInvestigation
-            ? `<p class="mode-switch-hint">State: ${escapeHtml(
-                investigationStateLabel(viewState.displayInvestigation.state)
-              )}</p>`
-            : ""
-        }
       </div>
       ${viewState.replyReadinessSummaryHtml}
     </div>

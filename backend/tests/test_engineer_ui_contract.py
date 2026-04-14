@@ -146,8 +146,8 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260414-engineer-readiness-relayout-1", html)
-        self.assertIn('./app.js?v=20260414-engineer-readiness-relayout-1', html)
+        self.assertIn("./styles.css?v=20260414-engineer-readiness-status-1", html)
+        self.assertIn('./app.js?v=20260414-engineer-readiness-status-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
@@ -1328,23 +1328,37 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!engineerThreadSection.includes('class="detail-readiness-summary"')) {{
                   throw new Error("Engineer thread header should render the compact readiness summary.");
                 }}
+                if (html.includes("State:")) {{
+                  throw new Error("Engineer detail should stop rendering the thread state line.");
+                }}
                 if (!engineerThreadSection.includes("Conclusion")) {{
-                  throw new Error("Engineer thread header should surface the conclusion summary card.");
+                  throw new Error("Engineer thread header should render the conclusion status card.");
                 }}
                 if (!engineerThreadSection.includes("Proof")) {{
-                  throw new Error("Engineer thread header should surface the proof summary card.");
+                  throw new Error("Engineer thread header should render the proof status card.");
                 }}
-                if (!engineerThreadSection.includes("Solution / Next Step")) {{
-                  throw new Error("Engineer thread header should surface the next-step summary card.");
+                if (!engineerThreadSection.includes("Next Step")) {{
+                  throw new Error("Engineer thread header should render the next-step status card.");
                 }}
-                if (!engineerThreadSection.includes("The audience may not be able to decode the current video stream.")) {{
-                  throw new Error("Engineer thread header should render the conclusion summary text.");
+                const readyCards = (engineerThreadSection.match(/detail-readiness-summary-card is-ready/g) || []).length;
+                const missingCards = (engineerThreadSection.match(/detail-readiness-summary-card is-missing/g) || []).length;
+                if (readyCards !== 2) {{
+                  throw new Error("Engineer thread header should render two ready status cards when conclusion and next step are present.");
                 }}
-                if (!engineerThreadSection.includes("Proof still missing.")) {{
-                  throw new Error("Engineer thread header should keep the proof fallback copy.");
+                if (missingCards !== 1) {{
+                  throw new Error("Engineer thread header should render one missing status card when proof is absent.");
                 }}
-                if (!engineerThreadSection.includes("Ask the engineer to provide the log evidence or reproduction result before replying.")) {{
-                  throw new Error("Engineer thread header should render the next-step summary text.");
+                if ((engineerThreadSection.match(/detail-readiness-summary-dot/g) || []).length !== 3) {{
+                  throw new Error("Each readiness status card should render a status dot.");
+                }}
+                if (engineerThreadSection.includes("The audience may not be able to decode the current video stream.")) {{
+                  throw new Error("Engineer thread header should no longer render the conclusion summary text.");
+                }}
+                if (engineerThreadSection.includes("Proof still missing.")) {{
+                  throw new Error("Engineer thread header should no longer render proof fallback copy.");
+                }}
+                if (engineerThreadSection.includes("Ask the engineer to provide the log evidence or reproduction result before replying.")) {{
+                  throw new Error("Engineer thread header should no longer render next-step summary text.");
                 }}
                 if (customerTimelineSection.includes('class="detail-readiness-summary"')) {{
                   throw new Error("Customer timeline sidebar should no longer render readiness summary content.");
@@ -1356,7 +1370,7 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
-    def test_engineer_detail_readiness_summary_uses_fallback_copy_in_header_cards(self) -> None:
+    def test_engineer_detail_readiness_summary_renders_missing_state_without_copy(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
                 """
@@ -1403,20 +1417,68 @@ class EngineerUiContractTests(unittest.TestCase):
                 const customerIndex = html.indexOf("Customer Timeline");
                 const engineerThreadSection = html.slice(engineerIndex, customerIndex);
 
-                if (!engineerThreadSection.includes("Conclusion not extracted yet.")) {{
-                  throw new Error("Conclusion card should keep the fallback copy when the summary is empty.");
+                if ((engineerThreadSection.match(/detail-readiness-summary-card is-missing/g) || []).length !== 3) {{
+                  throw new Error("All readiness cards should render as missing when every readiness boolean is false.");
                 }}
-                if (!engineerThreadSection.includes("Proof still missing.")) {{
-                  throw new Error("Proof card should keep the fallback copy when the summary is empty.");
+                if (engineerThreadSection.includes("Conclusion not extracted yet.")) {{
+                  throw new Error("Conclusion card should not render fallback body copy.");
                 }}
-                if (!engineerThreadSection.includes("No actionable next step captured yet.")) {{
-                  throw new Error("Next-step card should keep the fallback copy when the summary is empty.");
+                if (engineerThreadSection.includes("Proof still missing.")) {{
+                  throw new Error("Proof card should not render fallback body copy.");
+                }}
+                if (engineerThreadSection.includes("No actionable next step captured yet.")) {{
+                  throw new Error("Next-step card should not render fallback body copy.");
                 }}
                 if (html.includes("logs://alpha")) {{
                   throw new Error("Engineer detail should not surface proof anchors after the relayout.");
                 }}
                 if (html.includes("The engineer reply did not provide enough detail.")) {{
                   throw new Error("Engineer detail should not surface critique copy after the relayout.");
+                }}
+              """
+            )
+        )
+
+    def test_engineer_detail_readiness_summary_defaults_to_missing_when_readiness_is_absent(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                selectedTicketId = "TK-DETAIL-READINESS-ABSENT";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-READINESS-ABSENT",
+                  subject: "Readiness state not evaluated yet",
+                  requester: "user-12",
+                  status: "investigating",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: {
+                    id: "INV-DETAIL-READINESS-ABSENT",
+                    state: "active",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "",
+                    final_confirmation_requested_at: null,
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:05:00+00:00",
+                    messages: [],
+                  },
+                  engineer_agent_state: {
+                    phase: "gather_missing_inputs",
+                    ready_to_reply: false,
+                  },
+                };
+
+                const html = renderTicketDetailView();
+                const engineerIndex = html.indexOf("Engineer Ticket Thread");
+                const customerIndex = html.indexOf("Customer Timeline");
+                const engineerThreadSection = html.slice(engineerIndex, customerIndex);
+
+                if (!engineerThreadSection.includes('class="detail-readiness-summary"')) {{
+                  throw new Error("Engineer thread header should still render readiness cards when readiness data is absent.");
+                }}
+                if ((engineerThreadSection.match(/detail-readiness-summary-card is-missing/g) || []).length !== 3) {{
+                  throw new Error("Absent readiness data should default all three cards to missing.");
                 }}
               """
             )
@@ -1554,8 +1616,8 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!html.includes("Approved final reply.")) {{
                   throw new Error("Closed investigations should keep rendering the latest internal transcript.");
                 }}
-                if (!html.includes("State: Closed")) {{
-                  throw new Error("Closed investigations should label the thread as closed.");
+                if (html.includes("State:")) {{
+                  throw new Error("Closed investigations should no longer render the thread state line.");
                 }}
                 if (html.includes('id="detail-investigation-input"')) {{
                   throw new Error("Closed investigations should not render an active composer.");
@@ -2627,8 +2689,8 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!html.includes("Approved final reply.")) {{
                   throw new Error("Approve flow should immediately render the closed investigation transcript.");
                 }}
-                if (!html.includes("State: Closed")) {{
-                  throw new Error("Approve flow should immediately render the investigation as closed.");
+                if (html.includes("State:")) {{
+                  throw new Error("Approve flow should no longer render the thread state line after closing the investigation.");
                 }}
                 if (html.includes("Approve Reply")) {{
                   throw new Error("Approve flow should remove the approve button after the engineer ticket is closed.");
