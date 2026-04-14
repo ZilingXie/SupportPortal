@@ -146,8 +146,8 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260414-engineer-case-buddy-merged-request-1", html)
-        self.assertIn('./app.js?v=20260414-engineer-composer-focus-1', html)
+        self.assertIn("./styles.css?v=20260414-engineer-readiness-relayout-1", html)
+        self.assertIn('./app.js?v=20260414-engineer-readiness-relayout-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
@@ -1247,7 +1247,7 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
-    def test_engineer_detail_renders_reply_readiness_review_block(self) -> None:
+    def test_engineer_detail_moves_readiness_summary_into_thread_header(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
                 """
@@ -1298,20 +1298,125 @@ class EngineerUiContractTests(unittest.TestCase):
                 selectedTicketNextAction = "Collect explicit proof before replying.";
 
                 const html = renderTicketDetailView();
-                if (!html.includes("Readiness Review")) {{
-                  throw new Error("Engineer detail should render the reply readiness review block.");
+                if (html.includes("Internal Review")) {{
+                  throw new Error("Engineer detail should stop rendering the Internal Review section.");
                 }}
-                if (!html.includes("Conclusion")) {{
-                  throw new Error("Readiness review should show the conclusion check.");
+                if (html.includes("Readiness Review")) {{
+                  throw new Error("Engineer detail should stop rendering the standalone Readiness Review section.");
                 }}
-                if (!html.includes("Solution / Next Step")) {{
-                  throw new Error("Readiness review should show the solution-or-next-step check.");
+                if (html.includes("Needs Follow-up")) {{
+                  throw new Error("Engineer detail should hide the readiness status pill in detail view.");
                 }}
-                if (!html.includes("Explicit proof is still missing.")) {{
-                  throw new Error("Readiness review should surface current blockers.");
+                if (html.includes("Current Blockers")) {{
+                  throw new Error("Engineer detail should hide readiness blockers in detail view.");
                 }}
-                if (!html.includes("not yet backed by logs")) {{
-                  throw new Error("Readiness review should surface the critique text.");
+                if (html.includes("Critique")) {{
+                  throw new Error("Engineer detail should hide readiness critique in detail view.");
+                }}
+                if (html.includes("Proof Anchors")) {{
+                  throw new Error("Engineer detail should hide proof anchors in detail view.");
+                }}
+
+                const engineerIndex = html.indexOf("Engineer Ticket Thread");
+                const customerIndex = html.indexOf("Customer Timeline");
+                if (engineerIndex === -1 || customerIndex === -1 || engineerIndex > customerIndex) {{
+                  throw new Error("Engineer thread should still render before the customer timeline.");
+                }}
+                const engineerThreadSection = html.slice(engineerIndex, customerIndex);
+                const customerTimelineSection = html.slice(customerIndex);
+
+                if (!engineerThreadSection.includes('class="detail-readiness-summary"')) {{
+                  throw new Error("Engineer thread header should render the compact readiness summary.");
+                }}
+                if (!engineerThreadSection.includes("Conclusion")) {{
+                  throw new Error("Engineer thread header should surface the conclusion summary card.");
+                }}
+                if (!engineerThreadSection.includes("Proof")) {{
+                  throw new Error("Engineer thread header should surface the proof summary card.");
+                }}
+                if (!engineerThreadSection.includes("Solution / Next Step")) {{
+                  throw new Error("Engineer thread header should surface the next-step summary card.");
+                }}
+                if (!engineerThreadSection.includes("The audience may not be able to decode the current video stream.")) {{
+                  throw new Error("Engineer thread header should render the conclusion summary text.");
+                }}
+                if (!engineerThreadSection.includes("Proof still missing.")) {{
+                  throw new Error("Engineer thread header should keep the proof fallback copy.");
+                }}
+                if (!engineerThreadSection.includes("Ask the engineer to provide the log evidence or reproduction result before replying.")) {{
+                  throw new Error("Engineer thread header should render the next-step summary text.");
+                }}
+                if (customerTimelineSection.includes('class="detail-readiness-summary"')) {{
+                  throw new Error("Customer timeline sidebar should no longer render readiness summary content.");
+                }}
+                if (customerTimelineSection.includes("The audience may not be able to decode the current video stream.")) {{
+                  throw new Error("Customer timeline sidebar should only show customer timeline content.");
+                }}
+              """
+            )
+        )
+
+    def test_engineer_detail_readiness_summary_uses_fallback_copy_in_header_cards(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                selectedTicketId = "TK-DETAIL-READINESS-FALLBACKS";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-READINESS-FALLBACKS",
+                  subject: "Unable to summarize engineer response",
+                  requester: "user-11",
+                  status: "investigating",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: {
+                    id: "INV-DETAIL-READINESS-FALLBACKS",
+                    state: "active",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "",
+                    final_confirmation_requested_at: null,
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:05:00+00:00",
+                    messages: [],
+                  },
+                  engineer_agent_state: {
+                    phase: "gather_missing_inputs",
+                    ready_to_reply: false,
+                    reply_readiness: {
+                      has_conclusion: false,
+                      has_proof: false,
+                      has_solution_or_next_step: false,
+                      conclusion_summary: "",
+                      proof_summary: "",
+                      proof_anchors: ["logs://alpha"],
+                      solution_or_next_step: "",
+                      blockers: ["Conclusion, proof, and next step are all still missing."],
+                      critique: "The engineer reply did not provide enough detail.",
+                      ready_for_customer_reply: false,
+                    },
+                  },
+                };
+
+                const html = renderTicketDetailView();
+                const engineerIndex = html.indexOf("Engineer Ticket Thread");
+                const customerIndex = html.indexOf("Customer Timeline");
+                const engineerThreadSection = html.slice(engineerIndex, customerIndex);
+
+                if (!engineerThreadSection.includes("Conclusion not extracted yet.")) {{
+                  throw new Error("Conclusion card should keep the fallback copy when the summary is empty.");
+                }}
+                if (!engineerThreadSection.includes("Proof still missing.")) {{
+                  throw new Error("Proof card should keep the fallback copy when the summary is empty.");
+                }}
+                if (!engineerThreadSection.includes("No actionable next step captured yet.")) {{
+                  throw new Error("Next-step card should keep the fallback copy when the summary is empty.");
+                }}
+                if (html.includes("logs://alpha")) {{
+                  throw new Error("Engineer detail should not surface proof anchors after the relayout.");
+                }}
+                if (html.includes("The engineer reply did not provide enough detail.")) {{
+                  throw new Error("Engineer detail should not surface critique copy after the relayout.");
                 }}
               """
             )
