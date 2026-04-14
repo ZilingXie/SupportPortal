@@ -3503,6 +3503,358 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_engineer_detail_stale_inflight_refresh_started_before_approve_cannot_restore_controls(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                routeState.view = "detail";
+                selectedTicketId = "TK-DETAIL-APPROVE-STALE-INFLIGHT";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-APPROVE-STALE-INFLIGHT",
+                  client_ticket_ref: {
+                    ticket_id: "CLIENT-DETAIL-APPROVE-STALE-INFLIGHT",
+                    subject: "Android 14 token renew regression",
+                  },
+                  subject: "Android 14 token renew regression",
+                  requester: "user-7",
+                  status: "investigating",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: {
+                    id: "INV-DETAIL-APPROVE-STALE-INFLIGHT",
+                    state: "awaiting_confirmation",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                    final_confirmation_requested_at: "2026-03-24T09:05:00+00:00",
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-APPROVE-STALE-INFLIGHT-m1",
+                        role: "engineer_ai",
+                        content: "I have enough information now. Please confirm this draft before I reply to the customer.",
+                        created_at: "2026-03-24T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  engineer_agent_state: {
+                    phase: "awaiting_confirmation",
+                    ready_to_reply: true,
+                    reply_readiness: {
+                      has_conclusion: true,
+                      has_proof: true,
+                      has_solution_or_next_step: true,
+                      conclusion_summary: "Android 14 with SDK 4.2.1 reproduces the token renew failure.",
+                      proof_summary: "The engineer reproduced the issue on Android 14 with SDK 4.2.1 only.",
+                      proof_anchors: ["Android 14", "SDK 4.2.1"],
+                      solution_or_next_step: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                      blockers: [],
+                      critique: "The current evidence supports the customer-safe SDK upgrade guidance.",
+                      ready_for_customer_reply: true,
+                    },
+                  },
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+
+                const staleAwaitingConfirmationTicket = {
+                  ...selectedTicket,
+                  updated_at: "2026-03-24T09:10:30+00:00",
+                };
+
+                const closedInvestigation = {
+                  id: "INV-DETAIL-APPROVE-STALE-INFLIGHT",
+                  state: "closed",
+                  trigger_reason: "rag_insufficient_evidence",
+                  trigger_source: "support_query",
+                  draft_customer_reply: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                  final_confirmation_requested_at: null,
+                  opened_at: "2026-03-24T08:01:00+00:00",
+                  updated_at: "2026-03-24T09:11:00+00:00",
+                  closed_at: "2026-03-24T09:11:00+00:00",
+                  messages: [
+                    {
+                      id: "INV-DETAIL-APPROVE-STALE-INFLIGHT-m1",
+                      role: "engineer_ai",
+                      content: "I have enough information now. Please confirm this draft before I reply to the customer.",
+                      created_at: "2026-03-24T09:05:00+00:00",
+                    },
+                    {
+                      id: "INV-DETAIL-APPROVE-STALE-INFLIGHT-m2",
+                      role: "engineer",
+                      content: "Approved final reply.",
+                      created_at: "2026-03-24T09:11:00+00:00",
+                    },
+                  ],
+                };
+
+                const closedTicketPayload = {
+                  ...selectedTicket,
+                  status: "resolved",
+                  updated_at: "2026-03-24T09:11:00+00:00",
+                  active_investigation: null,
+                  investigation_history: [closedInvestigation],
+                };
+
+                let detailFetchCount = 0;
+                let resolveStaleRefresh = null;
+                fetchJson = async (url, options = undefined) => {
+                  if (url === "/api/engineer/tickets/TK-DETAIL-APPROVE-STALE-INFLIGHT/investigation/confirmation") {
+                    return {
+                      ticket_id: "TK-DETAIL-APPROVE-STALE-INFLIGHT",
+                      status: "resolved",
+                      active_investigation: null,
+                      closed_investigation: closedInvestigation,
+                      updated_at: "2026-03-24T09:11:00+00:00",
+                    };
+                  }
+                  if (url === "/api/engineer/tickets/TK-DETAIL-APPROVE-STALE-INFLIGHT") {
+                    detailFetchCount += 1;
+                    if (detailFetchCount === 1) {
+                      return await new Promise((resolve) => {
+                        resolveStaleRefresh = resolve;
+                      });
+                    }
+                    return {
+                      ticket: closedTicketPayload,
+                    };
+                  }
+                  throw new Error(`Unexpected url: ${url}`);
+                };
+                loadTickets = async () => {};
+
+                const staleRefreshPromise = refreshSelectedTicket({ silent: true, showLoading: false });
+
+                const approveButton = {
+                  dataset: { detailAction: "approve-investigation" },
+                  disabled: false,
+                };
+                const approveTarget = {
+                  closest(selector) {
+                    if (selector === "button[data-detail-action]") {
+                      return approveButton;
+                    }
+                    return null;
+                  },
+                };
+
+                await handleDetailClick({ target: approveTarget });
+                const approvedHtml = workspaceRegionEl.innerHTML;
+                if (approvedHtml.includes("Approve Reply")) {
+                  throw new Error("Approve should hide the approve button before any stale refresh arrives.");
+                }
+                if (approvedHtml.includes('id="detail-investigation-input"')) {
+                  throw new Error("Approve should hide the composer before any stale refresh arrives.");
+                }
+                if (!approvedHtml.includes("Approved final reply.")) {
+                  throw new Error("Approve should render the closed investigation transcript before stale refresh completion.");
+                }
+
+                resolveStaleRefresh({
+                  ticket: staleAwaitingConfirmationTicket,
+                });
+                await staleRefreshPromise;
+
+                const htmlAfterStaleRefresh = workspaceRegionEl.innerHTML;
+                if (htmlAfterStaleRefresh.includes("Approve Reply")) {
+                  throw new Error("A stale in-flight detail refresh that started before approval must not restore the approve button.");
+                }
+                if (htmlAfterStaleRefresh.includes('id="detail-investigation-input"')) {
+                  throw new Error("A stale in-flight detail refresh that started before approval must not restore the composer.");
+                }
+                if (!htmlAfterStaleRefresh.includes("Approved final reply.")) {
+                  throw new Error("A stale in-flight detail refresh that started before approval must not overwrite the closed transcript.");
+                }
+              """
+            )
+        )
+
+    def test_engineer_socket_stale_refresh_after_approve_cannot_restore_controls(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                let lastSocket = null;
+                WebSocket = function WebSocket() {
+                  this.readyState = 1;
+                  this.close = () => {};
+                  this.send = () => {};
+                  lastSocket = this;
+                };
+
+                routeState.view = "detail";
+                selectedTicketId = "TK-DETAIL-APPROVE-STALE-SOCKET";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-APPROVE-STALE-SOCKET",
+                  client_ticket_ref: {
+                    ticket_id: "CLIENT-DETAIL-APPROVE-STALE-SOCKET",
+                    subject: "Android 14 token renew regression",
+                  },
+                  subject: "Android 14 token renew regression",
+                  requester: "user-7",
+                  status: "investigating",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: {
+                    id: "INV-DETAIL-APPROVE-STALE-SOCKET",
+                    state: "awaiting_confirmation",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                    final_confirmation_requested_at: "2026-03-24T09:05:00+00:00",
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-APPROVE-STALE-SOCKET-m1",
+                        role: "engineer_ai",
+                        content: "I have enough information now. Please confirm this draft before I reply to the customer.",
+                        created_at: "2026-03-24T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  engineer_agent_state: {
+                    phase: "awaiting_confirmation",
+                    ready_to_reply: true,
+                    reply_readiness: {
+                      has_conclusion: true,
+                      has_proof: true,
+                      has_solution_or_next_step: true,
+                      conclusion_summary: "Android 14 with SDK 4.2.1 reproduces the token renew failure.",
+                      proof_summary: "The engineer reproduced the issue on Android 14 with SDK 4.2.1 only.",
+                      proof_anchors: ["Android 14", "SDK 4.2.1"],
+                      solution_or_next_step: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                      blockers: [],
+                      critique: "The current evidence supports the customer-safe SDK upgrade guidance.",
+                      ready_for_customer_reply: true,
+                    },
+                  },
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+
+                const staleAwaitingConfirmationTicket = {
+                  ...selectedTicket,
+                  updated_at: "2026-03-24T09:10:45+00:00",
+                };
+
+                const closedInvestigation = {
+                  id: "INV-DETAIL-APPROVE-STALE-SOCKET",
+                  state: "closed",
+                  trigger_reason: "rag_insufficient_evidence",
+                  trigger_source: "support_query",
+                  draft_customer_reply: "Please upgrade to SDK 4.2.2 and retry token renewal on Android 14.",
+                  final_confirmation_requested_at: null,
+                  opened_at: "2026-03-24T08:01:00+00:00",
+                  updated_at: "2026-03-24T09:11:00+00:00",
+                  closed_at: "2026-03-24T09:11:00+00:00",
+                  messages: [
+                    {
+                      id: "INV-DETAIL-APPROVE-STALE-SOCKET-m1",
+                      role: "engineer_ai",
+                      content: "I have enough information now. Please confirm this draft before I reply to the customer.",
+                      created_at: "2026-03-24T09:05:00+00:00",
+                    },
+                    {
+                      id: "INV-DETAIL-APPROVE-STALE-SOCKET-m2",
+                      role: "engineer",
+                      content: "Approved final reply.",
+                      created_at: "2026-03-24T09:11:00+00:00",
+                    },
+                  ],
+                };
+
+                const closedTicketPayload = {
+                  ...selectedTicket,
+                  status: "resolved",
+                  updated_at: "2026-03-24T09:11:00+00:00",
+                  active_investigation: null,
+                  investigation_history: [closedInvestigation],
+                };
+
+                let detailFetchCount = 0;
+                fetchJson = async (url, options = undefined) => {
+                  if (url === "/api/engineer/tickets/TK-DETAIL-APPROVE-STALE-SOCKET/investigation/confirmation") {
+                    return {
+                      ticket_id: "TK-DETAIL-APPROVE-STALE-SOCKET",
+                      status: "resolved",
+                      active_investigation: null,
+                      closed_investigation: closedInvestigation,
+                      updated_at: "2026-03-24T09:11:00+00:00",
+                    };
+                  }
+                  if (url === "/api/engineer/tickets/TK-DETAIL-APPROVE-STALE-SOCKET") {
+                    detailFetchCount += 1;
+                    if (detailFetchCount === 1) {
+                      return {
+                        ticket: closedTicketPayload,
+                      };
+                    }
+                    return {
+                      ticket: staleAwaitingConfirmationTicket,
+                    };
+                  }
+                  throw new Error(`Unexpected url: ${url}`);
+                };
+
+                let loadOptions = null;
+                loadTickets = async (options = {}) => {
+                  loadOptions = options;
+                };
+
+                setAuthenticated(true);
+                setupWebSocket();
+
+                const approveButton = {
+                  dataset: { detailAction: "approve-investigation" },
+                  disabled: false,
+                };
+                const approveTarget = {
+                  closest(selector) {
+                    if (selector === "button[data-detail-action]") {
+                      return approveButton;
+                    }
+                    return null;
+                  },
+                };
+
+                await handleDetailClick({ target: approveTarget });
+                const approvedHtml = workspaceRegionEl.innerHTML;
+                if (approvedHtml.includes("Approve Reply")) {
+                  throw new Error("Approve should hide the approve button before websocket refresh.");
+                }
+                if (!approvedHtml.includes("Approved final reply.")) {
+                  throw new Error("Approve should render the closed investigation transcript before websocket refresh.");
+                }
+
+                await lastSocket.onmessage({
+                  data: JSON.stringify({
+                    event: "ticket_guidance_applied",
+                    ticket_id: "TK-DETAIL-APPROVE-STALE-SOCKET",
+                    client_ticket_id: "CLIENT-DETAIL-APPROVE-STALE-SOCKET",
+                  }),
+                });
+
+                if (!loadOptions || loadOptions.refreshDetail !== false) {
+                  throw new Error("Realtime refresh should still refresh the pool without forcing a separate detail refresh path.");
+                }
+
+                const htmlAfterSocketRefresh = workspaceRegionEl.innerHTML;
+                if (htmlAfterSocketRefresh.includes("Approve Reply")) {
+                  throw new Error("A stale websocket-triggered detail refresh after approval must not restore the approve button.");
+                }
+                if (htmlAfterSocketRefresh.includes('id="detail-investigation-input"')) {
+                  throw new Error("A stale websocket-triggered detail refresh after approval must not restore the composer.");
+                }
+                if (!htmlAfterSocketRefresh.includes("Approved final reply.")) {
+                  throw new Error("A stale websocket-triggered detail refresh after approval must not overwrite the closed transcript.");
+                }
+              """
+            )
+        )
+
     def test_engineer_detail_status_actions_update_selected_pool_tab_and_back_to_pool_preserves_it(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(

@@ -31,6 +31,12 @@ let investigationReviseMode = false;
 let tellAiSubmitting = false;
 let localInvestigationThreadState = null;
 let localInvestigationMessageSequence = 0;
+const detailRefreshState = {
+  ticketId: null,
+  requestSeq: 0,
+  mutationEpoch: 0,
+  inFlightController: null,
+};
 let socket = null;
 let heartbeatTimer = null;
 let reconnectTimer = null;
@@ -100,6 +106,100 @@ function clearLocalInvestigationThreadState(ticketId = null) {
     return;
   }
   localInvestigationThreadState = null;
+}
+
+function createAbortController() {
+  if (typeof AbortController === "function") {
+    return new AbortController();
+  }
+  return {
+    signal: {
+      aborted: false,
+    },
+    abort() {
+      this.signal.aborted = true;
+    },
+  };
+}
+
+function abortInFlightDetailRefresh() {
+  if (
+    !detailRefreshState.inFlightController ||
+    typeof detailRefreshState.inFlightController.abort !== "function"
+  ) {
+    detailRefreshState.inFlightController = null;
+    return;
+  }
+  try {
+    detailRefreshState.inFlightController.abort();
+  } catch {
+    // Ignore abort errors from already-settled requests.
+  }
+  detailRefreshState.inFlightController = null;
+}
+
+function resetDetailRefreshState(ticketId = null) {
+  abortInFlightDetailRefresh();
+  detailRefreshState.ticketId = normalizeDetailTicketId(ticketId) || null;
+  detailRefreshState.requestSeq = 0;
+  detailRefreshState.mutationEpoch = 0;
+}
+
+function ensureDetailRefreshStateTicket(ticketId) {
+  const normalizedTicketId = normalizeDetailTicketId(ticketId) || null;
+  if (detailRefreshState.ticketId === normalizedTicketId) {
+    return;
+  }
+  resetDetailRefreshState(normalizedTicketId);
+}
+
+function bumpDetailMutationEpoch(ticketId = selectedTicketId) {
+  ensureDetailRefreshStateTicket(ticketId);
+  detailRefreshState.mutationEpoch += 1;
+  abortInFlightDetailRefresh();
+}
+
+function detailTicketUpdatedAtMs(ticket) {
+  if (!ticket || typeof ticket !== "object") {
+    return NaN;
+  }
+  return normalizeIsoTimestamp(ticket.updated_at || ticket.closed_at || ticket.created_at);
+}
+
+function shouldDiscardStaleDetailPayload(currentTicket, nextTicket) {
+  if (!currentTicket || typeof currentTicket !== "object" || !nextTicket || typeof nextTicket !== "object") {
+    return false;
+  }
+
+  const currentUpdatedAt = detailTicketUpdatedAtMs(currentTicket);
+  const nextUpdatedAt = detailTicketUpdatedAtMs(nextTicket);
+  if (Number.isFinite(currentUpdatedAt) && Number.isFinite(nextUpdatedAt) && nextUpdatedAt < currentUpdatedAt) {
+    return true;
+  }
+
+  const currentStatus = normalizeStatusValue(currentTicket.status || "open");
+  const nextStatus = normalizeStatusValue(nextTicket.status || "open");
+  if (
+    currentStatus === "resolved" &&
+    nextStatus !== "resolved" &&
+    (!Number.isFinite(currentUpdatedAt) || !Number.isFinite(nextUpdatedAt) || nextUpdatedAt <= currentUpdatedAt)
+  ) {
+    return true;
+  }
+
+  const currentActiveInvestigation = getActiveInvestigation(currentTicket);
+  const nextActiveInvestigation = getActiveInvestigation(nextTicket);
+  const currentClosedInvestigation = getLatestClosedInvestigation(currentTicket);
+  if (
+    !currentActiveInvestigation &&
+    currentClosedInvestigation &&
+    nextActiveInvestigation &&
+    (!Number.isFinite(currentUpdatedAt) || !Number.isFinite(nextUpdatedAt) || nextUpdatedAt <= currentUpdatedAt)
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 function mergeInvestigationMessagesWithLocalState(ticketId, durableMessages) {
@@ -324,6 +424,7 @@ function applyInvestigationResponseToSelectedTicket(ticketId, payload) {
   }
 
   if (payload && typeof payload === "object") {
+    bumpDetailMutationEpoch(normalizedTicketId);
     const nextClosedInvestigation =
       payload.closed_investigation && typeof payload.closed_investigation === "object"
         ? payload.closed_investigation
@@ -2052,6 +2153,7 @@ function renderTicketPoolView() {
 function resetDetailWorkspaceState() {
   clearStatusComboboxBlurTimer();
   clearLocalInvestigationThreadState();
+  resetDetailRefreshState();
   selectedTicketId = null;
   selectedTicket = null;
   detailLoading = false;
@@ -2703,24 +2805,48 @@ async function refreshSelectedTicket(options = {}) {
   if (!selectedTicketId) {
     selectedTicket = null;
     detailLoading = false;
+    resetDetailRefreshState();
     renderTicketDetail();
     return;
   }
 
   const requestedTicketId = selectedTicketId;
+  ensureDetailRefreshStateTicket(requestedTicketId);
+  abortInFlightDetailRefresh();
+  const controller = createAbortController();
+  detailRefreshState.inFlightController = controller;
+  detailRefreshState.requestSeq += 1;
+  const requestSeq = detailRefreshState.requestSeq;
+  const requestMutationEpoch = detailRefreshState.mutationEpoch;
   if (showLoading) {
     detailLoading = true;
     renderTicketDetail();
   }
 
   try {
-    const payload = await fetchJson(`/api/engineer/tickets/${encodeURIComponent(requestedTicketId)}`);
+    const payload = await fetchJson(`/api/engineer/tickets/${encodeURIComponent(requestedTicketId)}`, {
+      signal: controller.signal,
+    });
     if (selectedTicketId !== requestedTicketId) {
+      return;
+    }
+    if (
+      detailRefreshState.inFlightController !== controller ||
+      detailRefreshState.requestSeq !== requestSeq ||
+      detailRefreshState.mutationEpoch !== requestMutationEpoch
+    ) {
       return;
     }
     const nextTicket = payload.ticket || null;
     if (nextTicket && !isEngineerVisibleStatus(nextTicket.status || "open")) {
+      detailRefreshState.inFlightController = null;
       redirectOpenTicketToPool();
+      return;
+    }
+    if (shouldDiscardStaleDetailPayload(selectedTicket, nextTicket)) {
+      detailRefreshState.inFlightController = null;
+      detailLoading = false;
+      renderTicketDetail();
       return;
     }
     selectedTicket = nextTicket;
@@ -2733,12 +2859,22 @@ async function refreshSelectedTicket(options = {}) {
     if (!selectedTicket) {
       investigationReviseMode = false;
     }
+    detailRefreshState.inFlightController = null;
     detailLoading = false;
     renderTicketDetail();
   } catch (error) {
     if (selectedTicketId !== requestedTicketId) {
       return;
     }
+    const superseded =
+      controller.signal.aborted ||
+      detailRefreshState.inFlightController !== controller ||
+      detailRefreshState.requestSeq !== requestSeq ||
+      detailRefreshState.mutationEpoch !== requestMutationEpoch;
+    if (superseded) {
+      return;
+    }
+    detailRefreshState.inFlightController = null;
     detailLoading = false;
     if (String(error.message || "").toLowerCase().includes("not found")) {
       closeTicketDetail();
