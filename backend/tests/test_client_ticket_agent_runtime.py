@@ -1024,81 +1024,71 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn("please share what you're trying to achieve", execution.result.answer.lower())
         self.assertEqual(execution.runtime_state.review_agent.get("decision"), "answer_customer")
 
-    def test_ready_intake_follow_up_reuses_pending_investigation_reason(self) -> None:
+    def test_ready_investigation_intake_follow_up_short_circuits_before_rag_and_uses_intake_complete_reason(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
 
         execution = execute_client_ticket_agent_runtime(
-            message="channel name is demo-room, problematic uid is 42, timestamp is 2026-04-04T10:30:00Z",
+            message="it happened at 12:00pm utc+8",
             ticket_id="TK-RISK-TRBL-2",
             customer_id="C-001",
             ticket_subject="Black screen",
             ticket_context=[
                 {"role": "customer", "content": "i got black screen issue"},
                 {
+                    "role": "customer",
+                    "content": "channel name:zilingtest, uid 1, happened around 3/4 at 12pm",
+                },
+                {
                     "role": "assistant",
                     "content": (
-                        "Known so far: the issue symptom is black screen issue. "
-                        "To investigate this Audio/Video Calling issue, please share the channel name, "
-                        "problematic uid, and issue timestamp."
+                        "Known so far: issue symptom is black screen issue; channel name is zilingtest; "
+                        "problematic uid is 1. Please share the issue timezone."
                     ),
                 },
             ],
             product="audio_video_calling",
-            message_id="2026-04-04T10:30:00+00:00",
+            message_id="2026-03-04T04:05:00+00:00",
             client_intake_state={
                 "phase": "gather_customer_inputs",
                 "product": "audio_video_calling",
                 "issue_mode": "investigation",
-                "known_information": {"issue_symptom": "black screen issue"},
-                "missing_information": ["channel_name", "problematic_uid", "issue_timestamp"],
+                "known_information": {
+                    "issue_symptom": "black screen issue",
+                    "channel_name": "zilingtest",
+                    "problematic_uid": "1",
+                },
+                "missing_information": ["issue_timestamp"],
                 "ready_for_engineer_ticket": False,
                 "pending_investigation_reason": "rag_post_check_insufficient",
-                "last_updated_at": "2026-04-04T10:00:00Z",
+                "issue_timestamp_parts": {"date": "2026-03-04", "time": "12:00pm"},
+                "last_updated_at": "2026-03-04T04:00:00+00:00",
             },
-            route_agent=lambda **_kwargs: SupportRouteDecision(
-                scope_label="agora_technical",
-                route="rag",
-                confidence=0.94,
-                reason="technical_question",
-                matched_signals=["black screen", "uid"],
-                response_language="en",
-                route_family="agora_docs_rag",
-                execution_action="rag",
-                tooling_profile="agora_docs_only",
-            ),
+            route_agent=lambda **_kwargs: self.fail("route agent should not run once investigation intake is complete"),
             route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
-                answer="I couldn't find enough information in the docs alone.",
-                confidence=0.43,
-                sources=[],
-                citations=[],
-                needs_engineer_guidance=True,
-                reason="rag_insufficient_evidence",
-                evidence_summary={"quality_signals": {"needs_human": True}},
-                packed_evidence=None,
-            ),
-            review_agent=lambda **_kwargs: TroubleshootingIntakeResult(
-                issue_mode="investigation",
-                known_information={
-                    "issue_symptom": "black screen issue",
-                    "channel_name": "demo-room",
-                    "problematic_uid": "42",
-                    "issue_timestamp": "2026-04-04T10:30:00Z",
-                },
-                missing_information=[],
-                ready_for_engineer_ticket=True,
-                customer_reply="",
-            ),
+            rag_agent=lambda **_kwargs: self.fail("rag agent should not run once investigation intake is complete"),
+            review_agent=lambda **_kwargs: self.fail("review agent should not run once investigation intake is complete"),
             rag_canceler=None,
         )
 
         self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
         self.assertTrue(execution.result.needs_investigating)
-        self.assertEqual(execution.result.investigation_reason, "rag_post_check_insufficient")
+        self.assertEqual(execution.result.route_reason, "investigation_intake_complete")
+        self.assertEqual(execution.result.investigation_reason, "investigation_intake_complete")
+        self.assertIn("opened an engineer ticket", execution.result.answer.lower())
+        self.assertEqual(
+            execution.result.client_intake_state["known_information"]["issue_timestamp"],
+            "2026-03-04 12:00pm UTC+8",
+        )
         self.assertEqual(
             execution.result.client_intake_state["pending_investigation_reason"],
-            "rag_post_check_insufficient",
+            "investigation_intake_complete",
         )
+        self.assertEqual(execution.runtime_state.route_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.rag_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.route_agent.get("reason"), "investigation_intake_complete")
+        self.assertEqual(execution.runtime_state.rag_agent.get("reason"), "investigation_intake_complete")
+        self.assertEqual(execution.runtime_state.review_agent.get("reason"), "investigation_intake_complete")
 
     def test_rag_unavailable_from_knowledge_index_guard_skips_review_and_surfaces_diagnostics(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime

@@ -267,7 +267,7 @@ class TicketOrchestratorTests(unittest.TestCase):
         self.assertTrue(execution.needs_investigating)
         self.assertEqual(execution.next_status, INVESTIGATING_STATUS)
         self.assertEqual(execution.workflow_action, "open_engineer_ticket")
-        self.assertEqual(execution.investigation_reason, "rag_insufficient_evidence")
+        self.assertEqual(execution.investigation_reason, "investigation_intake_complete")
         self.assertTrue(execution.client_intake_state["ready_for_engineer_ticket"])
 
     def test_rag_service_error_keeps_service_error_reason_for_investigation(self) -> None:

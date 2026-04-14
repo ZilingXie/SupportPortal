@@ -162,6 +162,145 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(result.missing_information, [])
         self.assertTrue(result.ready_for_engineer_ticket)
 
+    def test_partial_timestamp_follow_up_only_requests_missing_timezone(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
+            result = evaluate_troubleshooting_intake(
+                message="channel name:zilingtest, uid 1, happened around 3/4 at 12pm",
+                product="audio_video_calling",
+                ticket_subject="Black screen issue",
+                ticket_context=[
+                    {"role": "customer", "content": "i got black screen, what should i do?"},
+                    {
+                        "role": "assistant",
+                        "content": (
+                            "Known so far: issue symptom is black screen issue. "
+                            "Please share the channel name, problematic uid, and issue timestamp."
+                        ),
+                    },
+                ],
+                current_state={
+                    "phase": "gather_customer_inputs",
+                    "product": "audio_video_calling",
+                    "issue_mode": "investigation",
+                    "known_information": {"issue_symptom": "black screen issue"},
+                    "missing_information": ["channel_name", "problematic_uid", "issue_timestamp"],
+                    "ready_for_engineer_ticket": False,
+                    "last_updated_at": "2026-03-04T04:00:00+00:00",
+                },
+                rag_result={
+                    "reason": "rag_insufficient_evidence",
+                    "answer": "I couldn't find enough information in the available support knowledge base to answer that question.",
+                    "evidence_summary": {},
+                },
+                message_created_at="2026-03-04T04:00:00+00:00",
+            )
+
+        self.assertEqual(result.issue_mode, "investigation")
+        self.assertEqual(result.known_information["channel_name"], "zilingtest")
+        self.assertEqual(result.known_information["problematic_uid"], "1")
+        self.assertEqual(result.known_information["issue_symptom"], "black screen issue")
+        self.assertEqual(result.missing_information, ["issue_timestamp"])
+        self.assertFalse(result.ready_for_engineer_ticket)
+        self.assertIn("timezone", result.customer_reply.lower())
+        self.assertNotIn("full timestamp", result.customer_reply.lower())
+        self.assertNotIn("date", result.customer_reply.lower())
+
+        intake_state = build_client_intake_state(
+            result,
+            product="audio_video_calling",
+            now_value="2026-03-04T04:00:00+00:00",
+        )
+        self.assertIsNotNone(intake_state)
+        assert intake_state is not None
+        self.assertEqual(
+            intake_state["issue_timestamp_parts"],
+            {"date": "2026-03-04", "time": "12:00pm"},
+        )
+
+    def test_follow_up_merges_timestamp_fragments_across_turns_and_later_full_timestamp_overrides(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
+            first_result = evaluate_troubleshooting_intake(
+                message="channel name:zilingtest, uid 1, happened around 3/4 at 12pm",
+                product="audio_video_calling",
+                ticket_subject="Black screen issue",
+                ticket_context=[{"role": "customer", "content": "i got black screen, what should i do?"}],
+                current_state={
+                    "phase": "gather_customer_inputs",
+                    "product": "audio_video_calling",
+                    "issue_mode": "investigation",
+                    "known_information": {"issue_symptom": "black screen issue"},
+                    "missing_information": ["channel_name", "problematic_uid", "issue_timestamp"],
+                    "ready_for_engineer_ticket": False,
+                    "last_updated_at": "2026-03-04T04:00:00+00:00",
+                },
+                rag_result={
+                    "reason": "rag_insufficient_evidence",
+                    "answer": "I couldn't find enough information in the available support knowledge base to answer that question.",
+                    "evidence_summary": {},
+                },
+                message_created_at="2026-03-04T04:00:00+00:00",
+            )
+            current_state = build_client_intake_state(
+                first_result,
+                product="audio_video_calling",
+                now_value="2026-03-04T04:00:00+00:00",
+            )
+            assert current_state is not None
+
+            merged_result = evaluate_troubleshooting_intake(
+                message="it happened at 12:00pm utc+8",
+                product="audio_video_calling",
+                ticket_subject="Black screen issue",
+                ticket_context=[
+                    {"role": "customer", "content": "i got black screen, what should i do?"},
+                    {
+                        "role": "customer",
+                        "content": "channel name:zilingtest, uid 1, happened around 3/4 at 12pm",
+                    },
+                    {"role": "assistant", "content": first_result.customer_reply},
+                ],
+                current_state=current_state,
+                rag_result={
+                    "reason": "rag_insufficient_evidence",
+                    "answer": "I couldn't find enough information in the available support knowledge base to answer that question.",
+                    "evidence_summary": {},
+                },
+                message_created_at="2026-03-04T04:05:00+00:00",
+            )
+
+            overridden_result = evaluate_troubleshooting_intake(
+                message="2026-03-06 12:00pm utc+8",
+                product="audio_video_calling",
+                ticket_subject="Black screen issue",
+                ticket_context=[
+                    {"role": "customer", "content": "i got black screen, what should i do?"},
+                    {
+                        "role": "customer",
+                        "content": "channel name:zilingtest, uid 1, happened around 3/4 at 12pm",
+                    },
+                    {"role": "assistant", "content": first_result.customer_reply},
+                    {"role": "customer", "content": "it happened at 12:00pm utc+8"},
+                ],
+                current_state=build_client_intake_state(
+                    merged_result,
+                    product="audio_video_calling",
+                    now_value="2026-03-04T04:05:00+00:00",
+                ),
+                rag_result={
+                    "reason": "rag_insufficient_evidence",
+                    "answer": "I couldn't find enough information in the available support knowledge base to answer that question.",
+                    "evidence_summary": {},
+                },
+                message_created_at="2026-03-06T04:00:00+00:00",
+            )
+
+        self.assertEqual(merged_result.missing_information, [])
+        self.assertTrue(merged_result.ready_for_engineer_ticket)
+        self.assertEqual(merged_result.known_information["issue_timestamp"], "2026-03-04 12:00pm UTC+8")
+        self.assertEqual(overridden_result.missing_information, [])
+        self.assertTrue(overridden_result.ready_for_engineer_ticket)
+        self.assertEqual(overridden_result.known_information["issue_timestamp"], "2026-03-06 12:00pm UTC+8")
+
     def test_answer_mode_follow_up_merges_goal_and_blocker_and_marks_ready_for_engineer_ticket(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
             result = evaluate_troubleshooting_intake(
@@ -237,6 +376,53 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn("channel name", result.customer_reply.lower())
         self.assertIn("problematic uid", result.customer_reply.lower())
         self.assertIn("issue timestamp", result.customer_reply.lower())
+
+    def test_llm_partial_issue_timestamp_still_requires_missing_timezone(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "backend.services.troubleshooting_intake.invoke_responses_text",
+            return_value=types.SimpleNamespace(
+                text=(
+                    '{"issue_mode":"investigation","known_information":{"issue_symptom":"black screen issue",'
+                    '"channel_name":"zilingtest","problematic_uid":"1","issue_timestamp":"3/4 at 12pm"},'
+                    '"missing_information":[],"ready_for_engineer_ticket":true,"customer_reply":""}'
+                )
+            ),
+        ):
+            result = evaluate_troubleshooting_intake(
+                message="channel name:zilingtest, uid 1, happened around 3/4 at 12pm",
+                product="audio_video_calling",
+                ticket_subject="Black screen issue",
+                ticket_context=[
+                    {"role": "customer", "content": "i got black screen, what should i do?"},
+                    {
+                        "role": "assistant",
+                        "content": (
+                            "Known so far: issue symptom is black screen issue. "
+                            "Please share the channel name, problematic uid, and issue timestamp."
+                        ),
+                    },
+                ],
+                current_state={
+                    "phase": "gather_customer_inputs",
+                    "product": "audio_video_calling",
+                    "issue_mode": "investigation",
+                    "known_information": {"issue_symptom": "black screen issue"},
+                    "missing_information": ["channel_name", "problematic_uid", "issue_timestamp"],
+                    "ready_for_engineer_ticket": False,
+                    "last_updated_at": "2026-03-04T04:00:00+00:00",
+                },
+                rag_result={
+                    "reason": "rag_processing_timeout",
+                    "answer": "",
+                    "evidence_summary": {},
+                },
+                message_created_at="2026-03-04T04:00:00+00:00",
+            )
+
+        self.assertFalse(result.ready_for_engineer_ticket)
+        self.assertEqual(result.missing_information, ["issue_timestamp"])
+        self.assertIn("timezone", result.customer_reply.lower())
+        self.assertNotIn("date", result.customer_reply.lower())
 
     def test_llm_cannot_downgrade_black_screen_issue_to_answer_mode(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(

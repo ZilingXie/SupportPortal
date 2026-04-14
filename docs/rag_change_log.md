@@ -3251,3 +3251,37 @@ For each new entry, record:
   - direct internal RAG probe `direct-probe-dual-stream-20260413-k`, which returned `decision=answer`, `reason=grounded_answer`, `answer_profile_used=dual_stream_deterministic`, and non-empty citations for the official media-stream-fallback guide
   - `$supportportal-run-report --message "how to enable the dual stream"` producing `/tmp/supportportal-traces/TK-TRACE-E7E1A61DB2.json` with `answer_route=rag`, `route_reason=grounded_answer`, `workflow_action=answer_customer`, and two citations
   - `$supportportal-run-report` against `real_case/real_user_questions.txt`, with `/tmp/supportportal-traces/TK-TRACE-BC63976623.json` preserving cited grounded `how to join channel` behavior and `/tmp/supportportal-traces/TK-TRACE-5B23410A88.json` confirming cited grounded `how to enable the dual stream`
+
+## 2026-04-13 - Merge investigation timestamp fragments across turns and short-circuit intake-complete engineer handoff
+
+- Summary:
+  - Added deterministic timestamp fragment parsing for troubleshooting intake so investigation turns can merge `date`, `time`, and `timezone` across customer follow-ups before deciding whether `issue_timestamp` is complete.
+  - Added a pre-RAG main-agent short-circuit that opens the engineer ticket immediately when investigation intake is already complete, instead of waiting for another route/RAG/review cycle.
+  - Added a dedicated `investigation_intake_complete` handoff reason so engineer opening context and handoff packets no longer mislabel this path as a RAG timeout or generic insufficient-evidence failure.
+- Reason:
+  - Live `TK-096` behavior showed `"channel name:zilingtest, uid 1, happened around 3/4 at 12pm"` followed by `"it happened at 12:00pm utc+8"` still triggered redundant timestamp follow-up and a slow engineer handoff after `rag_processing_timeout`.
+  - Investigation intake previously only trusted single-message full timestamps and allowed LLM review output to treat partial timestamp strings as complete.
+- Affected files/config:
+  - `backend/services/troubleshooting_intake.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/services/investigation_flow.py`
+  - `backend/services/engineer_agent.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/main.py`
+  - `backend/repositories/ticket_repository.py`
+  - `backend/tests/test_troubleshooting_intake.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_ticket_orchestrator.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No ingestion or vector-index changes.
+  - `client_intake_state` now persists `issue_timestamp_parts` so cross-turn troubleshooting intake can carry partial `date/time/timezone` evidence forward.
+  - Engineer handoff packets and active investigation context can now record `trigger_reason=investigation_intake_complete` / `unresolved_reason=investigation_intake_complete` when customer intake is complete before another RAG pass.
+- Verification:
+  - `python -m unittest backend.tests.test_troubleshooting_intake backend.tests.test_client_ticket_agent_runtime`
+  - `podman run --rm -v /Users/xieziling/.config/superpowers/worktrees/SupportPortal/tk-096-intake-handoff:/app -w /app localhost/supportportal-app:latest python -m unittest backend.tests.test_troubleshooting_intake backend.tests.test_client_ticket_agent_runtime backend.tests.test_ticket_orchestrator backend.tests.test_investigation_flow.InvestigationFlowTests.test_build_investigation_opening_context_for_intake_complete_reason_does_not_report_rag_failure`
+  - `python -m py_compile backend/services/troubleshooting_intake.py backend/services/client_ticket_agent_runtime.py backend/services/investigation_flow.py backend/services/engineer_agent.py backend/main.py backend/services/ticket_orchestrator.py backend/repositories/ticket_repository.py`
+  - official `deployment` local-lightweight stack live replay in temporary sync mode (`async_query_enabled=false`) using `TK-096-SYNC-VERIFY-3`, where the second customer follow-up returned `please share the issue timezone`, the third follow-up returned `workflow_action=open_engineer_ticket`, `route_reason=investigation_intake_complete`, and runtime state showed `route_agent/rag_agent/review_agent` all `skipped`
+  - engineer ticket `TK-096-SYNC-VERIFY-3-1` opening context now states that the customer already provided the required investigation details and no longer frames the handoff as a RAG timeout
+  - `$supportportal-run-report` attempts in the current environment produced `/tmp/supportportal-traces/TK-TRACE-0FAF8D24EC.json` (successful grounded black-screen answer, `route_reason=grounded_answer`, `question_to_final_answer_ms=88261.91`) plus timeout artifacts such as `/tmp/supportportal-traces/TK-TRACE-E9AB2A6ABC.json` and `/tmp/supportportal-traces/TK-TRACE-6E722C1019.json`, which indicate the existing trace wrapper/direct-probe environment remains noisy outside this intake fix
