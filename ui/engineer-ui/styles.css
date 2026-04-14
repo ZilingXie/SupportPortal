@@ -2243,8 +2243,37 @@ html.material-symbols-pending .material-symbols-outlined {
 }
 
 @media (min-width: 1181px) {
+  .workspace-layout {
+    --engineer-detail-timeline-height: 360px;
+    --engineer-detail-readiness-review-height: 420px;
+    --engineer-detail-sidebar-stack-gap: 14px;
+    --engineer-detail-thread-panel-height: calc(
+      var(--engineer-detail-timeline-height) +
+      var(--engineer-detail-readiness-review-height) +
+      var(--engineer-detail-sidebar-stack-gap)
+    );
+  }
+
+  .conversation-panel-compact-thread {
+    height: var(--engineer-detail-thread-panel-height);
+    min-height: 0;
+  }
+
+  .detail-conversation-thread-body {
+    align-content: start;
+    grid-template-rows: auto;
+    overflow-y: auto;
+    padding-right: 4px;
+    scrollbar-gutter: stable;
+    overscroll-behavior: contain;
+  }
+
+  .conversation-panel-compact-thread .message-list-compact-thread {
+    overflow-y: visible;
+  }
+
   .detail-timeline-panel {
-    height: 360px;
+    height: var(--engineer-detail-timeline-height);
   }
 
   .detail-timeline-body {
@@ -2259,7 +2288,7 @@ html.material-symbols-pending .material-symbols-outlined {
   }
 
   .detail-readiness-review {
-    height: 420px;
+    height: var(--engineer-detail-readiness-review-height);
     grid-template-rows: auto minmax(0, 1fr);
   }
 

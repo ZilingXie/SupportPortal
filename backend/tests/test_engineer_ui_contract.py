@@ -719,7 +719,6 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertNotEqual(list_end, -1, msg="Compact thread message-list block should be closed.")
         list_block = css[list_start:list_end]
         self.assertIn("min-height: 0;", list_block)
-        self.assertIn("overflow-y: auto;", list_block)
         self.assertIn("justify-content: flex-start;", list_block)
         self.assertIn("max-height: none;", list_block)
         self.assertIn(".message-list-compact-thread .message-item", css)
@@ -805,15 +804,25 @@ class EngineerUiContractTests(unittest.TestCase):
             msg="Engineer detail should keep the existing single-column mobile/tablet breakpoint after desktop sidebar sizing is added.",
         )
         desktop_block = css[desktop_media_start:mobile_media_start]
+        self.assertIn("--engineer-detail-timeline-height: 360px;", desktop_block)
+        self.assertIn("--engineer-detail-readiness-review-height: 420px;", desktop_block)
+        self.assertIn("--engineer-detail-sidebar-stack-gap: 14px;", desktop_block)
+        self.assertIn("--engineer-detail-thread-panel-height: calc(", desktop_block)
+        self.assertIn(".conversation-panel-compact-thread {", desktop_block)
+        self.assertIn("height: var(--engineer-detail-thread-panel-height);", desktop_block)
         self.assertIn(".detail-timeline-panel {", desktop_block)
-        self.assertIn("height: 360px;", desktop_block)
+        self.assertIn("height: var(--engineer-detail-timeline-height);", desktop_block)
         self.assertIn(".detail-readiness-review {", desktop_block)
-        self.assertIn("height: 420px;", desktop_block)
+        self.assertIn("height: var(--engineer-detail-readiness-review-height);", desktop_block)
         self.assertIn("grid-template-rows: auto minmax(0, 1fr);", desktop_block)
-        self.assertIn(".detail-timeline-panel .message-list {", desktop_block)
+        self.assertIn(".detail-conversation-thread-body {", desktop_block)
         self.assertIn("overflow-y: auto;", desktop_block)
         self.assertIn("scrollbar-gutter: stable;", desktop_block)
         self.assertIn("overscroll-behavior: contain;", desktop_block)
+        self.assertIn("align-content: start;", desktop_block)
+        self.assertIn(".conversation-panel-compact-thread .message-list-compact-thread {", desktop_block)
+        self.assertIn("overflow-y: visible;", desktop_block)
+        self.assertIn(".detail-timeline-panel .message-list {", desktop_block)
         self.assertIn(".detail-readiness-body {", desktop_block)
 
         self.assertNotIn(
