@@ -301,6 +301,38 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertTrue(overridden_result.ready_for_engineer_ticket)
         self.assertEqual(overridden_result.known_information["issue_timestamp"], "2026-03-06 12:00pm UTC+8")
 
+    def test_month_name_date_with_ordinal_counts_as_complete_issue_timestamp(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
+            result = evaluate_troubleshooting_intake(
+                message="channel name: zilingtest,uid:1, happened on April 3rd 12pm utc+8",
+                product="audio_video_calling",
+                ticket_subject="Black screen issue",
+                ticket_context=[{"role": "customer", "content": "i got black screen, what should i do?"}],
+                current_state={
+                    "phase": "gather_customer_inputs",
+                    "product": "audio_video_calling",
+                    "issue_mode": "investigation",
+                    "known_information": {"issue_symptom": "black screen issue"},
+                    "missing_information": ["channel_name", "problematic_uid", "issue_timestamp"],
+                    "ready_for_engineer_ticket": False,
+                    "last_updated_at": "2026-04-14T02:08:33.337732+00:00",
+                },
+                rag_result={
+                    "reason": "rag_insufficient_evidence",
+                    "answer": "I couldn't find enough information in the available support knowledge base to answer that question.",
+                    "evidence_summary": {},
+                },
+                message_created_at="2026-04-14T02:11:08.752498+00:00",
+            )
+
+        self.assertEqual(result.missing_information, [])
+        self.assertTrue(result.ready_for_engineer_ticket)
+        self.assertEqual(result.known_information["issue_timestamp"], "2026-04-03 12:00pm UTC+8")
+        self.assertEqual(
+            result.issue_timestamp_parts,
+            {"date": "2026-04-03", "time": "12:00pm", "timezone": "UTC+8"},
+        )
+
     def test_answer_mode_follow_up_merges_goal_and_blocker_and_marks_ready_for_engineer_ticket(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
             result = evaluate_troubleshooting_intake(
