@@ -948,13 +948,9 @@ function renderReplyReadinessReviewHtml(ticket, activeInvestigation) {
   }
 
   const replyReadiness = getReplyReadiness(ticket) || {};
-  const blockers = Array.isArray(replyReadiness.blockers)
-    ? replyReadiness.blockers.map((item) => String(item || "").trim()).filter(Boolean)
-    : [];
   const conclusionSummary = String(replyReadiness.conclusion_summary || "").trim();
   const proofSummary = String(replyReadiness.proof_summary || "").trim();
   const solutionSummary = String(replyReadiness.solution_or_next_step || "").trim();
-  const critique = String(replyReadiness.critique || "").trim();
   const checks = [
     {
       label: "Conclusion",
@@ -965,7 +961,7 @@ function renderReplyReadinessReviewHtml(ticket, activeInvestigation) {
       passed: replyReadiness.has_proof === true,
     },
     {
-      label: "Solution / Next Step",
+      label: "Next step",
       passed: replyReadiness.has_solution_or_next_step === true,
     },
   ];
@@ -1007,34 +1003,12 @@ function renderReplyReadinessReviewHtml(ticket, activeInvestigation) {
           <p class="detail-readiness-field-value">${formatMultiline(proofSummary || "Proof still missing.")}</p>
         </div>
         <div class="detail-readiness-field">
-          <p class="detail-readiness-field-label">Solution / Next Step</p>
+          <p class="detail-readiness-field-label">Next step</p>
           <p class="detail-readiness-field-value">${formatMultiline(
             solutionSummary || "No actionable next step captured yet."
           )}</p>
         </div>
       </div>
-      ${
-        blockers.length
-          ? `
-        <div class="detail-readiness-alert">
-          <p class="detail-readiness-field-label">Current Blockers</p>
-          <ul class="detail-readiness-list">
-            ${blockers.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
-          </ul>
-        </div>
-      `
-          : ""
-      }
-      ${
-        critique
-          ? `
-        <div class="detail-readiness-alert detail-readiness-alert-critique">
-          <p class="detail-readiness-field-label">Critique</p>
-          <p class="detail-readiness-field-value">${formatMultiline(critique)}</p>
-        </div>
-      `
-          : ""
-      }
     </section>
   `;
 }

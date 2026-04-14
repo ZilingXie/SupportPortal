@@ -146,8 +146,8 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260414-engineer-internal-review-sidebar-1", html)
-        self.assertIn('./app.js?v=20260414-engineer-internal-review-sidebar-1', html)
+        self.assertIn("./styles.css?v=20260414-engineer-detail-ui-tightening-1", html)
+        self.assertIn('./app.js?v=20260414-engineer-detail-ui-tightening-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
@@ -1324,11 +1324,11 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!customerTimelineSection.includes("Needs Follow-up")) {{
                   throw new Error("Internal Review should surface the readiness status pill when reply is not ready.");
                 }}
-                if (!customerTimelineSection.includes("Current Blockers")) {{
-                  throw new Error("Internal Review should render blockers when they are present.");
+                if (customerTimelineSection.includes("Current Blockers")) {{
+                  throw new Error("Internal Review should no longer render blockers in the detail sidebar.");
                 }}
-                if (!customerTimelineSection.includes("Critique")) {{
-                  throw new Error("Internal Review should render critique when it is present.");
+                if (customerTimelineSection.includes("Critique")) {{
+                  throw new Error("Internal Review should no longer render critique in the detail sidebar.");
                 }}
                 const readySegments = (customerTimelineSection.match(/detail-readiness-check is-passed/g) || []).length;
                 const missingSegments = (customerTimelineSection.match(/detail-readiness-check is-missing/g) || []).length;
@@ -1346,6 +1346,12 @@ class EngineerUiContractTests(unittest.TestCase):
                 }}
                 if (!customerTimelineSection.includes("Proof still missing.")) {{
                   throw new Error("Internal Review should render proof fallback copy when proof summary is missing.");
+                }}
+                if (!customerTimelineSection.includes("Next step")) {{
+                  throw new Error("Internal Review should rename the final readiness label to Next step.");
+                }}
+                if (customerTimelineSection.includes("Solution / Next Step")) {{
+                  throw new Error("Internal Review should stop rendering the old Solution / Next Step label.");
                 }}
                 if (!customerTimelineSection.includes("Ask the engineer to provide the log evidence or reproduction result before replying.")) {{
                   throw new Error("Internal Review should render the next-step summary.");
@@ -1423,14 +1429,17 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!customerTimelineSection.includes("No actionable next step captured yet.")) {{
                   throw new Error("Internal Review should render the next-step fallback copy.");
                 }}
-                if (!customerTimelineSection.includes("Current Blockers")) {{
-                  throw new Error("Internal Review should render blockers when they are present.");
+                if (customerTimelineSection.includes("Current Blockers")) {{
+                  throw new Error("Internal Review should not render blockers in the trimmed sidebar layout.");
                 }}
-                if (!customerTimelineSection.includes("Critique")) {{
-                  throw new Error("Internal Review should render critique when it is present.");
+                if (customerTimelineSection.includes("Critique")) {{
+                  throw new Error("Internal Review should not render critique in the trimmed sidebar layout.");
                 }}
-                if (!customerTimelineSection.includes("The engineer reply did not provide enough detail.")) {{
-                  throw new Error("Internal Review should render the critique body.");
+                if (!customerTimelineSection.includes("Next step")) {{
+                  throw new Error("Internal Review should still label the final field as Next step.");
+                }}
+                if (customerTimelineSection.includes("Solution / Next Step")) {{
+                  throw new Error("Internal Review should not render the old Solution / Next Step label.");
                 }}
                 if (customerTimelineSection.includes("logs://alpha")) {{
                   throw new Error("Internal Review should not surface proof anchors in the restored sidebar layout.");
@@ -1492,6 +1501,12 @@ class EngineerUiContractTests(unittest.TestCase):
                 }}
                 if (!customerTimelineSection.includes("No actionable next step captured yet.")) {{
                   throw new Error("Absent readiness data should default the next-step field copy.");
+                }}
+                if (!customerTimelineSection.includes("Next step")) {{
+                  throw new Error("Absent readiness data should still use the Next step label.");
+                }}
+                if (customerTimelineSection.includes("Solution / Next Step")) {{
+                  throw new Error("Absent readiness data should not render the old Solution / Next Step label.");
                 }}
               """
             )

@@ -1475,6 +1475,7 @@ html.material-symbols-pending .material-symbols-outlined {
 
 .conversation-panel-compact-thread {
   grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 14px;
 }
 
 .tell-ai-composer,
@@ -1789,18 +1790,18 @@ html.material-symbols-pending .material-symbols-outlined {
 .detail-readiness-checks {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .detail-readiness-check {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 11px 13px;
-  border-radius: 18px;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 16px;
   background: rgba(239, 244, 251, 0.9);
   color: var(--ink-soft);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -1815,8 +1816,8 @@ html.material-symbols-pending .material-symbols-outlined {
 }
 
 .detail-readiness-check-dot {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: currentColor;
   flex-shrink: 0;
