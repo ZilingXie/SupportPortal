@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 import tempfile
 import textwrap
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -22,6 +25,57 @@ def _git(args: list[str], cwd: Path, check: bool = True) -> subprocess.Completed
     )
 
 
+class _FakePostgresSslServer:
+    def __init__(self, port: int, *, response: bytes | None = b"S", hold_seconds: float = 0.0) -> None:
+        self.port = port
+        self.response = response
+        self.hold_seconds = hold_seconds
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._sock.bind(("127.0.0.1", port))
+        self._sock.listen(32)
+        self._sock.settimeout(0.2)
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+
+    def __enter__(self) -> "_FakePostgresSslServer":
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.stop()
+
+    def stop(self) -> None:
+        self._stop.set()
+        try:
+            self._sock.close()
+        except OSError:
+            pass
+        self._thread.join(timeout=1)
+
+    def _serve(self) -> None:
+        while not self._stop.is_set():
+            try:
+                conn, _ = self._sock.accept()
+            except TimeoutError:
+                continue
+            except OSError:
+                break
+            threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
+
+    def _handle(self, conn: socket.socket) -> None:
+        with conn:
+            try:
+                conn.settimeout(1)
+                conn.recv(8)
+                if self.hold_seconds:
+                    time.sleep(self.hold_seconds)
+                if self.response is not None:
+                    conn.sendall(self.response)
+            except OSError:
+                return
+
+
 class WorkflowScriptTests(unittest.TestCase):
     maxDiff = None
 
@@ -33,6 +87,47 @@ class WorkflowScriptTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
+
+    def _reserve_tcp_port(self) -> int:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        port = int(sock.getsockname()[1])
+        sock.close()
+        return port
+
+    def _relay_env(
+        self,
+        *,
+        listen_port: int,
+        upstream_port: int,
+        pid_path: Path,
+        log_path: Path,
+    ) -> dict[str, str]:
+        return {
+            "SUPPORTPORTAL_LOCAL_DB_RELAY_PORT": str(listen_port),
+            "SUPPORTPORTAL_LOCAL_DB_RELAY_UPSTREAM_PORT": str(upstream_port),
+            "SUPPORTPORTAL_LOCAL_DB_RELAY_PID_FILE": str(pid_path),
+            "SUPPORTPORTAL_LOCAL_DB_RELAY_LOG_FILE": str(log_path),
+        }
+
+    def _pg_ssl_request(self, host: str, port: int) -> bytes:
+        sock = socket.create_connection((host, port), timeout=5)
+        try:
+            sock.settimeout(5)
+            sock.sendall((8).to_bytes(4, "big") + (80877103).to_bytes(4, "big"))
+            return sock.recv(16)
+        finally:
+            sock.close()
+
+    def _terminate_pid_file(self, path: Path) -> None:
+        if not path.exists():
+            return
+        pid = int(path.read_text(encoding="utf-8").strip())
+        try:
+            os.kill(pid, 15)
+        except ProcessLookupError:
+            pass
+        path.unlink(missing_ok=True)
 
     def _write(self, repo: Path, relative_path: str, content: str) -> None:
         destination = repo / relative_path
@@ -855,6 +950,150 @@ class WorkflowScriptTests(unittest.TestCase):
         )
         curl_calls = self._read_json_lines(state_dir / "curl_calls.jsonl")
         self.assertEqual(curl_calls[0]["url"], "http://127.0.0.1:8080/health")
+
+    def test_ensure_local_db_relay_noops_when_dsn_does_not_require_host_relay(self) -> None:
+        repo = self._init_repo()
+        self._write(
+            repo,
+            ".env",
+            "TICKET_DB_DSN=postgresql://ticket:test@db.local:5432/tickets?sslmode=require\n"
+            "PGVECTOR_DSN=postgresql://rag:test@db.local:5432/rag?sslmode=require\n",
+        )
+        pid_path = self.root / "relay-noop.pid"
+        log_path = self.root / "relay-noop.log"
+
+        result = self._run_workflow(
+            "ensure_local_db_relay.sh",
+            repo,
+            extra_env=self._relay_env(
+                listen_port=self._reserve_tcp_port(),
+                upstream_port=self._reserve_tcp_port(),
+                pid_path=pid_path,
+                log_path=log_path,
+            ),
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("Local DB relay is not required", result.stdout)
+        self.assertFalse(pid_path.exists())
+
+    def test_ensure_local_db_relay_starts_and_reuses_existing_healthy_relay(self) -> None:
+        repo = self._init_repo()
+        listen_port = self._reserve_tcp_port()
+        upstream_port = self._reserve_tcp_port()
+        pid_path = self.root / "relay.pid"
+        log_path = self.root / "relay.log"
+        self._write(
+            repo,
+            ".env",
+            "TICKET_DB_DSN='"
+            "postgresql://ticket:test@127.0.0.1:15433/tickets?sslmode=require&hostaddr=192.168.127.254'\n"
+            "PGVECTOR_DSN='"
+            "postgresql://rag:test@127.0.0.1:15433/rag?sslmode=require&hostaddr=192.168.127.254'\n",
+        )
+
+        with _FakePostgresSslServer(upstream_port, response=b"S"):
+            result = self._run_workflow(
+                "ensure_local_db_relay.sh",
+                repo,
+                extra_env=self._relay_env(
+                    listen_port=listen_port,
+                    upstream_port=upstream_port,
+                    pid_path=pid_path,
+                    log_path=log_path,
+                ),
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertEqual(self._pg_ssl_request("127.0.0.1", listen_port), b"S")
+            pid_before = pid_path.read_text(encoding="utf-8").strip()
+
+            second = self._run_workflow(
+                "ensure_local_db_relay.sh",
+                repo,
+                extra_env=self._relay_env(
+                    listen_port=listen_port,
+                    upstream_port=upstream_port,
+                    pid_path=pid_path,
+                    log_path=log_path,
+                ),
+            )
+            self.assertEqual(second.returncode, 0, msg=second.stderr)
+            self.assertIn("Reusing existing healthy local DB relay", second.stdout)
+            self.assertEqual(pid_path.read_text(encoding="utf-8").strip(), pid_before)
+
+        self._terminate_pid_file(pid_path)
+
+    def test_ensure_local_db_relay_fails_when_unknown_listener_is_unhealthy(self) -> None:
+        repo = self._init_repo()
+        listen_port = self._reserve_tcp_port()
+        pid_path = self.root / "relay-bad.pid"
+        log_path = self.root / "relay-bad.log"
+        self._write(
+            repo,
+            ".env",
+            "TICKET_DB_DSN='"
+            "postgresql://ticket:test@127.0.0.1:15433/tickets?sslmode=require&hostaddr=192.168.127.254'\n"
+            "PGVECTOR_DSN='"
+            "postgresql://rag:test@127.0.0.1:15433/rag?sslmode=require&hostaddr=192.168.127.254'\n",
+        )
+
+        with _FakePostgresSslServer(listen_port, response=None, hold_seconds=0.2):
+            result = self._run_workflow(
+                "ensure_local_db_relay.sh",
+                repo,
+                extra_env=self._relay_env(
+                    listen_port=listen_port,
+                    upstream_port=self._reserve_tcp_port(),
+                    pid_path=pid_path,
+                    log_path=log_path,
+                ),
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("occupied by an unknown unhealthy listener", result.stderr)
+
+    def test_restart_single_host_lightweight_stack_starts_local_db_relay_when_required(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        listen_port = self._reserve_tcp_port()
+        upstream_port = self._reserve_tcp_port()
+        pid_path = self.root / "relay-restart.pid"
+        log_path = self.root / "relay-restart.log"
+        self._write(
+            seed,
+            ".env",
+            "TICKET_DB_DSN='"
+            "postgresql://ticket:test@127.0.0.1:15433/tickets?sslmode=require&hostaddr=192.168.127.254'\n"
+            "PGVECTOR_DSN='"
+            "postgresql://rag:test@127.0.0.1:15433/rag?sslmode=require&hostaddr=192.168.127.254'\n",
+        )
+        self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
+        self._write(seed, "deployment/docker-compose.single-host.local-lightweight.yml", "services: {}\n")
+        self._commit_all(seed, "Add relay-required runtime files")
+        _git(["push", "origin", "main"], cwd=seed)
+        _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
+        fake_bin, state_dir = self._install_fake_single_host_commands()
+
+        with _FakePostgresSslServer(upstream_port, response=b"S"):
+            result = self._run_workflow(
+                "restart_single_host_lightweight_stack.sh",
+                repo,
+                extra_env={
+                    "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                    "RESTART_TEST_STATE_DIR": str(state_dir),
+                    **self._relay_env(
+                        listen_port=listen_port,
+                        upstream_port=upstream_port,
+                        pid_path=pid_path,
+                        log_path=log_path,
+                    ),
+                },
+            )
+
+            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertTrue(pid_path.exists())
+            self.assertEqual(self._pg_ssl_request("127.0.0.1", listen_port), b"S")
+
+        self._terminate_pid_file(pid_path)
 
     def test_cleanup_single_host_aux_stack_only_targets_auxiliary_project(self) -> None:
         _, seed, repo = self._init_remote_repo_on_main()
