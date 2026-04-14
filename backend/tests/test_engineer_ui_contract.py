@@ -146,8 +146,8 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260414-engineer-readiness-status-1", html)
-        self.assertIn('./app.js?v=20260414-engineer-readiness-status-1', html)
+        self.assertIn("./styles.css?v=20260414-engineer-readiness-single-bubble-1", html)
+        self.assertIn('./app.js?v=20260414-engineer-readiness-single-bubble-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
@@ -1340,16 +1340,19 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!engineerThreadSection.includes("Next Step")) {{
                   throw new Error("Engineer thread header should render the next-step status card.");
                 }}
-                const readyCards = (engineerThreadSection.match(/detail-readiness-summary-card is-ready/g) || []).length;
-                const missingCards = (engineerThreadSection.match(/detail-readiness-summary-card is-missing/g) || []).length;
-                if (readyCards !== 2) {{
-                  throw new Error("Engineer thread header should render two ready status cards when conclusion and next step are present.");
+                if ((engineerThreadSection.match(/detail-readiness-summary-bubble/g) || []).length !== 1) {{
+                  throw new Error("Engineer thread header should render one readiness bubble.");
                 }}
-                if (missingCards !== 1) {{
-                  throw new Error("Engineer thread header should render one missing status card when proof is absent.");
+                const readySegments = (engineerThreadSection.match(/detail-readiness-summary-segment is-ready/g) || []).length;
+                const missingSegments = (engineerThreadSection.match(/detail-readiness-summary-segment is-missing/g) || []).length;
+                if (readySegments !== 2) {{
+                  throw new Error("Engineer thread header should render two ready readiness segments when conclusion and next step are present.");
+                }}
+                if (missingSegments !== 1) {{
+                  throw new Error("Engineer thread header should render one missing readiness segment when proof is absent.");
                 }}
                 if ((engineerThreadSection.match(/detail-readiness-summary-dot/g) || []).length !== 3) {{
-                  throw new Error("Each readiness status card should render a status dot.");
+                  throw new Error("Each readiness segment should render a status dot.");
                 }}
                 if (engineerThreadSection.includes("The audience may not be able to decode the current video stream.")) {{
                   throw new Error("Engineer thread header should no longer render the conclusion summary text.");
@@ -1417,8 +1420,11 @@ class EngineerUiContractTests(unittest.TestCase):
                 const customerIndex = html.indexOf("Customer Timeline");
                 const engineerThreadSection = html.slice(engineerIndex, customerIndex);
 
-                if ((engineerThreadSection.match(/detail-readiness-summary-card is-missing/g) || []).length !== 3) {{
-                  throw new Error("All readiness cards should render as missing when every readiness boolean is false.");
+                if ((engineerThreadSection.match(/detail-readiness-summary-bubble/g) || []).length !== 1) {{
+                  throw new Error("Engineer thread header should still render one readiness bubble when all values are missing.");
+                }}
+                if ((engineerThreadSection.match(/detail-readiness-summary-segment is-missing/g) || []).length !== 3) {{
+                  throw new Error("All readiness segments should render as missing when every readiness boolean is false.");
                 }}
                 if (engineerThreadSection.includes("Conclusion not extracted yet.")) {{
                   throw new Error("Conclusion card should not render fallback body copy.");
@@ -1477,8 +1483,11 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!engineerThreadSection.includes('class="detail-readiness-summary"')) {{
                   throw new Error("Engineer thread header should still render readiness cards when readiness data is absent.");
                 }}
-                if ((engineerThreadSection.match(/detail-readiness-summary-card is-missing/g) || []).length !== 3) {{
-                  throw new Error("Absent readiness data should default all three cards to missing.");
+                if ((engineerThreadSection.match(/detail-readiness-summary-bubble/g) || []).length !== 1) {{
+                  throw new Error("Engineer thread header should render one readiness bubble when readiness data is absent.");
+                }}
+                if ((engineerThreadSection.match(/detail-readiness-summary-segment is-missing/g) || []).length !== 3) {{
+                  throw new Error("Absent readiness data should default all three readiness segments to missing.");
                 }}
               """
             )
