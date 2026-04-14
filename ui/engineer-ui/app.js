@@ -928,16 +928,18 @@ function renderReplyReadinessSummaryHtml(ticket, displayInvestigation) {
 
   return `
     <div class="detail-readiness-summary" aria-label="Reply readiness summary">
-      ${summaryItems
-        .map(
-          (item) => `
-            <article class="detail-readiness-summary-card ${item.ready ? "is-ready" : "is-missing"}">
-              <span class="detail-readiness-summary-dot" aria-hidden="true"></span>
-              <p class="detail-readiness-summary-label">${escapeHtml(item.label)}</p>
-            </article>
-          `
-        )
-        .join("")}
+      <div class="detail-readiness-summary-bubble">
+        ${summaryItems
+          .map(
+            (item) => `
+              <div class="detail-readiness-summary-segment ${item.ready ? "is-ready" : "is-missing"}">
+                <span class="detail-readiness-summary-dot" aria-hidden="true"></span>
+                <p class="detail-readiness-summary-label">${escapeHtml(item.label)}</p>
+              </div>
+            `
+          )
+          .join("")}
+      </div>
     </div>
   `;
 }
