@@ -70,14 +70,13 @@ def _reply_readiness(
     normalized_advisories = list(advisory_followups or [])
     if ready_for_customer_reply is None:
         ready_for_customer_reply = bool(
-            has_conclusion
-            and has_proof
+            has_proof
             and has_solution_or_next_step
-            and conclusion_summary
             and proof_summary
             and solution_or_next_step
             and not normalized_blockers
             and reply_scope in {"root_cause_confirmed", "symptom_and_workaround_only"}
+            and (has_conclusion or reply_scope == "symptom_and_workaround_only")
         )
     return {
         "has_conclusion": has_conclusion,
@@ -2889,7 +2888,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(latest_message.get("meta", {}).get("scenario"), "engineer_investigation_reply")
         self.assertEqual(latest_message.get("meta", {}).get("model"), "gpt-5.4")
         self.assertEqual(latest_message.get("meta", {}).get("reasoning_effort"), "medium")
-        self.assertEqual(latest_message.get("meta", {}).get("prompt_version"), "engineer-investigation-reply-v3")
+        self.assertEqual(latest_message.get("meta", {}).get("prompt_version"), "engineer-investigation-reply-v4")
         self.assertEqual(latest_message.get("meta", {}).get("generation_status"), "succeeded")
         self.assertTrue(payload["engineer_agent_state"]["reply_readiness"]["ready_for_customer_reply"])
         self.assertEqual(
@@ -3129,6 +3128,216 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(
             summary_payload["next_action_needed"],
             "Approve the prepared symptom-level customer reply if it is safe to send.",
+        )
+
+    def test_engineer_internal_message_allows_symptom_level_workaround_without_explicit_conclusion(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-INV-LLM-SYMPTOM-NO-CONCLUSION",
+            subject="Black screen after joining the call",
+            status="investigating",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "I got a black screen after joining the call.",
+                    "created_at": "2026-03-29T09:00:00+00:00",
+                }
+            ],
+            active_investigation={
+                "id": "INV-LLM-SYMPTOM-NO-CONCLUSION",
+                "state": "active",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "support_query",
+                "draft_customer_reply": None,
+                "final_confirmation_requested_at": None,
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:00:00+00:00",
+                "messages": [
+                    {
+                        "id": "INV-LLM-SYMPTOM-NO-CONCLUSION-m1",
+                        "role": "engineer_ai",
+                        "content": "Please share the next diagnostic clue from the Web SDK logs.",
+                        "created_at": "2026-03-29T09:00:00+00:00",
+                    }
+                ],
+            },
+        )
+
+        llm_text = """
+        {
+          "state": "awaiting_confirmation",
+          "message": "We have enough for a conservative customer-safe reply. Please confirm the draft.",
+          "draft_customer_reply": "The logs show that local video capture failed and that the capture device became unavailable on the affected client. Please try a different capture device or browser and test again.",
+          "reply_readiness": {
+            "has_conclusion": false,
+            "has_proof": true,
+            "has_solution_or_next_step": true,
+            "reply_scope": "symptom_and_workaround_only",
+            "conclusion_summary": "",
+            "proof_summary": "The engineer cited Web SDK log lines showing that no frames were captured and the capture device became unavailable.",
+            "proof_anchors": [
+              "[websdk] no capture video frame",
+              "[websdk] capture device unavailable, please try a different device"
+            ],
+            "solution_or_next_step": "Ask the customer to try a different capture device or browser and retest.",
+            "blockers": [
+              "No browser/OS/device/SDK version",
+              "No surrounding log context"
+            ],
+            "advisory_followups": [],
+            "critique": "The current evidence is enough for a symptom-level customer reply with a conservative workaround.",
+            "ready_for_customer_reply": true
+          },
+          "engineer_agent_state": {
+            "phase": "awaiting_confirmation",
+            "issue_understanding": "The customer sees a black screen after joining the call.",
+            "knowledge_summary": "Verified Web SDK logs show local capture failure and a device-unavailable symptom on the affected client.",
+            "why_not_solved": "The exact root cause category is still unconfirmed, but the symptom-level evidence is enough for a conservative customer reply.",
+            "goal": "Get approval on the symptom-level workaround draft.",
+            "known_facts": [
+              "The affected client did not capture video frames.",
+              "The Web SDK reported that the capture device became unavailable."
+            ],
+            "missing_information": [],
+            "next_request_for_engineer": "Approve the prepared symptom-level customer reply if it is safe to send.",
+            "resolution_hypothesis": "The local capture path failed on the affected client.",
+            "ready_to_reply": true,
+            "last_refreshed_at": "2026-03-29T09:04:00+00:00"
+          }
+        }
+        """
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "backend.services.engineer_agent.invoke_responses_text",
+            return_value=LlmTextResult(text=llm_text, model_name="gpt-5.4"),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/engineer/tickets/TK-INV-LLM-SYMPTOM-NO-CONCLUSION-1/investigation/messages",
+                json={
+                    "engineer_id": "eng",
+                    "message": (
+                        "from log, it says\n"
+                        "[websdk] no capture video frame\n"
+                        "[websdk] capture device unavailable, please try a different device\n"
+                        "we could suggest the cx to try a different capture device or browser"
+                    ),
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["active_investigation"]["state"], "awaiting_confirmation")
+        self.assertTrue(payload["engineer_agent_state"]["reply_readiness"]["ready_for_customer_reply"])
+        self.assertFalse(payload["engineer_agent_state"]["reply_readiness"]["has_conclusion"])
+        self.assertEqual(
+            payload["engineer_agent_state"]["reply_readiness"]["reply_scope"],
+            "symptom_and_workaround_only",
+        )
+        self.assertEqual(payload["engineer_agent_state"]["reply_readiness"]["blockers"], [])
+        self.assertIn(
+            "No browser/OS/device/SDK version",
+            payload["engineer_agent_state"]["reply_readiness"]["advisory_followups"],
+        )
+        self.assertEqual(payload["engineer_agent_state"]["missing_information"], [])
+
+    def test_engineer_internal_message_rejects_missing_conclusion_when_reply_scope_claims_root_cause(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-INV-LLM-NO-CONCLUSION-ROOT-CAUSE",
+            subject="Black screen after joining the call",
+            status="investigating",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "I got a black screen after joining the call.",
+                    "created_at": "2026-03-29T09:00:00+00:00",
+                }
+            ],
+            active_investigation={
+                "id": "INV-LLM-NO-CONCLUSION-ROOT-CAUSE",
+                "state": "active",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "support_query",
+                "draft_customer_reply": None,
+                "final_confirmation_requested_at": None,
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:00:00+00:00",
+                "messages": [
+                    {
+                        "id": "INV-LLM-NO-CONCLUSION-ROOT-CAUSE-m1",
+                        "role": "engineer_ai",
+                        "content": "Please share the next diagnostic clue from the logs.",
+                        "created_at": "2026-03-29T09:00:00+00:00",
+                    }
+                ],
+            },
+        )
+
+        llm_text = """
+        {
+          "state": "awaiting_confirmation",
+          "message": "We have enough information now. Please confirm this draft.",
+          "draft_customer_reply": "The camera is broken on the affected client. Please try another capture device and test again.",
+          "reply_readiness": {
+            "has_conclusion": false,
+            "has_proof": true,
+            "has_solution_or_next_step": true,
+            "reply_scope": "root_cause_confirmed",
+            "conclusion_summary": "",
+            "proof_summary": "The engineer cited Web SDK log lines showing capture failure and device unavailability.",
+            "proof_anchors": [
+              "[websdk] no capture video frame",
+              "[websdk] capture device unavailable, please try a different device"
+            ],
+            "solution_or_next_step": "Ask the customer to try a different capture device and retest.",
+            "blockers": [],
+            "advisory_followups": [],
+            "critique": "The current evidence supports a customer-safe reply.",
+            "ready_for_customer_reply": true
+          },
+          "engineer_agent_state": {
+            "phase": "awaiting_confirmation",
+            "issue_understanding": "The customer sees a black screen after joining the call.",
+            "knowledge_summary": "The engineer found Web SDK log lines for capture failure.",
+            "why_not_solved": "The customer-safe answer still needs engineer confirmation.",
+            "goal": "Send the workaround to the customer.",
+            "known_facts": [
+              "The Web SDK reported capture failure."
+            ],
+            "missing_information": [],
+            "next_request_for_engineer": "Approve the prepared customer reply if it is safe to send.",
+            "resolution_hypothesis": "The camera is broken on the affected client.",
+            "ready_to_reply": true,
+            "last_refreshed_at": "2026-03-29T09:04:00+00:00"
+          }
+        }
+        """
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "backend.services.engineer_agent.invoke_responses_text",
+            return_value=LlmTextResult(text=llm_text, model_name="gpt-5.4"),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/engineer/tickets/TK-INV-LLM-NO-CONCLUSION-ROOT-CAUSE-1/investigation/messages",
+                json={
+                    "engineer_id": "eng",
+                    "message": (
+                        "from log, it says\n"
+                        "[websdk] no capture video frame\n"
+                        "[websdk] capture device unavailable, please try a different device\n"
+                        "we could suggest the cx to try a different capture device"
+                    ),
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["active_investigation"]["state"], "active")
+        self.assertEqual(payload["active_investigation"]["draft_customer_reply"], "")
+        self.assertFalse(payload["engineer_agent_state"]["reply_readiness"]["ready_for_customer_reply"])
+        self.assertTrue(
+            any(
+                "root cause" in item.lower() or "symptom level" in item.lower()
+                for item in payload["engineer_agent_state"]["reply_readiness"]["blockers"]
+            )
         )
 
     def test_engineer_internal_message_rejects_symptom_scope_when_draft_overstates_root_cause(self) -> None:
