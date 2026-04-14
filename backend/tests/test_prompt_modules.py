@@ -258,16 +258,21 @@ class PromptModuleTests(unittest.TestCase):
 
         self.assertEqual(
             ENGINEER_INVESTIGATION_REPLY_PROMPT_VERSION,
-            "engineer-investigation-reply-v2",
+            "engineer-investigation-reply-v3",
         )
         self.assertIn("## Role", system_prompt)
         self.assertIn("You are Case Buddy inside an internal support investigation workflow.", system_prompt)
         self.assertIn("If the customer-facing draft self-refers, use Sid as the assistant name.", system_prompt)
+        self.assertIn("symptom_and_workaround_only", system_prompt)
+        self.assertIn("root_cause_confirmed", system_prompt)
+        self.assertIn("advisory_followups", system_prompt)
+        self.assertIn("symptom-level", system_prompt)
         self.assertIn("Return strict JSON only", system_prompt)
         self.assertIn('"state"', system_prompt)
         self.assertIn('"draft_customer_reply"', system_prompt)
         self.assertIn('"reply_readiness"', system_prompt)
         self.assertIn('"proof_anchors"', system_prompt)
+        self.assertIn('"reply_scope"', system_prompt)
         self.assertIn("## Latest Customer Message", user_prompt)
         self.assertIn("## Current Investigation Thread", user_prompt)
         self.assertIn("## Ticket-Level Agent State", user_prompt)

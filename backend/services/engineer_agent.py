@@ -24,6 +24,57 @@ _MAX_SUMMARY_TEXT_CHARS = 280
 _PUBLIC_ASSISTANT_NAME = "Sid"
 _ENGINEER_NAME = "jack"
 _ENGINEER_AI_NAME = "Case Buddy"
+_REPLY_SCOPE_ROOT_CAUSE_CONFIRMED = "root_cause_confirmed"
+_REPLY_SCOPE_SYMPTOM_AND_WORKAROUND_ONLY = "symptom_and_workaround_only"
+_REPLY_SCOPE_NEEDS_MORE_EVIDENCE = "needs_more_evidence"
+_REPLY_SCOPE_ALLOWED = (
+    _REPLY_SCOPE_ROOT_CAUSE_CONFIRMED,
+    _REPLY_SCOPE_SYMPTOM_AND_WORKAROUND_ONLY,
+    _REPLY_SCOPE_NEEDS_MORE_EVIDENCE,
+)
+_ADVISORY_BLOCKER_PATTERNS = (
+    re.compile(r"\bbrowser\b"),
+    re.compile(r"\bos\b"),
+    re.compile(r"\bdevice model\b"),
+    re.compile(r"\bsdk version\b"),
+    re.compile(r"\bsurrounding log\b"),
+    re.compile(r"\blog context\b"),
+    re.compile(r"\bpermission\b"),
+    re.compile(r"\benumeration\b"),
+    re.compile(r"\benumerated\b"),
+    re.compile(r"\bselected\b"),
+    re.compile(r"\breproduc"),
+    re.compile(r"\banother browser\b"),
+    re.compile(r"\banother device\b"),
+    re.compile(r"\bdifferent device\b"),
+    re.compile(r"\broot cause\b"),
+    re.compile(r"\bclassif"),
+    re.compile(r"\bdistinguish\b"),
+    re.compile(r"\bremediation path\b"),
+)
+_ROOT_CAUSE_ASSERTION_PATTERNS = (
+    re.compile(r"\bcamera\b.{0,24}\bbroken\b"),
+    re.compile(r"\bhardware failure\b"),
+    re.compile(r"\bpermission issue\b"),
+    re.compile(r"\bbrowser incompatibility\b"),
+    re.compile(r"\bsdk bug\b"),
+    re.compile(r"\bwrong device selection\b"),
+    re.compile(r"\broot cause is\b"),
+)
+_ROOT_CAUSE_DISPROVING_PREFIXES = (
+    "does not prove",
+    "doesn't prove",
+    "not prove",
+    "does not confirm",
+    "doesn't confirm",
+    "not confirm",
+    "cannot confirm",
+    "can't confirm",
+    "without proving",
+    "without confirming",
+    "not enough to say",
+    "does not mean",
+)
 
 
 def _truncate_text(value: Any, max_chars: int = _MAX_SUMMARY_TEXT_CHARS) -> str:
@@ -50,11 +101,13 @@ def _default_reply_readiness() -> dict[str, Any]:
         "has_conclusion": False,
         "has_proof": False,
         "has_solution_or_next_step": False,
+        "reply_scope": _REPLY_SCOPE_NEEDS_MORE_EVIDENCE,
         "conclusion_summary": "",
         "proof_summary": "",
         "proof_anchors": [],
         "solution_or_next_step": "",
         "blockers": [],
+        "advisory_followups": [],
         "critique": "",
         "ready_for_customer_reply": False,
     }
@@ -69,6 +122,45 @@ def _append_corpus_text(items: list[str], value: Any) -> None:
     text = _clean_text(value)
     if text:
         items.append(text)
+
+
+def _dedupe_clean_list(items: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        normalized = _clean_text(item)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return deduped
+
+
+def _normalize_reply_scope(value: Any) -> str:
+    scope = _clean_text(value).lower()
+    if scope in _REPLY_SCOPE_ALLOWED:
+        return scope
+    return ""
+
+
+def _is_advisory_followup_text(value: str) -> bool:
+    text = _clean_text(value).lower()
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern in _ADVISORY_BLOCKER_PATTERNS)
+
+
+def _contains_strong_root_cause_claim(value: Any) -> bool:
+    text = _clean_text(value).lower()
+    if not text:
+        return False
+    for pattern in _ROOT_CAUSE_ASSERTION_PATTERNS:
+        for match in pattern.finditer(text):
+            prefix = text[max(0, match.start() - 48) : match.start()]
+            if any(token in prefix for token in _ROOT_CAUSE_DISPROVING_PREFIXES):
+                continue
+            return True
+    return False
 
 
 def _reply_readiness_search_corpus(
@@ -169,13 +261,16 @@ def _normalize_reply_readiness(
     handoff_packet: dict[str, Any] | None,
     engineer_message: str | None = None,
     revision_note: str | None = None,
+    draft_customer_reply: str | None = None,
 ) -> dict[str, Any]:
     raw = value if isinstance(value, dict) else {}
     conclusion_summary = _clean_text(raw.get("conclusion_summary"))
     proof_summary = _clean_text(raw.get("proof_summary"))
     proof_anchors = _clean_list(raw.get("proof_anchors"))
     solution_or_next_step = _clean_text(raw.get("solution_or_next_step"))
+    raw_scope = _normalize_reply_scope(raw.get("reply_scope"))
     blockers = _clean_list(raw.get("blockers"))
+    advisory_followups = _clean_list(raw.get("advisory_followups"))
     critique = _clean_text(raw.get("critique"))
     anchors_verified = _proof_anchors_verified(
         proof_anchors,
@@ -192,6 +287,27 @@ def _normalize_reply_readiness(
     )
     has_proof = bool((raw.get("has_proof") or proof_summary or proof_anchors) and proof_summary and anchors_verified)
 
+    reply_scope = raw_scope
+    if not reply_scope:
+        reply_scope = (
+            _REPLY_SCOPE_ROOT_CAUSE_CONFIRMED
+            if has_conclusion
+            and has_proof
+            and has_solution_or_next_step
+            and not blockers
+            and bool(raw.get("ready_for_customer_reply"))
+            else _REPLY_SCOPE_NEEDS_MORE_EVIDENCE
+        )
+
+    if reply_scope == _REPLY_SCOPE_SYMPTOM_AND_WORKAROUND_ONLY:
+        hard_blockers: list[str] = []
+        for blocker in blockers:
+            if _is_advisory_followup_text(blocker):
+                advisory_followups.append(blocker)
+            else:
+                hard_blockers.append(blocker)
+        blockers = hard_blockers
+
     if not has_conclusion:
         blockers.append("Explicit conclusion is missing.")
     if not has_proof:
@@ -203,14 +319,19 @@ def _normalize_reply_readiness(
     if not has_solution_or_next_step:
         blockers.append("Explicit solution or next step is missing.")
 
-    deduped_blockers: list[str] = []
-    seen_blockers: set[str] = set()
-    for blocker in blockers:
-        normalized = _clean_text(blocker)
-        if not normalized or normalized in seen_blockers:
-            continue
-        seen_blockers.add(normalized)
-        deduped_blockers.append(normalized)
+    if (
+        reply_scope == _REPLY_SCOPE_SYMPTOM_AND_WORKAROUND_ONLY
+        and (
+            _contains_strong_root_cause_claim(conclusion_summary)
+            or _contains_strong_root_cause_claim(draft_customer_reply)
+        )
+    ):
+        blockers.append(
+            "Customer-facing wording overstates the root cause. Keep the conclusion and draft at symptom level unless the root cause is confirmed."
+        )
+
+    deduped_blockers = _dedupe_clean_list(blockers)
+    deduped_advisories = _dedupe_clean_list(advisory_followups)
 
     if not critique and deduped_blockers:
         critique = deduped_blockers[0]
@@ -219,6 +340,7 @@ def _normalize_reply_readiness(
         has_conclusion
         and has_proof
         and has_solution_or_next_step
+        and reply_scope in {_REPLY_SCOPE_ROOT_CAUSE_CONFIRMED, _REPLY_SCOPE_SYMPTOM_AND_WORKAROUND_ONLY}
         and not deduped_blockers
         and bool(raw.get("ready_for_customer_reply"))
     )
@@ -227,11 +349,13 @@ def _normalize_reply_readiness(
         "has_conclusion": has_conclusion,
         "has_proof": has_proof,
         "has_solution_or_next_step": has_solution_or_next_step,
+        "reply_scope": reply_scope,
         "conclusion_summary": conclusion_summary,
         "proof_summary": proof_summary,
         "proof_anchors": proof_anchors if anchors_verified else [],
         "solution_or_next_step": solution_or_next_step,
         "blockers": deduped_blockers,
+        "advisory_followups": deduped_advisories,
         "critique": critique,
         "ready_for_customer_reply": ready_for_customer_reply,
     }
@@ -429,7 +553,9 @@ def _summarize_agent_state(state: dict[str, Any] | None) -> str:
             "has_conclusion": bool(reply_readiness.get("has_conclusion")),
             "has_proof": bool(reply_readiness.get("has_proof")),
             "has_solution_or_next_step": bool(reply_readiness.get("has_solution_or_next_step")),
+            "reply_scope": _clean_text(reply_readiness.get("reply_scope")),
             "blockers": _clean_list(reply_readiness.get("blockers"))[:4],
+            "advisory_followups": _clean_list(reply_readiness.get("advisory_followups"))[:4],
             "ready_for_customer_reply": bool(reply_readiness.get("ready_for_customer_reply")),
         },
         "last_refreshed_at": _clean_text(agent_state.get("last_refreshed_at")),
@@ -462,11 +588,13 @@ def _investigation_reply_extra_payload() -> dict[str, Any]:
                                 "has_conclusion",
                                 "has_proof",
                                 "has_solution_or_next_step",
+                                "reply_scope",
                                 "conclusion_summary",
                                 "proof_summary",
                                 "proof_anchors",
                                 "solution_or_next_step",
                                 "blockers",
+                                "advisory_followups",
                                 "critique",
                                 "ready_for_customer_reply",
                             ],
@@ -474,11 +602,16 @@ def _investigation_reply_extra_payload() -> dict[str, Any]:
                                 "has_conclusion": {"type": "boolean"},
                                 "has_proof": {"type": "boolean"},
                                 "has_solution_or_next_step": {"type": "boolean"},
+                                "reply_scope": {
+                                    "type": "string",
+                                    "enum": list(_REPLY_SCOPE_ALLOWED),
+                                },
                                 "conclusion_summary": {"type": "string"},
                                 "proof_summary": {"type": "string"},
                                 "proof_anchors": {"type": "array", "items": {"type": "string"}},
                                 "solution_or_next_step": {"type": "string"},
                                 "blockers": {"type": "array", "items": {"type": "string"}},
+                                "advisory_followups": {"type": "array", "items": {"type": "string"}},
                                 "critique": {"type": "string"},
                                 "ready_for_customer_reply": {"type": "boolean"},
                             },
@@ -695,6 +828,7 @@ def _generate_investigation_reply_turn(
         handoff_packet=handoff_packet,
         engineer_message=engineer_message,
         revision_note=revision_note,
+        draft_customer_reply=draft_customer_reply,
     )
     raw_agent_state["reply_readiness"] = reply_readiness
     if next_state == _AWAITING_CONFIRMATION_STATE and not reply_readiness.get("ready_for_customer_reply"):
@@ -1093,12 +1227,19 @@ def normalize_engineer_agent_state(
         ticket=ticket,
         investigation=ticket.get("active_investigation") if isinstance(ticket.get("active_investigation"), dict) else {},
         handoff_packet=handoff_packet,
+        draft_customer_reply=(
+            (ticket.get("active_investigation") or {}).get("draft_customer_reply")
+            if isinstance(ticket.get("active_investigation"), dict)
+            else ""
+        ),
     )
     if merged["reply_readiness"].get("blockers"):
         merged["missing_information"] = list(merged["reply_readiness"].get("blockers") or [])
     merged["ready_to_reply"] = bool(
         ready_to_reply and merged["reply_readiness"].get("ready_for_customer_reply")
     )
+    if merged["ready_to_reply"]:
+        merged["missing_information"] = []
     if merged["ready_to_reply"] and merged["phase"] == "gather_missing_inputs":
         merged["phase"] = "awaiting_confirmation"
     if not merged["ready_to_reply"] and merged["reply_readiness"].get("blockers") and merged["phase"] == "awaiting_confirmation":

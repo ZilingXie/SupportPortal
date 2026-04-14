@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-ENGINEER_INVESTIGATION_REPLY_PROMPT_VERSION = "engineer-investigation-reply-v2"
+ENGINEER_INVESTIGATION_REPLY_PROMPT_VERSION = "engineer-investigation-reply-v3"
 
 
 def _dump_json(value: Any) -> str:
@@ -22,8 +22,14 @@ def build_engineer_investigation_reply_system_prompt() -> str:
             "## Decision Rules",
             'Only set state to "awaiting_confirmation" when all three are explicit and defensible: conclusion, proof, and solution or next step.',
             'If any of those three are missing, weak, or not grounded in the engineer update or handoff context, set state to "active".',
+            "Distinguish root_cause_confirmed from symptom_and_workaround_only.",
+            "Use root_cause_confirmed only when the evidence supports the claimed root cause itself.",
+            "Use symptom_and_workaround_only when the evidence proves a symptom or failure mode and the customer draft stays at symptom level with a conservative workaround or retest step.",
+            "In symptom_and_workaround_only mode, do not treat optional diagnostics such as browser/OS/version, surrounding logs, permission details, or later root-cause classification as hard blockers unless the draft depends on them.",
             "Proof must be traceable internal evidence such as a reproduction result, log or error trace, version/config difference, or a cited doc path.",
             "Do not treat a bare engineer conclusion or intuition as proof.",
+            "If the engineer overstates the root cause but the evidence only supports a symptom, automatically downgrade conclusion_summary and draft_customer_reply to symptom-level wording.",
+            "Do not say that the camera is broken, that a permission issue is confirmed, that browser incompatibility is confirmed, or that an SDK bug is confirmed unless the evidence directly supports that root-cause claim.",
             "Use proof_anchors to quote short exact phrases, IDs, URLs, versions, or other snippets that already exist in the engineer update or handoff context.",
             "Never copy the engineer note directly into the customer draft.",
             "The internal message is for the engineer only.",
@@ -40,8 +46,9 @@ def build_engineer_investigation_reply_system_prompt() -> str:
             'Allowed state values: "active" or "awaiting_confirmation".',
             'When state is "awaiting_confirmation", draft_customer_reply must be non-empty and ready to send.',
             'When state is "active", draft_customer_reply must be an empty string and next_request_for_engineer must match the internal message.',
-            'Return reply_readiness with keys "has_conclusion", "has_proof", "has_solution_or_next_step", "conclusion_summary", "proof_summary", "proof_anchors", "solution_or_next_step", "blockers", "critique", and "ready_for_customer_reply".',
-            "Keep proof_anchors and blockers as arrays of short strings.",
+            'Return reply_readiness with keys "has_conclusion", "has_proof", "has_solution_or_next_step", "reply_scope", "conclusion_summary", "proof_summary", "proof_anchors", "solution_or_next_step", "blockers", "advisory_followups", "critique", and "ready_for_customer_reply".',
+            'Allowed reply_scope values: "root_cause_confirmed", "symptom_and_workaround_only", or "needs_more_evidence".',
+            "Keep proof_anchors, blockers, and advisory_followups as arrays of short strings.",
             "",
             "## engineer_agent_state Requirements",
             'Return engineer_agent_state with keys "phase", "issue_understanding", "knowledge_summary", "why_not_solved", "goal", "known_facts", "missing_information", "next_request_for_engineer", "resolution_hypothesis", "ready_to_reply", and "last_refreshed_at".',
