@@ -1254,7 +1254,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["status"], "investigating")
-        self.assertIn("我已经为这个问题创建了工程师工单", payload["answer"])
+        self.assertIn("这个问题需要进一步的内部调查", payload["answer"])
         self.assertNotEqual(payload["answer"], "收到，我先帮你看一下。")
 
         detail = self.client.get("/api/engineer/tickets/TK-INV-100-1")
@@ -1276,7 +1276,7 @@ class InvestigationFlowTests(unittest.TestCase):
         assistant_messages = [message["content"] for message in ticket["messages"] if message["role"] == "assistant"]
         self.assertNotIn("收到，我先帮你看一下。", assistant_messages)
         self.assertTrue(
-            any("我已经为这个问题创建了工程师工单" in content for content in assistant_messages)
+            any("这个问题需要进一步的内部调查" in content for content in assistant_messages)
         )
         self.assertNotIn("engineer_ai", [message["role"] for message in ticket["messages"]])
         event_types = [item["event_type"] for item in self.repository.list_ticket_events("TK-INV-100")]
@@ -1543,7 +1543,7 @@ class InvestigationFlowTests(unittest.TestCase):
                 "source": "support_query",
                 "conversation_summary": "Customer reports token renew callback never fires.",
                 "latest_customer_message": "token renew callback never fires",
-                "latest_client_ai_reply": "I've opened an engineer ticket for this issue and we're investigating further. I'll reply here as soon as the engineer review is confirmed.",
+                "latest_client_ai_reply": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
                 "route_summary": {
                     "answer_route": "rag",
                     "route_reason": "rag_insufficient_evidence",
@@ -2624,7 +2624,7 @@ class InvestigationFlowTests(unittest.TestCase):
         assistant_messages = [message["content"] for message in ticket["messages"] if message["role"] == "assistant"]
         self.assertFalse(any("Please upgrade to SDK 4.2.2" in content for content in assistant_messages))
         self.assertTrue(
-            any("I've opened an engineer ticket for this issue" in content for content in assistant_messages)
+            any("requires further internal investigation" in content for content in assistant_messages)
         )
 
     def test_ticket_query_post_rag_check_error_starts_investigation(self) -> None:
@@ -2797,7 +2797,7 @@ class InvestigationFlowTests(unittest.TestCase):
                 },
                 {
                     "role": "assistant",
-                    "content": "I've opened an engineer ticket and we're investigating further.",
+                    "content": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
                     "created_at": "2026-03-29T09:01:00+00:00",
                 },
             ],
@@ -2904,7 +2904,7 @@ class InvestigationFlowTests(unittest.TestCase):
                 },
                 {
                     "role": "assistant",
-                    "content": "I've opened an engineer ticket and we're investigating further.",
+                    "content": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
                     "created_at": "2026-03-29T09:01:00+00:00",
                 },
             ],
@@ -3005,7 +3005,7 @@ class InvestigationFlowTests(unittest.TestCase):
                 },
                 {
                     "role": "assistant",
-                    "content": "I've opened an engineer ticket and we're investigating further.",
+                    "content": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
                     "created_at": "2026-03-29T09:01:00+00:00",
                 },
             ],
@@ -3422,7 +3422,7 @@ class InvestigationFlowTests(unittest.TestCase):
                 "source": "worker_async_rag",
                 "conversation_summary": "Customer reports token renew callback does not fire.",
                 "latest_customer_message": "token renew callback never fires",
-                "latest_client_ai_reply": "I've opened an engineer ticket for this issue and we're investigating further. I'll reply here as soon as the engineer review is confirmed.",
+                "latest_client_ai_reply": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
                 "route_summary": {
                     "answer_route": "rag",
                     "route_reason": "rag_insufficient_evidence",

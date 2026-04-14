@@ -242,7 +242,7 @@ class ClientUiContractTests(unittest.TestCase):
                     },
                     {
                       role: "assistant",
-                      content: "I've opened an engineer ticket for this issue and we're investigating further. I'll reply here as soon as the engineer review is confirmed.",
+                      content: "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
                       created_at: "2026-03-24T08:01:00+00:00",
                     },
                   ],
@@ -308,7 +308,7 @@ class ClientUiContractTests(unittest.TestCase):
                             },
                             {
                               role: "assistant",
-                              content: "I've opened an engineer ticket for this issue and we're investigating further. I'll reply here as soon as the engineer review is confirmed.",
+                              content: "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
                               created_at: "2026-04-02T08:01:00+00:00",
                             },
                           ],
@@ -1571,7 +1571,7 @@ class ClientUiContractTests(unittest.TestCase):
                   {
                     id: "msg-assistant-2",
                     role: "assistant",
-                    content: "I've opened an engineer ticket for this issue and we're investigating further. I'll reply here as soon as the engineer review is confirmed.",
+                    content: "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
                     createdAt: "2026-04-04T04:46:28.952143Z",
                   },
                 ]);
@@ -1580,7 +1580,7 @@ class ClientUiContractTests(unittest.TestCase):
                 if (html.includes("Got it, let me check this for you.")) {
                   throw new Error("Legacy assistant reassurance should be hidden once a later assistant reply exists in history.");
                 }
-                if (!html.includes("engineer ticket for this issue")) {
+                if (!html.includes("requires further internal investigation")) {
                   throw new Error("Later durable assistant reply should remain visible.");
                 }
                 """

@@ -1074,7 +1074,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertTrue(execution.result.needs_investigating)
         self.assertEqual(execution.result.route_reason, "investigation_intake_complete")
         self.assertEqual(execution.result.investigation_reason, "investigation_intake_complete")
-        self.assertIn("opened an engineer ticket", execution.result.answer.lower())
+        self.assertIn("requires further internal investigation", execution.result.answer.lower())
         self.assertEqual(
             execution.result.client_intake_state["known_information"]["issue_timestamp"],
             "2026-03-04 12:00pm UTC+8",
