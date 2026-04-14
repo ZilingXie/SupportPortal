@@ -147,7 +147,7 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
         self.assertIn("./styles.css?v=20260414-engineer-case-buddy-merged-request-1", html)
-        self.assertIn('./app.js?v=20260414-engineer-case-buddy-merged-request-1', html)
+        self.assertIn('./app.js?v=20260414-engineer-composer-focus-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
@@ -1946,6 +1946,233 @@ class EngineerUiContractTests(unittest.TestCase):
                 }
                 if (tellAiSubmitting) {
                   throw new Error("The immediate UI lock should clear before the background ticket refresh starts.");
+                }
+              """
+            )
+        )
+
+    def test_engineer_detail_refresh_preserves_active_investigation_composer(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                routeState.view = "detail";
+                selectedTicketId = "TK-DETAIL-FOCUS";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-FOCUS",
+                  client_ticket_ref: {
+                    ticket_id: "TK-CLIENT-FOCUS",
+                    subject: "Client black screen issue",
+                  },
+                  subject: "Black screen after join",
+                  requester: "user-9",
+                  status: "investigating",
+                  created_at: "2026-04-14T09:00:00+00:00",
+                  updated_at: "2026-04-14T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: {
+                    id: "INV-DETAIL-FOCUS",
+                    state: "active",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "",
+                    final_confirmation_requested_at: null,
+                    opened_at: "2026-04-14T09:01:00+00:00",
+                    updated_at: "2026-04-14T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-FOCUS-m1",
+                        role: "engineer_ai",
+                        content: "Please share the latest device log.",
+                        created_at: "2026-04-14T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+                tellAiDraft = "第二轮日志补充";
+
+                let activeElement = null;
+                let composerInput = null;
+                let workspaceRoot = null;
+                let headerRegion = { innerHTML: "" };
+                let staticRegion = { innerHTML: "" };
+                let insightRegion = { innerHTML: "" };
+                const createComposer = () => ({
+                  value: tellAiDraft,
+                  disabled: false,
+                  selectionStart: 0,
+                  selectionEnd: 0,
+                  selectionDirection: "none",
+                  scrollTop: 0,
+                  focus() {
+                    activeElement = this;
+                  },
+                  blur() {
+                    if (activeElement === this) {
+                      activeElement = null;
+                    }
+                  },
+                  setSelectionRange(start, end, direction = "none") {
+                    this.selectionStart = start;
+                    this.selectionEnd = end;
+                    this.selectionDirection = direction;
+                  },
+                  scrollIntoView() {},
+                });
+                workspaceRegionEl.querySelector = (selector) => {
+                  if (selector === "#detail-investigation-input") {
+                    return composerInput;
+                  }
+                  if (selector === ".ticket-workspace") {
+                    return workspaceRoot;
+                  }
+                  return null;
+                };
+                const originalGetElementById = document.getElementById;
+                document.getElementById = (id) => {
+                  if (id === "detail-investigation-input") {
+                    return composerInput;
+                  }
+                  return originalGetElementById(id);
+                };
+                Object.defineProperty(document, "activeElement", {
+                  configurable: true,
+                  get() {
+                    return activeElement;
+                  },
+                });
+                Object.defineProperty(workspaceRegionEl, "innerHTML", {
+                  configurable: true,
+                  get() {
+                    return this._html || "";
+                  },
+                  set(value) {
+                    this._html = value;
+                    headerRegion = { innerHTML: value };
+                    staticRegion = { innerHTML: value };
+                    insightRegion = { innerHTML: value };
+                    if (value.includes('id="detail-investigation-input"')) {
+                      workspaceRoot = {
+                        dataset: { detailTicketId: selectedTicketId },
+                        querySelector(selector) {
+                          if (selector === '[data-detail-section="header"]') {
+                            return headerRegion;
+                          }
+                          if (selector === '[data-detail-section="investigation-static"]') {
+                            return staticRegion;
+                          }
+                          if (selector === '[data-detail-section="insight"]') {
+                            return insightRegion;
+                          }
+                          return null;
+                        },
+                      };
+                      composerInput = createComposer();
+                      if (activeElement && activeElement !== composerInput) {
+                        activeElement = null;
+                      }
+                    } else {
+                      workspaceRoot = null;
+                      composerInput = null;
+                      activeElement = null;
+                    }
+                  },
+                });
+
+                renderTicketDetail();
+                composerInput.focus();
+                composerInput.setSelectionRange(2, 2, "none");
+                composerInput.scrollTop = 11;
+                const originalComposer = composerInput;
+
+                fetchJson = async (url) => {
+                  if (url === "/api/engineer/tickets/TK-DETAIL-FOCUS") {
+                    return {
+                      ticket: {
+                        ...selectedTicket,
+                        updated_at: "2026-04-14T09:12:00+00:00",
+                      },
+                    };
+                  }
+                  throw new Error(`Unexpected url: ${url}`);
+                };
+
+                await refreshSelectedTicket({ silent: true, showLoading: false });
+
+                if (composerInput !== originalComposer) {
+                  throw new Error("Detail refresh should not recreate the active investigation composer.");
+                }
+                if (document.activeElement !== composerInput) {
+                  throw new Error("Detail refresh should preserve focus on the active investigation composer.");
+                }
+                if (composerInput.selectionStart !== 2 || composerInput.selectionEnd !== 2) {
+                  throw new Error("Detail refresh should preserve the investigation composer cursor position.");
+                }
+                if (composerInput.scrollTop !== 11) {
+                  throw new Error("Detail refresh should preserve the investigation composer scroll position.");
+                }
+                if (composerInput.value !== "第二轮日志补充") {
+                  throw new Error("Detail refresh should preserve the in-progress engineer draft.");
+                }
+              """
+            )
+        )
+
+    def test_engineer_socket_ignores_unrelated_ticket_detail_refresh(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                let lastSocket = null;
+                WebSocket = function WebSocket() {
+                  this.readyState = 1;
+                  this.close = () => {};
+                  this.send = () => {};
+                  lastSocket = this;
+                };
+
+                setAuthenticated(true);
+                selectedTicketId = "ENG-CASE-001";
+                selectedTicket = {
+                  ticket_id: "ENG-CASE-001",
+                  client_ticket_ref: {
+                    ticket_id: "CLIENT-CASE-001",
+                    subject: "Joined but black screen",
+                  },
+                  subject: "Joined but black screen",
+                  requester: "user-10",
+                  status: "investigating",
+                  created_at: "2026-04-14T09:00:00+00:00",
+                  updated_at: "2026-04-14T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: null,
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+
+                let loadOptions = null;
+                let refreshCalls = 0;
+                loadTickets = async (options = {}) => {
+                  loadOptions = options;
+                };
+                refreshSelectedTicket = async () => {
+                  refreshCalls += 1;
+                };
+
+                setupWebSocket();
+                await lastSocket.onmessage({
+                  data: JSON.stringify({
+                    event: "ticket_updated",
+                    ticket_id: "ENG-CASE-999",
+                    client_ticket_id: "CLIENT-CASE-999",
+                  }),
+                });
+
+                if (!loadOptions || loadOptions.refreshDetail !== false) {
+                  throw new Error("Engineer websocket should refresh the pool without forcing detail refresh for unrelated tickets.");
+                }
+                if (refreshCalls !== 0) {
+                  throw new Error("Engineer websocket should not refresh the open detail view for unrelated tickets.");
                 }
               """
             )

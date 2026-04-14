@@ -1816,17 +1816,65 @@ function renderChatHome() {
   `;
 }
 
-function renderChatTicket() {
-  const ticket = getTicketById(state.activeTicketId);
+function isTextComposerElement(element) {
+  return Boolean(
+    element &&
+      typeof element === "object" &&
+      typeof element.focus === "function" &&
+      typeof element.value === "string"
+  );
+}
+
+function captureComposerPreservationState(element) {
+  if (!isTextComposerElement(element) || document.activeElement !== element || element.disabled) {
+    return null;
+  }
+  return {
+    selectionStart:
+      typeof element.selectionStart === "number" ? element.selectionStart : element.value.length,
+    selectionEnd:
+      typeof element.selectionEnd === "number" ? element.selectionEnd : element.value.length,
+    selectionDirection:
+      typeof element.selectionDirection === "string" ? element.selectionDirection : "none",
+    scrollTop: typeof element.scrollTop === "number" ? element.scrollTop : 0,
+  };
+}
+
+function restoreComposerPreservationState(element, snapshot) {
+  if (!isTextComposerElement(element) || !snapshot || element.disabled) {
+    return;
+  }
+  try {
+    element.focus({ preventScroll: true });
+  } catch {
+    element.focus();
+  }
+  if (typeof element.setSelectionRange === "function") {
+    element.setSelectionRange(
+      snapshot.selectionStart,
+      snapshot.selectionEnd,
+      snapshot.selectionDirection || "none"
+    );
+  }
+  if (typeof snapshot.scrollTop === "number" && typeof element.scrollTop === "number") {
+    element.scrollTop = snapshot.scrollTop;
+  }
+}
+
+function getActiveChatComposerElement() {
+  const input = document.getElementById("chat-input");
+  return isTextComposerElement(input) ? input : null;
+}
+
+function buildChatTicketViewState(ticket) {
   if (!ticket || ticket.userId !== state.user.id) {
-    return `<div class="empty-state">Session not found.</div>`;
+    return null;
   }
   const renderableMessages = getRenderableMessages(ticket);
   const sending = isTicketAwaitingDurableReply(ticket);
   const requiresProductSelection = isTicketEmpty(ticket) && !normalizeTicketProduct(ticket.product);
   const canCompose = !sending && ticket.status !== "resolved" && !requiresProductSelection;
   const isEditing = Boolean(state.editingMessageId);
-  const selectedProductLabel = getProductLabel(ticket.product);
 
   if (isEditing && !renderableMessages.some((message) => message.id === state.editingMessageId)) {
     state.editingMessageId = null;
@@ -1835,31 +1883,38 @@ function renderChatTicket() {
     }
   }
 
+  return {
+    ticket,
+    renderableMessages,
+    sending,
+    requiresProductSelection,
+    canCompose,
+    isEditing: Boolean(state.editingMessageId),
+  };
+}
+
+function renderChatMessagesHtml(viewState) {
   return `
-    <section class="chat-root">
-      <main class="chat-main">
-        <div class="message-list">
-          ${
-            renderableMessages.length === 0
-              ? `
-                <div class="empty-chat">
-                  ${renderNewSessionWelcomeBubble()}
-                  ${renderTicketProductSelector(ticket)}
-                </div>
-              `
-              : renderableMessages
-                  .map(
-                    (message) => {
-                      const role = String(message.role || "assistant");
-                      const tone = role === "user" ? "user" : role === "engineer" ? "engineer" : "assistant";
-                      const author =
-                        role === "user"
-                          ? state.user.name
-                          : role === "engineer"
-                          ? "Engineer"
-                          : CLIENT_ASSISTANT_NAME;
-                      const metaTime = formatDate(message.createdAt || new Date().toISOString());
-                      return `
+    ${
+      viewState.renderableMessages.length === 0
+        ? `
+          <div class="empty-chat">
+            ${renderNewSessionWelcomeBubble()}
+            ${renderTicketProductSelector(viewState.ticket)}
+          </div>
+        `
+        : viewState.renderableMessages
+            .map((message) => {
+              const role = String(message.role || "assistant");
+              const tone = role === "user" ? "user" : role === "engineer" ? "engineer" : "assistant";
+              const author =
+                role === "user"
+                  ? state.user.name
+                  : role === "engineer"
+                  ? "Engineer"
+                  : CLIENT_ASSISTANT_NAME;
+              const metaTime = formatDate(message.createdAt || new Date().toISOString());
+              return `
                 <article class="msg-row ${tone === "user" ? "user" : ""}">
                   <div class="msg-column">
                     <div class="message-meta ${tone === "user" ? "message-meta-user" : ""}">
@@ -1877,69 +1932,136 @@ function renderChatTicket() {
                   </div>
                 </article>
               `;
-                    }
-                  )
-                  .join("")
-          }
-          ${
-            sending
-              ? `
-            <div class="thinking-line">
-              <span class="thinking-dots"><span></span><span></span><span></span></span>
-              <span class="thinking-label">AI is cross-referencing system health logs...</span>
-            </div>
-          `
-              : ""
-          }
+            })
+            .join("")
+    }
+    ${
+      viewState.sending
+        ? `
+      <div class="thinking-line">
+        <span class="thinking-dots"><span></span><span></span><span></span></span>
+        <span class="thinking-label">AI is cross-referencing system health logs...</span>
+      </div>
+    `
+        : ""
+    }
+  `;
+}
+
+function renderChatComposerNoteHtml(viewState) {
+  if (viewState.sending) {
+    return `<div class="composer-note">checking the knowledge base... click stop to interrupt.</div>`;
+  }
+  if (viewState.isEditing) {
+    return `<div class="composer-note">Editing your last message. Press Enter to resend, Shift+Enter for newline.</div>`;
+  }
+  if (viewState.requiresProductSelection) {
+    return `<div class="composer-note">Select Product before sending the first message in this session.</div>`;
+  }
+  return "";
+}
+
+function renderChatComposerActionHtml(viewState) {
+  if (viewState.sending) {
+    return `
+      <button
+        class="composer-icon-button composer-stop-btn"
+        type="button"
+        data-action="stop-generation"
+        aria-label="Stop Generation"
+        title="Stop Generation"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">stop</span>
+      </button>
+    `;
+  }
+
+  return `
+    <button
+      class="composer-icon-button send-btn"
+      type="submit"
+      aria-label="${viewState.isEditing ? "Resend Request" : "Send Request"}"
+      title="${viewState.isEditing ? "Resend Request" : "Send Request"}"
+      ${viewState.canCompose ? "" : "disabled"}
+    >
+      <span class="material-symbols-outlined" aria-hidden="true">arrow_upward</span>
+    </button>
+  `;
+}
+
+function renderChatTicketFromState(viewState) {
+  return `
+    <section class="chat-root" data-chat-ticket-id="${escapeHtml(viewState.ticket.id)}">
+      <main class="chat-main">
+        <div class="message-list" data-chat-section="messages">
+          ${renderChatMessagesHtml(viewState)}
         </div>
       </main>
       <footer class="chat-input-wrap">
-        ${
-          sending
-            ? `<div class="composer-note">checking the knowledge base... click stop to interrupt.</div>`
-            : isEditing
-            ? `<div class="composer-note">Editing your last message. Press Enter to resend, Shift+Enter for newline.</div>`
-            : requiresProductSelection
-            ? `<div class="composer-note">Select Product before sending the first message in this session.</div>`
-            : ""
-        }
-        <form id="chat-input-form" class="chat-input-inner">
+        <div data-chat-section="composer-note">${renderChatComposerNoteHtml(viewState)}</div>
+        <form id="chat-input-form" class="chat-input-inner" data-chat-section="composer-form">
           <textarea
             id="chat-input"
             class="textarea"
             rows="1"
             placeholder="Type your request or technical issue..."
-            ${canCompose ? "" : "disabled"}
+            ${viewState.canCompose ? "" : "disabled"}
           >${escapeHtml(state.inputDraft || "")}</textarea>
-          ${
-            sending
-              ? `
-            <button
-              class="composer-icon-button composer-stop-btn"
-              type="button"
-              data-action="stop-generation"
-              aria-label="Stop Generation"
-              title="Stop Generation"
-            >
-              <span class="material-symbols-outlined" aria-hidden="true">stop</span>
-            </button>
-          `
-              : `
-            <button
-              class="composer-icon-button send-btn"
-              type="submit"
-              aria-label="${isEditing ? "Resend Request" : "Send Request"}"
-              title="${isEditing ? "Resend Request" : "Send Request"}"
-              ${canCompose ? "" : "disabled"}
-            >
-              <span class="material-symbols-outlined" aria-hidden="true">arrow_upward</span>
-            </button>
-          `
-          }
+          <div data-chat-section="composer-action">
+            ${renderChatComposerActionHtml(viewState)}
+          </div>
         </form>
       </footer>
     </section>
   `;
+}
+
+function shouldPreserveActiveChatComposerOnRender(viewState) {
+  if (!viewState?.canCompose) {
+    return false;
+  }
+  return Boolean(captureComposerPreservationState(getActiveChatComposerElement()));
+}
+
+function patchChatTicketWhilePreservingComposer(mainRegion, viewState) {
+  if (!mainRegion || typeof mainRegion.querySelector !== "function") {
+    return false;
+  }
+  const chatRoot = mainRegion.querySelector(".chat-root");
+  if (!chatRoot || typeof chatRoot.querySelector !== "function") {
+    return false;
+  }
+  const chatTicketId = String(chatRoot.dataset?.chatTicketId || "").trim();
+  if (chatTicketId && chatTicketId !== String(viewState.ticket.id || "").trim()) {
+    return false;
+  }
+  const messagesRegion = chatRoot.querySelector('[data-chat-section="messages"]');
+  const noteRegion = chatRoot.querySelector('[data-chat-section="composer-note"]');
+  const actionRegion = chatRoot.querySelector('[data-chat-section="composer-action"]');
+  if (!messagesRegion || !noteRegion || !actionRegion) {
+    return false;
+  }
+
+  const composer = getActiveChatComposerElement();
+  const snapshot = captureComposerPreservationState(composer);
+  messagesRegion.innerHTML = renderChatMessagesHtml(viewState);
+  noteRegion.innerHTML = renderChatComposerNoteHtml(viewState);
+  actionRegion.innerHTML = renderChatComposerActionHtml(viewState);
+  if (composer) {
+    composer.disabled = !viewState.canCompose;
+    composer.placeholder = "Type your request or technical issue...";
+  }
+  restoreComposerPreservationState(composer, snapshot);
+  return true;
+}
+
+function renderChatTicket() {
+  const ticket = getTicketById(state.activeTicketId);
+  const viewState = buildChatTicketViewState(ticket);
+  if (!viewState) {
+    return `<div class="empty-state">Session not found.</div>`;
+  }
+  return renderChatTicketFromState(viewState);
 }
 
 function renderTicketsPage() {
@@ -2118,6 +2240,26 @@ function renderMainContent() {
   return renderChatHome();
 }
 
+function renderMainRegion(mainRegion) {
+  if (!mainRegion) {
+    return;
+  }
+  if (state.view !== "chat-ticket") {
+    mainRegion.innerHTML = renderMainContent();
+    return;
+  }
+  const ticket = getTicketById(state.activeTicketId);
+  const viewState = buildChatTicketViewState(ticket);
+  if (!viewState) {
+    mainRegion.innerHTML = renderChatTicket();
+    return;
+  }
+  if (shouldPreserveActiveChatComposerOnRender(viewState) && patchChatTicketWhilePreservingComposer(mainRegion, viewState)) {
+    return;
+  }
+  mainRegion.innerHTML = renderChatTicketFromState(viewState);
+}
+
 function renderAuthed() {
   const shell = ensureAuthedShell();
   shell.querySelector('[data-authed-region="sidebar-nav"]').innerHTML = renderSidebarNav();
@@ -2125,7 +2267,7 @@ function renderAuthed() {
   shell.querySelector('[data-authed-region="sidebar-footer"]').innerHTML = renderSidebarFooter();
   shell.querySelector('[data-authed-region="topbar"]').innerHTML = renderTopbar();
   shell.querySelector('[data-authed-region="context"]').innerHTML = renderContextBar();
-  shell.querySelector('[data-authed-region="main"]').innerHTML = renderMainContent();
+  renderMainRegion(shell.querySelector('[data-authed-region="main"]'));
 
   bindAuthedEvents();
 }
@@ -2532,27 +2674,33 @@ function bindAuthedEvents() {
   bindStatusFilter();
 
   const form = document.getElementById("chat-input-form");
-  form?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const message = String(state.inputDraft || "").trim();
-    if (!message) {
-      return;
-    }
-    await handleSendMessage(message, {
-      editMessageId: state.editingMessageId,
+  if (form && !form.__clientComposerSubmitBound) {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const message = String(state.inputDraft || "").trim();
+      if (!message) {
+        return;
+      }
+      await handleSendMessage(message, {
+        editMessageId: state.editingMessageId,
+      });
     });
-  });
+    form.__clientComposerSubmitBound = true;
+  }
 
   const input = document.getElementById("chat-input");
-  input?.addEventListener("input", () => {
-    state.inputDraft = input.value;
-  });
-  input?.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      form?.requestSubmit();
-    }
-  });
+  if (input && !input.__clientComposerInputBound) {
+    input.addEventListener("input", () => {
+      state.inputDraft = input.value;
+    });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        form?.requestSubmit();
+      }
+    });
+    input.__clientComposerInputBound = true;
+  }
 
   const stopButton = appRoot.querySelector("[data-action='stop-generation']");
   stopButton?.addEventListener("click", () => {
