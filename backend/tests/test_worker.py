@@ -1232,7 +1232,7 @@ class WorkerResilienceTests(unittest.TestCase):
 
         investigation_result = {
             "created": True,
-            "public_reply": "I've opened an engineer ticket for this issue and we're investigating further. I'll reply here as soon as the engineer review is confirmed.",
+            "public_reply": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
             "active_investigation": {
                 "id": "INV-RETRY-1",
                 "state": "active",
@@ -1260,7 +1260,7 @@ class WorkerResilienceTests(unittest.TestCase):
                 "source": "worker_async_rag",
                 "conversation_summary": "Customer reports token renew callback never fires.",
                 "latest_customer_message": "token renew callback never fires",
-                "latest_client_ai_reply": "I've opened an engineer ticket for this issue and we're investigating further. I'll reply here as soon as the engineer review is confirmed.",
+                "latest_client_ai_reply": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
                 "route_summary": {
                     "answer_route": "rag",
                     "route_reason": "grounded_answer",
@@ -1409,7 +1409,7 @@ class WorkerResilienceTests(unittest.TestCase):
                 "source": "worker_async_rag",
                 "conversation_summary": "Customer: how to join channel",
                 "latest_customer_message": "how to join channel",
-                "latest_client_ai_reply": "I've opened an engineer ticket for this issue and we're investigating further. I'll reply here as soon as the engineer review is confirmed.",
+                "latest_client_ai_reply": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
                 "route_summary": {
                     "answer_route": "rag",
                     "route_reason": execution_context.get("route_reason"),
@@ -1440,7 +1440,7 @@ class WorkerResilienceTests(unittest.TestCase):
             }
             return {
                 "created": True,
-                "public_reply": "I've opened an engineer ticket for this issue and we're investigating further. I'll reply here as soon as the engineer review is confirmed.",
+                "public_reply": "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
                 "active_investigation": copy.deepcopy(ticket["active_investigation"]),
                 "new_internal_messages": [],
             }
@@ -1471,7 +1471,7 @@ class WorkerResilienceTests(unittest.TestCase):
         saved_ticket = repository.save_ticket.call_args_list[0].args[0]
         saved_engineer_case = repository.save_engineer_case.call_args.kwargs["engineer_case"]
         self.assertEqual(saved_ticket["status"], "investigating")
-        self.assertEqual(saved_ticket["messages"][-1]["content"], "I've opened an engineer ticket for this issue and we're investigating further. I'll reply here as soon as the engineer review is confirmed.")
+        self.assertEqual(saved_ticket["messages"][-1]["content"], "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.")
         self.assertEqual(saved_engineer_case["trigger_reason"], "rag_service_error")
         self.assertEqual(saved_engineer_case["engineer_handoff_packet"]["route_summary"]["route_reason"], "rag_service_error")
         self.assertEqual(saved_engineer_case["engineer_handoff_packet"]["unresolved_reason"], "rag_service_error")

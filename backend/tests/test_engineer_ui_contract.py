@@ -747,7 +747,7 @@ class EngineerUiContractTests(unittest.TestCase):
                     },
                     {
                       role: "assistant",
-                      content: "I've opened an engineer ticket for this issue and we're investigating further. I'll reply here as soon as the engineer review is confirmed.",
+                      content: "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
                       created_at: "2026-03-24T08:01:00+00:00",
                     },
                   ],
