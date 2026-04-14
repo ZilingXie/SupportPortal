@@ -104,6 +104,9 @@ bash scripts/workflow/restart_single_host_lightweight_stack.sh
 ### 2.5 运维命令
 
 ```bash
+# 检查并补起本机 DB relay（在当前 .env 明确依赖 relay 时）
+bash scripts/workflow/ensure_local_db_relay.sh
+
 # 检查当前官方单机栈模式，并提示是否存在辅助栈 deploymentlw
 bash scripts/workflow/inspect_single_host_stack_mode.sh
 
@@ -136,6 +139,11 @@ podman-compose -f deployment/docker-compose.single-host.yml down
 4. 浏览器 `ERR_CONNECTION_REFUSED`：
    - 先检查 `podman-compose ... ps`。
    - 使用带端口 URL，比如 `http://localhost:8080/client/`。
+
+5. `/health` 变成 `ticket_storage=memory`，engineer 端看不到 ticket：
+   - 优先检查本机 DB relay 和 Shadowrocket 规则。
+   - 先运行 `bash scripts/workflow/ensure_local_db_relay.sh`。
+   - 完整排障步骤见 [local_db_relay_recovery.md](./local_db_relay_recovery.md)。
 
 ---
 
