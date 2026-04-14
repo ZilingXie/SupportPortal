@@ -146,8 +146,8 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260414-engineer-detail-fixed-column-height-1", html)
-        self.assertIn('./app.js?v=20260414-engineer-detail-fixed-column-height-1', html)
+        self.assertIn("./styles.css?v=20260414-engineer-detail-sidebar-regression-fix-1", html)
+        self.assertIn('./app.js?v=20260414-engineer-detail-sidebar-regression-fix-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
@@ -777,34 +777,25 @@ class EngineerUiContractTests(unittest.TestCase):
         timeline_body_block = css[timeline_body_start:timeline_body_end]
         self.assertIn("min-height: 0;", timeline_body_block)
 
-        desktop_media_marker = "@media (min-width: 1181px) {"
-        desktop_media_start = css.find(desktop_media_marker)
-        self.assertNotEqual(
-            desktop_media_start,
-            -1,
-            msg="Engineer detail fixed-height rules should be scoped to the desktop two-column layout.",
+        self.assertNotIn(
+            "height: clamp(580px, 68vh, 820px);",
+            css,
+            msg="Engineer detail should no longer force the entire desktop detail workspace to a viewport-based height.",
         )
-        mobile_media_start = css.find("@media (max-width: 1180px) {", desktop_media_start)
-        self.assertNotEqual(
-            mobile_media_start,
-            -1,
-            msg="Engineer detail should keep the existing single-column mobile/tablet breakpoint after desktop sizing is added.",
+        self.assertNotIn(
+            "grid-template-rows: minmax(0, 1fr) auto;",
+            css[css.find(".insight-panel {"):css.find("}", css.find(".insight-panel {"))],
+            msg="Engineer detail sidebar should return to natural vertical stacking instead of a forced two-row split.",
         )
-        desktop_block = css[desktop_media_start:mobile_media_start]
-        self.assertIn("height: clamp(580px, 68vh, 820px);", desktop_block)
-        self.assertIn(".workspace-layout {", desktop_block)
-        self.assertIn(".conversation-panel,", desktop_block)
-        self.assertIn(".insight-panel {", desktop_block)
-        self.assertIn(".detail-timeline-panel .message-list {", desktop_block)
-        self.assertIn("max-height: none;", desktop_block)
+        self.assertNotIn(
+            ".detail-timeline-panel,\n  .detail-timeline-body,\n  .detail-timeline-panel .message-list {\n    height: 100%;",
+            css,
+            msg="Customer timeline should not be forced to consume the full sidebar height on desktop.",
+        )
 
         base_layout_end = css.find("}", css.find(".workspace-layout {"))
         base_layout_block = css[css.find(".workspace-layout {"):base_layout_end]
-        self.assertNotIn(
-            "height: clamp(580px, 68vh, 820px);",
-            base_layout_block,
-            msg="Desktop fixed-height sizing should not leak into the base or mobile layout rules.",
-        )
+        self.assertIn("align-items: stretch;", base_layout_block)
 
     def test_engineer_detail_prioritizes_internal_investigation_workspace_and_confirmation(self) -> None:
         self.run_engineer_app_script(
@@ -995,6 +986,11 @@ class EngineerUiContractTests(unittest.TestCase):
                 }}
                 if (!customerTimelineSection.includes('class="detail-timeline-body"')) {{
                   throw new Error("Customer timeline should isolate its scroll body from the fixed-height sidebar stack.");
+                }}
+                const timelinePanelIndex = html.indexOf('class="panel-card detail-timeline-panel"');
+                const readinessReviewIndex = html.indexOf('class="panel-card detail-readiness-review"');
+                if (timelinePanelIndex === -1 || readinessReviewIndex === -1 || readinessReviewIndex < timelinePanelIndex) {{
+                  throw new Error("Internal Review should remain a natural-flow sibling after the customer timeline card.");
                 }}
                 if (html.includes("AI Summary")) {{
                   throw new Error("Detail workspace should merge the AI summary into the Case Buddy request instead of rendering a separate summary card.");
