@@ -1004,6 +1004,77 @@ def _is_short_symptom_troubleshooting_query(message: str) -> bool:
     )
 
 
+def _allows_release_note_guidance_for_short_symptom_query(message: str) -> bool:
+    normalized = _normalized_query_text(message)
+    if not normalized or not _is_short_symptom_troubleshooting_query(normalized):
+        return False
+    if any(
+        marker in normalized
+        for marker in [
+            "why ",
+            "root cause",
+            "reason",
+            "investigate",
+            "debug",
+            "log",
+            "trace",
+        ]
+    ):
+        return False
+    return any(
+        marker in normalized
+        for marker in [
+            "what should i do",
+            "what can i do",
+            "how should i fix",
+            "how can i fix",
+            "how do i fix",
+            "how to fix",
+            "what should i check",
+        ]
+    )
+
+
+def _is_black_screen_faq_chunk(chunk: RetrievedChunk) -> bool:
+    surface = _chunk_surface_text(chunk)
+    return "black screen" in surface and any(
+        marker in surface
+        for marker in [
+            "how can i fix black screen issues?",
+            "frequently asked questions",
+            "faq",
+        ]
+    )
+
+
+def _is_black_screen_release_note_chunk(chunk: RetrievedChunk) -> bool:
+    return _is_release_note_chunk(chunk) and "black screen" in _chunk_surface_text(chunk)
+
+
+def _select_black_screen_guidance_chunks(
+    chunks: list[RetrievedChunk],
+    *,
+    product: str | None,
+) -> tuple[RetrievedChunk | None, RetrievedChunk | None]:
+    compatible_chunks = [chunk for chunk in chunks if _generic_join_product_compatible(chunk, product)]
+    candidates = compatible_chunks or list(chunks)
+    faq_chunk = next((chunk for chunk in candidates if _is_black_screen_faq_chunk(chunk)), None)
+    release_note_chunk = next((chunk for chunk in candidates if _is_black_screen_release_note_chunk(chunk)), None)
+    return release_note_chunk, faq_chunk
+
+
+def _has_black_screen_guidance_support(
+    chunks: list[RetrievedChunk],
+    *,
+    product: str | None,
+) -> bool:
+    release_note_chunk, faq_chunk = _select_black_screen_guidance_chunks(
+        chunks,
+        product=product,
+    )
+    return release_note_chunk is not None and faq_chunk is not None
+
+
 def _short_lexical_faq_recovery_variants(message: str, exact_terms: list[str]) -> list[tuple[str, str]]:
     exact_query = " ".join(exact_terms).strip()
     pattern = _short_lexical_faq_pattern(message)
@@ -1695,6 +1766,48 @@ def _build_dual_stream_grounded_answer(
     return RagAnswer(
         answer="\n".join(answer_lines),
         confidence=round(min(0.96, confidence), 2),
+        sources=sources,
+        citations=citation_records,
+    )
+
+
+def _build_black_screen_guidance_grounded_answer(
+    message: str,
+    chunks: list[RetrievedChunk],
+    *,
+    product: str | None,
+) -> RagAnswer | None:
+    if not _allows_release_note_guidance_for_short_symptom_query(message):
+        return None
+    release_note_chunk, faq_chunk = _select_black_screen_guidance_chunks(
+        chunks,
+        product=product,
+    )
+    if release_note_chunk is None or faq_chunk is None:
+        return None
+    cited_chunks = [release_note_chunk]
+    if _chunk_dedupe_key(faq_chunk) != _chunk_dedupe_key(release_note_chunk):
+        cited_chunks.append(faq_chunk)
+    answer_lines = [
+        (
+            "If you're seeing a black screen, first review the available Agora release notes for known black-screen fixes "
+            "and update to an SDK version that includes them."
+        ),
+        "",
+        "Key Steps:",
+        "1. If this is a Web SDK case, check the release notes for the listed black-screen fixes and upgrade to a version that includes them.",
+        "2. Review the Quickstart FAQ entry \"How can I fix black screen issues?\" for your SDK or app type and apply the recommended checks there.",
+        "3. If the issue continues, please share the channel name, problematic uid, and issue timestamp so the investigation can be narrowed down.",
+    ]
+    citation_records = _citation_records_from_chunks(cited_chunks, limit=len(cited_chunks))
+    sources = [
+        record.get("source_url") or f"rag:{record['chunk_id']}"
+        for record in citation_records
+    ]
+    confidence = max(0.88, _confidence_from_chunks(cited_chunks))
+    return RagAnswer(
+        answer="\n".join(answer_lines),
+        confidence=round(min(0.95, confidence), 2),
         sources=sources,
         citations=citation_records,
     )
@@ -2703,9 +2816,16 @@ def _judge_agentic_round(
             return AgenticJudgeDecision("escalate", "missing_primary_support", 0.78, None)
         if (
             query_class == "troubleshooting_why"
+            and _allows_release_note_guidance_for_short_symptom_query(message)
+            and _has_black_screen_guidance_support(final_chunks, product=product)
+        ):
+            return AgenticJudgeDecision("answer_now", "sufficient_first_pass_support", 0.9, None)
+        if (
+            query_class == "troubleshooting_why"
             and top_chunk is not None
             and _is_release_note_chunk(top_chunk)
             and not _is_release_note_lookup_query(message)
+            and not _allows_release_note_guidance_for_short_symptom_query(message)
         ):
             return AgenticJudgeDecision("escalate", "weak_top1_support", 0.82, None)
         if primary_count == 0:
@@ -7919,6 +8039,26 @@ def _run_rag_query_agentic_single(
                     needs_human=False,
                     handoff_reason=None,
                     generation_mode="api_semantics_deterministic",
+                    extractive_fallback_used=False,
+                ),
+            )
+    if _allows_release_note_guidance_for_short_symptom_query(message):
+        deterministic_generation_started_at = time.perf_counter()
+        deterministic_answer = _build_black_screen_guidance_grounded_answer(
+            message,
+            final_chunks,
+            product=product,
+        )
+        if deterministic_answer is not None:
+            generation_latency_ms = (time.perf_counter() - deterministic_generation_started_at) * 1000
+            answer_profile_used = "black_screen_guidance_deterministic"
+            return RagQueryResult(
+                answer=deterministic_answer,
+                trace=_trace_for(
+                    deterministic_answer,
+                    needs_human=False,
+                    handoff_reason=None,
+                    generation_mode="black_screen_guidance_deterministic",
                     extractive_fallback_used=False,
                 ),
             )

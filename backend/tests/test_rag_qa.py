@@ -2818,6 +2818,163 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn("client.enableDualStream()", result.answer.answer)
         self.assertIn("```javascript", result.answer.answer)
 
+    def test_run_rag_query_short_black_screen_guidance_uses_deterministic_answer_profile(self) -> None:
+        faq_chunk = RetrievedChunk(
+            chunk_id="black-screen-faq-ios",
+            text=(
+                "Title: Quickstart\n"
+                "Knowledge Type: Official Documentation\n"
+                "Platform: ios\n"
+                "Product: video-calling\n"
+                "Section: Frequently asked questions\n\n"
+                "* [How can I fix black screen issues?](https://docs-md.agora.io/en/help/quality-issues/video_blank.md)\n"
+            ),
+            source_path="official/get-started-sdk_ios.md",
+            source_url="https://docs.agora.io/en/video-calling/get-started/get-started-sdk?platform=ios",
+            similarity=0.6227,
+            h1="Quickstart",
+            h2="Reference",
+            h3="Frequently asked questions",
+            metadata={
+                "product": "video-calling",
+                "source_family": "video-calling/get-started/get-started-sdk",
+                "chunk_type": "faq_index",
+                "use_case": "faq",
+            },
+            index_role="primary",
+        )
+        faq_chunk.rerank_score = 0.2593
+        release_note_chunk = RetrievedChunk(
+            chunk_id="black-screen-release-note-web",
+            text=(
+                "Title: Release notes\n"
+                "Knowledge Type: Official Documentation\n"
+                "Platform: web\n"
+                "Product: video-calling\n"
+                "Section: Bug fixes\n\n"
+                "This release fixes the following issues:\n"
+                "- Black screen might occur when calling setMute and setEnable under certain conditions.\n"
+            ),
+            source_path="official/release-notes_web.md",
+            source_url="https://docs.agora.io/en/video-calling/overview/release-notes?platform=web",
+            similarity=0.7617,
+            h1="Release notes",
+            h2="Video SDK",
+            h3="Bug fixes",
+            metadata={
+                "product": "video-calling",
+                "source_family": "video-calling/overview/release-notes",
+                "chunk_type": "concept",
+            },
+            index_role="primary",
+        )
+        release_note_chunk.rerank_score = 0.1345
+        query_understanding = QueryUnderstandingResult(
+            query_profile="en",
+            query_understanding_version="v2",
+            glossary_version="agora_glossary_en_v2",
+            self_query_version="v2",
+            normalized_query="i got black screen what should i do",
+            canonical_terms=["Black screen"],
+            glossary_hits=[{"canonical_term": "Black screen"}],
+            dictionary_hits=[],
+            retrieval_plan=RetrievalPlan(
+                semantic_query="black screen troubleshooting",
+                soft_signals={"symptoms": ["black screen"]},
+                rule_expansions=[],
+            ),
+            rewritten_queries=["black screen troubleshooting"],
+            decomposition_subqueries=[],
+            fallback_mode="none",
+            intent_latency_ms=2.0,
+            rewrite_latency_ms=1.0,
+        )
+
+        def _bm25_side_effect(query_text: str, *_args, **_kwargs) -> list[RetrievedChunk]:
+            normalized = " ".join(str(query_text or "").split()).lower()
+            if normalized == "i got black screen! what should i do?":
+                return [rag_qa._copy_chunk(faq_chunk), rag_qa._copy_chunk(release_note_chunk)]
+            raise AssertionError(f"unexpected bm25 query: {query_text!r}")
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "app_schema": "supportportal",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 3,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-5.4",
+                "reasoning_effort": "high",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "vector_enabled": True,
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_enabled": True,
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+                "context_budget_enabled": False,
+                "reserved_output_tokens": 1200,
+                "buffer_tokens": 1200,
+                "shadow_retrieval_enabled": True,
+            }
+            with patch(
+                "backend.services.rag_qa._resolve_active_vector_table",
+                return_value="supportportal.docagent_chunks_bge_m3_1024",
+            ), patch(
+                "backend.services.rag_qa.get_embedding_provider",
+                return_value=self._FakeProvider(),
+            ), patch(
+                "backend.services.rag_qa.understand_rag_query",
+                return_value=query_understanding,
+            ), patch(
+                "backend.services.rag_qa._retrieve_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._retrieve_bm25_chunks",
+                side_effect=_bm25_side_effect,
+            ), patch(
+                "backend.services.rag_qa._retrieve_fts_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._retrieve_keyword_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._metadata_rerank",
+                return_value=(
+                    [rag_qa._copy_chunk(faq_chunk), rag_qa._copy_chunk(release_note_chunk)],
+                    {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None},
+                ),
+            ), patch(
+                "backend.services.rag_qa._rerank_chunks",
+                side_effect=lambda query, chunks, config, *, limit=None: chunks,
+            ), patch(
+                "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                side_effect=AssertionError("black-screen deterministic path should not call the llm when faq and release-note guidance are both available"),
+            ):
+                result = run_rag_query("i got black screen! what should i do?", product="audio_video_calling")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.trace.query_class, "troubleshooting_why")
+        self.assertEqual(result.trace.answer_profile_used, "black_screen_guidance_deterministic")
+        self.assertFalse(result.trace.needs_human)
+        self.assertEqual(result.trace.handoff_reason, None)
+        self.assertEqual(len(result.answer.citations), 2)
+        self.assertIn("release notes", result.answer.answer.lower())
+        self.assertIn("black screen issues", result.answer.answer.lower())
+
     def test_run_rag_query_short_how_to_faq_recovers_when_original_support_missing_auth_chunk(self) -> None:
         join_chunk = RetrievedChunk(
             chunk_id="join-android",
@@ -4291,6 +4448,75 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 if isinstance(timing, dict)
             )
         )
+
+    def test_judge_agentic_round_short_black_screen_question_allows_release_note_guidance(self) -> None:
+        release_note_chunk = RetrievedChunk(
+            chunk_id="release-note-black-screen",
+            text="Issues fixed: fixed occasional black screen on Firefox 138+ caused by browser rollback.",
+            source_path="official/release-notes_web.md",
+            source_url="https://docs.agora.io/en/video-calling/overview/release-notes?platform=web",
+            similarity=0.83,
+            h1="Release notes",
+            h2="Issues fixed",
+            metadata={"product": "video-calling"},
+            index_role="primary",
+        )
+        support_chunk = RetrievedChunk(
+            chunk_id="faq-black-screen",
+            text="How can I fix black screen issues?",
+            source_path="official/get-started-sdk_react-native.md",
+            source_url="https://docs.agora.io/en/video-calling/get-started/get-started-sdk?platform=react-native",
+            similarity=0.71,
+            h1="Quickstart",
+            h2="Frequently asked questions",
+            metadata={"product": "video-calling"},
+            index_role="primary",
+        )
+
+        decision = rag_qa._judge_agentic_round(
+            message="I got black screen, what should I do?",
+            query_class="troubleshooting_why",
+            round_index=1,
+            reranked_chunks=[release_note_chunk, support_chunk],
+            final_chunks=[release_note_chunk, support_chunk],
+            decomposition_targets=[],
+            exact_terms=["black", "screen"],
+            grounded_overlap=True,
+            product="audio_video_calling",
+            troubleshooting_recovery_unlikely=False,
+        )
+
+        self.assertEqual(decision.decision, "answer_now")
+        self.assertEqual(decision.reason, "sufficient_first_pass_support")
+
+    def test_judge_agentic_round_root_cause_black_screen_question_still_rejects_release_note_only_top_chunk(self) -> None:
+        release_note_chunk = RetrievedChunk(
+            chunk_id="release-note-black-screen",
+            text="Issues fixed: fixed occasional black screen on Firefox 138+ caused by browser rollback.",
+            source_path="official/release-notes_web.md",
+            source_url="https://docs.agora.io/en/video-calling/overview/release-notes?platform=web",
+            similarity=0.83,
+            h1="Release notes",
+            h2="Issues fixed",
+            metadata={"product": "video-calling"},
+            index_role="primary",
+        )
+
+        decision = rag_qa._judge_agentic_round(
+            message="Why is the remote video black screen? What is the root cause?",
+            query_class="troubleshooting_why",
+            round_index=1,
+            reranked_chunks=[release_note_chunk],
+            final_chunks=[release_note_chunk],
+            decomposition_targets=[],
+            exact_terms=["black", "screen", "root", "cause"],
+            grounded_overlap=True,
+            product="audio_video_calling",
+            troubleshooting_recovery_unlikely=False,
+        )
+
+        self.assertEqual(decision.decision, "escalate")
+        self.assertEqual(decision.reason, "weak_top1_support")
 
     def test_resolve_active_vector_table_prefers_populated_fallback_when_configured_table_empty(self) -> None:
         config = {
