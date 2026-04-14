@@ -979,34 +979,36 @@ function renderReplyReadinessReviewHtml(ticket, activeInvestigation) {
           ${replyReadiness.ready_for_customer_reply === true ? "Validated" : "Needs Follow-up"}
         </span>
       </div>
-      <div class="detail-readiness-checks" aria-label="Reply readiness checks">
-        ${checks
-          .map(
-            (item) => `
-              <div class="detail-readiness-check ${item.passed ? "is-passed" : "is-missing"}">
-                <span class="detail-readiness-check-dot" aria-hidden="true"></span>
-                <span>${escapeHtml(item.label)}</span>
-              </div>
-            `
-          )
-          .join("")}
-      </div>
-      <div class="detail-readiness-fields">
-        <div class="detail-readiness-field">
-          <p class="detail-readiness-field-label">Conclusion</p>
-          <p class="detail-readiness-field-value">${formatMultiline(
-            conclusionSummary || "Conclusion not extracted yet."
-          )}</p>
+      <div class="detail-readiness-body">
+        <div class="detail-readiness-checks" aria-label="Reply readiness checks">
+          ${checks
+            .map(
+              (item) => `
+                <div class="detail-readiness-check ${item.passed ? "is-passed" : "is-missing"}">
+                  <span class="detail-readiness-check-dot" aria-hidden="true"></span>
+                  <span>${escapeHtml(item.label)}</span>
+                </div>
+              `
+            )
+            .join("")}
         </div>
-        <div class="detail-readiness-field">
-          <p class="detail-readiness-field-label">Proof</p>
-          <p class="detail-readiness-field-value">${formatMultiline(proofSummary || "Proof still missing.")}</p>
-        </div>
-        <div class="detail-readiness-field">
-          <p class="detail-readiness-field-label">Next step</p>
-          <p class="detail-readiness-field-value">${formatMultiline(
-            solutionSummary || "No actionable next step captured yet."
-          )}</p>
+        <div class="detail-readiness-fields">
+          <div class="detail-readiness-field">
+            <p class="detail-readiness-field-label">Conclusion</p>
+            <p class="detail-readiness-field-value">${formatMultiline(
+              conclusionSummary || "Conclusion not extracted yet."
+            )}</p>
+          </div>
+          <div class="detail-readiness-field">
+            <p class="detail-readiness-field-label">Proof</p>
+            <p class="detail-readiness-field-value">${formatMultiline(proofSummary || "Proof still missing.")}</p>
+          </div>
+          <div class="detail-readiness-field">
+            <p class="detail-readiness-field-label">Next step</p>
+            <p class="detail-readiness-field-value">${formatMultiline(
+              solutionSummary || "No actionable next step captured yet."
+            )}</p>
+          </div>
         </div>
       </div>
     </section>
