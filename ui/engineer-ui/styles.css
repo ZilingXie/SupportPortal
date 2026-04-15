@@ -1273,7 +1273,6 @@ html.material-symbols-pending .material-symbols-outlined {
 .workspace-header-toolbar-start,
 .workspace-header-toolbar-end,
 .workspace-header-main,
-.workspace-header-actions,
 .workspace-header-badges,
 .detail-inline-actions,
 .engineer-request-actions {
@@ -2584,14 +2583,6 @@ html.material-symbols-pending .material-symbols-outlined {
     margin-left: 0;
     flex-direction: column;
     align-items: stretch;
-  }
-
-  .workspace-header-actions {
-    width: 100%;
-  }
-
-  .workspace-header-actions .btn {
-    width: 100%;
   }
 
   .detail-investigation-composer-inner {
