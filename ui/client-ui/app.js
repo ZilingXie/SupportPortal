@@ -125,10 +125,15 @@ let clientSocket = null;
 let clientReconnectTimer = null;
 let clientHeartbeatTimer = null;
 let pendingStatusPollTimer = null;
-let pendingChatScrollMode = "";
-let pendingChatScrollTicketId = "";
+const CHAT_NEAR_BOTTOM_THRESHOLD_PX = 96;
+let pendingChatScrollRequest = null;
 let scheduledChatScrollPlan = null;
 let scheduledChatScrollJobId = 0;
+let lastRenderedChatMessageSignature = {
+  ticketId: "",
+  signature: "",
+};
+const chatUnreadStateByTicket = {};
 
 function escapeHtml(value) {
   return String(value)
@@ -2077,6 +2082,19 @@ function renderChatComposerActionHtml(viewState) {
   `;
 }
 
+function renderChatUnreadIndicatorHtml(ticketId) {
+  if (!getChatUnreadState(ticketId)) {
+    return "";
+  }
+  return `
+    <div class="chat-new-messages">
+      <button class="new-messages-btn" type="button" data-action="jump-chat-latest">
+        New messages
+      </button>
+    </div>
+  `;
+}
+
 function renderChatTicketFromState(viewState) {
   return `
     <section class="chat-root" data-chat-ticket-id="${escapeHtml(viewState.ticket.id)}">
@@ -2085,6 +2103,7 @@ function renderChatTicketFromState(viewState) {
           ${renderChatMessagesHtml(viewState)}
         </div>
       </main>
+      ${renderChatUnreadIndicatorHtml(viewState.ticket.id)}
       <footer class="chat-input-wrap">
         <div data-chat-section="composer-note">${renderChatComposerNoteHtml(viewState)}</div>
         <form id="chat-input-form" class="chat-input-inner" data-chat-section="composer-form">
@@ -2208,9 +2227,138 @@ function getActiveChatTicket() {
   return ticket;
 }
 
+function prefersReducedMotion() {
+  try {
+    return Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches);
+  } catch {
+    return false;
+  }
+}
+
+function scrollElementToTop(element, top, behavior = "auto") {
+  if (!element || typeof top !== "number") {
+    return;
+  }
+  const resolvedBehavior = behavior === "smooth" && !prefersReducedMotion() ? "smooth" : "auto";
+  if (typeof element.scrollTo === "function") {
+    if (resolvedBehavior === "smooth") {
+      element.scrollTo({ top, behavior: "smooth" });
+    } else {
+      element.scrollTo({ top });
+    }
+    if (typeof element.scrollTop === "number" && resolvedBehavior !== "smooth") {
+      element.scrollTop = top;
+    }
+    return;
+  }
+  if (typeof element.scrollTop === "number") {
+    element.scrollTop = top;
+  }
+}
+
+function distanceFromBottom(element) {
+  if (!element || typeof element.scrollHeight !== "number") {
+    return Number.POSITIVE_INFINITY;
+  }
+  const scrollTop = typeof element.scrollTop === "number" ? element.scrollTop : 0;
+  const clientHeight = typeof element.clientHeight === "number" ? element.clientHeight : 0;
+  return element.scrollHeight - (scrollTop + clientHeight);
+}
+
+function isElementNearBottom(element, threshold = CHAT_NEAR_BOTTOM_THRESHOLD_PX) {
+  return distanceFromBottom(element) <= threshold;
+}
+
+function normalizeRenderableMessageRole(message) {
+  const normalized = String(message?.role || "").trim().toLowerCase();
+  if (normalized === "customer") {
+    return "user";
+  }
+  return normalized || "assistant";
+}
+
+function getChatMessageSignatureToken(message) {
+  const role = normalizeRenderableMessageRole(message);
+  const id = String(message?.id || "").trim();
+  const createdAt = String(message?.createdAt || message?.created_at || "").trim();
+  const content = String(message?.content || "").trim().slice(0, 160);
+  const citationCount = Array.isArray(message?.citations) ? message.citations.length : 0;
+  return `${role}:${id || createdAt || content}:${citationCount}`;
+}
+
+function getRenderablePendingReplyAnchorIndex(ticket, renderableMessages) {
+  const messages = Array.isArray(renderableMessages) ? renderableMessages : [];
+  const pendingUserId = String(state.pendingUserMessageId || "").trim();
+  if (pendingUserId) {
+    const index = messages.findIndex(
+      (message) =>
+        normalizeRenderableMessageRole(message) === "user" &&
+        String(message?.id || "").trim() === pendingUserId
+    );
+    if (index >= 0) {
+      return index;
+    }
+  }
+
+  const pendingCreatedAt = String(state.pendingAsyncMessageCreatedAt || "").trim();
+  if (pendingCreatedAt) {
+    const index = messages.findIndex(
+      (message) =>
+        normalizeRenderableMessageRole(message) === "user" &&
+        String(message?.createdAt || message?.created_at || "").trim() === pendingCreatedAt
+    );
+    if (index >= 0) {
+      return index;
+    }
+  }
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (normalizeRenderableMessageRole(messages[index]) === "user") {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function buildRenderableChatMessageSignature(ticket, renderableMessages = getRenderableMessages(ticket)) {
+  const messages = Array.isArray(renderableMessages) ? renderableMessages : [];
+  if (messages.length === 0) {
+    return "";
+  }
+  const anchorIndex = getRenderablePendingReplyAnchorIndex(ticket, messages);
+  if (anchorIndex < 0 || anchorIndex >= messages.length - 1) {
+    return messages.map((message) => getChatMessageSignatureToken(message)).join("|");
+  }
+  const leadingTokens = messages
+    .slice(0, anchorIndex + 1)
+    .map((message) => getChatMessageSignatureToken(message));
+  const trailingRoles = messages
+    .slice(anchorIndex + 1)
+    .map((message) => normalizeRenderableMessageRole(message))
+    .join(",");
+  leadingTokens.push(`reply-slot:${messages.length - anchorIndex - 1}:${trailingRoles}`);
+  return leadingTokens.join("|");
+}
+
+function getChatUnreadState(ticketId) {
+  const normalizedTicketId = String(ticketId || "").trim();
+  return normalizedTicketId ? Boolean(chatUnreadStateByTicket[normalizedTicketId]) : false;
+}
+
+function setChatUnreadState(ticketId, visible) {
+  const normalizedTicketId = String(ticketId || "").trim();
+  if (!normalizedTicketId) {
+    return;
+  }
+  if (visible) {
+    chatUnreadStateByTicket[normalizedTicketId] = true;
+    return;
+  }
+  delete chatUnreadStateByTicket[normalizedTicketId];
+}
+
 function clearRequestedChatScroll() {
-  pendingChatScrollMode = "";
-  pendingChatScrollTicketId = "";
+  pendingChatScrollRequest = null;
 }
 
 function resetChatScrollState() {
@@ -2219,13 +2367,16 @@ function resetChatScrollState() {
   scheduledChatScrollJobId += 1;
 }
 
-function requestChatScrollToBottom(ticketId) {
+function requestChatScrollToBottom(ticketId, options = {}) {
   const normalizedId = String(ticketId || "").trim();
   if (!normalizedId) {
     return;
   }
-  pendingChatScrollMode = "bottom";
-  pendingChatScrollTicketId = normalizedId;
+  pendingChatScrollRequest = {
+    ticketId: normalizedId,
+    behavior: String(options?.behavior || "").trim().toLowerCase() === "smooth" ? "smooth" : "auto",
+  };
+  setChatUnreadState(normalizedId, false);
 }
 
 function captureChatScrollSnapshot() {
@@ -2240,6 +2391,9 @@ function captureChatScrollSnapshot() {
       return {
         ticketId,
         scrollTop: chatMain && typeof chatMain.scrollHeight === "number" ? chatMain.scrollHeight : null,
+        nearBottom: true,
+        preserveBottom: true,
+        behavior: scheduledChatScrollPlan.behavior || "auto",
       };
     }
     return {
@@ -2248,11 +2402,13 @@ function captureChatScrollSnapshot() {
         typeof scheduledChatScrollPlan.scrollTop === "number"
           ? scheduledChatScrollPlan.scrollTop
           : null,
+      nearBottom: false,
     };
   }
   return {
     ticketId,
     scrollTop: chatMain && typeof chatMain.scrollTop === "number" ? chatMain.scrollTop : null,
+    nearBottom: isElementNearBottom(chatMain),
   };
 }
 
@@ -2268,29 +2424,92 @@ function syncChatScrollPosition(previousSnapshot = null) {
   const ticket = getActiveChatTicket();
   if (!ticket) {
     resetChatScrollState();
+    lastRenderedChatMessageSignature = {
+      ticketId: "",
+      signature: "",
+    };
     return;
   }
 
   const ticketId = String(ticket.id || "").trim();
-  const shouldScrollToBottom =
-    pendingChatScrollMode === "bottom" && pendingChatScrollTicketId === ticketId;
+  const unreadVisibleBeforeSync = getChatUnreadState(ticketId);
+  const renderableMessages = getRenderableMessages(ticket);
+  const currentSignature = buildRenderableChatMessageSignature(ticket, renderableMessages);
+  const previousSignature =
+    lastRenderedChatMessageSignature.ticketId === ticketId ? lastRenderedChatMessageSignature.signature : "";
+  const hasExplicitBottomRequest = pendingChatScrollRequest?.ticketId === ticketId;
   const shouldRestoreScroll =
-    !shouldScrollToBottom &&
+    !hasExplicitBottomRequest &&
     previousSnapshot?.ticketId === ticketId &&
     typeof previousSnapshot?.scrollTop === "number";
+  const hasNewVisibleMessages = Boolean(previousSignature) && currentSignature !== previousSignature;
 
-  if (!shouldScrollToBottom && !shouldRestoreScroll) {
+  let nextPlan = null;
+  if (hasExplicitBottomRequest) {
+    nextPlan = {
+      ticketId,
+      type: "bottom",
+      behavior: pendingChatScrollRequest.behavior || "auto",
+    };
+    clearRequestedChatScroll();
+    setChatUnreadState(ticketId, false);
+  } else if (hasNewVisibleMessages) {
+    if (previousSnapshot?.preserveBottom) {
+      nextPlan = {
+        ticketId,
+        type: "restore",
+        scrollTop: previousSnapshot?.scrollTop ?? 0,
+        behavior: previousSnapshot.behavior || "auto",
+      };
+      setChatUnreadState(ticketId, false);
+    } else if (previousSnapshot?.nearBottom) {
+      nextPlan = {
+        ticketId,
+        type: "bottom",
+        behavior: "smooth",
+      };
+      setChatUnreadState(ticketId, false);
+    } else if (shouldRestoreScroll) {
+      nextPlan = {
+        ticketId,
+        type: "restore",
+        scrollTop: previousSnapshot?.scrollTop ?? 0,
+      };
+      setChatUnreadState(ticketId, true);
+    } else {
+      setChatUnreadState(ticketId, true);
+    }
+  } else if (previousSnapshot?.preserveBottom) {
+    nextPlan = {
+      ticketId,
+      type: "restore",
+      scrollTop: previousSnapshot.scrollTop ?? 0,
+      behavior: previousSnapshot.behavior || "auto",
+    };
+  } else if (shouldRestoreScroll) {
+    nextPlan = { ticketId, type: "restore", scrollTop: previousSnapshot?.scrollTop ?? 0 };
+  }
+
+  lastRenderedChatMessageSignature = {
+    ticketId,
+    signature: currentSignature,
+  };
+  const unreadVisibleAfterSync = getChatUnreadState(ticketId);
+  if (unreadVisibleBeforeSync !== unreadVisibleAfterSync) {
+    const shell = appRoot.querySelector(".app-shell");
+    const mainRegion = shell?.querySelector?.('[data-authed-region="main"]') || null;
+    if (mainRegion) {
+      renderMainRegion(mainRegion);
+      bindAuthedEvents();
+    }
+  }
+
+  if (!nextPlan) {
     scheduledChatScrollPlan = null;
     scheduledChatScrollJobId += 1;
     return;
   }
 
-  const nextPlan = shouldScrollToBottom
-    ? { ticketId, type: "bottom" }
-    : { ticketId, type: "restore", scrollTop: previousSnapshot?.scrollTop ?? 0 };
-  if (shouldScrollToBottom) {
-    clearRequestedChatScroll();
-  }
   scheduledChatScrollPlan = nextPlan;
   scheduledChatScrollJobId += 1;
   const jobId = scheduledChatScrollJobId;
@@ -2308,12 +2527,12 @@ function syncChatScrollPosition(previousSnapshot = null) {
       if (typeof chatMain.scrollHeight !== "number") {
         return;
       }
-      chatMain.scrollTop = chatMain.scrollHeight;
+      scrollElementToTop(chatMain, chatMain.scrollHeight, nextPlan.behavior || "auto");
       scheduledChatScrollPlan = null;
       return;
     }
 
-    chatMain.scrollTop = nextPlan.scrollTop;
+    scrollElementToTop(chatMain, nextPlan.scrollTop, nextPlan.behavior || "auto");
     scheduledChatScrollPlan = null;
   });
 }
@@ -2591,7 +2810,7 @@ async function handleSendMessage(text, options = {}) {
   state.pendingUserMessageId = userMessageId;
   state.pendingAbortController = createAbortController();
   stopPendingStatusPolling();
-  requestChatScrollToBottom(ticketId);
+  requestChatScrollToBottom(ticketId, { behavior: "smooth" });
   render();
   startClientAck(ticketId, text).catch(() => {
     // Keep the static fallback ack when client-side model generation fails.
@@ -2757,6 +2976,18 @@ function bindAuthedEvents() {
 
   appRoot.querySelectorAll("[data-action='go-chat']").forEach((element) => {
     element.addEventListener("click", () => navigate("/chat"));
+  });
+
+  appRoot.querySelectorAll("[data-action='jump-chat-latest']").forEach((element) => {
+    element.addEventListener("click", () => {
+      const ticket = getActiveChatTicket();
+      const ticketId = String(ticket?.id || "").trim();
+      if (!ticketId) {
+        return;
+      }
+      requestChatScrollToBottom(ticketId, { behavior: "smooth" });
+      render();
+    });
   });
   bindTicketProductSelect();
   bindStatusFilter();

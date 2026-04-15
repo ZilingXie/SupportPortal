@@ -2532,6 +2532,434 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_client_chat_remote_reply_shows_new_messages_when_scrolled_up(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                const queuedFrames = [];
+                globalThis.requestAnimationFrame = (callback) => {
+                  queuedFrames.push(callback);
+                  return queuedFrames.length;
+                };
+
+                const flushFrames = () => {
+                  while (queuedFrames.length > 0) {
+                    const callback = queuedFrames.shift();
+                    callback();
+                  }
+                };
+
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const ticket = createTicket(state.user.id);
+                saveTicketMessages(ticket.id, [
+                  {
+                    id: "msg-1",
+                    role: "user",
+                    content: "How do I enable dual stream?",
+                    createdAt: "2026-04-15T09:00:00.000Z",
+                  },
+                ]);
+
+                const shellRegions = {
+                  '[data-authed-region="sidebar-nav"]': { innerHTML: "" },
+                  '[data-authed-region="sidebar-content"]': { innerHTML: "" },
+                  '[data-authed-region="sidebar-footer"]': { innerHTML: "" },
+                  '[data-authed-region="topbar"]': { innerHTML: "" },
+                  '[data-authed-region="context"]': { innerHTML: "" },
+                };
+                let currentChatMain = null;
+                let scrollCalls = [];
+                const renderHeights = [];
+                const mainRegion = {};
+                Object.defineProperty(mainRegion, "innerHTML", {
+                  get() {
+                    return this._html || "";
+                  },
+                  set(value) {
+                    this._html = value;
+                    const previousScrollTop = currentChatMain?.scrollTop || 0;
+                    currentChatMain = {
+                      scrollTop: previousScrollTop,
+                      scrollHeight: renderHeights.shift() ?? 0,
+                      clientHeight: 160,
+                      scrollTo(options) {
+                        scrollCalls.push(options);
+                        this.scrollTop = typeof options?.top === "number" ? options.top : this.scrollTop;
+                      },
+                    };
+                  },
+                });
+                shellRegions['[data-authed-region="main"]'] = mainRegion;
+
+                const shell = {
+                  querySelector(selector) {
+                    return shellRegions[selector] || null;
+                  },
+                };
+                const fakeForm = {
+                  addEventListener() {},
+                  requestSubmit() {},
+                };
+                const fakeInput = {
+                  addEventListener() {},
+                  value: "",
+                };
+
+                document.getElementById = (id) => {
+                  if (id === "app") {
+                    return appRoot;
+                  }
+                  if (id === "chat-input-form") {
+                    return fakeForm;
+                  }
+                  if (id === "chat-input") {
+                    return fakeInput;
+                  }
+                  return null;
+                };
+                appRoot.querySelectorAll = () => [];
+                appRoot.querySelector = (selector) => {
+                  if (selector === ".app-shell") {
+                    return shell;
+                  }
+                  if (selector === ".chat-main") {
+                    return currentChatMain;
+                  }
+                  return null;
+                };
+
+                window.location.hash = `#/chat/${ticket.id}`;
+
+                renderHeights.push(360);
+                render();
+                flushFrames();
+
+                currentChatMain.scrollTop = 8;
+                saveTicketMessages(ticket.id, [
+                  ...getTicketById(ticket.id).messages,
+                  {
+                    id: "msg-2",
+                    role: "assistant",
+                    content: "Enable dual stream from the SDK config.",
+                    createdAt: "2026-04-15T09:01:00.000Z",
+                  },
+                ]);
+                renderHeights.push(420);
+                render();
+                flushFrames();
+
+                if (currentChatMain.scrollTop !== 8) {
+                  throw new Error(`Expected stale-up view to preserve scrollTop 8, got ${currentChatMain.scrollTop}.`);
+                }
+                const latestCall = scrollCalls[scrollCalls.length - 1];
+                if (!latestCall || latestCall.top !== 8) {
+                  throw new Error(`Expected the follow-up rerender to restore scrollTop 8, got ${JSON.stringify(latestCall)}.`);
+                }
+                if (latestCall.behavior === "smooth") {
+                  throw new Error("Scrolled-up remote replies should restore position, not smooth-scroll to bottom.");
+                }
+                if (!mainRegion.innerHTML.includes("New messages")) {
+                  throw new Error("Expected a New messages indicator when a remote reply arrives while scrolled up.");
+                }
+              """
+            )
+        )
+
+    def test_client_chat_clicking_new_messages_smooth_scrolls_to_latest(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                const queuedFrames = [];
+                globalThis.requestAnimationFrame = (callback) => {
+                  queuedFrames.push(callback);
+                  return queuedFrames.length;
+                };
+
+                const flushFrames = () => {
+                  while (queuedFrames.length > 0) {
+                    const callback = queuedFrames.shift();
+                    callback();
+                  }
+                };
+
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const ticket = createTicket(state.user.id);
+                saveTicketMessages(ticket.id, [
+                  {
+                    id: "msg-1",
+                    role: "user",
+                    content: "Need help with a follow-up",
+                    createdAt: "2026-04-15T09:00:00.000Z",
+                  },
+                ]);
+
+                const shellRegions = {
+                  '[data-authed-region="sidebar-nav"]': { innerHTML: "" },
+                  '[data-authed-region="sidebar-content"]': { innerHTML: "" },
+                  '[data-authed-region="sidebar-footer"]': { innerHTML: "" },
+                  '[data-authed-region="topbar"]': { innerHTML: "" },
+                  '[data-authed-region="context"]': { innerHTML: "" },
+                };
+                let currentChatMain = null;
+                const scrollCalls = [];
+                const renderHeights = [];
+                let jumpButton = null;
+                const mainRegion = {};
+                Object.defineProperty(mainRegion, "innerHTML", {
+                  get() {
+                    return this._html || "";
+                  },
+                  set(value) {
+                    this._html = value;
+                    const previousScrollTop = currentChatMain?.scrollTop || 0;
+                    currentChatMain = {
+                      scrollTop: previousScrollTop,
+                      scrollHeight: renderHeights.shift() ?? 0,
+                      clientHeight: 160,
+                      scrollTo(options) {
+                        scrollCalls.push(options);
+                        this.scrollTop = typeof options?.top === "number" ? options.top : this.scrollTop;
+                      },
+                    };
+                    jumpButton = value.includes('data-action="jump-chat-latest"')
+                      ? {
+                          addEventListener(type, handler) {
+                            if (type === "click") {
+                              this.click = handler;
+                            }
+                          },
+                        }
+                      : null;
+                  },
+                });
+                shellRegions['[data-authed-region="main"]'] = mainRegion;
+
+                const shell = {
+                  querySelector(selector) {
+                    return shellRegions[selector] || null;
+                  },
+                };
+                const fakeForm = {
+                  addEventListener() {},
+                  requestSubmit() {},
+                };
+                const fakeInput = {
+                  addEventListener() {},
+                  value: "",
+                };
+
+                document.getElementById = (id) => {
+                  if (id === "app") {
+                    return appRoot;
+                  }
+                  if (id === "chat-input-form") {
+                    return fakeForm;
+                  }
+                  if (id === "chat-input") {
+                    return fakeInput;
+                  }
+                  return null;
+                };
+                appRoot.querySelectorAll = (selector) => {
+                  if (selector === "[data-action='jump-chat-latest']") {
+                    return jumpButton ? [jumpButton] : [];
+                  }
+                  return [];
+                };
+                appRoot.querySelector = (selector) => {
+                  if (selector === ".app-shell") {
+                    return shell;
+                  }
+                  if (selector === ".chat-main") {
+                    return currentChatMain;
+                  }
+                  if (selector === "[data-action='jump-chat-latest']") {
+                    return jumpButton;
+                  }
+                  return null;
+                };
+
+                window.location.hash = `#/chat/${ticket.id}`;
+
+                renderHeights.push(360);
+                render();
+                flushFrames();
+
+                currentChatMain.scrollTop = 4;
+                saveTicketMessages(ticket.id, [
+                  ...getTicketById(ticket.id).messages,
+                  {
+                    id: "msg-2",
+                    role: "assistant",
+                    content: "Here is the latest assistant reply.",
+                    createdAt: "2026-04-15T09:01:00.000Z",
+                  },
+                ]);
+                renderHeights.push(430);
+                render();
+                flushFrames();
+
+                if (!jumpButton || typeof jumpButton.click !== "function") {
+                  throw new Error("Expected the New messages button to bind a click handler.");
+                }
+
+                renderHeights.push(430);
+                jumpButton.click();
+                flushFrames();
+
+                if (scrollCalls.length < 2) {
+                  throw new Error(`Expected a smooth scroll after clicking New messages, got ${scrollCalls.length} calls.`);
+                }
+                const latestCall = scrollCalls[scrollCalls.length - 1];
+                if (latestCall.behavior !== "smooth") {
+                  throw new Error(`Expected smooth scroll behavior, got ${JSON.stringify(latestCall)}.`);
+                }
+                if (currentChatMain.scrollTop !== 430) {
+                  throw new Error(`Expected scroll-to-latest to land at 430, got ${currentChatMain.scrollTop}.`);
+                }
+                if (mainRegion.innerHTML.includes("New messages")) {
+                  throw new Error("Expected the New messages indicator to clear after jumping to latest.");
+                }
+              """
+            )
+        )
+
+    def test_client_chat_user_send_forces_smooth_scroll_even_when_scrolled_up(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                const queuedFrames = [];
+                globalThis.requestAnimationFrame = (callback) => {
+                  queuedFrames.push(callback);
+                  return queuedFrames.length;
+                };
+
+                const flushFrames = () => {
+                  while (queuedFrames.length > 0) {
+                    const callback = queuedFrames.shift();
+                    callback();
+                  }
+                };
+
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const ticket = createTicket(state.user.id);
+                saveTicketMessages(ticket.id, [
+                  {
+                    id: "msg-1",
+                    role: "assistant",
+                    content: "Earlier assistant answer",
+                    createdAt: "2026-04-15T09:00:00.000Z",
+                  },
+                ]);
+
+                const shellRegions = {
+                  '[data-authed-region="sidebar-nav"]': { innerHTML: "" },
+                  '[data-authed-region="sidebar-content"]': { innerHTML: "" },
+                  '[data-authed-region="sidebar-footer"]': { innerHTML: "" },
+                  '[data-authed-region="topbar"]': { innerHTML: "" },
+                  '[data-authed-region="context"]': { innerHTML: "" },
+                };
+                let currentChatMain = null;
+                const scrollCalls = [];
+                const renderHeights = [];
+                const mainRegion = {};
+                Object.defineProperty(mainRegion, "innerHTML", {
+                  get() {
+                    return this._html || "";
+                  },
+                  set(value) {
+                    this._html = value;
+                    const previousScrollTop = currentChatMain?.scrollTop || 0;
+                    currentChatMain = {
+                      scrollTop: previousScrollTop,
+                      scrollHeight: renderHeights.shift() ?? 0,
+                      clientHeight: 160,
+                      scrollTo(options) {
+                        scrollCalls.push(options);
+                        this.scrollTop = typeof options?.top === "number" ? options.top : this.scrollTop;
+                      },
+                    };
+                  },
+                });
+                shellRegions['[data-authed-region="main"]'] = mainRegion;
+
+                const shell = {
+                  querySelector(selector) {
+                    return shellRegions[selector] || null;
+                  },
+                };
+                const fakeForm = {
+                  addEventListener() {},
+                  requestSubmit() {},
+                };
+                const fakeInput = {
+                  addEventListener() {},
+                  value: "",
+                };
+
+                fetch = async () => ({
+                  ok: true,
+                  json: async () => ({ queued_for_ai: true, queued_message_created_at: "2026-04-15T09:01:00.000Z" }),
+                });
+                syncTicketsFromBackend = async () => {};
+                startClientAck = async () => {};
+                ensurePendingStatusPolling = () => {};
+
+                document.getElementById = (id) => {
+                  if (id === "app") {
+                    return appRoot;
+                  }
+                  if (id === "chat-input-form") {
+                    return fakeForm;
+                  }
+                  if (id === "chat-input") {
+                    return fakeInput;
+                  }
+                  return null;
+                };
+                appRoot.querySelectorAll = () => [];
+                appRoot.querySelector = (selector) => {
+                  if (selector === ".app-shell") {
+                    return shell;
+                  }
+                  if (selector === ".chat-main") {
+                    return currentChatMain;
+                  }
+                  return null;
+                };
+
+                window.location.hash = `#/chat/${ticket.id}`;
+
+                renderHeights.push(360);
+                render();
+                flushFrames();
+
+                currentChatMain.scrollTop = 12;
+                renderHeights.push(420);
+                renderHeights.push(420);
+                await handleSendMessage("Second-round follow-up", {});
+                flushFrames();
+
+                const latestCall = scrollCalls[scrollCalls.length - 1];
+                if (!latestCall) {
+                  throw new Error("Expected sending to request a scroll-to-latest call.");
+                }
+                if (latestCall.behavior !== "smooth") {
+                  throw new Error(`Expected sending to use smooth scrolling, got ${JSON.stringify(latestCall)}.`);
+                }
+                if (currentChatMain.scrollTop !== 420) {
+                  throw new Error(`Expected sending to scroll to 420, got ${currentChatMain.scrollTop}.`);
+                }
+              """
+            )
+        )
+
     def test_client_chat_same_ticket_refresh_preserves_active_second_round_composer(self) -> None:
         self.run_client_app_script(
             textwrap.dedent(

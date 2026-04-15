@@ -61,6 +61,9 @@ const INVESTIGATION_AI_TURN_FETCH_TIMEOUT_MS = 100000;
 const INVESTIGATION_TIMEOUT_RECOVERY_WINDOW_MS = 15000;
 const INVESTIGATION_TIMEOUT_RECOVERY_POLL_MS = 1500;
 const TICKET_POOL_VIEW_STORAGE_KEY = "engineer_ticket_pool_view_mode";
+const DETAIL_NEAR_BOTTOM_THRESHOLD_PX = 96;
+const DETAIL_THREAD_PANE = "thread";
+const DETAIL_TIMELINE_PANE = "timeline";
 
 const FILTER_KEYS = [];
 const FILTER_BLUR_DELAY_MS = 140;
@@ -69,6 +72,10 @@ const filterComboboxState = {};
 let ticketPoolViewMode = "list";
 let selectedPoolStatus = "investigating";
 const filterComboboxConfig = {};
+const detailPaneStateByKey = {};
+const detailPendingScrollRequestByKey = {};
+let detailScheduledScrollPlans = null;
+let detailScheduledScrollJobId = 0;
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -2154,6 +2161,10 @@ function resetDetailWorkspaceState() {
   clearStatusComboboxBlurTimer();
   clearLocalInvestigationThreadState();
   resetDetailRefreshState();
+  clearDetailPaneScrollRequest(selectedTicketId, DETAIL_THREAD_PANE);
+  clearDetailPaneScrollRequest(selectedTicketId, DETAIL_TIMELINE_PANE);
+  detailScheduledScrollPlans = null;
+  detailScheduledScrollJobId += 1;
   selectedTicketId = null;
   selectedTicket = null;
   detailLoading = false;
@@ -2458,6 +2469,302 @@ function getActiveInvestigationComposerElement() {
   return isTextComposerElement(input) ? input : null;
 }
 
+function prefersReducedMotion() {
+  try {
+    return Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches);
+  } catch {
+    return false;
+  }
+}
+
+function runOnNextFrame(callback) {
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(callback);
+    return;
+  }
+  setTimeout(callback, 0);
+}
+
+function scrollElementToTop(element, top, behavior = "auto") {
+  if (!element || typeof top !== "number") {
+    return;
+  }
+  const resolvedBehavior = behavior === "smooth" && !prefersReducedMotion() ? "smooth" : "auto";
+  if (typeof element.scrollTo === "function") {
+    if (resolvedBehavior === "smooth") {
+      element.scrollTo({ top, behavior: "smooth" });
+    } else {
+      element.scrollTo({ top });
+    }
+    if (typeof element.scrollTop === "number" && resolvedBehavior !== "smooth") {
+      element.scrollTop = top;
+    }
+    return;
+  }
+  if (typeof element.scrollTop === "number") {
+    element.scrollTop = top;
+  }
+}
+
+function getScrollDistanceFromBottom(element) {
+  if (!element || typeof element.scrollHeight !== "number") {
+    return Number.POSITIVE_INFINITY;
+  }
+  const scrollTop = typeof element.scrollTop === "number" ? element.scrollTop : 0;
+  const clientHeight = typeof element.clientHeight === "number" ? element.clientHeight : 0;
+  return element.scrollHeight - (scrollTop + clientHeight);
+}
+
+function isElementNearBottom(element, threshold = DETAIL_NEAR_BOTTOM_THRESHOLD_PX) {
+  return getScrollDistanceFromBottom(element) <= threshold;
+}
+
+function buildMessageSignature(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return "";
+  }
+  return messages
+    .map((message) => {
+      const role = String(message?.role || "").trim().toLowerCase() || "system";
+      const id = String(message?.id || "").trim();
+      const createdAt = String(message?.created_at || message?.createdAt || "").trim();
+      const content = String(message?.content || "").trim().slice(0, 160);
+      return `${role}:${id || createdAt || content}`;
+    })
+    .join("|");
+}
+
+function getDetailPaneKey(ticketId, pane) {
+  const normalizedTicketId = normalizeDetailTicketId(ticketId);
+  const normalizedPane = String(pane || "").trim().toLowerCase();
+  return normalizedTicketId && normalizedPane ? `${normalizedTicketId}:${normalizedPane}` : "";
+}
+
+function getDetailPaneState(ticketId, pane) {
+  const key = getDetailPaneKey(ticketId, pane);
+  if (!key) {
+    return {
+      signature: "",
+      unreadVisible: false,
+    };
+  }
+  return (
+    detailPaneStateByKey[key] || {
+      signature: "",
+      unreadVisible: false,
+    }
+  );
+}
+
+function setDetailPaneState(ticketId, pane, patch) {
+  const key = getDetailPaneKey(ticketId, pane);
+  if (!key) {
+    return;
+  }
+  detailPaneStateByKey[key] = {
+    ...getDetailPaneState(ticketId, pane),
+    ...(patch && typeof patch === "object" ? patch : {}),
+  };
+}
+
+function isDetailPaneUnreadVisible(ticketId, pane) {
+  return Boolean(getDetailPaneState(ticketId, pane).unreadVisible);
+}
+
+function setDetailPaneUnreadVisible(ticketId, pane, visible) {
+  setDetailPaneState(ticketId, pane, { unreadVisible: Boolean(visible) });
+}
+
+function requestDetailPaneScrollToBottom(ticketId, pane, options = {}) {
+  const key = getDetailPaneKey(ticketId, pane);
+  if (!key) {
+    return;
+  }
+  detailPendingScrollRequestByKey[key] = {
+    behavior: String(options?.behavior || "").trim().toLowerCase() === "smooth" ? "smooth" : "auto",
+  };
+  setDetailPaneUnreadVisible(ticketId, pane, false);
+}
+
+function clearDetailPaneScrollRequest(ticketId, pane) {
+  const key = getDetailPaneKey(ticketId, pane);
+  if (!key) {
+    return;
+  }
+  delete detailPendingScrollRequestByKey[key];
+}
+
+function getDetailPaneScrollElement(pane) {
+  if (!workspaceRegionEl || typeof workspaceRegionEl.querySelector !== "function") {
+    return null;
+  }
+  if (pane === DETAIL_THREAD_PANE) {
+    return workspaceRegionEl.querySelector(".detail-conversation-thread-body");
+  }
+  if (pane === DETAIL_TIMELINE_PANE) {
+    return workspaceRegionEl.querySelector(".detail-timeline-panel .message-list");
+  }
+  return null;
+}
+
+function buildDetailPaneElementSnapshot(element, scheduledPlan = null) {
+  if (scheduledPlan?.type === "bottom") {
+    return {
+      scrollTop: typeof element?.scrollHeight === "number" ? element.scrollHeight : null,
+      nearBottom: true,
+      preserveBottom: true,
+      behavior: scheduledPlan.behavior || "auto",
+    };
+  }
+  if (scheduledPlan?.type === "restore") {
+    return {
+      scrollTop: typeof scheduledPlan.scrollTop === "number" ? scheduledPlan.scrollTop : null,
+      nearBottom: false,
+    };
+  }
+  return {
+    scrollTop: typeof element?.scrollTop === "number" ? element.scrollTop : null,
+    nearBottom: isElementNearBottom(element),
+  };
+}
+
+function captureDetailPaneScrollSnapshot() {
+  const ticketId = normalizeDetailTicketId(selectedTicketId);
+  if (routeState.view !== "detail" || !ticketId) {
+    return null;
+  }
+  const scheduledPlans = detailScheduledScrollPlans?.ticketId === ticketId ? detailScheduledScrollPlans : null;
+  const threadElement = getDetailPaneScrollElement(DETAIL_THREAD_PANE);
+  const timelineElement = getDetailPaneScrollElement(DETAIL_TIMELINE_PANE);
+  return {
+    ticketId,
+    thread: buildDetailPaneElementSnapshot(threadElement, scheduledPlans?.thread || null),
+    timeline: buildDetailPaneElementSnapshot(timelineElement, scheduledPlans?.timeline || null),
+  };
+}
+
+function syncDetailPaneScrollPosition(previousSnapshot, viewState) {
+  if (!viewState?.ticketId) {
+    detailScheduledScrollPlans = null;
+    detailScheduledScrollJobId += 1;
+    return;
+  }
+
+  const ticketId = normalizeDetailTicketId(viewState.ticketId);
+  const unreadBeforeSync = {
+    thread: isDetailPaneUnreadVisible(ticketId, DETAIL_THREAD_PANE),
+    timeline: isDetailPaneUnreadVisible(ticketId, DETAIL_TIMELINE_PANE),
+  };
+  const paneDefinitions = [
+    {
+      pane: DETAIL_THREAD_PANE,
+      signature: buildMessageSignature(viewState.investigationMessages),
+      previous: previousSnapshot?.thread || null,
+    },
+    {
+      pane: DETAIL_TIMELINE_PANE,
+      signature: buildMessageSignature(viewState.messages),
+      previous: previousSnapshot?.timeline || null,
+    },
+  ];
+
+  const nextPlans = {
+    ticketId,
+    thread: null,
+    timeline: null,
+  };
+
+  paneDefinitions.forEach(({ pane, signature, previous }) => {
+    const state = getDetailPaneState(ticketId, pane);
+    const request = detailPendingScrollRequestByKey[getDetailPaneKey(ticketId, pane)] || null;
+    const hasNewMessages = Boolean(state.signature) && signature !== state.signature;
+    const shouldRestore =
+      previousSnapshot?.ticketId === ticketId && typeof previous?.scrollTop === "number";
+
+    if (request) {
+      nextPlans[pane] = {
+        type: "bottom",
+        behavior: request.behavior || "auto",
+      };
+      clearDetailPaneScrollRequest(ticketId, pane);
+      setDetailPaneUnreadVisible(ticketId, pane, false);
+    } else if (hasNewMessages) {
+      if (previous?.nearBottom) {
+        nextPlans[pane] = {
+          type: "bottom",
+          behavior: "smooth",
+        };
+        setDetailPaneUnreadVisible(ticketId, pane, false);
+      } else if (shouldRestore) {
+        nextPlans[pane] = {
+          type: "restore",
+          scrollTop: previous.scrollTop,
+        };
+        setDetailPaneUnreadVisible(ticketId, pane, true);
+      } else {
+        setDetailPaneUnreadVisible(ticketId, pane, true);
+      }
+    } else if (previous?.preserveBottom) {
+      nextPlans[pane] = {
+        type: "bottom",
+        behavior: previous.behavior || "auto",
+      };
+    } else if (shouldRestore) {
+      nextPlans[pane] = {
+        type: "restore",
+        scrollTop: previous.scrollTop,
+      };
+    }
+
+    setDetailPaneState(ticketId, pane, {
+      signature,
+    });
+  });
+  const unreadAfterSync = {
+    thread: isDetailPaneUnreadVisible(ticketId, DETAIL_THREAD_PANE),
+    timeline: isDetailPaneUnreadVisible(ticketId, DETAIL_TIMELINE_PANE),
+  };
+  if (
+    unreadBeforeSync.thread !== unreadAfterSync.thread ||
+    unreadBeforeSync.timeline !== unreadAfterSync.timeline
+  ) {
+    if (!patchTicketDetailWhilePreservingComposer(viewState)) {
+      workspaceRegionEl.innerHTML = renderTicketDetailViewFromState(viewState);
+    }
+  }
+
+  if (!nextPlans.thread && !nextPlans.timeline) {
+    detailScheduledScrollPlans = null;
+    detailScheduledScrollJobId += 1;
+    return;
+  }
+
+  detailScheduledScrollPlans = nextPlans;
+  detailScheduledScrollJobId += 1;
+  const jobId = detailScheduledScrollJobId;
+  runOnNextFrame(() => {
+    if (jobId !== detailScheduledScrollJobId || !detailScheduledScrollPlans || detailScheduledScrollPlans.ticketId !== ticketId) {
+      return;
+    }
+    [DETAIL_THREAD_PANE, DETAIL_TIMELINE_PANE].forEach((pane) => {
+      const plan = detailScheduledScrollPlans[pane];
+      const element = getDetailPaneScrollElement(pane);
+      if (!plan || !element) {
+        return;
+      }
+      if (plan.type === "bottom") {
+        if (typeof element.scrollHeight !== "number") {
+          return;
+        }
+        scrollElementToTop(element, element.scrollHeight, plan.behavior || "auto");
+        return;
+      }
+      scrollElementToTop(element, plan.scrollTop, "auto");
+    });
+    detailScheduledScrollPlans = null;
+  });
+}
+
 function buildTicketDetailViewState() {
   const ticket = selectedTicket;
   const ticketId = String(ticket.ticket_id || selectedTicketId || "-");
@@ -2577,6 +2884,22 @@ function renderTicketDetailConversationStaticHtml(viewState) {
   `;
 }
 
+function renderDetailPaneUnreadHtml(viewState, pane) {
+  const ticketId = normalizeDetailTicketId(viewState?.ticketId);
+  if (!ticketId || !isDetailPaneUnreadVisible(ticketId, pane)) {
+    return "";
+  }
+  const action =
+    pane === DETAIL_TIMELINE_PANE ? "jump-detail-timeline-latest" : "jump-detail-thread-latest";
+  return `
+    <div class="detail-pane-new-messages" data-detail-pane-unread="${escapeHtml(pane)}">
+      <button class="detail-new-messages-btn" type="button" data-detail-action="${escapeHtml(action)}">
+        New messages
+      </button>
+    </div>
+  `;
+}
+
 function renderTicketDetailConversationBodyHtml(viewState) {
   return `
     ${
@@ -2600,6 +2923,7 @@ function renderTicketDetailConversationBodyHtml(viewState) {
         ? renderInvestigationDraftPreviewHtml({ draftCustomerReply: viewState.draftCustomerReply })
         : ""
     }
+    ${renderDetailPaneUnreadHtml(viewState, DETAIL_THREAD_PANE)}
   `;
 }
 
@@ -2629,6 +2953,7 @@ function renderTicketDetailInsightPanelHtml(viewState) {
       </div>
       <div class="detail-timeline-body">
         ${renderConversationHtml(viewState.messages)}
+        ${renderDetailPaneUnreadHtml(viewState, DETAIL_TIMELINE_PANE)}
       </div>
     </section>
     ${viewState.replyReadinessReviewHtml}
@@ -2774,8 +3099,11 @@ function closeTicketDetail() {
 
 function renderTicketDetail() {
   if (!workspaceRegionEl || routeState.view !== "detail") {
+    detailScheduledScrollPlans = null;
+    detailScheduledScrollJobId += 1;
     return;
   }
+  const previousPaneSnapshot = captureDetailPaneScrollSnapshot();
   renderWorkspaceChrome();
   if (!selectedTicketId || detailLoading || !selectedTicket) {
     workspaceRegionEl.innerHTML = renderTicketDetailView();
@@ -2783,9 +3111,11 @@ function renderTicketDetail() {
   }
   const viewState = buildTicketDetailViewState();
   if (shouldPreserveInvestigationComposerOnRender(viewState) && patchTicketDetailWhilePreservingComposer(viewState)) {
+    syncDetailPaneScrollPosition(previousPaneSnapshot, viewState);
     return;
   }
   workspaceRegionEl.innerHTML = renderTicketDetailViewFromState(viewState);
+  syncDetailPaneScrollPosition(previousPaneSnapshot, viewState);
 }
 
 function redirectOpenTicketToPool() {
@@ -3085,6 +3415,13 @@ async function handleDetailClick(event) {
     return;
   }
 
+  if (action === "jump-detail-thread-latest" || action === "jump-detail-timeline-latest") {
+    const pane = action === "jump-detail-timeline-latest" ? DETAIL_TIMELINE_PANE : DETAIL_THREAD_PANE;
+    requestDetailPaneScrollToBottom(selectedTicketId, pane, { behavior: "smooth" });
+    renderTicketDetail();
+    return;
+  }
+
   if (action === "refresh-ticket") {
     button.disabled = true;
     try {
@@ -3152,6 +3489,7 @@ async function handleDetailClick(event) {
       cleaned,
       isRevisionFlow ? "investigation_revise" : "investigation_message"
     );
+    requestDetailPaneScrollToBottom(requestTicketId, DETAIL_THREAD_PANE, { behavior: "smooth" });
     tellAiDraft = "";
     tellAiSubmitting = true;
     renderTicketDetail();
