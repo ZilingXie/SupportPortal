@@ -1304,6 +1304,48 @@ html.material-symbols-pending .material-symbols-outlined {
   justify-content: flex-end;
 }
 
+.context-bar-ticket {
+  flex-wrap: nowrap;
+}
+
+.context-bar-ticket .context-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+}
+
+.context-bar-ticket .context-ticket {
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+}
+
+.context-bar-ticket .context-ticket-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.context-bar-ticket .status-badge,
+.context-bar-ticket .context-product-pill {
+  flex: 0 0 auto;
+}
+
+.context-bar-ticket .context-actions {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  gap: 10px;
+}
+
+.context-bar-ticket .context-actions .btn {
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 14px;
+}
+
 .context-assistance-btn {
   color: var(--primary);
   border-color: rgba(0, 100, 147, 0.14);
@@ -2063,6 +2105,23 @@ a.citation-link:hover {
 
   .context-actions {
     justify-content: flex-start;
+  }
+
+  .context-bar-ticket,
+  .context-bar-ticket .context-copy,
+  .context-bar-ticket .context-ticket,
+  .context-bar-ticket .context-actions {
+    flex-wrap: wrap;
+  }
+
+  .context-bar-ticket .context-actions {
+    flex: 1 1 100%;
+  }
+
+  .context-bar-ticket .context-ticket-title {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
   }
 
   .filter-select {
