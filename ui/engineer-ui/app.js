@@ -36,6 +36,10 @@ const detailRefreshState = {
   mutationEpoch: 0,
   inFlightController: null,
 };
+const ticketLoadState = {
+  inFlightPromise: null,
+  queuedOptions: null,
+};
 let socket = null;
 let heartbeatTimer = null;
 let reconnectTimer = null;
@@ -3270,8 +3274,30 @@ async function openTicketDetail(ticketId) {
   }
 }
 
-async function loadTickets(options = {}) {
-  const { refreshDetail = true, showLoading = tickets.length === 0 } = options;
+function normalizeTicketLoadOptions(options = {}) {
+  const normalizedOptions = options && typeof options === "object" ? options : {};
+  return {
+    refreshDetail: normalizedOptions.refreshDetail !== false,
+    showLoading: Object.prototype.hasOwnProperty.call(normalizedOptions, "showLoading")
+      ? Boolean(normalizedOptions.showLoading)
+      : tickets.length === 0,
+  };
+}
+
+function mergeQueuedTicketLoadOptions(options) {
+  if (!ticketLoadState.queuedOptions) {
+    ticketLoadState.queuedOptions = {
+      refreshDetail: Boolean(options.refreshDetail),
+      showLoading: false,
+    };
+    return;
+  }
+  ticketLoadState.queuedOptions.refreshDetail =
+    ticketLoadState.queuedOptions.refreshDetail || Boolean(options.refreshDetail);
+}
+
+async function performTicketLoad(options = {}) {
+  const { refreshDetail, showLoading } = normalizeTicketLoadOptions(options);
   const shouldShowPoolLoading = showLoading && routeState.view === "pool" && tickets.length === 0;
   if (shouldShowPoolLoading) {
     boardLoading = true;
@@ -3295,6 +3321,46 @@ async function loadTickets(options = {}) {
   } catch (error) {
     boardLoading = false;
     throw error;
+  }
+}
+
+async function loadTickets(options = {}) {
+  const normalizedOptions = normalizeTicketLoadOptions(options);
+  if (ticketLoadState.inFlightPromise) {
+    mergeQueuedTicketLoadOptions(normalizedOptions);
+    return ticketLoadState.inFlightPromise;
+  }
+
+  const activePromise = (async () => {
+    let nextOptions = normalizedOptions;
+    let pendingError = null;
+    while (nextOptions) {
+      try {
+        await performTicketLoad(nextOptions);
+        pendingError = null;
+      } catch (error) {
+        pendingError = error;
+      }
+      if (ticketLoadState.queuedOptions) {
+        nextOptions = ticketLoadState.queuedOptions;
+        ticketLoadState.queuedOptions = null;
+        continue;
+      }
+      if (pendingError) {
+        throw pendingError;
+      }
+      nextOptions = null;
+    }
+  })();
+
+  ticketLoadState.inFlightPromise = activePromise;
+  try {
+    return await activePromise;
+  } finally {
+    if (ticketLoadState.inFlightPromise === activePromise) {
+      ticketLoadState.inFlightPromise = null;
+      ticketLoadState.queuedOptions = null;
+    }
   }
 }
 

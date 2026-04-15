@@ -2710,10 +2710,7 @@ def get_dashboard_ticket_summary(ticket_id: str) -> dict[str, Any]:
 def list_tickets(
     status: str = Query(default="open", pattern="^(open|all|resolved|communicating|escalated|investigating)$"),
 ) -> dict[str, Any]:
-    all_cases = ticket_repository.list_engineer_cases(
-        include_client_messages=False,
-        include_investigation_messages=False,
-    )
+    all_cases = ticket_repository.list_engineer_case_headers()
     filtered_cases: list[dict[str, Any]] = []
     for engineer_case in all_cases:
         if ticket_matches_status_filter(engineer_case, status):

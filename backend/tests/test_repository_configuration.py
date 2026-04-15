@@ -18,6 +18,7 @@ from backend.repositories.knowledge_repository import (
     create_knowledge_repository,
 )
 from backend.repositories.ticket_repository import PostgresTicketRepository, create_ticket_repository
+from backend.repositories.ticket_repository import InMemoryTicketRepository
 
 
 class _BenchmarkPrepCursor:
@@ -655,6 +656,155 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertEqual(len(payloads), 1)
         self.assertEqual(payloads[0]["engineer_case_id"], "TK-ENG-001-1")
         self.assertEqual(payloads[0]["active_investigation"]["messages"], [])
+
+    def test_in_memory_ticket_repository_list_engineer_case_headers_returns_lightweight_payload(self) -> None:
+        repository = InMemoryTicketRepository()
+        repository.initialize()
+        ticket = {
+            "ticket_id": "TK-ENG-HEAD-001",
+            "customer_id": "C-1",
+            "requester": "Requester",
+            "subject": "Engineer header list",
+            "status": "investigating",
+            "created_at": "2026-04-09T10:00:00+00:00",
+            "updated_at": "2026-04-09T10:05:00+00:00",
+            "messages": [
+                {
+                    "id": "TK-ENG-HEAD-001-m1",
+                    "role": "customer",
+                    "content": "black screen",
+                    "created_at": "2026-04-09T10:00:00+00:00",
+                }
+            ],
+            "engineer_handoff_packet": {"summary": "need repro details"},
+            "engineer_agent_state": {"phase": "gather_missing_inputs"},
+        }
+        repository.save_ticket(ticket, new_messages=ticket["messages"])
+        repository.save_engineer_case(
+            {
+                "engineer_case_id": "TK-ENG-HEAD-001-1",
+                "client_ticket_id": "TK-ENG-HEAD-001",
+                "case_sequence": 1,
+                "title": "Engineer header list",
+                "status": "investigating",
+                "investigation_state": "active",
+                "trigger_source": "support_query",
+                "trigger_reason": "rag_insufficient_evidence",
+                "opened_at": "2026-04-09T10:00:00+00:00",
+                "updated_at": "2026-04-09T10:05:00+00:00",
+                "closed_at": None,
+                "messages": [
+                    {
+                        "id": "INV-HEAD-001-m1",
+                        "role": "engineer_ai",
+                        "content": "Need the device logs.",
+                        "created_at": "2026-04-09T10:05:00+00:00",
+                    }
+                ],
+                "engineer_handoff_packet": {"summary": "need repro details"},
+                "engineer_agent_state": {"phase": "gather_missing_inputs"},
+            }
+        )
+
+        payloads = repository.list_engineer_case_headers()
+
+        self.assertEqual(len(payloads), 1)
+        self.assertEqual(payloads[0]["engineer_case_id"], "TK-ENG-HEAD-001-1")
+        self.assertEqual(payloads[0]["client_ticket_ref"]["ticket_id"], "TK-ENG-HEAD-001")
+        self.assertEqual(payloads[0]["messages"], [])
+        self.assertIsNone(payloads[0]["active_investigation"])
+        self.assertEqual(payloads[0]["investigation_history"], [])
+        self.assertIsNone(payloads[0]["engineer_handoff_packet"])
+        self.assertIsNone(payloads[0]["engineer_agent_state"])
+
+    def test_ticket_repository_list_engineer_case_headers_returns_lightweight_payload(self) -> None:
+        repository = PostgresTicketRepository(dsn="postgresql://example")
+        dummy_conn = object()
+        engineer_row = (
+            "TK-ENG-HEAD-002-1",
+            "TK-ENG-HEAD-002",
+            1,
+            "Engineer header case",
+            "investigating",
+            "support_query",
+            "rag_insufficient_evidence",
+            "",
+            None,
+            {"summary": "need repro details"},
+            {"phase": "gather_missing_inputs"},
+            "2026-04-09T10:00:00+00:00",
+            "2026-04-09T10:05:00+00:00",
+            None,
+        )
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _label, op: op(dummy_conn),
+        ), patch.object(
+            repository,
+            "_fetch_engineer_case_rows",
+            return_value=[engineer_row],
+        ), patch.object(
+            repository,
+            "_fetch_engineer_case_messages",
+            side_effect=AssertionError("engineer case messages should be skipped for header payloads"),
+        ), patch.object(
+            repository,
+            "_fetch_ticket_header_map",
+            return_value={
+                "TK-ENG-HEAD-002": {
+                    "ticket_id": "TK-ENG-HEAD-002",
+                    "customer_id": "C-2",
+                    "requester": "customer-2",
+                    "subject": "black screen",
+                    "status": "investigating",
+                    "created_at": "2026-04-09T10:00:00+00:00",
+                    "updated_at": "2026-04-09T10:05:00+00:00",
+                    "messages": [
+                        {
+                            "id": "TK-ENG-HEAD-002-m1",
+                            "role": "customer",
+                            "content": "black screen",
+                            "created_at": "2026-04-09T10:00:00+00:00",
+                        }
+                    ],
+                }
+            },
+        ):
+            payloads = repository.list_engineer_case_headers()
+
+        self.assertEqual(len(payloads), 1)
+        self.assertEqual(payloads[0]["engineer_case_id"], "TK-ENG-HEAD-002-1")
+        self.assertEqual(payloads[0]["messages"], [])
+        self.assertIsNone(payloads[0]["active_investigation"])
+        self.assertEqual(payloads[0]["investigation_history"], [])
+        self.assertIsNone(payloads[0]["engineer_handoff_packet"])
+        self.assertIsNone(payloads[0]["engineer_agent_state"])
+
+    def test_ticket_repository_pool_timeout_includes_pool_stats(self) -> None:
+        repository = PostgresTicketRepository(
+            dsn="postgresql://example",
+            connect_timeout=10,
+            pool_timeout_seconds=15,
+        )
+
+        class _PoolWithStats:
+            def get_stats(self):
+                return {
+                    "pool_available": 0,
+                    "requests_waiting": 3,
+                    "pool_size": 4,
+                }
+
+        error = repository._classify_pool_timeout(
+            psycopg.OperationalError("couldn't get a connection after 15.00 sec"),
+            phase="borrow",
+            pool=_PoolWithStats(),
+        )
+
+        self.assertIn("pool_available=0", str(error))
+        self.assertIn("requests_waiting=3", str(error))
+        self.assertIn("pool_size=4", str(error))
 
     def test_ticket_repository_opens_new_connection_between_event_writes_without_pool(self) -> None:
         repository = PostgresTicketRepository(dsn="postgresql://example")

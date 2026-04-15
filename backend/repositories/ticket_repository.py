@@ -353,6 +353,44 @@ def _engineer_case_record_to_payload(
     }
 
 
+def _engineer_case_record_to_header_payload(
+    engineer_case: dict[str, Any],
+    *,
+    client_ticket: dict[str, Any] | None,
+) -> dict[str, Any]:
+    parent_ref = _ticket_client_reference(client_ticket)
+    title = str(engineer_case.get("title") or "").strip() or parent_ref["subject"] or "Engineer case"
+    return {
+        "engineer_case_id": str(engineer_case.get("engineer_case_id") or "").strip(),
+        "ticket_id": str(engineer_case.get("engineer_case_id") or "").strip(),
+        "client_ticket_id": parent_ref["ticket_id"],
+        "client_ticket_ref": parent_ref,
+        "case_sequence": _case_sequence_from_identifiers(
+            engineer_case.get("engineer_case_id"),
+            engineer_case.get("case_sequence"),
+        ),
+        "title": title,
+        "subject": title,
+        "status": _normalize_status(engineer_case.get("status")),
+        "trigger_source": str(engineer_case.get("trigger_source") or "").strip(),
+        "trigger_reason": str(engineer_case.get("trigger_reason") or "").strip(),
+        "requester": str((client_ticket or {}).get("requester") or "").strip(),
+        "customer_id": str((client_ticket or {}).get("customer_id") or "").strip(),
+        "last_engineer_action": (client_ticket or {}).get("last_engineer_action"),
+        "created_at": _to_iso(engineer_case.get("opened_at")),
+        "opened_at": _to_iso(engineer_case.get("opened_at")),
+        "updated_at": _to_iso(engineer_case.get("updated_at")),
+        "closed_at": _to_iso(engineer_case.get("closed_at"))
+        if engineer_case.get("closed_at") is not None
+        else None,
+        "messages": [],
+        "active_investigation": None,
+        "investigation_history": [],
+        "engineer_handoff_packet": None,
+        "engineer_agent_state": None,
+    }
+
+
 class TicketRepository(Protocol):
     def initialize(self) -> None:
         ...
@@ -404,6 +442,9 @@ class TicketRepository(Protocol):
         include_client_messages: bool = True,
         include_investigation_messages: bool = True,
     ) -> list[dict[str, Any]]:
+        ...
+
+    def list_engineer_case_headers(self) -> list[dict[str, Any]]:
         ...
 
     def list_ticket_engineer_cases(
@@ -766,6 +807,20 @@ class InMemoryTicketRepository:
                     payload_engineer_case,
                     client_ticket=client_ticket,
                     include_client_messages=include_client_messages,
+                )
+            )
+        return case_payloads
+
+    def list_engineer_case_headers(self) -> list[dict[str, Any]]:
+        case_payloads: list[dict[str, Any]] = []
+        for ticket_id in list(self._tickets):
+            self._backfill_engineer_cases_from_legacy_ticket(ticket_id)
+        for engineer_case in self._engineer_cases.values():
+            client_ticket = self.get_ticket(str(engineer_case.get("client_ticket_id") or ""))
+            case_payloads.append(
+                _engineer_case_record_to_header_payload(
+                    engineer_case,
+                    client_ticket=client_ticket,
                 )
             )
         return case_payloads
@@ -1277,6 +1332,12 @@ class PostgresTicketRepository:
                 detail = (
                     f"ticket db pool borrow timed out after {self._pool_timeout_seconds:.2f} sec"
                 )
+            stats_parts: list[str] = []
+            for key in ("pool_available", "requests_waiting", "pool_size"):
+                if key in pool_stats:
+                    stats_parts.append(f"{key}={_safe_non_negative_int(pool_stats.get(key), 0)}")
+            if stats_parts:
+                detail = f"{detail} ({', '.join(stats_parts)})"
         if message:
             detail = f"{detail}: {message}"
         return psycopg.OperationalError(detail)
@@ -2354,6 +2415,49 @@ class PostgresTicketRepository:
             for row in rows
         }
 
+    def _row_to_ticket_header(self, row: tuple[Any, ...]) -> dict[str, Any]:
+        return {
+            "ticket_id": str(row[0]),
+            "customer_id": str(row[1]),
+            "requester": str(row[2]),
+            "subject": str(row[3]),
+            "last_engineer_action": row[4],
+            "created_at": _to_iso(row[5]),
+            "updated_at": _to_iso(row[6]),
+            "messages": [],
+        }
+
+    def _fetch_ticket_header_map(
+        self,
+        conn: psycopg.Connection[Any],
+        ticket_ids: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        if not ticket_ids:
+            return {}
+        with conn.cursor() as cur:
+            cur.execute(
+                sql.SQL(
+                    """
+                    SELECT
+                        ticket_id,
+                        customer_id,
+                        requester,
+                        subject,
+                        last_engineer_action,
+                        created_at,
+                        updated_at
+                    FROM {}
+                    WHERE ticket_id = ANY(%s)
+                    """
+                ).format(self._table("support_tickets")),
+                (ticket_ids,),
+            )
+            rows = cur.fetchall()
+        return {
+            str(row[0]): self._row_to_ticket_header(row)
+            for row in rows
+        }
+
     def _fetch_tickets(self, include_messages: bool) -> list[dict[str, Any]]:
         def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
             rows = self._fetch_ticket_rows(conn)
@@ -2671,6 +2775,24 @@ class PostgresTicketRepository:
             return payloads
 
         return self._run_with_connection_retry("list_engineer_cases", _operation)
+
+    def list_engineer_case_headers(self) -> list[dict[str, Any]]:
+        def _operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            rows = self._fetch_engineer_case_rows(conn)
+            client_ticket_ids = sorted({str(row[1]) for row in rows})
+            client_ticket_map = self._fetch_ticket_header_map(conn, client_ticket_ids)
+            payloads: list[dict[str, Any]] = []
+            for row in rows:
+                record = self._row_to_engineer_case_record(row, [])
+                payloads.append(
+                    _engineer_case_record_to_header_payload(
+                        record,
+                        client_ticket=client_ticket_map.get(str(record.get("client_ticket_id") or "")),
+                    )
+                )
+            return payloads
+
+        return self._run_with_connection_retry("list_engineer_case_headers", _operation)
 
     def list_ticket_engineer_cases(
         self,

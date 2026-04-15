@@ -3884,6 +3884,115 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_engineer_ticket_pool_load_tickets_is_single_flight_with_one_queued_follow_up(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                routeState.view = "pool";
+                URLSearchParams = globalThis.URLSearchParams = class URLSearchParams {
+                  constructor(init = {}) {
+                    this._pairs = Object.entries(init);
+                  }
+
+                  toString() {
+                    return this._pairs
+                      .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+                      .join("&");
+                  }
+                };
+                selectedTicketId = "TK-QUEUE-001";
+                selectedTicket = {
+                  ticket_id: "TK-QUEUE-001",
+                  status: "investigating",
+                };
+                tickets = [];
+                boardLoading = false;
+
+                let refreshCalls = 0;
+                refreshSelectedTicket = async () => {
+                  refreshCalls += 1;
+                };
+
+                const resolvers = [];
+                const payload = {
+                  tickets: [
+                    {
+                      ticket_id: "TK-QUEUE-001",
+                      engineer_case_id: "TK-QUEUE-001",
+                      title: "Queue stabilization issue",
+                      subject: "Queue stabilization issue",
+                      requester: "user-queue",
+                      customer_id: "user-queue",
+                      status: "investigating",
+                      created_at: "2026-03-24T08:00:00+00:00",
+                      updated_at: "2026-03-24T08:30:00+00:00",
+                      client_ticket_ref: {
+                        ticket_id: "TK-QUEUE",
+                        subject: "Queue stabilization issue",
+                      },
+                      messages: [],
+                      active_investigation: null,
+                      investigation_history: [],
+                      engineer_handoff_packet: null,
+                      engineer_agent_state: null,
+                    },
+                  ],
+                };
+                let fetchCalls = 0;
+                fetchJson = async (url) => {
+                  if (url !== "/api/engineer/tickets?status=all") {
+                    throw new Error(`Unexpected URL: ${url}`);
+                  }
+                  fetchCalls += 1;
+                  return await new Promise((resolve) => {
+                    resolvers.push(() => resolve(payload));
+                  });
+                };
+
+                const first = loadTickets({ refreshDetail: false, showLoading: true });
+                const second = loadTickets({ refreshDetail: true, showLoading: false });
+                const third = loadTickets({ refreshDetail: false, showLoading: false });
+                await Promise.resolve();
+                if (fetchCalls !== 1) {
+                  throw new Error(`Expected one in-flight pool fetch before resolution, got ${fetchCalls}.`);
+                }
+                if (!boardLoading) {
+                  throw new Error("First empty-board load should keep the loading state visible while in flight.");
+                }
+
+                const resolveFirst = resolvers.shift();
+                if (!resolveFirst) {
+                  throw new Error("Expected the first pool fetch resolver to exist.");
+                }
+                resolveFirst();
+                for (let step = 0; step < 6 && fetchCalls < 2; step += 1) {
+                  await Promise.resolve();
+                }
+
+                if (fetchCalls !== 2) {
+                  throw new Error(`Expected exactly one queued follow-up pool fetch, got ${fetchCalls}.`);
+                }
+
+                const resolveSecond = resolvers.shift();
+                if (!resolveSecond) {
+                  throw new Error("Expected the queued follow-up pool fetch resolver to exist.");
+                }
+                resolveSecond();
+                await Promise.all([first, second, third]);
+
+                if (fetchCalls !== 2) {
+                  throw new Error(`Queued loadTickets calls should collapse into exactly two fetches, got ${fetchCalls}.`);
+                }
+                if (refreshCalls !== 1) {
+                  throw new Error(`Queued refreshDetail requests should merge into one detail refresh, got ${refreshCalls}.`);
+                }
+                if (boardLoading) {
+                  throw new Error("Ticket pool loading state should clear after the queued follow-up fetch completes.");
+                }
+              """
+            )
+        )
+
     def test_engineer_detail_approve_action_hides_controls_while_request_is_pending(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
