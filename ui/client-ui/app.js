@@ -1835,8 +1835,10 @@ function renderContextBar() {
           <div class="context-copy">
             <div class="context-ticket">
               <span class="context-ticket-title">${escapeHtml(ticket.id)}: ${escapeHtml(ticket.title)}</span>
-              ${statusBadge(ticket.status)}
-              ${productLabel ? `<span class="context-product-pill">${escapeHtml(productLabel)}</span>` : ""}
+              <div class="context-ticket-meta">
+                ${statusBadge(ticket.status)}
+                ${productLabel ? `<span class="context-product-pill">${escapeHtml(productLabel)}</span>` : ""}
+              </div>
             </div>
           </div>
           ${actionButtons ? `<div class="context-actions">${actionButtons}</div>` : ""}
