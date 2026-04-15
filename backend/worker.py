@@ -27,12 +27,14 @@ from backend.services.engineer_cases import (
     build_new_engineer_case,
     apply_case_context_to_engineer_case,
     build_engineer_case_context,
+    close_case_context_active_investigation,
     derive_engineer_case_title,
 )
 from backend.services.event_bus import SyncRedisEventBus
 from backend.services.investigation_flow import (
     COMMUNICATING_STATUS,
     INVESTIGATING_STATUS,
+    RESOLVED_STATUS,
     build_investigation_opening_context,
     default_investigation_prompt as generate_investigation_ai_turn,
     normalize_ticket_status,
@@ -398,6 +400,7 @@ def _execute_agent_runtime_ticket_query(
         client_intake_state=client_intake_state,
         latest_assistant_message=latest_assistant_message,
         current_ticket_status=current_ticket_status,
+        has_active_engineer_case=False,
         route_agent=decide_support_route,
         route_executor=resolve_support_message,
         rag_agent=lambda **kwargs: _fetch_rag_answer_detail_for_worker(
@@ -713,13 +716,19 @@ def _task_latest_assistant_message(task: dict[str, Any]) -> dict[str, Any] | Non
     message = task.get("latest_assistant_message")
     if not isinstance(message, dict):
         return None
-    return {
+    payload = {
         "role": str(message.get("role", "assistant")).strip().lower() or "assistant",
         "content": " ".join(str(message.get("content", "")).split()).strip(),
         "workflow_action": str(message.get("workflow_action") or "").strip(),
         "answer_route": str(message.get("answer_route") or "").strip(),
         "route_reason": str(message.get("route_reason") or "").strip(),
     }
+    assistant_message_source = str(message.get("assistant_message_source") or "").strip()
+    if assistant_message_source:
+        payload["assistant_message_source"] = assistant_message_source
+    if bool(message.get("supports_customer_resolution")):
+        payload["supports_customer_resolution"] = True
+    return payload
 
 
 def _build_worker_auto_resolved_by_customer_confirmation_event(
@@ -992,6 +1001,23 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
             ticket["client_agent_runtime_state"] = execution_client_agent_runtime_state
         execution_workflow_action = str(getattr(execution, "workflow_action", "") or "").strip()
         execution_route_payload = build_execution_route_payload(execution)
+        active_engineer_case_payload = _active_engineer_case_payload(ticket)
+        if execution_workflow_action == "resolve_ticket" and isinstance(active_engineer_case_payload, dict):
+            engineer_case = _engineer_case_payload_to_record(active_engineer_case_payload)
+            case_context = build_engineer_case_context(ticket, engineer_case)
+            _, investigation_messages = close_case_context_active_investigation(
+                case_context,
+                now_value=now_iso(),
+                system_note="Investigation closed because the customer confirmed the issue is resolved.",
+            )
+            engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
+            engineer_case["status"] = RESOLVED_STATUS
+            engineer_case["investigation_state"] = "closed"
+            investigation_result = {
+                "created": False,
+                "new_internal_messages": investigation_messages,
+            }
+            ticket["active_engineer_case_id"] = None
         if execution.needs_investigating:
             ticket["client_intake_state"] = execution_client_intake_state
             engineer_case, engineer_case_created = _prepare_engineer_case_for_ticket(
@@ -1205,6 +1231,21 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
                 auto_resolved_event,
             ),
         )
+        if isinstance(engineer_case, dict) and str(engineer_case.get("engineer_case_id") or "").strip():
+            engineer_auto_resolved_event = {
+                **auto_resolved_event,
+                "ticket_id": str(engineer_case.get("engineer_case_id") or ""),
+                "client_ticket_id": ticket_id,
+                "engineer_case_id": str(engineer_case.get("engineer_case_id") or ""),
+            }
+            _call_ticket_repository(
+                "record_engineer_case_event",
+                lambda: ticket_repository.record_engineer_case_event(
+                    str(engineer_case.get("engineer_case_id") or ""),
+                    engineer_auto_resolved_event["event"],
+                    engineer_auto_resolved_event,
+                ),
+            )
         _publish(bus, ["engineer", "dashboard"], auto_resolved_event)
     if investigation_result is not None:
         investigation_event = _build_worker_investigation_event(

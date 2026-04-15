@@ -48,6 +48,7 @@ from backend.services.engineer_cases import (
     apply_case_context_to_engineer_case,
     build_engineer_case_context,
     build_new_engineer_case,
+    close_case_context_active_investigation,
     derive_engineer_case_title,
 )
 from backend.services.investigation_flow import (
@@ -69,7 +70,6 @@ from backend.services.client_ticket_agent_runtime import (
     TicketExecutionResult,
     build_execution_route_payload,
     execute_client_ticket_agent_runtime,
-    is_customer_resolved_confirmation_candidate,
     resolve_next_ticket_status,
 )
 from backend.services.app_build import get_app_build_info
@@ -101,6 +101,10 @@ from backend.services.support_router import (
     SupportRouteDecision,
     decide_support_route,
     resolve_support_message as resolve_support_route_message,
+)
+from backend.services.ticket_resolution import (
+    ASSISTANT_MESSAGE_SOURCE_ENGINEER_GUIDANCE,
+    is_explicit_resolved_confirmation,
 )
 from backend.services.support_products import normalize_support_product
 from backend.services.task_queue import AsyncRedisTaskQueue
@@ -1220,6 +1224,9 @@ def resolve_support_message(
     ticket_subject: str | None = None,
     ticket_context: list[dict[str, str]] | None = None,
     product: str | None = None,
+    latest_assistant_message: dict[str, Any] | None = None,
+    current_ticket_status: str | None = None,
+    has_active_engineer_case: bool = False,
     decision: SupportRouteDecision | None = None,
 ) -> SupportResolution:
     return resolve_support_route_message(
@@ -1227,6 +1234,9 @@ def resolve_support_message(
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
         product=product,
+        latest_assistant_message=latest_assistant_message,
+        current_ticket_status=current_ticket_status,
+        has_active_engineer_case=has_active_engineer_case,
         decision=decision,
     )
 
@@ -1348,6 +1358,11 @@ def build_query_task(
             "answer_route": str(latest_assistant_message.get("answer_route") or "").strip(),
             "route_reason": str(latest_assistant_message.get("route_reason") or "").strip(),
         }
+        assistant_message_source = str(latest_assistant_message.get("assistant_message_source") or "").strip()
+        if assistant_message_source:
+            task["latest_assistant_message"]["assistant_message_source"] = assistant_message_source
+        if bool(latest_assistant_message.get("supports_customer_resolution")):
+            task["latest_assistant_message"]["supports_customer_resolution"] = True
     if current_ticket_status:
         task["current_ticket_status"] = normalize_ticket_status(current_ticket_status)
     if ticket_updated_at:
@@ -1574,37 +1589,11 @@ def _close_active_investigation(
     system_note: str | None = None,
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     ensure_ticket_defaults(ticket)
-    active_investigation = ticket.get("active_investigation")
-    if not isinstance(active_investigation, dict):
-        return None, []
-
-    appended_messages: list[dict[str, Any]] = []
-    if system_note:
-        next_sequence = len(active_investigation.get("messages", [])) + 1
-        system_message = {
-            "id": f"{active_investigation.get('id')}-m-{next_sequence}",
-            "role": "system",
-            "content": str(system_note).strip(),
-            "created_at": now_value,
-        }
-        active_investigation.setdefault("messages", []).append(system_message)
-        appended_messages.append(system_message)
-
-    active_investigation["state"] = "closed"
-    active_investigation["draft_customer_reply"] = str(
-        active_investigation.get("draft_customer_reply") or ""
-    ).strip()
-    active_investigation["final_confirmation_requested_at"] = None
-    active_investigation["updated_at"] = now_value
-    active_investigation["closed_at"] = now_value
-
-    history = ticket.get("investigation_history")
-    if not isinstance(history, list):
-        history = []
-        ticket["investigation_history"] = history
-    history.insert(0, active_investigation)
-    ticket["active_investigation"] = None
-    return active_investigation, appended_messages
+    return close_case_context_active_investigation(
+        ticket,
+        now_value=now_value,
+        system_note=system_note,
+    )
 
 
 def build_engineer_request_records(ticket_id: str) -> list[dict[str, Any]]:
@@ -1728,6 +1717,11 @@ def _dashboard_ticket_agent_brief(ticket: dict[str, Any]) -> tuple[str, str]:
 
 def _latest_assistant_message_for_ticket(ticket: dict[str, Any]) -> dict[str, Any] | None:
     messages = ticket.get("messages") if isinstance(ticket.get("messages"), list) else []
+    latest_engineer_action = (
+        ticket.get("last_engineer_action")
+        if isinstance(ticket.get("last_engineer_action"), dict)
+        else {}
+    )
     for message in reversed(messages):
         if not isinstance(message, dict):
             continue
@@ -1735,7 +1729,17 @@ def _latest_assistant_message_for_ticket(ticket: dict[str, Any]) -> dict[str, An
             continue
         if not " ".join(str(message.get("content") or "").split()).strip():
             continue
-        return copy.deepcopy(message)
+        latest_message = copy.deepcopy(message)
+        if (
+            not str(latest_message.get("workflow_action") or "").strip()
+            and str(latest_engineer_action.get("action") or "").strip() == "investigation_approve"
+            and str(latest_engineer_action.get("created_at") or "").strip()
+            and str(latest_engineer_action.get("created_at") or "").strip()
+            == str(latest_message.get("created_at") or "").strip()
+        ):
+            latest_message["assistant_message_source"] = ASSISTANT_MESSAGE_SOURCE_ENGINEER_GUIDANCE
+            latest_message["supports_customer_resolution"] = True
+        return latest_message
     return None
 
 
@@ -1760,6 +1764,25 @@ def _build_ticket_auto_resolved_by_customer_confirmation_event(
         "assistant_message_created_at": str(answer_created_at or "").strip() or None,
         "created_at": now_iso(),
     }
+
+
+def _close_active_engineer_case_for_customer_resolution(
+    ticket: dict[str, Any],
+    engineer_case: dict[str, Any],
+    *,
+    now_value: str,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    case_context = build_engineer_case_context(ticket, engineer_case)
+    _, investigation_messages = close_case_context_active_investigation(
+        case_context,
+        now_value=now_value,
+        system_note="Investigation closed because the customer confirmed the issue is resolved.",
+    )
+    engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
+    engineer_case["status"] = RESOLVED_STATUS
+    engineer_case["investigation_state"] = "closed"
+    ticket["active_engineer_case_id"] = None
+    return engineer_case, investigation_messages
 
 
 def _build_dashboard_ticket_payload(
@@ -2075,11 +2098,7 @@ async def create_or_update_ticket(
     customer_message = request.message.strip()
     ticket_status_before_customer_message = normalize_ticket_status(ticket.get("status"))
     latest_assistant_message = _latest_assistant_message_for_ticket(ticket)
-    customer_resolved_confirmation_candidate = is_customer_resolved_confirmation_candidate(
-        customer_message,
-        latest_assistant_message=latest_assistant_message,
-        current_ticket_status=ticket_status_before_customer_message,
-    )
+    customer_resolution_signal = is_explicit_resolved_confirmation(customer_message)
 
     ticket["customer_id"] = request.customer_id
     ticket["requester"] = (
@@ -2145,7 +2164,7 @@ async def create_or_update_ticket(
     main_agent_async_eligible = (
         active_engineer_case_payload is None
         and _main_agent_async_enabled()
-        and not customer_resolved_confirmation_candidate
+        and not customer_resolution_signal
     )
     if not main_agent_async_eligible:
         initial_ack = build_initial_ack(customer_message)
@@ -2153,22 +2172,75 @@ async def create_or_update_ticket(
         processing_mode = "main_agent_sync"
     if isinstance(active_engineer_case_payload, dict):
         engineer_case = _engineer_case_payload_to_record(active_engineer_case_payload)
-        case_context = build_engineer_case_context(ticket, engineer_case)
-        investigation_result = start_or_refresh_investigation(
-            case_context,
-            trigger_reason="customer_follow_up",
-            trigger_source="customer_follow_up",
-            now_value=now_iso(),
-            next_status=str(engineer_case.get("status") or ticket.get("status") or INVESTIGATING_STATUS),
-            ai_turn_builder=generate_investigation_ai_turn,
+        active_case_route = decide_support_route(
+            customer_message,
+            ticket_subject=str(ticket.get("subject") or "").strip() or None,
+            ticket_context=route_context,
+            product=ticket.get("product"),
+            latest_assistant_message=latest_assistant_message,
+            current_ticket_status=ticket_status_before_customer_message,
+            has_active_engineer_case=True,
         )
-        engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
-        follow_up_answer = str(investigation_result.get("public_reply") or "").strip()
-        needs_engineer_input = True
-        ticket["status"] = normalize_ticket_status(engineer_case.get("status"))
-        ticket["active_engineer_case_id"] = str(engineer_case.get("engineer_case_id") or "").strip() or None
-        ticket["client_intake_state"] = None
-        processing_mode = "active_investigation_followup"
+        if str(active_case_route.execution_action or "").strip() == "resolve_ticket":
+            resolution = resolve_support_message(
+                customer_message,
+                ticket_id=ticket_id,
+                customer_id=request.customer_id,
+                ticket_subject=str(ticket.get("subject") or "").strip() or None,
+                ticket_context=route_context,
+                product=ticket.get("product"),
+                latest_assistant_message=latest_assistant_message,
+                current_ticket_status=ticket_status_before_customer_message,
+                has_active_engineer_case=True,
+                decision=active_case_route,
+            )
+            execution = TicketExecutionResult(
+                answer=str(resolution.answer or "").strip(),
+                confidence=float(resolution.confidence or 0.0),
+                sources=list(resolution.sources),
+                citations=[dict(item) for item in resolution.citations],
+                evidence_summary=dict(resolution.evidence_summary or {}) or None,
+                packed_evidence=dict(resolution.packed_evidence or {}) or None,
+                needs_investigating=False,
+                next_status=RESOLVED_STATUS,
+                answer_route=resolution.answer_route,
+                scope_label=resolution.scope_label,
+                route_family=resolution.route_family,
+                execution_action=str(resolution.execution_action or resolution.answer_route or "resolve_ticket"),
+                tooling_profile=resolution.tooling_profile,
+                route_reason=resolution.route_reason,
+                route_confidence=float(resolution.route_confidence or 0.0),
+                search_used=bool(resolution.search_used),
+                matched_signals=list(resolution.matched_signals),
+                workflow_action="resolve_ticket",
+            )
+            engineer_case, investigation_messages = _close_active_engineer_case_for_customer_resolution(
+                ticket,
+                engineer_case,
+                now_value=now_iso(),
+            )
+            investigation_result = {
+                "created": False,
+                "new_internal_messages": investigation_messages,
+            }
+            processing_mode = "active_investigation_resolution"
+        else:
+            case_context = build_engineer_case_context(ticket, engineer_case)
+            investigation_result = start_or_refresh_investigation(
+                case_context,
+                trigger_reason="customer_follow_up",
+                trigger_source="customer_follow_up",
+                now_value=now_iso(),
+                next_status=str(engineer_case.get("status") or ticket.get("status") or INVESTIGATING_STATUS),
+                ai_turn_builder=generate_investigation_ai_turn,
+            )
+            engineer_case = apply_case_context_to_engineer_case(engineer_case, case_context)
+            follow_up_answer = str(investigation_result.get("public_reply") or "").strip()
+            needs_engineer_input = True
+            ticket["status"] = normalize_ticket_status(engineer_case.get("status"))
+            ticket["active_engineer_case_id"] = str(engineer_case.get("engineer_case_id") or "").strip() or None
+            ticket["client_intake_state"] = None
+            processing_mode = "active_investigation_followup"
     else:
         if main_agent_async_eligible:
             ticket["status"] = resolve_next_ticket_status(ticket.get("status"), COMMUNICATING_STATUS)
@@ -2186,6 +2258,7 @@ async def create_or_update_ticket(
                 client_intake_state=ticket.get("client_intake_state"),
                 latest_assistant_message=latest_assistant_message,
                 current_ticket_status=ticket_status_before_customer_message,
+                has_active_engineer_case=False,
                 route_agent=decide_support_route,
                 route_executor=resolve_support_message,
                 rag_agent=lambda **kwargs: _build_rag_answer_detail(
@@ -2265,6 +2338,23 @@ async def create_or_update_ticket(
                 ticket["client_intake_state"] = execution_client_intake_state
         elif not main_agent_async_eligible:
             ticket["status"] = resolve_next_ticket_status(ticket.get("status"), COMMUNICATING_STATUS)
+
+    if isinstance(active_engineer_case_payload, dict) and execution is not None:
+        execution_route_payload = build_execution_route_payload(execution)
+        route_payload.update(execution_route_payload)
+        follow_up_answer = execution.answer
+        follow_up_sources = list(execution.sources)
+        follow_up_citations = [dict(item) for item in execution.citations]
+        execution_client_intake_state = (
+            dict(getattr(execution, "client_intake_state"))
+            if isinstance(getattr(execution, "client_intake_state", None), dict)
+            else None
+        )
+        execution_client_agent_runtime_state = _execution_client_agent_runtime_state(execution)
+        if execution_client_agent_runtime_state is not None:
+            ticket["client_agent_runtime_state"] = execution_client_agent_runtime_state
+        ticket["status"] = resolve_next_ticket_status(ticket.get("status"), execution.next_status)
+        ticket["client_intake_state"] = execution_client_intake_state
 
     if str(follow_up_answer).strip():
         assistant_message: dict[str, Any] = {
@@ -2425,6 +2515,19 @@ async def create_or_update_ticket(
             auto_resolved_event["event"],
             auto_resolved_event,
         )
+        if isinstance(engineer_case, dict) and str(engineer_case.get("engineer_case_id") or "").strip():
+            engineer_auto_resolved_event = {
+                **auto_resolved_event,
+                "ticket_id": str(engineer_case.get("engineer_case_id") or ""),
+                "client_ticket_id": ticket_id,
+                "engineer_case_id": str(engineer_case.get("engineer_case_id") or ""),
+            }
+            await async_to_thread(
+                ticket_repository.record_engineer_case_event,
+                str(engineer_case.get("engineer_case_id") or ""),
+                engineer_auto_resolved_event["event"],
+                engineer_auto_resolved_event,
+            )
         await dispatch_event(["engineer", "dashboard"], auto_resolved_event)
     if investigation_result is not None:
         await _record_and_dispatch_investigation_event(
@@ -3069,6 +3172,8 @@ async def confirm_investigation_reply(
                 "role": "assistant",
                 "content": customer_reply,
                 "created_at": timestamp,
+                "assistant_message_source": ASSISTANT_MESSAGE_SOURCE_ENGINEER_GUIDANCE,
+                "supports_customer_resolution": True,
             }
         )
 

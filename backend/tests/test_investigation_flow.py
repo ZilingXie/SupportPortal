@@ -5,7 +5,7 @@ import os
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 os.environ.setdefault("TICKET_DB_DSN", "postgresql://example.invalid/test")
 
@@ -341,6 +341,19 @@ class InvestigationFlowTests(unittest.TestCase):
                 },
             ],
         )
+        route_mock = Mock(
+            return_value=main.SupportRouteDecision(
+                scope_label="ticket_resolution",
+                route="resolve_ticket",
+                confidence=0.99,
+                reason="customer_confirmed_resolved",
+                matched_signals=["got it", "thanks"],
+                response_language="en",
+                route_family="ticket_resolution",
+                execution_action="resolve_ticket",
+                tooling_profile="deterministic_resolution",
+            )
+        )
 
         with patch.object(
             main,
@@ -362,7 +375,7 @@ class InvestigationFlowTests(unittest.TestCase):
         ), patch.object(
             main,
             "decide_support_route",
-            side_effect=AssertionError("route agent should not run for resolved confirmation"),
+            route_mock,
         ), patch.object(
             main,
             "_build_rag_answer_detail",
@@ -383,6 +396,7 @@ class InvestigationFlowTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200, response.text)
+        route_mock.assert_called()
         payload = response.json()
         self.assertEqual(payload["status"], "resolved")
         self.assertTrue(payload["ai_replied"])
@@ -404,6 +418,244 @@ class InvestigationFlowTests(unittest.TestCase):
         event_types = [item["event_type"] for item in self.repository.list_ticket_events("TK-RESOLVE-API-1")]
         self.assertIn("ticket_updated", event_types)
         self.assertIn("ticket_auto_resolved_by_customer_confirmation", event_types)
+
+    def test_ticket_query_active_engineer_case_resolution_closes_case_without_refreshing_investigation(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-RESOLVE-ACTIVE-1",
+            subject="Black screen issue",
+            status="investigating",
+            product="audio_video_calling",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "black screen issue",
+                    "created_at": "2026-04-14T09:00:00+00:00",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Please try switching to another camera and test again.",
+                    "created_at": "2026-04-14T09:10:00+00:00",
+                },
+            ],
+        )
+        ticket = self.repository.get_ticket("TK-RESOLVE-ACTIVE-1")
+        assert ticket is not None
+        ticket["active_engineer_case_id"] = "TK-RESOLVE-ACTIVE-1-1"
+        ticket["engineer_case_count"] = 1
+        self.repository.save_ticket(ticket, new_messages=[])
+        self.repository.save_engineer_case(
+            {
+                "engineer_case_id": "TK-RESOLVE-ACTIVE-1-1",
+                "client_ticket_id": "TK-RESOLVE-ACTIVE-1",
+                "case_sequence": 1,
+                "title": "Black screen issue",
+                "status": "investigating",
+                "trigger_source": "support_query",
+                "trigger_reason": "rag_insufficient_evidence",
+                "thread_id": "INV-RESOLVE-ACTIVE-1",
+                "draft_customer_reply": "",
+                "final_confirmation_requested_at": None,
+                "opened_at": "2026-04-14T09:00:00+00:00",
+                "updated_at": "2026-04-14T09:10:00+00:00",
+                "closed_at": None,
+                "investigation_state": "active",
+                "messages": [
+                    {
+                        "id": "INV-RESOLVE-ACTIVE-1-m1",
+                        "role": "engineer_ai",
+                        "content": "Customer is testing another camera.",
+                        "created_at": "2026-04-14T09:10:00+00:00",
+                    }
+                ],
+            },
+            new_messages=[],
+        )
+        route_mock = Mock(
+            return_value=main.SupportRouteDecision(
+                scope_label="ticket_resolution",
+                route="resolve_ticket",
+                confidence=0.99,
+                reason="customer_confirmed_resolved",
+                matched_signals=["got it", "thanks"],
+                response_language="en",
+                route_family="ticket_resolution",
+                execution_action="resolve_ticket",
+                tooling_profile="deterministic_resolution",
+            )
+        )
+
+        with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            True,
+        ), patch.object(
+            main,
+            "OPTIMISTIC_PARALLEL_ROUTE_ENABLED",
+            True,
+            create=True,
+        ), patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="Got it, let me check this for you.",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main,
+            "decide_support_route",
+            route_mock,
+        ), patch.object(
+            main,
+            "start_or_refresh_investigation",
+            side_effect=AssertionError("active investigation should not refresh for customer resolution"),
+        ), patch.object(
+            main,
+            "_enqueue_or_defer_message_sentiment_tag",
+            AsyncMock(return_value=False),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-RESOLVE-ACTIVE-1",
+                    "customer_id": "C-001",
+                    "product": "audio_video_calling",
+                    "message": "got it, thanks",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        route_mock.assert_called()
+        payload = response.json()
+        self.assertEqual(payload["status"], "resolved")
+        self.assertEqual(payload["answer_route"], "workflow")
+        self.assertEqual(payload["route_reason"], "customer_confirmed_resolved")
+
+        stored_ticket = self.repository.get_ticket("TK-RESOLVE-ACTIVE-1")
+        self.assertIsNotNone(stored_ticket)
+        assert stored_ticket is not None
+        self.assertEqual(stored_ticket["status"], "resolved")
+        self.assertIsNone(stored_ticket.get("active_engineer_case_id"))
+        self.assertEqual(stored_ticket["messages"][-1]["workflow_action"], "resolve_ticket")
+
+        stored_case = self.repository.get_engineer_case("TK-RESOLVE-ACTIVE-1-1")
+        self.assertIsNotNone(stored_case)
+        assert stored_case is not None
+        self.assertEqual(stored_case["status"], "resolved")
+        self.assertTrue(str(stored_case.get("closed_at") or "").strip())
+        self.assertIsNone(
+            self.repository.get_active_engineer_case("TK-RESOLVE-ACTIVE-1", include_client_messages=True)
+        )
+
+    def test_ticket_query_engineer_guidance_confirmation_resolves_when_route_agent_fails(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-RESOLVE-ENG-ROUTEFAIL-1",
+            subject="Black screen issue",
+            status="communicating",
+            product="audio_video_calling",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "black screen issue",
+                    "created_at": "2026-04-14T09:00:00+00:00",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Please try switching to a different camera and test again.",
+                    "created_at": "2026-04-14T09:10:00+00:00",
+                },
+            ],
+        )
+        ticket = self.repository.get_ticket("TK-RESOLVE-ENG-ROUTEFAIL-1")
+        assert ticket is not None
+        ticket["engineer_case_count"] = 1
+        ticket["last_engineer_action"] = {
+            "action": "investigation_approve",
+            "engineer_id": "eng",
+            "note": "Please try switching to a different camera and test again.",
+            "created_at": "2026-04-14T09:10:00+00:00",
+        }
+        self.repository.save_ticket(ticket, new_messages=[])
+        self.repository.save_engineer_case(
+            {
+                "engineer_case_id": "TK-RESOLVE-ENG-ROUTEFAIL-1-1",
+                "client_ticket_id": "TK-RESOLVE-ENG-ROUTEFAIL-1",
+                "case_sequence": 1,
+                "title": "Black screen issue",
+                "status": "resolved",
+                "trigger_source": "support_query",
+                "trigger_reason": "rag_insufficient_evidence",
+                "thread_id": "INV-RESOLVE-ENG-ROUTEFAIL-1",
+                "draft_customer_reply": "",
+                "final_confirmation_requested_at": None,
+                "opened_at": "2026-04-14T09:00:00+00:00",
+                "updated_at": "2026-04-14T09:10:00+00:00",
+                "closed_at": "2026-04-14T09:10:00+00:00",
+                "investigation_state": "closed",
+                "messages": [],
+            },
+            new_messages=[],
+        )
+
+        with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            True,
+        ), patch.object(
+            main,
+            "OPTIMISTIC_PARALLEL_ROUTE_ENABLED",
+            True,
+            create=True,
+        ), patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="Got it, let me check this for you.",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main,
+            "decide_support_route",
+            side_effect=RuntimeError("router unavailable"),
+        ), patch.object(
+            main,
+            "_build_rag_answer_detail",
+            side_effect=AssertionError("rag agent should not run for engineer guidance resolution fallback"),
+        ), patch.object(
+            main,
+            "_enqueue_or_defer_message_sentiment_tag",
+            AsyncMock(return_value=False),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-RESOLVE-ENG-ROUTEFAIL-1",
+                    "customer_id": "C-001",
+                    "product": "audio_video_calling",
+                    "message": "it worked, thanks!",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["status"], "resolved")
+        self.assertEqual(payload["answer_route"], "workflow")
+        self.assertEqual(payload["route_reason"], "customer_confirmed_resolved")
+
+        stored_ticket = self.repository.get_ticket("TK-RESOLVE-ENG-ROUTEFAIL-1")
+        self.assertIsNotNone(stored_ticket)
+        assert stored_ticket is not None
+        self.assertEqual(stored_ticket["status"], "resolved")
+        self.assertIsNone(stored_ticket.get("active_engineer_case_id"))
+        self.assertEqual(stored_ticket.get("engineer_case_count"), 1)
+        self.assertEqual(stored_ticket["messages"][-1]["workflow_action"], "resolve_ticket")
+
+        engineer_cases = self.repository.list_ticket_engineer_cases(
+            "TK-RESOLVE-ENG-ROUTEFAIL-1",
+            include_client_messages=True,
+        )
+        self.assertEqual(len(engineer_cases), 1)
 
     def test_health_reports_shared_ticket_and_rag_database_warning_when_dsns_match(self) -> None:
         with patch.dict(

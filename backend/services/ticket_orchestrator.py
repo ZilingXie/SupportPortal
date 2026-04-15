@@ -189,12 +189,18 @@ def analyze_ticket_message(
     ticket_subject: str | None = None,
     ticket_context: list[dict[str, str]] | None = None,
     product: str | None = None,
+    latest_assistant_message: dict[str, Any] | None = None,
+    current_ticket_status: str | None = None,
+    has_active_engineer_case: bool = False,
 ) -> SupportRouteDecision:
     return decide_support_route(
         message,
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
         product=product,
+        latest_assistant_message=latest_assistant_message,
+        current_ticket_status=current_ticket_status,
+        has_active_engineer_case=has_active_engineer_case,
     )
 
 
@@ -371,6 +377,8 @@ def orchestrate_ticket_execution(
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
         product=product,
+        latest_assistant_message=latest_assistant_message,
+        current_ticket_status=current_ticket_status,
     )
 
     def _route_agent(**_kwargs: Any) -> SupportRouteDecision:
@@ -401,6 +409,7 @@ def orchestrate_ticket_execution(
         client_intake_state=client_intake_state,
         latest_assistant_message=latest_assistant_message,
         current_ticket_status=current_ticket_status,
+        has_active_engineer_case=False,
         route_agent=_route_agent,
         route_executor=_route_executor,
         rag_agent=_rag_agent,

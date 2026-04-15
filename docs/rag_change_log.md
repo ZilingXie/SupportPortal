@@ -3334,3 +3334,36 @@ For each new entry, record:
   - `podman run --rm -v /Users/xieziling/.config/superpowers/worktrees/SupportPortal/tk-097-month-name-date:/app -w /app localhost/supportportal-app:latest python -m unittest backend.tests.test_troubleshooting_intake backend.tests.test_client_ticket_agent_runtime`
   - official `deployment` local-lightweight stack rebuild from the task worktree, followed by live replay on `TK-097-MONTHNAME-VERIFY-1`, where `channel name: zilingtest,uid:1, happened on April 3rd 12pm utc+8` returned `workflow_action=open_engineer_ticket`, `route_reason=investigation_intake_complete`, and runtime state showed `route_agent/rag_agent/review_agent` all `skipped`
   - required `$supportportal-run-report` batch against `real_case/real_user_questions.txt` produced fresh traces including `/tmp/supportportal-traces/TK-TRACE-DF489F252E.json` (`how to join channel`, `trace_status=ok`, `route_reason=grounded_answer`), `/tmp/supportportal-traces/TK-TRACE-B656AE1B96.json` (`I got black screen, what should I do?`, `trace_status=ok`, `route_reason=grounded_answer`), plus `/tmp/supportportal-traces/TK-TRACE-33D0132A7E.json` and `/tmp/supportportal-traces/TK-TRACE-CC3CB99FEC.json` as `timeout_partial`; the batch stalled on the final long API-semantics case in this environment, so verification uses the completed traces as partial run-report evidence rather than a fully printed aggregate report
+
+## 2026-04-15 - Route gratitude follow-ups through ticket resolution instead of small talk or investigation reopen
+
+- Summary:
+  - Added a dedicated `ticket_resolution` route contract so gratitude follow-ups can resolve a ticket when recent context shows a substantive client-visible support reply.
+  - Removed gratitude terms from lexical `small_talk` routing hints and added shared resolution heuristics plus route-failure fallback for engineer-guidance confirmations.
+  - Closed active engineer cases immediately when the customer confirms the issue is resolved, instead of refreshing investigation or opening another case.
+- Reason:
+  - `TK-114` returned a `small_talk` refusal after `got it, thanks`.
+  - `TK-113` reopened investigation after `it worked, thanks!` because the latest engineer-approved public reply was not treated as resolution-eligible support context, and route failure could fall through into RAG/investigation.
+- Affected files/config:
+  - `backend/services/ticket_resolution.py`
+  - `backend/services/support_router.py`
+  - `backend/services/support_router_prompt.py`
+  - `backend/services/prompts/router.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/services/engineer_cases.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `backend/tests/test_support_router.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No ingestion, embedding, or schema changes.
+  - Ticket and engineer-case event streams can now record `ticket_auto_resolved_by_customer_confirmation` for engineer-case resolution paths as well as client-ticket resolution paths.
+  - Engineer-approved public replies now persist `assistant_message_source=engineer_guidance` / `supports_customer_resolution=true`, so later customer confirmations can reuse that context deterministically.
+- Verification:
+  - `python -m unittest backend.tests.test_support_router backend.tests.test_client_ticket_agent_runtime`
+  - `python -m py_compile backend/services/ticket_resolution.py backend/services/support_router.py backend/services/support_router_prompt.py backend/services/prompts/router.py backend/services/client_ticket_agent_runtime.py backend/services/engineer_cases.py backend/services/ticket_orchestrator.py backend/worker.py backend/main.py`
+  - `podman run --rm -v /Users/xieziling/.config/superpowers/worktrees/SupportPortal/ticket-resolution-gratitude-followups:/app -w /app localhost/supportportal-app:latest python -m unittest backend.tests.test_investigation_flow.InvestigationFlowTests.test_ticket_query_customer_resolved_confirmation_returns_resolved_and_records_auto_close_event backend.tests.test_investigation_flow.InvestigationFlowTests.test_ticket_query_active_engineer_case_resolution_closes_case_without_refreshing_investigation backend.tests.test_investigation_flow.InvestigationFlowTests.test_ticket_query_engineer_guidance_confirmation_resolves_when_route_agent_fails`
+  - `podman run --rm -v /Users/xieziling/.config/superpowers/worktrees/SupportPortal/ticket-resolution-gratitude-followups:/app -w /app localhost/supportportal-app:latest python -m unittest backend.tests.test_worker.WorkerResilienceTests.test_process_ticket_query_starts_main_agent_from_task_snapshot_before_ticket_refresh`
