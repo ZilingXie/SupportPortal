@@ -1,21 +1,7 @@
 from __future__ import annotations
 
 import copy
-import re
 from typing import Any
-
-_ISSUE_PHRASE_RE = re.compile(
-    r"\b([a-z0-9][a-z0-9 /_-]{0,80}?(?:issue|problem|error|failure|bug|crash))\b",
-    re.IGNORECASE,
-)
-_LEADING_PREFIX_RE = re.compile(
-    r"^(?:i|we)\s+(?:have|had|got|get|am seeing|are seeing|see|am getting|are getting|hit|encounter|encountered)\s+",
-    re.IGNORECASE,
-)
-_REQUEST_PREFIX_RE = re.compile(
-    r"^(?:need help(?: with| on)?|can you help(?: me)? with|please help(?: me)? with|help(?: me)? with)\s+",
-    re.IGNORECASE,
-)
 
 
 def _clean_text(value: Any) -> str:
@@ -31,45 +17,12 @@ def _normalize_status(value: Any) -> str:
     return "open"
 
 
-def _strip_issue_prefixes(text: str) -> str:
-    candidate = _clean_text(text)
-    candidate = _LEADING_PREFIX_RE.sub("", candidate)
-    candidate = _REQUEST_PREFIX_RE.sub("", candidate)
-    candidate = re.sub(r"^(?:the|a|an)\s+", "", candidate, flags=re.IGNORECASE)
-    return candidate.strip(" .,:;!?")
-
-
 def derive_engineer_case_title(
     client_ticket: dict[str, Any],
     *,
     handoff_packet: dict[str, Any] | None = None,
     engineer_agent_state: dict[str, Any] | None = None,
 ) -> str:
-    packet = handoff_packet if isinstance(handoff_packet, dict) else {}
-    agent_state = engineer_agent_state if isinstance(engineer_agent_state, dict) else {}
-    candidates = [
-        packet.get("latest_customer_message"),
-        packet.get("conversation_summary"),
-        agent_state.get("issue_understanding"),
-    ]
-    messages = client_ticket.get("messages")
-    if isinstance(messages, list):
-        for message in reversed(messages):
-            if str(message.get("role") or "").strip().lower() == "customer":
-                candidates.insert(0, message.get("content"))
-                break
-
-    for candidate in candidates:
-        cleaned = _strip_issue_prefixes(_clean_text(candidate))
-        if not cleaned:
-            continue
-        match = _ISSUE_PHRASE_RE.search(cleaned)
-        if match:
-            return _clean_text(match.group(1))[:120]
-        if len(cleaned) <= 120:
-            return cleaned
-        return cleaned[:120].rstrip(" ,.;:")
-
     subject = _clean_text(client_ticket.get("subject"))
     return subject[:120] or "Engineer case"
 
