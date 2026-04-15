@@ -1433,6 +1433,72 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(payload["client_agent_events"][0]["run_id"], "run-123")
         self.assertEqual(payload["client_agent_events"][0]["agent_name"], "main_agent")
 
+    def test_engineer_ticket_detail_can_skip_heavy_context_for_ui_refresh(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-LITE-100",
+            status="investigating",
+            product="audio_video_calling",
+        )
+        engineer_case = {
+            "engineer_case_id": "TK-LITE-100-1",
+            "client_ticket_id": "TK-LITE-100",
+            "case_sequence": 1,
+            "title": "Lightweight detail ticket",
+            "status": "investigating",
+            "trigger_source": "support_query",
+            "trigger_reason": "rag_insufficient_evidence",
+            "opened_at": "2026-04-04T00:01:00+00:00",
+            "updated_at": "2026-04-04T00:01:00+00:00",
+            "closed_at": None,
+            "messages": [],
+            "active_investigation": {
+                "id": "TK-LITE-100-1",
+                "state": "active",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "support_query",
+                "opened_at": "2026-04-04T00:01:00+00:00",
+                "updated_at": "2026-04-04T00:01:00+00:00",
+                "messages": [],
+            },
+        }
+        client_ticket = self.repository.get_ticket("TK-LITE-100")
+        assert client_ticket is not None
+        client_ticket["active_engineer_case_id"] = "TK-LITE-100-1"
+        client_ticket["engineer_case_count"] = 1
+        client_ticket["client_agent_runtime_state"] = {
+            "runtime_version": "client_ticket_agents_v1",
+            "active_run_id": "run-lite-123",
+            "status": "completed",
+        }
+        self.repository.save_ticket(client_ticket, new_messages=[])
+        self.repository.save_engineer_case(engineer_case, new_messages=[])
+
+        with patch.object(
+            main.rag_service_client,
+            "get_ticket_family_token_summary",
+            side_effect=AssertionError("Lightweight engineer detail should not fetch token usage."),
+        ), patch.object(
+            self.repository,
+            "list_ticket_agent_events",
+            side_effect=AssertionError("Lightweight engineer detail should not fetch client agent events."),
+        ), patch.object(
+            main,
+            "build_engineer_request_records",
+            side_effect=AssertionError("Lightweight engineer detail should not fetch engineer request records."),
+        ):
+            detail = self.client.get("/api/engineer/tickets/TK-LITE-100-1?include_context=false")
+
+        self.assertEqual(detail.status_code, 200, detail.text)
+        payload = detail.json()["ticket"]
+        self.assertEqual(payload["engineer_case_id"], "TK-LITE-100-1")
+        self.assertEqual(payload["client_ticket_id"], "TK-LITE-100")
+        self.assertIsNone(payload["client_agent_runtime_state"])
+        self.assertEqual(payload["client_agent_events"], [])
+        self.assertEqual(payload["engineer_request_records"], [])
+        self.assertEqual(payload["token_usage"]["canonical_ticket_id"], "TK-LITE-100")
+        self.assertEqual(payload["token_usage"]["related_ticket_ids"], ["TK-LITE-100-1"])
+        self.assertEqual(payload["token_usage"]["total_input_tokens"], 0)
+
     def test_repository_normalizes_legacy_waiting_for_engineer_status_to_investigating(self) -> None:
         ticket = self._seed_ticket(status="waiting_for_engineer")
         loaded = self.repository.get_ticket(str(ticket["ticket_id"]))

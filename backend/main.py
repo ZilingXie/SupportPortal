@@ -2731,12 +2731,30 @@ def list_tickets(
 
 
 @app.get("/api/engineer/tickets/{ticket_id}")
-def get_ticket_detail(ticket_id: str) -> dict[str, Any]:
+def get_ticket_detail(ticket_id: str, include_context: bool = Query(default=True)) -> dict[str, Any]:
     engineer_case = _resolve_engineer_case_payload(ticket_id)
     if engineer_case is None:
         raise HTTPException(status_code=404, detail="Ticket not found")
     client_ref = engineer_case.get("client_ticket_ref") if isinstance(engineer_case.get("client_ticket_ref"), dict) else {}
     client_ticket_id = str(client_ref.get("ticket_id") or "").strip() or None
+    token_usage_fallback = {
+        **resolve_ticket_family_identity(
+            {
+                "ticket_id": ticket_id,
+                "client_ticket_id": client_ticket_id,
+                "client_ticket_ref": client_ref,
+            },
+            related_ticket_ids=[str(engineer_case.get("engineer_case_id") or ticket_id)],
+        ),
+        **aggregate_usage_ledger([]),
+    }
+    if not include_context:
+        engineer_case["client_agent_runtime_state"] = None
+        engineer_case["client_agent_events"] = []
+        engineer_case["token_usage"] = token_usage_fallback
+        engineer_case["engineer_request_records"] = []
+        return {"ticket": engineer_case}
+
     client_ticket = ticket_repository.get_ticket(client_ticket_id) if client_ticket_id else None
     engineer_case["client_agent_runtime_state"] = (
         dict(client_ticket.get("client_agent_runtime_state"))
@@ -2754,17 +2772,7 @@ def get_ticket_detail(ticket_id: str) -> dict[str, Any]:
             client_ticket_id=client_ticket_id,
         )
     except RagServiceError:
-        engineer_case["token_usage"] = {
-            **resolve_ticket_family_identity(
-                {
-                    "ticket_id": ticket_id,
-                    "client_ticket_id": client_ticket_id,
-                    "client_ticket_ref": client_ref,
-                },
-                related_ticket_ids=[str(engineer_case.get("engineer_case_id") or ticket_id)],
-            ),
-            **aggregate_usage_ledger([]),
-        }
+        engineer_case["token_usage"] = token_usage_fallback
     engineer_case["engineer_request_records"] = build_engineer_request_records(
         str(client_ref.get("ticket_id") or "")
     )

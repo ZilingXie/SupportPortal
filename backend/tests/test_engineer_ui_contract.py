@@ -146,8 +146,8 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260414-engineer-approve-reply-overlap-fix-1", html)
-        self.assertIn('./app.js?v=20260414-engineer-approve-reply-overlap-fix-1', html)
+        self.assertIn("./styles.css?v=20260415-engineer-detail-lightweight-1", html)
+        self.assertIn('./app.js?v=20260415-engineer-detail-lightweight-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
@@ -1185,7 +1185,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 const requestedUrls = [];
                 fetchJson = async (url) => {
                   requestedUrls.push(url);
-                  if (url === "/api/engineer/tickets/TK-DETAIL-NO-SUMMARY") {
+                  if (url === "/api/engineer/tickets/TK-DETAIL-NO-SUMMARY?include_context=false") {
                     return {
                       ticket: {
                         ticket_id: "TK-DETAIL-NO-SUMMARY",
@@ -1233,6 +1233,9 @@ class EngineerUiContractTests(unittest.TestCase):
                 await Promise.resolve();
                 await Promise.resolve();
 
+                if (!requestedUrls.includes("/api/engineer/tickets/TK-DETAIL-NO-SUMMARY?include_context=false")) {{
+                  throw new Error("Engineer detail refresh should request the lightweight detail payload.");
+                }}
                 if (requestedUrls.includes("/api/engineer/tickets/TK-DETAIL-NO-SUMMARY/summary")) {{
                   throw new Error("Engineer detail refresh should no longer request the summary endpoint.");
                 }}
@@ -2523,7 +2526,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 const originalComposer = composerInput;
 
                 fetchJson = async (url) => {
-                  if (url === "/api/engineer/tickets/TK-DETAIL-FOCUS") {
+                  if (url === "/api/engineer/tickets/TK-DETAIL-FOCUS?include_context=false") {
                     return {
                       ticket: {
                         ...selectedTicket,
@@ -2902,7 +2905,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 };
 
                 fetchJson = async (url) => {
-                  if (url === "/api/engineer/tickets/TK-DETAIL-RECONCILE") {
+                  if (url === "/api/engineer/tickets/TK-DETAIL-RECONCILE?include_context=false") {
                     return {
                       ticket: {
                         ...selectedTicket,
@@ -3013,7 +3016,7 @@ class EngineerUiContractTests(unittest.TestCase):
                     capturedOptions = options;
                     throw new Error("Request timed out after 100s");
                   }
-                  if (url === "/api/engineer/tickets/TK-DETAIL-TIMEOUT-RECOVER") {
+                  if (url === "/api/engineer/tickets/TK-DETAIL-TIMEOUT-RECOVER?include_context=false") {
                     detailRefreshCalls += 1;
                     return {
                       ticket: {
@@ -3610,7 +3613,7 @@ class EngineerUiContractTests(unittest.TestCase):
                       updated_at: "2026-03-24T09:11:00+00:00",
                     };
                   }
-                  if (url === "/api/engineer/tickets/TK-DETAIL-APPROVE-STALE-INFLIGHT") {
+                  if (url === "/api/engineer/tickets/TK-DETAIL-APPROVE-STALE-INFLIGHT?include_context=false") {
                     detailFetchCount += 1;
                     if (detailFetchCount === 1) {
                       return await new Promise((resolve) => {
@@ -3785,7 +3788,7 @@ class EngineerUiContractTests(unittest.TestCase):
                       updated_at: "2026-03-24T09:11:00+00:00",
                     };
                   }
-                  if (url === "/api/engineer/tickets/TK-DETAIL-APPROVE-STALE-SOCKET") {
+                  if (url === "/api/engineer/tickets/TK-DETAIL-APPROVE-STALE-SOCKET?include_context=false") {
                     detailFetchCount += 1;
                     if (detailFetchCount === 1) {
                       return {
@@ -3981,7 +3984,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 window.location.hash = "#/tickets/TK-OPEN-DETAIL";
 
                 fetchJson = async (url) => {
-                  if (url === "/api/engineer/tickets/TK-OPEN-DETAIL") {
+                  if (url === "/api/engineer/tickets/TK-OPEN-DETAIL?include_context=false") {
                     return {
                       ticket: {
                         ticket_id: "TK-OPEN-DETAIL",
