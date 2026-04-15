@@ -1809,7 +1809,6 @@ function renderContextBar() {
     if (ticket && ticket.userId === state.user.id) {
       const productLabel = getProductLabel(ticket.product);
       const assistanceRequested = String(ticket.status || "").trim().toLowerCase() === "escalated";
-      const canRequestAssistance = canRequestEngineerAssistance(ticket) && !assistanceRequested;
       const assistanceControl = assistanceRequested
         ? `<span class="context-assistance-note">${escapeHtml(
             ENGINEER_ASSISTANCE_WAIT_TEXT
@@ -1820,10 +1819,8 @@ function renderContextBar() {
                 data-action="request-engineer-assistance"
                 data-ticket-id="${ticket.id}"
                 type="button"
-              >Request Engineer Assistance</button>
+              >Request Engineer</button>
             `;
-      const contextChipLabel = assistanceRequested ? "Escalated" : "AI-SOLVING";
-      const contextChipClass = assistanceRequested ? "context-chip is-escalated" : "context-chip";
       const actionButtons =
         ticket.status === "resolved"
           ? `<button class="btn btn-outline" data-action="reopen-ticket" data-ticket-id="${ticket.id}" type="button">Reopen Ticket</button>`
@@ -1831,16 +1828,11 @@ function renderContextBar() {
           ? ""
           : `
               ${assistanceControl}
-              <button class="btn btn-outline btn-danger" data-action="resolve-ticket" data-ticket-id="${ticket.id}" type="button">Close Ticket</button>
+              <button class="btn btn-outline btn-danger" data-action="resolve-ticket" data-ticket-id="${ticket.id}" type="button">Resolve</button>
             `;
       return `
-        <section class="context-bar">
+        <section class="context-bar context-bar-ticket">
           <div class="context-copy">
-            <div class="${contextChipClass}">
-              <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
-              <span>${contextChipLabel}</span>
-            </div>
-            <div class="context-divider" aria-hidden="true"></div>
             <div class="context-ticket">
               <span class="context-ticket-title">Ticket ${escapeHtml(ticket.id)}: ${escapeHtml(ticket.title)}</span>
               ${statusBadge(ticket.status)}

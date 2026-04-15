@@ -137,9 +137,9 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260413-client-sid-zac-1", html)
-        self.assertIn('./app.js?v=20260414-client-sid-welcome-1', html)
-        self.assertIn("AI-SOLVING", app_source)
+        self.assertIn("./styles.css?v=20260415-client-context-bar-single-line-1", html)
+        self.assertIn('./app.js?v=20260415-client-context-bar-single-line-1', html)
+        self.assertNotIn("AI-SOLVING", app_source)
         self.assertIn("Session History", app_source)
         self.assertIn("Sid", app_source)
         self.assertIn("zac@example.com", app_source)
@@ -152,6 +152,7 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertNotIn("Create a new support session or reopen a recent ticket.", app_source)
         self.assertIn("function ensureAuthedShell()", app_source)
         self.assertIn('data-authed-region="sidebar-nav"', app_source)
+        self.assertIn("context-bar context-bar-ticket", app_source)
         self.assertNotIn('appRoot.innerHTML = `\n    <div class="app-shell">', app_source)
 
         new_session_pos = app_source.index('<span class="sidebar-nav-label">New Session</span>')
@@ -171,6 +172,9 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn(".status-surface-escalated", css)
         self.assertIn(".status-surface-investigating", css)
         self.assertIn(".status-surface-resolved", css)
+        self.assertIn(".context-bar-ticket {", css)
+        self.assertIn("flex-wrap: nowrap;", css)
+        self.assertIn(".context-bar-ticket .context-actions {", css)
         self.assertIn('font-family: "Material Symbols Outlined";', css)
         self.assertIn("html.material-symbols-pending .material-symbols-outlined", css)
         self.assertIn("visibility: hidden;", css)
@@ -372,8 +376,8 @@ class ClientUiContractTests(unittest.TestCase):
                 ]);
                 updateTicketStatus(firstDraft.id, "communicating");
                 const filledContextBar = renderContextBar();
-                if (!filledContextBar.includes("Close Ticket")) {
-                  throw new Error("Non-empty session should show Close Ticket in chat view.");
+                if (!filledContextBar.includes("Resolve")) {
+                  throw new Error("Non-empty session should show Resolve in chat view.");
                 }
 
                 const emptyDraftInHistory = createTicket(state.user.id);
@@ -876,23 +880,26 @@ class ClientUiContractTests(unittest.TestCase):
                 state.activeTicketId = ticket.id;
 
                 const initialBar = renderContextBar();
-                if (!initialBar.includes("AI-SOLVING")) {
-                  throw new Error("Active ticket should start in AI-SOLVING mode before escalation.");
+                if (!initialBar.includes('class="context-bar context-bar-ticket"')) {
+                  throw new Error("Active ticket should render the dedicated single-line ticket context bar.");
+                }
+                if (initialBar.includes("AI-SOLVING")) {
+                  throw new Error("Active ticket should no longer display AI-SOLVING.");
                 }
                 if (!initialBar.includes('data-action="request-engineer-assistance"')) {
                   throw new Error("Active non-empty ticket should render the request engineer assistance button.");
                 }
-                if (!initialBar.includes("Request Engineer Assistance")) {
-                  throw new Error("Engineer assistance button should render its copy.");
+                if (!initialBar.includes("Request Engineer")) {
+                  throw new Error("Engineer assistance button should render its shortened copy.");
                 }
-                if (!initialBar.includes("Close Ticket")) {
-                  throw new Error("Active non-empty ticket should still render Close Ticket.");
+                if (!initialBar.includes("Resolve")) {
+                  throw new Error("Active non-empty ticket should still render Resolve.");
                 }
                 if (
-                  initialBar.indexOf("Request Engineer Assistance") >
-                  initialBar.indexOf("Close Ticket")
+                  initialBar.indexOf("Request Engineer") >
+                  initialBar.indexOf("Resolve")
                 ) {
-                  throw new Error("Engineer assistance button should render to the left of Close Ticket.");
+                  throw new Error("Engineer assistance button should render to the left of Resolve.");
                 }
                 if (initialBar.includes("Estimate waiting time: 3 hours")) {
                   throw new Error("Waiting time note should not render before the user requests assistance.");
@@ -936,28 +943,21 @@ class ClientUiContractTests(unittest.TestCase):
                 if (!requestedBar.includes("Estimate waiting time: 3 hours")) {
                   throw new Error("Requested engineer assistance should render the inline waiting estimate.");
                 }
-                if (requestedBar.includes("Request Engineer Assistance")) {
+                if (requestedBar.includes("Request Engineer")) {
                   throw new Error("After requesting assistance, the button should be replaced by the waiting estimate.");
                 }
-                if (requestedBar.includes("AI-SOLVING")) {
-                  throw new Error("Escalated ticket should no longer display the AI-SOLVING label.");
-                }
-                if (!requestedBar.includes("Escalated")) {
-                  throw new Error("Escalated ticket should display the Escalated status label.");
+                if (!requestedBar.includes("status-escalated")) {
+                  throw new Error("Escalated ticket should retain the escalated status badge styling.");
                 }
                 if (!requestedBar.includes("Waiting for Engineer")) {
                   throw new Error("Escalated ticket should show Waiting for Engineer as the ticket status badge.");
                 }
-                const escalatedMatches = requestedBar.match(/Escalated/g) || [];
-                if (escalatedMatches.length !== 1) {
-                  throw new Error(`Escalated label should render only once in the context bar, got ${escalatedMatches.length}.`);
-                }
-                if (!requestedBar.includes("Close Ticket")) {
-                  throw new Error("Close Ticket should remain available after requesting assistance.");
+                if (!requestedBar.includes("Resolve")) {
+                  throw new Error("Resolve should remain available after requesting assistance.");
                 }
                 if (
                   requestedBar.indexOf("Estimate waiting time: 3 hours") >
-                  requestedBar.indexOf("Close Ticket")
+                  requestedBar.indexOf("Resolve")
                 ) {
                   throw new Error("The waiting estimate should render in the original assistance button position.");
                 }
