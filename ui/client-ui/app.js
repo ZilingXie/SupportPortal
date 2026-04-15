@@ -1784,7 +1784,7 @@ function renderTopbar() {
     <header class="topbar">
       <div class="topbar-copy">
         <h2>${CLIENT_ASSISTANT_NAME}</h2>
-        <p>Technical Support</p>
+        <p>AI Technical Support</p>
       </div>
       <div class="topbar-meta">
         <div class="topbar-pill">
@@ -1834,7 +1834,7 @@ function renderContextBar() {
         <section class="context-bar context-bar-ticket">
           <div class="context-copy">
             <div class="context-ticket">
-              <span class="context-ticket-title">Ticket ${escapeHtml(ticket.id)}: ${escapeHtml(ticket.title)}</span>
+              <span class="context-ticket-title">${escapeHtml(ticket.id)}: ${escapeHtml(ticket.title)}</span>
               ${statusBadge(ticket.status)}
               ${productLabel ? `<span class="context-product-pill">${escapeHtml(productLabel)}</span>` : ""}
             </div>

@@ -137,9 +137,12 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
+        self.assertIn("<title>Sid - AI Technical Support</title>", html)
         self.assertIn("./styles.css?v=20260415-client-context-bar-single-line-1", html)
-        self.assertIn('./app.js?v=20260415-client-context-bar-single-line-1', html)
+        self.assertIn('./app.js?v=20260415-client-ai-technical-support-copy-1', html)
         self.assertNotIn("AI-SOLVING", app_source)
+        self.assertIn("AI Technical Support", app_source)
+        self.assertNotIn(">Technical Support<", app_source)
         self.assertIn("Session History", app_source)
         self.assertIn("Sid", app_source)
         self.assertIn("zac@example.com", app_source)
@@ -882,6 +885,12 @@ class ClientUiContractTests(unittest.TestCase):
                 const initialBar = renderContextBar();
                 if (!initialBar.includes('class="context-bar context-bar-ticket"')) {
                   throw new Error("Active ticket should render the dedicated single-line ticket context bar.");
+                }
+                if (!initialBar.includes(`${ticket.id}: Need direct engineer review`)) {
+                  throw new Error("Active ticket context bar should render the bare ticket id prefix.");
+                }
+                if (initialBar.includes(`Ticket ${ticket.id}: Need direct engineer review`)) {
+                  throw new Error("Active ticket context bar should not render the legacy Ticket prefix.");
                 }
                 if (initialBar.includes("AI-SOLVING")) {
                   throw new Error("Active ticket should no longer display AI-SOLVING.");
