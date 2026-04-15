@@ -1324,6 +1324,7 @@ class WorkerResilienceTests(unittest.TestCase):
         )
         self.assertEqual(saved_engineer_case["engineer_agent_state"]["phase"], "gather_missing_inputs")
         self.assertEqual(saved_engineer_case["engineer_case_id"], "T-RETRY-1")
+        self.assertEqual(saved_engineer_case["title"], "Token question")
         self.assertEqual(repository.save_engineer_case.call_count, 1)
         self.assertIsInstance(captured_opening_context, dict)
         self.assertIn("Need help with token generation", captured_opening_context["issue_summary"])
