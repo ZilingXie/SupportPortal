@@ -2873,46 +2873,35 @@ function buildTicketDetailViewState() {
 function renderTicketDetailHeaderHtml(viewState) {
   return `
     <header class="workspace-header">
-      <div class="workspace-header-top">
-        <div class="workspace-header-toolbar-start">
-          <button
-            class="detail-back-icon-btn"
-            type="button"
-            data-detail-action="back-to-pool"
-            aria-label="Back to Pool"
-            title="Back to Pool"
-          >
-            <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
-          </button>
-          <div class="workspace-header-badges">
-            <span class="status-badge ${statusClass(viewState.status)}">${escapeHtml(
-              statusLabel(viewState.status)
-            )}</span>
-          </div>
-        </div>
-        <div class="workspace-header-toolbar-end">
-          <span class="workspace-eyebrow">Ticket #${escapeHtml(viewState.ticketId)}</span>
-        </div>
+      <div class="workspace-header-line workspace-header-line-primary">
+        <button
+          class="detail-back-icon-btn"
+          type="button"
+          data-detail-action="back-to-pool"
+          aria-label="Back to Pool"
+          title="Back to Pool"
+        >
+          <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
+        </button>
+        <span class="workspace-ticket-id">${escapeHtml(viewState.ticketId)}</span>
+        <h2 class="workspace-ticket-title">${escapeHtml(
+          String(viewState.ticket.title || viewState.ticket.subject || "(No subject)")
+        )}</h2>
+        <span class="status-badge status-badge-compact ${statusClass(viewState.status)}">${escapeHtml(
+          statusLabel(viewState.status)
+        )}</span>
       </div>
-
-      <div class="workspace-header-main">
-        <div class="workspace-header-copy">
-          <h2 class="workspace-ticket-title">${escapeHtml(
-            String(viewState.ticket.title || viewState.ticket.subject || "(No subject)")
-          )}</h2>
-          <div class="workspace-header-meta">
-            ${
-              viewState.clientTicketId
-                ? `<span>Client Ticket ${escapeHtml(viewState.clientTicketId)}${
-                    viewState.clientTicketSubject ? ` · ${escapeHtml(viewState.clientTicketSubject)}` : ""
-                  }</span>`
-                : ""
-            }
-            <span>Requester ${escapeHtml(viewState.requester)}</span>
-            <span>Created ${escapeHtml(formatDateTime(viewState.ticket.created_at))}</span>
-            <span>Updated ${escapeHtml(formatDateTime(viewState.ticket.updated_at))}</span>
-          </div>
-        </div>
+      <div class="workspace-header-line workspace-header-line-secondary">
+        ${
+          viewState.clientTicketId
+            ? `<span class="workspace-header-meta-primary">Client Ticket ${escapeHtml(viewState.clientTicketId)}${
+                viewState.clientTicketSubject ? ` · ${escapeHtml(viewState.clientTicketSubject)}` : ""
+              }</span>`
+            : ""
+        }
+        <span>Requester ${escapeHtml(viewState.requester)}</span>
+        <span>Created ${escapeHtml(formatDateTime(viewState.ticket.created_at))}</span>
+        <span>Updated ${escapeHtml(formatDateTime(viewState.ticket.updated_at))}</span>
       </div>
     </header>
   `;

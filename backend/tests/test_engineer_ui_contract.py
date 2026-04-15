@@ -664,8 +664,8 @@ class EngineerUiContractTests(unittest.TestCase):
                 selectedTicketNextAction = "Confirm the affected device scope.";
 
                 const detailHtml = renderTicketDetailView();
-                if (!detailHtml.includes("Ticket #TK-040-1")) {{
-                  throw new Error("Engineer detail should label the engineer case id in the header.");
+                if (!detailHtml.includes('class="workspace-ticket-id">TK-040-1<')) {{
+                  throw new Error("Engineer detail should show the engineer case id inline in the primary header row.");
                 }}
                 if (!detailHtml.includes(">black screen issue<")) {{
                   throw new Error("Engineer detail should use the engineer case title as the primary title.");
@@ -864,10 +864,14 @@ class EngineerUiContractTests(unittest.TestCase):
                 selectedTicket = {
                   ticket_id: "TK-DETAIL-INV",
                   subject: "Android 14 token renew regression",
-                  requester: "user-7",
+                  requester: "user-1",
                   status: "investigating",
-                  created_at: "2026-03-24T08:00:00+00:00",
-                  updated_at: "2026-03-24T09:10:00+00:00",
+                  created_at: "2026-03-24T09:00:00+08:00",
+                  updated_at: "2026-03-24T09:25:00+08:00",
+                  client_ticket_ref: {
+                    ticket_id: "TK-041",
+                    subject: "Token Renew Regression",
+                  },
                   messages: [
                     {
                       role: "customer",
@@ -955,44 +959,57 @@ class EngineerUiContractTests(unittest.TestCase):
                 };
 
                 const html = renderTicketDetailView();
-                const headerTopStart = html.indexOf('class="workspace-header-top"');
-                const headerMainStart = html.indexOf('class="workspace-header-main"');
-                if (headerTopStart === -1 || headerMainStart === -1 || headerTopStart > headerMainStart) {{
-                  throw new Error("Detail header should render a toolbar row ahead of the title block.");
+                const primaryLineStart = html.indexOf('class="workspace-header-line workspace-header-line-primary"');
+                const secondaryLineStart = html.indexOf('class="workspace-header-line workspace-header-line-secondary"');
+                if (primaryLineStart === -1 || secondaryLineStart === -1 || primaryLineStart > secondaryLineStart) {{
+                  throw new Error("Detail header should render a compact two-line identity banner.");
                 }}
-                const headerTopMarkup = html.slice(headerTopStart, headerMainStart);
-                if (!headerTopMarkup.includes('detail-back-icon-btn')) {{
-                  throw new Error("Toolbar row should render the icon-only back action.");
+                const primaryLineMarkup = html.slice(primaryLineStart, secondaryLineStart);
+                const secondaryLineMarkup = html.slice(secondaryLineStart, html.indexOf("</header>", secondaryLineStart));
+                if (!primaryLineMarkup.includes('detail-back-icon-btn')) {{
+                  throw new Error("Primary banner row should render the icon-only back action.");
                 }}
-                if (!headerTopMarkup.includes('aria-label="Back to Pool"')) {{
+                if (!primaryLineMarkup.includes('aria-label="Back to Pool"')) {{
                   throw new Error("Back action should keep an accessible label.");
                 }}
-                if (!headerTopMarkup.includes("arrow_back")) {{
+                if (!primaryLineMarkup.includes("arrow_back")) {{
                   throw new Error("Back action should render the arrow_back icon.");
                 }}
-                if (headerTopMarkup.includes(">Back to Pool<")) {{
-                  throw new Error("Toolbar row should not keep visible Back to Pool text.");
+                if (primaryLineMarkup.includes(">Back to Pool<")) {{
+                  throw new Error("Primary banner row should not keep visible Back to Pool text.");
                 }}
-                if (headerTopMarkup.includes("Sync Ticket")) {{
-                  throw new Error("Toolbar row should not keep the removed sync action.");
+                if (primaryLineMarkup.includes("Sync Ticket")) {{
+                  throw new Error("Primary banner row should not keep the removed sync action.");
                 }}
-                if (headerTopMarkup.includes("workspace-header-actions")) {{
-                  throw new Error("Toolbar row should not keep an empty header actions wrapper after removing sync.");
+                if (html.includes('class="workspace-header-top"') || html.includes('class="workspace-header-main"')) {{
+                  throw new Error("Detail header should no longer render separate toolbar and title rows.");
                 }}
-                if (!headerTopMarkup.includes("workspace-eyebrow")) {{
-                  throw new Error("Toolbar row should keep the ticket id label.");
+                if (!primaryLineMarkup.includes('class="workspace-ticket-id">TK-DETAIL-INV<')) {{
+                  throw new Error("Primary banner row should keep the engineer case id inline.");
                 }}
-                if (!headerTopMarkup.includes("status-badge")) {{
-                  throw new Error("Toolbar row should carry the status badge after the header compaction.");
+                if (!primaryLineMarkup.includes("status-badge") || !primaryLineMarkup.includes("status-badge-compact")) {{
+                  throw new Error("Primary banner row should carry the compact status badge.");
                 }}
-                if (headerTopMarkup.includes("priority-badge")) {{
-                  throw new Error("Toolbar row should no longer render a priority badge.");
+                if (primaryLineMarkup.includes("priority-badge")) {{
+                  throw new Error("Primary banner row should no longer render a priority badge.");
                 }}
-                if (headerTopMarkup.includes("mode-pill")) {{
-                  throw new Error("Toolbar row should not render the removed mode pill.");
+                if (primaryLineMarkup.includes("mode-pill")) {{
+                  throw new Error("Primary banner row should not render the removed mode pill.");
                 }}
-                if (headerTopMarkup.includes("workspace-ticket-title")) {{
-                  throw new Error("Ticket title should stay below the compact toolbar row.");
+                if (!primaryLineMarkup.includes("workspace-ticket-title")) {{
+                  throw new Error("Primary banner row should carry the engineer case title.");
+                }}
+                if (!secondaryLineMarkup.includes("Client Ticket TK-041 · Token Renew Regression")) {{
+                  throw new Error("Secondary banner row should keep the full client ticket reference.");
+                }}
+                if (!secondaryLineMarkup.includes("Requester user-1")) {{
+                  throw new Error("Secondary banner row should keep the requester metadata.");
+                }}
+                if (!secondaryLineMarkup.includes("Created 03/24 09:00")) {{
+                  throw new Error("Secondary banner row should keep the created timestamp.");
+                }}
+                if (!secondaryLineMarkup.includes("Updated 03/24 09:25")) {{
+                  throw new Error("Secondary banner row should keep the updated timestamp.");
                 }}
                 if (!html.includes("Engineer Ticket Thread")) {{
                   throw new Error("Detail workspace should foreground the engineer ticket thread.");

@@ -1269,11 +1269,6 @@ html.material-symbols-pending .material-symbols-outlined {
 .ticket-row-header,
 .ticket-row-secondary,
 .ticket-row-badges,
-.workspace-header-top,
-.workspace-header-toolbar-start,
-.workspace-header-toolbar-end,
-.workspace-header-main,
-.workspace-header-badges,
 .detail-inline-actions,
 .engineer-request-actions {
   display: flex;
@@ -1322,7 +1317,7 @@ html.material-symbols-pending .material-symbols-outlined {
 }
 
 .ticket-row-meta,
-.workspace-header-meta {
+.workspace-header-line-secondary {
   display: flex;
   flex-wrap: wrap;
   gap: 10px 18px;
@@ -1409,26 +1404,45 @@ html.material-symbols-pending .material-symbols-outlined {
 
 .workspace-header {
   display: grid;
-  gap: 18px;
-  padding: 24px;
-}
-
-.workspace-header-top {
-  justify-content: space-between;
-}
-
-.workspace-header-toolbar-start,
-.workspace-header-toolbar-end {
+  gap: 10px;
+  padding: 20px 24px;
   min-width: 0;
 }
 
-.workspace-header-toolbar-start {
-  gap: 8px;
+.workspace-header-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
 }
 
-.workspace-header-toolbar-end {
-  margin-left: auto;
-  justify-content: flex-end;
+.workspace-header-line-primary {
+  flex-wrap: nowrap;
+}
+
+.workspace-header-line-secondary {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.workspace-header-line-secondary span {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.workspace-header-meta-primary {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-ticket-id {
+  flex: 0 0 auto;
+  color: var(--secondary);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
 }
 
 .detail-back-icon-btn {
@@ -1472,19 +1486,20 @@ html.material-symbols-pending .material-symbols-outlined {
     0 0 0 7px rgba(228, 233, 239, 0.22);
 }
 
-.workspace-header-main {
-  align-items: flex-start;
-  justify-content: flex-start;
-}
-
-.workspace-header-badges {
-  margin-bottom: 0;
-}
-
-.workspace-header-copy {
-  display: grid;
-  gap: 8px;
+.workspace-ticket-title {
+  flex: 1 1 auto;
   min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-badge-compact {
+  min-height: 24px;
+  padding: 0 10px;
+  font-size: 11px;
+  letter-spacing: 0.07em;
 }
 
 .workspace-layout {
@@ -2565,30 +2580,29 @@ html.material-symbols-pending .material-symbols-outlined {
     justify-content: flex-start;
   }
 
-  .ticket-row-secondary,
-  .workspace-header-top,
-  .workspace-header-main {
+  .ticket-row-secondary {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .workspace-header-toolbar-start,
-  .workspace-header-toolbar-end {
-    width: 100%;
-  }
-
-  .workspace-header-toolbar-start {
-    gap: 8px;
   }
 
   .detail-readiness-checks {
     grid-template-columns: 1fr;
   }
 
-  .workspace-header-toolbar-end {
-    margin-left: 0;
-    flex-direction: column;
-    align-items: stretch;
+  .workspace-header-line,
+  .workspace-header-line-secondary {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .workspace-ticket-title {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  .workspace-header-line-secondary .workspace-header-meta-primary {
+    flex-basis: 100%;
   }
 
   .detail-investigation-composer-inner {
