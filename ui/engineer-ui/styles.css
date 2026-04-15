@@ -1769,6 +1769,12 @@ html.material-symbols-pending .material-symbols-outlined {
   text-transform: uppercase;
 }
 
+.case-buddy-request-summary {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.55;
+}
+
 .case-buddy-request-list {
   margin: 0;
   padding-left: 18px;

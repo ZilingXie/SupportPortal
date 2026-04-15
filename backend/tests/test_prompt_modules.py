@@ -258,7 +258,7 @@ class PromptModuleTests(unittest.TestCase):
 
         self.assertEqual(
             ENGINEER_INVESTIGATION_REPLY_PROMPT_VERSION,
-            "engineer-investigation-reply-v4",
+            "engineer-investigation-reply-v5",
         )
         self.assertIn("## Role", system_prompt)
         self.assertIn("You are Case Buddy inside an internal support investigation workflow.", system_prompt)
@@ -269,6 +269,8 @@ class PromptModuleTests(unittest.TestCase):
         self.assertIn("symptom-level", system_prompt)
         self.assertIn("Conclusion is recommended but not required.", system_prompt)
         self.assertIn("Without an explicit conclusion, you may only use symptom_and_workaround_only", system_prompt)
+        self.assertIn("known_facts must only contain current customer reports, verified reproduction details, logs, versions, config facts, or cited evidence.", system_prompt)
+        self.assertIn("Do not put Sid/client AI candidate answers, draft recommendations, or unverified suggestions into known_facts.", system_prompt)
         self.assertIn("Return strict JSON only", system_prompt)
         self.assertIn('"state"', system_prompt)
         self.assertIn('"draft_customer_reply"', system_prompt)

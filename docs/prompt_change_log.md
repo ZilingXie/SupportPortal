@@ -12,6 +12,33 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-04-15 - case buddy current-issue facts exclude candidate answers
+
+- Area or subsystem: Engineer investigation reply prompt and Case Buddy current-issue fact curation
+- Prompt or model version: `engineer-investigation-reply-v5`
+- Summary: Tightened the engineer investigation reply prompt so `known_facts` must stay limited to current customer reports and verified evidence, while the engineer-agent fallback/normalization logic and engineer detail UI now strip candidate-answer-like facts from the Case Buddy `Current issue` block.
+- Reason: `Current issue` was leaking `Sid candidate answer` text instead of presenting a clean problem summary plus current known information, which made the opening engineer handoff harder to scan and mixed unverified draft guidance with actual facts.
+- Affected files or config:
+  - `backend/services/prompts/engineer_investigation_reply.py`
+  - `backend/services/engineer_agent.py`
+  - `ui/engineer-ui/app.js`
+  - `ui/engineer-ui/styles.css`
+  - `ui/engineer-ui/index.html`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_worker.py`
+  - `backend/tests/test_engineer_ui_contract.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - `Current issue` in engineer detail now renders as one summary paragraph plus remaining fact bullets, instead of one flat bullet list.
+  - `Sid candidate answer`, `Candidate answer ...`, and `The current candidate answer ...` no longer appear in `known_facts` for new or normalized engineer-agent state.
+  - The investigation reply prompt now explicitly tells the model not to write candidate answers or draft recommendations into `known_facts`.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_engineer_ui_contract.py`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_investigation_flow.py`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_worker.py`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_prompt_modules.py`
+
 ## 2026-04-14 - engineer investigation reply transport fallback
 
 - Area or subsystem: Engineer investigation reply model fallback
