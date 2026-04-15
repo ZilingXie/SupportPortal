@@ -1532,6 +1532,7 @@ html.material-symbols-pending .material-symbols-outlined {
 }
 
 .detail-conversation-thread-body {
+  position: relative;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   gap: 14px;
@@ -1544,8 +1545,34 @@ html.material-symbols-pending .material-symbols-outlined {
 }
 
 .detail-timeline-body {
+  position: relative;
   display: grid;
   min-height: 0;
+}
+
+.detail-pane-new-messages {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 3;
+  pointer-events: none;
+}
+
+.detail-new-messages-btn {
+  pointer-events: auto;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid rgba(0, 100, 147, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 18px 36px rgba(17, 28, 33, 0.16);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
 }
 
 .tell-ai-composer,

@@ -2555,6 +2555,694 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_engineer_detail_thread_new_internal_message_shows_new_messages_when_scrolled_up(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                const queuedFrames = [];
+                globalThis.requestAnimationFrame = (callback) => {
+                  queuedFrames.push(callback);
+                  return queuedFrames.length;
+                };
+
+                const flushFrames = () => {
+                  while (queuedFrames.length > 0) {
+                    const callback = queuedFrames.shift();
+                    callback();
+                  }
+                };
+
+                routeState.view = "detail";
+                selectedTicketId = "TK-DETAIL-SCROLL";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-SCROLL",
+                  client_ticket_ref: {
+                    ticket_id: "TK-CLIENT-SCROLL",
+                    subject: "Black screen after join",
+                  },
+                  subject: "Black screen after join",
+                  requester: "user-11",
+                  status: "investigating",
+                  created_at: "2026-04-15T09:00:00+00:00",
+                  updated_at: "2026-04-15T09:10:00+00:00",
+                  messages: [
+                    {
+                      id: "client-msg-1",
+                      role: "customer",
+                      content: "The remote video is black.",
+                      created_at: "2026-04-15T09:00:00+00:00",
+                    },
+                  ],
+                  active_investigation: {
+                    id: "INV-SCROLL-1",
+                    state: "active",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "",
+                    opened_at: "2026-04-15T09:01:00+00:00",
+                    updated_at: "2026-04-15T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "inv-msg-1",
+                        role: "engineer_ai",
+                        content: "Please collect the latest SDK log.",
+                        created_at: "2026-04-15T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+
+                let workspaceRoot = null;
+                let currentThreadBody = null;
+                let currentTimelineList = null;
+                let insightRegion = { innerHTML: "" };
+                let threadScrollCalls = [];
+                let timelineScrollCalls = [];
+                const renderThreadHeights = [];
+                const renderTimelineHeights = [];
+                workspaceRegionEl.querySelector = (selector) => {
+                  if (selector === ".ticket-workspace") {
+                    return workspaceRoot;
+                  }
+                  if (selector === ".detail-conversation-thread-body") {
+                    return currentThreadBody;
+                  }
+                  if (selector === ".detail-timeline-panel .message-list") {
+                    return currentTimelineList;
+                  }
+                  return null;
+                };
+                Object.defineProperty(workspaceRegionEl, "innerHTML", {
+                  configurable: true,
+                  get() {
+                    return this._html || "";
+                  },
+                  set(value) {
+                    this._html = value;
+                    currentThreadBody = {
+                      innerHTML: "",
+                      scrollTop: currentThreadBody?.scrollTop || 0,
+                      scrollHeight: renderThreadHeights.shift() ?? 0,
+                      clientHeight: 180,
+                      scrollTo(options) {
+                        threadScrollCalls.push(options);
+                        this.scrollTop = typeof options?.top === "number" ? options.top : this.scrollTop;
+                      },
+                    };
+                    currentTimelineList = {
+                      scrollTop: currentTimelineList?.scrollTop || 0,
+                      scrollHeight: renderTimelineHeights.shift() ?? 0,
+                      clientHeight: 180,
+                      scrollTo(options) {
+                        timelineScrollCalls.push(options);
+                        this.scrollTop = typeof options?.top === "number" ? options.top : this.scrollTop;
+                      },
+                    };
+                    workspaceRoot = {
+                      dataset: { detailTicketId: selectedTicketId },
+                      querySelector(selector) {
+                        if (selector === '[data-detail-section="header"]') {
+                          return { innerHTML: "" };
+                        }
+                        if (selector === '[data-detail-section="investigation-static"]') {
+                          return { innerHTML: "" };
+                        }
+                        if (selector === '[data-detail-section="investigation-thread-body"]') {
+                          return currentThreadBody;
+                        }
+                        if (selector === '[data-detail-section="insight"]') {
+                          return insightRegion;
+                        }
+                        if (selector === ".detail-conversation-thread-body") {
+                          return currentThreadBody;
+                        }
+                        if (selector === ".detail-timeline-panel .message-list") {
+                          return currentTimelineList;
+                        }
+                        return null;
+                      },
+                    };
+                  },
+                });
+
+                renderThreadHeights.push(420);
+                renderTimelineHeights.push(240);
+                renderTicketDetail();
+                flushFrames();
+
+                const initialThreadScrollCalls = threadScrollCalls.length;
+                currentThreadBody.scrollTop = 20;
+                selectedTicket = {
+                  ...selectedTicket,
+                  active_investigation: {
+                    ...selectedTicket.active_investigation,
+                    updated_at: "2026-04-15T09:11:00+00:00",
+                    messages: [
+                      ...selectedTicket.active_investigation.messages,
+                      {
+                        id: "inv-msg-2",
+                        role: "engineer",
+                        content: "Customer confirmed reproduction on iOS 18.",
+                        created_at: "2026-04-15T09:11:00+00:00",
+                      },
+                    ],
+                  },
+                  updated_at: "2026-04-15T09:11:00+00:00",
+                };
+
+                renderThreadHeights.push(520);
+                renderTimelineHeights.push(240);
+                renderTicketDetail();
+                flushFrames();
+
+                if (currentThreadBody.scrollTop !== 20) {
+                  throw new Error(`Expected thread scrollTop 20 to be preserved, got ${currentThreadBody.scrollTop}.`);
+                }
+                const latestThreadCall = threadScrollCalls[threadScrollCalls.length - 1];
+                if (!latestThreadCall || latestThreadCall.top !== 20) {
+                  throw new Error(`Expected the engineer thread rerender to restore scrollTop 20, got ${JSON.stringify(latestThreadCall)}.`);
+                }
+                if (latestThreadCall.behavior === "smooth") {
+                  throw new Error("Scrolled-up engineer thread should restore position instead of smooth-scrolling to bottom.");
+                }
+                if (!currentThreadBody.innerHTML.includes("New messages")) {
+                  throw new Error("Engineer thread should expose a New messages indicator when a remote internal message arrives off-screen.");
+                }
+              """
+            )
+        )
+
+    def test_engineer_detail_thread_near_bottom_auto_scrolls_smoothly_for_new_internal_message(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                const queuedFrames = [];
+                globalThis.requestAnimationFrame = (callback) => {
+                  queuedFrames.push(callback);
+                  return queuedFrames.length;
+                };
+
+                const flushFrames = () => {
+                  while (queuedFrames.length > 0) {
+                    const callback = queuedFrames.shift();
+                    callback();
+                  }
+                };
+
+                routeState.view = "detail";
+                selectedTicketId = "TK-DETAIL-SMOOTH";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-SMOOTH",
+                  client_ticket_ref: {
+                    ticket_id: "TK-CLIENT-SMOOTH",
+                    subject: "Black screen after join",
+                  },
+                  subject: "Black screen after join",
+                  requester: "user-11",
+                  status: "investigating",
+                  created_at: "2026-04-15T09:00:00+00:00",
+                  updated_at: "2026-04-15T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: {
+                    id: "INV-SMOOTH-1",
+                    state: "active",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "",
+                    opened_at: "2026-04-15T09:01:00+00:00",
+                    updated_at: "2026-04-15T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "inv-msg-1",
+                        role: "engineer_ai",
+                        content: "Please collect the latest SDK log.",
+                        created_at: "2026-04-15T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+
+                let workspaceRoot = null;
+                let currentThreadBody = null;
+                let currentTimelineList = null;
+                const threadScrollCalls = [];
+                const renderThreadHeights = [];
+                const renderTimelineHeights = [];
+                workspaceRegionEl.querySelector = (selector) => {
+                  if (selector === ".ticket-workspace") {
+                    return workspaceRoot;
+                  }
+                  if (selector === ".detail-conversation-thread-body") {
+                    return currentThreadBody;
+                  }
+                  if (selector === ".detail-timeline-panel .message-list") {
+                    return currentTimelineList;
+                  }
+                  return null;
+                };
+                Object.defineProperty(workspaceRegionEl, "innerHTML", {
+                  configurable: true,
+                  get() {
+                    return this._html || "";
+                  },
+                  set(value) {
+                    this._html = value;
+                    currentThreadBody = {
+                      scrollTop: currentThreadBody?.scrollTop || 0,
+                      scrollHeight: renderThreadHeights.shift() ?? 0,
+                      clientHeight: 160,
+                      scrollTo(options) {
+                        threadScrollCalls.push(options);
+                        this.scrollTop = typeof options?.top === "number" ? options.top : this.scrollTop;
+                      },
+                    };
+                    currentTimelineList = {
+                      scrollTop: currentTimelineList?.scrollTop || 0,
+                      scrollHeight: renderTimelineHeights.shift() ?? 0,
+                      clientHeight: 160,
+                      scrollTo() {},
+                    };
+                    workspaceRoot = {
+                      dataset: { detailTicketId: selectedTicketId },
+                      querySelector(selector) {
+                        if (selector === '[data-detail-section="header"]') {
+                          return { innerHTML: "" };
+                        }
+                        if (selector === '[data-detail-section="investigation-static"]') {
+                          return { innerHTML: "" };
+                        }
+                        if (selector === '[data-detail-section="investigation-thread-body"]') {
+                          return currentThreadBody;
+                        }
+                        if (selector === '[data-detail-section="insight"]') {
+                          return { innerHTML: "" };
+                        }
+                        if (selector === ".detail-conversation-thread-body") {
+                          return currentThreadBody;
+                        }
+                        if (selector === ".detail-timeline-panel .message-list") {
+                          return currentTimelineList;
+                        }
+                        return null;
+                      },
+                    };
+                  },
+                });
+
+                renderThreadHeights.push(300);
+                renderTimelineHeights.push(240);
+                renderTicketDetail();
+                flushFrames();
+
+                const initialThreadScrollCalls = threadScrollCalls.length;
+                currentThreadBody.scrollTop = 170;
+                selectedTicket = {
+                  ...selectedTicket,
+                  active_investigation: {
+                    ...selectedTicket.active_investigation,
+                    messages: [
+                      ...selectedTicket.active_investigation.messages,
+                      {
+                        id: "inv-msg-2",
+                        role: "engineer_ai",
+                        content: "The decoder path looks normal so far.",
+                        created_at: "2026-04-15T09:11:00+00:00",
+                      },
+                    ],
+                  },
+                };
+
+                renderThreadHeights.push(520);
+                renderTimelineHeights.push(240);
+                renderTicketDetail();
+                flushFrames();
+
+                if (threadScrollCalls.length !== initialThreadScrollCalls + 1) {
+                  throw new Error("Near-bottom engineer thread should auto-scroll exactly once for the new internal message.");
+                }
+                const latestCall = threadScrollCalls[threadScrollCalls.length - 1];
+                if (latestCall.behavior !== "smooth") {
+                  throw new Error(`Expected smooth auto-scroll in engineer thread, got ${JSON.stringify(latestCall)}.`);
+                }
+                if (currentThreadBody.scrollTop !== 520) {
+                  throw new Error(`Expected thread to scroll to 520, got ${currentThreadBody.scrollTop}.`);
+                }
+              """
+            )
+        )
+
+    def test_engineer_detail_send_note_forces_smooth_scroll_to_thread_bottom(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                const queuedFrames = [];
+                globalThis.requestAnimationFrame = (callback) => {
+                  queuedFrames.push(callback);
+                  return queuedFrames.length;
+                };
+
+                const flushFrames = () => {
+                  while (queuedFrames.length > 0) {
+                    const callback = queuedFrames.shift();
+                    callback();
+                  }
+                };
+
+                routeState.view = "detail";
+                selectedTicketId = "TK-DETAIL-SEND";
+                tellAiDraft = "Please compare the renderer events.";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-SEND",
+                  client_ticket_ref: {
+                    ticket_id: "TK-CLIENT-SEND",
+                    subject: "Black screen after join",
+                  },
+                  subject: "Black screen after join",
+                  requester: "user-11",
+                  status: "investigating",
+                  created_at: "2026-04-15T09:00:00+00:00",
+                  updated_at: "2026-04-15T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: {
+                    id: "INV-SEND-1",
+                    state: "active",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "",
+                    opened_at: "2026-04-15T09:01:00+00:00",
+                    updated_at: "2026-04-15T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "inv-msg-1",
+                        role: "engineer_ai",
+                        content: "Please collect the latest SDK log.",
+                        created_at: "2026-04-15T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+
+                let workspaceRoot = null;
+                let currentThreadBody = null;
+                let currentTimelineList = null;
+                const threadScrollCalls = [];
+                const renderThreadHeights = [];
+                const renderTimelineHeights = [];
+                const sendButton = {
+                  dataset: { detailAction: "send-tell-ai" },
+                  disabled: false,
+                };
+                workspaceRegionEl.querySelector = (selector) => {
+                  if (selector === ".ticket-workspace") {
+                    return workspaceRoot;
+                  }
+                  if (selector === ".detail-conversation-thread-body") {
+                    return currentThreadBody;
+                  }
+                  if (selector === ".detail-timeline-panel .message-list") {
+                    return currentTimelineList;
+                  }
+                  return null;
+                };
+                Object.defineProperty(workspaceRegionEl, "innerHTML", {
+                  configurable: true,
+                  get() {
+                    return this._html || "";
+                  },
+                  set(value) {
+                    this._html = value;
+                    currentThreadBody = {
+                      scrollTop: currentThreadBody?.scrollTop || 0,
+                      scrollHeight: renderThreadHeights.shift() ?? 0,
+                      clientHeight: 160,
+                      scrollTo(options) {
+                        threadScrollCalls.push(options);
+                        this.scrollTop = typeof options?.top === "number" ? options.top : this.scrollTop;
+                      },
+                    };
+                    currentTimelineList = {
+                      scrollTop: currentTimelineList?.scrollTop || 0,
+                      scrollHeight: renderTimelineHeights.shift() ?? 0,
+                      clientHeight: 160,
+                      scrollTo() {},
+                    };
+                    workspaceRoot = {
+                      dataset: { detailTicketId: selectedTicketId },
+                      querySelector(selector) {
+                        if (selector === '[data-detail-section="header"]') {
+                          return { innerHTML: "" };
+                        }
+                        if (selector === '[data-detail-section="investigation-static"]') {
+                          return { innerHTML: "" };
+                        }
+                        if (selector === '[data-detail-section="investigation-thread-body"]') {
+                          return currentThreadBody;
+                        }
+                        if (selector === '[data-detail-section="insight"]') {
+                          return { innerHTML: "" };
+                        }
+                        if (selector === ".detail-conversation-thread-body") {
+                          return currentThreadBody;
+                        }
+                        if (selector === ".detail-timeline-panel .message-list") {
+                          return currentTimelineList;
+                        }
+                        return null;
+                      },
+                    };
+                  },
+                });
+
+                submitInvestigationMessage = async () => ({
+                  status: "investigating",
+                  updated_at: "2026-04-15T09:12:00+00:00",
+                  active_investigation: {
+                    ...selectedTicket.active_investigation,
+                    messages: [
+                      ...selectedTicket.active_investigation.messages,
+                      {
+                        id: "inv-msg-2",
+                        role: "engineer",
+                        content: "Please compare the renderer events.",
+                        created_at: "2026-04-15T09:11:00+00:00",
+                      },
+                    ],
+                  },
+                });
+                loadTickets = async () => {};
+                refreshSelectedTicket = async () => {};
+
+                renderThreadHeights.push(420);
+                renderTimelineHeights.push(240);
+                renderTicketDetail();
+                flushFrames();
+
+                currentThreadBody.scrollTop = 18;
+                renderThreadHeights.push(540);
+                renderTimelineHeights.push(240);
+                renderThreadHeights.push(540);
+                renderTimelineHeights.push(240);
+                renderThreadHeights.push(540);
+                renderTimelineHeights.push(240);
+                await handleDetailClick({
+                  target: {
+                    closest(selector) {
+                      return selector === "button[data-detail-action]" ? sendButton : null;
+                    },
+                  },
+                });
+                flushFrames();
+
+                const latestCall = threadScrollCalls[threadScrollCalls.length - 1];
+                if (!latestCall) {
+                  throw new Error("Expected sending an engineer note to request thread scrolling.");
+                }
+                if (latestCall.behavior !== "smooth") {
+                  throw new Error(`Expected sending an engineer note to use smooth scrolling, got ${JSON.stringify(latestCall)}.`);
+                }
+                if (currentThreadBody.scrollTop !== 540) {
+                  throw new Error(`Expected engineer send to scroll to 540, got ${currentThreadBody.scrollTop}.`);
+                }
+              """
+            )
+        )
+
+    def test_engineer_detail_timeline_new_customer_message_shows_new_messages_when_scrolled_up(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                const queuedFrames = [];
+                globalThis.requestAnimationFrame = (callback) => {
+                  queuedFrames.push(callback);
+                  return queuedFrames.length;
+                };
+
+                const flushFrames = () => {
+                  while (queuedFrames.length > 0) {
+                    const callback = queuedFrames.shift();
+                    callback();
+                  }
+                };
+
+                routeState.view = "detail";
+                selectedTicketId = "TK-DETAIL-TIMELINE";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-TIMELINE",
+                  client_ticket_ref: {
+                    ticket_id: "TK-CLIENT-TIMELINE",
+                    subject: "Black screen after join",
+                  },
+                  subject: "Black screen after join",
+                  requester: "user-11",
+                  status: "investigating",
+                  created_at: "2026-04-15T09:00:00+00:00",
+                  updated_at: "2026-04-15T09:10:00+00:00",
+                  messages: [
+                    {
+                      id: "client-msg-1",
+                      role: "customer",
+                      content: "The remote video is black.",
+                      created_at: "2026-04-15T09:00:00+00:00",
+                    },
+                  ],
+                  active_investigation: {
+                    id: "INV-TIMELINE-1",
+                    state: "active",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "",
+                    opened_at: "2026-04-15T09:01:00+00:00",
+                    updated_at: "2026-04-15T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "inv-msg-1",
+                        role: "engineer_ai",
+                        content: "Please collect the latest SDK log.",
+                        created_at: "2026-04-15T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+
+                let workspaceRoot = null;
+                let currentThreadBody = null;
+                let currentTimelineList = null;
+                let insightRegion = { innerHTML: "" };
+                const timelineScrollCalls = [];
+                const renderThreadHeights = [];
+                const renderTimelineHeights = [];
+                workspaceRegionEl.querySelector = (selector) => {
+                  if (selector === ".ticket-workspace") {
+                    return workspaceRoot;
+                  }
+                  if (selector === ".detail-conversation-thread-body") {
+                    return currentThreadBody;
+                  }
+                  if (selector === ".detail-timeline-panel .message-list") {
+                    return currentTimelineList;
+                  }
+                  return null;
+                };
+                Object.defineProperty(workspaceRegionEl, "innerHTML", {
+                  configurable: true,
+                  get() {
+                    return this._html || "";
+                  },
+                  set(value) {
+                    this._html = value;
+                    currentThreadBody = {
+                      scrollTop: currentThreadBody?.scrollTop || 0,
+                      scrollHeight: renderThreadHeights.shift() ?? 0,
+                      clientHeight: 180,
+                      scrollTo() {},
+                    };
+                    currentTimelineList = {
+                      innerHTML: "",
+                      scrollTop: currentTimelineList?.scrollTop || 0,
+                      scrollHeight: renderTimelineHeights.shift() ?? 0,
+                      clientHeight: 180,
+                      scrollTo(options) {
+                        timelineScrollCalls.push(options);
+                        this.scrollTop = typeof options?.top === "number" ? options.top : this.scrollTop;
+                      },
+                    };
+                    workspaceRoot = {
+                      dataset: { detailTicketId: selectedTicketId },
+                      querySelector(selector) {
+                        if (selector === '[data-detail-section="header"]') {
+                          return { innerHTML: "" };
+                        }
+                        if (selector === '[data-detail-section="investigation-static"]') {
+                          return { innerHTML: "" };
+                        }
+                        if (selector === '[data-detail-section="investigation-thread-body"]') {
+                          return currentThreadBody;
+                        }
+                        if (selector === '[data-detail-section="insight"]') {
+                          return insightRegion;
+                        }
+                        if (selector === ".detail-conversation-thread-body") {
+                          return currentThreadBody;
+                        }
+                        if (selector === ".detail-timeline-panel .message-list") {
+                          return currentTimelineList;
+                        }
+                        return null;
+                      },
+                    };
+                  },
+                });
+
+                renderThreadHeights.push(280);
+                renderTimelineHeights.push(420);
+                renderTicketDetail();
+                flushFrames();
+
+                const initialTimelineScrollCalls = timelineScrollCalls.length;
+                currentTimelineList.scrollTop = 12;
+                selectedTicket = {
+                  ...selectedTicket,
+                  messages: [
+                    ...selectedTicket.messages,
+                    {
+                      id: "client-msg-2",
+                      role: "assistant",
+                      content: "We need the issue timestamp to investigate further.",
+                      created_at: "2026-04-15T09:11:00+00:00",
+                    },
+                  ],
+                };
+
+                renderThreadHeights.push(280);
+                renderTimelineHeights.push(520);
+                renderTicketDetail();
+                flushFrames();
+
+                if (currentTimelineList.scrollTop !== 12) {
+                  throw new Error(`Expected timeline scrollTop 12 to be preserved, got ${currentTimelineList.scrollTop}.`);
+                }
+                const latestTimelineCall = timelineScrollCalls[timelineScrollCalls.length - 1];
+                if (!latestTimelineCall || latestTimelineCall.top !== 12) {
+                  throw new Error(`Expected the customer timeline rerender to restore scrollTop 12, got ${JSON.stringify(latestTimelineCall)}.`);
+                }
+                if (latestTimelineCall.behavior === "smooth") {
+                  throw new Error("Scrolled-up customer timeline should restore position instead of smooth-scrolling to bottom.");
+                }
+                if (!insightRegion.innerHTML.includes("New messages")) {
+                  throw new Error("Customer timeline should expose a New messages indicator when a new customer-visible turn arrives off-screen.");
+                }
+              """
+            )
+        )
+
     def test_engineer_socket_ignores_unrelated_ticket_detail_refresh(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
