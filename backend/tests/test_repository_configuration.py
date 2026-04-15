@@ -332,6 +332,19 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertEqual(repository._pool_max_lifetime_seconds, 301)
         self.assertEqual(repository._pool_max_idle_seconds, 61)
 
+    def test_ticket_repository_reads_pool_acquire_budget_setting(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TICKET_DB_DSN": "postgresql://example",
+                "TICKET_DB_POOL_ACQUIRE_BUDGET_SECONDS": "21.5",
+            },
+            clear=True,
+        ):
+            repository = create_ticket_repository()
+        self.assertIsInstance(repository, PostgresTicketRepository)
+        self.assertAlmostEqual(repository._pool_acquire_budget_seconds, 21.5)
+
     def test_ticket_repository_defaults_pool_timeouts_for_rds_jitter(self) -> None:
         with patch.dict(
             os.environ,
@@ -345,6 +358,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertEqual(repository._pool_timeout_seconds, 15.0)
         self.assertEqual(repository._pool_max_lifetime_seconds, 1800.0)
         self.assertEqual(repository._pool_max_idle_seconds, 300.0)
+        self.assertEqual(repository._pool_acquire_budget_seconds, 20.0)
 
     def test_ticket_repository_reads_application_name(self) -> None:
         with patch.dict(
@@ -511,7 +525,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIs(pool, fresh_pool)
         self.assertIs(repository._pool, fresh_pool)
         pool_factory_mock.assert_called_once()
-        self.assertEqual(fresh_pool.open_calls, [(True, repository._pool_timeout_seconds)])
+        self.assertEqual(fresh_pool.open_calls, [(False, None)])
 
     def test_ticket_repository_close_closes_live_pool_and_clears_reference(self) -> None:
         repository = PostgresTicketRepository(
@@ -892,7 +906,40 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertEqual(tickets[0]["ticket_id"], "T-1")
         self.assertEqual(stale_pool.close_calls, 1)
         self.assertIs(repository._pool, healthy_pool)
-        self.assertEqual(healthy_pool.open_calls, [(True, repository._pool_timeout_seconds)])
+        self.assertEqual(healthy_pool.open_calls, [(False, None)])
+
+    def test_ticket_repository_pool_retry_uses_remaining_shared_acquire_budget(self) -> None:
+        repository = PostgresTicketRepository(
+            dsn="postgresql://example",
+            use_connection_pool=True,
+            connect_timeout=10,
+            pool_timeout_seconds=15,
+            pool_acquire_budget_seconds=20,
+        )
+        stale_pool = _BorrowingPool(
+            borrow_error=PoolTimeout("couldn't get a connection after 15.00 sec"),
+            stats={
+                "pool_available": 2,
+                "requests_waiting": 0,
+                "pool_size": 3,
+            },
+        )
+        healthy_pool = _BorrowingPool(connection=object())
+        repository._pool = stale_pool
+
+        with patch.object(repository, "_pool_factory", return_value=healthy_pool):
+            with patch.object(repository, "_fetch_ticket_rows", return_value=[]):
+                with patch(
+                    "backend.repositories.ticket_repository.time.monotonic",
+                    side_effect=[100.0, 100.0, 112.5],
+                ):
+                    tickets = repository.list_tickets(include_messages=False)
+
+        self.assertEqual(tickets, [])
+        self.assertEqual(stale_pool.connection_calls, [15.0])
+        self.assertEqual(healthy_pool.open_calls, [(False, None)])
+        self.assertEqual(len(healthy_pool.connection_calls), 1)
+        self.assertAlmostEqual(healthy_pool.connection_calls[0], 7.5)
 
     def test_ticket_repository_opens_new_connection_between_event_writes_without_pool(self) -> None:
         repository = PostgresTicketRepository(dsn="postgresql://example")

@@ -10,7 +10,11 @@ os.environ.setdefault("TICKET_DB_DSN", "postgresql://example.invalid/test")
 from fastapi.testclient import TestClient
 
 import backend.main as main
-from backend.repositories.ticket_repository import InMemoryTicketRepository
+from backend.repositories.ticket_repository import (
+    InMemoryTicketRepository,
+    PoolTimeout,
+    PostgresTicketRepository,
+)
 
 
 class _CapturingTicketRepository(InMemoryTicketRepository):
@@ -52,6 +56,52 @@ class _CapturingTicketRepository(InMemoryTicketRepository):
             payload["engineer_handoff_packet"] = None
             payload["engineer_agent_state"] = None
         return payloads
+
+
+class _RouteBorrowingPool:
+    def __init__(
+        self,
+        *,
+        connection: object | None = None,
+        borrow_error: Exception | None = None,
+        stats: dict[str, object] | None = None,
+        closed: bool = False,
+    ) -> None:
+        self.closed = closed
+        self._connection = connection
+        self._borrow_error = borrow_error
+        self._stats = dict(stats or {})
+        self.open_calls: list[tuple[bool, float | None]] = []
+        self.close_calls = 0
+        self.connection_calls: list[float | None] = []
+
+    def open(self, *, wait: bool = False, timeout: float | None = None) -> None:
+        self.open_calls.append((wait, timeout))
+        self.closed = False
+
+    def close(self) -> None:
+        self.close_calls += 1
+        self.closed = True
+
+    def connection(self, timeout: float | None = None):
+        self.connection_calls.append(timeout)
+        pool = self
+
+        class _ConnectionContext:
+            def __enter__(self_inner):
+                if pool._borrow_error is not None:
+                    error = pool._borrow_error
+                    pool._borrow_error = None
+                    raise error
+                return pool._connection
+
+            def __exit__(self_inner, exc_type, exc, tb) -> bool:
+                return False
+
+        return _ConnectionContext()
+
+    def get_stats(self):
+        return dict(self._stats)
 
 
 class DashboardTicketRouteTests(unittest.TestCase):
@@ -197,6 +247,72 @@ class DashboardTicketRouteTests(unittest.TestCase):
         self.assertEqual(payload["investigation_history"], [])
         self.assertIsNone(payload["engineer_handoff_packet"])
         self.assertIsNone(payload["engineer_agent_state"])
+
+    def test_engineer_ticket_list_recovers_from_pool_acquire_error_within_shared_budget(self) -> None:
+        repository = PostgresTicketRepository(
+            dsn="postgresql://example",
+            use_connection_pool=True,
+            connect_timeout=1,
+            pool_timeout_seconds=3,
+            pool_acquire_budget_seconds=4,
+        )
+        stale_pool = _RouteBorrowingPool(
+            borrow_error=PoolTimeout("couldn't get a connection after 3.00 sec"),
+            stats={
+                "pool_available": 2,
+                "requests_waiting": 0,
+                "pool_size": 3,
+            },
+        )
+        healthy_pool = _RouteBorrowingPool(connection=object())
+        repository._pool = stale_pool
+        main.ticket_repository = repository
+        self.repository = repository
+
+        engineer_case_row = (
+            "TK-ENG-RECOVER-001-1",
+            "TK-ENG-RECOVER-001",
+            1,
+            "recovered engineer case",
+            "investigating",
+            "worker_async_rag",
+            "rag_insufficient_evidence",
+            "",
+            None,
+            None,
+            None,
+            "2026-04-08T03:05:00+00:00",
+            "2026-04-08T03:07:00+00:00",
+            None,
+        )
+        ticket_header_map = {
+            "TK-ENG-RECOVER-001": {
+                "ticket_id": "TK-ENG-RECOVER-001",
+                "customer_id": "user-1",
+                "requester": "user-1",
+                "subject": "needs engineer",
+                "last_engineer_action": None,
+                "created_at": "2026-04-08T03:01:03.342358+00:00",
+                "updated_at": "2026-04-08T03:07:00+00:00",
+                "messages": [],
+            }
+        }
+
+        with patch.object(repository, "_pool_factory", return_value=healthy_pool):
+            with patch.object(repository, "_fetch_engineer_case_rows", return_value=[engineer_case_row]):
+                with patch.object(repository, "_fetch_ticket_header_map", return_value=ticket_header_map):
+                    with patch(
+                        "backend.repositories.ticket_repository.time.monotonic",
+                        side_effect=[100.0, 100.0, 103.25],
+                    ):
+                        payload = main.list_tickets(status="all")
+
+        tickets = payload["tickets"]
+        self.assertEqual([item["ticket_id"] for item in tickets], ["TK-ENG-RECOVER-001-1"])
+        self.assertEqual(stale_pool.connection_calls, [3.0])
+        self.assertEqual(healthy_pool.open_calls, [(False, None)])
+        self.assertEqual(len(healthy_pool.connection_calls), 1)
+        self.assertAlmostEqual(healthy_pool.connection_calls[0], 0.75)
 
     def test_dashboard_investigating_list_uses_one_row_per_client_ticket_and_detail_returns_all_sub_tickets(self) -> None:
         self._seed_ticket(
