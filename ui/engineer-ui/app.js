@@ -2536,9 +2536,6 @@ function renderTicketDetailHeaderHtml(viewState) {
         </div>
         <div class="workspace-header-toolbar-end">
           <span class="workspace-eyebrow">Ticket #${escapeHtml(viewState.ticketId)}</span>
-          <div class="workspace-header-actions">
-            <button class="btn btn-outline" type="button" data-detail-action="refresh-ticket">Sync Ticket</button>
-          </div>
         </div>
       </div>
 
@@ -3081,19 +3078,6 @@ async function handleDetailClick(event) {
 
   if (action === "back-to-pool") {
     closeTicketDetail();
-    return;
-  }
-
-  if (action === "refresh-ticket") {
-    button.disabled = true;
-    try {
-      await loadTickets({ refreshDetail: false });
-      await refreshSelectedTicket({ silent: true, showLoading: true });
-    } catch (error) {
-      window.alert(`Sync failed: ${error.message}`);
-    } finally {
-      button.disabled = false;
-    }
     return;
   }
 

@@ -146,8 +146,8 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260415-engineer-detail-back-icon-only-1", html)
-        self.assertIn('./app.js?v=20260415-case-buddy-hide-why-section-1', html)
+        self.assertIn("./styles.css?v=20260415-engineer-detail-remove-sync-ticket-button-1", html)
+        self.assertIn('./app.js?v=20260415-engineer-detail-remove-sync-ticket-button-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
@@ -163,6 +163,9 @@ class EngineerUiContractTests(unittest.TestCase):
             "Sending the approved customer reply and closing this engineer ticket...",
             app_source,
         )
+        self.assertNotIn('data-detail-action="refresh-ticket"', app_source)
+        self.assertNotIn('action === "refresh-ticket"', app_source)
+        self.assertNotIn("Sync failed:", app_source)
         self.assertIn(".detail-investigation-closing-state {", css)
         self.assertIn("function parseRoute()", app_source)
         self.assertIn('path.startsWith("/tickets/")', app_source)
@@ -969,8 +972,11 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (headerTopMarkup.includes(">Back to Pool<")) {{
                   throw new Error("Toolbar row should not keep visible Back to Pool text.");
                 }}
-                if (!headerTopMarkup.includes("Sync Ticket")) {{
-                  throw new Error("Toolbar row should include the sync action.");
+                if (headerTopMarkup.includes("Sync Ticket")) {{
+                  throw new Error("Toolbar row should not keep the removed sync action.");
+                }}
+                if (headerTopMarkup.includes("workspace-header-actions")) {{
+                  throw new Error("Toolbar row should not keep an empty header actions wrapper after removing sync.");
                 }}
                 if (!headerTopMarkup.includes("workspace-eyebrow")) {{
                   throw new Error("Toolbar row should keep the ticket id label.");
@@ -2609,6 +2615,71 @@ class EngineerUiContractTests(unittest.TestCase):
                 }
                 if (refreshCalls !== 0) {
                   throw new Error("Engineer websocket should not refresh the open detail view for unrelated tickets.");
+                }
+              """
+            )
+        )
+
+    def test_engineer_socket_refreshes_open_detail_for_matching_ticket(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                let lastSocket = null;
+                WebSocket = function WebSocket() {
+                  this.readyState = 1;
+                  this.close = () => {};
+                  this.send = () => {};
+                  lastSocket = this;
+                };
+
+                setAuthenticated(true);
+                selectedTicketId = "ENG-CASE-001";
+                selectedTicket = {
+                  ticket_id: "ENG-CASE-001",
+                  client_ticket_id: "CLIENT-CASE-001",
+                  client_ticket_ref: {
+                    ticket_id: "CLIENT-CASE-001",
+                    subject: "Joined but black screen",
+                  },
+                  subject: "Joined but black screen",
+                  requester: "user-10",
+                  status: "investigating",
+                  created_at: "2026-04-14T09:00:00+00:00",
+                  updated_at: "2026-04-14T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: null,
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+
+                let loadOptions = null;
+                let refreshOptions = null;
+                let refreshCalls = 0;
+                loadTickets = async (options = {}) => {
+                  loadOptions = options;
+                };
+                refreshSelectedTicket = async (options = {}) => {
+                  refreshOptions = options;
+                  refreshCalls += 1;
+                };
+
+                setupWebSocket();
+                await lastSocket.onmessage({
+                  data: JSON.stringify({
+                    event: "ticket_updated",
+                    engineer_case_id: "ENG-CASE-001",
+                    client_ticket_id: "CLIENT-CASE-001",
+                  }),
+                });
+
+                if (!loadOptions || loadOptions.refreshDetail !== false) {
+                  throw new Error("Engineer websocket should still refresh the pool without forcing detail refresh in the pool call.");
+                }
+                if (refreshCalls !== 1) {
+                  throw new Error("Engineer websocket should refresh the open detail view when the payload matches the current ticket.");
+                }
+                if (!refreshOptions || refreshOptions.silent !== true) {
+                  throw new Error("Engineer websocket should refresh the matching open detail silently.");
                 }
               """
             )
