@@ -19,6 +19,7 @@ class _CapturingTicketRepository(InMemoryTicketRepository):
         self.last_list_tickets_include_messages: bool | None = None
         self.last_list_engineer_cases_include_client_messages: bool | None = None
         self.last_list_engineer_cases_include_investigation_messages: bool | None = None
+        self.last_list_engineer_case_headers_called = False
 
     def list_tickets(self, include_messages: bool = True) -> list[dict[str, object]]:
         self.last_list_tickets_include_messages = include_messages
@@ -36,6 +37,21 @@ class _CapturingTicketRepository(InMemoryTicketRepository):
             include_client_messages=include_client_messages,
             include_investigation_messages=include_investigation_messages,
         )
+
+    def list_engineer_case_headers(self) -> list[dict[str, object]]:
+        self.last_list_engineer_case_headers_called = True
+        payloads = InMemoryTicketRepository.list_engineer_cases(
+            self,
+            include_client_messages=False,
+            include_investigation_messages=False,
+        )
+        for payload in payloads:
+            payload["messages"] = []
+            payload["active_investigation"] = None
+            payload["investigation_history"] = []
+            payload["engineer_handoff_packet"] = None
+            payload["engineer_agent_state"] = None
+        return payloads
 
 
 class DashboardTicketRouteTests(unittest.TestCase):
@@ -172,8 +188,15 @@ class DashboardTicketRouteTests(unittest.TestCase):
         response = self.client.get("/api/engineer/tickets?status=all")
 
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertFalse(repository.last_list_engineer_cases_include_client_messages)
-        self.assertFalse(repository.last_list_engineer_cases_include_investigation_messages)
+        self.assertTrue(repository.last_list_engineer_case_headers_called)
+        self.assertIsNone(repository.last_list_engineer_cases_include_client_messages)
+        self.assertIsNone(repository.last_list_engineer_cases_include_investigation_messages)
+        payload = response.json()["tickets"][0]
+        self.assertEqual(payload["messages"], [])
+        self.assertIsNone(payload["active_investigation"])
+        self.assertEqual(payload["investigation_history"], [])
+        self.assertIsNone(payload["engineer_handoff_packet"])
+        self.assertIsNone(payload["engineer_agent_state"])
 
     def test_dashboard_investigating_list_uses_one_row_per_client_ticket_and_detail_returns_all_sub_tickets(self) -> None:
         self._seed_ticket(
