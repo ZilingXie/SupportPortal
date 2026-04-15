@@ -549,7 +549,7 @@ def _summarize_agent_state(state: dict[str, Any] | None) -> str:
         "knowledge_summary": _truncate_text(agent_state.get("knowledge_summary")),
         "why_not_solved": _truncate_text(agent_state.get("why_not_solved")),
         "goal": _truncate_text(agent_state.get("goal")),
-        "known_facts": _clean_list(agent_state.get("known_facts"))[:4],
+        "known_facts": _clean_known_facts(agent_state.get("known_facts"))[:4],
         "missing_information": _clean_list(agent_state.get("missing_information"))[:4],
         "next_request_for_engineer": _truncate_text(agent_state.get("next_request_for_engineer")),
         "resolution_hypothesis": _truncate_text(agent_state.get("resolution_hypothesis")),
@@ -1088,14 +1088,35 @@ def _default_known_facts(ticket: dict[str, Any], handoff_packet: dict[str, Any])
         facts.append(f"Customer reported: {latest_customer}")
     rag_result = handoff_packet.get("rag_result")
     if isinstance(rag_result, dict):
-        candidate = _clean_text(rag_result.get("candidate_answer"))
-        if candidate:
-            facts.append(f"{_PUBLIC_ASSISTANT_NAME} candidate answer: {candidate}")
         source_count = len(list(rag_result.get("sources") or []))
         citation_count = len(list(rag_result.get("citations") or []))
         if source_count or citation_count:
             facts.append(f"Available evidence: {source_count} source(s), {citation_count} citation(s).")
     return facts[:4]
+
+
+def _normalize_known_fact_text(value: Any) -> str:
+    return " ".join(_clean_text(value).lower().split())
+
+
+def _is_candidate_answer_like_known_fact(value: Any) -> bool:
+    normalized = _normalize_known_fact_text(value)
+    if not normalized:
+        return False
+    return (
+        normalized.startswith(f"{_PUBLIC_ASSISTANT_NAME.lower()} candidate answer")
+        or normalized.startswith("candidate answer")
+        or normalized.startswith("the current candidate answer")
+        or normalized.startswith("client ai candidate answer")
+    )
+
+
+def _clean_known_facts(value: Any) -> list[str]:
+    return [
+        item
+        for item in _clean_list(value)
+        if not _is_candidate_answer_like_known_fact(item)
+    ]
 
 
 def _default_missing_information(ticket: dict[str, Any], handoff_packet: dict[str, Any]) -> list[str]:
@@ -1183,7 +1204,7 @@ def fallback_engineer_agent_state(
         "knowledge_summary": knowledge_summary,
         "why_not_solved": why_not_solved,
         "goal": goal,
-        "known_facts": _clean_list(existing.get("known_facts")) or _default_known_facts(ticket, packet),
+        "known_facts": _clean_known_facts(existing.get("known_facts")) or _default_known_facts(ticket, packet),
         "missing_information": missing_information,
         "next_request_for_engineer": next_request,
         "resolution_hypothesis": resolution_hypothesis,
@@ -1218,7 +1239,7 @@ def normalize_engineer_agent_state(
             "knowledge_summary": _clean_text(value.get("knowledge_summary")) or fallback["knowledge_summary"],
             "why_not_solved": _clean_text(value.get("why_not_solved")) or fallback["why_not_solved"],
             "goal": _clean_text(value.get("goal")) or fallback["goal"],
-            "known_facts": _clean_list(value.get("known_facts")) or fallback["known_facts"],
+            "known_facts": _clean_known_facts(value.get("known_facts")) or fallback["known_facts"],
             "missing_information": _clean_list(value.get("missing_information")) or fallback["missing_information"],
             "next_request_for_engineer": _clean_text(value.get("next_request_for_engineer"))
             or fallback["next_request_for_engineer"],

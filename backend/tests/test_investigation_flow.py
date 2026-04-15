@@ -13,6 +13,10 @@ from fastapi.testclient import TestClient
 
 import backend.main as main
 from backend.repositories.ticket_repository import InMemoryTicketRepository
+from backend.services.engineer_agent import (
+    fallback_engineer_agent_state,
+    normalize_engineer_agent_state,
+)
 from backend.services.investigation_flow import build_investigation_opening_context
 from backend.services.llm_factory import LlmInvocationError, LlmTextResult
 from backend.services.rag_service_client import RagTicketAnswerDetail
@@ -1797,7 +1801,6 @@ class InvestigationFlowTests(unittest.TestCase):
                     "goal": "Confirm the exact SDK version and whether Android 14 is the only affected platform before replying to the customer.",
                     "known_facts": [
                         "Customer reports token renewal still fails on Android 14.",
-                        "The current candidate answer recommends upgrading to SDK 4.2.2.",
                     ],
                     "missing_information": [
                         "Exact SDK version in the failing build",
@@ -1840,11 +1843,93 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(agent_state["phase"], "gather_missing_inputs")
         self.assertTrue(agent_state["goal"].startswith("Confirm the exact SDK version"))
         self.assertEqual(
+            agent_state["known_facts"],
+            ["Customer reports token renewal still fails on Android 14."],
+        )
+        self.assertEqual(
             agent_state["next_request_for_engineer"],
             "Please confirm the exact SDK version and whether Android 14 is the only affected platform.",
         )
         self.assertIsInstance(agent_state.get("reply_readiness"), dict)
         self.assertFalse(agent_state["reply_readiness"]["ready_for_customer_reply"])
+
+    def test_fallback_engineer_agent_state_omits_candidate_answer_from_known_facts(self) -> None:
+        state = fallback_engineer_agent_state(
+            {
+                "subject": "Android 14 token renew callback issue",
+                "engineer_agent_state": {},
+            },
+            {
+                "latest_customer_message": "Token renew callback still fails on Android 14.",
+                "rag_result": {
+                    "candidate_answer": "Please upgrade to SDK 4.2.2 and retry token renewal.",
+                    "sources": ["https://docs.agora.io/en/video-calling/token-authentication"],
+                    "citations": [],
+                },
+                "unresolved_reason": "rag_post_check_insufficient",
+            },
+            now_value="2026-04-15T08:00:00+00:00",
+            ready_to_reply=False,
+        )
+
+        self.assertEqual(
+            state["known_facts"],
+            [
+                "Customer reported: Token renew callback still fails on Android 14.",
+                "Available evidence: 1 source(s), 0 citation(s).",
+            ],
+        )
+
+    def test_normalize_engineer_agent_state_filters_candidate_answer_like_known_facts(self) -> None:
+        state = normalize_engineer_agent_state(
+            {
+                "phase": "gather_missing_inputs",
+                "issue_understanding": "Token renew callback still fails after the upgrade attempt.",
+                "knowledge_summary": "Client AI found generic token-authentication guidance but not enough Android 14-specific evidence.",
+                "why_not_solved": "The current grounded answer is not enough to prove the Android-specific fix.",
+                "goal": "Confirm Android 14 scope and exact SDK version before replying.",
+                "known_facts": [
+                    "Sid candidate answer: Please upgrade to SDK 4.2.2 and retry token renewal.",
+                    "The current candidate answer recommends upgrading to SDK 4.2.2.",
+                    "Verified Web SDK log shows token renew callback never fires on Android 14.",
+                ],
+                "missing_information": ["Exact SDK version"],
+                "next_request_for_engineer": "Please confirm Android 14 scope and exact SDK version.",
+                "resolution_hypothesis": "The issue may be isolated to SDK 4.2.1 on Android 14.",
+                "ready_to_reply": False,
+                "last_refreshed_at": "2026-04-15T08:00:00+00:00",
+                "reply_readiness": _reply_readiness(
+                    has_conclusion=False,
+                    has_proof=False,
+                    has_solution_or_next_step=False,
+                    reply_scope="needs_more_evidence",
+                    blockers=["Exact SDK version"],
+                    ready_for_customer_reply=False,
+                ),
+            },
+            ticket={
+                "subject": "Android 14 token renew callback issue",
+                "active_investigation": {
+                    "draft_customer_reply": "",
+                },
+            },
+            handoff_packet={
+                "latest_customer_message": "Token renew callback still fails on Android 14.",
+                "rag_result": {
+                    "candidate_answer": "Please upgrade to SDK 4.2.2 and retry token renewal.",
+                    "sources": ["https://docs.agora.io/en/video-calling/token-authentication"],
+                    "citations": [],
+                },
+                "unresolved_reason": "rag_post_check_insufficient",
+            },
+            now_value="2026-04-15T08:00:00+00:00",
+            ready_to_reply=False,
+        )
+
+        self.assertEqual(
+            state["known_facts"],
+            ["Verified Web SDK log shows token renew callback never fires on Android 14."],
+        )
 
     def test_customer_follow_up_during_investigation_keeps_same_thread_and_clears_confirmation(self) -> None:
         self._seed_ticket(
@@ -3212,7 +3297,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(latest_message.get("meta", {}).get("scenario"), "engineer_investigation_reply")
         self.assertEqual(latest_message.get("meta", {}).get("model"), "gpt-5.4")
         self.assertEqual(latest_message.get("meta", {}).get("reasoning_effort"), "medium")
-        self.assertEqual(latest_message.get("meta", {}).get("prompt_version"), "engineer-investigation-reply-v4")
+        self.assertEqual(latest_message.get("meta", {}).get("prompt_version"), "engineer-investigation-reply-v5")
         self.assertEqual(latest_message.get("meta", {}).get("generation_status"), "succeeded")
         self.assertTrue(payload["engineer_agent_state"]["reply_readiness"]["ready_for_customer_reply"])
         self.assertEqual(

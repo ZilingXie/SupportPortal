@@ -146,8 +146,8 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260415-engineer-detail-remove-sync-ticket-button-1", html)
-        self.assertIn('./app.js?v=20260415-engineer-detail-remove-sync-ticket-button-1', html)
+        self.assertIn("./styles.css?v=20260415-case-buddy-current-issue-1", html)
+        self.assertIn('./app.js?v=20260415-case-buddy-current-issue-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
@@ -167,6 +167,7 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertNotIn('action === "refresh-ticket"', app_source)
         self.assertNotIn("Sync failed:", app_source)
         self.assertIn(".detail-investigation-closing-state {", css)
+        self.assertIn(".case-buddy-request-summary {", css)
         self.assertIn("function parseRoute()", app_source)
         self.assertIn('path.startsWith("/tickets/")', app_source)
         self.assertIn("function renderTicketPoolView()", app_source)
@@ -1094,11 +1095,14 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!engineerThreadSection.includes("Action needed")) {{
                   throw new Error("The merged Case Buddy request should render the Action needed section.");
                 }}
-                if (!/Current issue[\\s\\S]*?<ul[\\s\\S]*?<li>Android 14 token renew callback fails on SDK 4\\.2\\.1\\.<\\/li>[\\s\\S]*?<li>Customer reported token renew callback failures on Android 14\\.<\\/li>[\\s\\S]*?<li>The engineer reproduced the issue on Android 14 with SDK 4\\.2\\.1 only\\.<\\/li>/m.test(engineerThreadSection)) {{
-                  throw new Error("Current issue should render issue understanding and known facts as bullet points.");
+                if (!/Current issue[\\s\\S]*?<p class="case-buddy-request-summary">Android 14 token renew callback fails on SDK 4\\.2\\.1\\.<\\/p>[\\s\\S]*?<ul[\\s\\S]*?<li>Customer reported token renew callback failures on Android 14\\.<\\/li>[\\s\\S]*?<li>The engineer reproduced the issue on Android 14 with SDK 4\\.2\\.1 only\\.<\\/li>/m.test(engineerThreadSection)) {{
+                  throw new Error("Current issue should render a summary paragraph followed by known-fact bullets.");
                 }}
                 if (!/Action needed[\\s\\S]*?<ul[\\s\\S]*?<li>Confirm the customer can upgrade to SDK 4\\.2\\.2 before approving the reply\\.<\\/li>[\\s\\S]*?<li>Confirm the customer can upgrade to SDK 4\\.2\\.2\\.<\\/li>/m.test(engineerThreadSection)) {{
                   throw new Error("Action needed should render the next request and missing information as bullet points.");
+                }}
+                if (engineerThreadSection.includes("Sid candidate answer")) {{
+                  throw new Error("Current issue should not leak Sid candidate answer text.");
                 }}
                 if (engineerThreadSection.includes("Why Sid couldn't solve it")) {{
                   throw new Error("The merged Case Buddy request should not render the Why Sid couldn't solve it section anymore.");
@@ -1186,8 +1190,8 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!html.includes("Action needed")) {{
                   throw new Error("Legacy engineer request text should still render the Action needed section.");
                 }}
-                if (!html.includes("<li>black screen happened on march 4th at 12pm</li>")) {{
-                  throw new Error("Legacy engineer request issue text should become a bullet in the Current issue section.");
+                if (!html.includes('<p class="case-buddy-request-summary">black screen happened on march 4th at 12pm</p>')) {{
+                  throw new Error("Legacy engineer request issue text should become the Current issue summary paragraph.");
                 }}
                 if (!html.includes("<li>check backend log regarding black screen issue</li>")) {{
                   throw new Error("Legacy engineer request action text should become a bullet in the Action needed section.");
@@ -1720,11 +1724,14 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (sections[0].title !== "Current issue") {
                   throw new Error("The first merged section should be Current issue.");
                 }
-                if (!sections[0].items.includes("Android 14 token renewal still fails after the customer upgraded the SDK.")) {
-                  throw new Error("Current issue should include the agent issue understanding.");
+                if (sections[0].summary !== "Android 14 token renewal still fails after the customer upgraded the SDK.") {
+                  throw new Error("Current issue should expose the agent issue understanding as the summary paragraph.");
                 }
                 if (!sections[0].items.includes("Customer already upgraded the SDK.")) {
                   throw new Error("Current issue should include known facts.");
+                }
+                if (sections[0].items.includes("Android 14 token renewal still fails after the customer upgraded the SDK.")) {
+                  throw new Error("Current issue summary should not be duplicated inside the facts bullets.");
                 }
                 if (sections[1].title !== "Action needed") {
                   throw new Error("The second merged section should be Action needed.");
@@ -1768,8 +1775,8 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!Array.isArray(sections) || sections.length !== 2) {
                   throw new Error("Structured Case Buddy requests should still return two sections after dedupe.");
                 }
-                if (!sections[0].items.includes("Camera/video capture failure reported for channel zilingtest, uid 2, around 2026-04-04 12:00 UTC+8.")) {
-                  throw new Error("Current issue should keep the issue_understanding summary.");
+                if (sections[0].summary !== "Camera/video capture failure reported for channel zilingtest, uid 2, around 2026-04-04 12:00 UTC+8.") {
+                  throw new Error("Current issue should keep the issue_understanding summary as the summary paragraph.");
                 }
                 if (sections[0].items.includes("Customer reported channel zilingtest")) {
                   throw new Error("Current issue should hide a redundant channel fact already covered by issue_understanding.");
@@ -1787,7 +1794,7 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
-    def test_case_buddy_current_issue_keeps_known_facts_without_issue_summary(self) -> None:
+    def test_case_buddy_current_issue_promotes_first_non_candidate_fact_when_issue_summary_missing(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
                 """
@@ -1800,6 +1807,7 @@ class EngineerUiContractTests(unittest.TestCase):
                     why_not_solved: "The current evidence is incomplete.",
                     goal: "Collect the next missing technical detail.",
                     known_facts: [
+                      "Sid candidate answer: Please ask the engineer to confirm the workaround.",
                       "Customer reported channel zilingtest",
                       "Problematic uid is 2",
                       "Issue time is around 2026-04-04 12:00 UTC+8",
@@ -1812,14 +1820,20 @@ class EngineerUiContractTests(unittest.TestCase):
                   },
                 });
 
-                if (!sections[0].items.includes("Customer reported channel zilingtest")) {
-                  throw new Error("Current issue should keep known_facts when issue_understanding is missing.");
+                if (sections[0].summary !== "Customer reported channel zilingtest") {
+                  throw new Error("Current issue should promote the first non-candidate known fact into the summary when issue_understanding is missing.");
+                }
+                if (sections[0].items.includes("Customer reported channel zilingtest")) {
+                  throw new Error("The promoted current-issue summary should not remain duplicated inside the fact bullets.");
                 }
                 if (!sections[0].items.includes("Problematic uid is 2")) {
-                  throw new Error("Current issue should keep uid facts when there is no issue_understanding summary.");
+                  throw new Error("Current issue should keep remaining uid facts when there is no issue_understanding summary.");
                 }
                 if (!sections[0].items.includes("Issue time is around 2026-04-04 12:00 UTC+8")) {
-                  throw new Error("Current issue should keep timestamp facts when there is no issue_understanding summary.");
+                  throw new Error("Current issue should keep remaining timestamp facts when there is no issue_understanding summary.");
+                }
+                if (sections[0].summary.includes("candidate answer") || sections[0].items.some((item) => item.includes("candidate answer"))) {
+                  throw new Error("Current issue should filter candidate-answer-like facts before choosing the summary and facts bullets.");
                 }
               """
             )

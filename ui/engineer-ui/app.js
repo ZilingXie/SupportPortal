@@ -1066,17 +1066,53 @@ function isCurrentIssueFactCoveredBySummary(issueUnderstanding, fact) {
   }
 }
 
+function isCandidateAnswerLikeCurrentIssueFact(fact) {
+  const normalizedFact = normalizeCaseBuddyFactText(fact);
+  if (!normalizedFact) {
+    return false;
+  }
+  const normalizedPublicAssistantName = normalizeCaseBuddyFactText(PUBLIC_ASSISTANT_DISPLAY_NAME);
+  return (
+    normalizedFact.startsWith(`${normalizedPublicAssistantName} candidate answer`) ||
+    normalizedFact.startsWith("candidate answer") ||
+    normalizedFact.startsWith("the current candidate answer") ||
+    normalizedFact.startsWith("client ai candidate answer")
+  );
+}
+
+function cleanCaseBuddyCurrentIssueFacts(facts) {
+  return (Array.isArray(facts) ? facts : [])
+    .map((fact) => String(fact || "").trim())
+    .filter(Boolean)
+    .filter((fact) => !isCandidateAnswerLikeCurrentIssueFact(fact));
+}
+
 function buildCaseBuddyCurrentIssueItems(agentState) {
   const issueUnderstanding = String(agentState?.issue_understanding || "").trim();
-  const knownFacts = Array.isArray(agentState?.known_facts) ? agentState.known_facts : [];
-  if (!issueUnderstanding) {
-    return withFallbackItems(knownFacts, CASE_BUDDY_CURRENT_ISSUE_FALLBACK);
+  const knownFacts = cleanCaseBuddyCurrentIssueFacts(agentState?.known_facts);
+  if (issueUnderstanding) {
+    const filteredKnownFacts = knownFacts.filter(
+      (fact) => !isCurrentIssueFactCoveredBySummary(issueUnderstanding, fact)
+    );
+    return {
+      summary: issueUnderstanding,
+      items: filteredKnownFacts,
+    };
   }
 
-  const filteredKnownFacts = knownFacts.filter(
-    (fact) => !isCurrentIssueFactCoveredBySummary(issueUnderstanding, fact)
-  );
-  return withFallbackItems([issueUnderstanding, ...filteredKnownFacts], CASE_BUDDY_CURRENT_ISSUE_FALLBACK);
+  if (knownFacts.length) {
+    const [summary, ...items] = knownFacts;
+    return {
+      summary,
+      items,
+    };
+  }
+
+  const [summary = "", ...items] = withFallbackItems([], CASE_BUDDY_CURRENT_ISSUE_FALLBACK);
+  return {
+    summary,
+    items,
+  };
 }
 
 function findOpeningCaseBuddyMessageIndex(messages) {
@@ -1097,10 +1133,12 @@ function findOpeningCaseBuddyMessageIndex(messages) {
 function buildCaseBuddyOpeningRequestSections(ticket, rawMessage = "") {
   const agentState = getEngineerAgentState(ticket);
   if (agentState) {
+    const currentIssue = buildCaseBuddyCurrentIssueItems(agentState);
     return [
       {
         title: "Current issue",
-        items: buildCaseBuddyCurrentIssueItems(agentState),
+        summary: currentIssue.summary,
+        items: currentIssue.items,
       },
       {
         title: "Action needed",
@@ -1116,13 +1154,15 @@ function buildCaseBuddyOpeningRequestSections(ticket, rawMessage = "") {
   }
 
   const parsedRequest = parseEngineerRequest(rawMessage);
+  const [summary = "", ...items] = withFallbackItems(
+    [parsedRequest.issue || String(rawMessage || "").trim()],
+    CASE_BUDDY_CURRENT_ISSUE_FALLBACK
+  );
   return [
     {
       title: "Current issue",
-      items: withFallbackItems(
-        [parsedRequest.issue || String(rawMessage || "").trim()],
-        CASE_BUDDY_CURRENT_ISSUE_FALLBACK
-      ),
+      summary,
+      items,
     },
     {
       title: "Action needed",
@@ -1140,14 +1180,23 @@ function renderCaseBuddyRequestSectionsHtml(sections) {
     <div class="case-buddy-request-sections">
       ${items
         .map(
-          (section) => `
+          (section) => {
+            const summary = String(section?.summary || "").trim();
+            const sectionItems = withFallbackItems(section?.items, "");
+            return `
             <section class="case-buddy-request-section">
               <p class="case-buddy-request-title">${String(section?.title || "")}</p>
-              <ul class="case-buddy-request-list">
-                ${withFallbackItems(section?.items, "").map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
-              </ul>
+              ${summary ? `<p class="case-buddy-request-summary">${escapeHtml(summary)}</p>` : ""}
+              ${
+                sectionItems.length
+                  ? `<ul class="case-buddy-request-list">
+                ${sectionItems.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+              </ul>`
+                  : ""
+              }
             </section>
-          `
+          `;
+          }
         )
         .join("")}
     </div>

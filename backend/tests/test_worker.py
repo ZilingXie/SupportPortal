@@ -1380,7 +1380,7 @@ class WorkerResilienceTests(unittest.TestCase):
                 "knowledge_summary": "Client AI found generic token-authentication guidance but not enough Android 14-specific evidence.",
                 "why_not_solved": "The current grounded answer is not enough to prove the Android-specific fix.",
                 "goal": "Confirm Android 14 scope and exact SDK version before replying.",
-                "known_facts": ["Candidate answer recommends SDK 4.2.2."],
+                "known_facts": ["Customer confirmed the upgrade attempt already failed."],
                 "missing_information": ["Exact SDK version", "Whether Android 14 is the only affected platform"],
                 "next_request_for_engineer": "Please confirm Android 14 scope and exact SDK version.",
                 "resolution_hypothesis": "The issue may be isolated to SDK 4.2.1 on Android 14.",
@@ -1421,6 +1421,10 @@ class WorkerResilienceTests(unittest.TestCase):
             "Please upgrade to SDK 4.2.2 and retry token renewal.",
         )
         self.assertEqual(saved_engineer_case["engineer_agent_state"]["phase"], "gather_missing_inputs")
+        self.assertEqual(
+            saved_engineer_case["engineer_agent_state"]["known_facts"],
+            ["Customer confirmed the upgrade attempt already failed."],
+        )
         self.assertEqual(saved_engineer_case["engineer_case_id"], "T-RETRY-1")
         self.assertEqual(saved_engineer_case["title"], "Token question")
         self.assertEqual(repository.save_engineer_case.call_count, 1)
