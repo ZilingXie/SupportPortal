@@ -146,8 +146,8 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260415-engineer-detail-lightweight-1", html)
-        self.assertIn('./app.js?v=20260415-engineer-detail-lightweight-1', html)
+        self.assertIn("./styles.css?v=20260415-engineer-detail-back-icon-only-1", html)
+        self.assertIn('./app.js?v=20260415-engineer-detail-back-icon-only-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
@@ -218,6 +218,7 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn(".status-surface-escalated", css)
         self.assertIn(".status-surface-investigating", css)
         self.assertIn(".status-surface-resolved", css)
+        self.assertIn(".detail-back-icon-btn", css)
         self.assertIn('font-family: "Material Symbols Outlined";', css)
         self.assertIn("html.material-symbols-pending .material-symbols-outlined", css)
         self.assertIn("visibility: hidden;", css)
@@ -957,8 +958,17 @@ class EngineerUiContractTests(unittest.TestCase):
                   throw new Error("Detail header should render a toolbar row ahead of the title block.");
                 }}
                 const headerTopMarkup = html.slice(headerTopStart, headerMainStart);
-                if (!headerTopMarkup.includes("Back to Pool")) {{
-                  throw new Error("Toolbar row should keep the back action.");
+                if (!headerTopMarkup.includes('detail-back-icon-btn')) {{
+                  throw new Error("Toolbar row should render the icon-only back action.");
+                }}
+                if (!headerTopMarkup.includes('aria-label="Back to Pool"')) {{
+                  throw new Error("Back action should keep an accessible label.");
+                }}
+                if (!headerTopMarkup.includes("arrow_back")) {{
+                  throw new Error("Back action should render the arrow_back icon.");
+                }}
+                if (headerTopMarkup.includes(">Back to Pool<")) {{
+                  throw new Error("Toolbar row should not keep visible Back to Pool text.");
                 }}
                 if (!headerTopMarkup.includes("Sync Ticket")) {{
                   throw new Error("Toolbar row should include the sync action.");

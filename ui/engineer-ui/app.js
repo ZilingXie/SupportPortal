@@ -2528,7 +2528,15 @@ function renderTicketDetailHeaderHtml(viewState) {
     <header class="workspace-header">
       <div class="workspace-header-top">
         <div class="workspace-header-toolbar-start">
-          <button class="btn btn-ghost" type="button" data-detail-action="back-to-pool">Back to Pool</button>
+          <button
+            class="detail-back-icon-btn"
+            type="button"
+            data-detail-action="back-to-pool"
+            aria-label="Back to Pool"
+            title="Back to Pool"
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
+          </button>
           <div class="workspace-header-badges">
             <span class="status-badge ${statusClass(viewState.status)}">${escapeHtml(
               statusLabel(viewState.status)
