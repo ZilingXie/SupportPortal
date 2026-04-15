@@ -1341,6 +1341,115 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_client_send_message_sync_followup_sync_replaces_optimistic_customer_turn_without_duplication(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Admin", email: "admin@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+                render = () => {};
+                requestChatScrollToBottom = () => {};
+                ensurePendingStatusPolling = () => {};
+                AbortController = class AbortController {
+                  constructor() {
+                    this.signal = { aborted: false };
+                  }
+                  abort() {
+                    this.signal.aborted = true;
+                  }
+                };
+
+                const ticket = createTicket(state.user.id);
+                updateTicketProduct(ticket.id, "audio_video_calling");
+                state.view = "chat-ticket";
+                state.activeTicketId = ticket.id;
+
+                const persistedCustomerCreatedAt = "2026-04-15T03:43:59.738250+00:00";
+                let resolveAck = null;
+                fetch = (url, options = undefined) => {
+                  if (url === "/api/client/ack") {
+                    return new Promise((resolve) => {
+                      resolveAck = resolve;
+                    });
+                  }
+                  if (url === "/api/tickets/query") {
+                    return Promise.resolve({
+                      ok: true,
+                      json: async () => ({
+                        ticket_id: ticket.id,
+                        answer: "Thanks for your response. I'm glad to hear the information provided was helpful. I'll mark this case as resolved. If you have any further questions, please create a new ticket.",
+                        ai_replied: true,
+                        queued_for_ai: false,
+                        message_created_at: persistedCustomerCreatedAt,
+                        ack_source: "workflow",
+                        processing_mode: "main_agent_sync",
+                        status: "resolved",
+                      }),
+                    });
+                  }
+                  if (url.startsWith("/api/tickets?customer_id=user-1&status=all")) {
+                    return Promise.resolve({
+                      ok: true,
+                      json: async () => ({
+                        tickets: [
+                          {
+                            ticket_id: ticket.id,
+                            customer_id: "user-1",
+                            subject: "Black Screen Troubleshooting",
+                            status: "resolved",
+                            product: "audio_video_calling",
+                            created_at: "2026-04-15T03:30:00.000000+00:00",
+                            updated_at: "2026-04-15T03:44:00.000000+00:00",
+                            messages: [
+                              {
+                                role: "customer",
+                                content: "it worked, thanks!",
+                                created_at: persistedCustomerCreatedAt,
+                              },
+                              {
+                                role: "assistant",
+                                content: "Thanks for your response. I'm glad to hear the information provided was helpful. I'll mark this case as resolved. If you have any further questions, please create a new ticket.",
+                                created_at: "2026-04-15T03:44:00.000000+00:00",
+                              },
+                            ],
+                          },
+                        ],
+                      }),
+                    });
+                  }
+                  throw new Error(`Unexpected fetch call to ${url}`);
+                };
+
+                await handleSendMessage("it worked, thanks!");
+
+                const updated = getTicketById(ticket.id);
+                if (!updated) {
+                  throw new Error("Expected ticket to remain available after the sync response and catch-up sync.");
+                }
+                const followUps = updated.messages.filter(
+                  (message) => message.role === "user" && message.content === "it worked, thanks!"
+                );
+                if (followUps.length !== 1) {
+                  throw new Error(`Expected exactly one persisted user follow-up after sync, got ${followUps.length}.`);
+                }
+                if (followUps[0].createdAt !== persistedCustomerCreatedAt) {
+                  throw new Error("Expected the backend persisted customer timestamp to replace the optimistic local timestamp.");
+                }
+                if (updated.messages.length !== 2) {
+                  throw new Error(`Expected one user message and one assistant reply after sync, got ${updated.messages.length}.`);
+                }
+                const resolvedHtml = renderChatTicket();
+                const renderedFollowUps = (resolvedHtml.match(/it worked, thanks!/g) || []).length;
+                if (renderedFollowUps !== 1) {
+                  throw new Error(`Expected the rendered transcript to show one customer follow-up, got ${renderedFollowUps}.`);
+                }
+                if (!resolveAck) {
+                  throw new Error("Expected client ack request promise to remain pending.");
+                }
+              """
+            )
+        )
+
     def test_client_realtime_ready_keeps_visible_ack_until_durable_reply_syncs(self) -> None:
         self.run_client_app_script(
             textwrap.dedent(

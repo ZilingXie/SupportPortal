@@ -215,7 +215,9 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(payload["ack_source"], "client_model")
         self.assertEqual(payload["processing_mode"], "main_agent_async")
         self.assertEqual(payload["status"], "communicating")
+        self.assertTrue(str(payload["message_created_at"] or "").strip())
         self.assertTrue(str(payload["queued_message_created_at"] or "").strip())
+        self.assertEqual(payload["message_created_at"], payload["queued_message_created_at"])
         self.assertGreaterEqual(float(payload["api_persist_latency_ms"]), 0.0)
         self.assertGreaterEqual(float(payload["api_return_latency_ms"]), 0.0)
         enqueue_mock.assert_awaited_once()
@@ -223,6 +225,7 @@ class InvestigationFlowTests(unittest.TestCase):
         saved_ticket = self.repository.get_ticket("TK-OPT-001")
         self.assertIsNotNone(saved_ticket)
         assert saved_ticket is not None
+        self.assertEqual(saved_ticket["messages"][-1]["created_at"], payload["message_created_at"])
         self.assertEqual(
             [
                 {
@@ -401,6 +404,8 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(payload["status"], "resolved")
         self.assertTrue(payload["ai_replied"])
         self.assertFalse(payload["queued_for_ai"])
+        self.assertTrue(str(payload["message_created_at"] or "").strip())
+        self.assertIsNone(payload["queued_message_created_at"])
         self.assertEqual(payload["answer_route"], "workflow")
         self.assertEqual(payload["route_reason"], "customer_confirmed_resolved")
         self.assertFalse(payload["citations"])
@@ -410,6 +415,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertIsNotNone(stored)
         assert stored is not None
         self.assertEqual(stored["status"], "resolved")
+        self.assertEqual(stored["messages"][-2]["created_at"], payload["message_created_at"])
         self.assertEqual(stored["messages"][-1]["workflow_action"], "resolve_ticket")
         self.assertEqual(stored["messages"][-1]["answer_route"], "workflow")
         self.assertEqual(stored["messages"][-1]["route_reason"], "customer_confirmed_resolved")
