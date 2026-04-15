@@ -161,6 +161,28 @@ class SyncRedisTaskQueue:
             return None
         return payload if isinstance(payload, dict) else None
 
+    def list_pending_tasks(self, limit_per_queue: int = 200) -> list[dict[str, Any]]:
+        client = self._client()
+        if client is None:
+            return []
+        safe_limit = max(1, int(limit_per_queue))
+        pending: list[dict[str, Any]] = []
+        for queue_name in self._queue_names:
+            try:
+                raw_items = client.lrange(queue_name, 0, safe_limit - 1)
+            except Exception as exc:
+                LOGGER.warning("Task queue snapshot failed for %s: %s", queue_name, exc)
+                continue
+            for raw_payload in raw_items:
+                try:
+                    payload = json.loads(raw_payload)
+                except Exception:
+                    LOGGER.warning("Invalid task payload in queue snapshot: %s", raw_payload)
+                    continue
+                if isinstance(payload, dict):
+                    pending.append(payload)
+        return pending
+
     def close(self) -> None:
         if self._redis is None:
             return

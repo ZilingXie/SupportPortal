@@ -56,6 +56,13 @@ def _load_worker_module():
 
     fake_main = types.ModuleType("backend.main")
     fake_main.build_answer = lambda *_args, **_kwargs: ("", 0.0, [], [], False)
+    fake_main.build_query_task = lambda ticket_id, customer_message, message_created_at, **kwargs: {
+        "task_type": "ticket_query",
+        "ticket_id": ticket_id,
+        "customer_message": customer_message,
+        "message_created_at": message_created_at,
+        **kwargs,
+    }
     fake_main.resolve_support_message = lambda *_args, **_kwargs: None
     fake_main.build_client_sync_event = lambda *_args, **_kwargs: {}
     fake_main.build_engineer_followup_request = lambda *_args, **_kwargs: "follow up"
@@ -1050,6 +1057,97 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(retry_task["last_retry_at"], "2026-03-22T00:02:00+00:00")
         self.assertIn("server closed the connection unexpectedly", retry_task["last_error"])
         sleep_mock.assert_called_once_with(0.5)
+
+    def test_recover_stale_ticket_query_tasks_on_worker_start_reenqueues_missing_async_turn(self) -> None:
+        stuck_ticket = _build_ticket(ticket_id="TK-116")
+        stuck_ticket["messages"].append(
+            {
+                "role": "customer",
+                "content": "i got black screen, what should i do now?",
+                "created_at": "2026-03-22T00:03:00+00:00",
+            }
+        )
+        stuck_ticket["updated_at"] = "2026-03-22T00:03:01+00:00"
+        repository = Mock()
+        repository.list_tickets.return_value = [copy.deepcopy(stuck_ticket)]
+        repository.list_ticket_events.return_value = [
+            {
+                "ticket_id": "TK-116",
+                "event_type": "ticket_ai_processing",
+                "payload": {
+                    "message_created_at": "2026-03-22T00:03:00+00:00",
+                },
+                "created_at": "2026-03-22T00:03:02+00:00",
+            }
+        ]
+        queue = Mock()
+        queue.list_pending_tasks.return_value = []
+        queue.enqueue.return_value = True
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "now_iso",
+            return_value="2026-03-22T00:05:00+00:00",
+        ):
+            recovered = worker._recover_stale_ticket_query_tasks_on_worker_start(
+                queue,
+                worker_started_at="2026-03-22T00:04:00+00:00",
+            )
+
+        self.assertEqual(recovered, 1)
+        queue.enqueue.assert_called_once()
+        recovery_task = queue.enqueue.call_args.args[0]
+        self.assertEqual(recovery_task["ticket_id"], "TK-116")
+        self.assertEqual(recovery_task["customer_message"], "i got black screen, what should i do now?")
+        self.assertEqual(recovery_task["message_created_at"], "2026-03-22T00:03:00+00:00")
+        self.assertEqual(recovery_task["processing_mode"], "worker_startup_recovery")
+        self.assertEqual(recovery_task["latest_assistant_message"]["content"], "I am checking the knowledge base for you now.")
+        repository.record_event.assert_called_once()
+        self.assertEqual(repository.record_event.call_args.args[0], "TK-116")
+        self.assertEqual(repository.record_event.call_args.args[1], "ticket_ai_recovery_queued")
+        recovery_event = repository.record_event.call_args.args[2]
+        self.assertEqual(recovery_event["message_created_at"], "2026-03-22T00:03:00+00:00")
+        self.assertEqual(recovery_event["recovery_reason"], "missing_async_completion_after_worker_restart")
+
+    def test_recover_stale_ticket_query_tasks_on_worker_start_skips_turn_still_in_queue(self) -> None:
+        stuck_ticket = _build_ticket(ticket_id="TK-117")
+        stuck_ticket["messages"].append(
+            {
+                "role": "customer",
+                "content": "the video stays frozen",
+                "created_at": "2026-03-22T00:03:00+00:00",
+            }
+        )
+        repository = Mock()
+        repository.list_tickets.return_value = [copy.deepcopy(stuck_ticket)]
+        repository.list_ticket_events.return_value = [
+            {
+                "ticket_id": "TK-117",
+                "event_type": "ticket_ai_processing",
+                "payload": {
+                    "message_created_at": "2026-03-22T00:03:00+00:00",
+                },
+                "created_at": "2026-03-22T00:03:02+00:00",
+            }
+        ]
+        queue = Mock()
+        queue.list_pending_tasks.return_value = [
+            {
+                "task_type": "ticket_query",
+                "ticket_id": "TK-117",
+                "message_created_at": "2026-03-22T00:03:00+00:00",
+            }
+        ]
+
+        with patch.object(worker, "ticket_repository", repository):
+            recovered = worker._recover_stale_ticket_query_tasks_on_worker_start(
+                queue,
+                worker_started_at="2026-03-22T00:04:00+00:00",
+            )
+
+        self.assertEqual(recovered, 0)
+        queue.enqueue.assert_not_called()
+        repository.record_event.assert_not_called()
 
     def test_process_ticket_query_skips_duplicate_final_response_after_requeue(self) -> None:
         initial_ticket = _build_ticket()
