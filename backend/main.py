@@ -191,6 +191,14 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _ticket_db_startup_init_retries() -> int:
+    return _safe_int_env("TICKET_DB_STARTUP_INIT_RETRIES", 2)
+
+
+def _ticket_db_startup_init_retry_delay_seconds() -> float:
+    return _safe_float_env("TICKET_DB_STARTUP_INIT_RETRY_DELAY_SECONDS", 1.0)
+
+
 def _main_agent_async_enabled() -> bool:
     return bool(ASYNC_QUERY_ENABLED and OPTIMISTIC_PARALLEL_ROUTE_ENABLED)
 
@@ -1902,15 +1910,34 @@ def logout() -> dict[str, Any]:
 @app.on_event("startup")
 def startup_event() -> None:
     global ticket_repository
-    try:
-        ticket_repository.initialize()
-        LOGGER.info("Ticket repository initialized: %s", ticket_repository.storage_mode())
-    except (psycopg.OperationalError, psycopg.Error, OSError, TimeoutError) as exc:
-        LOGGER.error("Ticket repository initialization failed: %s", exc)
-        fallback_repository = InMemoryTicketRepository()
-        fallback_repository.initialize()
-        ticket_repository = fallback_repository
-        LOGGER.warning("Falling back to in-memory ticket repository for this process.")
+    attempts = max(1, _ticket_db_startup_init_retries() + 1)
+    retry_delay_seconds = _ticket_db_startup_init_retry_delay_seconds()
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            ticket_repository.initialize()
+            LOGGER.info("Ticket repository initialized: %s", ticket_repository.storage_mode())
+            return
+        except (psycopg.OperationalError, psycopg.Error, OSError, TimeoutError) as exc:
+            last_error = exc
+            if attempt >= attempts:
+                break
+            LOGGER.warning(
+                "Ticket repository initialization failed attempt %s/%s: %s",
+                attempt,
+                attempts,
+                exc,
+            )
+            time.sleep(retry_delay_seconds)
+    LOGGER.error(
+        "Ticket repository initialization failed after %s attempts: %s",
+        attempts,
+        last_error,
+    )
+    fallback_repository = InMemoryTicketRepository()
+    fallback_repository.initialize()
+    ticket_repository = fallback_repository
+    LOGGER.warning("Falling back to in-memory ticket repository for this process.")
 
 
 @app.on_event("shutdown")

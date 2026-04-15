@@ -17,7 +17,7 @@ from backend.repositories.knowledge_repository import (
     _vector_type_dimension,
     create_knowledge_repository,
 )
-from backend.repositories.ticket_repository import PostgresTicketRepository, create_ticket_repository
+from backend.repositories.ticket_repository import PoolTimeout, PostgresTicketRepository, create_ticket_repository
 from backend.repositories.ticket_repository import InMemoryTicketRepository
 
 
@@ -158,6 +158,42 @@ class _FakePool:
     def close(self) -> None:
         self.close_calls += 1
         self.closed = True
+
+
+class _BorrowingPool(_FakePool):
+    def __init__(
+        self,
+        *,
+        connection: _ReusableConnection | None = None,
+        borrow_error: Exception | None = None,
+        stats: dict[str, object] | None = None,
+        closed: bool = False,
+    ) -> None:
+        super().__init__(closed=closed)
+        self._connection = connection
+        self._borrow_error = borrow_error
+        self._stats = dict(stats or {})
+        self.connection_calls: list[float | None] = []
+
+    def connection(self, timeout: float | None = None):
+        self.connection_calls.append(timeout)
+        pool = self
+
+        class _ConnectionContext:
+            def __enter__(self_inner):
+                if pool._borrow_error is not None:
+                    error = pool._borrow_error
+                    pool._borrow_error = None
+                    raise error
+                return pool._connection
+
+            def __exit__(self_inner, exc_type, exc, tb) -> bool:
+                return False
+
+        return _ConnectionContext()
+
+    def get_stats(self):
+        return dict(self._stats)
 
 
 class RepositoryConfigurationTests(unittest.TestCase):
@@ -805,6 +841,58 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("pool_available=0", str(error))
         self.assertIn("requests_waiting=3", str(error))
         self.assertIn("pool_size=4", str(error))
+
+    def test_ticket_repository_rebuilds_pool_and_retries_after_borrow_timeout(self) -> None:
+        repository = PostgresTicketRepository(
+            dsn="postgresql://example",
+            use_connection_pool=True,
+            connect_timeout=10,
+            pool_timeout_seconds=15,
+        )
+        stale_pool = _BorrowingPool(
+            borrow_error=PoolTimeout("couldn't get a connection after 15.00 sec"),
+            stats={
+                "pool_available": 2,
+                "requests_waiting": 0,
+                "pool_size": 3,
+            },
+        )
+        healthy_pool = _BorrowingPool(
+            connection=_ReusableConnection(
+                _ReusableCursor(
+                    fetchall_results=[
+                        [
+                            (
+                                "T-1",
+                                "C-1",
+                                "Requester",
+                                "Subject",
+                                "open",
+                                None,
+                                None,
+                                0,
+                                None,
+                                None,
+                                "2026-03-31T00:00:00+00:00",
+                                "2026-03-31T00:00:00+00:00",
+                            )
+                        ]
+                    ]
+                )
+            )
+        )
+        repository._pool = stale_pool
+
+        with patch.object(repository, "_pool_factory", return_value=healthy_pool):
+            with patch.object(repository, "_fetch_messages", return_value={"T-1": []}):
+                with patch.object(repository, "_fetch_investigations", return_value={"T-1": []}):
+                    tickets = repository.list_tickets(include_messages=True)
+
+        self.assertEqual(len(tickets), 1)
+        self.assertEqual(tickets[0]["ticket_id"], "T-1")
+        self.assertEqual(stale_pool.close_calls, 1)
+        self.assertIs(repository._pool, healthy_pool)
+        self.assertEqual(healthy_pool.open_calls, [(True, repository._pool_timeout_seconds)])
 
     def test_ticket_repository_opens_new_connection_between_event_writes_without_pool(self) -> None:
         repository = PostgresTicketRepository(dsn="postgresql://example")

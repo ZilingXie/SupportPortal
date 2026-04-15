@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from unittest.mock import patch
 
 if __import__("importlib.util").util.find_spec("psycopg") is None:
     raise unittest.SkipTest("psycopg is not installed in the local test environment")
@@ -41,6 +42,21 @@ class _TrackingKnowledgeRepository:
         return "postgres"
 
 
+class _FlakyRepository:
+    def __init__(self, failures: int, message: str = "connection timeout expired") -> None:
+        self.failures = failures
+        self.message = message
+        self.initialize_calls = 0
+
+    def initialize(self) -> None:
+        self.initialize_calls += 1
+        if self.initialize_calls <= self.failures:
+            raise psycopg.OperationalError(self.message)
+
+    def storage_mode(self) -> str:
+        return "postgres"
+
+
 class StartupRepositoryFallbackTests(unittest.TestCase):
     def setUp(self) -> None:
         self.original_ticket_repository = main.ticket_repository
@@ -55,10 +71,31 @@ class StartupRepositoryFallbackTests(unittest.TestCase):
     def test_main_startup_falls_back_to_in_memory_ticket_repository_when_ticket_db_init_fails(self) -> None:
         main.ticket_repository = _FailingRepository("connection timeout expired")
 
-        main.startup_event()
+        with patch("backend.main.time.sleep"):
+            main.startup_event()
 
         self.assertIsInstance(main.ticket_repository, InMemoryTicketRepository)
         self.assertEqual(main.ticket_repository.storage_mode(), "memory")
+
+    def test_main_startup_retries_transient_ticket_db_init_failure_before_falling_back(self) -> None:
+        repository = _FlakyRepository(failures=1)
+        main.ticket_repository = repository
+
+        with patch.dict(
+            os.environ,
+            {
+                "TICKET_DB_STARTUP_INIT_RETRIES": "2",
+                "TICKET_DB_STARTUP_INIT_RETRY_DELAY_SECONDS": "0.25",
+            },
+            clear=False,
+        ):
+            with patch("backend.main.time.sleep") as sleep_mock:
+                main.startup_event()
+
+        self.assertIs(main.ticket_repository, repository)
+        self.assertEqual(repository.storage_mode(), "postgres")
+        self.assertEqual(repository.initialize_calls, 2)
+        sleep_mock.assert_called_once_with(0.25)
 
     def test_rag_api_startup_falls_back_to_in_memory_event_repository_when_event_db_init_fails(self) -> None:
         rag_api.event_repository = _FailingRepository("connection timeout expired")
