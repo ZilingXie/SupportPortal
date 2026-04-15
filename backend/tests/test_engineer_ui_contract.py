@@ -146,8 +146,8 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260415-engineer-detail-lightweight-1", html)
-        self.assertIn('./app.js?v=20260415-engineer-detail-lightweight-1', html)
+        self.assertIn("./styles.css?v=20260415-engineer-detail-back-icon-only-1", html)
+        self.assertIn('./app.js?v=20260415-case-buddy-hide-why-section-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
@@ -169,7 +169,6 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn("function renderTicketPoolView()", app_source)
         self.assertIn("function renderTicketDetailView()", app_source)
         self.assertIn("Current issue", app_source)
-        self.assertIn("Why Sid couldn't solve it", app_source)
         self.assertIn("Action needed", app_source)
         self.assertIn("Engineer Ticket Command", html)
         self.assertIn("Start Investigation", app_source)
@@ -218,6 +217,7 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn(".status-surface-escalated", css)
         self.assertIn(".status-surface-investigating", css)
         self.assertIn(".status-surface-resolved", css)
+        self.assertIn(".detail-back-icon-btn", css)
         self.assertIn('font-family: "Material Symbols Outlined";', css)
         self.assertIn("html.material-symbols-pending .material-symbols-outlined", css)
         self.assertIn("visibility: hidden;", css)
@@ -957,8 +957,17 @@ class EngineerUiContractTests(unittest.TestCase):
                   throw new Error("Detail header should render a toolbar row ahead of the title block.");
                 }}
                 const headerTopMarkup = html.slice(headerTopStart, headerMainStart);
-                if (!headerTopMarkup.includes("Back to Pool")) {{
-                  throw new Error("Toolbar row should keep the back action.");
+                if (!headerTopMarkup.includes('detail-back-icon-btn')) {{
+                  throw new Error("Toolbar row should render the icon-only back action.");
+                }}
+                if (!headerTopMarkup.includes('aria-label="Back to Pool"')) {{
+                  throw new Error("Back action should keep an accessible label.");
+                }}
+                if (!headerTopMarkup.includes("arrow_back")) {{
+                  throw new Error("Back action should render the arrow_back icon.");
+                }}
+                if (headerTopMarkup.includes(">Back to Pool<")) {{
+                  throw new Error("Toolbar row should not keep visible Back to Pool text.");
                 }}
                 if (!headerTopMarkup.includes("Sync Ticket")) {{
                   throw new Error("Toolbar row should include the sync action.");
@@ -1059,20 +1068,17 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!engineerThreadSection.includes("Current issue")) {{
                   throw new Error("The merged Case Buddy request should render the Current issue section.");
                 }}
-                if (!engineerThreadSection.includes("Why Sid couldn't solve it")) {{
-                  throw new Error("The merged Case Buddy request should render the Why Sid couldn't solve it section.");
-                }}
                 if (!engineerThreadSection.includes("Action needed")) {{
                   throw new Error("The merged Case Buddy request should render the Action needed section.");
                 }}
                 if (!/Current issue[\\s\\S]*?<ul[\\s\\S]*?<li>Android 14 token renew callback fails on SDK 4\\.2\\.1\\.<\\/li>[\\s\\S]*?<li>Customer reported token renew callback failures on Android 14\\.<\\/li>[\\s\\S]*?<li>The engineer reproduced the issue on Android 14 with SDK 4\\.2\\.1 only\\.<\\/li>/m.test(engineerThreadSection)) {{
                   throw new Error("Current issue should render issue understanding and known facts as bullet points.");
                 }}
-                if (!/Why Sid couldn't solve it[\\s\\S]*?<ul[\\s\\S]*?<li>Sid did not have reproducible platform-scoped evidence before the engineer confirmed Android 14 plus SDK 4\\.2\\.1\\.<\\/li>/m.test(engineerThreadSection)) {{
-                  throw new Error("Why Sid couldn't solve it should render the engineer agent explanation as a bullet point.");
-                }}
                 if (!/Action needed[\\s\\S]*?<ul[\\s\\S]*?<li>Confirm the customer can upgrade to SDK 4\\.2\\.2 before approving the reply\\.<\\/li>[\\s\\S]*?<li>Confirm the customer can upgrade to SDK 4\\.2\\.2\\.<\\/li>/m.test(engineerThreadSection)) {{
                   throw new Error("Action needed should render the next request and missing information as bullet points.");
+                }}
+                if (engineerThreadSection.includes("Why Sid couldn't solve it")) {{
+                  throw new Error("The merged Case Buddy request should not render the Why Sid couldn't solve it section anymore.");
                 }}
                 if (engineerThreadSection.includes("Current understanding:")) {{
                   throw new Error("The merged opening request should no longer show the old summary-style Current understanding label.");
@@ -1154,9 +1160,6 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!html.includes("Current issue")) {{
                   throw new Error("Legacy engineer request text should still render the Current issue section.");
                 }}
-                if (!html.includes("Why Sid couldn't solve it")) {{
-                  throw new Error("Legacy engineer request text should still render the Why Sid couldn't solve it section.");
-                }}
                 if (!html.includes("Action needed")) {{
                   throw new Error("Legacy engineer request text should still render the Action needed section.");
                 }}
@@ -1166,8 +1169,8 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!html.includes("<li>check backend log regarding black screen issue</li>")) {{
                   throw new Error("Legacy engineer request action text should become a bullet in the Action needed section.");
                 }}
-                if (!html.includes("<li>Sid still lacks verifiable evidence, so it is not yet safe to send a customer reply.</li>")) {{
-                  throw new Error("Legacy engineer request rendering should supply the deterministic Why Sid fallback bullet.");
+                if (html.includes("Why Sid couldn't solve it")) {{
+                  throw new Error("Legacy engineer request text should no longer render the Why Sid couldn't solve it section.");
                 }}
                 if (html.includes("Engineer Request:")) {{
                   throw new Error("Legacy engineer request text should be replaced by the merged structured Case Buddy block.");
@@ -1688,8 +1691,8 @@ class EngineerUiContractTests(unittest.TestCase):
                   },
                 });
 
-                if (!Array.isArray(sections) || sections.length !== 3) {
-                  throw new Error("Structured Case Buddy requests should return the three merged sections.");
+                if (!Array.isArray(sections) || sections.length !== 2) {
+                  throw new Error("Structured Case Buddy requests should return the two merged sections.");
                 }
                 if (sections[0].title !== "Current issue") {
                   throw new Error("The first merged section should be Current issue.");
@@ -1700,19 +1703,13 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!sections[0].items.includes("Customer already upgraded the SDK.")) {
                   throw new Error("Current issue should include known facts.");
                 }
-                if (sections[1].title !== "Why Sid couldn't solve it") {
-                  throw new Error("The second merged section should explain why Sid could not solve it.");
+                if (sections[1].title !== "Action needed") {
+                  throw new Error("The second merged section should be Action needed.");
                 }
-                if (!sections[1].items.includes("The current evidence does not prove the exact SDK regression boundary.")) {
-                  throw new Error("The Why Sid section should use the agent why_not_solved field.");
-                }
-                if (sections[2].title !== "Action needed") {
-                  throw new Error("The third merged section should be Action needed.");
-                }
-                if (!sections[2].items.includes("Please confirm the exact SDK version and whether Android 14 is the only affected platform.")) {
+                if (!sections[1].items.includes("Please confirm the exact SDK version and whether Android 14 is the only affected platform.")) {
                   throw new Error("Action needed should include the agent next request.");
                 }
-                if (!sections[2].items.includes("Exact SDK version") || !sections[2].items.includes("Cross-platform reproduction scope")) {
+                if (!sections[1].items.includes("Exact SDK version") || !sections[1].items.includes("Cross-platform reproduction scope")) {
                   throw new Error("Action needed should include the remaining missing information bullets.");
                 }
               """
@@ -1745,8 +1742,8 @@ class EngineerUiContractTests(unittest.TestCase):
                   },
                 });
 
-                if (!Array.isArray(sections) || sections.length !== 3) {
-                  throw new Error("Structured Case Buddy requests should still return three sections after dedupe.");
+                if (!Array.isArray(sections) || sections.length !== 2) {
+                  throw new Error("Structured Case Buddy requests should still return two sections after dedupe.");
                 }
                 if (!sections[0].items.includes("Camera/video capture failure reported for channel zilingtest, uid 2, around 2026-04-04 12:00 UTC+8.")) {
                   throw new Error("Current issue should keep the issue_understanding summary.");

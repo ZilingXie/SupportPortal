@@ -112,6 +112,7 @@ const state = {
   pendingAbortController: null,
   pendingTicketId: null,
   pendingUserMessageId: null,
+  pendingPersistedUserMessageCreatedAt: null,
   pendingAsyncTicketId: null,
   pendingAsyncMessageCreatedAt: null,
   pendingClientAck: null,
@@ -652,7 +653,7 @@ function getPendingReplyAnchorIndex(ticket) {
     }
   }
 
-  const pendingCreatedAt = String(state.pendingAsyncMessageCreatedAt || "").trim();
+  const pendingCreatedAt = String(state.pendingPersistedUserMessageCreatedAt || "").trim();
   if (pendingCreatedAt) {
     const index = messages.findIndex(
       (message) =>
@@ -677,6 +678,7 @@ function clearPendingRequestState() {
   state.pendingAbortController = null;
   state.pendingTicketId = null;
   state.pendingUserMessageId = null;
+  state.pendingPersistedUserMessageCreatedAt = null;
   state.pendingAsyncTicketId = null;
   state.pendingAsyncMessageCreatedAt = null;
   clearPendingAckState();
@@ -1030,7 +1032,7 @@ function getPendingLocalUserMessageForSync(localTicket) {
 }
 
 function remoteTicketHasPersistedPendingCustomerTurn(remoteTicket) {
-  const pendingCreatedAt = String(state.pendingAsyncMessageCreatedAt || "").trim();
+  const pendingCreatedAt = String(state.pendingPersistedUserMessageCreatedAt || "").trim();
   if (!pendingCreatedAt) {
     return false;
   }
@@ -2834,6 +2836,9 @@ async function handleSendMessage(text, options = {}) {
     const payload = await response.json();
     const updated = getTicketById(ticketId);
     const queuedForAi = Boolean(payload?.queued_for_ai);
+    state.pendingPersistedUserMessageCreatedAt = String(
+      payload?.message_created_at || payload?.queued_message_created_at || ""
+    ).trim();
     if (queuedForAi) {
       keepWaitingForAsync = true;
       state.pendingAsyncTicketId = ticketId;

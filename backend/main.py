@@ -2596,6 +2596,7 @@ async def create_or_update_ticket(
         "ai_replied": ai_replied,
         "needs_engineer_input": needs_engineer_input,
         "queued_for_ai": task_enqueued,
+        "message_created_at": timestamp,
         "queued_message_created_at": timestamp if task_enqueued else None,
         "answer_route": route_payload.get("answer_route"),
         "scope_label": route_payload.get("scope_label"),

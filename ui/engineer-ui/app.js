@@ -6,7 +6,6 @@ const ENGINEER_DISPLAY_NAME = "jack";
 const ENGINEER_AI_DISPLAY_NAME = "Case Buddy";
 const PUBLIC_ASSISTANT_DISPLAY_NAME = "Sid";
 const CASE_BUDDY_CURRENT_ISSUE_FALLBACK = "The current issue summary is still being clarified.";
-const CASE_BUDDY_WHY_FALLBACK = "Sid still lacks verifiable evidence, so it is not yet safe to send a customer reply.";
 const CASE_BUDDY_ACTION_FALLBACK = "Review the current evidence and decide the next technical check.";
 
 const loginScreenEl = document.getElementById("login-screen");
@@ -1104,10 +1103,6 @@ function buildCaseBuddyOpeningRequestSections(ticket, rawMessage = "") {
         items: buildCaseBuddyCurrentIssueItems(agentState),
       },
       {
-        title: "Why Sid couldn't solve it",
-        items: withFallbackItems([agentState.why_not_solved], CASE_BUDDY_WHY_FALLBACK),
-      },
-      {
         title: "Action needed",
         items: withFallbackItems(
           [
@@ -1128,10 +1123,6 @@ function buildCaseBuddyOpeningRequestSections(ticket, rawMessage = "") {
         [parsedRequest.issue || String(rawMessage || "").trim()],
         CASE_BUDDY_CURRENT_ISSUE_FALLBACK
       ),
-    },
-    {
-      title: "Why Sid couldn't solve it",
-      items: [CASE_BUDDY_WHY_FALLBACK],
     },
     {
       title: "Action needed",
@@ -2835,7 +2826,15 @@ function renderTicketDetailHeaderHtml(viewState) {
     <header class="workspace-header">
       <div class="workspace-header-top">
         <div class="workspace-header-toolbar-start">
-          <button class="btn btn-ghost" type="button" data-detail-action="back-to-pool">Back to Pool</button>
+          <button
+            class="detail-back-icon-btn"
+            type="button"
+            data-detail-action="back-to-pool"
+            aria-label="Back to Pool"
+            title="Back to Pool"
+          >
+            <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
+          </button>
           <div class="workspace-header-badges">
             <span class="status-badge ${statusClass(viewState.status)}">${escapeHtml(
               statusLabel(viewState.status)
