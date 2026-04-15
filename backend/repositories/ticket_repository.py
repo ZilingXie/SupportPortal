@@ -1414,28 +1414,55 @@ class PostgresTicketRepository:
             return True
         return _is_retryable_storage_error(exc)
 
+    def _should_retry_pool_acquire_error(self, exc: Exception) -> bool:
+        if not self._use_connection_pool:
+            return False
+        if not isinstance(exc, (psycopg.OperationalError, psycopg.Error, OSError, TimeoutError)):
+            return False
+        lowered = _clean_error_text(exc).lower()
+        return (
+            "ticket db pool warm-up failed" in lowered
+            or "ticket db pool warm-up did not complete" in lowered
+            or "ticket db pool borrow timed out" in lowered
+            or "while backend connections were still establishing" in lowered
+            or "connection timeout expired" in lowered
+        )
+
     def _run_with_connection_retry(
         self,
         operation_name: str,
         action: Callable[[psycopg.Connection[Any]], _ResultT],
     ) -> _ResultT:
         attempt = 0
+        pool_retry_attempt = 0
         while True:
-            with self._borrow_connection() as conn:
-                try:
-                    return action(conn)
-                except Exception as exc:
-                    should_retry = self._should_retry_connection_error(conn, exc)
-                    if should_retry:
-                        self._invalidate_connection(conn)
-                    if not should_retry or attempt >= 1:
-                        raise
-                    attempt += 1
-                    LOGGER.warning(
-                        "Ticket repository %s hit a retryable storage error; resetting connection and retrying once: %s",
-                        operation_name,
-                        exc,
-                    )
+            try:
+                with self._borrow_connection() as conn:
+                    try:
+                        return action(conn)
+                    except Exception as exc:
+                        should_retry = self._should_retry_connection_error(conn, exc)
+                        if should_retry:
+                            self._invalidate_connection(conn)
+                        if not should_retry or attempt >= 1:
+                            raise
+                        attempt += 1
+                        LOGGER.warning(
+                            "Ticket repository %s hit a retryable storage error; resetting connection and retrying once: %s",
+                            operation_name,
+                            exc,
+                        )
+            except Exception as exc:
+                should_retry_pool = self._should_retry_pool_acquire_error(exc)
+                if not should_retry_pool or pool_retry_attempt >= 1:
+                    raise
+                pool_retry_attempt += 1
+                LOGGER.warning(
+                    "Ticket repository %s hit a retryable pool acquire error; rebuilding the pool and retrying once: %s",
+                    operation_name,
+                    exc,
+                )
+                self.close()
 
     def initialize(self) -> None:
         with self._connect() as conn:
