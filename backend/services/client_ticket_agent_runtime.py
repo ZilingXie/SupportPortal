@@ -20,6 +20,11 @@ from backend.services.investigation_flow import (
 )
 from backend.services.support_products import get_support_product_label, list_support_product_field_labels
 from backend.services.support_router import SupportResolution, SupportRouteDecision
+from backend.services.ticket_resolution import (
+    build_resolved_confirmation_reply,
+    is_customer_resolved_confirmation_candidate,
+    matched_resolution_markers,
+)
 from backend.services.troubleshooting_intake import (
     TroubleshootingIntakeResult,
     build_client_intake_state,
@@ -75,69 +80,6 @@ _CLARIFY_REPLY_MARKERS = (
     "api version",
     "api semantics",
 )
-_RESOLVED_CONFIRMATION_MAX_CHARS = 160
-_RESOLVED_CONFIRMATION_POSITIVE_MARKERS = (
-    "got it",
-    "understood",
-    "that helps",
-    "helpful",
-    "solved",
-    "resolved",
-    "thanks",
-    "thank you",
-    "thx",
-    "明白了",
-    "知道了",
-    "了解了",
-    "已经解决",
-    "解决了",
-    "谢谢",
-    "感谢",
-    "收到",
-)
-_RESOLVED_CONFIRMATION_NEGATIVE_MARKERS = (
-    "?",
-    "？",
-    "still",
-    "but",
-    "however",
-    "another question",
-    "one more",
-    "issue",
-    "problem",
-    "error",
-    "not resolved",
-    "not working",
-    "doesn't work",
-    "didn't work",
-    "failed",
-    "fail",
-    "unresolved",
-    "未解决",
-    "没解决",
-    "还有问题",
-    "还有个问题",
-    "还有一个问题",
-    "仍然",
-    "还是",
-    "但是",
-    "不过",
-    "错误",
-    "报错",
-    "不行",
-    "不好用",
-)
-_RESOLVED_CONFIRMATION_CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
-_NON_SUBSTANTIVE_ANSWER_REASONS = {
-    RAG_INSUFFICIENT_EVIDENCE_REASON,
-    RAG_SERVICE_ERROR_REASON,
-    RAG_UNAVAILABLE_REASON,
-    RAG_PROCESSING_TIMEOUT_REASON,
-    RAG_POST_CHECK_INSUFFICIENT_REASON,
-    RAG_POST_CHECK_ERROR_REASON,
-    DEADLINE_EXHAUSTED_REASON,
-    ROUTE_TIMEOUT_REASON,
-}
 
 
 def _utc_now() -> str:
@@ -148,67 +90,9 @@ def _clean_text(value: Any) -> str:
     return " ".join(str(value or "").split()).strip()
 
 
-def _is_cjk_text(value: str) -> bool:
-    return bool(_RESOLVED_CONFIRMATION_CJK_RE.search(str(value or "")))
-
-
-def _is_substantive_answer_message(message: dict[str, Any] | None) -> bool:
-    if not isinstance(message, dict):
-        return False
-    if str(message.get("role") or "").strip().lower() != "assistant":
-        return False
-    if not _clean_text(message.get("content")):
-        return False
-    if _clean_text(message.get("workflow_action")) != WORKFLOW_ACTION_ANSWER_CUSTOMER:
-        return False
-    if _clean_text(message.get("answer_route")).lower() == "refuse":
-        return False
-    if _clean_text(message.get("route_reason")).lower() in _NON_SUBSTANTIVE_ANSWER_REASONS:
-        return False
-    return True
-
-
-def _is_explicit_resolved_confirmation(message: str) -> bool:
-    cleaned = _clean_text(message)
-    if not cleaned or len(cleaned) > _RESOLVED_CONFIRMATION_MAX_CHARS:
-        return False
-    lowered = cleaned.lower()
-    if not any(marker in lowered for marker in _RESOLVED_CONFIRMATION_POSITIVE_MARKERS):
-        return False
-    if any(marker in lowered for marker in _RESOLVED_CONFIRMATION_NEGATIVE_MARKERS):
-        return False
-    return True
-
-
-def is_customer_resolved_confirmation_candidate(
-    message: str,
-    *,
-    latest_assistant_message: dict[str, Any] | None,
-    current_ticket_status: str | None,
-) -> bool:
-    if normalize_ticket_status(current_ticket_status) == RESOLVED_STATUS:
-        return False
-    if not _is_substantive_answer_message(latest_assistant_message):
-        return False
-    return _is_explicit_resolved_confirmation(message)
-
-
-def _resolved_confirmation_reply(message: str) -> str:
-    if _is_cjk_text(message):
-        return (
-            "感谢你的回复，很高兴这些信息对你有帮助。"
-            "我会将这个工单标记为已解决。"
-            "如果你后续还有其他问题，欢迎再创建一个新工单。"
-        )
-    return (
-        "Thanks for your response. I'm glad to hear the information provided was helpful. "
-        "I'll mark this case as resolved. If you have any further questions, please create a new ticket."
-    )
-
-
 def _build_resolved_confirmation_resolution(message: str) -> SupportResolution:
     return SupportResolution(
-        answer=_resolved_confirmation_reply(message),
+        answer=build_resolved_confirmation_reply(message),
         confidence=1.0,
         sources=[],
         citations=[],
@@ -221,7 +105,7 @@ def _build_resolved_confirmation_resolution(message: str) -> SupportResolution:
         route_reason="customer_confirmed_resolved",
         route_confidence=1.0,
         search_used=False,
-        matched_signals=["customer_confirmed_resolved"],
+        matched_signals=matched_resolution_markers(message) or ["customer_confirmed_resolved"],
         evidence_summary=None,
         packed_evidence=None,
     )
@@ -1085,6 +969,7 @@ def execute_client_ticket_agent_runtime(
     client_intake_state: dict[str, Any] | None = None,
     latest_assistant_message: dict[str, Any] | None = None,
     current_ticket_status: str | None = None,
+    has_active_engineer_case: bool = False,
     route_agent: Callable[..., SupportRouteDecision],
     route_executor: Callable[..., SupportResolution],
     rag_agent: Callable[..., RagTicketAnswerDetail],
@@ -1129,117 +1014,6 @@ def execute_client_ticket_agent_runtime(
         event_type="started",
         payload={},
     )
-    if is_customer_resolved_confirmation_candidate(
-        message,
-        latest_assistant_message=latest_assistant_message,
-        current_ticket_status=current_ticket_status,
-    ):
-        diagnostics["customer_resolved_confirmation"] = True
-        _mark_agent_summary(
-            route_summary,
-            phase="skipped",
-            status="skipped",
-            decision="skipped",
-            reason="customer_confirmed_resolved",
-        )
-        _append_event(
-            agent_events,
-            ticket_id=ticket_id,
-            message_id=message_id,
-            run_id=run_id,
-            agent_name=AGENT_NAME_ROUTE,
-            phase="skipped",
-            event_type="skipped",
-            payload={"reason": "customer_confirmed_resolved"},
-        )
-        _mark_agent_summary(
-            rag_summary,
-            phase="skipped",
-            status="skipped",
-            decision="skipped",
-            reason="customer_confirmed_resolved",
-            extra={"request_id": rag_request_id},
-        )
-        _append_event(
-            agent_events,
-            ticket_id=ticket_id,
-            message_id=message_id,
-            run_id=run_id,
-            agent_name=AGENT_NAME_RAG,
-            phase="skipped",
-            event_type="skipped",
-            payload={"reason": "customer_confirmed_resolved", "request_id": rag_request_id},
-        )
-        _mark_agent_summary(
-            review_summary,
-            phase="skipped",
-            status="skipped",
-            decision="skipped",
-            reason="customer_confirmed_resolved",
-        )
-        _append_event(
-            agent_events,
-            ticket_id=ticket_id,
-            message_id=message_id,
-            run_id=run_id,
-            agent_name=AGENT_NAME_REVIEW,
-            phase="skipped",
-            event_type="skipped",
-            payload={"reason": "customer_confirmed_resolved"},
-        )
-        result = _build_ticket_execution_result(
-            resolution=_build_resolved_confirmation_resolution(message),
-            needs_investigating=False,
-            workflow_action=WORKFLOW_ACTION_RESOLVE_TICKET,
-            next_status=RESOLVED_STATUS,
-        )
-        _mark_agent_summary(
-            main_summary,
-            phase="completed",
-            status="completed",
-            decision=result.workflow_action,
-            reason=result.route_reason,
-        )
-        _append_event(
-            agent_events,
-            ticket_id=ticket_id,
-            message_id=message_id,
-            run_id=run_id,
-            agent_name=AGENT_NAME_MAIN,
-            phase="completed",
-            event_type="workflow_decided",
-            payload={
-                "workflow_action": result.workflow_action,
-                "route_reason": result.route_reason,
-                "next_status": result.next_status,
-            },
-        )
-        runtime_state = ClientTicketAgentRuntimeState(
-            runtime_version=CLIENT_TICKET_AGENT_RUNTIME_VERSION,
-            active_run_id=run_id,
-            product=_clean_text(product) or None,
-            message_id=_clean_text(message_id) or None,
-            workflow_action=result.workflow_action,
-            main_agent=dict(main_summary),
-            route_agent=dict(route_summary),
-            rag_agent=dict(rag_summary),
-            review_agent=dict(review_summary),
-            status="completed",
-            updated_at=_utc_now(),
-            completed_at=_utc_now(),
-        )
-        result = _attach_runtime_metadata(
-            result,
-            run_id=run_id,
-            runtime_state=runtime_state,
-            agent_events=agent_events,
-        )
-        return ClientTicketAgentRuntimeExecution(
-            result=result,
-            runtime_state=runtime_state,
-            agent_events=agent_events,
-            diagnostics=diagnostics,
-        )
     intake_short_circuit_result = None
     if _is_troubleshooting_intake_candidate(
         message=message,
@@ -1399,6 +1173,9 @@ def execute_client_ticket_agent_runtime(
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
         product=product,
+        latest_assistant_message=latest_assistant_message,
+        current_ticket_status=current_ticket_status,
+        has_active_engineer_case=has_active_engineer_case,
     )
     rag_future: Future[RagTicketAnswerDetail] = executor.submit(
         rag_agent,
@@ -1507,15 +1284,29 @@ def execute_client_ticket_agent_runtime(
                 ticket_subject=ticket_subject,
                 ticket_context=ticket_context,
                 product=product,
+                latest_assistant_message=latest_assistant_message,
+                current_ticket_status=current_ticket_status,
+                has_active_engineer_case=has_active_engineer_case,
                 decision=route_decision,
             )
             result = _build_ticket_execution_result(
                 resolution=resolution,
                 needs_investigating=bool(resolution.needs_engineer_guidance),
-                workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET
-                if bool(resolution.needs_engineer_guidance)
-                else WORKFLOW_ACTION_ANSWER_CUSTOMER,
+                workflow_action=(
+                    WORKFLOW_ACTION_RESOLVE_TICKET
+                    if str(route_decision.execution_action or "").strip() == WORKFLOW_ACTION_RESOLVE_TICKET
+                    else (
+                        WORKFLOW_ACTION_OPEN_ENGINEER_TICKET
+                        if bool(resolution.needs_engineer_guidance)
+                        else WORKFLOW_ACTION_ANSWER_CUSTOMER
+                    )
+                ),
                 investigation_reason=resolution.route_reason if resolution.needs_engineer_guidance else None,
+                next_status=(
+                    RESOLVED_STATUS
+                    if str(route_decision.execution_action or "").strip() == WORKFLOW_ACTION_RESOLVE_TICKET
+                    else None
+                ),
             )
             _mark_agent_summary(
                 main_summary,
@@ -1533,6 +1324,101 @@ def execute_client_ticket_agent_runtime(
                 phase="completed",
                 event_type="workflow_decided",
                 payload={"workflow_action": result.workflow_action, "route_reason": result.route_reason},
+            )
+            runtime_state = ClientTicketAgentRuntimeState(
+                runtime_version=CLIENT_TICKET_AGENT_RUNTIME_VERSION,
+                active_run_id=run_id,
+                product=_clean_text(product) or None,
+                message_id=_clean_text(message_id) or None,
+                workflow_action=result.workflow_action,
+                main_agent=dict(main_summary),
+                route_agent=dict(route_summary),
+                rag_agent=dict(rag_summary),
+                review_agent=dict(review_summary),
+                status="completed",
+                updated_at=_utc_now(),
+                completed_at=_utc_now(),
+            )
+            result = _attach_runtime_metadata(
+                result,
+                run_id=run_id,
+                runtime_state=runtime_state,
+                agent_events=agent_events,
+            )
+            return ClientTicketAgentRuntimeExecution(
+                result=result,
+                runtime_state=runtime_state,
+                agent_events=agent_events,
+                diagnostics=diagnostics,
+            )
+
+        if route_decision is None and is_customer_resolved_confirmation_candidate(
+            message,
+            latest_assistant_message=latest_assistant_message,
+            current_ticket_status=current_ticket_status,
+        ):
+            diagnostics["customer_resolved_confirmation"] = True
+            _mark_agent_summary(
+                rag_summary,
+                phase="skipped",
+                status="skipped",
+                decision="skipped",
+                reason="customer_confirmed_resolved",
+                extra={"request_id": rag_request_id},
+            )
+            _append_event(
+                agent_events,
+                ticket_id=ticket_id,
+                message_id=message_id,
+                run_id=run_id,
+                agent_name=AGENT_NAME_RAG,
+                phase="skipped",
+                event_type="skipped",
+                payload={"reason": "customer_confirmed_resolved", "request_id": rag_request_id},
+            )
+            _mark_agent_summary(
+                review_summary,
+                phase="skipped",
+                status="skipped",
+                decision="skipped",
+                reason="customer_confirmed_resolved",
+            )
+            _append_event(
+                agent_events,
+                ticket_id=ticket_id,
+                message_id=message_id,
+                run_id=run_id,
+                agent_name=AGENT_NAME_REVIEW,
+                phase="skipped",
+                event_type="skipped",
+                payload={"reason": "customer_confirmed_resolved"},
+            )
+            result = _build_ticket_execution_result(
+                resolution=_build_resolved_confirmation_resolution(message),
+                needs_investigating=False,
+                workflow_action=WORKFLOW_ACTION_RESOLVE_TICKET,
+                next_status=RESOLVED_STATUS,
+            )
+            _mark_agent_summary(
+                main_summary,
+                phase="completed",
+                status="completed",
+                decision=result.workflow_action,
+                reason=result.route_reason,
+            )
+            _append_event(
+                agent_events,
+                ticket_id=ticket_id,
+                message_id=message_id,
+                run_id=run_id,
+                agent_name=AGENT_NAME_MAIN,
+                phase="completed",
+                event_type="workflow_decided",
+                payload={
+                    "workflow_action": result.workflow_action,
+                    "route_reason": result.route_reason,
+                    "next_status": result.next_status,
+                },
             )
             runtime_state = ClientTicketAgentRuntimeState(
                 runtime_version=CLIENT_TICKET_AGENT_RUNTIME_VERSION,

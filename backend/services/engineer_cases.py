@@ -219,3 +219,42 @@ def build_new_engineer_case(
         "investigation_state": "active",
         "messages": [],
     }
+
+
+def close_case_context_active_investigation(
+    case_context: dict[str, Any],
+    *,
+    now_value: str,
+    system_note: str | None = None,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    active_investigation = case_context.get("active_investigation")
+    if not isinstance(active_investigation, dict):
+        return None, []
+
+    appended_messages: list[dict[str, Any]] = []
+    if system_note:
+        next_sequence = len(active_investigation.get("messages", [])) + 1
+        system_message = {
+            "id": f"{active_investigation.get('id')}-m-{next_sequence}",
+            "role": "system",
+            "content": str(system_note).strip(),
+            "created_at": now_value,
+        }
+        active_investigation.setdefault("messages", []).append(system_message)
+        appended_messages.append(system_message)
+
+    active_investigation["state"] = "closed"
+    active_investigation["draft_customer_reply"] = str(
+        active_investigation.get("draft_customer_reply") or ""
+    ).strip()
+    active_investigation["final_confirmation_requested_at"] = None
+    active_investigation["updated_at"] = now_value
+    active_investigation["closed_at"] = now_value
+
+    history = case_context.get("investigation_history")
+    if not isinstance(history, list):
+        history = []
+        case_context["investigation_history"] = history
+    history.insert(0, active_investigation)
+    case_context["active_investigation"] = None
+    return active_investigation, appended_messages

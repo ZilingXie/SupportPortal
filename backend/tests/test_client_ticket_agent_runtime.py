@@ -101,8 +101,11 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(payload["retrieval_plan_snapshot"]["query_class"], "how_to_faq")
         self.assertEqual(payload["retrieval_plan_snapshot"]["open_diagnosis_target"], "rag-abc123")
 
-    def test_resolved_confirmation_short_circuits_before_route_agent_and_marks_ticket_resolved(self) -> None:
+    def test_resolved_confirmation_routes_via_route_agent_and_marks_ticket_resolved(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        route_called: list[bool] = []
+        route_executor_called: list[bool] = []
 
         execution = execute_client_ticket_agent_runtime(
             message="got it, thanks",
@@ -127,13 +130,43 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 "execution_action": "rag",
             },
             current_ticket_status="communicating",
-            route_agent=lambda **_kwargs: self.fail("route agent should not run for resolved confirmation"),
-            route_executor=lambda **_kwargs: self.fail("route executor should not run for resolved confirmation"),
+            route_agent=lambda **_kwargs: route_called.append(True) or SupportRouteDecision(
+                scope_label="ticket_resolution",
+                route="resolve_ticket",
+                confidence=0.99,
+                reason="customer_confirmed_resolved",
+                matched_signals=["got it", "thanks"],
+                response_language="en",
+                route_family="ticket_resolution",
+                execution_action="resolve_ticket",
+                tooling_profile="deterministic_resolution",
+            ),
+            route_executor=lambda **_kwargs: route_executor_called.append(True) or SupportResolution(
+                answer=(
+                    "Thanks for your response. I'm glad to hear the information provided was helpful. "
+                    "I'll mark this case as resolved. If you have any further questions, please create a new ticket."
+                ),
+                confidence=1.0,
+                sources=[],
+                citations=[],
+                needs_engineer_guidance=False,
+                answer_route="workflow",
+                scope_label="ticket_resolution",
+                route_reason="customer_confirmed_resolved",
+                route_confidence=0.99,
+                search_used=False,
+                matched_signals=["got it", "thanks"],
+                route_family="ticket_resolution",
+                execution_action="resolve_ticket",
+                tooling_profile="deterministic_resolution",
+            ),
             rag_agent=lambda **_kwargs: self.fail("rag agent should not run for resolved confirmation"),
             review_agent=lambda **_kwargs: self.fail("review agent should not run for resolved confirmation"),
             rag_canceler=None,
         )
 
+        self.assertTrue(route_called)
+        self.assertTrue(route_executor_called)
         self.assertEqual(execution.result.workflow_action, "resolve_ticket")
         self.assertEqual(execution.result.next_status, "resolved")
         self.assertEqual(execution.result.answer_route, "workflow")
@@ -145,12 +178,14 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertFalse(execution.result.citations)
         self.assertFalse(execution.result.needs_investigating)
         self.assertIn("I'll mark this case as resolved", execution.result.answer)
-        self.assertEqual(execution.runtime_state.route_agent.get("status"), "skipped")
-        self.assertEqual(execution.runtime_state.rag_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.route_agent.get("status"), "completed")
+        self.assertEqual(execution.runtime_state.rag_agent.get("status"), "cancelled")
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
 
     def test_resolved_confirmation_returns_chinese_resolution_message(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        route_called: list[bool] = []
 
         execution = execute_client_ticket_agent_runtime(
             message="明白了，谢谢",
@@ -175,16 +210,80 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 "execution_action": "rag",
             },
             current_ticket_status="communicating",
-            route_agent=lambda **_kwargs: self.fail("route agent should not run for resolved confirmation"),
-            route_executor=lambda **_kwargs: self.fail("route executor should not run for resolved confirmation"),
+            route_agent=lambda **_kwargs: route_called.append(True) or SupportRouteDecision(
+                scope_label="ticket_resolution",
+                route="resolve_ticket",
+                confidence=0.99,
+                reason="customer_confirmed_resolved",
+                matched_signals=["明白了", "谢谢"],
+                response_language="zh",
+                route_family="ticket_resolution",
+                execution_action="resolve_ticket",
+                tooling_profile="deterministic_resolution",
+            ),
+            route_executor=lambda **_kwargs: SupportResolution(
+                answer="感谢你的回复，很高兴这些信息对你有帮助。我会将这个工单标记为已解决。如果你后续还有其他问题，欢迎再创建一个新工单。",
+                confidence=1.0,
+                sources=[],
+                citations=[],
+                needs_engineer_guidance=False,
+                answer_route="workflow",
+                scope_label="ticket_resolution",
+                route_reason="customer_confirmed_resolved",
+                route_confidence=0.99,
+                search_used=False,
+                matched_signals=["明白了", "谢谢"],
+                route_family="ticket_resolution",
+                execution_action="resolve_ticket",
+                tooling_profile="deterministic_resolution",
+            ),
             rag_agent=lambda **_kwargs: self.fail("rag agent should not run for resolved confirmation"),
             review_agent=lambda **_kwargs: self.fail("review agent should not run for resolved confirmation"),
             rag_canceler=None,
         )
 
+        self.assertTrue(route_called)
         self.assertEqual(execution.result.workflow_action, "resolve_ticket")
         self.assertEqual(execution.result.next_status, "resolved")
         self.assertIn("我会将这个工单标记为已解决", execution.result.answer)
+
+    def test_resolved_confirmation_route_failure_falls_back_to_resolution_for_engineer_guidance_reply(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        execution = execute_client_ticket_agent_runtime(
+            message="it worked, thanks!",
+            ticket_id="TK-RESOLVE-ENG-1",
+            customer_id="C-001",
+            ticket_subject="Black screen issue",
+            ticket_context=[
+                {"role": "customer", "content": "I got black screen issue."},
+                {
+                    "role": "assistant",
+                    "content": "Please try switching to a different camera and test again.",
+                },
+            ],
+            product="audio_video_calling",
+            message_id="2026-04-15T01:00:00+00:00",
+            latest_assistant_message={
+                "role": "assistant",
+                "content": "Please try switching to a different camera and test again.",
+                "assistant_message_source": "engineer_guidance",
+                "supports_customer_resolution": True,
+            },
+            current_ticket_status="communicating",
+            route_agent=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("router unavailable")),
+            route_executor=lambda **_kwargs: self.fail("route executor should not run when the route agent fails"),
+            rag_agent=lambda **_kwargs: self.fail("rag agent should not run for resolved confirmation fallback"),
+            review_agent=lambda **_kwargs: self.fail("review agent should not run for resolved confirmation fallback"),
+            rag_canceler=None,
+        )
+
+        self.assertEqual(execution.result.workflow_action, "resolve_ticket")
+        self.assertEqual(execution.result.next_status, "resolved")
+        self.assertEqual(execution.result.route_reason, "customer_confirmed_resolved")
+        self.assertEqual(execution.runtime_state.route_agent.get("status"), "failed")
+        self.assertEqual(execution.runtime_state.rag_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
 
     def test_resolved_confirmation_requires_previous_substantive_answer(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime

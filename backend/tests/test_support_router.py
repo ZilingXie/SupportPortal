@@ -210,6 +210,63 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(decision.execution_action, "rag")
         self.assertEqual(decision.reason, "few_shot_follow_up")
 
+    def test_decide_support_route_routes_ticket_resolution_after_substantive_answer(self) -> None:
+        decision = decide_support_route(
+            "got it, thanks",
+            ticket_subject="Join channel",
+            ticket_context=[
+                {"role": "customer", "content": "how to join channel"},
+                {
+                    "role": "assistant",
+                    "content": "Use joinChannel with the same channel name and token.",
+                },
+            ],
+            latest_assistant_message={
+                "role": "assistant",
+                "content": "Use joinChannel with the same channel name and token.",
+                "workflow_action": "answer_customer",
+                "answer_route": "rag",
+                "route_reason": "grounded_answer",
+                "execution_action": "rag",
+            },
+            current_ticket_status="communicating",
+        )
+
+        self.assertEqual(decision.scope_label, "ticket_resolution")
+        self.assertEqual(decision.route_family, "ticket_resolution")
+        self.assertEqual(decision.execution_action, "resolve_ticket")
+        self.assertEqual(decision.route, "resolve_ticket")
+        self.assertEqual(decision.reason, "customer_confirmed_resolved")
+        self.assertIn("got it", decision.matched_signals)
+        self.assertIn("thanks", decision.matched_signals)
+
+    def test_decide_support_route_routes_ticket_resolution_after_engineer_guidance(self) -> None:
+        decision = decide_support_route(
+            "it worked, thanks!",
+            ticket_subject="Black screen issue",
+            ticket_context=[
+                {"role": "customer", "content": "black screen issue"},
+                {
+                    "role": "assistant",
+                    "content": "Please try switching to another camera and test again.",
+                },
+            ],
+            latest_assistant_message={
+                "role": "assistant",
+                "content": "Please try switching to another camera and test again.",
+                "assistant_message_source": "engineer_guidance",
+                "supports_customer_resolution": True,
+            },
+            current_ticket_status="communicating",
+        )
+
+        self.assertEqual(decision.scope_label, "ticket_resolution")
+        self.assertEqual(decision.route_family, "ticket_resolution")
+        self.assertEqual(decision.execution_action, "resolve_ticket")
+        self.assertEqual(decision.reason, "customer_confirmed_resolved")
+        self.assertIn("it worked", decision.matched_signals)
+        self.assertIn("thanks", decision.matched_signals)
+
     def test_decide_support_route_includes_selected_product_in_llm_prompt(self) -> None:
         captured_request: dict[str, object] = {}
         payload = {

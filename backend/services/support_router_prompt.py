@@ -8,6 +8,11 @@ from backend.services.prompts.router import (
     build_router_user_prompt as build_router_user_prompt_v2,
 )
 from backend.services.support_products import get_support_product_label
+from backend.services.ticket_resolution import (
+    has_resolution_negative_marker,
+    latest_assistant_reply_supports_resolution,
+    matched_resolution_markers,
+)
 
 SYSTEM_TERMS = (
     "windows",
@@ -35,8 +40,6 @@ SMALL_TALK_TERMS = (
     "hello",
     "hi",
     "hey",
-    "thanks",
-    "thank you",
     "你好",
     "早上好",
     "晚上好",
@@ -236,6 +239,23 @@ ROUTE_FEW_SHOT_EXAMPLES = (
         },
     },
     {
+        "message": "got it, thanks",
+        "hints": {
+            "resolution": {
+                "message_signals": ["got it", "thanks"],
+                "latest_reply_supports_resolution": True,
+                "has_active_engineer_case": False,
+                "current_ticket_status": "communicating",
+            }
+        },
+        "output": {
+            "scope_label": "ticket_resolution",
+            "confidence": 0.99,
+            "reason": "customer_confirmed_resolved",
+            "matched_signals": ["got it", "thanks", "latest_support_reply"],
+        },
+    },
+    {
         "message": "I got black screen issue, what should I do?",
         "hints": {"technical": ["black screen"], "flags": ["looks_like_question"]},
         "output": {
@@ -307,9 +327,13 @@ def build_route_prompt_hints(
     *,
     ticket_subject: str | None = None,
     ticket_context: list[dict[str, str]] | None = None,
+    latest_assistant_message: dict[str, Any] | None = None,
+    current_ticket_status: str | None = None,
+    has_active_engineer_case: bool = False,
 ) -> dict[str, Any]:
     normalized_message = _normalize_text(message)
     context_text = _context_text(ticket_subject, ticket_context)
+    resolution_signals = matched_resolution_markers(normalized_message)
     message_matches = {
         "agora": _contains_any(normalized_message, AGORA_SIGNALS),
         "technical": _contains_any(normalized_message, TECHNICAL_TERMS),
@@ -337,11 +361,20 @@ def build_route_prompt_hints(
         "choice_pattern": bool(CHOICE_RE.search(normalized_message)),
         "docs_eval_anchor": docs_eval_anchor,
         "has_agora_brand": bool(message_matches["agora"] or context_matches["agora"]),
+        "customer_resolution_candidate": bool(resolution_signals) and not has_resolution_negative_marker(normalized_message),
+        "latest_reply_supports_resolution": latest_assistant_reply_supports_resolution(latest_assistant_message),
+        "has_active_engineer_case": bool(has_active_engineer_case),
     }
     return {
         "message_matches": message_matches,
         "context_matches": context_matches,
         "flags": flags,
+        "resolution": {
+            "message_signals": resolution_signals,
+            "latest_reply_supports_resolution": bool(flags["latest_reply_supports_resolution"]),
+            "has_active_engineer_case": bool(has_active_engineer_case),
+            "current_ticket_status": _normalize_text(current_ticket_status).lower() or None,
+        },
     }
 
 
@@ -352,6 +385,9 @@ def build_route_user_payload(
     ticket_context: list[dict[str, str]] | None,
     response_language: str,
     product: str | None = None,
+    latest_assistant_message: dict[str, Any] | None = None,
+    current_ticket_status: str | None = None,
+    has_active_engineer_case: bool = False,
 ) -> str:
     selected_product = get_support_product_label(product)
     payload = {
@@ -364,6 +400,9 @@ def build_route_user_payload(
             message,
             ticket_subject=ticket_subject,
             ticket_context=ticket_context,
+            latest_assistant_message=latest_assistant_message,
+            current_ticket_status=current_ticket_status,
+            has_active_engineer_case=has_active_engineer_case,
         ),
     }
     return build_router_user_prompt_v2(payload=payload)

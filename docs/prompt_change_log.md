@@ -881,6 +881,27 @@ For each new entry, record:
   - `node --check ui/client-ui/app.js`
   - `git diff --check`
 
+- Date: 2026-04-15
+- Area or subsystem: Client ticket route classification for gratitude follow-ups
+- Prompt or model version: `intent-router-ticket-resolution-v1`
+- Summary: Added a dedicated `ticket_resolution` routing scope, removed gratitude phrases from lexical `small_talk` hints, and taught the router prompt to use ticket context to distinguish “resolve this case” confirmations from generic thanks.
+- Reason: `TK-114` misclassified `got it, thanks` as `small_talk`, while `TK-113` could reopen investigation after `it worked, thanks!` because the router had no explicit contract for customer-confirmed resolution after a substantive support reply.
+- Affected files or config:
+  - `backend/services/prompts/router.py`
+  - `backend/services/support_router_prompt.py`
+  - `backend/services/support_router.py`
+  - `backend/services/ticket_resolution.py`
+  - `backend/tests/test_support_router.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Gratitude-only follow-ups can now route to `ticket_resolution` when recent context shows a substantive client-visible support reply and there are no remaining-problem signals.
+  - Generic thanks without resolution context still stays in general chat instead of falling into Agora technical fallback.
+  - The router prompt now explicitly distinguishes `ticket_resolution` from `small_talk`.
+- Verification:
+  - `python -m unittest backend.tests.test_support_router backend.tests.test_client_ticket_agent_runtime`
+  - `python -m py_compile backend/services/ticket_resolution.py backend/services/support_router.py backend/services/support_router_prompt.py backend/services/prompts/router.py backend/services/client_ticket_agent_runtime.py`
+  - `podman run --rm -v /Users/xieziling/.config/superpowers/worktrees/SupportPortal/ticket-resolution-gratitude-followups:/app -w /app localhost/supportportal-app:latest python -m unittest backend.tests.test_investigation_flow.InvestigationFlowTests.test_ticket_query_customer_resolved_confirmation_returns_resolved_and_records_auto_close_event backend.tests.test_investigation_flow.InvestigationFlowTests.test_ticket_query_active_engineer_case_resolution_closes_case_without_refreshing_investigation backend.tests.test_investigation_flow.InvestigationFlowTests.test_ticket_query_engineer_guidance_confirmation_resolves_when_route_agent_fails`
+
 - Date: 2026-04-14
 - Area or subsystem: Engineer investigation reply gate
 - Prompt or model version: `engineer-investigation-reply-v4`

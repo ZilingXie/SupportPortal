@@ -13,6 +13,12 @@ from backend.services.llm_factory import LlmInvocationError, invoke_responses_te
 from backend.services.llm_profiles import INTENT_ROUTER_SCENARIO, WEB_SEARCH_SCENARIO, resolve_model_profile
 from backend.services.prompts.web_search import build_web_search_system_prompt, build_web_search_user_prompt
 from backend.services.support_router_prompt import build_route_system_prompt, build_route_user_payload
+from backend.services.ticket_resolution import (
+    build_resolved_confirmation_reply,
+    has_resolution_negative_marker,
+    is_customer_resolved_confirmation_candidate,
+    matched_resolution_markers,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -130,6 +136,8 @@ def _route_contract_for_scope(*, scope_label: str, action: str, reason: str) -> 
     clean_scope = _normalize_text(scope_label).lower()
     normalized_action = _normalize_text(action).lower()
 
+    if clean_scope == "ticket_resolution":
+        return "ticket_resolution", "resolve_ticket", "deterministic_resolution"
     if clean_scope == "agora_technical":
         return "agora_docs_rag", "rag", "agora_docs_only"
     if clean_scope == "agora_non_technical":
@@ -245,10 +253,47 @@ def _heuristic_route_decision(
     message: str,
     *,
     response_language: str,
+    latest_assistant_message: dict[str, Any] | None = None,
+    current_ticket_status: str | None = None,
+    has_active_engineer_case: bool = False,
 ) -> SupportRouteDecision | None:
     text = _normalize_text(message)
     if not text:
         return None
+
+    if is_customer_resolved_confirmation_candidate(
+        text,
+        latest_assistant_message=latest_assistant_message,
+        current_ticket_status=current_ticket_status,
+    ):
+        matched_signals = matched_resolution_markers(text)
+        if latest_assistant_message is not None:
+            matched_signals.append(
+                "engineer_guidance"
+                if _normalize_text(latest_assistant_message.get("assistant_message_source")).lower() == "engineer_guidance"
+                else "latest_support_reply"
+            )
+        if has_active_engineer_case:
+            matched_signals.append("active_engineer_case")
+        return _build_route_decision(
+            scope_label="ticket_resolution",
+            action="resolve_ticket",
+            confidence=0.99,
+            reason="customer_confirmed_resolved",
+            matched_signals=_sanitize_matched_signals(matched_signals),
+            response_language=response_language,
+        )
+
+    gratitude_signals = matched_resolution_markers(text)
+    if gratitude_signals and not has_resolution_negative_marker(text) and not _looks_like_question(text):
+        return _build_route_decision(
+            scope_label="small_talk",
+            action="refuse",
+            confidence=0.91,
+            reason="gratitude_acknowledgement",
+            matched_signals=_sanitize_matched_signals(gratitude_signals),
+            response_language=response_language,
+        )
 
     if is_api_semantics_mismatch_message(text):
         matched_signals = ["docs_url", "endpoint_path"]
@@ -313,6 +358,9 @@ def _llm_route_decision(
     ticket_context: list[dict[str, str]] | None,
     response_language: str,
     product: str | None,
+    latest_assistant_message: dict[str, Any] | None = None,
+    current_ticket_status: str | None = None,
+    has_active_engineer_case: bool = False,
 ) -> SupportRouteDecision | None:
     profile = resolve_model_profile(INTENT_ROUTER_SCENARIO)
     if not profile.api_key:
@@ -324,6 +372,9 @@ def _llm_route_decision(
         ticket_context=ticket_context,
         response_language=response_language,
         product=product,
+        latest_assistant_message=latest_assistant_message,
+        current_ticket_status=current_ticket_status,
+        has_active_engineer_case=has_active_engineer_case,
     )
     try:
         response = invoke_responses_text(
@@ -340,7 +391,7 @@ def _llm_route_decision(
         LOGGER.warning("Intent router response did not return valid JSON")
         return None
     scope_label = _normalize_text(payload.get("scope_label")).lower()
-    if scope_label not in {"small_talk", "non_agora", "agora_non_technical", "agora_technical"}:
+    if scope_label not in {"ticket_resolution", "small_talk", "non_agora", "agora_non_technical", "agora_technical"}:
         return None
     try:
         confidence = float(payload.get("confidence") or 0.0)
@@ -363,6 +414,9 @@ def decide_support_route(
     ticket_subject: str | None = None,
     ticket_context: list[dict[str, str]] | None = None,
     product: str | None = None,
+    latest_assistant_message: dict[str, Any] | None = None,
+    current_ticket_status: str | None = None,
+    has_active_engineer_case: bool = False,
 ) -> SupportRouteDecision:
     text = _normalize_text(message)
     response_language = _response_language(text)
@@ -379,6 +433,9 @@ def decide_support_route(
     heuristic_decision = _heuristic_route_decision(
         text,
         response_language=response_language,
+        latest_assistant_message=latest_assistant_message,
+        current_ticket_status=current_ticket_status,
+        has_active_engineer_case=has_active_engineer_case,
     )
     if heuristic_decision is not None:
         return heuristic_decision
@@ -389,6 +446,9 @@ def decide_support_route(
         ticket_context=ticket_context,
         response_language=response_language,
         product=product,
+        latest_assistant_message=latest_assistant_message,
+        current_ticket_status=current_ticket_status,
+        has_active_engineer_case=has_active_engineer_case,
     )
     threshold = _safe_float_env(
         "INTENT_ROUTER_CONFIDENCE_THRESHOLD",
@@ -595,6 +655,9 @@ def resolve_support_message(
     ticket_subject: str | None = None,
     ticket_context: list[dict[str, str]] | None = None,
     product: str | None = None,
+    latest_assistant_message: dict[str, Any] | None = None,
+    current_ticket_status: str | None = None,
+    has_active_engineer_case: bool = False,
     rag_answerer: Callable[[str], tuple[str, float, list[str], list[dict[str, str]], bool]] | None = None,
     decision: SupportRouteDecision | None = None,
 ) -> SupportResolution:
@@ -603,7 +666,27 @@ def resolve_support_message(
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
         product=product,
+        latest_assistant_message=latest_assistant_message,
+        current_ticket_status=current_ticket_status,
+        has_active_engineer_case=has_active_engineer_case,
     )
+    if decision.execution_action == "resolve_ticket":
+        return SupportResolution(
+            answer=build_resolved_confirmation_reply(message),
+            confidence=1.0,
+            sources=[],
+            citations=[],
+            needs_engineer_guidance=False,
+            answer_route="workflow",
+            scope_label=decision.scope_label,
+            route_family=decision.route_family,
+            execution_action=decision.execution_action,
+            tooling_profile=decision.tooling_profile,
+            route_reason=decision.reason,
+            route_confidence=decision.confidence,
+            search_used=False,
+            matched_signals=list(decision.matched_signals),
+        )
     if decision.execution_action == "refuse":
         answer = build_refusal_answer(decision)
         return SupportResolution(
