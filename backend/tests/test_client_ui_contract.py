@@ -138,8 +138,8 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
         self.assertIn("<title>Sid - AI Technical Support</title>", html)
-        self.assertIn("./styles.css?v=20260415-client-context-bar-single-line-1", html)
-        self.assertIn('./app.js?v=20260415-client-ai-technical-support-copy-1', html)
+        self.assertIn("./styles.css?v=20260415-client-context-bar-badges-left-1", html)
+        self.assertIn('./app.js?v=20260415-client-context-bar-badges-left-1', html)
         self.assertNotIn("AI-SOLVING", app_source)
         self.assertIn("AI Technical Support", app_source)
         self.assertNotIn(">Technical Support<", app_source)
@@ -156,6 +156,7 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn("function ensureAuthedShell()", app_source)
         self.assertIn('data-authed-region="sidebar-nav"', app_source)
         self.assertIn("context-bar context-bar-ticket", app_source)
+        self.assertIn('class="context-ticket-meta"', app_source)
         self.assertNotIn('appRoot.innerHTML = `\n    <div class="app-shell">', app_source)
 
         new_session_pos = app_source.index('<span class="sidebar-nav-label">New Session</span>')
@@ -177,6 +178,7 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn(".status-surface-resolved", css)
         self.assertIn(".context-bar-ticket {", css)
         self.assertIn("flex-wrap: nowrap;", css)
+        self.assertIn(".context-bar-ticket .context-ticket-meta {", css)
         self.assertIn(".context-bar-ticket .context-actions {", css)
         self.assertIn('font-family: "Material Symbols Outlined";', css)
         self.assertIn("html.material-symbols-pending .material-symbols-outlined", css)
@@ -892,8 +894,29 @@ class ClientUiContractTests(unittest.TestCase):
                 if (initialBar.includes(`Ticket ${ticket.id}: Need direct engineer review`)) {
                   throw new Error("Active ticket context bar should not render the legacy Ticket prefix.");
                 }
+                if (!initialBar.includes('class="context-ticket-meta"')) {
+                  throw new Error("Active ticket context bar should render a dedicated left-side badge group.");
+                }
                 if (initialBar.includes("AI-SOLVING")) {
                   throw new Error("Active ticket should no longer display AI-SOLVING.");
+                }
+                if (
+                  initialBar.indexOf(`${ticket.id}: Need direct engineer review`) >
+                  initialBar.indexOf('class="context-ticket-meta"')
+                ) {
+                  throw new Error("Badge group should render after the ticket title inside the left-side ticket block.");
+                }
+                if (
+                  initialBar.indexOf("Communicating") >
+                  initialBar.indexOf("Request Engineer")
+                ) {
+                  throw new Error("Status badge should remain on the left side before the action buttons.");
+                }
+                if (
+                  initialBar.indexOf("Audio/Video Calling") >
+                  initialBar.indexOf("Request Engineer")
+                ) {
+                  throw new Error("Product badge should remain on the left side before the action buttons.");
                 }
                 if (!initialBar.includes('data-action="request-engineer-assistance"')) {
                   throw new Error("Active non-empty ticket should render the request engineer assistance button.");
