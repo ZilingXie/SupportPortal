@@ -843,7 +843,7 @@ class InvestigationFlowTests(unittest.TestCase):
                 response = self.client.get(path)
             self.assertEqual(response.status_code, 404, response.text)
 
-    def test_ticket_query_escalation_creates_linked_engineer_case_with_snapshot_title(self) -> None:
+    def test_ticket_query_escalation_creates_linked_engineer_case_with_client_ticket_title(self) -> None:
         self._seed_ticket(
             ticket_id="TK-040",
             subject="how to join channel",
@@ -918,7 +918,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(payload["engineer_case_id"], "TK-040-1")
         self.assertEqual(payload["client_ticket_ref"]["ticket_id"], "TK-040")
         self.assertEqual(payload["client_ticket_ref"]["subject"], "how to join channel")
-        self.assertEqual(payload["title"], "black screen issue")
+        self.assertEqual(payload["title"], "how to join channel")
         self.assertEqual(payload["status"], "investigating")
 
     def test_client_ticket_list_keeps_client_ticket_identity_after_engineer_case_is_created(self) -> None:
@@ -4505,7 +4505,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(detail.status_code, 200, detail.text)
         self.assertEqual(detail.json()["ticket"]["status"], "escalated")
         self.assertEqual(detail.json()["ticket"]["engineer_case_id"], "TK-INV-105-1")
-        self.assertEqual(detail.json()["ticket"]["title"], "black screen issue")
+        self.assertEqual(detail.json()["ticket"]["title"], "how to join channel")
 
     def test_investigate_action_reuses_latest_rag_turn_when_escalated_ticket_enters_investigation(self) -> None:
         self._seed_ticket(

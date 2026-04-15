@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import os
 import sys
 import types
@@ -53,10 +54,17 @@ class _FakeAsyncRedisFactory:
 class _FakeSyncRedisClient:
     def __init__(self) -> None:
         self.blpop_calls: list[tuple[object, int]] = []
+        self.queued_items: dict[str, list[str]] = {}
 
     def blpop(self, queue_names: object, timeout: int) -> None:
         self.blpop_calls.append((queue_names, timeout))
         return None
+
+    def lrange(self, queue_name: str, start: int, end: int) -> list[str]:
+        items = list(self.queued_items.get(queue_name, []))
+        if end < 0:
+            return items[start:]
+        return items[start : end + 1]
 
     def close(self) -> None:
         return None
@@ -115,3 +123,36 @@ class TaskQueueRoutingTests(unittest.TestCase):
         client = _FakeSyncRedisFactory.clients[0]
         self.assertEqual(client.blpop_calls[0][0], ["support.ticket_queries"])
         self.assertEqual(client.blpop_calls[0][1], 7)
+
+    def test_sync_queue_lists_pending_tasks_from_selected_queues(self) -> None:
+        with patch.object(task_queue, "SyncRedis", _FakeSyncRedisFactory), patch.dict(
+            os.environ,
+            {
+                "REDIS_URL": "redis://example.test/0",
+                "TICKET_QUERY_QUEUE_NAME": "support.ticket_queries",
+                "TICKET_AUX_QUEUE_NAME": "support.ticket_aux",
+            },
+            clear=False,
+        ):
+            queue = task_queue.SyncRedisTaskQueue(task_types=("ticket_query", "ticket_message_sentiment"))
+            client = queue._client()
+            assert client is not None
+            client.queued_items = {
+                "support.ticket_queries": [
+                    json.dumps({"task_type": "ticket_query", "ticket_id": "TK-116"}),
+                ],
+                "support.ticket_aux": [
+                    json.dumps({"task_type": "ticket_message_sentiment", "ticket_id": "TK-116"}),
+                ],
+            }
+
+            pending = queue.list_pending_tasks()
+            queue.close()
+
+        self.assertEqual(
+            pending,
+            [
+                {"task_type": "ticket_query", "ticket_id": "TK-116"},
+                {"task_type": "ticket_message_sentiment", "ticket_id": "TK-116"},
+            ],
+        )

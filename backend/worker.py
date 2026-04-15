@@ -17,6 +17,7 @@ import psycopg
 from backend.main import (
     _record_ticket_agent_runtime_events,
     _run_client_ticket_review_agent,
+    build_query_task,
     build_client_sync_event,
     ensure_ticket_defaults,
     now_iso,
@@ -853,6 +854,203 @@ def _find_existing_worker_response(
     return assistant_messages[-1]
 
 
+def _find_latest_assistant_message_before_index(
+    ticket: dict[str, Any],
+    customer_index: int,
+) -> dict[str, Any] | None:
+    messages = ticket.get("messages", [])
+    if not isinstance(messages, list):
+        return None
+    safe_end = min(max(customer_index, 0), len(messages))
+    for index in range(safe_end - 1, -1, -1):
+        item = messages[index]
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("role", "")).strip().lower() != "assistant":
+            continue
+        content = " ".join(str(item.get("content", "")).split()).strip()
+        if not content:
+            continue
+        payload: dict[str, Any] = {
+            "role": "assistant",
+            "content": content,
+            "workflow_action": str(item.get("workflow_action") or "").strip(),
+            "answer_route": str(item.get("answer_route") or "").strip(),
+            "route_reason": str(item.get("route_reason") or "").strip(),
+        }
+        assistant_message_source = str(item.get("assistant_message_source") or "").strip()
+        if assistant_message_source:
+            payload["assistant_message_source"] = assistant_message_source
+        if bool(item.get("supports_customer_resolution")):
+            payload["supports_customer_resolution"] = True
+        return payload
+    return None
+
+
+def _has_assistant_message_after_index(ticket: dict[str, Any], customer_index: int) -> bool:
+    messages = ticket.get("messages", [])
+    if not isinstance(messages, list):
+        return False
+    for item in messages[customer_index + 1 :]:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("role", "")).strip().lower() == "assistant":
+            return True
+    return False
+
+
+def _event_matches_message_created_at(event: dict[str, Any], message_created_at: str) -> bool:
+    payload = event.get("payload")
+    if not isinstance(payload, dict):
+        return False
+    candidate = str(payload.get("message_created_at") or "").strip()
+    if not candidate:
+        return False
+    return _timestamps_match(candidate, message_created_at)
+
+
+def _find_latest_ticket_event_for_message(
+    events: list[dict[str, Any]],
+    *,
+    event_types: tuple[str, ...],
+    message_created_at: str,
+) -> dict[str, Any] | None:
+    normalized_types = {str(item or "").strip() for item in event_types if str(item or "").strip()}
+    if not normalized_types:
+        return None
+    for event in events:
+        if str(event.get("event_type") or "").strip() not in normalized_types:
+            continue
+        if _event_matches_message_created_at(event, message_created_at):
+            return event
+    return None
+
+
+def _pending_ticket_query_keys(queue: SyncRedisTaskQueue) -> set[tuple[str, str]]:
+    keys: set[tuple[str, str]] = set()
+    for task in queue.list_pending_tasks():
+        if str(task.get("task_type") or "").strip().lower() != "ticket_query":
+            continue
+        ticket_id = str(task.get("ticket_id") or "").strip()
+        message_created_at = str(task.get("message_created_at") or "").strip()
+        if ticket_id and message_created_at:
+            keys.add((ticket_id, message_created_at))
+    return keys
+
+
+def _recover_stale_ticket_query_tasks_on_worker_start(
+    queue: SyncRedisTaskQueue,
+    *,
+    worker_started_at: str,
+) -> int:
+    worker_started_dt = _parse_iso_datetime(worker_started_at)
+    if worker_started_dt is None:
+        return 0
+    pending_keys = _pending_ticket_query_keys(queue)
+    tickets = _call_ticket_repository(
+        "list_tickets",
+        lambda: ticket_repository.list_tickets(include_messages=True),
+    )
+    recovered_count = 0
+    for ticket in tickets:
+        if normalize_ticket_status(ticket.get("status")) == RESOLVED_STATUS:
+            continue
+        ticket_id = str(ticket.get("ticket_id") or "").strip()
+        if not ticket_id:
+            continue
+        customer_index = _find_latest_customer_message_index(ticket, "", "")
+        if customer_index is None:
+            continue
+        messages = ticket.get("messages", [])
+        if not isinstance(messages, list) or customer_index >= len(messages):
+            continue
+        latest_customer = messages[customer_index]
+        if not isinstance(latest_customer, dict):
+            continue
+        customer_message = " ".join(str(latest_customer.get("content", "")).split()).strip()
+        message_created_at = str(latest_customer.get("created_at") or "").strip()
+        message_created_dt = _parse_iso_datetime(message_created_at)
+        if not customer_message or message_created_dt is None:
+            continue
+        if message_created_dt >= worker_started_dt:
+            continue
+        if _has_assistant_message_after_index(ticket, customer_index):
+            continue
+        if (ticket_id, message_created_at) in pending_keys:
+            continue
+        events = _call_ticket_repository(
+            "list_ticket_events",
+            lambda ticket_id=ticket_id: ticket_repository.list_ticket_events(ticket_id, limit=50),
+        )
+        processing_event = _find_latest_ticket_event_for_message(
+            events,
+            event_types=("ticket_ai_processing",),
+            message_created_at=message_created_at,
+        )
+        if processing_event is None:
+            continue
+        processing_created_at = str(processing_event.get("created_at") or "").strip()
+        processing_created_dt = _parse_iso_datetime(processing_created_at)
+        if processing_created_dt is None or processing_created_dt >= worker_started_dt:
+            continue
+        completion_event = _find_latest_ticket_event_for_message(
+            events,
+            event_types=("ticket_ai_response_ready", "ticket_ai_generation_stopped"),
+            message_created_at=message_created_at,
+        )
+        if completion_event is not None:
+            continue
+        recovery_task = build_query_task(
+            ticket_id=ticket_id,
+            customer_message=customer_message,
+            message_created_at=message_created_at,
+            customer_id=str(ticket.get("customer_id") or "").strip() or None,
+            ticket_subject=str(ticket.get("subject") or "").strip() or None,
+            product=str(ticket.get("product") or "").strip() or None,
+            route_context_tail=messages[max(0, len(messages) - 6) :],
+            client_intake_state=(
+                dict(ticket.get("client_intake_state"))
+                if isinstance(ticket.get("client_intake_state"), dict)
+                else None
+            ),
+            latest_assistant_message=_find_latest_assistant_message_before_index(ticket, customer_index),
+            current_ticket_status=normalize_ticket_status(ticket.get("status")),
+            ticket_updated_at=str(ticket.get("updated_at") or "").strip() or None,
+            processing_mode="worker_startup_recovery",
+        )
+        recovery_task["recovered_from_worker_startup"] = True
+        recovery_task["original_processing_created_at"] = processing_created_at
+        if not queue.enqueue(recovery_task):
+            LOGGER.warning(
+                "Worker startup recovery could not requeue ticket %s for message %s",
+                ticket_id,
+                message_created_at,
+            )
+            continue
+        recovery_event = {
+            "event": "ticket_ai_recovery_queued",
+            "ticket_id": ticket_id,
+            "status": normalize_ticket_status(ticket.get("status")),
+            "message_created_at": message_created_at,
+            "created_at": now_iso(),
+            "parallel_mode": "worker_startup_recovery",
+            "recovery_reason": "missing_async_completion_after_worker_restart",
+            "worker_started_at": worker_started_at,
+            "original_processing_created_at": processing_created_at,
+        }
+        _call_ticket_repository(
+            "record_event",
+            lambda ticket_id=ticket_id, recovery_event=recovery_event: ticket_repository.record_event(
+                ticket_id,
+                recovery_event["event"],
+                recovery_event,
+            ),
+        )
+        pending_keys.add((ticket_id, message_created_at))
+        recovered_count += 1
+    return recovered_count
+
+
 def _schedule_ticket_task_retry(
     queue: SyncRedisTaskQueue,
     task: dict[str, Any],
@@ -1439,6 +1637,7 @@ def run_worker() -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     _install_signal_handlers()
+    worker_started_at = now_iso()
 
     try:
         ticket_repository.initialize()
@@ -1452,6 +1651,19 @@ def run_worker() -> int:
     if not queue.is_enabled():
         LOGGER.error("Worker requires REDIS_URL and ticket queue configuration.")
         return 1
+    if "ticket_query" in task_types:
+        try:
+            recovered_count = _recover_stale_ticket_query_tasks_on_worker_start(
+                queue,
+                worker_started_at=worker_started_at,
+            )
+            if recovered_count > 0:
+                LOGGER.warning(
+                    "Worker startup recovery requeued %s stale ticket query task(s).",
+                    recovered_count,
+                )
+        except Exception as exc:
+            LOGGER.exception("Worker startup recovery failed: %s", exc)
     queue.close()
 
     LOGGER.info(
