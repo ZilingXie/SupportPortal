@@ -2824,7 +2824,7 @@ async function refreshSelectedTicket(options = {}) {
   }
 
   try {
-    const payload = await fetchJson(`/api/engineer/tickets/${encodeURIComponent(requestedTicketId)}`, {
+    const payload = await fetchJson(`/api/engineer/tickets/${encodeURIComponent(requestedTicketId)}?include_context=false`, {
       signal: controller.signal,
     });
     if (selectedTicketId !== requestedTicketId) {
