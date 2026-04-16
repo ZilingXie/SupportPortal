@@ -288,6 +288,78 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertIn("record_ticket_created_event_ms", payload_data)
         self.assertGreaterEqual(float(payload_data.get("record_ticket_created_event_ms") or 0.0), 0.0)
 
+    def test_cancel_pending_returns_already_completed_without_recording_generation_stopped(self) -> None:
+        ticket = self._seed_ticket(
+            ticket_id="TK-CANCEL-DONE",
+            status="communicating",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "how to join channel",
+                    "created_at": "2026-04-16T09:00:00+00:00",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Use joinChannel with the same token and channel name.",
+                    "created_at": "2026-04-16T09:00:05+00:00",
+                },
+            ],
+        )
+
+        with patch.object(main, "dispatch_event", AsyncMock()) as dispatch_mock:
+            response = self.client.post(
+                f"/api/tickets/{ticket['ticket_id']}/cancel-pending",
+                json={
+                    "customer_id": "C-001",
+                    "message_created_at": "2026-04-16T09:00:00+00:00",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertFalse(payload["canceled"])
+        self.assertTrue(payload["already_completed"])
+        self.assertEqual(payload["message_created_at"], "2026-04-16T09:00:00+00:00")
+        events = self.repository.list_ticket_events(ticket["ticket_id"])
+        event_names = [str(item.get("event_type") or "").strip() for item in events]
+        self.assertNotIn("ticket_ai_generation_stopped", event_names)
+        dispatch_mock.assert_not_awaited()
+
+    def test_cancel_pending_records_generation_stopped_for_incomplete_turn(self) -> None:
+        ticket = self._seed_ticket(
+            ticket_id="TK-CANCEL-PENDING",
+            status="communicating",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "how to join channel",
+                    "created_at": "2026-04-16T09:10:00+00:00",
+                }
+            ],
+        )
+
+        with patch.object(main, "dispatch_event", AsyncMock()) as dispatch_mock:
+            response = self.client.post(
+                f"/api/tickets/{ticket['ticket_id']}/cancel-pending",
+                json={
+                    "customer_id": "C-001",
+                    "message_created_at": "2026-04-16T09:10:00+00:00",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload["canceled"])
+        self.assertFalse(payload["already_completed"])
+        events = self.repository.list_ticket_events(ticket["ticket_id"])
+        stop_events = [
+            item
+            for item in events
+            if str(item.get("event_type") or "").strip() == "ticket_ai_generation_stopped"
+        ]
+        self.assertEqual(len(stop_events), 1)
+        dispatch_mock.assert_awaited()
+
     def test_build_query_task_includes_execution_snapshot_fields(self) -> None:
         task = main.build_query_task(
             ticket_id="TK-SNAPSHOT-001",

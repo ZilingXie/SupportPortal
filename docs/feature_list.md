@@ -20,6 +20,7 @@
 - 新会话会先选择产品，并按产品加载对应的 support prompt。
 - 排查型问题会先向客户补齐必要信息，再自动创建工程师工单。
 - 客户工单处理支持 main agent 调度 route、RAG 和 review 子 agent。
+- Client 对话支持同 ticket 打断重发，并允许不同 ticket 并发等待 AI 回复。
 
 ### 未完成
 - 对话支持上传图片和 txt/log/md 文件。

@@ -139,14 +139,17 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
         self.assertIn("<title>Sid - AI Technical Support</title>", html)
 
-        self.assertIn("./styles.css?v=20260415-client-context-bar-badges-left-1", html)
-        self.assertIn('./app.js?v=20260415-client-context-bar-badges-left-1', html)
+        self.assertIn("./styles.css?v=20260416-client-interrupt-concurrent-send-1", html)
+        self.assertIn('./app.js?v=20260416-client-interrupt-concurrent-send-1', html)
         self.assertNotIn("AI-SOLVING", app_source)
         self.assertIn("AI Technical Support", app_source)
         self.assertNotIn(">Technical Support<", app_source)
         self.assertIn("Session History", app_source)
         self.assertIn("Sid", app_source)
         self.assertIn("zac@example.com", app_source)
+        self.assertIn("pendingByTicket", app_source)
+        self.assertIn("supersededTurnsByTicket", app_source)
+        self.assertNotIn('data-action="stop-generation"', app_source)
         self.assertNotIn("Concierge AI", app_source)
         self.assertIn('navigate("/chat");', app_source)
         self.assertIn('<span class="sidebar-nav-label">New Session</span>', app_source)
@@ -1092,8 +1095,14 @@ class ClientUiContractTests(unittest.TestCase):
                 if (!state.isSending || state.pendingAsyncTicketId !== ticket.id) {
                   throw new Error("Queued async ticket should keep the client waiting state active.");
                 }
-                if (!pendingHtml.includes('class="composer-icon-button composer-stop-btn"')) {
-                  throw new Error("Async waiting state should still render the inline stop button.");
+                if (!state.pendingByTicket[ticket.id] || state.pendingByTicket[ticket.id].phase !== "queued") {
+                  throw new Error("Queued async ticket should be tracked in the per-ticket pending map.");
+                }
+                if (!pendingHtml.includes('class="composer-icon-button send-btn"')) {
+                  throw new Error("Async waiting state should keep the inline send button available.");
+                }
+                if (pendingHtml.includes('class="composer-icon-button composer-stop-btn"')) {
+                  throw new Error("Async waiting state should no longer render the inline stop button.");
                 }
               """
             )
@@ -1154,8 +1163,11 @@ class ClientUiContractTests(unittest.TestCase):
                 if (html.includes("AI is cross-referencing system health logs")) {
                   throw new Error("Async waiting state should not render the thinking line for CJK messages either.");
                 }
-                if (!html.includes('class="composer-icon-button composer-stop-btn"')) {
-                  throw new Error("Async waiting state should still render the inline stop button for CJK messages.");
+                if (!html.includes('class="composer-icon-button send-btn"')) {
+                  throw new Error("Async waiting state should keep the inline send button for CJK messages.");
+                }
+                if (html.includes('class="composer-icon-button composer-stop-btn"')) {
+                  throw new Error("Async waiting state should not render the old stop button for CJK messages.");
                 }
               """
             )
@@ -1342,6 +1354,371 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_client_same_ticket_queued_resend_supersedes_old_turn_and_requeues_latest_turn(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+                render = () => {};
+                syncTicketsFromBackend = async () => {};
+                requestChatScrollToBottom = () => {};
+                ensurePendingStatusPolling = () => {};
+                AbortController = class AbortController {
+                  constructor() {
+                    this.signal = { aborted: false };
+                  }
+                  abort() {
+                    this.signal.aborted = true;
+                  }
+                };
+
+                const ticket = createTicket(state.user.id);
+                updateTicketProduct(ticket.id, "audio_video_calling");
+                state.view = "chat-ticket";
+                state.activeTicketId = ticket.id;
+
+                let queryCount = 0;
+                const cancelBodies = [];
+                fetch = (url, options = undefined) => {
+                  if (url === "/api/tickets/query") {
+                    queryCount += 1;
+                    return Promise.resolve({
+                      ok: true,
+                      json: async () => ({
+                        ticket_id: ticket.id,
+                        answer: "",
+                        ai_replied: false,
+                        queued_for_ai: true,
+                        message_created_at: `2026-04-16T08:0${queryCount}:00.000Z`,
+                        queued_message_created_at: `2026-04-16T08:0${queryCount}:00.000Z`,
+                        status: "communicating",
+                      }),
+                    });
+                  }
+                  if (url === `/api/tickets/${encodeURIComponent(ticket.id)}/cancel-pending`) {
+                    cancelBodies.push(JSON.parse(options.body));
+                    return Promise.resolve({
+                      ok: true,
+                      json: async () => ({ ticket_id: ticket.id, canceled: true }),
+                    });
+                  }
+                  throw new Error(`Unexpected fetch call to ${url}`);
+                };
+
+                await handleSendMessage("First question");
+                const firstPending = getPendingSession(ticket.id);
+                if (!firstPending || firstPending.phase !== "queued") {
+                  throw new Error("First send should leave the ticket in queued pending state.");
+                }
+
+                await handleSendMessage("Second question");
+
+                const updated = getTicketById(ticket.id);
+                const userContents = updated.messages.filter((message) => message.role === "user").map((message) => message.content);
+                if (userContents.length !== 2 || userContents[0] !== "First question" || userContents[1] !== "Second question") {
+                  throw new Error(`Expected both customer turns to remain in transcript order, got ${JSON.stringify(userContents)}.`);
+                }
+                if (cancelBodies.length !== 1) {
+                  throw new Error(`Expected exactly one silent cancel for the superseded turn, got ${cancelBodies.length}.`);
+                }
+                if (cancelBodies[0].message_created_at !== "2026-04-16T08:01:00.000Z") {
+                  throw new Error(`Expected cancel-pending to target the old queued turn, got ${JSON.stringify(cancelBodies[0])}.`);
+                }
+                const supersededTurns = getSupersededTurnsForTicket(ticket.id);
+                if (!supersededTurns.some((entry) => entry.createdAt === "2026-04-16T08:01:00.000Z")) {
+                  throw new Error("Expected the old queued customer turn to be recorded as superseded.");
+                }
+                const currentPending = getPendingSession(ticket.id);
+                if (!currentPending || currentPending.phase !== "queued") {
+                  throw new Error("The latest turn should become the only active queued pending turn.");
+                }
+                if (currentPending.userMessageId === firstPending.userMessageId) {
+                  throw new Error("The latest queued turn should replace the old pending anchor.");
+                }
+                const html = renderChatTicket();
+                if (!html.includes("Second question")) {
+                  throw new Error("Latest customer turn should remain visible in the transcript.");
+                }
+                if (!html.includes('class="composer-icon-button send-btn"')) {
+                  throw new Error("Queued resend flow should keep the send button available.");
+                }
+                if (html.includes("composer-stop-btn")) {
+                  throw new Error("Queued resend flow should not render the old stop button.");
+                }
+              """
+            )
+        )
+
+    def test_client_late_old_reply_is_hidden_when_newer_turn_is_pending(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+                render = () => {};
+
+                let lastSocket = null;
+                WebSocket = function WebSocket() {
+                  lastSocket = this;
+                  this.readyState = 1;
+                  this.close = () => {};
+                  this.send = () => {};
+                };
+                WebSocket.OPEN = 1;
+
+                const ticket = createTicket(state.user.id);
+                updateTicketProduct(ticket.id, "audio_video_calling");
+                saveTicketMessages(ticket.id, [
+                  {
+                    id: "msg-user-1",
+                    role: "user",
+                    content: "First question",
+                    createdAt: "2026-04-16T08:01:00.000Z",
+                  },
+                  {
+                    id: "msg-user-2",
+                    role: "user",
+                    content: "Second question",
+                    createdAt: "2026-04-16T08:02:00.000Z",
+                  },
+                ]);
+                setSupersededTurnsForTicket(ticket.id, [
+                  { messageId: "msg-user-1", createdAt: "2026-04-16T08:01:00.000Z" },
+                ]);
+                state.pendingByTicket = {
+                  [ticket.id]: {
+                    phase: "queued",
+                    userMessageId: "msg-user-2",
+                    persistedMessageCreatedAt: "2026-04-16T08:02:00.000Z",
+                    queuedMessageCreatedAt: "2026-04-16T08:02:00.000Z",
+                  },
+                };
+                state.view = "chat-ticket";
+                state.activeTicketId = ticket.id;
+
+                let syncCallCount = 0;
+                syncTicketsFromBackend = async () => {
+                  syncCallCount += 1;
+                  if (syncCallCount === 1) {
+                    saveTicketMessages(ticket.id, [
+                      {
+                        id: "msg-user-1",
+                        role: "user",
+                        content: "First question",
+                        createdAt: "2026-04-16T08:01:00.000Z",
+                      },
+                      {
+                        id: "msg-assistant-old",
+                        role: "assistant",
+                        content: "Old answer that should stay hidden",
+                        createdAt: "2026-04-16T08:01:05.000Z",
+                      },
+                      {
+                        id: "msg-user-2",
+                        role: "user",
+                        content: "Second question",
+                        createdAt: "2026-04-16T08:02:00.000Z",
+                      },
+                    ]);
+                    return;
+                  }
+                  saveTicketMessages(ticket.id, [
+                    {
+                      id: "msg-user-1",
+                      role: "user",
+                      content: "First question",
+                      createdAt: "2026-04-16T08:01:00.000Z",
+                    },
+                    {
+                      id: "msg-assistant-old",
+                      role: "assistant",
+                      content: "Old answer that should stay hidden",
+                      createdAt: "2026-04-16T08:01:05.000Z",
+                    },
+                    {
+                      id: "msg-user-2",
+                      role: "user",
+                      content: "Second question",
+                      createdAt: "2026-04-16T08:02:00.000Z",
+                    },
+                    {
+                      id: "msg-assistant-new",
+                      role: "assistant",
+                      content: "Latest answer only",
+                      createdAt: "2026-04-16T08:02:05.000Z",
+                    },
+                  ]);
+                };
+
+                setupClientRealtimeConnection();
+                await lastSocket.onmessage({
+                  data: JSON.stringify({
+                    event: "ticket_ai_response_ready",
+                    ticket_id: ticket.id,
+                    customer_id: state.user.id,
+                  }),
+                });
+
+                const staleHtml = renderChatTicket();
+                if (staleHtml.includes("Old answer that should stay hidden")) {
+                  throw new Error("Superseded-turn reply should not render while the latest turn is still pending.");
+                }
+                if (!getPendingSession(ticket.id)) {
+                  throw new Error("A hidden late old reply should not clear the latest pending turn.");
+                }
+
+                await lastSocket.onmessage({
+                  data: JSON.stringify({
+                    event: "ticket_ai_response_ready",
+                    ticket_id: ticket.id,
+                    customer_id: state.user.id,
+                  }),
+                });
+
+                const finalHtml = renderChatTicket();
+                if (finalHtml.includes("Old answer that should stay hidden")) {
+                  throw new Error("Superseded-turn reply should remain hidden after the latest durable answer arrives.");
+                }
+                if (!finalHtml.includes("Latest answer only")) {
+                  throw new Error("The latest durable assistant answer should render.");
+                }
+                if (getPendingSession(ticket.id)) {
+                  throw new Error("Latest durable assistant answer should clear the active pending turn.");
+                }
+              """
+            )
+        )
+
+    def test_client_different_tickets_can_queue_concurrently(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+                render = () => {};
+                syncTicketsFromBackend = async () => {};
+                requestChatScrollToBottom = () => {};
+                ensurePendingStatusPolling = () => {};
+                AbortController = class AbortController {
+                  constructor() {
+                    this.signal = { aborted: false };
+                  }
+                  abort() {
+                    this.signal.aborted = true;
+                  }
+                };
+
+                const ticketA = createTicket(state.user.id);
+                const ticketB = createTicket(state.user.id);
+                updateTicketProduct(ticketA.id, "audio_video_calling");
+                updateTicketProduct(ticketB.id, "audio_video_calling");
+
+                fetch = (url, options = undefined) => {
+                  if (url === "/api/tickets/query") {
+                    const body = JSON.parse(options.body);
+                    return Promise.resolve({
+                      ok: true,
+                      json: async () => ({
+                        ticket_id: body.ticket_id,
+                        answer: "",
+                        ai_replied: false,
+                        queued_for_ai: true,
+                        message_created_at: `2026-04-16T09:${body.ticket_id === ticketA.id ? "00" : "01"}:00.000Z`,
+                        queued_message_created_at: `2026-04-16T09:${body.ticket_id === ticketA.id ? "00" : "01"}:00.000Z`,
+                        status: "communicating",
+                      }),
+                    });
+                  }
+                  throw new Error(`Unexpected fetch call to ${url}`);
+                };
+
+                state.view = "chat-ticket";
+                state.activeTicketId = ticketA.id;
+                await handleSendMessage("Question on ticket A");
+
+                state.activeTicketId = ticketB.id;
+                await handleSendMessage("Question on ticket B");
+
+                if (!state.pendingByTicket[ticketA.id] || !state.pendingByTicket[ticketB.id]) {
+                  throw new Error("Both tickets should keep independent queued pending sessions.");
+                }
+                if (Object.keys(state.pendingByTicket).length !== 2) {
+                  throw new Error(`Expected two concurrent pending tickets, got ${Object.keys(state.pendingByTicket).length}.`);
+                }
+              """
+            )
+        )
+
+    def test_client_same_ticket_submitting_window_blocks_second_send_until_query_returns(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+                render = () => {};
+                syncTicketsFromBackend = async () => {};
+                requestChatScrollToBottom = () => {};
+                ensurePendingStatusPolling = () => {};
+                AbortController = class AbortController {
+                  constructor() {
+                    this.signal = { aborted: false };
+                  }
+                  abort() {
+                    this.signal.aborted = true;
+                  }
+                };
+
+                const ticket = createTicket(state.user.id);
+                updateTicketProduct(ticket.id, "audio_video_calling");
+                state.view = "chat-ticket";
+                state.activeTicketId = ticket.id;
+
+                let resolveQuery = null;
+                fetch = (url) => {
+                  if (url !== "/api/tickets/query") {
+                    throw new Error(`Unexpected fetch call to ${url}`);
+                  }
+                  return new Promise((resolve) => {
+                    resolveQuery = resolve;
+                  });
+                };
+
+                const firstSend = handleSendMessage("First question");
+                await Promise.resolve();
+
+                const duringSubmitView = buildChatTicketViewState(getTicketById(ticket.id));
+                if (!isTicketSubmitting(ticket.id)) {
+                  throw new Error("Ticket should stay in submitting phase until the query API returns.");
+                }
+                if (duringSubmitView.canCompose) {
+                  throw new Error("Composer should stay disabled during the initial submitting window.");
+                }
+
+                await handleSendMessage("Second question");
+
+                const userMessages = getTicketById(ticket.id).messages.filter((message) => message.role === "user");
+                if (userMessages.length !== 1 || userMessages[0].content !== "First question") {
+                  throw new Error("Second send should be ignored while the initial query is still submitting.");
+                }
+
+                resolveQuery({
+                  ok: true,
+                  json: async () => ({
+                    ticket_id: ticket.id,
+                    answer: "",
+                    ai_replied: false,
+                    queued_for_ai: true,
+                    message_created_at: "2026-04-16T10:00:00.000Z",
+                    queued_message_created_at: "2026-04-16T10:00:00.000Z",
+                    status: "communicating",
+                  }),
+                });
+                await firstSend;
+              """
+            )
+        )
+
     def test_client_realtime_ready_keeps_async_pending_state_without_waiting_copy_until_durable_reply_syncs(self) -> None:
         self.run_client_app_script(
             textwrap.dedent(
@@ -1418,8 +1795,11 @@ class ClientUiContractTests(unittest.TestCase):
                 if (initialHtml.includes("checking the knowledge base... click stop to interrupt.")) {
                   throw new Error("Async waiting state should not render the composer waiting note before realtime updates.");
                 }
-                if (!initialHtml.includes('class="composer-icon-button composer-stop-btn"')) {
-                  throw new Error("Async waiting state should keep the inline stop button available.");
+                if (!initialHtml.includes('class="composer-icon-button send-btn"')) {
+                  throw new Error("Async waiting state should keep the inline send button available.");
+                }
+                if (initialHtml.includes('class="composer-icon-button composer-stop-btn"')) {
+                  throw new Error("Async waiting state should no longer render the stop button.");
                 }
 
                 setupClientRealtimeConnection();
@@ -1448,8 +1828,11 @@ class ClientUiContractTests(unittest.TestCase):
                 if (waitingHtml.includes("checking the knowledge base... click stop to interrupt.")) {
                   throw new Error("Realtime ready should not reintroduce the composer waiting note while waiting for sync.");
                 }
-                if (!waitingHtml.includes('class="composer-icon-button composer-stop-btn"')) {
-                  throw new Error("Realtime ready should keep the stop button available until the durable reply arrives.");
+                if (!waitingHtml.includes('class="composer-icon-button send-btn"')) {
+                  throw new Error("Realtime ready should keep the send button available until the durable reply arrives.");
+                }
+                if (waitingHtml.includes('class="composer-icon-button composer-stop-btn"')) {
+                  throw new Error("Realtime ready should not reintroduce the old stop button.");
                 }
                 if (waitingHtml.includes("Use joinChannel with the same channel name and token.")) {
                   throw new Error("First ready event should not invent a durable reply before backend sync has it.");
@@ -1474,7 +1857,7 @@ class ClientUiContractTests(unittest.TestCase):
                   throw new Error("Durable reply should not coexist with a transient reassurance bubble.");
                 }
                 if (resolvedHtml.includes('class="composer-icon-button composer-stop-btn"')) {
-                  throw new Error("Stop button should disappear once the durable reply is available.");
+                  throw new Error("Stop button should remain absent once the durable reply is available.");
                 }
               """
             )
@@ -2245,20 +2628,25 @@ class ClientUiContractTests(unittest.TestCase):
                   throw new Error("Send icon button should expose an accessible label.");
                 }
 
-                state.isSending = true;
-                state.pendingTicketId = ticket.id;
+                state.pendingByTicket = {
+                  [ticket.id]: {
+                    phase: "queued",
+                    userMessageId: "msg-user-1",
+                    queuedMessageCreatedAt: "2026-04-15T09:00:00.000Z",
+                  },
+                };
 
                 const sendingHtml = renderChatTicket();
-                if (!sendingHtml.includes('class="composer-icon-button composer-stop-btn"')) {
-                  throw new Error("Sending state should render an inline stop icon button.");
+                if (!sendingHtml.includes('class="composer-icon-button send-btn"')) {
+                  throw new Error("Queued state should still render an inline send icon button.");
                 }
-                if (!sendingHtml.includes('data-action="stop-generation"')) {
-                  throw new Error("Stop icon button should keep the existing stop-generation action.");
+                if (sendingHtml.includes('data-action="stop-generation"')) {
+                  throw new Error("Queued state should not render the legacy stop-generation action.");
                 }
-                if (!sendingHtml.includes('aria-label="Stop Generation"')) {
-                  throw new Error("Stop icon button should expose an accessible label.");
+                if (sendingHtml.includes('class="composer-icon-button composer-stop-btn"')) {
+                  throw new Error("Queued state should not render the legacy stop icon button.");
                 }
-                """
+              """
             )
         )
 
@@ -2373,8 +2761,13 @@ class ClientUiContractTests(unittest.TestCase):
                   );
                 }
 
-                state.isSending = true;
-                state.pendingTicketId = ticket.id;
+                state.pendingByTicket = {
+                  [ticket.id]: {
+                    phase: "queued",
+                    userMessageId: "msg-pending-1",
+                    queuedMessageCreatedAt: "2026-03-31T15:25:00.000Z",
+                  },
+                };
                 currentChatMain.scrollTop = 41;
                 renderHeights.push(220);
                 render();
@@ -2385,8 +2778,11 @@ class ClientUiContractTests(unittest.TestCase):
                 if (mainRegion.innerHTML.includes("checking the knowledge base... click stop to interrupt.")) {
                   throw new Error("Waiting-state rerender should no longer render the composer waiting note.");
                 }
-                if (!mainRegion.innerHTML.includes("composer-stop-btn")) {
-                  throw new Error("Waiting-state rerender should still render the inline stop button.");
+                if (!mainRegion.innerHTML.includes("send-btn")) {
+                  throw new Error("Waiting-state rerender should keep the inline send button available.");
+                }
+                if (mainRegion.innerHTML.includes("composer-stop-btn")) {
+                  throw new Error("Waiting-state rerender should not render the legacy stop button.");
                 }
                 if (currentChatMain.scrollTop !== 41) {
                   throw new Error(
@@ -2394,8 +2790,7 @@ class ClientUiContractTests(unittest.TestCase):
                   );
                 }
 
-                state.isSending = false;
-                state.pendingTicketId = null;
+                state.pendingByTicket = {};
                 currentChatMain.scrollTop = 38;
                 saveTicketMessages(ticket.id, [
                   ...getTicketById(ticket.id).messages,
@@ -3432,7 +3827,7 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
-    def test_client_async_waiting_state_keeps_stop_without_waiting_copy(self) -> None:
+    def test_client_async_waiting_state_keeps_send_without_waiting_copy(self) -> None:
         self.run_client_app_script(
             textwrap.dedent(
                 """
@@ -3467,10 +3862,13 @@ class ClientUiContractTests(unittest.TestCase):
                 if (html.includes("checking the knowledge base... click stop to interrupt.")) {
                   throw new Error("Async waiting state should not render the composer waiting note.");
                 }
-                if (!html.includes("composer-stop-btn")) {
-                  throw new Error("Async waiting state should still render the inline stop button.");
+                if (!html.includes("send-btn")) {
+                  throw new Error("Async waiting state should keep the inline send button.");
                 }
-                """
+                if (html.includes("composer-stop-btn")) {
+                  throw new Error("Async waiting state should no longer render the old stop button.");
+                }
+              """
             )
         )
 
