@@ -1132,7 +1132,7 @@ def _why_not_solved_text(unresolved_reason: str) -> str:
         )
     if normalized == "investigation_intake_round_exhausted":
         return (
-            f"{_PUBLIC_ASSISTANT_NAME} already used the single allowed intake clarification, "
+            f"{_PUBLIC_ASSISTANT_NAME} already exhausted the allowed intake clarification rounds, "
             "so the case was handed off for engineer investigation with some troubleshooting details still missing."
         )
     if normalized == "rag_post_check_insufficient":

@@ -1738,7 +1738,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertIsNotNone(opening)
         rag_summary = str((opening or {}).get("rag_answer_summary") or "").lower()
         action_needed = str((opening or {}).get("action_needed") or "").lower()
-        self.assertIn("single allowed intake clarification", rag_summary)
+        self.assertIn("allowed intake clarification rounds are exhausted", rag_summary)
         self.assertNotIn("timed out", rag_summary)
         self.assertNotIn("could not find enough grounded doc evidence", rag_summary)
         self.assertIn("remaining missing investigation details", action_needed)
