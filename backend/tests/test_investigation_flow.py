@@ -1923,6 +1923,71 @@ class InvestigationFlowTests(unittest.TestCase):
             ],
         )
 
+    def test_fallback_engineer_agent_state_prefers_intake_symptom_summary_over_latest_customer_message(self) -> None:
+        state = fallback_engineer_agent_state(
+            {
+                "subject": "Black Screen Issue",
+                "engineer_agent_state": {},
+            },
+            {
+                "latest_customer_message": "channel name: zilingtest, uid 2",
+                "client_intake_state": {
+                    "known_information": {
+                        "issue_symptom": "black screen issue",
+                        "channel_name": "zilingtest",
+                        "problematic_uid": "2",
+                    }
+                },
+                "rag_result": {
+                    "candidate_answer": (
+                        "Customer already answered the single allowed intake clarification, "
+                        "and the case was handed off for direct engineer investigation."
+                    ),
+                    "sources": [],
+                    "citations": [],
+                },
+                "unresolved_reason": "investigation_intake_round_exhausted",
+            },
+            now_value="2026-04-16T03:51:52.897458+00:00",
+            ready_to_reply=False,
+        )
+
+        self.assertEqual(
+            state["issue_understanding"],
+            "Black screen issue reported for channel zilingtest, uid 2.",
+        )
+        self.assertEqual(
+            state["known_facts"],
+            [
+                "Issue symptom is black screen issue.",
+                "Channel name is zilingtest.",
+                "Problematic uid is 2.",
+            ],
+        )
+
+    def test_fallback_engineer_agent_state_uses_latest_customer_message_without_intake_symptom(self) -> None:
+        state = fallback_engineer_agent_state(
+            {
+                "subject": "Black Screen Issue",
+                "engineer_agent_state": {},
+            },
+            {
+                "latest_customer_message": "channel name: zilingtest, uid 2",
+                "client_intake_state": {
+                    "known_information": {
+                        "channel_name": "zilingtest",
+                        "problematic_uid": "2",
+                    }
+                },
+                "rag_result": {"candidate_answer": "", "sources": [], "citations": []},
+                "unresolved_reason": "investigation_intake_round_exhausted",
+            },
+            now_value="2026-04-16T03:51:52.897458+00:00",
+            ready_to_reply=False,
+        )
+
+        self.assertEqual(state["issue_understanding"], "channel name: zilingtest, uid 2")
+
     def test_normalize_engineer_agent_state_filters_candidate_answer_like_known_facts(self) -> None:
         state = normalize_engineer_agent_state(
             {
@@ -2225,9 +2290,8 @@ class InvestigationFlowTests(unittest.TestCase):
             return_value=types.SimpleNamespace(
                 result=types.SimpleNamespace(
                     answer=(
-                        "Known so far: the issue symptom is black screen. "
-                        "To investigate this Audio/Video Calling issue, please share the channel name, "
-                        "problematic uid, and issue timestamp."
+                        "Thanks for the details. To help us investigate this Audio/Video Calling issue, "
+                        "could you also share the channel name, problematic uid, and issue timestamp?"
                     ),
                     confidence=0.0,
                     sources=[],
@@ -2277,7 +2341,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(payload["route_reason"], "rag_insufficient_evidence")
         self.assertEqual(
             payload["answer"],
-            "Known so far: the issue symptom is black screen. To investigate this Audio/Video Calling issue, please share the channel name, problematic uid, and issue timestamp.",
+            "Thanks for the details. To help us investigate this Audio/Video Calling issue, could you also share the channel name, problematic uid, and issue timestamp?",
         )
         stored = self.repository.get_ticket("TK-INV-110")
         self.assertIsNotNone(stored)
@@ -2288,8 +2352,9 @@ class InvestigationFlowTests(unittest.TestCase):
         )
         self.assertEqual(
             stored["messages"][-1]["content"],
-            "Known so far: the issue symptom is black screen. To investigate this Audio/Video Calling issue, please share the channel name, problematic uid, and issue timestamp.",
+            "Thanks for the details. To help us investigate this Audio/Video Calling issue, could you also share the channel name, problematic uid, and issue timestamp?",
         )
+        self.assertNotIn("Known so far", stored["messages"][-1]["content"])
         self.assertFalse(
             any(message["content"] == "Got it, let me check this for you." for message in stored["messages"])
         )
@@ -2315,9 +2380,8 @@ class InvestigationFlowTests(unittest.TestCase):
             return_value=types.SimpleNamespace(
                 result=types.SimpleNamespace(
                     answer=(
-                        "Known so far: the issue symptom is black screen issue. "
-                        "To investigate this Audio/Video Calling issue, please share the channel name, "
-                        "problematic uid, and issue timestamp."
+                        "Thanks for the details. To help us investigate this Audio/Video Calling issue, "
+                        "could you also share the channel name, problematic uid, and issue timestamp?"
                     ),
                     confidence=0.0,
                     sources=[],
@@ -2386,9 +2450,8 @@ class InvestigationFlowTests(unittest.TestCase):
                 {
                     "role": "assistant",
                     "content": (
-                        "Known so far: the issue symptom is black screen. "
-                        "To investigate this Audio/Video Calling issue, please share the channel name, "
-                        "problematic uid, and issue timestamp."
+                        "Thanks for the details. To help us investigate this Audio/Video Calling issue, "
+                        "could you also share the channel name, problematic uid, and issue timestamp?"
                     ),
                     "created_at": "2026-03-29T09:01:00+00:00",
                 },
@@ -2503,9 +2566,8 @@ class InvestigationFlowTests(unittest.TestCase):
                 {
                     "role": "assistant",
                     "content": (
-                        "Known so far: the issue symptom is black screen issue. "
-                        "To investigate this Audio/Video Calling issue, please share the channel name, "
-                        "problematic uid, and issue timestamp."
+                        "Thanks for the details. To help us investigate this Audio/Video Calling issue, "
+                        "could you also share the channel name, problematic uid, and issue timestamp?"
                     ),
                     "created_at": "2026-03-29T09:01:00+00:00",
                 },
@@ -2724,9 +2786,8 @@ class InvestigationFlowTests(unittest.TestCase):
 
     def test_black_screen_rag_service_error_persists_intake_gate_before_opening_engineer_ticket(self) -> None:
         clarify_reply = (
-            "Known so far: the issue symptom is black screen issue. "
-            "To investigate this Audio/Video Calling issue, please share the channel name, "
-            "problematic uid, and issue timestamp."
+            "Thanks for the details. To help us investigate this Audio/Video Calling issue, "
+            "could you also share the channel name, problematic uid, and issue timestamp?"
         )
 
         with patch.object(
@@ -3340,7 +3401,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(latest_message.get("meta", {}).get("scenario"), "engineer_investigation_reply")
         self.assertEqual(latest_message.get("meta", {}).get("model"), "gpt-5.4")
         self.assertEqual(latest_message.get("meta", {}).get("reasoning_effort"), "medium")
-        self.assertEqual(latest_message.get("meta", {}).get("prompt_version"), "engineer-investigation-reply-v5")
+        self.assertEqual(latest_message.get("meta", {}).get("prompt_version"), "engineer-investigation-reply-v6")
         self.assertEqual(latest_message.get("meta", {}).get("generation_status"), "succeeded")
         self.assertTrue(payload["engineer_agent_state"]["reply_readiness"]["ready_for_customer_reply"])
         self.assertEqual(

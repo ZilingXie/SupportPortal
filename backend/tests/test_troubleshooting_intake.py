@@ -44,8 +44,11 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(result.issue_mode, "answer")
         self.assertEqual(result.missing_information, ["desired_outcome", "blocked_step_or_error"])
         self.assertFalse(result.ready_for_engineer_ticket)
-        self.assertIn("What are you trying to achieve", result.customer_reply)
-        self.assertIn("What error or blocker are you seeing", result.customer_reply)
+        self.assertTrue(result.customer_reply.startswith("Thanks for the details."))
+        self.assertIn("what you're trying to achieve", result.customer_reply.lower())
+        self.assertIn("the exact error or blocker you're seeing", result.customer_reply.lower())
+        self.assertNotIn("grounded answer", result.customer_reply.lower())
+        self.assertNotIn("support evidence", result.customer_reply.lower())
 
         intake_state = build_client_intake_state(
             result,
@@ -83,7 +86,12 @@ The documentation states that time: 0 means the rule is applied permanently. How
             ["channel_name", "problematic_uid", "issue_timestamp"],
         )
         self.assertFalse(result.ready_for_engineer_ticket)
-        self.assertIn("Known so far", result.customer_reply)
+        self.assertTrue(result.customer_reply.startswith("Thanks for the details."))
+        self.assertIn("to help us investigate this audio/video calling issue", result.customer_reply.lower())
+        self.assertIn("channel name", result.customer_reply.lower())
+        self.assertIn("problematic uid", result.customer_reply.lower())
+        self.assertIn("issue timestamp", result.customer_reply.lower())
+        self.assertNotIn("known so far", result.customer_reply.lower())
 
         intake_state = build_client_intake_state(
             result,
@@ -321,9 +329,11 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(result.known_information["issue_symptom"], "black screen issue")
         self.assertEqual(result.missing_information, ["issue_timestamp"])
         self.assertFalse(result.ready_for_engineer_ticket)
+        self.assertTrue(result.customer_reply.startswith("Thanks for sharing the additional info."))
         self.assertIn("timezone", result.customer_reply.lower())
         self.assertNotIn("full timestamp", result.customer_reply.lower())
         self.assertNotIn("date", result.customer_reply.lower())
+        self.assertNotIn("known so far", result.customer_reply.lower())
 
         intake_state = build_client_intake_state(
             result,
@@ -453,6 +463,51 @@ The documentation states that time: 0 means the rule is applied permanently. How
             {"date": "2026-04-03", "time": "12:00pm", "timezone": "UTC+8"},
         )
 
+    def test_tk_122_follow_up_preserves_existing_issue_symptom_and_only_requests_missing_time_and_timezone(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
+            result = evaluate_troubleshooting_intake(
+                message="channel name: zilingtest, uid is 2, and the issue happened on april 3rd",
+                product="audio_video_calling",
+                ticket_subject="Black screen",
+                ticket_context=[
+                    {"role": "customer", "content": "i got black screen issue"},
+                    {
+                        "role": "assistant",
+                        "content": (
+                            "Thanks for the details. To help us investigate this Audio/Video Calling issue, "
+                            "could you also share the channel name, problematic uid, and issue timestamp?"
+                        ),
+                    },
+                ],
+                current_state={
+                    "phase": "gather_customer_inputs",
+                    "product": "audio_video_calling",
+                    "issue_mode": "investigation",
+                    "known_information": {"issue_symptom": "black screen issue"},
+                    "missing_information": ["channel_name", "problematic_uid", "issue_timestamp"],
+                    "ready_for_engineer_ticket": False,
+                    "last_updated_at": "2026-04-14T02:08:33.337732+00:00",
+                },
+                rag_result={
+                    "reason": "rag_insufficient_evidence",
+                    "answer": "I couldn't find enough information in the available support knowledge base to answer that question.",
+                    "evidence_summary": {},
+                },
+                message_created_at="2026-04-14T02:11:08.752498+00:00",
+            )
+
+        self.assertEqual(result.issue_mode, "investigation")
+        self.assertEqual(result.known_information["issue_symptom"], "black screen issue")
+        self.assertEqual(result.known_information["channel_name"], "zilingtest")
+        self.assertEqual(result.known_information["problematic_uid"], "2")
+        self.assertEqual(result.issue_timestamp_parts, {"date": "2026-04-03"})
+        self.assertEqual(result.missing_information, ["issue_timestamp"])
+        self.assertFalse(result.ready_for_engineer_ticket)
+        self.assertTrue(result.customer_reply.startswith("Thanks for sharing the additional info."))
+        self.assertIn("issue time and timezone", result.customer_reply.lower())
+        self.assertNotIn("known so far", result.customer_reply.lower())
+        self.assertNotIn("issue symptom is", result.customer_reply.lower())
+
     def test_answer_mode_follow_up_merges_goal_and_blocker_and_marks_ready_for_engineer_ticket(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
             result = evaluate_troubleshooting_intake(
@@ -467,8 +522,8 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     {
                         "role": "assistant",
                         "content": (
-                            "I couldn't verify a grounded answer yet. What are you trying to achieve? "
-                            "What error or blocker are you seeing?"
+                            "Thanks for the details. To help us give the right guidance, could you also "
+                            "share what you're trying to achieve and the exact error or blocker you're seeing?"
                         ),
                     },
                 ],
@@ -575,6 +630,71 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(result.missing_information, ["issue_timestamp"])
         self.assertIn("timezone", result.customer_reply.lower())
         self.assertNotIn("date", result.customer_reply.lower())
+        self.assertNotIn("known so far", result.customer_reply.lower())
+
+    def test_llm_investigation_reply_with_known_so_far_falls_back_to_new_customer_facing_reply(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "backend.services.troubleshooting_intake.invoke_responses_text",
+            return_value=types.SimpleNamespace(
+                text=(
+                    '{"issue_mode":"investigation","known_information":{"issue_symptom":"black screen issue"},'
+                    '"missing_information":["channel_name","problematic_uid","issue_timestamp"],'
+                    '"ready_for_engineer_ticket":false,'
+                    '"customer_reply":"Known so far: issue symptom is black screen issue. '
+                    'To investigate this Audio/Video Calling issue, please share the channel name, '
+                    'problematic uid, and issue timestamp."}'
+                )
+            ),
+        ):
+            result = evaluate_troubleshooting_intake(
+                message="I got black screen issue.",
+                product="audio_video_calling",
+                ticket_subject="Black screen issue",
+                ticket_context=[{"role": "customer", "content": "I got black screen issue."}],
+                current_state=None,
+                rag_result={
+                    "reason": "rag_insufficient_evidence",
+                    "answer": "I couldn't find enough information in the available support knowledge base to answer that question.",
+                    "evidence_summary": {},
+                },
+            )
+
+        self.assertTrue(result.customer_reply.startswith("Thanks for the details."))
+        self.assertIn("channel name", result.customer_reply.lower())
+        self.assertNotIn("known so far", result.customer_reply.lower())
+
+    def test_llm_answer_mode_internal_phrasing_falls_back_to_customer_facing_clarify(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "backend.services.troubleshooting_intake.invoke_responses_text",
+            return_value=types.SimpleNamespace(
+                text=(
+                    '{"issue_mode":"answer","known_information":{},'
+                    '"missing_information":["desired_outcome","blocked_step_or_error"],'
+                    '"ready_for_engineer_ticket":false,'
+                    '"customer_reply":"I couldn\'t verify a grounded answer from the current support evidence. '
+                    'What are you trying to achieve? What error or blocker are you seeing?"}'
+                )
+            ),
+        ):
+            result = evaluate_troubleshooting_intake(
+                message="How do I join channel?",
+                product="audio_video_calling",
+                ticket_subject="Join channel",
+                ticket_context=[{"role": "customer", "content": "How do I join channel?"}],
+                current_state=None,
+                rag_result={
+                    "reason": "rag_insufficient_evidence",
+                    "answer": "I couldn't find enough information in the available support knowledge base to answer that question.",
+                    "evidence_summary": {},
+                },
+            )
+
+        self.assertEqual(result.issue_mode, "answer")
+        self.assertTrue(result.customer_reply.startswith("Thanks for the details."))
+        self.assertIn("what you're trying to achieve", result.customer_reply.lower())
+        self.assertIn("the exact error or blocker you're seeing", result.customer_reply.lower())
+        self.assertNotIn("grounded answer", result.customer_reply.lower())
+        self.assertNotIn("support evidence", result.customer_reply.lower())
 
     def test_llm_cannot_downgrade_black_screen_issue_to_answer_mode(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(

@@ -23,7 +23,7 @@ _MAX_SUMMARY_MESSAGES = 8
 _MAX_SUMMARY_TEXT_CHARS = 280
 _PUBLIC_ASSISTANT_NAME = "Sid"
 _ENGINEER_NAME = "jack"
-_ENGINEER_AI_NAME = "Case Buddy"
+_ENGINEER_AI_NAME = "Sid"
 _REPLY_SCOPE_ROOT_CAUSE_CONFIRMED = "root_cause_confirmed"
 _REPLY_SCOPE_SYMPTOM_AND_WORKAROUND_ONLY = "symptom_and_workaround_only"
 _REPLY_SCOPE_NEEDS_MORE_EVIDENCE = "needs_more_evidence"
@@ -96,6 +96,22 @@ def _clean_list(value: Any) -> list[str]:
     return [item for item in items if item]
 
 
+def _sentence_case(value: Any) -> str:
+    text = _clean_text(value)
+    if not text:
+        return ""
+    return f"{text[:1].upper()}{text[1:]}"
+
+
+def _ensure_sentence(value: Any) -> str:
+    text = _clean_text(value)
+    if not text:
+        return ""
+    if text[-1] in ".!?":
+        return text
+    return f"{text}."
+
+
 def _default_reply_readiness() -> dict[str, Any]:
     return {
         "has_conclusion": False,
@@ -111,6 +127,53 @@ def _default_reply_readiness() -> dict[str, Any]:
         "critique": "",
         "ready_for_customer_reply": False,
     }
+
+
+def _handoff_client_intake_known_information(handoff_packet: dict[str, Any] | None) -> dict[str, str]:
+    packet = handoff_packet if isinstance(handoff_packet, dict) else {}
+    client_intake_state = (
+        packet.get("client_intake_state") if isinstance(packet.get("client_intake_state"), dict) else {}
+    )
+    known_information = (
+        client_intake_state.get("known_information")
+        if isinstance(client_intake_state.get("known_information"), dict)
+        else {}
+    )
+    normalized: dict[str, str] = {}
+    for key in ("issue_symptom", "channel_name", "problematic_uid", "issue_timestamp", "sid"):
+        value = _clean_text(known_information.get(key))
+        if value:
+            normalized[key] = value
+    return normalized
+
+
+def _issue_understanding_from_intake_known_information(known_information: dict[str, str]) -> str:
+    symptom = _sentence_case(known_information.get("issue_symptom"))
+    if not symptom:
+        return ""
+
+    scope_parts: list[str] = []
+    channel_name = _clean_text(known_information.get("channel_name"))
+    if channel_name:
+        scope_parts.append(f"channel {channel_name}")
+    problematic_uid = _clean_text(known_information.get("problematic_uid"))
+    if problematic_uid:
+        scope_parts.append(f"uid {problematic_uid}")
+    sid = _clean_text(known_information.get("sid"))
+    if sid:
+        scope_parts.append(f"sid {sid}")
+    issue_timestamp = _clean_text(known_information.get("issue_timestamp"))
+
+    summary = symptom
+    if scope_parts:
+        summary = f"{summary} reported for {', '.join(scope_parts)}"
+        if issue_timestamp:
+            summary = f"{summary}, around {issue_timestamp}"
+    elif issue_timestamp:
+        summary = f"{summary} reported around {issue_timestamp}"
+    else:
+        summary = f"{summary} reported"
+    return _ensure_sentence(summary)
 
 
 def _normalize_search_text(value: Any) -> str:
@@ -1088,8 +1151,26 @@ def _why_not_solved_text(unresolved_reason: str) -> str:
 
 def _default_known_facts(ticket: dict[str, Any], handoff_packet: dict[str, Any]) -> list[str]:
     facts: list[str] = []
+    intake_known_information = _handoff_client_intake_known_information(handoff_packet)
+    if intake_known_information:
+        symptom = _clean_text(intake_known_information.get("issue_symptom"))
+        if symptom:
+            facts.append(_ensure_sentence(f"Issue symptom is {symptom}"))
+        channel_name = _clean_text(intake_known_information.get("channel_name"))
+        if channel_name:
+            facts.append(_ensure_sentence(f"Channel name is {channel_name}"))
+        problematic_uid = _clean_text(intake_known_information.get("problematic_uid"))
+        if problematic_uid:
+            facts.append(_ensure_sentence(f"Problematic uid is {problematic_uid}"))
+        issue_timestamp = _clean_text(intake_known_information.get("issue_timestamp"))
+        if issue_timestamp:
+            facts.append(_ensure_sentence(f"Issue time is around {issue_timestamp}"))
+        sid = _clean_text(intake_known_information.get("sid"))
+        if sid:
+            facts.append(_ensure_sentence(f"Sid is {sid}"))
+
     latest_customer = _clean_text(handoff_packet.get("latest_customer_message"))
-    if latest_customer:
+    if latest_customer and not facts:
         facts.append(f"Customer reported: {latest_customer}")
     rag_result = handoff_packet.get("rag_result")
     if isinstance(rag_result, dict):
@@ -1175,8 +1256,10 @@ def fallback_engineer_agent_state(
 ) -> dict[str, Any]:
     packet = handoff_packet if isinstance(handoff_packet, dict) else {}
     existing = ticket.get("engineer_agent_state") if isinstance(ticket.get("engineer_agent_state"), dict) else {}
+    intake_known_information = _handoff_client_intake_known_information(packet)
     issue_understanding = (
         _clean_text(existing.get("issue_understanding"))
+        or _issue_understanding_from_intake_known_information(intake_known_information)
         or _clean_text(packet.get("latest_customer_message"))
         or _clean_text(ticket.get("subject"))
         or "The engineer ticket needs more technical context."

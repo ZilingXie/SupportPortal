@@ -68,12 +68,18 @@ _STRUCTURED_TECHNICAL_REPLY_RE = re.compile(
     re.IGNORECASE,
 )
 _CLARIFY_REPLY_MARKERS = (
+    "thanks for the details",
+    "thanks for sharing the additional info",
+    "to help us give the right guidance",
     "what are you trying to achieve",
+    "what you're trying to achieve",
     "what error or blocker are you seeing",
+    "exact error or blocker",
     "what error are you seeing",
     "what blocker are you seeing",
     "what are you seeing",
     "please share",
+    "could you also share",
     "please confirm",
     "could you share",
     "can you share",
@@ -83,6 +89,14 @@ _CLARIFY_REPLY_MARKERS = (
     "docs page",
     "api version",
     "api semantics",
+)
+_INTERNAL_CLARIFY_REPLY_MARKERS = (
+    "known so far",
+    "grounded answer",
+    "support evidence",
+    "support knowledge base",
+    "i couldn't verify",
+    "i could not verify",
 )
 
 
@@ -149,23 +163,13 @@ def _build_answer_mode_customer_reply(
 ) -> str:
     prompts: list[str] = []
     if "desired_outcome" in missing_information:
-        prompts.append("What are you trying to achieve?")
+        prompts.append("what you're trying to achieve")
     if "blocked_step_or_error" in missing_information:
-        prompts.append("What error or blocker are you seeing?")
+        prompts.append("the exact error or blocker you're seeing")
     if not prompts:
         return ""
-    prefix = "I couldn't verify a grounded answer from the current support evidence."
-    if known_information:
-        summaries: list[str] = []
-        desired_outcome = _clean_text(known_information.get("desired_outcome"))
-        blocked_step_or_error = _clean_text(known_information.get("blocked_step_or_error"))
-        if desired_outcome:
-            summaries.append(f"desired outcome is {desired_outcome}")
-        if blocked_step_or_error:
-            summaries.append(f"blocked step or error is {blocked_step_or_error}")
-        if summaries:
-            return f"Known so far: {'; '.join(summaries)}. {prefix} {' '.join(prompts)}".strip()
-    return f"{prefix} {' '.join(prompts)}".strip()
+    opening = "Thanks for sharing the additional info." if known_information else "Thanks for the details."
+    return f"{opening} To help us give the right guidance, could you also share {_join_labels(prompts)}?"
 
 
 def _build_answer_mode_review_result_from_state(
@@ -196,6 +200,8 @@ def _is_safe_answer_mode_clarify_reply(text: str) -> bool:
     if not cleaned:
         return False
     lowered = cleaned.lower()
+    if any(marker in lowered for marker in _INTERNAL_CLARIFY_REPLY_MARKERS):
+        return False
     if _STRUCTURED_TECHNICAL_REPLY_RE.search(cleaned):
         return False
     if any(marker in lowered for marker in _CLARIFY_REPLY_MARKERS):

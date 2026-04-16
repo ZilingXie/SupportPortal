@@ -851,7 +851,10 @@ The documentation states that time: 0 means the rule is applied permanently. How
             execution.result.client_intake_state["missing_information"],
             ["desired_outcome", "blocked_step_or_error"],
         )
-        self.assertIn("What are you trying to achieve", execution.result.answer)
+        self.assertTrue(execution.result.answer.startswith("Thanks for the details."))
+        self.assertIn("what you're trying to achieve", execution.result.answer.lower())
+        self.assertIn("the exact error or blocker you're seeing", execution.result.answer.lower())
+        self.assertNotIn("grounded answer", execution.result.answer.lower())
         self.assertEqual(execution.runtime_state.review_agent.get("decision"), "clarify_customer_for_intake")
 
     def test_rag_insufficient_evidence_discards_technical_clarify_reply_without_citations(self) -> None:
@@ -907,8 +910,10 @@ The documentation states that time: 0 means the rule is applied permanently. How
         )
 
         self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
-        self.assertIn("I couldn't verify a grounded answer", execution.result.answer)
-        self.assertIn("What are you trying to achieve?", execution.result.answer)
+        self.assertTrue(execution.result.answer.startswith("Thanks for the details."))
+        self.assertIn("what you're trying to achieve", execution.result.answer.lower())
+        self.assertIn("the exact error or blocker you're seeing", execution.result.answer.lower())
+        self.assertNotIn("grounded answer", execution.result.answer.lower())
         self.assertNotIn("call joinChannel", execution.result.answer)
         self.assertFalse(execution.result.citations)
 
@@ -1547,9 +1552,8 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 missing_information=["channel_name", "problematic_uid", "issue_timestamp"],
                 ready_for_engineer_ticket=False,
                 customer_reply=(
-                    "Known so far: the issue symptom is black screen issue. "
-                    "To investigate this Audio/Video Calling issue, please share the channel name, "
-                    "problematic uid, and issue timestamp."
+                    "Thanks for the details. To help us investigate this Audio/Video Calling issue, "
+                    "could you also share the channel name, problematic uid, and issue timestamp?"
                 ),
             )
 
@@ -1609,6 +1613,8 @@ The documentation states that time: 0 means the rule is applied permanently. How
             "rag_unavailable",
         )
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "completed")
+        self.assertTrue(execution.result.answer.startswith("Thanks for the details."))
+        self.assertNotIn("known so far", execution.result.answer.lower())
 
     def test_troubleshooting_rag_unavailable_keeps_investigation_mode_when_intake_llm_prefers_answer(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
@@ -1758,9 +1764,8 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 missing_information=["channel_name", "problematic_uid", "issue_timestamp"],
                 ready_for_engineer_ticket=False,
                 customer_reply=(
-                    "Known so far: the issue symptom is black screen issue. "
-                    "To investigate this Audio/Video Calling issue, please share the channel name, "
-                    "problematic uid, and issue timestamp."
+                    "Thanks for the details. To help us investigate this Audio/Video Calling issue, "
+                    "could you also share the channel name, problematic uid, and issue timestamp?"
                 ),
             ),
             rag_canceler=None,
@@ -1773,6 +1778,8 @@ The documentation states that time: 0 means the rule is applied permanently. How
         )
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "completed")
         self.assertEqual(execution.runtime_state.review_agent.get("decision"), "clarify_customer_for_intake")
+        self.assertTrue(execution.result.answer.startswith("Thanks for the details."))
+        self.assertNotIn("known so far", execution.result.answer.lower())
 
     def test_grounded_answer_high_risk_waits_for_review(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime

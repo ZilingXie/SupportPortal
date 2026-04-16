@@ -12,6 +12,34 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-04-16 - unify engineer-facing AI identity to Sid
+
+- Area or subsystem: Engineer investigation reply persona and cross-surface user-visible AI naming
+- Prompt or model version: `engineer-investigation-reply-v6`
+- Summary: Unified the remaining engineer-side and dashboard-side user-visible AI identity from `Case Buddy` to `Sid`, so all customer- and engineer-facing AI labels now use the same public name.
+- Reason: The product still exposed two user-visible AI names across `/client`, `/engineer`, and `/dashboard`, which made the assistant identity feel inconsistent even though the same support agent experience was being presented.
+- Affected files or config:
+  - `ui/engineer-ui/app.js`
+  - `ui/engineer-ui/index.html`
+  - `ui/dashboard-ui/app.js`
+  - `ui/dashboard-ui/index.html`
+  - `backend/services/engineer_agent.py`
+  - `backend/services/prompts/engineer_investigation_reply.py`
+  - `backend/tests/test_engineer_ui_contract.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Engineer internal thread `engineer_ai` messages now render as `Sid` instead of `Case Buddy`.
+  - Dashboard ticket detail uses `Sid` for the internal AI author label as well as the public assistant label.
+  - The engineer investigation reply prompt persona is now `Sid`, removing the previous `Case Buddy` / `Sid` split from user-visible naming.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_engineer_ui_contract.py`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_dashboard_ui_contract.py`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_prompt_modules.py`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_client_ui_contract.py`
+
 ## 2026-04-15 - case buddy current-issue facts exclude candidate answers
 
 - Area or subsystem: Engineer investigation reply prompt and Case Buddy current-issue fact curation
@@ -907,6 +935,27 @@ For each new entry, record:
   - `python -m unittest backend.tests.test_client_ui_contract`
   - `node --check ui/client-ui/app.js`
   - `git diff --check`
+
+- Date: 2026-04-16
+- Area or subsystem: Troubleshooting intake customer-facing clarification
+- Prompt or model version: `troubleshooting-intake-v3`
+- Summary: Rewrote missing-information clarification guidance to use appreciative customer-facing openings, forbid `Known so far` / internal-evaluation phrasing, and ask only for the still-missing troubleshooting or answer-mode fields.
+- Reason: `TK-122` and related follow-ups were surfacing mechanical recap-style replies and internal terms such as `grounded answer`, which were not customer-facing and also encouraged structured detail turns to overwrite the original issue symptom.
+- Affected files or config:
+  - `backend/services/prompts/troubleshooting_intake.py`
+  - `backend/services/troubleshooting_intake.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/tests/test_troubleshooting_intake.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Investigation-mode clarification replies now start with a short thanks, ask only for the remaining fields, and avoid recapping known information back to the customer.
+  - Partial timestamp follow-ups now ask only for the missing timestamp part, such as `issue timezone` or `issue time and timezone`, instead of falling back to `full issue timestamp`.
+  - Answer-mode clarification replies no longer mention `grounded answer`, `support evidence`, or similar internal evaluation language.
+  - Structured investigation follow-ups such as `channel name..., uid..., happened on...` preserve the previously known `issue_symptom` instead of overwriting it with the follow-up sentence.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_troubleshooting_intake backend.tests.test_client_ticket_agent_runtime backend.tests.test_investigation_flow`
 
 - Date: 2026-04-15
 - Area or subsystem: Client ticket route classification for gratitude follow-ups
