@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en" class="material-symbols-pending">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Support Portal - Client Preview</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      id="material-symbols-font-stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@300;400;500;700&display=block"
+      rel="stylesheet"
+    />
+    <script>
+      (() => {
+        const revealIcons = () => {
+          document.documentElement.classList.remove("material-symbols-pending");
+        };
+        const iconFontStylesheet = document.getElementById("material-symbols-font-stylesheet");
+        let waitingForMaterialSymbols = false;
+
+        const waitForMaterialSymbols = () => {
+          if (waitingForMaterialSymbols) {
+            return;
+          }
+          waitingForMaterialSymbols = true;
+
+          if (!document.fonts || typeof document.fonts.load !== "function") {
+            revealIcons();
+            return;
+          }
+
+          const revealFallbackTimer = window.setTimeout(revealIcons, 3000);
+          document.fonts
+            .load('24px "Material Symbols Outlined"')
+            .then(revealIcons)
+            .catch(revealIcons)
+            .finally(() => window.clearTimeout(revealFallbackTimer));
+        };
+
+        if (!iconFontStylesheet) {
+          revealIcons();
+          return;
+        }
+
+        iconFontStylesheet.addEventListener("load", waitForMaterialSymbols, { once: true });
+        iconFontStylesheet.addEventListener("error", revealIcons, { once: true });
+        if (iconFontStylesheet?.sheet) {
+          waitForMaterialSymbols();
+        }
+      })();
+    </script>
+    <link rel="stylesheet" href="./styles.css?v=20260416-clienttest-preview-shell-1" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="toast-root" aria-live="polite"></div>
+    <script src="./app.js?v=20260416-clienttest-preview-shell-1"></script>
+  </body>
+</html>
