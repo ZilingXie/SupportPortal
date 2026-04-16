@@ -3452,8 +3452,9 @@ async function handleSendMessage(text, options = {}) {
   if (!ticket || ticket.status === "resolved") {
     return;
   }
+  const isNewTicketPreview = isNewTicketPreviewTicket(ticket);
   const normalizedProduct = normalizeTicketProduct(ticket.product);
-  if (isTicketEmpty(ticket) && !normalizedProduct) {
+  if (!isNewTicketPreview && isTicketEmpty(ticket) && !normalizedProduct) {
     toast("Select a product before sending your first message.", "error");
     return;
   }

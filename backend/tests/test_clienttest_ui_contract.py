@@ -26,8 +26,8 @@ class ClientTestRouteSmokeTests(unittest.TestCase):
     def test_clienttest_html_references_local_assets(self) -> None:
         html = Path("ui/clienttest-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260416-clienttest-reference-links-panel-1", html)
-        self.assertIn("./app.js?v=20260416-clienttest-reference-links-panel-1", html)
+        self.assertIn("./styles.css?v=20260416-clienttest-fix-preview-product-gate-1", html)
+        self.assertIn("./app.js?v=20260416-clienttest-fix-preview-product-gate-1", html)
 
 
 class ClientTestUiContractTests(unittest.TestCase):
@@ -532,6 +532,122 @@ class ClientTestUiContractTests(unittest.TestCase):
                 }
                 if (sidebarHtml.includes("All reference links provided by agent will show up here.")) {
                   throw new Error("New Ticket reference sidebar should remove the placeholder after assistant links exist.");
+                }
+              """
+            )
+        )
+
+    def test_clienttest_preview_first_message_sends_without_product_gate(self) -> None:
+        self.run_clienttest_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Alex Rivera", email: "alex.rivera@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const toastMessages = [];
+                toast = (message) => {
+                  toastMessages.push(String(message));
+                };
+                render = () => {};
+                startClientAck = async () => {};
+                syncTicketsFromBackend = async () => {};
+                requestChatScrollToBottom = () => {};
+                stopPendingStatusPolling = () => {};
+
+                let queryRequestCount = 0;
+                fetch = async (url) => {
+                  if (url === "/api/tickets/query") {
+                    queryRequestCount += 1;
+                    return {
+                      ok: true,
+                      json: async () => ({
+                        answer: "",
+                        ai_replied: false,
+                        status: "communicating",
+                      }),
+                    };
+                  }
+                  return {
+                    ok: true,
+                    json: async () => ({ tickets: [] }),
+                  };
+                };
+
+                const draft = getOrCreateDraftTicket(state.user.id);
+                state.newTicketPreviewTicketId = draft.id;
+                state.view = "chat-ticket";
+                state.activeTicketId = draft.id;
+
+                await handleSendMessage("Preview route should allow the first message without product.");
+
+                const updated = getTicketById(draft.id);
+                if (toastMessages.includes("Select a product before sending your first message.")) {
+                  throw new Error("Preview New Ticket should not emit the legacy product-gate toast.");
+                }
+                if (queryRequestCount !== 1) {
+                  throw new Error("Preview New Ticket should still call the existing query endpoint.");
+                }
+                if (!updated || updated.status !== "communicating") {
+                  throw new Error("Preview New Ticket should transition to the normal submitted status.");
+                }
+                if (!Array.isArray(updated.messages) || updated.messages.length !== 1) {
+                  throw new Error("Preview New Ticket should persist the first customer message locally.");
+                }
+                if (updated.messages[0].role !== "user") {
+                  throw new Error("Preview New Ticket should keep the first submitted turn as a user message.");
+                }
+                if (!updated.messages[0].content.includes("first message without product")) {
+                  throw new Error("Preview New Ticket should preserve the submitted first-message content.");
+                }
+              """
+            )
+        )
+
+    def test_clienttest_non_preview_empty_ticket_still_requires_product_gate(self) -> None:
+        self.run_clienttest_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Alex Rivera", email: "alex.rivera@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const toastMessages = [];
+                toast = (message) => {
+                  toastMessages.push(String(message));
+                };
+                render = () => {};
+                startClientAck = async () => {};
+                syncTicketsFromBackend = async () => {};
+                requestChatScrollToBottom = () => {};
+                stopPendingStatusPolling = () => {};
+
+                let queryRequestCount = 0;
+                fetch = async (url) => {
+                  if (url === "/api/tickets/query") {
+                    queryRequestCount += 1;
+                  }
+                  return {
+                    ok: true,
+                    json: async () => ({ tickets: [] }),
+                  };
+                };
+
+                const draft = getOrCreateDraftTicket(state.user.id);
+                isNewTicketPreviewTicket = () => false;
+                state.newTicketPreviewTicketId = "another-ticket";
+                state.view = "chat-ticket";
+                state.activeTicketId = draft.id;
+
+                await handleSendMessage("This non-preview first message should still be blocked.");
+
+                const updated = getTicketById(draft.id);
+                if (!toastMessages.includes("Select a product before sending your first message.")) {
+                  throw new Error("Non-preview empty ticket should still emit the legacy product-gate toast.");
+                }
+                if (queryRequestCount !== 0) {
+                  throw new Error("Non-preview empty ticket should not call the query endpoint without product.");
+                }
+                if (!updated || (Array.isArray(updated.messages) && updated.messages.length !== 0)) {
+                  throw new Error("Non-preview empty ticket should not persist a first message when product is missing.");
                 }
               """
             )
