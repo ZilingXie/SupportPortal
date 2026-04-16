@@ -26,8 +26,8 @@ class ClientTestRouteSmokeTests(unittest.TestCase):
     def test_clienttest_html_references_local_assets(self) -> None:
         html = Path("ui/clienttest-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260416-clienttest-sidebar-align-1", html)
-        self.assertIn("./app.js?v=20260416-clienttest-sidebar-align-1", html)
+        self.assertIn("./styles.css?v=20260416-clienttest-fixed-sections-1", html)
+        self.assertIn("./app.js?v=20260416-clienttest-fixed-sections-1", html)
 
 
 class ClientTestUiContractTests(unittest.TestCase):
@@ -191,6 +191,12 @@ class ClientTestUiContractTests(unittest.TestCase):
         self.assertIn("new-ticket-composer-panel", css)
         self.assertIn("new-ticket-info-card", css)
         self.assertIn("new-ticket-inline-send-btn", css)
+        self.assertIn("new-ticket-summary-toolbar-btn", css)
+        self.assertIn("new-ticket-fixed-thread-panel", css)
+        self.assertIn("new-ticket-fixed-info-card", css)
+        self.assertIn("new-ticket-fixed-composer-panel", css)
+        self.assertIn("new-ticket-fixed-knowledge-card", css)
+        self.assertNotIn("new-ticket-summary-card", css)
         self.assertNotIn("new-ticket-composer-footer", css)
         self.assertNotIn("new-ticket-product-group", css)
         self.assertNotIn("new-ticket-composer-top", css)
@@ -210,6 +216,12 @@ class ClientTestUiContractTests(unittest.TestCase):
                 state.newTicketPreviewTicketId = draft.id;
 
                 const html = renderChatTicket();
+                const sidebarStart = html.indexOf('<aside class="new-ticket-sidebar">');
+                const sidebarEnd = html.indexOf('</aside>', sidebarStart);
+                const sidebarHtml = html.slice(sidebarStart, sidebarEnd);
+                const toolbarStart = html.indexOf('<div class="new-ticket-composer-toolbar">');
+                const toolbarEnd = html.indexOf('</div>', toolbarStart);
+                const toolbarHtml = html.slice(toolbarStart, toolbarEnd);
                 if (!html.includes("Start a new support ticket")) {
                   throw new Error("New Ticket draft should render the high-fidelity title.");
                 }
@@ -225,14 +237,34 @@ class ClientTestUiContractTests(unittest.TestCase):
                 if (html.includes("new-ticket-breadcrumb") || html.includes("chevron_right")) {
                   throw new Error("New Ticket draft should remove the breadcrumb row.");
                 }
-                if (!html.includes("Ticket Information") || !html.includes("AI Summary") || !html.includes("Knowledge Base Articles")) {
-                  throw new Error("New Ticket draft should render the right sidebar cards.");
+                if (!html.includes("Ticket Information") || !html.includes("Knowledge Base Articles")) {
+                  throw new Error("New Ticket draft should render the remaining right sidebar cards.");
+                }
+                if (sidebarHtml.includes("AI Summary")) {
+                  throw new Error("New Ticket draft should remove the AI Summary sidebar card.");
+                }
+                if (!toolbarHtml.includes("AI Summary")) {
+                  throw new Error("New Ticket draft should render the AI Summary toolbar button.");
+                }
+                if (!/new-ticket-summary-toolbar-btn[^>]*type="button"/.test(toolbarHtml)) {
+                  throw new Error("New Ticket draft should render AI Summary as a non-submitting toolbar button.");
+                }
+                if (
+                  !html.includes("new-ticket-fixed-thread-panel") ||
+                  !html.includes("new-ticket-fixed-info-card") ||
+                  !html.includes("new-ticket-fixed-composer-panel") ||
+                  !html.includes("new-ticket-fixed-knowledge-card")
+                ) {
+                  throw new Error("New Ticket draft should mark the major sections as fixed-size blocks.");
                 }
                 if (!html.includes("Draft") || !html.includes("Pending") || !html.includes("Not submitted") || !html.includes("Unassigned")) {
                   throw new Error("New Ticket draft should render draft-safe placeholder metadata.");
                 }
                 if (!html.includes("new-ticket-inline-send-btn")) {
                   throw new Error("New Ticket draft should render the inline send action inside the textarea shell.");
+                }
+                if (!html.includes("new-ticket-summary-toolbar-btn")) {
+                  throw new Error("New Ticket draft should keep the AI Summary action inside the composer toolbar.");
                 }
                 if (html.includes("Describe your issue") || html.includes("Smart intake enabled")) {
                   throw new Error("New Ticket draft should remove the composer topline row.");
@@ -306,6 +338,12 @@ class ClientTestUiContractTests(unittest.TestCase):
                 state.inputDraft = "I can add another reproduction detail.";
 
                 const html = renderChatTicket();
+                const sidebarStart = html.indexOf('<aside class="new-ticket-sidebar">');
+                const sidebarEnd = html.indexOf('</aside>', sidebarStart);
+                const sidebarHtml = html.slice(sidebarStart, sidebarEnd);
+                const toolbarStart = html.indexOf('<div class="new-ticket-composer-toolbar">');
+                const toolbarEnd = html.indexOf('</div>', toolbarStart);
+                const toolbarHtml = html.slice(toolbarStart, toolbarEnd);
                 if (!html.includes("The video freezes after 10 minutes")) {
                   throw new Error("New Ticket detail should keep the updated ticket title after the first message.");
                 }
@@ -321,11 +359,25 @@ class ClientTestUiContractTests(unittest.TestCase):
                 if (!html.includes("I checked the latest call path")) {
                   throw new Error("New Ticket detail should render the assistant thread card.");
                 }
-                if (!html.includes("Ticket Information") || !html.includes("AI Summary") || !html.includes("Knowledge Base Articles")) {
-                  throw new Error("New Ticket detail should keep the same right-column layout after the first message.");
+                if (!html.includes("Ticket Information") || !html.includes("Knowledge Base Articles")) {
+                  throw new Error("New Ticket detail should keep the remaining right-column layout after the first message.");
+                }
+                if (sidebarHtml.includes("AI Summary")) {
+                  throw new Error("Existing New Ticket threads should not restore the AI Summary sidebar card.");
+                }
+                if (!toolbarHtml.includes("AI Summary")) {
+                  throw new Error("Existing New Ticket threads should keep the AI Summary toolbar button.");
                 }
                 if (!html.includes("new-ticket-inline-send-btn")) {
                   throw new Error("Existing New Ticket threads should keep the inline send action.");
+                }
+                if (
+                  !html.includes("new-ticket-fixed-thread-panel") ||
+                  !html.includes("new-ticket-fixed-info-card") ||
+                  !html.includes("new-ticket-fixed-composer-panel") ||
+                  !html.includes("new-ticket-fixed-knowledge-card")
+                ) {
+                  throw new Error("Existing New Ticket threads should keep the fixed-size section markers.");
                 }
                 if (html.includes("Continue the conversation") || html.includes("Smart intake enabled")) {
                   throw new Error("Existing New Ticket threads should remove the composer topline row.");

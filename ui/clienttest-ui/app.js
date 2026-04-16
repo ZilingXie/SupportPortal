@@ -2066,7 +2066,7 @@ function buildNewTicketKnowledgeItems(ticket) {
 function renderNewTicketInformationPanel(ticket) {
   const isDraft = isTicketEmpty(ticket);
   return `
-    <section class="new-ticket-info-card">
+    <section class="new-ticket-info-card new-ticket-fixed-info-card">
       <div class="new-ticket-info-card-header">
         <p class="new-ticket-info-kicker">Ticket Information</p>
       </div>
@@ -2096,23 +2096,10 @@ function renderNewTicketInformationPanel(ticket) {
   `;
 }
 
-function renderNewTicketSummaryPanel(ticket) {
-  return `
-    <section class="new-ticket-info-card new-ticket-summary-card">
-      <div class="new-ticket-info-card-header">
-        <p class="new-ticket-info-kicker">AI Summary</p>
-      </div>
-      <div class="new-ticket-info-body">
-        <p class="new-ticket-summary-copy">${escapeHtml(buildNewTicketSummary(ticket))}</p>
-      </div>
-    </section>
-  `;
-}
-
 function renderNewTicketKnowledgePanel(ticket) {
   const items = buildNewTicketKnowledgeItems(ticket);
   return `
-    <section class="new-ticket-info-card">
+    <section class="new-ticket-info-card new-ticket-fixed-knowledge-card">
       <div class="new-ticket-info-card-header">
         <p class="new-ticket-info-kicker">Knowledge Base Articles</p>
       </div>
@@ -2253,7 +2240,13 @@ function renderNewTicketComposerToolbar() {
         </button>
       `
     )
-    .join("");
+    .join("") +
+    `
+      <button class="new-ticket-summary-toolbar-btn" type="button" aria-label="AI Summary" title="AI Summary">
+        <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
+        <span>AI Summary</span>
+      </button>
+    `;
 }
 
 function renderNewTicketComposerNoteHtml(viewState) {
@@ -2324,7 +2317,7 @@ function renderNewTicketTicketFromState(viewState) {
         </header>
         <div class="new-ticket-body-layout">
           <div class="new-ticket-main-column">
-            <section class="new-ticket-thread-panel">
+            <section class="new-ticket-thread-panel new-ticket-fixed-thread-panel">
               <main class="chat-main new-ticket-thread-scroll">
                 <div class="message-list new-ticket-thread-list" data-chat-section="messages">
                   ${renderNewTicketThreadHtml(viewState)}
@@ -2332,7 +2325,7 @@ function renderNewTicketTicketFromState(viewState) {
               </main>
             </section>
             ${renderChatUnreadIndicatorHtml(ticket.id)}
-            <footer class="new-ticket-composer-panel">
+            <footer class="new-ticket-composer-panel new-ticket-fixed-composer-panel">
               <div class="new-ticket-composer-toolbar">
                 ${renderNewTicketComposerToolbar()}
               </div>
@@ -2355,7 +2348,6 @@ function renderNewTicketTicketFromState(viewState) {
           </div>
           <aside class="new-ticket-sidebar">
             ${renderNewTicketInformationPanel(ticket)}
-            ${renderNewTicketSummaryPanel(ticket)}
             ${renderNewTicketKnowledgePanel(ticket)}
           </aside>
         </div>
