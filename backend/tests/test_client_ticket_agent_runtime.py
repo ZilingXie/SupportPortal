@@ -851,7 +851,8 @@ The documentation states that time: 0 means the rule is applied permanently. How
             execution.result.client_intake_state["missing_information"],
             ["desired_outcome", "blocked_step_or_error"],
         )
-        self.assertTrue(execution.result.answer.startswith("Thanks for the details."))
+        self.assertTrue(execution.result.answer.startswith("Hi there,"))
+        self.assertIn("Thanks for the details.", execution.result.answer)
         self.assertIn("what you're trying to achieve", execution.result.answer.lower())
         self.assertIn("the exact error or blocker you're seeing", execution.result.answer.lower())
         self.assertNotIn("grounded answer", execution.result.answer.lower())
@@ -910,7 +911,8 @@ The documentation states that time: 0 means the rule is applied permanently. How
         )
 
         self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
-        self.assertTrue(execution.result.answer.startswith("Thanks for the details."))
+        self.assertTrue(execution.result.answer.startswith("Hi there,"))
+        self.assertIn("Thanks for the details.", execution.result.answer)
         self.assertIn("what you're trying to achieve", execution.result.answer.lower())
         self.assertIn("the exact error or blocker you're seeing", execution.result.answer.lower())
         self.assertNotIn("grounded answer", execution.result.answer.lower())
@@ -1613,7 +1615,8 @@ The documentation states that time: 0 means the rule is applied permanently. How
             "rag_unavailable",
         )
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "completed")
-        self.assertTrue(execution.result.answer.startswith("Thanks for the details."))
+        self.assertTrue(execution.result.answer.startswith("Hi there,"))
+        self.assertIn("Thanks for the details.", execution.result.answer)
         self.assertNotIn("known so far", execution.result.answer.lower())
 
     def test_troubleshooting_rag_unavailable_keeps_investigation_mode_when_intake_llm_prefers_answer(self) -> None:
@@ -1778,7 +1781,8 @@ The documentation states that time: 0 means the rule is applied permanently. How
         )
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "completed")
         self.assertEqual(execution.runtime_state.review_agent.get("decision"), "clarify_customer_for_intake")
-        self.assertTrue(execution.result.answer.startswith("Thanks for the details."))
+        self.assertTrue(execution.result.answer.startswith("Hi there,"))
+        self.assertIn("Thanks for the details.", execution.result.answer)
         self.assertNotIn("known so far", execution.result.answer.lower())
 
     def test_grounded_answer_high_risk_waits_for_review(self) -> None:

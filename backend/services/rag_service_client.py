@@ -413,6 +413,7 @@ class RagServiceClient:
         request_id: str,
         ticket_id: str | None,
         customer_id: str | None,
+        requester: str | None = None,
         ticket_context: list[dict[str, str]] | None = None,
         product: str | None = None,
         top_k: int | None = None,
@@ -424,6 +425,8 @@ class RagServiceClient:
             "ticket_id": ticket_id,
             "customer_id": customer_id,
         }
+        if str(requester or "").strip():
+            payload["requester"] = str(requester).strip()
         if str(product or "").strip():
             payload["product"] = str(product).strip()
         if ticket_context is not None:
@@ -457,6 +460,7 @@ class RagServiceClient:
         request_id: str,
         ticket_id: str | None,
         customer_id: str | None,
+        requester: str | None = None,
         ticket_context: list[dict[str, str]] | None = None,
         product: str | None = None,
         insufficient_reply: str,
@@ -472,6 +476,7 @@ class RagServiceClient:
             request_id=request_id,
             ticket_id=ticket_id,
             customer_id=customer_id,
+            requester=requester,
             ticket_context=ticket_context,
             insufficient_reply=insufficient_reply,
             top_k=top_k,
@@ -491,6 +496,7 @@ class RagServiceClient:
         request_id: str,
         ticket_id: str | None,
         customer_id: str | None,
+        requester: str | None = None,
         ticket_context: list[dict[str, str]] | None = None,
         product: str | None = None,
         insufficient_reply: str,
@@ -507,6 +513,7 @@ class RagServiceClient:
                 "request_id": request_id,
                 "ticket_id": ticket_id,
                 "customer_id": customer_id,
+                "requester": requester,
                 "ticket_context": ticket_context,
                 "top_k": top_k,
                 "timeout_seconds": timeout_seconds,

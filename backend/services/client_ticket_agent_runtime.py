@@ -9,6 +9,12 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from backend.services.api_semantics import is_api_semantics_mismatch_context
+from backend.services.customer_reply_composer import (
+    append_customer_reply_email_paragraph,
+    compose_customer_reply_email,
+    detect_customer_reply_language,
+    ensure_customer_reply_email_style,
+)
 from backend.services.rag_service_client import RagTicketAnswerDetail
 from backend.services.investigation_flow import (
     COMMUNICATING_STATUS,
@@ -158,8 +164,11 @@ def _normalize_answer_mode_known_information(value: Any) -> dict[str, str]:
 
 def _build_answer_mode_customer_reply(
     *,
+    message: str,
     known_information: dict[str, str],
     missing_information: list[str],
+    requester: str | None = None,
+    customer_id: str | None = None,
 ) -> str:
     prompts: list[str] = []
     if "desired_outcome" in missing_information:
@@ -169,12 +178,22 @@ def _build_answer_mode_customer_reply(
     if not prompts:
         return ""
     opening = "Thanks for sharing the additional info." if known_information else "Thanks for the details."
-    return f"{opening} To help us give the right guidance, could you also share {_join_labels(prompts)}?"
+    return compose_customer_reply_email(
+        reply_kind="clarification",
+        body=f"To help us give the right guidance, could you also share {_join_labels(prompts)}?",
+        requester=requester,
+        customer_id=customer_id,
+        language=detect_customer_reply_language(message),
+        opener=opening,
+    )
 
 
 def _build_answer_mode_review_result_from_state(
     *,
     current_state: dict[str, Any] | None,
+    message: str = "",
+    requester: str | None = None,
+    customer_id: str | None = None,
 ) -> TroubleshootingIntakeResult:
     known_information = _normalize_answer_mode_known_information((current_state or {}).get("known_information"))
     missing_information = [
@@ -189,8 +208,11 @@ def _build_answer_mode_review_result_from_state(
         customer_reply=""
         if ready_for_engineer_ticket
         else _build_answer_mode_customer_reply(
+            message=message,
             known_information=known_information,
             missing_information=missing_information,
+            requester=requester,
+            customer_id=customer_id,
         ),
     )
 
@@ -213,6 +235,9 @@ def _sanitize_insufficient_review_result(
     review_result: TroubleshootingIntakeResult,
     *,
     current_state: dict[str, Any] | None,
+    message: str = "",
+    requester: str | None = None,
+    customer_id: str | None = None,
 ) -> TroubleshootingIntakeResult:
     if review_result.issue_mode != "answer":
         return review_result
@@ -223,13 +248,23 @@ def _sanitize_insufficient_review_result(
         field_name for field_name in _ANSWER_MODE_REQUIRED_FIELDS if not _clean_text(known_information.get(field_name))
     ]
     ready_for_engineer_ticket = not missing_information and bool(known_information)
-    customer_reply = _clean_text(review_result.customer_reply)
+    customer_reply = str(review_result.customer_reply or "").strip()
     if ready_for_engineer_ticket:
         customer_reply = ""
     elif not _is_safe_answer_mode_clarify_reply(customer_reply):
         customer_reply = _build_answer_mode_customer_reply(
+            message=message,
             known_information=known_information,
             missing_information=missing_information,
+            requester=requester,
+            customer_id=customer_id,
+        )
+    elif customer_reply:
+        customer_reply = _ensure_customer_reply_email(
+            customer_reply,
+            message=message,
+            requester=requester,
+            customer_id=customer_id,
         )
     return TroubleshootingIntakeResult(
         issue_mode="answer",
@@ -252,6 +287,23 @@ def _join_labels(labels: list[str]) -> str:
     if len(labels) == 2:
         return f"{labels[0]} and {labels[1]}"
     return f"{', '.join(labels[:-1])}, and {labels[-1]}"
+
+
+def _ensure_customer_reply_email(
+    text: str,
+    *,
+    message: str,
+    requester: str | None = None,
+    customer_id: str | None = None,
+    reply_kind: str = "clarification",
+) -> str:
+    return ensure_customer_reply_email_style(
+        body=text,
+        reply_kind=reply_kind,
+        requester=requester,
+        customer_id=customer_id,
+        language=detect_customer_reply_language(message, text),
+    )
 
 
 def _build_answer_mode_follow_up(missing_information: list[str]) -> str:
@@ -307,14 +359,20 @@ def _build_cited_answer_execution_result(
     *,
     review_result: TroubleshootingIntakeResult,
     resolution: SupportResolution,
+    message: str,
     product: str | None,
     investigation_reason: str,
     current_state: dict[str, Any] | None = None,
+    requester: str | None = None,
+    customer_id: str | None = None,
 ) -> TicketExecutionResult:
     if str(review_result.issue_mode or "").strip().lower() == "answer":
         review_result = _sanitize_insufficient_review_result(
             review_result,
             current_state=current_state,
+            message=message,
+            requester=requester,
+            customer_id=customer_id,
         )
     pending_investigation_reason = _resolve_pending_investigation_reason(
         current_state=current_state,
@@ -333,7 +391,13 @@ def _build_cited_answer_execution_result(
     )
     answer_text = str(resolution.answer or "").strip()
     if follow_up:
-        answer_text = f"{answer_text}\n\n{follow_up}"
+        answer_text = append_customer_reply_email_paragraph(
+            existing_reply=answer_text,
+            paragraph=follow_up,
+            requester=requester,
+            customer_id=customer_id,
+            language=detect_customer_reply_language(message, answer_text, follow_up),
+        )
     cited_resolution = replace(
         resolution,
         answer=answer_text,
@@ -694,11 +758,19 @@ class InvestigationIntakeShortCircuitResult:
 
 def _build_investigation_intake_clarify_resolution(
     *,
+    message: str,
     customer_reply: str,
     route_reason: str,
+    requester: str | None = None,
+    customer_id: str | None = None,
 ) -> SupportResolution:
     return SupportResolution(
-        answer=customer_reply,
+        answer=_ensure_customer_reply_email(
+            customer_reply,
+            message=message,
+            requester=requester,
+            customer_id=customer_id,
+        ),
         confidence=1.0,
         sources=[],
         citations=[],
@@ -720,11 +792,14 @@ def _build_investigation_intake_clarify_resolution(
 def _build_investigation_intake_clarify_execution_result(
     *,
     review_result: TroubleshootingIntakeResult,
+    message: str,
     route_reason: str,
     product: str | None,
     current_state: dict[str, Any] | None,
     message_id: str | None,
     clarification_rounds_used: int,
+    requester: str | None = None,
+    customer_id: str | None = None,
 ) -> TicketExecutionResult:
     next_client_intake_state = build_client_intake_state(
         review_result,
@@ -736,8 +811,11 @@ def _build_investigation_intake_clarify_execution_result(
     )
     return _build_ticket_execution_result(
         resolution=_build_investigation_intake_clarify_resolution(
+            message=message,
             customer_reply=review_result.customer_reply,
             route_reason=route_reason,
+            requester=requester,
+            customer_id=customer_id,
         ),
         needs_investigating=False,
         workflow_action=WORKFLOW_ACTION_CLARIFY_CUSTOMER_FOR_INTAKE,
@@ -881,9 +959,18 @@ def _normalize_investigation_reason(value: Any) -> str:
     return RAG_INSUFFICIENT_EVIDENCE_REASON
 
 
-def _build_intake_complete_investigation_resolution(message: str) -> SupportResolution:
+def _build_intake_complete_investigation_resolution(
+    message: str,
+    *,
+    requester: str | None = None,
+    customer_id: str | None = None,
+) -> SupportResolution:
     return SupportResolution(
-        answer=default_public_investigation_reply(message),
+        answer=default_public_investigation_reply(
+            message,
+            requester=requester,
+            customer_id=customer_id,
+        ),
         confidence=1.0,
         sources=[],
         citations=[],
@@ -902,9 +989,18 @@ def _build_intake_complete_investigation_resolution(message: str) -> SupportReso
     )
 
 
-def _build_intake_round_exhausted_investigation_resolution(message: str) -> SupportResolution:
+def _build_intake_round_exhausted_investigation_resolution(
+    message: str,
+    *,
+    requester: str | None = None,
+    customer_id: str | None = None,
+) -> SupportResolution:
     return SupportResolution(
-        answer=default_public_investigation_reply(message),
+        answer=default_public_investigation_reply(
+            message,
+            requester=requester,
+            customer_id=customer_id,
+        ),
         confidence=1.0,
         sources=[],
         citations=[],
@@ -934,10 +1030,15 @@ def _handle_insufficient_review(
     ticket_context: list[dict[str, str]] | None = None,
     latest_assistant_message: dict[str, Any] | None = None,
     message_created_at: str | None = None,
+    requester: str | None = None,
+    customer_id: str | None = None,
 ) -> TicketExecutionResult:
     review_result = _sanitize_insufficient_review_result(
         review_result,
         current_state=current_state,
+        message=message,
+        requester=requester,
+        customer_id=customer_id,
     )
     pending_investigation_reason = _resolve_pending_investigation_reason(
         current_state=current_state,
@@ -977,7 +1078,11 @@ def _handle_insufficient_review(
             phase_override="clarification_limit_reached",
         )
         return _build_ticket_execution_result(
-            resolution=_build_intake_round_exhausted_investigation_resolution(message),
+            resolution=_build_intake_round_exhausted_investigation_resolution(
+                message,
+                requester=requester,
+                customer_id=customer_id,
+            ),
             needs_investigating=True,
             workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
             investigation_reason=INVESTIGATION_INTAKE_ROUND_EXHAUSTED_REASON,
@@ -985,7 +1090,12 @@ def _handle_insufficient_review(
         )
     if _clean_text(review_result.customer_reply):
         clarify_resolution = SupportResolution(
-            answer=review_result.customer_reply,
+            answer=_ensure_customer_reply_email(
+                review_result.customer_reply,
+                message=message,
+                requester=requester,
+                customer_id=customer_id,
+            ),
             confidence=float(resolution.confidence),
             sources=[],
             citations=[],
@@ -1072,6 +1182,8 @@ def _evaluate_investigation_intake_short_circuit(
     current_state: dict[str, Any] | None,
     message_id: str | None,
     latest_assistant_message: dict[str, Any] | None,
+    requester: str | None = None,
+    customer_id: str | None = None,
 ) -> InvestigationIntakeShortCircuitResult | None:
     deterministic_review = evaluate_troubleshooting_intake(
         message=message,
@@ -1086,6 +1198,8 @@ def _evaluate_investigation_intake_short_circuit(
         },
         message_created_at=message_id,
         deterministic_only=True,
+        requester=requester,
+        customer_id=customer_id,
     )
     if deterministic_review.issue_mode != "investigation":
         return None
@@ -1134,6 +1248,7 @@ def execute_client_ticket_agent_runtime(
     *,
     ticket_id: str | None,
     customer_id: str | None,
+    requester: str | None = None,
     ticket_subject: str | None,
     ticket_context: list[dict[str, str]] | None,
     product: str | None,
@@ -1199,6 +1314,8 @@ def execute_client_ticket_agent_runtime(
             current_state=client_intake_state,
             message_id=message_id,
             latest_assistant_message=latest_assistant_message,
+            requester=requester,
+            customer_id=customer_id,
         )
     if intake_short_circuit_result is not None:
         diagnostics["investigation_intake_short_circuit"] = True
@@ -1275,18 +1392,29 @@ def execute_client_ticket_agent_runtime(
         if intake_short_circuit_workflow_action == WORKFLOW_ACTION_CLARIFY_CUSTOMER_FOR_INTAKE:
             result = _build_investigation_intake_clarify_execution_result(
                 review_result=intake_short_circuit_review,
+                message=message,
                 route_reason=intake_short_circuit_reason,
                 product=product,
                 current_state=client_intake_state,
                 message_id=message_id,
                 clarification_rounds_used=intake_short_circuit_rounds_used,
+                requester=requester,
+                customer_id=customer_id,
             )
         else:
             result = _build_ticket_execution_result(
                 resolution=(
-                    _build_intake_complete_investigation_resolution(message)
+                    _build_intake_complete_investigation_resolution(
+                        message,
+                        requester=requester,
+                        customer_id=customer_id,
+                    )
                     if intake_short_circuit_reason == INVESTIGATION_INTAKE_COMPLETE_REASON
-                    else _build_intake_round_exhausted_investigation_resolution(message)
+                    else _build_intake_round_exhausted_investigation_resolution(
+                        message,
+                        requester=requester,
+                        customer_id=customer_id,
+                    )
                 ),
                 needs_investigating=True,
                 workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
@@ -1759,6 +1887,8 @@ def execute_client_ticket_agent_runtime(
                     ticket_context=ticket_context,
                     current_state=client_intake_state,
                     message_created_at=message_id,
+                    requester=requester,
+                    customer_id=customer_id,
                     route_decision=effective_route_decision,
                     resolution=rag_resolution,
                     rag_result={
@@ -1786,6 +1916,8 @@ def execute_client_ticket_agent_runtime(
                     ticket_context=ticket_context,
                     latest_assistant_message=latest_assistant_message,
                     message_created_at=message_id,
+                    requester=requester,
+                    customer_id=customer_id,
                 )
                 _mark_agent_summary(
                     review_summary,
@@ -1839,6 +1971,8 @@ def execute_client_ticket_agent_runtime(
                         ticket_context=ticket_context,
                         current_state=client_intake_state,
                         message_created_at=message_id,
+                        requester=requester,
+                        customer_id=customer_id,
                         route_decision=effective_route_decision,
                         resolution=rag_resolution,
                         rag_result={
@@ -1897,6 +2031,8 @@ def execute_client_ticket_agent_runtime(
                                 ticket_context=ticket_context,
                                 current_state=client_intake_state,
                                 message_created_at=message_id,
+                                requester=requester,
+                                customer_id=customer_id,
                                 route_decision=effective_route_decision,
                                 resolution=rag_resolution,
                                 rag_result={
@@ -1917,18 +2053,27 @@ def execute_client_ticket_agent_runtime(
                         else:
                             review_result = _build_answer_mode_review_result_from_state(
                                 current_state=client_intake_state,
+                                message=message,
+                                requester=requester,
+                                customer_id=customer_id,
                             )
                         result = _build_cited_answer_execution_result(
                             review_result=review_result,
                             resolution=rag_resolution,
+                            message=message,
                             product=product,
                             investigation_reason=investigation_reason,
                             current_state=client_intake_state,
+                            requester=requester,
+                            customer_id=customer_id,
                         )
                     elif not rag_resolution.citations and not troubleshooting_candidate:
                         result = _handle_insufficient_review(
                             review_result=_build_answer_mode_review_result_from_state(
                                 current_state=client_intake_state,
+                                message=message,
+                                requester=requester,
+                                customer_id=customer_id,
                             ),
                             resolution=rag_resolution,
                             product=product,
@@ -1938,6 +2083,8 @@ def execute_client_ticket_agent_runtime(
                             ticket_context=ticket_context,
                             latest_assistant_message=latest_assistant_message,
                             message_created_at=message_id,
+                            requester=requester,
+                            customer_id=customer_id,
                         )
                     elif troubleshooting_candidate:
                         _mark_agent_summary(
@@ -1965,6 +2112,8 @@ def execute_client_ticket_agent_runtime(
                             ticket_context=ticket_context,
                             current_state=client_intake_state,
                             message_created_at=message_id,
+                            requester=requester,
+                            customer_id=customer_id,
                             route_decision=effective_route_decision,
                             resolution=rag_resolution,
                             rag_result={
@@ -1992,6 +2141,8 @@ def execute_client_ticket_agent_runtime(
                             ticket_context=ticket_context,
                             latest_assistant_message=latest_assistant_message,
                             message_created_at=message_id,
+                            requester=requester,
+                            customer_id=customer_id,
                         )
                     else:
                         result = _build_ticket_execution_result(

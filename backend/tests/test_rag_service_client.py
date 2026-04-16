@@ -315,6 +315,37 @@ class RagServiceClientTests(unittest.TestCase):
             },
         )
 
+    def test_query_includes_requester_in_json_payload(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+        captured: dict[str, object] = {}
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"decision":"answer","answer":"ok","confidence":0.8,"sources":[],"citations":[]}'
+
+        def _fake_urlopen(request, timeout):
+            captured["timeout"] = timeout
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return _FakeResponse()
+
+        with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            payload = client.query(
+                question="What does error 109 mean?",
+                request_id="rag-ctx-requester-1",
+                ticket_id="T-001",
+                customer_id="C-001",
+                requester="Taylor",
+            )
+
+        self.assertEqual(payload["decision"], "answer")
+        self.assertEqual(captured["body"]["requester"], "Taylor")
+
     def test_query_answer_with_recovery_detail_forwards_ticket_context(self) -> None:
         client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
 
@@ -338,6 +369,7 @@ class RagServiceClientTests(unittest.TestCase):
             request_id="rag-ctx-2",
             ticket_id="T-001",
             customer_id="C-001",
+            requester=None,
             ticket_context=[{"role": "customer", "content": "We only see this on iOS 4.6.0"}],
             top_k=None,
             timeout_seconds=None,
@@ -394,6 +426,7 @@ class RagServiceClientTests(unittest.TestCase):
             request_id="rag-product-2",
             ticket_id="T-001",
             customer_id="C-001",
+            requester=None,
             ticket_context=None,
             product="audio_video_calling",
             top_k=None,
@@ -422,6 +455,7 @@ class RagServiceClientTests(unittest.TestCase):
             request_id="rag-timeout-override-1",
             ticket_id="T-001",
             customer_id="C-001",
+            requester=None,
             ticket_context=None,
             top_k=None,
             timeout_seconds=90.0,

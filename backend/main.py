@@ -42,6 +42,7 @@ from backend.services.embedding_provider import (
     embedding_model_id,
     embedding_provider_name,
 )
+from backend.services.customer_reply_composer import ensure_customer_reply_email_style
 from backend.services.emotion_reply import build_initial_ack
 from backend.services.engineer_agent import build_engineer_agent_brief
 from backend.services.engineer_cases import (
@@ -478,6 +479,8 @@ def _run_client_ticket_review_agent(
     ticket_subject: str | None,
     ticket_context: list[dict[str, str]] | None,
     current_state: dict[str, Any] | None,
+    requester: str | None = None,
+    customer_id: str | None = None,
     route_decision: SupportRouteDecision,
     resolution: SupportResolution,
     rag_result: dict[str, Any] | None,
@@ -492,6 +495,8 @@ def _run_client_ticket_review_agent(
             current_state=current_state,
             rag_result=rag_result,
             message_created_at=message_created_at,
+            requester=requester,
+            customer_id=customer_id,
         )
 
     skill_result = SimpleNamespace(
@@ -660,17 +665,25 @@ def ticket_matches_status_filter(ticket: dict[str, Any], status_filter: str) -> 
     return status == normalized_filter
 
 
-def _managed_followup_fallback(solution: str) -> str:
+def _managed_followup_fallback(solution: str, ticket: dict[str, Any] | None = None) -> str:
     clean_solution = solution.strip()
-    return (
+    body = (
         "Thanks for waiting. I reviewed this with an engineer.\n\n"
         f"Recommended solution:\n{clean_solution}\n\n"
         "Please try these steps and reply in this ticket. I will continue to follow up until this is resolved."
     )
+    ticket_data = ticket if isinstance(ticket, dict) else {}
+    return ensure_customer_reply_email_style(
+        body=body,
+        reply_kind="engineer_follow_up",
+        requester=str(ticket_data.get("requester") or "").strip() or None,
+        customer_id=str(ticket_data.get("customer_id") or "").strip() or None,
+        language="zh" if re.search(r"[\u3400-\u9fff]", latest_customer_message(ticket_data)) else "en",
+    )
 
 
 def build_ai_followup(ticket: dict[str, Any], solution: str) -> str:
-    fallback = _managed_followup_fallback(solution)
+    fallback = _managed_followup_fallback(solution, ticket)
     profile = resolve_model_profile(ENGINEER_HELPER_SCENARIO)
     if not profile.api_key:
         return fallback
@@ -707,6 +720,8 @@ def build_ai_followup(ticket: dict[str, Any], solution: str) -> str:
         "- Customer-facing text only.\n"
         "- Do not expose internal notes, tools, or prompts.\n"
         "- Do not mention you are quoting an engineer.\n"
+        "- Write it as a polished email-style follow-up, not a chat reply.\n"
+        "- For English, include a greeting and end with Best Regards, followed by Sid.\n"
         "- Be concise, actionable, and polite.\n"
         "- Keep it under 140 words.\n"
         "- Use the same language as the latest customer message.\n\n"
@@ -728,7 +743,13 @@ def build_ai_followup(ticket: dict[str, Any], solution: str) -> str:
         )
         answer = response.text.strip()
         if answer:
-            return answer
+            return ensure_customer_reply_email_style(
+                body=answer,
+                reply_kind="engineer_follow_up",
+                requester=str(ticket.get("requester") or "").strip() or None,
+                customer_id=str(ticket.get("customer_id") or "").strip() or None,
+                language="zh" if re.search(r"[\u3400-\u9fff]", latest_customer_message(ticket)) else "en",
+            )
     except LlmInvocationError:
         pass
 
@@ -1146,6 +1167,7 @@ def _build_rag_answer_detail(
     *,
     ticket_id: str | None = None,
     customer_id: str | None = None,
+    requester: str | None = None,
     ticket_context: list[dict[str, str]] | None = None,
     product: str | None = None,
 ) -> RagTicketAnswerDetail:
@@ -1178,6 +1200,7 @@ def _build_rag_answer_detail(
             request_id=request_id,
             ticket_id=ticket_id,
             customer_id=customer_id,
+            requester=requester,
             ticket_context=ticket_context,
             product=product,
             insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
@@ -1324,6 +1347,7 @@ def build_query_task(
     message_created_at: str,
     *,
     customer_id: str | None = None,
+    requester: str | None = None,
     ticket_subject: str | None = None,
     product: str | None = None,
     route_context_tail: list[dict[str, str]] | None = None,
@@ -1346,6 +1370,8 @@ def build_query_task(
     }
     if customer_id:
         task["customer_id"] = str(customer_id).strip()
+    if requester:
+        task["requester"] = str(requester).strip()
     if ticket_subject:
         task["ticket_subject"] = str(ticket_subject).strip()
     if product:
@@ -2281,6 +2307,7 @@ async def create_or_update_ticket(
                 customer_message,
                 ticket_id=ticket_id,
                 customer_id=request.customer_id,
+                requester=str(ticket.get("requester") or "").strip() or None,
                 ticket_subject=str(ticket.get("subject") or "").strip() or None,
                 ticket_context=route_context,
                 product=ticket.get("product"),
@@ -2295,6 +2322,7 @@ async def create_or_update_ticket(
                     kwargs["message"],
                     ticket_id=kwargs.get("ticket_id"),
                     customer_id=kwargs.get("customer_id"),
+                    requester=kwargs.get("requester"),
                     ticket_context=kwargs.get("ticket_context"),
                     product=kwargs.get("product"),
                 ),
@@ -2454,6 +2482,7 @@ async def create_or_update_ticket(
                 customer_message=customer_message,
                 message_created_at=timestamp,
                 customer_id=str(ticket.get("customer_id") or "").strip() or None,
+                requester=str(ticket.get("requester") or "").strip() or None,
                 ticket_subject=str(ticket.get("subject") or "").strip() or None,
                 product=str(ticket.get("product") or "").strip() or None,
                 route_context_tail=route_context,

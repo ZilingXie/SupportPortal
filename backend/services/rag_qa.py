@@ -34,6 +34,10 @@ from backend.services.llm_profiles import (
     RAG_CONTEXT_COMPRESSION_SCENARIO,
     resolve_model_profile,
 )
+from backend.services.customer_reply_composer import (
+    compose_customer_reply_email,
+    detect_customer_reply_language,
+)
 from backend.services.rag_context_budget import (
     PackedEvidence,
     build_packed_evidence,
@@ -156,8 +160,6 @@ _AUDIO_VIDEO_CALLING_PENALIZED_PRODUCTS = frozenset({"signaling", "iot", "cloud-
 _TOKEN_USAGE_FOCUSED_VARIANT_KINDS = frozenset({"focused_token_usage", "focused_rewrite"})
 _CONNECTION_STATE_FOCUSED_VARIANT_KINDS = frozenset({"focused_reference", "focused_rewrite"})
 _API_SEMANTICS_MAX_FANOUT_CHILDREN = 3
-
-
 def _build_answer_system_prompt(product: str | None = None) -> str:
     return build_rag_answer_system_prompt(
         insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
@@ -1732,6 +1734,8 @@ def _build_dual_stream_grounded_answer(
     chunks: list[RetrievedChunk],
     *,
     product: str | None,
+    requester: str | None = None,
+    customer_id: str | None = None,
 ) -> RagAnswer | None:
     if not _is_dual_stream_enable_query(message):
         return None
@@ -1747,16 +1751,14 @@ def _build_dual_stream_grounded_answer(
     if support_chunk is not None:
         cited_chunks.append(support_chunk)
     example_code_block = _extract_authoritative_code_block(action_chunk)
-    answer_lines = [
-        f"To enable dual-stream mode, use {api_name} as described in the available Agora documentation.",
-        "",
-        "Key Steps:",
-        "1. Enable dual-stream mode on the publishing client before subscribers switch between the high and low video streams.",
-        "2. Keep the publisher sending video so the SDK can provide both stream layers.",
-        "3. Configure your low-stream subscription or media stream fallback behavior as needed for your app.",
+    body = f"To enable dual-stream mode, use {api_name} as described in the available Agora documentation."
+    steps = [
+        "Enable dual-stream mode on the publishing client before subscribers switch between the high and low video streams.",
+        "Keep the publisher sending video so the SDK can provide both stream layers.",
+        "Configure your low-stream subscription or media stream fallback behavior as needed for your app.",
     ]
     if example_code_block:
-        answer_lines.extend(["", "Reference Example:", example_code_block])
+        body = f"{body}\n\nReference Example:\n{example_code_block}"
     citation_records = _citation_records_from_chunks(cited_chunks, limit=len(cited_chunks))
     sources = [
         record.get("source_url") or f"rag:{record['chunk_id']}"
@@ -1764,7 +1766,13 @@ def _build_dual_stream_grounded_answer(
     ]
     confidence = max(0.9, _confidence_from_chunks(cited_chunks))
     return RagAnswer(
-        answer="\n".join(answer_lines),
+        answer=_compose_grounded_answer_email(
+            question=message,
+            body=body,
+            steps=steps,
+            requester=requester,
+            customer_id=customer_id,
+        ),
         confidence=round(min(0.96, confidence), 2),
         sources=sources,
         citations=citation_records,
@@ -1776,6 +1784,8 @@ def _build_black_screen_guidance_grounded_answer(
     chunks: list[RetrievedChunk],
     *,
     product: str | None,
+    requester: str | None = None,
+    customer_id: str | None = None,
 ) -> RagAnswer | None:
     if not _allows_release_note_guidance_for_short_symptom_query(message):
         return None
@@ -1788,16 +1798,14 @@ def _build_black_screen_guidance_grounded_answer(
     cited_chunks = [release_note_chunk]
     if _chunk_dedupe_key(faq_chunk) != _chunk_dedupe_key(release_note_chunk):
         cited_chunks.append(faq_chunk)
-    answer_lines = [
-        (
-            "If you're seeing a black screen, first review the available Agora release notes for known black-screen fixes "
-            "and update to an SDK version that includes them."
-        ),
-        "",
-        "Key Steps:",
-        "1. If this is a Web SDK case, check the release notes for the listed black-screen fixes and upgrade to a version that includes them.",
-        "2. Review the Quickstart FAQ entry \"How can I fix black screen issues?\" for your SDK or app type and apply the recommended checks there.",
-        "3. If the issue continues, please share the channel name, problematic uid, and issue timestamp so the investigation can be narrowed down.",
+    body = (
+        "If you're seeing a black screen, first review the available Agora release notes for known black-screen fixes "
+        "and update to an SDK version that includes them."
+    )
+    steps = [
+        "If this is a Web SDK case, check the release notes for the listed black-screen fixes and upgrade to a version that includes them.",
+        'Review the Quickstart FAQ entry "How can I fix black screen issues?" for your SDK or app type and apply the recommended checks there.',
+        "If the issue continues, please share the channel name, problematic uid, and issue timestamp so the investigation can be narrowed down.",
     ]
     citation_records = _citation_records_from_chunks(cited_chunks, limit=len(cited_chunks))
     sources = [
@@ -1806,7 +1814,13 @@ def _build_black_screen_guidance_grounded_answer(
     ]
     confidence = max(0.88, _confidence_from_chunks(cited_chunks))
     return RagAnswer(
-        answer="\n".join(answer_lines),
+        answer=_compose_grounded_answer_email(
+            question=message,
+            body=body,
+            steps=steps,
+            requester=requester,
+            customer_id=customer_id,
+        ),
         confidence=round(min(0.95, confidence), 2),
         sources=sources,
         citations=citation_records,
@@ -1818,6 +1832,8 @@ def _build_generic_join_grounded_answer(
     chunks: list[RetrievedChunk],
     *,
     product: str | None,
+    requester: str | None = None,
+    customer_id: str | None = None,
 ) -> RagAnswer | None:
     if not _is_generic_join_channel_query(message):
         return None
@@ -1849,22 +1865,19 @@ def _build_generic_join_grounded_answer(
         ),
         None,
     )
-    answer_lines = [
-        (
-            "To join a channel, call the SDK join method with your channel name, authentication token, "
-            f"user ID, and {options_term}. The channel name identifies which channel to join, the token "
-            "authenticates the user, and the user ID identifies the local user before joining."
-        ),
-        "",
-        "Key Steps:",
-        "1. Provide the channel name you want the client to join.",
+    body = (
+        "To join a channel, call the SDK join method with your channel name, authentication token, "
+        f"user ID, and {options_term}. The channel name identifies which channel to join, the token "
+        "authenticates the user, and the user ID identifies the local user before joining."
+    )
+    steps = [
+        "Provide the channel name you want the client to join.",
         token_step.strip(),
-        "3. Set the local user ID.",
-        f"4. Configure {options_term} as needed, then call the SDK join method.",
+        "Set the local user ID.",
+        f"Configure {options_term} as needed, then call the SDK join method.",
     ]
     if example_code_block:
-        answer_lines.extend(["", "Reference Example:", example_code_block])
-    answer = "\n".join(answer_lines)
+        body = f"{body}\n\nReference Example:\n{example_code_block}"
     citation_records = _citation_records_from_chunks(cited_chunks, limit=len(cited_chunks))
     sources = [
         record.get("source_url") or f"rag:{record['chunk_id']}"
@@ -1872,7 +1885,13 @@ def _build_generic_join_grounded_answer(
     ]
     confidence = max(0.88, _confidence_from_chunks(cited_chunks))
     return RagAnswer(
-        answer=answer,
+        answer=_compose_grounded_answer_email(
+            question=message,
+            body=body,
+            steps=steps,
+            requester=requester,
+            customer_id=customer_id,
+        ),
         confidence=round(min(0.96, confidence), 2),
         sources=sources,
         citations=citation_records,
@@ -6073,14 +6092,41 @@ def _is_valid_response(payload: dict[str, Any], allowed_chunk_ids: set[str]) -> 
     return True
 
 
-def _build_answer_text(answer: str, key_steps: list[str]) -> str:
+def _compose_grounded_answer_email(
+    *,
+    question: str,
+    body: str,
+    steps: list[str] | None = None,
+    requester: str | None = None,
+    customer_id: str | None = None,
+) -> str:
+    cleaned_steps = [step.strip() for step in list(steps or []) if isinstance(step, str) and step.strip()]
+    return compose_customer_reply_email(
+        reply_kind="grounded_answer",
+        body=body.strip(),
+        requester=requester,
+        customer_id=customer_id,
+        language=detect_customer_reply_language(question, body, *cleaned_steps),
+        steps=cleaned_steps,
+    )
+
+
+def _build_answer_text(
+    answer: str,
+    key_steps: list[str],
+    *,
+    question: str,
+    requester: str | None = None,
+    customer_id: str | None = None,
+) -> str:
     cleaned_steps = [step.strip() for step in key_steps if isinstance(step, str) and step.strip()]
-    if not cleaned_steps:
-        return answer.strip()
-    lines = [answer.strip(), "", "Key Steps:"]
-    for index, step in enumerate(cleaned_steps, start=1):
-        lines.append(f"{index}. {step}")
-    return "\n".join(lines).strip()
+    return _compose_grounded_answer_email(
+        question=question,
+        body=answer.strip(),
+        steps=cleaned_steps,
+        requester=requester,
+        customer_id=customer_id,
+    )
 
 
 def _build_extractive_fallback(chunks: list[RetrievedChunk]) -> str:
@@ -6125,6 +6171,9 @@ def _api_semantics_time_rule_chunk(chunks: list[RetrievedChunk]) -> RetrievedChu
 def _build_api_semantics_grounded_answer(
     message: str,
     chunks: list[RetrievedChunk],
+    *,
+    requester: str | None = None,
+    customer_id: str | None = None,
 ) -> RagAnswer | None:
     parameter_groups = _api_semantics_parameter_groups(message)
     if not chunks or not parameter_groups:
@@ -6173,7 +6222,12 @@ def _build_api_semantics_grounded_answer(
     ]
     confidence = max(0.86, _confidence_from_chunks(deduped_cited_chunks or chunks))
     return RagAnswer(
-        answer="\n\n".join(section.strip() for section in sections if section.strip()),
+        answer=_compose_grounded_answer_email(
+            question=message,
+            body="\n\n".join(section.strip() for section in sections if section.strip()),
+            requester=requester,
+            customer_id=customer_id,
+        ),
         confidence=round(min(0.95, confidence), 2),
         sources=sources,
         citations=citation_records,
@@ -6690,6 +6744,8 @@ def _run_rag_query_legacy(
     message: str,
     top_k: int | None = None,
     *,
+    requester: str | None = None,
+    customer_id: str | None = None,
     product: str | None = None,
     should_cancel: Callable[[], bool] | None = None,
     record_cancel_stage: Callable[[str], None] | None = None,
@@ -7413,7 +7469,13 @@ def _run_rag_query_legacy(
             for record in citation_records
         ]
         answer = RagAnswer(
-            answer=_build_answer_text(str(payload["answer"]), payload.get("key_steps", [])),
+            answer=_build_answer_text(
+                str(payload["answer"]),
+                payload.get("key_steps", []),
+                question=message,
+                requester=requester,
+                customer_id=customer_id,
+            ),
             confidence=_confidence_from_chunks(final_chunks),
             sources=sources,
             citations=citation_records,
@@ -7484,12 +7546,12 @@ def _run_rag_query_agentic_single(
     ticket_context: list[dict[str, str]] | None = None,
     ticket_id: str | None = None,
     customer_id: str | None = None,
+    requester: str | None = None,
     product: str | None = None,
     should_cancel: Callable[[], bool] | None = None,
     record_cancel_stage: Callable[[str], None] | None = None,
 ) -> RagQueryResult | None:
     _ = ticket_id
-    _ = customer_id
     request_started_at = time.perf_counter()
     config = _get_rag_config(top_k=top_k)
     if not config["dsn"] or not config["api_key"]:
@@ -8028,7 +8090,12 @@ def _run_rag_query_agentic_single(
     )
     if plan.query_class == "api_semantics_mismatch":
         deterministic_generation_started_at = time.perf_counter()
-        deterministic_answer = _build_api_semantics_grounded_answer(message, final_chunks)
+        deterministic_answer = _build_api_semantics_grounded_answer(
+            message,
+            final_chunks,
+            requester=requester,
+            customer_id=customer_id,
+        )
         if deterministic_answer is not None:
             generation_latency_ms = (time.perf_counter() - deterministic_generation_started_at) * 1000
             answer_profile_used = "api_semantics_deterministic"
@@ -8048,6 +8115,8 @@ def _run_rag_query_agentic_single(
             message,
             final_chunks,
             product=product,
+            requester=requester,
+            customer_id=customer_id,
         )
         if deterministic_answer is not None:
             generation_latency_ms = (time.perf_counter() - deterministic_generation_started_at) * 1000
@@ -8068,6 +8137,8 @@ def _run_rag_query_agentic_single(
             message,
             final_chunks,
             product=product,
+            requester=requester,
+            customer_id=customer_id,
         )
         if deterministic_answer is not None:
             generation_latency_ms = (time.perf_counter() - deterministic_generation_started_at) * 1000
@@ -8088,6 +8159,8 @@ def _run_rag_query_agentic_single(
             message,
             final_chunks,
             product=product,
+            requester=requester,
+            customer_id=customer_id,
         )
         if deterministic_answer is not None:
             generation_latency_ms = (time.perf_counter() - deterministic_generation_started_at) * 1000
@@ -8311,7 +8384,13 @@ def _run_rag_query_agentic_single(
             for record in citation_records
         ]
         answer = RagAnswer(
-            answer=_build_answer_text(str(payload["answer"]), payload.get("key_steps", [])),
+            answer=_build_answer_text(
+                str(payload["answer"]),
+                payload.get("key_steps", []),
+                question=message,
+                requester=requester,
+                customer_id=customer_id,
+            ),
             confidence=_confidence_from_chunks(final_chunks),
             sources=sources,
             citations=citation_records,
@@ -8535,6 +8614,7 @@ def _run_rag_query_agentic(
     ticket_context: list[dict[str, str]] | None = None,
     ticket_id: str | None = None,
     customer_id: str | None = None,
+    requester: str | None = None,
     product: str | None = None,
     should_cancel: Callable[[], bool] | None = None,
     record_cancel_stage: Callable[[str], None] | None = None,
@@ -8552,6 +8632,7 @@ def _run_rag_query_agentic(
             ticket_context=ticket_context,
             ticket_id=ticket_id,
             customer_id=customer_id,
+            requester=requester,
             product=product,
             should_cancel=should_cancel,
             record_cancel_stage=record_cancel_stage,
@@ -8598,6 +8679,7 @@ def _run_rag_query_agentic(
             ticket_context=ticket_context,
             ticket_id=ticket_id,
             customer_id=customer_id,
+            requester=requester,
             product=product,
             should_cancel=_child_should_cancel,
             record_cancel_stage=_child_record,
@@ -8681,6 +8763,7 @@ def run_rag_query(
     ticket_context: list[dict[str, str]] | None = None,
     ticket_id: str | None = None,
     customer_id: str | None = None,
+    requester: str | None = None,
     product: str | None = None,
     should_cancel: Callable[[], bool] | None = None,
     record_cancel_stage: Callable[[str], None] | None = None,
@@ -8689,6 +8772,8 @@ def run_rag_query(
         result = _run_rag_query_legacy(
             message,
             top_k=top_k,
+            requester=requester,
+            customer_id=customer_id,
             product=product,
             should_cancel=should_cancel,
             record_cancel_stage=record_cancel_stage,
@@ -8706,6 +8791,7 @@ def run_rag_query(
             ticket_context=ticket_context,
             ticket_id=ticket_id,
             customer_id=customer_id,
+            requester=requester,
             product=product,
             should_cancel=should_cancel,
             record_cancel_stage=record_cancel_stage,
@@ -8722,6 +8808,8 @@ def run_rag_query(
         result = _run_rag_query_legacy(
             message,
             top_k=top_k,
+            requester=requester,
+            customer_id=customer_id,
             product=product,
             should_cancel=should_cancel,
             record_cancel_stage=record_cancel_stage,

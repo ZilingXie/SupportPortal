@@ -258,11 +258,13 @@ class PromptModuleTests(unittest.TestCase):
 
         self.assertEqual(
             ENGINEER_INVESTIGATION_REPLY_PROMPT_VERSION,
-            "engineer-investigation-reply-v6",
+            "engineer-investigation-reply-v7",
         )
         self.assertIn("## Role", system_prompt)
         self.assertIn("You are Sid inside an internal support investigation workflow.", system_prompt)
         self.assertIn("If the customer-facing draft self-refers, use Sid as the assistant name.", system_prompt)
+        self.assertIn("formal customer email", system_prompt)
+        self.assertIn('end with exactly "Best Regards," followed by "Sid"', system_prompt)
         self.assertIn("symptom_and_workaround_only", system_prompt)
         self.assertIn("root_cause_confirmed", system_prompt)
         self.assertIn("advisory_followups", system_prompt)

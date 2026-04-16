@@ -937,6 +937,43 @@ For each new entry, record:
   - `git diff --check`
 
 - Date: 2026-04-16
+- Area or subsystem: Client durable reply formatting and engineer investigation follow-up drafting
+- Prompt or model version: `customer-reply-email-composer-v1`, `engineer-investigation-reply-v7`
+- Summary: Standardized durable customer-facing replies into formal email-style messages with localized greeting/signoff, requester-aware personalization, and shared formatting across direct RAG answers, clarification requests, investigation updates, and engineer approval replies.
+- Reason: The client assistant was returning terse chat-style wording such as one-line troubleshooting instructions, while the desired customer experience is a polished email-style response that still preserves grounded technical content and existing citations/approval flows.
+- Affected files or config:
+  - `backend/services/customer_reply_composer.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/troubleshooting_intake.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/services/investigation_flow.py`
+  - `backend/services/engineer_agent.py`
+  - `backend/services/prompts/engineer_investigation_reply.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/rag_api.py`
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `ui/client-ui/app.js`
+  - `backend/tests/test_customer_reply_composer.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `backend/tests/test_troubleshooting_intake.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_worker.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_client_ui_contract.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Durable client-facing assistant replies now render as email-style messages with `Hi {name|there},`, a contextual polite opener, grounded body text and steps, and `Best Regards,` followed by `Sid` for English.
+  - Non-English durable replies keep the customer language and use the localized salutation/signoff instead of forcing English formatting.
+  - `/api/tickets/query` and `/internal/rag/query` now accept an optional `requester` display name so customer greetings can use the real name when available without exposing raw `customer_id` or email-like identifiers.
+  - Engineer investigation follow-up drafts now ask for a final sendable email reply by prompt contract, and backend normalization preserves approval safety for older/plain drafts by wrapping them into the same email format before send.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_customer_reply_composer backend.tests.test_troubleshooting_intake backend.tests.test_client_ticket_agent_runtime backend.tests.test_rag_service_client backend.tests.test_worker backend.tests.test_prompt_modules backend.tests.test_rag_qa.RagQaHybridTests.test_build_answer_text_formats_email_style_response backend.tests.test_rag_qa.RagQaHybridTests.test_run_rag_query_short_black_screen_guidance_uses_deterministic_answer_profile backend.tests.test_investigation_flow.InvestigationFlowTests.test_default_public_investigation_reply_uses_email_style backend.tests.test_investigation_flow.InvestigationFlowTests.test_engineer_internal_message_uses_investigation_reply_model_and_records_metadata backend.tests.test_investigation_flow.InvestigationFlowTests.test_confirmation_approve_sends_customer_reply_and_closes_investigation backend.tests.test_investigation_flow.InvestigationFlowTests.test_build_query_task_includes_execution_snapshot_fields backend.tests.test_client_ui_contract.ClientUiContractTests.test_client_query_payload_includes_requester_name -q`
+  - `python3 -m py_compile backend/services/customer_reply_composer.py backend/services/rag_qa.py backend/services/troubleshooting_intake.py backend/services/client_ticket_agent_runtime.py backend/services/investigation_flow.py backend/services/engineer_agent.py backend/services/prompts/engineer_investigation_reply.py backend/services/rag_service_client.py backend/rag_api.py backend/main.py backend/worker.py`
+
+- Date: 2026-04-16
 - Area or subsystem: Troubleshooting intake customer-facing clarification
 - Prompt or model version: `troubleshooting-intake-v3`
 - Summary: Rewrote missing-information clarification guidance to use appreciative customer-facing openings, forbid `Known so far` / internal-evaluation phrasing, and ask only for the still-missing troubleshooting or answer-mode fields.

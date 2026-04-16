@@ -2820,6 +2820,7 @@ async function handleSendMessage(text, options = {}) {
       body: JSON.stringify({
         ticket_id: ticketId,
         customer_id: state.user.id,
+        requester: state.user.name,
         product: normalizedProduct,
         message: text,
       }),
