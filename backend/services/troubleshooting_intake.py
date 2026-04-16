@@ -39,8 +39,17 @@ _TROUBLESHOOTING_SIGNAL_RE = re.compile(
     r"doesn't work|cannot|can't|stuck|timeout|crash|lag|freeze|symptom|troubleshoot)\b",
     re.IGNORECASE,
 )
+_EXPLICIT_SYMPTOM_SIGNAL_RE = re.compile(
+    r"\b(black screen|blank screen|no audio|no video|recording failed|fail|failed|failure|error(?:\s*code)?|"
+    r"cannot|can't|unable|stuck|timeout|crash|lag|freeze|callback|renew|renewal|doesn't work|not work)\b",
+    re.IGNORECASE,
+)
 _LEADING_SYMPTOM_PREFIX_RE = re.compile(
     r"^(?:i|we)\s+(?:have|had|got|get|am seeing|are seeing|see|am getting|are getting|hit|encounter|encountered)\s+",
+    re.IGNORECASE,
+)
+_STRUCTURED_INVESTIGATION_DETAIL_RE = re.compile(
+    r"\b(channel(?:\s+name)?|uid|sid|timestamp|timezone|utc|gmt|happened|occurred|date|time)\b",
     re.IGNORECASE,
 )
 _CHANNEL_NAME_RE = re.compile(
@@ -119,11 +128,35 @@ _ANSWER_BLOCKER_SIGNAL_RE = re.compile(
 _ANSWER_MODE_FIELD_SET = set(_ANSWER_MODE_REQUIRED_FIELDS)
 _INVESTIGATION_CLARIFY_REPLY_MARKERS = (
     "to investigate this",
+    "to help us investigate this",
     "narrow down the",
     "please share channel name",
     "please share the issue",
     "please share channel",
     "please share problematic uid",
+)
+_INVESTIGATION_SHARE_REQUEST_MARKERS = (
+    "please share",
+    "could you share",
+    "could you also share",
+    "can you share",
+)
+_INVESTIGATION_FIELD_MARKERS = (
+    "channel name",
+    "problematic uid",
+    "issue timestamp",
+    "issue time",
+    "issue timezone",
+    "timezone",
+    "sid",
+)
+_FORBIDDEN_CUSTOMER_REPLY_MARKERS = (
+    "known so far",
+    "grounded answer",
+    "support evidence",
+    "support knowledge base",
+    "i couldn't verify",
+    "i could not verify",
 )
 
 
@@ -327,6 +360,11 @@ def _assistant_message_is_investigation_clarification(message: dict[str, Any] | 
         return False
     if any(marker in content for marker in _INVESTIGATION_CLARIFY_REPLY_MARKERS):
         return True
+    if any(marker in content for marker in _INVESTIGATION_SHARE_REQUEST_MARKERS) and any(
+        field_label in content for field_label in _INVESTIGATION_FIELD_MARKERS
+    ):
+        if "investigate" in content or "narrow down" in content:
+            return True
     if "known so far:" in content and "please share" in content and "issue" in content:
         if any(label in content for label in ("channel name", "problematic uid", "issue timestamp", "timezone")):
             return True
@@ -545,6 +583,8 @@ def _extract_issue_symptom(text: str) -> str | None:
         return None
     if "black screen" in normalized:
         return "black screen issue"
+    if _STRUCTURED_INVESTIGATION_DETAIL_RE.search(normalized) and not _EXPLICIT_SYMPTOM_SIGNAL_RE.search(normalized):
+        return None
     if _TROUBLESHOOTING_SIGNAL_RE.search(normalized):
         return normalized
     return None
@@ -707,6 +747,17 @@ def _format_known_information(known_information: dict[str, str], *, required_fie
     return f"Known so far: {'; '.join(summaries)}."
 
 
+def _build_appreciative_opening(*, has_additional_info: bool) -> str:
+    return "Thanks for sharing the additional info." if has_additional_info else "Thanks for the details."
+
+
+def _customer_reply_uses_forbidden_pattern(value: str) -> bool:
+    lowered = _clean_text(value).lower()
+    if not lowered:
+        return False
+    return any(marker in lowered for marker in _FORBIDDEN_CUSTOMER_REPLY_MARKERS)
+
+
 def _join_labels(labels: list[str]) -> str:
     if not labels:
         return ""
@@ -726,10 +777,14 @@ def _build_customer_reply(
     issue_timestamp_parts: dict[str, str],
 ) -> str:
     product_label = get_support_product_label(product) or "Agora"
-    known_summary = _format_known_information(
-        known_information,
-        required_fields=required_fields,
+    has_additional_info = any(
+        _clean_text(field_value)
+        for field_name, field_value in known_information.items()
+        if field_name != "issue_symptom"
     )
+    if not has_additional_info:
+        has_additional_info = any(_clean_text(issue_timestamp_parts.get(part)) for part in ("date", "time", "timezone"))
+    opening = _build_appreciative_opening(has_additional_info=has_additional_info)
     missing_labels: list[str] = []
     for field_name in missing_information:
         if field_name == "issue_timestamp":
@@ -757,10 +812,7 @@ def _build_customer_reply(
         missing_labels.extend(list_support_product_field_labels([field_name]))
     if not missing_labels:
         return ""
-    return (
-        f"{known_summary} To investigate this {product_label} issue, please share "
-        f"{_join_labels(missing_labels)}."
-    )
+    return f"{opening} To help us investigate this {product_label} issue, could you also share {_join_labels(missing_labels)}?"
 
 
 def _build_answer_mode_customer_reply(
@@ -770,20 +822,13 @@ def _build_answer_mode_customer_reply(
 ) -> str:
     prompts: list[str] = []
     if "desired_outcome" in missing_information:
-        prompts.append("What are you trying to achieve?")
+        prompts.append("what you're trying to achieve")
     if "blocked_step_or_error" in missing_information:
-        prompts.append("What error or blocker are you seeing?")
+        prompts.append("the exact error or blocker you're seeing")
     if not prompts:
         return ""
-
-    prefix = "I couldn't verify a grounded answer from the current support evidence."
-    if known_information:
-        known_summary = _format_known_information(
-            known_information,
-            required_fields=_ANSWER_MODE_REQUIRED_FIELDS,
-        )
-        return f"{known_summary} {prefix} {' '.join(prompts)}".strip()
-    return f"{prefix} {' '.join(prompts)}".strip()
+    opening = _build_appreciative_opening(has_additional_info=bool(known_information))
+    return f"{opening} To help us give the right guidance, could you also share {_join_labels(prompts)}?"
 
 
 def _fallback_result(
@@ -909,6 +954,15 @@ def _parse_llm_result(
     known_information.update(_normalize_known_information(payload.get("known_information")))
     issue_timestamp_parts = dict(fallback.issue_timestamp_parts)
     if issue_mode == "investigation":
+        sanitized_issue_symptom = _extract_issue_symptom(str(known_information.get("issue_symptom") or ""))
+        if sanitized_issue_symptom:
+            known_information["issue_symptom"] = sanitized_issue_symptom
+        else:
+            fallback_issue_symptom = _clean_text(fallback.known_information.get("issue_symptom"))
+            if fallback_issue_symptom:
+                known_information["issue_symptom"] = fallback_issue_symptom
+            else:
+                known_information.pop("issue_symptom", None)
         normalized_issue_timestamp, derived_parts = _normalize_complete_issue_timestamp(
             str(known_information.get("issue_timestamp") or "")
         )
@@ -951,7 +1005,11 @@ def _parse_llm_result(
     customer_reply = _clean_text(payload.get("customer_reply"))
     if ready_for_engineer_ticket:
         customer_reply = ""
-    elif not customer_reply or payload_issue_mode != issue_mode:
+    elif (
+        not customer_reply
+        or payload_issue_mode != issue_mode
+        or _customer_reply_uses_forbidden_pattern(customer_reply)
+    ):
         customer_reply = _clean_text(fallback.customer_reply)
 
     return TroubleshootingIntakeResult(
