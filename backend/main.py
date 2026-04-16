@@ -3120,6 +3120,34 @@ async def update_ticket(ticket_id: str, request: TicketActionRequest) -> dict[st
     }
 
 
+def _ticket_turn_has_completed_response(ticket: dict[str, Any], message_created_at: str) -> bool:
+    expected_created_at = str(message_created_at or "").strip()
+    if not expected_created_at:
+        return False
+
+    seen_customer_turn = False
+    for message in list(ticket.get("messages") or []):
+        role = str(message.get("role") or "").strip().lower()
+        created_at = str(message.get("created_at") or "").strip()
+        if role == "customer" and created_at == expected_created_at:
+            seen_customer_turn = True
+            continue
+        if not seen_customer_turn:
+            continue
+        if role == "customer":
+            return False
+        if role:
+            return True
+
+    for event in ticket_repository.list_ticket_events(str(ticket.get("ticket_id") or "")):
+        if str(event.get("event_type") or "").strip().lower() != "ticket_ai_response_ready":
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        if str(payload.get("message_created_at") or "").strip() == expected_created_at:
+            return True
+    return False
+
+
 @app.post("/api/tickets/{ticket_id}/cancel-pending")
 async def cancel_pending_ticket_query(ticket_id: str, request: CancelPendingRequest) -> dict[str, Any]:
     ticket = ticket_repository.get_ticket(ticket_id)
@@ -3135,6 +3163,15 @@ async def cancel_pending_ticket_query(ticket_id: str, request: CancelPendingRequ
     message_created_at = request.message_created_at.strip()
     if not message_created_at:
         raise HTTPException(status_code=400, detail="message_created_at is required")
+
+    if _ticket_turn_has_completed_response(ticket, message_created_at):
+        return {
+            "ticket_id": ticket_id,
+            "canceled": False,
+            "already_completed": True,
+            "message_created_at": message_created_at,
+            "updated_at": str(ticket.get("updated_at") or now_iso()),
+        }
 
     ticket["updated_at"] = now_iso()
     ticket_repository.save_ticket(ticket, new_messages=[])
@@ -3158,6 +3195,7 @@ async def cancel_pending_ticket_query(ticket_id: str, request: CancelPendingRequ
     return {
         "ticket_id": ticket_id,
         "canceled": True,
+        "already_completed": False,
         "message_created_at": message_created_at,
         "updated_at": ticket["updated_at"],
     }

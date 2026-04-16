@@ -1450,6 +1450,75 @@ class WorkerResilienceTests(unittest.TestCase):
         investigation_event = repository.record_event.call_args_list[1].args[2]
         self.assertEqual(investigation_event["agent_phase"], "gather_missing_inputs")
 
+    def test_process_ticket_query_drops_stale_result_when_newer_customer_turn_exists(self) -> None:
+        initial_ticket = _build_ticket(
+            customer_message="First question",
+            message_created_at="2026-03-22T00:00:00+00:00",
+        )
+        refreshed_ticket = copy.deepcopy(initial_ticket)
+        refreshed_ticket["messages"].append(
+            {
+                "role": "customer",
+                "content": "Second question",
+                "created_at": "2026-03-22T00:01:00+00:00",
+            }
+        )
+        refreshed_ticket["updated_at"] = "2026-03-22T00:01:00+00:00"
+
+        repository = Mock()
+        repository.get_ticket.return_value = copy.deepcopy(refreshed_ticket)
+        repository.list_ticket_events.return_value = []
+        repository.save_ticket.return_value = None
+        repository.record_event.return_value = None
+        bus = Mock()
+
+        execution = types.SimpleNamespace(
+            answer="Old answer that should be dropped.",
+            confidence=0.91,
+            sources=["official/docs.md"],
+            citations=[{"source": "official/docs.md", "label": "Docs"}],
+            needs_engineer_guidance=False,
+            answer_route="rag",
+            scope_label="agora_technical",
+            route_reason="grounded_answer",
+            route_confidence=0.91,
+            search_used=False,
+            matched_signals=["token"],
+            route_family="agora_docs_rag",
+            execution_action="rag",
+            tooling_profile="agora_docs_only",
+            needs_investigating=False,
+            next_status="communicating",
+        )
+
+        task = dict(
+            self.task,
+            customer_message="First question",
+            message_created_at="2026-03-22T00:00:00+00:00",
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "_orchestrate_worker_support_message",
+            return_value=execution,
+        ), patch.object(
+            worker,
+            "build_client_sync_event",
+            return_value={"event": "ticket_ai_response_ready"},
+        ), patch.object(
+            worker,
+            "ensure_ticket_defaults",
+            side_effect=lambda ticket: None,
+        ), patch.object(
+            worker,
+            "now_iso",
+            return_value="2026-03-22T00:01:05+00:00",
+        ):
+            worker._process_ticket_query(bus, task)
+
+        repository.save_ticket.assert_not_called()
+        repository.record_event.assert_not_called()
+
     def test_process_ticket_query_service_error_preserves_service_error_reason(self) -> None:
         initial_ticket = _build_ticket(
             ticket_id="T-SVCERR",

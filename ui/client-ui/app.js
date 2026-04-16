@@ -4,6 +4,7 @@ const toastRoot = document.getElementById("toast-root");
 const AUTH_KEY = "helpdesk_auth_user";
 const CLIENT_ASSISTANT_NAME = "Sid";
 const TICKETS_KEY = "helpdesk_tickets";
+const SUPERSEDED_TURNS_KEY = "helpdesk_superseded_turns";
 const COUNTER_KEY = "helpdesk_ticket_counter";
 const MAX_RECENT = 5;
 const LEGACY_REASSURANCE_MESSAGES = new Set([
@@ -98,6 +99,8 @@ const state = {
   pendingPersistedUserMessageCreatedAt: null,
   pendingAsyncTicketId: null,
   pendingAsyncMessageCreatedAt: null,
+  pendingByTicket: {},
+  supersededTurnsByTicket: loadSupersededTurnsByTicket(),
 };
 let clientSocket = null;
 let clientReconnectTimer = null;
@@ -368,6 +371,7 @@ function login(username, password) {
 }
 
 function logout() {
+  abortAllPendingSubmissions();
   clearPendingRequestState();
   closeClientRealtimeConnection();
   resetChatScrollState();
@@ -399,6 +403,231 @@ function createAbortController() {
     signal: undefined,
     abort() {},
   };
+}
+
+function normalizeTicketKey(value) {
+  return String(value || "").trim();
+}
+
+function normalizeSupersededTurnRecord(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const messageId = String(value.messageId || value.id || "").trim();
+  const createdAt = String(value.createdAt || value.created_at || "").trim();
+  if (!messageId && !createdAt) {
+    return null;
+  }
+  return {
+    messageId,
+    createdAt,
+  };
+}
+
+function loadSupersededTurnsByTicket() {
+  try {
+    const raw = localStorage.getItem(SUPERSEDED_TURNS_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    const normalized = {};
+    for (const [ticketId, turns] of Object.entries(parsed)) {
+      const normalizedTicketId = normalizeTicketKey(ticketId);
+      if (!normalizedTicketId || !Array.isArray(turns)) {
+        continue;
+      }
+      const normalizedTurns = turns.map(normalizeSupersededTurnRecord).filter(Boolean);
+      if (normalizedTurns.length > 0) {
+        normalized[normalizedTicketId] = normalizedTurns;
+      }
+    }
+    return normalized;
+  } catch {
+    return {};
+  }
+}
+
+function saveSupersededTurnsByTicket() {
+  localStorage.setItem(SUPERSEDED_TURNS_KEY, JSON.stringify(state.supersededTurnsByTicket || {}));
+}
+
+function getSupersededTurnsForTicket(ticketId) {
+  return Array.isArray(state.supersededTurnsByTicket?.[normalizeTicketKey(ticketId)])
+    ? state.supersededTurnsByTicket[normalizeTicketKey(ticketId)]
+    : [];
+}
+
+function setSupersededTurnsForTicket(ticketId, turns) {
+  const normalizedTicketId = normalizeTicketKey(ticketId);
+  if (!normalizedTicketId) {
+    return;
+  }
+  const normalizedTurns = (Array.isArray(turns) ? turns : [])
+    .map(normalizeSupersededTurnRecord)
+    .filter(Boolean);
+  if (normalizedTurns.length > 0) {
+    state.supersededTurnsByTicket[normalizedTicketId] = normalizedTurns;
+  } else {
+    delete state.supersededTurnsByTicket[normalizedTicketId];
+  }
+  saveSupersededTurnsByTicket();
+}
+
+function rememberSupersededTurn(ticketId, turn) {
+  const normalizedTicketId = normalizeTicketKey(ticketId);
+  const normalizedTurn = normalizeSupersededTurnRecord(turn);
+  if (!normalizedTicketId || !normalizedTurn) {
+    return;
+  }
+  const existing = getSupersededTurnsForTicket(normalizedTicketId);
+  const duplicate = existing.some(
+    (entry) =>
+      (normalizedTurn.messageId && entry.messageId === normalizedTurn.messageId) ||
+      (normalizedTurn.createdAt && entry.createdAt === normalizedTurn.createdAt)
+  );
+  if (duplicate) {
+    return;
+  }
+  setSupersededTurnsForTicket(normalizedTicketId, [...existing, normalizedTurn]);
+}
+
+function isSupersededTurn(ticketId, message) {
+  const messageId = String(message?.id || "").trim();
+  const createdAt = String(message?.createdAt || message?.created_at || "").trim();
+  return getSupersededTurnsForTicket(ticketId).some(
+    (entry) =>
+      (messageId && entry.messageId === messageId) || (createdAt && entry.createdAt === createdAt)
+  );
+}
+
+function normalizePendingSession(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const phase = String(value.phase || "").trim().toLowerCase();
+  if (phase !== "submitting" && phase !== "queued") {
+    return null;
+  }
+  return {
+    phase,
+    userMessageId: String(value.userMessageId || "").trim(),
+    persistedMessageCreatedAt: String(value.persistedMessageCreatedAt || "").trim(),
+    queuedMessageCreatedAt: String(value.queuedMessageCreatedAt || "").trim(),
+    waitingForDurableReply: phase === "queued" ? value.waitingForDurableReply !== false : false,
+    abortController: value.abortController || null,
+  };
+}
+
+function getLegacyPendingSession(ticketId) {
+  const normalizedTicketId = normalizeTicketKey(ticketId);
+  const legacyTicketId = normalizeTicketKey(state.pendingTicketId || state.pendingAsyncTicketId);
+  if (!normalizedTicketId || !legacyTicketId || normalizedTicketId !== legacyTicketId) {
+    return null;
+  }
+  const phase = state.pendingAsyncTicketId ? "queued" : state.isSending ? "submitting" : "";
+  if (!phase) {
+    return null;
+  }
+  return normalizePendingSession({
+    phase,
+    userMessageId: state.pendingUserMessageId,
+    persistedMessageCreatedAt: state.pendingPersistedUserMessageCreatedAt,
+    queuedMessageCreatedAt: state.pendingAsyncMessageCreatedAt,
+    waitingForDurableReply: Boolean(state.pendingAsyncTicketId),
+    abortController: state.pendingAbortController,
+  });
+}
+
+function getPendingSession(ticketId) {
+  const normalizedTicketId = normalizeTicketKey(ticketId);
+  if (!normalizedTicketId) {
+    return null;
+  }
+  return (
+    normalizePendingSession(state.pendingByTicket?.[normalizedTicketId]) ||
+    getLegacyPendingSession(normalizedTicketId)
+  );
+}
+
+function getPendingSessionEntries() {
+  const entries = Object.entries(state.pendingByTicket || {})
+    .map(([ticketId, session]) => [normalizeTicketKey(ticketId), normalizePendingSession(session)])
+    .filter((entry) => entry[0] && entry[1]);
+  if (entries.length > 0) {
+    return entries;
+  }
+  const legacyTicketId = normalizeTicketKey(state.pendingTicketId || state.pendingAsyncTicketId);
+  const legacySession = getLegacyPendingSession(legacyTicketId);
+  return legacyTicketId && legacySession ? [[legacyTicketId, legacySession]] : [];
+}
+
+function getRepresentativePendingEntry() {
+  const entries = getPendingSessionEntries();
+  if (entries.length === 0) {
+    return null;
+  }
+  const activeTicketId = normalizeTicketKey(state.activeTicketId);
+  const activeEntry = activeTicketId
+    ? entries.find(([ticketId]) => ticketId === activeTicketId) || null
+    : null;
+  if (activeEntry) {
+    return {
+      ticketId: activeEntry[0],
+      session: activeEntry[1],
+    };
+  }
+  return {
+    ticketId: entries[0][0],
+    session: entries[0][1],
+  };
+}
+
+function syncLegacyPendingState() {
+  const entries = getPendingSessionEntries();
+  state.isSending = entries.length > 0;
+  const representative = getRepresentativePendingEntry();
+  state.pendingAbortController = representative?.session?.abortController || null;
+  state.pendingTicketId = representative?.ticketId || null;
+  state.pendingUserMessageId = representative?.session?.userMessageId || null;
+  state.pendingPersistedUserMessageCreatedAt =
+    representative?.session?.persistedMessageCreatedAt || null;
+  state.pendingAsyncTicketId =
+    representative?.session?.phase === "queued" ? representative.ticketId : null;
+  state.pendingAsyncMessageCreatedAt =
+    representative?.session?.phase === "queued"
+      ? representative.session.queuedMessageCreatedAt || representative.session.persistedMessageCreatedAt
+      : null;
+  if (!entries.some(([, session]) => session?.phase === "queued")) {
+    stopPendingStatusPolling();
+  }
+}
+
+function setPendingSession(ticketId, session) {
+  const normalizedTicketId = normalizeTicketKey(ticketId);
+  const normalizedSession = normalizePendingSession(session);
+  if (!normalizedTicketId || !normalizedSession) {
+    return;
+  }
+  state.pendingByTicket = {
+    ...(state.pendingByTicket || {}),
+    [normalizedTicketId]: normalizedSession,
+  };
+  syncLegacyPendingState();
+}
+
+function getQueuedPendingTicketIds() {
+  return getPendingSessionEntries()
+    .filter(([, session]) => session?.phase === "queued")
+    .map(([ticketId]) => ticketId);
+}
+
+function abortAllPendingSubmissions() {
+  for (const [, session] of getPendingSessionEntries()) {
+    if (session?.phase === "submitting" && session.abortController?.abort) {
+      session.abortController.abort();
+    }
+  }
 }
 
 function buildNewSessionWelcomeText(userName) {
@@ -447,9 +676,28 @@ function shouldHideLegacyReassuranceMessage(messages, index) {
   return false;
 }
 
+function shouldHideSupersededAssistantTurn(ticketId, messages, index) {
+  const role = normalizeRenderableMessageRole(messages[index]);
+  if (role === "user") {
+    return false;
+  }
+  for (let currentIndex = index - 1; currentIndex >= 0; currentIndex -= 1) {
+    if (normalizeRenderableMessageRole(messages[currentIndex]) !== "user") {
+      continue;
+    }
+    return isSupersededTurn(ticketId, messages[currentIndex]);
+  }
+  return false;
+}
+
 function getRenderableMessages(ticket) {
+  const ticketId = normalizeTicketKey(ticket?.id);
   return Array.isArray(ticket?.messages)
-    ? ticket.messages.filter((message, index, messages) => !shouldHideLegacyReassuranceMessage(messages, index))
+    ? ticket.messages.filter(
+        (message, index, messages) =>
+          !shouldHideLegacyReassuranceMessage(messages, index) &&
+          !shouldHideSupersededAssistantTurn(ticketId, messages, index)
+      )
     : [];
 }
 
@@ -462,7 +710,7 @@ function stopPendingStatusPolling() {
 }
 
 function hasDurableAssistantReplyAfterMessage(ticket, messageId = null) {
-  const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
+  const messages = getRenderableMessages(ticket);
   if (messages.length === 0) {
     return false;
   }
@@ -488,9 +736,14 @@ function hasDurableAssistantReplyAfterMessage(ticket, messageId = null) {
   return false;
 }
 
-function getPendingReplyAnchorIndex(ticket) {
-  const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
-  const pendingUserId = String(state.pendingUserMessageId || "").trim();
+function getPendingReplyAnchorIndex(ticket, renderableMessages = null) {
+  const messages = Array.isArray(renderableMessages)
+    ? renderableMessages
+    : Array.isArray(ticket?.messages)
+    ? ticket.messages
+    : [];
+  const pendingSession = getPendingSession(ticket?.id);
+  const pendingUserId = String(pendingSession?.userMessageId || "").trim();
   if (pendingUserId) {
     const index = messages.findIndex((message) => String(message?.id || "").trim() === pendingUserId);
     if (index >= 0) {
@@ -498,7 +751,9 @@ function getPendingReplyAnchorIndex(ticket) {
     }
   }
 
-  const pendingCreatedAt = String(state.pendingPersistedUserMessageCreatedAt || "").trim();
+  const pendingCreatedAt = String(
+    pendingSession?.persistedMessageCreatedAt || pendingSession?.queuedMessageCreatedAt || ""
+  ).trim();
   if (pendingCreatedAt) {
     const index = messages.findIndex(
       (message) =>
@@ -518,30 +773,52 @@ function getPendingReplyAnchorIndex(ticket) {
   return -1;
 }
 
-function clearPendingRequestState() {
-  state.isSending = false;
-  state.pendingAbortController = null;
-  state.pendingTicketId = null;
-  state.pendingUserMessageId = null;
-  state.pendingPersistedUserMessageCreatedAt = null;
-  state.pendingAsyncTicketId = null;
-  state.pendingAsyncMessageCreatedAt = null;
-  stopPendingStatusPolling();
+function clearPendingRequestState(ticketId = null) {
+  const normalizedTicketId = normalizeTicketKey(ticketId);
+  if (!normalizedTicketId) {
+    state.pendingByTicket = {};
+    state.pendingAbortController = null;
+    state.pendingTicketId = null;
+    state.pendingUserMessageId = null;
+    state.pendingPersistedUserMessageCreatedAt = null;
+    state.pendingAsyncTicketId = null;
+    state.pendingAsyncMessageCreatedAt = null;
+    state.isSending = false;
+    syncLegacyPendingState();
+    return;
+  }
+  if (state.pendingByTicket && Object.prototype.hasOwnProperty.call(state.pendingByTicket, normalizedTicketId)) {
+    const nextPendingByTicket = { ...(state.pendingByTicket || {}) };
+    delete nextPendingByTicket[normalizedTicketId];
+    state.pendingByTicket = nextPendingByTicket;
+  } else if (
+    normalizeTicketKey(state.pendingTicketId || state.pendingAsyncTicketId) === normalizedTicketId
+  ) {
+    state.pendingTicketId = null;
+    state.pendingUserMessageId = null;
+    state.pendingPersistedUserMessageCreatedAt = null;
+    state.pendingAsyncTicketId = null;
+    state.pendingAsyncMessageCreatedAt = null;
+    state.pendingAbortController = null;
+    state.isSending = false;
+  }
+  syncLegacyPendingState();
 }
 
 function isTicketSending(ticketId) {
-  return (
-    state.isSending &&
-    String(state.pendingTicketId || "").trim() === String(ticketId || "").trim()
-  );
+  return Boolean(getPendingSession(ticketId));
+}
+
+function isTicketSubmitting(ticketId) {
+  return getPendingSession(ticketId)?.phase === "submitting";
 }
 
 function ticketHasAssistantReply(ticket) {
-  const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
+  const messages = getRenderableMessages(ticket);
   if (messages.length === 0) {
     return false;
   }
-  const anchorIndex = getPendingReplyAnchorIndex(ticket);
+  const anchorIndex = getPendingReplyAnchorIndex(ticket, messages);
   if (anchorIndex < 0) {
     return false;
   }
@@ -551,52 +828,65 @@ function ticketHasAssistantReply(ticket) {
 }
 
 function isTicketAwaitingDurableReply(ticket) {
-  return isTicketSending(ticket?.id) && !ticketHasAssistantReply(ticket);
+  const pendingSession = getPendingSession(ticket?.id);
+  return Boolean(pendingSession) && pendingSession.phase === "queued" && !ticketHasAssistantReply(ticket);
+}
+
+function pendingSessionMatchesCreatedAt(session, messageCreatedAt) {
+  const normalizedCreatedAt = String(messageCreatedAt || "").trim();
+  if (!session || !normalizedCreatedAt) {
+    return false;
+  }
+  return [session.persistedMessageCreatedAt, session.queuedMessageCreatedAt].some(
+    (value) => String(value || "").trim() === normalizedCreatedAt
+  );
 }
 
 function reconcilePendingAsyncStateAfterSync(options = {}) {
-  const currentPendingTicketId = String(state.pendingAsyncTicketId || "").trim();
-  const normalizedTicketId = String(options?.ticketId || currentPendingTicketId || "").trim();
+  const normalizedTicketId = normalizeTicketKey(options?.ticketId);
   if (!normalizedTicketId) {
     return false;
   }
-  if (currentPendingTicketId && currentPendingTicketId !== normalizedTicketId) {
+  const pendingSession = getPendingSession(normalizedTicketId);
+  if (!pendingSession || pendingSession.phase !== "queued") {
     return false;
   }
 
   const eventName = String(options?.eventName || "").trim().toLowerCase();
+  const eventMessageCreatedAt = String(options?.messageCreatedAt || "").trim();
   if (eventName === "ticket_ai_generation_stopped") {
-    clearPendingRequestState();
-    return true;
+    if (!eventMessageCreatedAt || pendingSessionMatchesCreatedAt(pendingSession, eventMessageCreatedAt)) {
+      clearPendingRequestState(normalizedTicketId);
+      return true;
+    }
+    return false;
   }
 
   const pendingTicket = getTicketById(normalizedTicketId);
   if (!pendingTicket || ticketHasAssistantReply(pendingTicket)) {
-    clearPendingRequestState();
+    clearPendingRequestState(normalizedTicketId);
     return true;
   }
   return false;
 }
 
 function ensurePendingStatusPolling() {
-  if (
-    pendingStatusPollTimer ||
-    !state.user ||
-    !state.isSending ||
-    !String(state.pendingAsyncTicketId || "").trim()
-  ) {
+  if (pendingStatusPollTimer || !state.user || getQueuedPendingTicketIds().length === 0) {
     return;
   }
 
   pendingStatusPollTimer = setInterval(() => {
-    if (!state.user || !state.isSending || !String(state.pendingAsyncTicketId || "").trim()) {
+    const queuedTicketIds = getQueuedPendingTicketIds();
+    if (!state.user || queuedTicketIds.length === 0) {
       stopPendingStatusPolling();
       return;
     }
 
     syncTicketsFromBackend({ silent: true })
       .then(() => {
-        reconcilePendingAsyncStateAfterSync({ ticketId: state.pendingAsyncTicketId });
+        queuedTicketIds.forEach((ticketId) => {
+          reconcilePendingAsyncStateAfterSync({ ticketId });
+        });
         render();
       })
       .catch(() => {
@@ -656,14 +946,18 @@ function setupClientRealtimeConnection() {
       return;
     }
     const eventName = String(payload?.event || "").trim().toLowerCase();
-    const eventTicketId = String(payload?.ticket_id || "").trim();
+    const eventTicketId = normalizeTicketKey(payload?.ticket_id);
+    const eventMessageCreatedAt = String(payload?.message_created_at || "").trim();
     if (
-      state.pendingAsyncTicketId &&
-      eventTicketId === state.pendingAsyncTicketId &&
+      getPendingSession(eventTicketId)?.phase === "queued" &&
       (eventName === "ticket_ai_response_ready" || eventName === "ticket_ai_generation_stopped")
     ) {
       await syncTicketsFromBackend({ silent: true });
-      reconcilePendingAsyncStateAfterSync({ ticketId: eventTicketId, eventName });
+      reconcilePendingAsyncStateAfterSync({
+        ticketId: eventTicketId,
+        eventName,
+        messageCreatedAt: eventMessageCreatedAt,
+      });
       if (state.user) {
         render();
       }
@@ -860,10 +1154,10 @@ function normalizeBackendTicket(ticket) {
 }
 
 function getPendingLocalUserMessageForSync(localTicket) {
-  const pendingTicketId = String(state.pendingAsyncTicketId || state.pendingTicketId || "").trim();
-  const localTicketId = String(localTicket?.id || "").trim();
-  const pendingUserId = String(state.pendingUserMessageId || "").trim();
-  if (!pendingTicketId || !localTicketId || pendingTicketId !== localTicketId || !pendingUserId) {
+  const localTicketId = normalizeTicketKey(localTicket?.id);
+  const pendingSession = getPendingSession(localTicketId);
+  const pendingUserId = String(pendingSession?.userMessageId || "").trim();
+  if (!localTicketId || !pendingSession || !pendingUserId) {
     return null;
   }
   return (
@@ -875,8 +1169,10 @@ function getPendingLocalUserMessageForSync(localTicket) {
   );
 }
 
-function remoteTicketHasPersistedPendingCustomerTurn(remoteTicket) {
-  const pendingCreatedAt = String(state.pendingPersistedUserMessageCreatedAt || "").trim();
+function remoteTicketHasPersistedPendingCustomerTurn(remoteTicket, pendingSession = null) {
+  const pendingCreatedAt = String(
+    pendingSession?.persistedMessageCreatedAt || pendingSession?.queuedMessageCreatedAt || ""
+  ).trim();
   if (!pendingCreatedAt) {
     return false;
   }
@@ -888,8 +1184,9 @@ function remoteTicketHasPersistedPendingCustomerTurn(remoteTicket) {
 }
 
 function mergePendingLocalUserMessageIntoRemoteTicket(remoteTicket, localTicket) {
+  const pendingSession = getPendingSession(remoteTicket?.id || localTicket?.id);
   const pendingLocalMessage = getPendingLocalUserMessageForSync(localTicket);
-  if (!pendingLocalMessage || remoteTicketHasPersistedPendingCustomerTurn(remoteTicket)) {
+  if (!pendingLocalMessage || remoteTicketHasPersistedPendingCustomerTurn(remoteTicket, pendingSession)) {
     return remoteTicket;
   }
   const remoteMessages = Array.isArray(remoteTicket?.messages) ? remoteTicket.messages : [];
@@ -1804,9 +2101,11 @@ function buildChatTicketViewState(ticket) {
     return null;
   }
   const renderableMessages = getRenderableMessages(ticket);
+  const pendingSession = getPendingSession(ticket.id);
   const sending = isTicketAwaitingDurableReply(ticket);
+  const isSubmitting = pendingSession?.phase === "submitting";
   const requiresProductSelection = isTicketEmpty(ticket) && !normalizeTicketProduct(ticket.product);
-  const canCompose = !sending && ticket.status !== "resolved" && !requiresProductSelection;
+  const canCompose = !isSubmitting && ticket.status !== "resolved" && !requiresProductSelection;
   const isEditing = Boolean(state.editingMessageId);
 
   if (isEditing && !renderableMessages.some((message) => message.id === state.editingMessageId)) {
@@ -1820,6 +2119,7 @@ function buildChatTicketViewState(ticket) {
     ticket,
     renderableMessages,
     sending,
+    isSubmitting,
     requiresProductSelection,
     canCompose,
     isEditing: Boolean(state.editingMessageId),
@@ -1882,20 +2182,6 @@ function renderChatComposerNoteHtml(viewState) {
 }
 
 function renderChatComposerActionHtml(viewState) {
-  if (viewState.sending) {
-    return `
-      <button
-        class="composer-icon-button composer-stop-btn"
-        type="button"
-        data-action="stop-generation"
-        aria-label="Stop Generation"
-        title="Stop Generation"
-      >
-        <span class="material-symbols-outlined" aria-hidden="true">stop</span>
-      </button>
-    `;
-  }
-
   return `
     <button
       class="composer-icon-button send-btn"
@@ -2115,7 +2401,8 @@ function getChatMessageSignatureToken(message) {
 
 function getRenderablePendingReplyAnchorIndex(ticket, renderableMessages) {
   const messages = Array.isArray(renderableMessages) ? renderableMessages : [];
-  const pendingUserId = String(state.pendingUserMessageId || "").trim();
+  const pendingSession = getPendingSession(ticket?.id);
+  const pendingUserId = String(pendingSession?.userMessageId || "").trim();
   if (pendingUserId) {
     const index = messages.findIndex(
       (message) =>
@@ -2127,7 +2414,9 @@ function getRenderablePendingReplyAnchorIndex(ticket, renderableMessages) {
     }
   }
 
-  const pendingCreatedAt = String(state.pendingAsyncMessageCreatedAt || "").trim();
+  const pendingCreatedAt = String(
+    pendingSession?.persistedMessageCreatedAt || pendingSession?.queuedMessageCreatedAt || ""
+  ).trim();
   if (pendingCreatedAt) {
     const index = messages.findIndex(
       (message) =>
@@ -2423,51 +2712,84 @@ async function syncBackendTicketAction(ticketId, action) {
   }
 }
 
-async function stopGeneration() {
-  if (!state.isSending || !state.pendingAbortController) {
-    const pendingTicketId = String(state.pendingTicketId || state.pendingAsyncTicketId || "").trim();
-    const pendingCreatedAt = String(state.pendingAsyncMessageCreatedAt || "").trim();
-    if (!state.isSending || !pendingTicketId || !pendingCreatedAt) {
-      return;
-    }
+function markPendingTurnSuperseded(ticketId, pendingSession) {
+  if (!pendingSession) {
+    return;
+  }
+  rememberSupersededTurn(ticketId, {
+    messageId: pendingSession.userMessageId,
+    createdAt: pendingSession.persistedMessageCreatedAt || pendingSession.queuedMessageCreatedAt,
+  });
+}
 
-    try {
-      const response = await fetch(
-        `/api/tickets/${encodeURIComponent(pendingTicketId)}/cancel-pending`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            customer_id: state.user?.id || "",
-            message_created_at: pendingCreatedAt,
-          }),
-        }
-      );
-      if (!response.ok) {
-        throw new Error(`Request failed with status ${response.status}`);
-      }
+function cancelPendingTurnSilently(ticketId, pendingSession) {
+  const normalizedTicketId = normalizeTicketKey(ticketId);
+  const queuedMessageCreatedAt = String(pendingSession?.queuedMessageCreatedAt || "").trim();
+  if (!normalizedTicketId || !queuedMessageCreatedAt || !state.user?.id) {
+    return;
+  }
+  fetch(`/api/tickets/${encodeURIComponent(normalizedTicketId)}/cancel-pending`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      customer_id: state.user.id,
+      message_created_at: queuedMessageCreatedAt,
+    }),
+  }).catch(() => {
+    // Keep the latest-turn flow uninterrupted; stale worker-result suppression remains the fallback.
+  });
+}
 
-      const activeTicket = getTicketById(pendingTicketId);
-      const pendingMessage = activeTicket?.messages?.find(
-        (message) => message.id === state.pendingUserMessageId && message.role === "user"
-      );
-      const userMessages = Array.isArray(activeTicket?.messages)
-        ? activeTicket.messages.filter((message) => message.role === "user")
-        : [];
-      const latestUserContent =
-        userMessages.length > 0 ? String(userMessages[userMessages.length - 1]?.content || "") : "";
-      state.editingMessageId = state.pendingUserMessageId;
-      state.inputDraft = pendingMessage?.content || latestUserContent || "";
-      clearPendingRequestState();
-      await syncTicketsFromBackend({ silent: true });
+async function stopGeneration(ticketId = state.activeTicketId) {
+  const normalizedTicketId = normalizeTicketKey(ticketId);
+  const pendingSession = getPendingSession(normalizedTicketId);
+  if (!pendingSession) {
+    return;
+  }
+
+  if (pendingSession.phase !== "queued" || !pendingSession.queuedMessageCreatedAt) {
+    if (pendingSession.phase === "submitting" && pendingSession.abortController?.abort) {
+      pendingSession.abortController.abort();
+      clearPendingRequestState(normalizedTicketId);
       render();
-      toast("Generation stopped. Edit your message and resend.");
-    } catch (error) {
-      toast(`Failed to stop generation: ${error.message}`, "error");
     }
     return;
   }
-  state.pendingAbortController.abort();
+
+  try {
+    const response = await fetch(
+      `/api/tickets/${encodeURIComponent(normalizedTicketId)}/cancel-pending`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customer_id: state.user?.id || "",
+          message_created_at: pendingSession.queuedMessageCreatedAt,
+        }),
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`Request failed with status ${response.status}`);
+    }
+
+    const activeTicket = getTicketById(normalizedTicketId);
+    const pendingMessage = activeTicket?.messages?.find(
+      (message) => message.id === pendingSession.userMessageId && message.role === "user"
+    );
+    const userMessages = Array.isArray(activeTicket?.messages)
+      ? activeTicket.messages.filter((message) => message.role === "user")
+      : [];
+    const latestUserContent =
+      userMessages.length > 0 ? String(userMessages[userMessages.length - 1]?.content || "") : "";
+    state.editingMessageId = pendingSession.userMessageId;
+    state.inputDraft = pendingMessage?.content || latestUserContent || "";
+    clearPendingRequestState(normalizedTicketId);
+    await syncTicketsFromBackend({ silent: true });
+    render();
+    toast("Generation stopped. Edit your message and resend.");
+  } catch (error) {
+    toast(`Failed to stop generation: ${error.message}`, "error");
+  }
 }
 
 async function handleSendMessage(text, options = {}) {
@@ -2481,13 +2803,17 @@ async function handleSendMessage(text, options = {}) {
     toast("Select a product before sending your first message.", "error");
     return;
   }
-  if (state.isSending && String(state.pendingTicketId || "").trim() !== String(ticketId || "").trim()) {
-    toast("Another session is still processing. Wait or stop it first.", "error");
+  const existingPendingSession = getPendingSession(ticketId);
+  if (existingPendingSession?.phase === "submitting") {
     return;
   }
-  if (isTicketSending(ticketId)) {
-    return;
+
+  if (existingPendingSession?.phase === "queued") {
+    markPendingTurnSuperseded(ticketId, existingPendingSession);
+    clearPendingRequestState(ticketId);
+    cancelPendingTurnSilently(ticketId, existingPendingSession);
   }
+
   const editMessageId = options.editMessageId || null;
   const now = new Date().toISOString();
   let userMessageId = editMessageId;
@@ -2528,11 +2854,12 @@ async function handleSendMessage(text, options = {}) {
   updateTicketStatus(ticketId, hasEscalatedAssistance ? "escalated" : "communicating");
   state.editingMessageId = null;
   state.inputDraft = "";
-  state.isSending = true;
-  state.pendingTicketId = ticketId;
-  state.pendingUserMessageId = userMessageId;
-  state.pendingAbortController = createAbortController();
-  stopPendingStatusPolling();
+  const abortController = createAbortController();
+  setPendingSession(ticketId, {
+    phase: "submitting",
+    userMessageId,
+    abortController,
+  });
   requestChatScrollToBottom(ticketId, { behavior: "smooth" });
   render();
 
@@ -2540,7 +2867,7 @@ async function handleSendMessage(text, options = {}) {
     const response = await fetch("/api/tickets/query", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      signal: state.pendingAbortController.signal,
+      signal: abortController.signal,
       body: JSON.stringify({
         ticket_id: ticketId,
         customer_id: state.user.id,
@@ -2555,13 +2882,25 @@ async function handleSendMessage(text, options = {}) {
     const payload = await response.json();
     const updated = getTicketById(ticketId);
     const queuedForAi = Boolean(payload?.queued_for_ai);
-    state.pendingPersistedUserMessageCreatedAt = String(
+    const persistedMessageCreatedAt = String(
       payload?.message_created_at || payload?.queued_message_created_at || ""
     ).trim();
+    const queuedMessageCreatedAt = String(payload?.queued_message_created_at || "").trim();
     if (queuedForAi) {
       keepWaitingForAsync = true;
-      state.pendingAsyncTicketId = ticketId;
-      state.pendingAsyncMessageCreatedAt = String(payload?.queued_message_created_at || "").trim();
+      setPendingSession(ticketId, {
+        phase: "queued",
+        userMessageId,
+        persistedMessageCreatedAt,
+        queuedMessageCreatedAt: queuedMessageCreatedAt || persistedMessageCreatedAt,
+        waitingForDurableReply: true,
+      });
+    } else {
+      setPendingSession(ticketId, {
+        phase: "submitting",
+        userMessageId,
+        persistedMessageCreatedAt,
+      });
     }
     const allowAssistantReply =
       payload?.ai_replied !== false && String(payload?.answer || "").trim().length > 0;
@@ -2613,12 +2952,10 @@ async function handleSendMessage(text, options = {}) {
       toast("Failed to fetch assistant response.", "error");
     }
   } finally {
-    state.pendingAbortController = null;
     if (keepWaitingForAsync) {
-      state.isSending = true;
       ensurePendingStatusPolling();
     } else {
-      clearPendingRequestState();
+      clearPendingRequestState(ticketId);
     }
     render();
   }
@@ -2744,13 +3081,6 @@ function bindAuthedEvents() {
     });
     input.__clientComposerInputBound = true;
   }
-
-  const stopButton = appRoot.querySelector("[data-action='stop-generation']");
-  stopButton?.addEventListener("click", () => {
-    stopGeneration().catch(() => {
-      // Stop action errors are already surfaced by toast.
-    });
-  });
 }
 
 function bindStatusFilter() {
@@ -3157,6 +3487,7 @@ function render() {
   const previousTicketId = String(state.activeTicketId || "").trim();
   const previousChatScroll = captureChatScrollSnapshot();
 
+  syncLegacyPendingState();
   parseRoute();
   if (!state.user) {
     clearPendingRequestState();
