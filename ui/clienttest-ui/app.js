@@ -2028,13 +2028,6 @@ function buildNewTicketPageTitle(ticket) {
   return String(ticket?.title || "New Ticket").trim() || "New Ticket";
 }
 
-function buildNewTicketBreadcrumbLabel(ticket) {
-  if (isTicketEmpty(ticket)) {
-    return "New Ticket";
-  }
-  return `Ticket #${String(ticket?.id || "").trim() || "Pending"}`;
-}
-
 function renderNewTicketStatusPill(ticket) {
   if (isTicketEmpty(ticket)) {
     return `<span class="new-ticket-status-pill draft">Draft</span>`;
@@ -2062,7 +2055,7 @@ function buildNewTicketSummary(ticket) {
 function buildNewTicketKnowledgeItems(ticket) {
   if (isTicketEmpty(ticket)) {
     return [
-      { title: "Choose the affected product", meta: "intake starter", href: "" },
+      { title: "Write a sharp issue summary", meta: "intake starter", href: "" },
       { title: "Prepare logs or call IDs", meta: "diagnostic checklist", href: "" },
       { title: "Explain expected vs. actual behavior", meta: "case writing guide", href: "" },
     ];
@@ -2224,7 +2217,7 @@ function renderNewTicketThreadHtml(viewState) {
       <div class="new-ticket-thread-empty">
         <p class="new-ticket-thread-empty-kicker">Draft Workspace</p>
         <h2>Your conversation thread will appear here after the first submission.</h2>
-        <p>Use the intake composer below to describe the issue and choose the affected product.</p>
+        <p>Use the intake composer below to describe the issue and share the impact or reproduction details.</p>
       </div>
     `;
   }
@@ -2270,8 +2263,8 @@ function renderNewTicketComposerNoteHtml(viewState) {
   if (viewState.isEditing) {
     return `<div class="composer-note">Editing your draft message. Press Enter to resend, Shift+Enter for newline.</div>`;
   }
-  if (viewState.requiresProductSelection) {
-    return `<div class="composer-note">Choose a support product before you submit the first message.</div>`;
+  if (isTicketEmpty(viewState.ticket)) {
+    return `<div class="composer-note">Your first message creates the ticket and starts Sid's intake workflow.</div>`;
   }
   return `<div class="composer-note">Your message will reuse the current client ticket runtime and websocket flow.</div>`;
 }
@@ -2279,7 +2272,7 @@ function renderNewTicketComposerNoteHtml(viewState) {
 function getChatComposerPlaceholder(viewState) {
   if (viewState?.isNewTicketPreview) {
     return isTicketEmpty(viewState.ticket)
-      ? "Describe your issue..."
+      ? "Type your request or technical issue..."
       : "Add more context or follow-up details...";
   }
   return "Type your request or technical issue...";
@@ -2288,8 +2281,14 @@ function getChatComposerPlaceholder(viewState) {
 function renderNewTicketComposerActionHtml(viewState) {
   if (viewState.sending) {
     return `
-      <button class="new-ticket-submit-btn is-secondary" type="button" data-action="stop-generation">
-        Stop
+      <button
+        class="new-ticket-inline-send-btn is-stop"
+        type="button"
+        data-action="stop-generation"
+        aria-label="Stop Generation"
+        title="Stop Generation"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true">stop</span>
       </button>
     `;
   }
@@ -2303,9 +2302,14 @@ function renderNewTicketComposerActionHtml(viewState) {
     : "Send Message";
 
   return `
-    <button class="new-ticket-submit-btn" type="submit" ${viewState.canSubmit ? "" : "disabled"}>
-      ${buttonLabel}
-      <span class="material-symbols-outlined" aria-hidden="true">send</span>
+    <button
+      class="new-ticket-inline-send-btn"
+      type="submit"
+      aria-label="${escapeHtml(buttonLabel)}"
+      title="${escapeHtml(buttonLabel)}"
+      ${viewState.canSubmit ? "" : "disabled"}
+    >
+      <span class="material-symbols-outlined" aria-hidden="true">arrow_upward</span>
     </button>
   `;
 }
@@ -2317,11 +2321,6 @@ function renderNewTicketTicketFromState(viewState) {
       <div class="new-ticket-layout">
         <div class="new-ticket-main-column">
           <header class="new-ticket-hero">
-            <div class="new-ticket-breadcrumb">
-              <span>My Tickets</span>
-              <span class="material-symbols-outlined" aria-hidden="true">chevron_right</span>
-              <span>${escapeHtml(buildNewTicketBreadcrumbLabel(ticket))}</span>
-            </div>
             <h1 class="new-ticket-page-title">${escapeHtml(buildNewTicketPageTitle(ticket))}</h1>
           </header>
           <section class="new-ticket-thread-panel">
@@ -2342,19 +2341,15 @@ function renderNewTicketTicketFromState(viewState) {
             </div>
             <div data-chat-section="composer-note">${renderNewTicketComposerNoteHtml(viewState)}</div>
             <form id="chat-input-form" class="chat-input-inner new-ticket-composer-form" data-chat-section="composer-form">
-              <textarea
-                id="chat-input"
-                class="textarea new-ticket-textarea"
-                rows="1"
-                placeholder="${escapeHtml(getChatComposerPlaceholder(viewState))}"
-                ${viewState.canCompose ? "" : "disabled"}
-              >${escapeHtml(state.inputDraft || "")}</textarea>
-              <div class="new-ticket-composer-footer">
-                <div class="new-ticket-product-group">
-                  <span class="new-ticket-product-label">Support Product</span>
-                  ${renderTicketProductSelector(viewState.ticket)}
-                </div>
-                <div class="new-ticket-composer-actions" data-chat-section="composer-action">
+              <div class="new-ticket-composer-input-shell">
+                <textarea
+                  id="chat-input"
+                  class="textarea new-ticket-textarea"
+                  rows="1"
+                  placeholder="${escapeHtml(getChatComposerPlaceholder(viewState))}"
+                  ${viewState.canCompose ? "" : "disabled"}
+                >${escapeHtml(state.inputDraft || "")}</textarea>
+                <div class="new-ticket-inline-action" data-chat-section="composer-action">
                   ${renderNewTicketComposerActionHtml(viewState)}
                 </div>
               </div>
@@ -2560,12 +2555,15 @@ function buildChatTicketViewState(ticket) {
   }
   const renderableMessages = getRenderableMessages(ticket);
   const sending = isTicketAwaitingDurableReply(ticket);
-  const requiresProductSelection = isTicketEmpty(ticket) && !normalizeTicketProduct(ticket.product);
   const isNewTicketPreview = isNewTicketPreviewTicket(ticket);
+  const requiresProductSelection =
+    !isNewTicketPreview && isTicketEmpty(ticket) && !normalizeTicketProduct(ticket.product);
+  const hasComposerText = String(state.inputDraft || "").trim().length > 0;
   const canCompose =
     !sending && ticket.status !== "resolved" && (isNewTicketPreview || !requiresProductSelection);
-  const canSubmit =
-    canCompose && (!isTicketEmpty(ticket) || Boolean(normalizeTicketProduct(ticket.product)));
+  const canSubmit = isNewTicketPreview
+    ? canCompose && hasComposerText
+    : canCompose && (!isTicketEmpty(ticket) || Boolean(normalizeTicketProduct(ticket.product)));
   const isEditing = Boolean(state.editingMessageId);
 
   if (isEditing && !renderableMessages.some((message) => message.id === state.editingMessageId)) {
@@ -2816,6 +2814,21 @@ function patchChatTicketWhilePreservingComposer(mainRegion, viewState) {
   }
   restoreComposerPreservationState(composer, snapshot);
   return true;
+}
+
+function refreshNewTicketInlineComposerAction() {
+  const ticket = getActiveChatTicket();
+  const viewState = buildChatTicketViewState(ticket);
+  if (!viewState?.isNewTicketPreview || viewState.sending) {
+    return;
+  }
+
+  const actionRegion = appRoot.querySelector('[data-chat-section="composer-action"]');
+  if (!actionRegion) {
+    return;
+  }
+
+  actionRegion.innerHTML = renderNewTicketComposerActionHtml(viewState);
 }
 
 function renderChatTicket() {
@@ -3703,6 +3716,7 @@ function bindAuthedEvents() {
   if (input && !input.__clientComposerInputBound) {
     input.addEventListener("input", () => {
       state.inputDraft = input.value;
+      refreshNewTicketInlineComposerAction();
     });
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey) {

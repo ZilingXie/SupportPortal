@@ -26,8 +26,8 @@ class ClientTestRouteSmokeTests(unittest.TestCase):
     def test_clienttest_html_references_local_assets(self) -> None:
         html = Path("ui/clienttest-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260416-clienttest-new-ticket-hifi-1", html)
-        self.assertIn("./app.js?v=20260416-clienttest-new-ticket-hifi-1", html)
+        self.assertIn("./styles.css?v=20260416-clienttest-inline-send-1", html)
+        self.assertIn("./app.js?v=20260416-clienttest-inline-send-1", html)
 
 
 class ClientTestUiContractTests(unittest.TestCase):
@@ -173,8 +173,6 @@ class ClientTestUiContractTests(unittest.TestCase):
 
         self.assertIn("Start a new support ticket", app_source)
         self.assertIn("Knowledge Base Articles", app_source)
-        self.assertIn("Submit Ticket", app_source)
-        self.assertIn("Send Message", app_source)
         self.assertIn("Draft", app_source)
         self.assertIn("Pending", app_source)
         self.assertIn("Not submitted", app_source)
@@ -183,11 +181,16 @@ class ClientTestUiContractTests(unittest.TestCase):
         self.assertNotIn("Reply to Ticket", app_source)
         self.assertNotIn("Send Reply", app_source)
         self.assertNotIn("Contact Us", app_source)
+        self.assertNotIn("Support Product", app_source)
+        self.assertNotIn("Choose the affected product", app_source)
 
         self.assertIn("clienttest-new-ticket-shell", css)
         self.assertIn("new-ticket-thread-card", css)
         self.assertIn("new-ticket-composer-panel", css)
         self.assertIn("new-ticket-info-card", css)
+        self.assertIn("new-ticket-inline-send-btn", css)
+        self.assertNotIn("new-ticket-composer-footer", css)
+        self.assertNotIn("new-ticket-product-group", css)
 
     def test_clienttest_new_ticket_initial_state_renders_empty_high_fidelity_draft(self) -> None:
         self.run_clienttest_app_script(
@@ -205,11 +208,8 @@ class ClientTestUiContractTests(unittest.TestCase):
                 if (!html.includes("Start a new support ticket")) {
                   throw new Error("New Ticket draft should render the high-fidelity title.");
                 }
-                if (!html.includes("My Tickets")) {
-                  throw new Error("New Ticket draft should keep the breadcrumb.");
-                }
-                if (!html.includes("New Ticket")) {
-                  throw new Error("New Ticket draft should label the breadcrumb destination.");
+                if (html.includes("new-ticket-breadcrumb") || html.includes("chevron_right")) {
+                  throw new Error("New Ticket draft should remove the breadcrumb row.");
                 }
                 if (!html.includes("Ticket Information") || !html.includes("AI Summary") || !html.includes("Knowledge Base Articles")) {
                   throw new Error("New Ticket draft should render the right sidebar cards.");
@@ -217,14 +217,23 @@ class ClientTestUiContractTests(unittest.TestCase):
                 if (!html.includes("Draft") || !html.includes("Pending") || !html.includes("Not submitted") || !html.includes("Unassigned")) {
                   throw new Error("New Ticket draft should render draft-safe placeholder metadata.");
                 }
-                if (!html.includes("Submit Ticket")) {
-                  throw new Error("New Ticket draft should use customer-safe submit language.");
+                if (!html.includes("new-ticket-inline-send-btn")) {
+                  throw new Error("New Ticket draft should render the inline send action inside the textarea shell.");
                 }
-                if (!html.includes("Support Product")) {
-                  throw new Error("New Ticket draft should keep product selection inside the intake surface.");
+                if (!/new-ticket-inline-send-btn[^>]*disabled/.test(html)) {
+                  throw new Error("New Ticket draft should keep the inline send action disabled until there is input.");
+                }
+                if (html.includes("Support Product")) {
+                  throw new Error("New Ticket draft should remove the product selector from the intake surface.");
+                }
+                if (html.includes("Choose the affected product")) {
+                  throw new Error("New Ticket draft should remove product-gated helper copy.");
                 }
                 if (/id="chat-input"[^>]*disabled/.test(html)) {
                   throw new Error("New Ticket draft textarea should remain available before the first submission.");
+                }
+                if (/>\\s*Submit Ticket\\s*</.test(html) || />\\s*Send Message\\s*</.test(html)) {
+                  throw new Error("New Ticket draft should use an icon-only send action, not visible action text.");
                 }
                 if (html.includes("Hi Alex Rivera, I'm Sid")) {
                   throw new Error("New Ticket draft should not reuse the legacy welcome bubble.");
@@ -234,6 +243,12 @@ class ClientTestUiContractTests(unittest.TestCase):
                 }
                 if (html.includes("Dashboard") || html.includes("Contact Us")) {
                   throw new Error("New Ticket draft should not inject the screenshot top navigation.");
+                }
+
+                state.inputDraft = "The web SDK disconnects after 30 seconds.";
+                const readyHtml = renderChatTicket();
+                if (/new-ticket-inline-send-btn[^>]*disabled/.test(readyHtml)) {
+                  throw new Error("New Ticket draft should become sendable with input even when no product is selected.");
                 }
                 """
             )
@@ -248,7 +263,6 @@ class ClientTestUiContractTests(unittest.TestCase):
 
                 const draft = getOrCreateDraftTicket(state.user.id);
                 state.newTicketPreviewTicketId = draft.id;
-                updateTicketProduct(draft.id, "audio_video_calling");
                 saveTicketMessages(draft.id, [
                   {
                     id: "msg-1",
@@ -269,6 +283,7 @@ class ClientTestUiContractTests(unittest.TestCase):
 
                 state.view = "chat-ticket";
                 state.activeTicketId = draft.id;
+                state.inputDraft = "I can add another reproduction detail.";
 
                 const html = renderChatTicket();
                 if (!html.includes("The video freezes after 10 minutes")) {
@@ -283,8 +298,14 @@ class ClientTestUiContractTests(unittest.TestCase):
                 if (!html.includes("Ticket Information") || !html.includes("AI Summary") || !html.includes("Knowledge Base Articles")) {
                   throw new Error("New Ticket detail should keep the same right-column layout after the first message.");
                 }
-                if (!html.includes("Send Message")) {
-                  throw new Error("Existing New Ticket threads should keep customer-safe send language.");
+                if (!html.includes("new-ticket-inline-send-btn")) {
+                  throw new Error("Existing New Ticket threads should keep the inline send action.");
+                }
+                if (html.includes("Support Product")) {
+                  throw new Error("Existing New Ticket threads should not restore the product selector.");
+                }
+                if (/>\\s*Send Message\\s*</.test(html) || />\\s*Submit Ticket\\s*</.test(html)) {
+                  throw new Error("Existing New Ticket threads should keep the icon-only send action.");
                 }
                 if (html.includes("Reply to Ticket") || html.includes("Send Reply")) {
                   throw new Error("Existing New Ticket threads should not regress to reply/email wording.");
