@@ -26,8 +26,8 @@ class ClientTestRouteSmokeTests(unittest.TestCase):
     def test_clienttest_html_references_local_assets(self) -> None:
         html = Path("ui/clienttest-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260416-clienttest-inline-send-1", html)
-        self.assertIn("./app.js?v=20260416-clienttest-inline-send-1", html)
+        self.assertIn("./styles.css?v=20260416-clienttest-inline-send-2", html)
+        self.assertIn("./app.js?v=20260416-clienttest-inline-send-2", html)
 
 
 class ClientTestUiContractTests(unittest.TestCase):
@@ -183,6 +183,7 @@ class ClientTestUiContractTests(unittest.TestCase):
         self.assertNotIn("Contact Us", app_source)
         self.assertNotIn("Support Product", app_source)
         self.assertNotIn("Choose the affected product", app_source)
+        self.assertNotIn("Smart intake enabled", app_source)
 
         self.assertIn("clienttest-new-ticket-shell", css)
         self.assertIn("new-ticket-thread-card", css)
@@ -191,6 +192,9 @@ class ClientTestUiContractTests(unittest.TestCase):
         self.assertIn("new-ticket-inline-send-btn", css)
         self.assertNotIn("new-ticket-composer-footer", css)
         self.assertNotIn("new-ticket-product-group", css)
+        self.assertNotIn("new-ticket-composer-top", css)
+        self.assertNotIn("new-ticket-composer-heading", css)
+        self.assertNotIn("new-ticket-composer-mode", css)
 
     def test_clienttest_new_ticket_initial_state_renders_empty_high_fidelity_draft(self) -> None:
         self.run_clienttest_app_script(
@@ -219,6 +223,9 @@ class ClientTestUiContractTests(unittest.TestCase):
                 }
                 if (!html.includes("new-ticket-inline-send-btn")) {
                   throw new Error("New Ticket draft should render the inline send action inside the textarea shell.");
+                }
+                if (html.includes("Describe your issue") || html.includes("Smart intake enabled")) {
+                  throw new Error("New Ticket draft should remove the composer topline row.");
                 }
                 if (!/new-ticket-inline-send-btn[^>]*disabled/.test(html)) {
                   throw new Error("New Ticket draft should keep the inline send action disabled until there is input.");
@@ -300,6 +307,9 @@ class ClientTestUiContractTests(unittest.TestCase):
                 }
                 if (!html.includes("new-ticket-inline-send-btn")) {
                   throw new Error("Existing New Ticket threads should keep the inline send action.");
+                }
+                if (html.includes("Continue the conversation") || html.includes("Smart intake enabled")) {
+                  throw new Error("Existing New Ticket threads should remove the composer topline row.");
                 }
                 if (html.includes("Support Product")) {
                   throw new Error("Existing New Ticket threads should not restore the product selector.");

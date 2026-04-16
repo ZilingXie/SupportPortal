@@ -2950,31 +2950,6 @@ a.citation-link:hover {
   overflow: hidden;
 }
 
-.new-ticket-composer-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px 18px;
-  background: var(--surface-container);
-  border-bottom: 1px solid rgba(110, 120, 130, 0.08);
-}
-
-.new-ticket-composer-heading {
-  font-family: "Manrope", "Inter", sans-serif;
-  font-size: 16px;
-  font-weight: 800;
-  color: var(--ink);
-}
-
-.new-ticket-composer-mode {
-  color: var(--ink-muted);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
 .new-ticket-composer-toolbar {
   display: flex;
   align-items: center;
@@ -3392,7 +3367,6 @@ a.citation-link:hover {
     font-size: 24px;
   }
 
-  .new-ticket-composer-top,
   .new-ticket-thread-card-head,
   .new-ticket-info-card-header,
   .new-ticket-info-body {
