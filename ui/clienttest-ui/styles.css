@@ -3254,6 +3254,399 @@ a.citation-link:hover {
   line-height: 1.7;
 }
 
+.new-ticket-postsend-page {
+  width: min(100%, 1240px);
+  margin: 0 auto 40px;
+  display: grid;
+  gap: 24px;
+}
+
+.new-ticket-postsend-header {
+  display: grid;
+  gap: 10px;
+  padding: 2px 2px 0;
+}
+
+.new-ticket-postsend-breadcrumb {
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.new-ticket-postsend-heading {
+  display: grid;
+  gap: 14px;
+}
+
+.new-ticket-postsend-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.new-ticket-postsend-meta-pill,
+.new-ticket-postsend-meta-item {
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.new-ticket-postsend-meta-pill {
+  background: rgba(224, 224, 255, 0.72);
+  color: var(--secondary);
+}
+
+.new-ticket-postsend-meta-item {
+  background: rgba(239, 244, 251, 0.9);
+  color: var(--ink-muted);
+}
+
+.new-ticket-postsend-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(300px, 360px);
+  gap: 28px;
+  align-items: start;
+}
+
+.new-ticket-postsend-main {
+  min-width: 0;
+  display: grid;
+  gap: 20px;
+}
+
+.new-ticket-postsend-sidebar {
+  position: sticky;
+  top: 24px;
+  display: grid;
+  gap: 20px;
+  align-content: start;
+}
+
+.new-ticket-postsend-thread,
+.new-ticket-postsend-sidebar .new-ticket-info-card,
+.new-ticket-postsend-composer {
+  background: #fff;
+  border-radius: 24px;
+  border: 1px solid rgba(110, 120, 130, 0.12);
+  box-shadow: 0 16px 34px rgba(52, 61, 150, 0.08);
+}
+
+.new-ticket-postsend-thread {
+  padding: 16px 20px 20px;
+}
+
+.new-ticket-postsend-thread-scroll {
+  padding: 0;
+  max-height: none;
+  overflow: visible;
+}
+
+.new-ticket-postsend-message-list {
+  width: 100%;
+  margin: 0;
+  gap: 18px;
+}
+
+.new-ticket-correspondence-card {
+  overflow: hidden;
+  border-radius: 18px;
+  border: 1px solid rgba(110, 120, 130, 0.12);
+  background: #fff;
+}
+
+.new-ticket-correspondence-card.customer {
+  border-color: rgba(110, 120, 130, 0.16);
+}
+
+.new-ticket-correspondence-card.assistant {
+  border-color: rgba(0, 176, 255, 0.2);
+}
+
+.new-ticket-correspondence-card.engineer {
+  border-color: rgba(76, 86, 175, 0.2);
+}
+
+.new-ticket-correspondence-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  background: var(--surface-container-low);
+}
+
+.new-ticket-correspondence-card.assistant .new-ticket-correspondence-card-head {
+  background: rgba(0, 176, 255, 0.08);
+}
+
+.new-ticket-correspondence-card.engineer .new-ticket-correspondence-card-head {
+  background: rgba(224, 224, 255, 0.58);
+}
+
+.new-ticket-correspondence-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.new-ticket-correspondence-avatar {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.new-ticket-correspondence-avatar.customer {
+  background: rgba(110, 120, 130, 0.12);
+  color: var(--ink-soft);
+}
+
+.new-ticket-correspondence-avatar.assistant {
+  background: rgba(0, 100, 147, 0.12);
+  color: var(--primary);
+}
+
+.new-ticket-correspondence-avatar.engineer {
+  background: rgba(76, 86, 175, 0.12);
+  color: var(--secondary);
+}
+
+.new-ticket-correspondence-avatar .material-symbols-outlined {
+  font-size: 18px;
+  font-variation-settings: "FILL" 1, "wght" 500, "GRAD" 0, "opsz" 24;
+}
+
+.new-ticket-correspondence-copy {
+  min-width: 0;
+}
+
+.new-ticket-correspondence-author,
+.new-ticket-correspondence-subtitle,
+.new-ticket-correspondence-time {
+  margin: 0;
+}
+
+.new-ticket-correspondence-author {
+  color: var(--ink);
+  font-family: "Manrope", "Inter", sans-serif;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.new-ticket-correspondence-subtitle {
+  margin-top: 2px;
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.new-ticket-correspondence-time {
+  color: var(--ink-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: right;
+}
+
+.new-ticket-correspondence-card-body {
+  padding: 20px;
+  display: grid;
+  gap: 16px;
+}
+
+.new-ticket-correspondence-body-copy {
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.new-ticket-correspondence-body-copy .message-markdown {
+  gap: 12px;
+}
+
+.new-ticket-correspondence-body-copy .message-markdown p {
+  margin: 0;
+}
+
+.new-ticket-correspondence-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.new-ticket-correspondence-source-chip {
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  background: rgba(224, 224, 255, 0.68);
+  color: var(--secondary);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.new-ticket-correspondence-source-chip:hover {
+  background: rgba(214, 219, 255, 0.92);
+}
+
+.new-ticket-correspondence-source-chip.is-static {
+  cursor: default;
+}
+
+.new-ticket-postsend-waiting {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 2px 2px;
+  color: var(--ink-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.new-ticket-postsend-composer {
+  overflow: hidden;
+}
+
+.new-ticket-postsend-composer-header {
+  padding: 18px 20px 14px;
+  background: #fff;
+}
+
+.new-ticket-postsend-composer-title {
+  margin: 0;
+  color: var(--ink);
+  font-family: "Manrope", "Inter", sans-serif;
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+}
+
+.new-ticket-postsend-composer-desc {
+  margin: 8px 0 0;
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.new-ticket-postsend-composer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  background: rgba(246, 249, 255, 0.98);
+  border-top: 1px solid rgba(110, 120, 130, 0.08);
+  border-bottom: 1px solid rgba(110, 120, 130, 0.08);
+}
+
+.new-ticket-postsend-composer-form {
+  margin-top: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  display: grid;
+  gap: 0;
+}
+
+.new-ticket-postsend-textarea {
+  width: 100%;
+  min-height: 220px;
+  padding: 20px 22px;
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  overflow: auto;
+  resize: none;
+}
+
+.new-ticket-postsend-textarea:focus {
+  box-shadow: none;
+}
+
+.new-ticket-postsend-composer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 14px 20px 20px;
+  border-top: 1px solid rgba(110, 120, 130, 0.08);
+  background: #fff;
+}
+
+.new-ticket-postsend-composer-helper {
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  flex: 1 1 280px;
+}
+
+.new-ticket-postsend-send-btn {
+  min-height: 48px;
+  padding: 0 18px;
+  border-radius: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: linear-gradient(135deg, #0a7ab5 0%, #1598da 100%);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  box-shadow: 0 14px 30px rgba(17, 120, 181, 0.24);
+  cursor: pointer;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    opacity 0.18s ease,
+    background 0.18s ease;
+}
+
+.new-ticket-postsend-send-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 18px 34px rgba(17, 120, 181, 0.28);
+}
+
+.new-ticket-postsend-send-btn:disabled {
+  opacity: 0.45;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.new-ticket-postsend-send-btn.is-stop {
+  background: rgba(23, 28, 33, 0.08);
+  color: var(--ink);
+  box-shadow: none;
+}
+
+.new-ticket-postsend-send-btn .material-symbols-outlined {
+  font-size: 18px;
+  font-variation-settings: "wght" 700;
+}
+
+.new-ticket-postsend-knowledge-card .new-ticket-info-body {
+  overflow: visible;
+}
+
 @media (min-width: 721px) and (max-width: 900px) {
   .new-ticket-layout {
     --new-ticket-thread-panel-height: 376px;
@@ -3316,6 +3709,14 @@ a.citation-link:hover {
     position: static;
   }
 
+  .new-ticket-postsend-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .new-ticket-postsend-sidebar {
+    position: static;
+  }
+
   .ticket-detail-thread .chat-main {
     max-height: none;
   }
@@ -3327,6 +3728,10 @@ a.citation-link:hover {
   .new-ticket-textarea {
     min-height: 116px;
     height: min(168px, 100%);
+  }
+
+  .new-ticket-postsend-textarea {
+    min-height: 190px;
   }
 }
 
@@ -3427,6 +3832,15 @@ a.citation-link:hover {
     position: static;
   }
 
+  .new-ticket-postsend-layout {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .new-ticket-postsend-sidebar {
+    position: static;
+  }
+
   .ticket-detail-thread .chat-main {
     max-height: none;
   }
@@ -3441,6 +3855,12 @@ a.citation-link:hover {
   .ticket-detail-composer,
   .ticket-side-card,
   .clienttest-home-panel {
+    border-radius: 24px;
+  }
+
+  .new-ticket-postsend-thread,
+  .new-ticket-postsend-composer,
+  .new-ticket-postsend-sidebar .new-ticket-info-card {
     border-radius: 24px;
   }
 
@@ -3465,6 +3885,18 @@ a.citation-link:hover {
     font-size: 24px;
   }
 
+  .new-ticket-postsend-page {
+    gap: 20px;
+  }
+
+  .new-ticket-postsend-header {
+    gap: 8px;
+  }
+
+  .new-ticket-postsend-thread {
+    padding: 14px 14px 16px;
+  }
+
   .new-ticket-thread-card-head,
   .new-ticket-info-card-header,
   .new-ticket-info-body {
@@ -3473,6 +3905,17 @@ a.citation-link:hover {
   }
 
   .new-ticket-thread-card-body {
+    padding: 16px;
+  }
+
+  .new-ticket-correspondence-card-head,
+  .new-ticket-postsend-composer-header,
+  .new-ticket-postsend-composer-footer {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .new-ticket-correspondence-card-body {
     padding: 16px;
   }
 
@@ -3497,5 +3940,19 @@ a.citation-link:hover {
     width: 44px;
     height: 44px;
     border-radius: 16px;
+  }
+
+  .new-ticket-postsend-textarea {
+    min-height: 170px;
+    padding: 18px 16px;
+  }
+
+  .new-ticket-postsend-composer-footer {
+    align-items: stretch;
+  }
+
+  .new-ticket-postsend-send-btn {
+    width: 100%;
+    justify-content: center;
   }
 }
