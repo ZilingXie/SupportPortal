@@ -26,8 +26,8 @@ class ClientTestRouteSmokeTests(unittest.TestCase):
     def test_clienttest_html_references_local_assets(self) -> None:
         html = Path("ui/clienttest-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260416-clienttest-disable-textarea-resize-1", html)
-        self.assertIn("./app.js?v=20260416-clienttest-disable-textarea-resize-1", html)
+        self.assertIn("./styles.css?v=20260416-clienttest-reference-links-panel-1", html)
+        self.assertIn("./app.js?v=20260416-clienttest-reference-links-panel-1", html)
 
 
 class ClientTestUiContractTests(unittest.TestCase):
@@ -173,6 +173,7 @@ class ClientTestUiContractTests(unittest.TestCase):
 
         self.assertIn("Start a new support ticket", app_source)
         self.assertIn("Knowledge Base Articles", app_source)
+        self.assertIn("All reference links provided by agent will show up here.", app_source)
         self.assertIn("Draft", app_source)
         self.assertIn("Pending", app_source)
         self.assertIn("Not submitted", app_source)
@@ -184,6 +185,9 @@ class ClientTestUiContractTests(unittest.TestCase):
         self.assertNotIn("Support Product", app_source)
         self.assertNotIn("Choose the affected product", app_source)
         self.assertNotIn("Smart intake enabled", app_source)
+        self.assertNotIn("Write a sharp issue summary", app_source)
+        self.assertNotIn("Prepare logs or call IDs", app_source)
+        self.assertNotIn("Explain expected vs. actual behavior", app_source)
 
         self.assertIn("clienttest-new-ticket-shell", css)
         self.assertIn("new-ticket-body-layout", css)
@@ -199,6 +203,22 @@ class ClientTestUiContractTests(unittest.TestCase):
         self.assertIn(".new-ticket-fixed-knowledge-card {\n  height: var(--new-ticket-info-card-height);", css)
         self.assertIn(".clienttest-main-new-ticket {\n  padding: 28px 36px 0;\n}", css)
         self.assertIn(".new-ticket-footer-spacer {\n  height: 40px;\n}", css)
+        self.assertIn(
+            '.new-ticket-page-title {\n  margin: 0;\n  font-family: "Manrope", "Inter", sans-serif;\n  font-size: clamp(32px, calc(4.2vw - 2px), 46px);',
+            css,
+        )
+        self.assertIn(
+            ".new-ticket-thread-scroll {\n  padding: 16px;\n  height: 100%;\n  max-height: none;\n  overflow: auto;\n  flex: 1 1 auto;\n  display: flex;\n}",
+            css,
+        )
+        self.assertIn(
+            ".new-ticket-thread-list {\n  width: 100%;\n  margin: 0;\n  gap: 16px;\n  flex: 1 1 auto;\n  min-height: 0;\n}",
+            css,
+        )
+        self.assertIn(
+            ".new-ticket-thread-empty {\n  flex: 1 1 auto;\n  min-height: 100%;\n  height: 100%;",
+            css,
+        )
         self.assertIn("--new-ticket-thread-panel-height: 480px;", css)
         self.assertIn("--new-ticket-composer-panel-height: 296px;", css)
         self.assertIn("--new-ticket-thread-panel-height: 376px;", css)
@@ -213,6 +233,7 @@ class ClientTestUiContractTests(unittest.TestCase):
         self.assertIn(".new-ticket-textarea {\n    min-height: 116px;\n    height: min(168px, 100%);", css)
         self.assertIn(".clienttest-main-new-ticket {\n    padding: 18px 16px 0;\n  }", css)
         self.assertIn(".new-ticket-footer-spacer {\n    height: 24px;\n  }", css)
+        self.assertIn(".new-ticket-page-title {\n    font-size: 32px;\n  }", css)
         self.assertIn(".new-ticket-textarea {\n    min-height: 104px;\n    height: min(152px, 100%);", css)
         self.assertNotIn("resize: vertical;", css)
         self.assertNotIn("new-ticket-summary-card", css)
@@ -264,6 +285,12 @@ class ClientTestUiContractTests(unittest.TestCase):
                 }
                 if (!html.includes("Ticket Information") || !html.includes("Knowledge Base Articles")) {
                   throw new Error("New Ticket draft should render the remaining right sidebar cards.");
+                }
+                if (!html.includes("All reference links provided by agent will show up here.")) {
+                  throw new Error("New Ticket draft should show the reference-links placeholder before any agent links exist.");
+                }
+                if (html.includes("Write a sharp issue summary") || html.includes("Prepare logs or call IDs") || html.includes("Explain expected vs. actual behavior")) {
+                  throw new Error("New Ticket draft should remove the static starter items from the knowledge sidebar.");
                 }
                 if (sidebarHtml.includes("AI Summary")) {
                   throw new Error("New Ticket draft should remove the AI Summary sidebar card.");
@@ -390,6 +417,12 @@ class ClientTestUiContractTests(unittest.TestCase):
                 if (!html.includes("I checked the latest call path")) {
                   throw new Error("New Ticket detail should render the assistant thread card.");
                 }
+                if (!sidebarHtml.includes("https://example.com/ios-freeze")) {
+                  throw new Error("Existing New Ticket threads should show assistant reference links in the knowledge sidebar.");
+                }
+                if (sidebarHtml.includes("All reference links provided by agent will show up here.")) {
+                  throw new Error("Existing New Ticket threads should hide the empty reference-links placeholder once links exist.");
+                }
                 if (!html.includes("Ticket Information") || !html.includes("Knowledge Base Articles")) {
                   throw new Error("New Ticket detail should keep the remaining right-column layout after the first message.");
                 }
@@ -426,6 +459,81 @@ class ClientTestUiContractTests(unittest.TestCase):
                   throw new Error("Existing New Ticket threads should render the dedicated high-fidelity message cards.");
                 }
                 """
+            )
+        )
+
+    def test_clienttest_new_ticket_reference_sidebar_aggregates_all_agent_links(self) -> None:
+        self.run_clienttest_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Alex Rivera", email: "alex.rivera@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const draft = getOrCreateDraftTicket(state.user.id);
+                state.newTicketPreviewTicketId = draft.id;
+                saveTicketMessages(draft.id, [
+                  {
+                    id: "msg-1",
+                    role: "user",
+                    content: "Please help investigate the recurring disconnect.",
+                    createdAt: "2026-04-16T04:00:00.000Z",
+                    citations: [{ heading: "Customer link should be ignored", source_url: "https://example.com/customer-ignore" }],
+                  },
+                  {
+                    id: "msg-2",
+                    role: "assistant",
+                    content: "I found an iOS checklist and a retry guide.",
+                    createdAt: "2026-04-16T04:01:00.000Z",
+                    citations: [
+                      { heading: "iOS freeze checklist", source_url: "https://example.com/ios-freeze" },
+                      { heading: "No link reference" },
+                    ],
+                  },
+                  {
+                    id: "msg-3",
+                    role: "engineer",
+                    content: "Internal case note with a link that should not surface here.",
+                    createdAt: "2026-04-16T04:02:00.000Z",
+                    citations: [{ heading: "Engineer only", source_url: "https://example.com/engineer-ignore" }],
+                  },
+                  {
+                    id: "msg-4",
+                    role: "assistant",
+                    content: "Here is another source plus the same checklist again.",
+                    createdAt: "2026-04-16T04:03:00.000Z",
+                    citations: [{ heading: "Checklist duplicate", source_url: "https://example.com/ios-freeze" }],
+                    sources: ["https://example.com/reconnect-guide"],
+                  },
+                ]);
+                updateTicketTitle(draft.id, "Recurring disconnect during support call");
+                updateTicketStatus(draft.id, "communicating");
+
+                state.view = "chat-ticket";
+                state.activeTicketId = draft.id;
+
+                const html = renderChatTicket();
+                const sidebarStart = html.indexOf('<aside class="new-ticket-sidebar">');
+                const sidebarEnd = html.indexOf('</aside>', sidebarStart);
+                const sidebarHtml = html.slice(sidebarStart, sidebarEnd);
+                const iosMatches = sidebarHtml.match(/https:\\/\\/example.com\\/ios-freeze/g) || [];
+                const reconnectMatches = sidebarHtml.match(/https:\\/\\/example.com\\/reconnect-guide/g) || [];
+
+                if (iosMatches.length !== 1) {
+                  throw new Error("New Ticket reference sidebar should dedupe repeated assistant links by URL.");
+                }
+                if (reconnectMatches.length !== 1) {
+                  throw new Error("New Ticket reference sidebar should include assistant source URLs from the full conversation.");
+                }
+                if (sidebarHtml.includes("https://example.com/customer-ignore") || sidebarHtml.includes("https://example.com/engineer-ignore")) {
+                  throw new Error("New Ticket reference sidebar should ignore non-assistant links.");
+                }
+                if (sidebarHtml.includes("No link reference")) {
+                  throw new Error("New Ticket reference sidebar should ignore citations that have no source URL.");
+                }
+                if (sidebarHtml.includes("All reference links provided by agent will show up here.")) {
+                  throw new Error("New Ticket reference sidebar should remove the placeholder after assistant links exist.");
+                }
+              """
             )
         )
 

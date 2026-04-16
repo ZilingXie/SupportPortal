@@ -2727,7 +2727,7 @@ a.citation-link:hover {
 .new-ticket-page-title {
   margin: 0;
   font-family: "Manrope", "Inter", sans-serif;
-  font-size: clamp(34px, 4.2vw, 48px);
+  font-size: clamp(32px, calc(4.2vw - 2px), 46px);
   font-weight: 800;
   line-height: 1.02;
   letter-spacing: -0.05em;
@@ -2762,16 +2762,19 @@ a.citation-link:hover {
   max-height: none;
   overflow: auto;
   flex: 1 1 auto;
+  display: flex;
 }
 
 .new-ticket-thread-list {
   width: 100%;
   margin: 0;
   gap: 16px;
-  min-height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .new-ticket-thread-empty {
+  flex: 1 1 auto;
   min-height: 100%;
   height: 100%;
   padding: 52px 28px;
@@ -3244,6 +3247,13 @@ a.citation-link:hover {
   text-transform: uppercase;
 }
 
+.new-ticket-knowledge-placeholder {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
 @media (min-width: 721px) and (max-width: 900px) {
   .new-ticket-layout {
     --new-ticket-thread-panel-height: 376px;
@@ -3443,7 +3453,7 @@ a.citation-link:hover {
   }
 
   .new-ticket-page-title {
-    font-size: 34px;
+    font-size: 32px;
   }
 
   .new-ticket-thread-empty {
