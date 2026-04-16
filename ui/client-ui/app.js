@@ -6,22 +6,6 @@ const CLIENT_ASSISTANT_NAME = "Sid";
 const TICKETS_KEY = "helpdesk_tickets";
 const COUNTER_KEY = "helpdesk_ticket_counter";
 const MAX_RECENT = 5;
-const DEFAULT_CLIENT_ACK_FALLBACK_TIMEOUT_MS = 5000;
-const STATUS_FOLLOWUP_MARKERS = [
-  "any update",
-  "status update",
-  "status?",
-  "follow up",
-  "follow-up",
-  "eta",
-  "when will",
-  "有进展",
-  "有更新",
-  "跟进",
-  "进度",
-  "状态",
-  "最新情况",
-];
 const LEGACY_REASSURANCE_MESSAGES = new Set([
   "收到，我先帮你看一下。",
   "收到，我继续帮你跟进。",
@@ -30,7 +14,6 @@ const LEGACY_REASSURANCE_MESSAGES = new Set([
   "Got it, I'm checking the latest status.",
   "I got your message and I am checking it now.",
 ]);
-const CJK_RE = /[\u4e00-\u9fff]/;
 
 const DEMO_USERS = [
   {
@@ -115,12 +98,6 @@ const state = {
   pendingPersistedUserMessageCreatedAt: null,
   pendingAsyncTicketId: null,
   pendingAsyncMessageCreatedAt: null,
-  pendingClientAck: null,
-  stagedClientAck: null,
-  pendingAckAbortController: null,
-  pendingAckTicketId: null,
-  pendingAckFlowId: null,
-  pendingAckFallbackTimerId: null,
 };
 let clientSocket = null;
 let clientReconnectTimer = null;
@@ -424,30 +401,6 @@ function createAbortController() {
   };
 }
 
-function containsCjk(text) {
-  return CJK_RE.test(String(text || ""));
-}
-
-function isStatusFollowup(message) {
-  const normalized = String(message || "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-  return STATUS_FOLLOWUP_MARKERS.some((marker) => normalized.includes(marker));
-}
-
-function buildStaticClientAck(message) {
-  if (containsCjk(message)) {
-    return isStatusFollowup(message) ? "收到，我继续帮你跟进。" : "收到，我先帮你看一下。";
-  }
-  return isStatusFollowup(message)
-    ? "Got it, I'm checking the latest status."
-    : "Got it, let me check this for you.";
-}
-
 function buildNewSessionWelcomeText(userName) {
   const greetingName = String(userName || "").trim() || "there";
   return `Hi ${greetingName}, I'm ${CLIENT_ASSISTANT_NAME}, Agora's intelligent support assistant. I'm here to help you with Agora-related technical issues. Before we begin, please select the product you need support with.`;
@@ -468,109 +421,6 @@ function renderNewSessionWelcomeBubble() {
       </article>
     </div>
   `;
-}
-
-function getTransientClientAck(ticketId) {
-  const pending = state.pendingClientAck;
-  if (!pending) {
-    return null;
-  }
-  return String(pending.ticketId || "").trim() === String(ticketId || "").trim() ? pending : null;
-}
-
-function setTransientClientAck(ticketId, content, options = {}) {
-  const normalizedTicketId = String(ticketId || "").trim();
-  const normalizedContent = String(content || "").trim();
-  if (!normalizedTicketId || !normalizedContent) {
-    return;
-  }
-  const existing = getTransientClientAck(normalizedTicketId);
-  state.pendingClientAck = {
-    id: existing?.id || `client-ack-${crypto.randomUUID()}`,
-    ticketId: normalizedTicketId,
-    role: "assistant",
-    content: normalizedContent,
-    createdAt: existing?.createdAt || new Date().toISOString(),
-    citations: [],
-    transient: true,
-    source: options.source || existing?.source || "fallback",
-  };
-}
-
-function clearTransientClientAck(ticketId = null) {
-  if (!state.pendingClientAck) {
-    return;
-  }
-  if (ticketId && String(state.pendingClientAck.ticketId || "").trim() !== String(ticketId || "").trim()) {
-    return;
-  }
-  state.pendingClientAck = null;
-}
-
-function getStagedClientAck(ticketId) {
-  const pending = state.stagedClientAck;
-  if (!pending) {
-    return null;
-  }
-  return String(pending.ticketId || "").trim() === String(ticketId || "").trim() ? pending : null;
-}
-
-function setStagedClientAck(ticketId, content, options = {}) {
-  const normalizedTicketId = String(ticketId || "").trim();
-  const normalizedContent = String(content || "").trim();
-  if (!normalizedTicketId || !normalizedContent) {
-    return;
-  }
-  const existing = getStagedClientAck(normalizedTicketId);
-  state.stagedClientAck = {
-    id: existing?.id || `staged-client-ack-${crypto.randomUUID()}`,
-    ticketId: normalizedTicketId,
-    content: normalizedContent,
-    source: options.source || existing?.source || "client_model",
-  };
-}
-
-function clearStagedClientAck(ticketId = null) {
-  if (!state.stagedClientAck) {
-    return;
-  }
-  if (ticketId && String(state.stagedClientAck.ticketId || "").trim() !== String(ticketId || "").trim()) {
-    return;
-  }
-  state.stagedClientAck = null;
-}
-
-function clearPendingAckFallbackTimer() {
-  if (state.pendingAckFallbackTimerId) {
-    clearTimeout(state.pendingAckFallbackTimerId);
-    state.pendingAckFallbackTimerId = null;
-  }
-}
-
-function clearPendingAckState(options = {}) {
-  const normalizedTicketId = String(options?.ticketId || "").trim();
-  const pendingTicketId = String(state.pendingAckTicketId || "").trim();
-  const ticketMatches = !normalizedTicketId || !pendingTicketId || pendingTicketId === normalizedTicketId;
-
-  clearStagedClientAck(normalizedTicketId || null);
-  if (options.clearVisible !== false) {
-    clearTransientClientAck(normalizedTicketId || null);
-  }
-  if (!ticketMatches) {
-    return;
-  }
-
-  clearPendingAckFallbackTimer();
-  if (
-    options.abortTransport !== false &&
-    state.pendingAckAbortController &&
-    typeof state.pendingAckAbortController.abort === "function"
-  ) {
-    state.pendingAckAbortController.abort();
-  }
-  state.pendingAckAbortController = null;
-  state.pendingAckTicketId = null;
-  state.pendingAckFlowId = null;
 }
 
 function isLegacyReassuranceMessage(message) {
@@ -598,14 +448,9 @@ function shouldHideLegacyReassuranceMessage(messages, index) {
 }
 
 function getRenderableMessages(ticket) {
-  const durable = Array.isArray(ticket?.messages)
+  return Array.isArray(ticket?.messages)
     ? ticket.messages.filter((message, index, messages) => !shouldHideLegacyReassuranceMessage(messages, index))
     : [];
-  const transientAck = getTransientClientAck(ticket?.id);
-  if (transientAck && !ticketHasAssistantReply(ticket)) {
-    durable.push(transientAck);
-  }
-  return durable;
 }
 
 function stopPendingStatusPolling() {
@@ -681,7 +526,6 @@ function clearPendingRequestState() {
   state.pendingPersistedUserMessageCreatedAt = null;
   state.pendingAsyncTicketId = null;
   state.pendingAsyncMessageCreatedAt = null;
-  clearPendingAckState();
   stopPendingStatusPolling();
 }
 
@@ -2024,23 +1868,10 @@ function renderChatMessagesHtml(viewState) {
             })
             .join("")
     }
-    ${
-      viewState.sending
-        ? `
-      <div class="thinking-line">
-        <span class="thinking-dots"><span></span><span></span><span></span></span>
-        <span class="thinking-label">AI is cross-referencing system health logs...</span>
-      </div>
-    `
-        : ""
-    }
   `;
 }
 
 function renderChatComposerNoteHtml(viewState) {
-  if (viewState.sending) {
-    return `<div class="composer-note">checking the knowledge base... click stop to interrupt.</div>`;
-  }
   if (viewState.isEditing) {
     return `<div class="composer-note">Editing your last message. Press Enter to resend, Shift+Enter for newline.</div>`;
   }
@@ -2639,110 +2470,6 @@ async function stopGeneration() {
   state.pendingAbortController.abort();
 }
 
-async function requestProxyTextAck(ticketId, message, controller) {
-  try {
-    const response = await fetch("/api/client/ack", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: controller?.signal,
-      body: JSON.stringify({
-        ticket_id: ticketId,
-        customer_id: state.user?.id || "",
-        message,
-      }),
-    });
-    if (!response.ok) {
-      return { ackText: "", source: "client_model" };
-    }
-    const payload = await response.json();
-    const ackText = String(payload?.ack_text || "").trim();
-    return {
-      ackText,
-      source: String(payload?.source || "client_model").trim() || "client_model",
-    };
-  } catch (error) {
-    return { ackText: "", source: "client_model" };
-  }
-}
-
-async function startClientAck(ticketId, message) {
-  const normalizedTicketId = String(ticketId || "").trim();
-  if (!normalizedTicketId) {
-    return;
-  }
-  const fallbackText = buildStaticClientAck(message);
-  clearPendingAckState();
-
-  const controller = createAbortController();
-  const flowId = crypto.randomUUID();
-  state.pendingAckAbortController = controller;
-  state.pendingAckTicketId = normalizedTicketId;
-  state.pendingAckFlowId = flowId;
-  const fallbackTimerId = setTimeout(() => {
-    if (
-      state.pendingAckFlowId !== flowId ||
-      String(state.pendingAckTicketId || "").trim() !== normalizedTicketId
-    ) {
-      return;
-    }
-    clearPendingAckFallbackTimer();
-    const latestTicket = getTicketById(normalizedTicketId);
-    if (latestTicket && ticketHasAssistantReply(latestTicket)) {
-      clearPendingAckState({ ticketId: normalizedTicketId });
-      return;
-    }
-    const stagedAck = getStagedClientAck(normalizedTicketId);
-    if (stagedAck) {
-      setTransientClientAck(normalizedTicketId, stagedAck.content, { source: stagedAck.source });
-      clearStagedClientAck(normalizedTicketId);
-    } else {
-      setTransientClientAck(normalizedTicketId, fallbackText, { source: "fallback" });
-    }
-    if (!state.pendingAckAbortController) {
-      state.pendingAckTicketId = null;
-      state.pendingAckFlowId = null;
-    }
-    render();
-  }, DEFAULT_CLIENT_ACK_FALLBACK_TIMEOUT_MS);
-  state.pendingAckFallbackTimerId = fallbackTimerId;
-
-  const result = await requestProxyTextAck(normalizedTicketId, message, controller);
-
-  if (
-    state.pendingAckFlowId !== flowId ||
-    String(state.pendingAckTicketId || "").trim() !== normalizedTicketId
-  ) {
-    return;
-  }
-
-  state.pendingAckAbortController = null;
-  const ackText = String(result?.ackText || "").trim();
-  if (!ackText) {
-    if (!state.pendingAckFallbackTimerId) {
-      state.pendingAckTicketId = null;
-      state.pendingAckFlowId = null;
-    }
-    return;
-  }
-  const latestTicket = getTicketById(normalizedTicketId);
-  if (latestTicket && ticketHasAssistantReply(latestTicket)) {
-    clearPendingAckState({ ticketId: normalizedTicketId, abortTransport: false });
-    return;
-  }
-
-  const ackSource = String(result?.source || "client_model").trim() || "client_model";
-  if (state.pendingAckFallbackTimerId) {
-    setStagedClientAck(normalizedTicketId, ackText, { source: ackSource });
-    return;
-  }
-  setTransientClientAck(normalizedTicketId, ackText, {
-    source: ackSource,
-  });
-  state.pendingAckTicketId = null;
-  state.pendingAckFlowId = null;
-  render();
-}
-
 async function handleSendMessage(text, options = {}) {
   const ticketId = state.activeTicketId;
   const ticket = getTicketById(ticketId);
@@ -2808,9 +2535,6 @@ async function handleSendMessage(text, options = {}) {
   stopPendingStatusPolling();
   requestChatScrollToBottom(ticketId, { behavior: "smooth" });
   render();
-  startClientAck(ticketId, text).catch(() => {
-    // Keep the static fallback ack when client-side model generation fails.
-  });
 
   try {
     const response = await fetch("/api/tickets/query", {
@@ -3444,9 +3168,6 @@ function render() {
 
   const nextTicketId =
     state.view === "chat-ticket" ? String(state.activeTicketId || "").trim() : "";
-  if (previousView === "chat-ticket" && previousTicketId && previousTicketId !== nextTicketId) {
-    clearPendingAckState({ ticketId: previousTicketId });
-  }
   if (!nextTicketId) {
     resetChatScrollState();
   } else if (previousView !== "chat-ticket" || previousTicketId !== nextTicketId) {
