@@ -26,8 +26,8 @@ class ClientTestRouteSmokeTests(unittest.TestCase):
     def test_clienttest_html_references_local_assets(self) -> None:
         html = Path("ui/clienttest-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260416-clienttest-inline-send-2", html)
-        self.assertIn("./app.js?v=20260416-clienttest-inline-send-2", html)
+        self.assertIn("./styles.css?v=20260416-clienttest-inline-send-3", html)
+        self.assertIn("./app.js?v=20260416-clienttest-inline-send-3", html)
 
 
 class ClientTestUiContractTests(unittest.TestCase):
@@ -226,6 +226,9 @@ class ClientTestUiContractTests(unittest.TestCase):
                 }
                 if (html.includes("Describe your issue") || html.includes("Smart intake enabled")) {
                   throw new Error("New Ticket draft should remove the composer topline row.");
+                }
+                if (html.includes("Your first message creates the ticket and starts Sid's intake workflow.")) {
+                  throw new Error("New Ticket draft should remove the intake workflow note.");
                 }
                 if (!/new-ticket-inline-send-btn[^>]*disabled/.test(html)) {
                   throw new Error("New Ticket draft should keep the inline send action disabled until there is input.");

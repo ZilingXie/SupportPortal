@@ -2264,7 +2264,7 @@ function renderNewTicketComposerNoteHtml(viewState) {
     return `<div class="composer-note">Editing your draft message. Press Enter to resend, Shift+Enter for newline.</div>`;
   }
   if (isTicketEmpty(viewState.ticket)) {
-    return `<div class="composer-note">Your first message creates the ticket and starts Sid's intake workflow.</div>`;
+    return "";
   }
   return `<div class="composer-note">Your message will reuse the current client ticket runtime and websocket flow.</div>`;
 }
