@@ -246,7 +246,7 @@ class PromptModuleTests(unittest.TestCase):
             latest_public_assistant_reply="This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours.",
             ticket_conversation_summary="Customer: black screen after join | Sid: opened engineer ticket",
             investigation_thread_summary=(
-                "Case Buddy: Please confirm the reproduction scope first. | "
+                "Sid: Please confirm the reproduction scope first. | "
                 "jack: you need to get the channel name"
             ),
             handoff_packet_summary="unresolved_reason=rag_post_check_insufficient; product=audio_video_calling",
@@ -258,10 +258,10 @@ class PromptModuleTests(unittest.TestCase):
 
         self.assertEqual(
             ENGINEER_INVESTIGATION_REPLY_PROMPT_VERSION,
-            "engineer-investigation-reply-v5",
+            "engineer-investigation-reply-v6",
         )
         self.assertIn("## Role", system_prompt)
-        self.assertIn("You are Case Buddy inside an internal support investigation workflow.", system_prompt)
+        self.assertIn("You are Sid inside an internal support investigation workflow.", system_prompt)
         self.assertIn("If the customer-facing draft self-refers, use Sid as the assistant name.", system_prompt)
         self.assertIn("symptom_and_workaround_only", system_prompt)
         self.assertIn("root_cause_confirmed", system_prompt)
