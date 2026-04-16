@@ -5,6 +5,11 @@ import re
 from typing import Any, Callable
 from uuid import uuid4
 
+from backend.services.customer_reply_composer import (
+    compose_customer_reply_email,
+    detect_customer_reply_language,
+    ensure_customer_reply_email_style,
+)
 from backend.services.engineer_agent import (
     build_engineer_handoff_packet,
     default_customer_reply as default_engineer_customer_reply,
@@ -324,10 +329,27 @@ def normalize_ticket_status(value: Any) -> str:
     return OPEN_STATUS
 
 
-def default_public_investigation_reply(latest_customer_message: str) -> str:
-    if _CJK_RE.search(str(latest_customer_message or "")):
-        return "这个问题需要进一步的内部调查，可能需要一些时间。感谢你的耐心等待，我们预计会在24小时内在这里回复你。"
-    return "This issue requires further internal investigation, which may take some time. Thank you for your patience. We expect to reply here within 24 hours."
+def default_public_investigation_reply(
+    latest_customer_message: str,
+    *,
+    requester: str | None = None,
+    customer_id: str | None = None,
+) -> str:
+    language = detect_customer_reply_language(latest_customer_message)
+    body = (
+        "这个问题需要进一步的内部调查，可能需要一些时间。我们预计会在 24 小时内在这里回复你。"
+        if language.startswith("zh")
+        else "This issue requires further internal investigation, which may take some time. We expect to reply here within 24 hours."
+    )
+    opener = "感谢你的耐心等待。" if language.startswith("zh") else "Thank you for your patience."
+    return compose_customer_reply_email(
+        reply_kind="investigation_wait",
+        body=body,
+        requester=requester,
+        customer_id=customer_id,
+        language=language,
+        opener=opener,
+    )
 
 
 def build_internal_message(
@@ -540,7 +562,12 @@ def _apply_ai_turn_to_active_investigation(
     active_investigation["state"] = next_state
 
     draft_reply = ai_turn.get("draft_customer_reply")
-    active_investigation["draft_customer_reply"] = str(draft_reply or "").strip()
+    normalized_draft_reply = str(draft_reply or "").strip()
+    if normalized_draft_reply:
+        normalized_draft_reply = ensure_customer_reply_email_style(
+            body=normalized_draft_reply,
+        )
+    active_investigation["draft_customer_reply"] = normalized_draft_reply
     active_investigation["updated_at"] = now_value
     if next_state == INVESTIGATION_STATE_AWAITING_CONFIRMATION:
         active_investigation["final_confirmation_requested_at"] = now_value
@@ -611,7 +638,11 @@ def start_or_refresh_investigation(
     return {
         "active_investigation": active_investigation,
         "new_internal_messages": new_internal_messages,
-        "public_reply": default_public_investigation_reply(latest_customer_message(ticket)),
+        "public_reply": default_public_investigation_reply(
+            latest_customer_message(ticket),
+            requester=str(ticket.get("requester") or "").strip() or None,
+            customer_id=str(ticket.get("customer_id") or "").strip() or None,
+        ),
         "created": created,
     }
 
@@ -691,7 +722,14 @@ def apply_investigation_confirmation(
         draft_reply = str(active_investigation.get("draft_customer_reply") or "").strip()
         if not draft_reply:
             raise ValueError("A draft customer reply is required before approval.")
-        customer_reply = draft_reply
+        customer_reply = ensure_customer_reply_email_style(
+            body=draft_reply,
+            reply_kind="engineer_follow_up",
+            requester=str(ticket.get("requester") or "").strip() or None,
+            customer_id=str(ticket.get("customer_id") or "").strip() or None,
+            language=detect_customer_reply_language(latest_customer_message(ticket), draft_reply),
+        )
+        active_investigation["draft_customer_reply"] = customer_reply
         history = ticket.get("investigation_history")
         if not isinstance(history, list):
             history = []

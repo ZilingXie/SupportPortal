@@ -5,6 +5,7 @@ import json
 import re
 from typing import Any
 
+from backend.services.customer_reply_composer import ensure_customer_reply_email_style
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import (
     ENGINEER_INVESTIGATION_REPLY_SCENARIO,
@@ -604,6 +605,24 @@ def _customer_language_hint(ticket: dict[str, Any]) -> str:
     return "zh" if _CJK_RE.search(latest_customer) else "en"
 
 
+def _customer_requester(ticket: dict[str, Any]) -> str | None:
+    requester = _clean_text(ticket.get("requester"))
+    return requester or None
+
+
+def _normalize_customer_draft_reply(ticket: dict[str, Any], draft_customer_reply: str) -> str:
+    normalized_draft = str(draft_customer_reply or "").strip()
+    if not normalized_draft:
+        return ""
+    return ensure_customer_reply_email_style(
+        body=normalized_draft,
+        reply_kind="engineer_follow_up",
+        requester=_customer_requester(ticket),
+        customer_id=_clean_text(ticket.get("customer_id")) or None,
+        language=_customer_language_hint(ticket),
+    )
+
+
 def _engineer_thread_language_hint(
     investigation: dict[str, Any],
     *,
@@ -926,7 +945,7 @@ def _generate_investigation_reply_turn(
 
     next_state = _clean_text(parsed.get("state")).lower()
     message = _clean_text(parsed.get("message"))
-    draft_customer_reply = _clean_text(parsed.get("draft_customer_reply"))
+    draft_customer_reply = str(parsed.get("draft_customer_reply") or "").strip()
     if next_state not in {_ACTIVE_STATE, _AWAITING_CONFIRMATION_STATE} or not message:
         return _fail_closed_investigation_reply_turn(
             ticket,
@@ -949,6 +968,8 @@ def _generate_investigation_reply_turn(
         )
     if next_state == _ACTIVE_STATE:
         draft_customer_reply = ""
+    elif draft_customer_reply:
+        draft_customer_reply = _normalize_customer_draft_reply(ticket, draft_customer_reply)
 
     raw_agent_state = parsed.get("engineer_agent_state") if isinstance(parsed.get("engineer_agent_state"), dict) else {}
     reply_readiness = _normalize_reply_readiness(
@@ -1476,15 +1497,27 @@ def normalize_engineer_agent_state(
 
 
 def default_customer_reply(ticket: dict[str, Any], engineer_context: str) -> str:
-    customer_text = latest_customer_message(ticket)
     guidance = " ".join(str(engineer_context or "").split()).strip()
-    if _CJK_RE.search(customer_text):
-        if guidance:
-            return f"我们已经进一步调查了这个问题。请先按照以下信息处理：{guidance}"
-        return "我们已经进一步调查了这个问题，请根据最新建议重试并告知结果。"
-    if guidance:
-        return f"We investigated this further. Please try the following: {guidance}"
-    return "We investigated this further. Please try the latest guidance and let us know the result."
+    language = _customer_language_hint(ticket)
+    if language == "zh":
+        body = (
+            f"我们已经进一步调查了这个问题。请先按照以下信息处理：{guidance}"
+            if guidance
+            else "我们已经进一步调查了这个问题，请根据最新建议重试并告知结果。"
+        )
+    else:
+        body = (
+            f"We investigated this further. Please try the following: {guidance}"
+            if guidance
+            else "We investigated this further. Please try the latest guidance and let us know the result."
+        )
+    return ensure_customer_reply_email_style(
+        body=body,
+        reply_kind="engineer_follow_up",
+        requester=_customer_requester(ticket),
+        customer_id=_clean_text(ticket.get("customer_id")) or None,
+        language=language,
+    )
 
 
 def build_engineer_agent_brief(ticket: dict[str, Any]) -> tuple[str, str]:

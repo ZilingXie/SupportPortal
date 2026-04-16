@@ -11,6 +11,11 @@ from backend.services.api_semantics import (
     build_api_semantics_clarification,
     is_api_semantics_mismatch_context,
 )
+from backend.services.customer_reply_composer import (
+    compose_customer_reply_email,
+    detect_customer_reply_language,
+    ensure_customer_reply_email_style,
+)
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import TROUBLESHOOTING_INTAKE_SCENARIO, resolve_model_profile
 from backend.services.prompts.troubleshooting_intake import (
@@ -172,6 +177,10 @@ class TroubleshootingIntakeResult:
 
 def _clean_text(value: Any) -> str:
     return " ".join(str(value or "").split()).strip()
+
+
+def _normalize_customer_reply_text(value: Any) -> str:
+    return str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
 
 
 def _utc_now() -> str:
@@ -751,6 +760,40 @@ def _build_appreciative_opening(*, has_additional_info: bool) -> str:
     return "Thanks for sharing the additional info." if has_additional_info else "Thanks for the details."
 
 
+def _compose_clarification_customer_reply(
+    *,
+    latest_message: str,
+    body: str,
+    opener: str | None = None,
+    requester: str | None = None,
+    customer_id: str | None = None,
+) -> str:
+    return compose_customer_reply_email(
+        reply_kind="clarification",
+        body=body,
+        requester=requester,
+        customer_id=customer_id,
+        language=detect_customer_reply_language(latest_message, body),
+        opener=opener,
+    )
+
+
+def _ensure_clarification_customer_reply(
+    *,
+    latest_message: str,
+    body: str,
+    requester: str | None = None,
+    customer_id: str | None = None,
+) -> str:
+    return ensure_customer_reply_email_style(
+        body=body,
+        reply_kind="clarification",
+        requester=requester,
+        customer_id=customer_id,
+        language=detect_customer_reply_language(latest_message, body),
+    )
+
+
 def _customer_reply_uses_forbidden_pattern(value: str) -> bool:
     lowered = _clean_text(value).lower()
     if not lowered:
@@ -770,11 +813,14 @@ def _join_labels(labels: list[str]) -> str:
 
 def _build_customer_reply(
     *,
+    latest_message: str,
     product: str | None,
     required_fields: tuple[str, ...],
     known_information: dict[str, str],
     missing_information: list[str],
     issue_timestamp_parts: dict[str, str],
+    requester: str | None = None,
+    customer_id: str | None = None,
 ) -> str:
     product_label = get_support_product_label(product) or "Agora"
     has_additional_info = any(
@@ -812,13 +858,22 @@ def _build_customer_reply(
         missing_labels.extend(list_support_product_field_labels([field_name]))
     if not missing_labels:
         return ""
-    return f"{opening} To help us investigate this {product_label} issue, could you also share {_join_labels(missing_labels)}?"
+    return _compose_clarification_customer_reply(
+        latest_message=latest_message,
+        opener=opening,
+        body=f"To help us investigate this {product_label} issue, could you also share {_join_labels(missing_labels)}?",
+        requester=requester,
+        customer_id=customer_id,
+    )
 
 
 def _build_answer_mode_customer_reply(
     *,
+    latest_message: str,
     known_information: dict[str, str],
     missing_information: list[str],
+    requester: str | None = None,
+    customer_id: str | None = None,
 ) -> str:
     prompts: list[str] = []
     if "desired_outcome" in missing_information:
@@ -828,7 +883,13 @@ def _build_answer_mode_customer_reply(
     if not prompts:
         return ""
     opening = _build_appreciative_opening(has_additional_info=bool(known_information))
-    return f"{opening} To help us give the right guidance, could you also share {_join_labels(prompts)}?"
+    return _compose_clarification_customer_reply(
+        latest_message=latest_message,
+        opener=opening,
+        body=f"To help us give the right guidance, could you also share {_join_labels(prompts)}?",
+        requester=requester,
+        customer_id=customer_id,
+    )
 
 
 def _fallback_result(
@@ -839,6 +900,8 @@ def _fallback_result(
     current_state: dict[str, Any] | None,
     rag_result: dict[str, Any] | None,
     message_created_at: str | None,
+    requester: str | None = None,
+    customer_id: str | None = None,
 ) -> TroubleshootingIntakeResult:
     if is_api_semantics_mismatch_context(message=latest_message, rag_result=rag_result):
         known_information, missing_information, customer_reply = build_api_semantics_clarification(
@@ -850,7 +913,12 @@ def _fallback_result(
             known_information=known_information,
             missing_information=missing_information,
             ready_for_engineer_ticket=False,
-            customer_reply=customer_reply,
+            customer_reply=_ensure_clarification_customer_reply(
+                latest_message=latest_message,
+                body=customer_reply,
+                requester=requester,
+                customer_id=customer_id,
+            ),
             issue_timestamp_parts={},
         )
 
@@ -882,8 +950,11 @@ def _fallback_result(
             customer_reply=""
             if ready
             else _build_answer_mode_customer_reply(
+                latest_message=latest_message,
                 known_information=known_information,
                 missing_information=missing_information,
+                requester=requester,
+                customer_id=customer_id,
             ),
             issue_timestamp_parts=issue_timestamp_parts,
         )
@@ -920,11 +991,14 @@ def _fallback_result(
         customer_reply=""
         if ready
         else _build_customer_reply(
+            latest_message=latest_message,
             product=product,
             required_fields=required_fields,
             known_information=known_information,
             missing_information=missing_information,
             issue_timestamp_parts=issue_timestamp_parts,
+            requester=requester,
+            customer_id=customer_id,
         ),
         issue_timestamp_parts=issue_timestamp_parts,
     )
@@ -935,6 +1009,9 @@ def _parse_llm_result(
     *,
     fallback: TroubleshootingIntakeResult,
     product: str | None,
+    latest_message: str,
+    requester: str | None = None,
+    customer_id: str | None = None,
 ) -> TroubleshootingIntakeResult:
     if not isinstance(payload, dict):
         return fallback
@@ -1002,7 +1079,7 @@ def _parse_llm_result(
         ]
         ready_for_engineer_ticket = not missing_information
 
-    customer_reply = _clean_text(payload.get("customer_reply"))
+    customer_reply = _normalize_customer_reply_text(payload.get("customer_reply"))
     if ready_for_engineer_ticket:
         customer_reply = ""
     elif (
@@ -1010,7 +1087,14 @@ def _parse_llm_result(
         or payload_issue_mode != issue_mode
         or _customer_reply_uses_forbidden_pattern(customer_reply)
     ):
-        customer_reply = _clean_text(fallback.customer_reply)
+        customer_reply = _normalize_customer_reply_text(fallback.customer_reply)
+    if customer_reply:
+        customer_reply = _ensure_clarification_customer_reply(
+            latest_message=latest_message,
+            body=customer_reply,
+            requester=requester,
+            customer_id=customer_id,
+        )
 
     return TroubleshootingIntakeResult(
         issue_mode=issue_mode,
@@ -1032,6 +1116,8 @@ def _evaluate_with_llm(
     rag_result: dict[str, Any] | None,
     fallback: TroubleshootingIntakeResult,
     deterministic_only: bool,
+    requester: str | None = None,
+    customer_id: str | None = None,
 ) -> TroubleshootingIntakeResult:
     if is_api_semantics_mismatch_context(message=message, rag_result=rag_result):
         return fallback
@@ -1066,7 +1152,14 @@ def _evaluate_with_llm(
     except json.JSONDecodeError:
         LOGGER.warning("Troubleshooting intake returned invalid JSON: %s", response.text)
         return fallback
-    return _parse_llm_result(payload, fallback=fallback, product=product)
+    return _parse_llm_result(
+        payload,
+        fallback=fallback,
+        product=product,
+        latest_message=message,
+        requester=requester,
+        customer_id=customer_id,
+    )
 
 
 def evaluate_troubleshooting_intake(
@@ -1079,6 +1172,8 @@ def evaluate_troubleshooting_intake(
     rag_result: dict[str, Any] | None,
     message_created_at: str | None = None,
     deterministic_only: bool = False,
+    requester: str | None = None,
+    customer_id: str | None = None,
 ) -> TroubleshootingIntakeResult:
     fallback = _fallback_result(
         latest_message=message,
@@ -1087,6 +1182,8 @@ def evaluate_troubleshooting_intake(
         current_state=current_state,
         rag_result=rag_result,
         message_created_at=message_created_at,
+        requester=requester,
+        customer_id=customer_id,
     )
     return _evaluate_with_llm(
         message=message,
@@ -1097,6 +1194,8 @@ def evaluate_troubleshooting_intake(
         rag_result=rag_result,
         fallback=fallback,
         deterministic_only=deterministic_only,
+        requester=requester,
+        customer_id=customer_id,
     )
 
 

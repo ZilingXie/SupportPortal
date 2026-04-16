@@ -178,6 +178,7 @@ class WorkerResilienceTests(unittest.TestCase):
             request_id="rag-worker-timeout-1",
             ticket_id="T-WORKER-1",
             customer_id="C-123",
+            requester=None,
             ticket_context=[{"role": "customer", "content": "how to join channel"}],
             product="audio_video_calling",
             insufficient_reply=worker.INSUFFICIENT_EVIDENCE_REPLY,

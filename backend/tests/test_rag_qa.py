@@ -80,6 +80,25 @@ The documentation states that time: 0 means the rule is applied permanently. How
             else:
                 os.environ[name] = value
 
+    def test_build_answer_text_formats_email_style_response(self) -> None:
+        answer_text = rag_qa._build_answer_text(
+            "To join a channel, call the SDK join method with the required authentication token.",
+            [
+                "Provide the channel name.",
+                "Pass a valid authentication token.",
+            ],
+            question="How do I join a channel?",
+        )
+
+        self.assertTrue(answer_text.startswith("Hi there,"))
+        self.assertIn(
+            "To join a channel, call the SDK join method with the required authentication token.",
+            answer_text,
+        )
+        self.assertIn("1. Provide the channel name.", answer_text)
+        self.assertIn("2. Pass a valid authentication token.", answer_text)
+        self.assertTrue(answer_text.endswith("Best Regards,\nSid"))
+
     def test_split_table_name_supports_schema_prefix(self) -> None:
         self.assertEqual(_split_table_name("public.docagent"), ("public", "docagent"))
         self.assertEqual(
@@ -2972,8 +2991,10 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertFalse(result.trace.needs_human)
         self.assertEqual(result.trace.handoff_reason, None)
         self.assertEqual(len(result.answer.citations), 2)
+        self.assertTrue(result.answer.answer.startswith("Hi there,"))
         self.assertIn("release notes", result.answer.answer.lower())
         self.assertIn("black screen issues", result.answer.answer.lower())
+        self.assertTrue(result.answer.answer.endswith("Best Regards,\nSid"))
 
     def test_run_rag_query_short_how_to_faq_recovers_when_original_support_missing_auth_chunk(self) -> None:
         join_chunk = RetrievedChunk(

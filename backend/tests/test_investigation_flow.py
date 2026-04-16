@@ -17,7 +17,10 @@ from backend.services.engineer_agent import (
     fallback_engineer_agent_state,
     normalize_engineer_agent_state,
 )
-from backend.services.investigation_flow import build_investigation_opening_context
+from backend.services.investigation_flow import (
+    build_investigation_opening_context,
+    default_public_investigation_reply,
+)
 from backend.services.llm_factory import LlmInvocationError, LlmTextResult
 from backend.services.rag_service_client import RagTicketAnswerDetail
 from backend.services.support_router import SupportResolution
@@ -125,6 +128,18 @@ class InvestigationFlowTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["app_build"]["ref"], "abc123def456")
         self.assertEqual(payload["app_build"]["built_at"], "2026-04-08T08:00:00Z")
+
+    def test_default_public_investigation_reply_uses_email_style(self) -> None:
+        reply = default_public_investigation_reply(
+            "i got black screen, what should i do?",
+            requester="Taylor",
+            customer_id="C-001",
+        )
+
+        self.assertTrue(reply.startswith("Hi Taylor,"))
+        self.assertIn("Thank you for your patience.", reply)
+        self.assertIn("This issue requires further internal investigation", reply)
+        self.assertTrue(reply.endswith("Best Regards,\nSid"))
 
     def test_engineer_request_models_default_to_jack(self) -> None:
         self.assertEqual(main.TicketActionRequest(action="investigate").engineer_id, "Jack")
@@ -279,6 +294,7 @@ class InvestigationFlowTests(unittest.TestCase):
             customer_message="how to join channel",
             message_created_at="2026-04-05T00:00:00+00:00",
             customer_id="C-001",
+            requester="Taylor",
             ticket_subject="Join question",
             product="audio_video_calling",
             route_context_tail=[
@@ -299,6 +315,7 @@ class InvestigationFlowTests(unittest.TestCase):
 
         self.assertEqual(task["task_type"], "ticket_query")
         self.assertEqual(task["customer_id"], "C-001")
+        self.assertEqual(task["requester"], "Taylor")
         self.assertEqual(task["ticket_subject"], "Join question")
         self.assertEqual(task["product"], "audio_video_calling")
         self.assertEqual(task["ticket_updated_at"], "2026-04-05T00:00:01+00:00")
@@ -3528,9 +3545,10 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
         self.assertEqual(payload["active_investigation"]["state"], "awaiting_confirmation")
-        self.assertEqual(
-            payload["active_investigation"]["draft_customer_reply"],
+        self.assertTrue(payload["active_investigation"]["draft_customer_reply"].startswith("Hi there,"))
+        self.assertIn(
             "Could you please share the channel name with us for further investigation?",
+            payload["active_investigation"]["draft_customer_reply"],
         )
         latest_message = payload["active_investigation"]["messages"][-1]
         self.assertEqual(latest_message["role"], "engineer_ai")
@@ -3538,7 +3556,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(latest_message.get("meta", {}).get("scenario"), "engineer_investigation_reply")
         self.assertEqual(latest_message.get("meta", {}).get("model"), "gpt-5.4")
         self.assertEqual(latest_message.get("meta", {}).get("reasoning_effort"), "medium")
-        self.assertEqual(latest_message.get("meta", {}).get("prompt_version"), "engineer-investigation-reply-v6")
+        self.assertEqual(latest_message.get("meta", {}).get("prompt_version"), "engineer-investigation-reply-v7")
         self.assertEqual(latest_message.get("meta", {}).get("generation_status"), "succeeded")
         self.assertTrue(payload["engineer_agent_state"]["reply_readiness"]["ready_for_customer_reply"])
         self.assertEqual(
@@ -4674,6 +4692,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(ticket["status"], "resolved")
         self.assertIsNone(ticket["active_investigation"])
         self.assertEqual(ticket["messages"][-1]["role"], "assistant")
+        self.assertTrue(ticket["messages"][-1]["content"].startswith("Hi there,"))
         self.assertIn("Please upgrade to SDK 4.2.2", ticket["messages"][-1]["content"])
         self.assertEqual(ticket["investigation_history"][0]["state"], "closed")
         self.assertEqual(

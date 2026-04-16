@@ -138,6 +138,7 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
         self.assertIn("<title>Sid - AI Technical Support</title>", html)
+
         self.assertIn("./styles.css?v=20260415-client-context-bar-badges-left-1", html)
         self.assertIn('./app.js?v=20260415-client-context-bar-badges-left-1', html)
         self.assertNotIn("AI-SOLVING", app_source)
@@ -183,6 +184,11 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn('font-family: "Material Symbols Outlined";', css)
         self.assertIn("html.material-symbols-pending .material-symbols-outlined", css)
         self.assertIn("visibility: hidden;", css)
+
+    def test_client_query_payload_includes_requester_name(self) -> None:
+        app_source = Path("ui/client-ui/app.js").read_text(encoding="utf-8")
+
+        self.assertIn("requester: state.user.name", app_source)
 
     def test_client_login_uses_zac_credentials_and_identity(self) -> None:
         self.run_client_app_script(
