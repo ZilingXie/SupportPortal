@@ -908,6 +908,27 @@ For each new entry, record:
   - `node --check ui/client-ui/app.js`
   - `git diff --check`
 
+- Date: 2026-04-16
+- Area or subsystem: Troubleshooting intake customer-facing clarification
+- Prompt or model version: `troubleshooting-intake-v3`
+- Summary: Rewrote missing-information clarification guidance to use appreciative customer-facing openings, forbid `Known so far` / internal-evaluation phrasing, and ask only for the still-missing troubleshooting or answer-mode fields.
+- Reason: `TK-122` and related follow-ups were surfacing mechanical recap-style replies and internal terms such as `grounded answer`, which were not customer-facing and also encouraged structured detail turns to overwrite the original issue symptom.
+- Affected files or config:
+  - `backend/services/prompts/troubleshooting_intake.py`
+  - `backend/services/troubleshooting_intake.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/tests/test_troubleshooting_intake.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Investigation-mode clarification replies now start with a short thanks, ask only for the remaining fields, and avoid recapping known information back to the customer.
+  - Partial timestamp follow-ups now ask only for the missing timestamp part, such as `issue timezone` or `issue time and timezone`, instead of falling back to `full issue timestamp`.
+  - Answer-mode clarification replies no longer mention `grounded answer`, `support evidence`, or similar internal evaluation language.
+  - Structured investigation follow-ups such as `channel name..., uid..., happened on...` preserve the previously known `issue_symptom` instead of overwriting it with the follow-up sentence.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_troubleshooting_intake backend.tests.test_client_ticket_agent_runtime backend.tests.test_investigation_flow`
+
 - Date: 2026-04-15
 - Area or subsystem: Client ticket route classification for gratitude follow-ups
 - Prompt or model version: `intent-router-ticket-resolution-v1`

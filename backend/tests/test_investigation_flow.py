@@ -2290,9 +2290,8 @@ class InvestigationFlowTests(unittest.TestCase):
             return_value=types.SimpleNamespace(
                 result=types.SimpleNamespace(
                     answer=(
-                        "Known so far: the issue symptom is black screen. "
-                        "To investigate this Audio/Video Calling issue, please share the channel name, "
-                        "problematic uid, and issue timestamp."
+                        "Thanks for the details. To help us investigate this Audio/Video Calling issue, "
+                        "could you also share the channel name, problematic uid, and issue timestamp?"
                     ),
                     confidence=0.0,
                     sources=[],
@@ -2342,7 +2341,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(payload["route_reason"], "rag_insufficient_evidence")
         self.assertEqual(
             payload["answer"],
-            "Known so far: the issue symptom is black screen. To investigate this Audio/Video Calling issue, please share the channel name, problematic uid, and issue timestamp.",
+            "Thanks for the details. To help us investigate this Audio/Video Calling issue, could you also share the channel name, problematic uid, and issue timestamp?",
         )
         stored = self.repository.get_ticket("TK-INV-110")
         self.assertIsNotNone(stored)
@@ -2353,8 +2352,9 @@ class InvestigationFlowTests(unittest.TestCase):
         )
         self.assertEqual(
             stored["messages"][-1]["content"],
-            "Known so far: the issue symptom is black screen. To investigate this Audio/Video Calling issue, please share the channel name, problematic uid, and issue timestamp.",
+            "Thanks for the details. To help us investigate this Audio/Video Calling issue, could you also share the channel name, problematic uid, and issue timestamp?",
         )
+        self.assertNotIn("Known so far", stored["messages"][-1]["content"])
         self.assertFalse(
             any(message["content"] == "Got it, let me check this for you." for message in stored["messages"])
         )
@@ -2380,9 +2380,8 @@ class InvestigationFlowTests(unittest.TestCase):
             return_value=types.SimpleNamespace(
                 result=types.SimpleNamespace(
                     answer=(
-                        "Known so far: the issue symptom is black screen issue. "
-                        "To investigate this Audio/Video Calling issue, please share the channel name, "
-                        "problematic uid, and issue timestamp."
+                        "Thanks for the details. To help us investigate this Audio/Video Calling issue, "
+                        "could you also share the channel name, problematic uid, and issue timestamp?"
                     ),
                     confidence=0.0,
                     sources=[],
@@ -2451,9 +2450,8 @@ class InvestigationFlowTests(unittest.TestCase):
                 {
                     "role": "assistant",
                     "content": (
-                        "Known so far: the issue symptom is black screen. "
-                        "To investigate this Audio/Video Calling issue, please share the channel name, "
-                        "problematic uid, and issue timestamp."
+                        "Thanks for the details. To help us investigate this Audio/Video Calling issue, "
+                        "could you also share the channel name, problematic uid, and issue timestamp?"
                     ),
                     "created_at": "2026-03-29T09:01:00+00:00",
                 },
@@ -2568,9 +2566,8 @@ class InvestigationFlowTests(unittest.TestCase):
                 {
                     "role": "assistant",
                     "content": (
-                        "Known so far: the issue symptom is black screen issue. "
-                        "To investigate this Audio/Video Calling issue, please share the channel name, "
-                        "problematic uid, and issue timestamp."
+                        "Thanks for the details. To help us investigate this Audio/Video Calling issue, "
+                        "could you also share the channel name, problematic uid, and issue timestamp?"
                     ),
                     "created_at": "2026-03-29T09:01:00+00:00",
                 },
@@ -2789,9 +2786,8 @@ class InvestigationFlowTests(unittest.TestCase):
 
     def test_black_screen_rag_service_error_persists_intake_gate_before_opening_engineer_ticket(self) -> None:
         clarify_reply = (
-            "Known so far: the issue symptom is black screen issue. "
-            "To investigate this Audio/Video Calling issue, please share the channel name, "
-            "problematic uid, and issue timestamp."
+            "Thanks for the details. To help us investigate this Audio/Video Calling issue, "
+            "could you also share the channel name, problematic uid, and issue timestamp?"
         )
 
         with patch.object(
