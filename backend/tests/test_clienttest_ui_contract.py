@@ -26,8 +26,8 @@ class ClientTestRouteSmokeTests(unittest.TestCase):
     def test_clienttest_html_references_local_assets(self) -> None:
         html = Path("ui/clienttest-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260416-clienttest-remove-footer-gap-1", html)
-        self.assertIn("./app.js?v=20260416-clienttest-remove-footer-gap-1", html)
+        self.assertIn("./styles.css?v=20260416-clienttest-footer-spacer-1", html)
+        self.assertIn("./app.js?v=20260416-clienttest-footer-spacer-1", html)
 
 
 class ClientTestUiContractTests(unittest.TestCase):
@@ -198,7 +198,9 @@ class ClientTestUiContractTests(unittest.TestCase):
         self.assertIn("new-ticket-fixed-knowledge-card", css)
         self.assertIn(".new-ticket-fixed-knowledge-card {\n  height: var(--new-ticket-info-card-height);", css)
         self.assertIn(".clienttest-main-new-ticket {\n  padding: 28px 36px 0;\n}", css)
+        self.assertIn(".new-ticket-footer-spacer {\n  height: 40px;\n}", css)
         self.assertIn(".clienttest-main-new-ticket {\n    padding: 18px 16px 0;\n  }", css)
+        self.assertIn(".new-ticket-footer-spacer {\n    height: 24px;\n  }", css)
         self.assertNotIn("new-ticket-summary-card", css)
         self.assertNotIn("new-ticket-composer-footer", css)
         self.assertNotIn("new-ticket-product-group", css)
@@ -236,6 +238,12 @@ class ClientTestUiContractTests(unittest.TestCase):
                 }
                 if (!(html.indexOf('class="new-ticket-body-layout"') < html.indexOf('class="new-ticket-sidebar"'))) {
                   throw new Error("New Ticket draft sidebar should render inside the shared body layout.");
+                }
+                if (!html.includes('class="new-ticket-footer-spacer"')) {
+                  throw new Error("New Ticket draft should render the restored footer spacer.");
+                }
+                if (!(html.indexOf('class="new-ticket-body-layout"') < html.indexOf('class="new-ticket-footer-spacer"'))) {
+                  throw new Error("New Ticket draft footer spacer should render after the shared body layout.");
                 }
                 if (html.includes("new-ticket-breadcrumb") || html.includes("chevron_right")) {
                   throw new Error("New Ticket draft should remove the breadcrumb row.");
@@ -355,6 +363,12 @@ class ClientTestUiContractTests(unittest.TestCase):
                 }
                 if (!(html.indexOf('class="new-ticket-hero"') < html.indexOf('class="new-ticket-body-layout"'))) {
                   throw new Error("Existing New Ticket threads should keep the title above the shared body layout.");
+                }
+                if (!html.includes('class="new-ticket-footer-spacer"')) {
+                  throw new Error("Existing New Ticket threads should render the restored footer spacer.");
+                }
+                if (!(html.indexOf('class="new-ticket-body-layout"') < html.indexOf('class="new-ticket-footer-spacer"'))) {
+                  throw new Error("Existing New Ticket threads should keep the footer spacer after the shared body layout.");
                 }
                 if (!html.includes("The video freezes after 10 minutes on iOS.")) {
                   throw new Error("New Ticket detail should render the submitted customer message.");

@@ -2734,6 +2734,10 @@ a.citation-link:hover {
   color: var(--ink);
 }
 
+.new-ticket-footer-spacer {
+  height: 40px;
+}
+
 .new-ticket-thread-panel,
 .new-ticket-info-card,
 .new-ticket-composer-panel {
@@ -3427,6 +3431,10 @@ a.citation-link:hover {
 
   .clienttest-main-new-ticket {
     padding: 18px 16px 0;
+  }
+
+  .new-ticket-footer-spacer {
+    height: 24px;
   }
 
   .new-ticket-page-title {

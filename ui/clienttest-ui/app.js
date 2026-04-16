@@ -2351,6 +2351,7 @@ function renderNewTicketTicketFromState(viewState) {
             ${renderNewTicketKnowledgePanel(ticket)}
           </aside>
         </div>
+        <div class="new-ticket-footer-spacer" aria-hidden="true"></div>
       </div>
     </section>
   `;
