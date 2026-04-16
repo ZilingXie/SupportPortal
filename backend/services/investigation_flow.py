@@ -272,6 +272,16 @@ def build_investigation_opening_context(
             "Use the confirmed customer intake details to reproduce the issue, collect logs or traces around the "
             "reported timestamp, and continue direct engineer investigation."
         )
+    elif normalized_reason == "investigation_intake_round_exhausted":
+        rag_summary = (
+            "The customer already answered the single allowed intake clarification, so the case was handed off "
+            "for direct engineer investigation even though some requested investigation details are still missing."
+        )
+        action_needed = (
+            "Use the collected customer intake details to start direct engineer investigation, capture the "
+            "remaining missing investigation details during engineering follow-up, and collect logs or traces "
+            "around the reported session if available."
+        )
     elif normalized_reason in {"rag_post_check_insufficient", "rag_post_check_error"}:
         rag_summary = "AI found a tentative docs-backed answer but could not safely send it without engineer review."
         if normalized_answer:
@@ -453,6 +463,11 @@ def _build_handoff_rag_result(execution_context: dict[str, Any] | None = None) -
         candidate_answer = "RAG processing timed out before a grounded answer could be produced."
     elif route_reason == "investigation_intake_complete":
         candidate_answer = "Customer intake is complete and the case was handed off directly for engineer investigation."
+    elif route_reason == "investigation_intake_round_exhausted":
+        candidate_answer = (
+            "Customer already answered the single allowed intake clarification, and the case was handed off "
+            "for direct engineer investigation with some remaining missing investigation details."
+        )
     else:
         candidate_answer = str(execution.get("answer") or "").strip()
     return {

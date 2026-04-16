@@ -1700,6 +1700,49 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertNotIn("could not find enough grounded doc evidence", rag_summary)
         self.assertIn("direct engineer investigation", action_needed)
 
+    def test_build_investigation_opening_context_for_intake_round_exhausted_reason_preserves_remaining_gaps(self) -> None:
+        ticket = self._seed_ticket(
+            ticket_id="TK-INV-OPENING-ROUND-LIMIT",
+            subject="Black screen issue",
+            product="audio_video_calling",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "channel is zilingtest, uid is 2, and the issue happened on april 3rd",
+                    "created_at": "2026-04-14T02:11:08+00:00",
+                }
+            ],
+            client_intake_state={
+                "phase": "clarification_limit_reached",
+                "product": "audio_video_calling",
+                "issue_mode": "investigation",
+                "known_information": {
+                    "issue_symptom": "black screen issue",
+                    "channel_name": "zilingtest",
+                    "problematic_uid": "2",
+                },
+                "missing_information": ["issue_timestamp"],
+                "ready_for_engineer_ticket": False,
+                "clarification_rounds_used": 1,
+                "pending_investigation_reason": "investigation_intake_round_exhausted",
+                "issue_timestamp_parts": {"date": "2026-04-03"},
+                "last_updated_at": "2026-04-14T02:11:08+00:00",
+            },
+        )
+
+        opening = build_investigation_opening_context(
+            ticket,
+            trigger_reason="investigation_intake_round_exhausted",
+        )
+
+        self.assertIsNotNone(opening)
+        rag_summary = str((opening or {}).get("rag_answer_summary") or "").lower()
+        action_needed = str((opening or {}).get("action_needed") or "").lower()
+        self.assertIn("single allowed intake clarification", rag_summary)
+        self.assertNotIn("timed out", rag_summary)
+        self.assertNotIn("could not find enough grounded doc evidence", rag_summary)
+        self.assertIn("remaining missing investigation details", action_needed)
+
     def test_ticket_query_escalation_persists_ticket_level_handoff_and_agent_state(self) -> None:
         resolution = SupportResolution(
             answer="Please upgrade to SDK 4.2.2 and retry token renewal.",

@@ -28,7 +28,9 @@ from backend.services.ticket_resolution import (
 from backend.services.troubleshooting_intake import (
     TroubleshootingIntakeResult,
     build_client_intake_state,
+    customer_follow_up_adds_requested_investigation_detail,
     evaluate_troubleshooting_intake,
+    resolve_investigation_clarification_rounds_used,
 )
 
 CLIENT_TICKET_AGENT_RUNTIME_VERSION = "client_ticket_agents_v1"
@@ -41,6 +43,7 @@ RAG_POST_CHECK_ERROR_REASON = "rag_post_check_error"
 DEADLINE_EXHAUSTED_REASON = "deadline_exhausted"
 ROUTE_TIMEOUT_REASON = "route_timeout"
 INVESTIGATION_INTAKE_COMPLETE_REASON = "investigation_intake_complete"
+INVESTIGATION_INTAKE_ROUND_EXHAUSTED_REASON = "investigation_intake_round_exhausted"
 WORKFLOW_ACTION_ANSWER_CUSTOMER = "answer_customer"
 WORKFLOW_ACTION_CLARIFY_CUSTOMER_FOR_INTAKE = "clarify_customer_for_intake"
 WORKFLOW_ACTION_OPEN_ENGINEER_TICKET = "open_engineer_ticket"
@@ -314,6 +317,7 @@ def _build_cited_answer_execution_result(
         review_result,
         product=product,
         pending_investigation_reason=pending_investigation_reason,
+        current_state=current_state,
     )
     follow_up = _build_cited_answer_follow_up(
         review_result,
@@ -801,6 +805,7 @@ def _normalize_investigation_reason(value: Any) -> str:
         DEADLINE_EXHAUSTED_REASON,
         ROUTE_TIMEOUT_REASON,
         INVESTIGATION_INTAKE_COMPLETE_REASON,
+        INVESTIGATION_INTAKE_ROUND_EXHAUSTED_REASON,
     }:
         return normalized
     return RAG_INSUFFICIENT_EVIDENCE_REASON
@@ -827,13 +832,38 @@ def _build_intake_complete_investigation_resolution(message: str) -> SupportReso
     )
 
 
+def _build_intake_round_exhausted_investigation_resolution(message: str) -> SupportResolution:
+    return SupportResolution(
+        answer=default_public_investigation_reply(message),
+        confidence=1.0,
+        sources=[],
+        citations=[],
+        needs_engineer_guidance=True,
+        answer_route="workflow",
+        scope_label="agora_technical",
+        route_family="investigation_intake",
+        execution_action="open_engineer_ticket",
+        tooling_profile="deterministic_intake",
+        route_reason=INVESTIGATION_INTAKE_ROUND_EXHAUSTED_REASON,
+        route_confidence=1.0,
+        search_used=False,
+        matched_signals=[INVESTIGATION_INTAKE_ROUND_EXHAUSTED_REASON],
+        evidence_summary={"diagnostics": {"intake_short_circuit": True, "clarification_limit_reached": True}},
+        packed_evidence=None,
+    )
+
+
 def _handle_insufficient_review(
     *,
     review_result: TroubleshootingIntakeResult,
     resolution: SupportResolution,
     product: str | None,
     investigation_reason: str,
+    message: str,
     current_state: dict[str, Any] | None = None,
+    ticket_context: list[dict[str, str]] | None = None,
+    latest_assistant_message: dict[str, Any] | None = None,
+    message_created_at: str | None = None,
 ) -> TicketExecutionResult:
     review_result = _sanitize_insufficient_review_result(
         review_result,
@@ -847,6 +877,7 @@ def _handle_insufficient_review(
         review_result,
         product=product,
         pending_investigation_reason=pending_investigation_reason,
+        current_state=current_state,
     )
     if review_result.ready_for_engineer_ticket:
         return _build_ticket_execution_result(
@@ -855,6 +886,32 @@ def _handle_insufficient_review(
             workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
             investigation_reason=pending_investigation_reason,
             client_intake_state=next_client_intake_state,
+        )
+    clarification_rounds_used = resolve_investigation_clarification_rounds_used(
+        current_state=current_state,
+        latest_assistant_message=latest_assistant_message,
+        ticket_context=ticket_context,
+    )
+    if (
+        review_result.issue_mode == "investigation"
+        and clarification_rounds_used >= 1
+        and bool(_clean_text(review_result.customer_reply))
+    ):
+        exhausted_client_intake_state = build_client_intake_state(
+            review_result,
+            product=product,
+            now_value=message_created_at,
+            pending_investigation_reason=INVESTIGATION_INTAKE_ROUND_EXHAUSTED_REASON,
+            current_state=current_state,
+            clarification_rounds_used=max(clarification_rounds_used, 1),
+            phase_override="clarification_limit_reached",
+        )
+        return _build_ticket_execution_result(
+            resolution=_build_intake_round_exhausted_investigation_resolution(message),
+            needs_investigating=True,
+            workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
+            investigation_reason=INVESTIGATION_INTAKE_ROUND_EXHAUSTED_REASON,
+            client_intake_state=exhausted_client_intake_state,
         )
     if _clean_text(review_result.customer_reply):
         clarify_resolution = SupportResolution(
@@ -880,7 +937,13 @@ def _handle_insufficient_review(
             needs_investigating=False,
             workflow_action=WORKFLOW_ACTION_CLARIFY_CUSTOMER_FOR_INTAKE,
             investigation_reason=pending_investigation_reason,
-            client_intake_state=next_client_intake_state,
+            client_intake_state=build_client_intake_state(
+                review_result,
+                product=product,
+                pending_investigation_reason=pending_investigation_reason,
+                current_state=current_state,
+                clarification_sent=True,
+            ),
         )
     return _build_ticket_execution_result(
         resolution=resolution,
@@ -935,7 +998,8 @@ def _evaluate_investigation_intake_short_circuit(
     ticket_context: list[dict[str, str]] | None,
     current_state: dict[str, Any] | None,
     message_id: str | None,
-) -> TroubleshootingIntakeResult | None:
+    latest_assistant_message: dict[str, Any] | None,
+) -> tuple[TroubleshootingIntakeResult, str, int] | None:
     deterministic_review = evaluate_troubleshooting_intake(
         message=message,
         product=product,
@@ -952,9 +1016,31 @@ def _evaluate_investigation_intake_short_circuit(
     )
     if deterministic_review.issue_mode != "investigation":
         return None
+    clarification_rounds_used = resolve_investigation_clarification_rounds_used(
+        current_state=current_state,
+        latest_assistant_message=latest_assistant_message,
+        ticket_context=ticket_context,
+    )
     if not deterministic_review.ready_for_engineer_ticket:
-        return None
-    return deterministic_review
+        if clarification_rounds_used < 1:
+            return None
+        if not customer_follow_up_adds_requested_investigation_detail(
+            message=message,
+            product=product,
+            current_state=current_state,
+            message_created_at=message_id,
+        ):
+            return None
+        return (
+            deterministic_review,
+            INVESTIGATION_INTAKE_ROUND_EXHAUSTED_REASON,
+            max(clarification_rounds_used, 1),
+        )
+    return (
+        deterministic_review,
+        INVESTIGATION_INTAKE_COMPLETE_REASON,
+        clarification_rounds_used,
+    )
 
 
 def execute_client_ticket_agent_runtime(
@@ -1026,15 +1112,21 @@ def execute_client_ticket_agent_runtime(
             ticket_context=ticket_context,
             current_state=client_intake_state,
             message_id=message_id,
+            latest_assistant_message=latest_assistant_message,
         )
     if intake_short_circuit_result is not None:
         diagnostics["investigation_intake_short_circuit"] = True
+        (
+            intake_short_circuit_review,
+            intake_short_circuit_reason,
+            intake_short_circuit_rounds_used,
+        ) = intake_short_circuit_result
         _mark_agent_summary(
             route_summary,
             phase="skipped",
             status="skipped",
             decision="skipped",
-            reason=INVESTIGATION_INTAKE_COMPLETE_REASON,
+            reason=intake_short_circuit_reason,
         )
         _append_event(
             agent_events,
@@ -1044,14 +1136,14 @@ def execute_client_ticket_agent_runtime(
             agent_name=AGENT_NAME_ROUTE,
             phase="skipped",
             event_type="skipped",
-            payload={"reason": INVESTIGATION_INTAKE_COMPLETE_REASON},
+            payload={"reason": intake_short_circuit_reason},
         )
         _mark_agent_summary(
             rag_summary,
             phase="skipped",
             status="skipped",
             decision="skipped",
-            reason=INVESTIGATION_INTAKE_COMPLETE_REASON,
+            reason=intake_short_circuit_reason,
             extra={"request_id": rag_request_id},
         )
         _append_event(
@@ -1062,14 +1154,14 @@ def execute_client_ticket_agent_runtime(
             agent_name=AGENT_NAME_RAG,
             phase="skipped",
             event_type="skipped",
-            payload={"reason": INVESTIGATION_INTAKE_COMPLETE_REASON, "request_id": rag_request_id},
+            payload={"reason": intake_short_circuit_reason, "request_id": rag_request_id},
         )
         _mark_agent_summary(
             review_summary,
             phase="skipped",
             status="skipped",
             decision="skipped",
-            reason=INVESTIGATION_INTAKE_COMPLETE_REASON,
+            reason=intake_short_circuit_reason,
         )
         _append_event(
             agent_events,
@@ -1079,19 +1171,30 @@ def execute_client_ticket_agent_runtime(
             agent_name=AGENT_NAME_REVIEW,
             phase="skipped",
             event_type="skipped",
-            payload={"reason": INVESTIGATION_INTAKE_COMPLETE_REASON},
+            payload={"reason": intake_short_circuit_reason},
         )
         next_client_intake_state = build_client_intake_state(
-            intake_short_circuit_result,
+            intake_short_circuit_review,
             product=product,
             now_value=message_id,
-            pending_investigation_reason=INVESTIGATION_INTAKE_COMPLETE_REASON,
+            pending_investigation_reason=intake_short_circuit_reason,
+            current_state=client_intake_state,
+            clarification_rounds_used=intake_short_circuit_rounds_used,
+            phase_override=(
+                "clarification_limit_reached"
+                if intake_short_circuit_reason == INVESTIGATION_INTAKE_ROUND_EXHAUSTED_REASON
+                else None
+            ),
         )
         result = _build_ticket_execution_result(
-            resolution=_build_intake_complete_investigation_resolution(message),
+            resolution=(
+                _build_intake_complete_investigation_resolution(message)
+                if intake_short_circuit_reason == INVESTIGATION_INTAKE_COMPLETE_REASON
+                else _build_intake_round_exhausted_investigation_resolution(message)
+            ),
             needs_investigating=True,
             workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
-            investigation_reason=INVESTIGATION_INTAKE_COMPLETE_REASON,
+            investigation_reason=intake_short_circuit_reason,
             client_intake_state=next_client_intake_state,
         )
         _mark_agent_summary(
@@ -1112,7 +1215,9 @@ def execute_client_ticket_agent_runtime(
             payload={
                 "workflow_action": result.workflow_action,
                 "route_reason": result.route_reason,
-                "client_intake_ready_for_engineer_ticket": True,
+                "client_intake_ready_for_engineer_ticket": bool(
+                    next_client_intake_state.get("ready_for_engineer_ticket")
+                ),
             },
         )
         runtime_state = ClientTicketAgentRuntimeState(
@@ -1580,7 +1685,11 @@ def execute_client_ticket_agent_runtime(
                     resolution=rag_resolution,
                     product=product,
                     investigation_reason=effective_review_reason,
+                    message=message,
                     current_state=client_intake_state,
+                    ticket_context=ticket_context,
+                    latest_assistant_message=latest_assistant_message,
+                    message_created_at=message_id,
                 )
                 _mark_agent_summary(
                     review_summary,
@@ -1728,7 +1837,11 @@ def execute_client_ticket_agent_runtime(
                             resolution=rag_resolution,
                             product=product,
                             investigation_reason=investigation_reason,
+                            message=message,
                             current_state=client_intake_state,
+                            ticket_context=ticket_context,
+                            latest_assistant_message=latest_assistant_message,
+                            message_created_at=message_id,
                         )
                     elif troubleshooting_candidate:
                         _mark_agent_summary(
@@ -1778,7 +1891,11 @@ def execute_client_ticket_agent_runtime(
                             resolution=rag_resolution,
                             product=product,
                             investigation_reason=investigation_reason,
+                            message=message,
                             current_state=client_intake_state,
+                            ticket_context=ticket_context,
+                            latest_assistant_message=latest_assistant_message,
+                            message_created_at=message_id,
                         )
                     else:
                         result = _build_ticket_execution_result(

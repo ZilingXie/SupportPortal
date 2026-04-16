@@ -116,6 +116,15 @@ _ANSWER_BLOCKER_SIGNAL_RE = re.compile(
     r"\b(error|problem|fail|failed|failure|cannot|can't|unable|blocked|stuck|timeout|doesn't work|not work)\b",
     re.IGNORECASE,
 )
+_ANSWER_MODE_FIELD_SET = set(_ANSWER_MODE_REQUIRED_FIELDS)
+_INVESTIGATION_CLARIFY_REPLY_MARKERS = (
+    "to investigate this",
+    "narrow down the",
+    "please share channel name",
+    "please share the issue",
+    "please share channel",
+    "please share problematic uid",
+)
 
 
 @dataclass(frozen=True)
@@ -166,6 +175,14 @@ def _normalize_issue_timestamp_parts(value: Any) -> dict[str, str]:
         if clean_value:
             normalized[key] = clean_value
     return normalized
+
+
+def _normalize_nonnegative_int(value: Any, *, default: int = 0) -> int:
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= 0 else default
 
 
 def _extract_reference_year(value: Any) -> int | None:
@@ -282,6 +299,91 @@ def _compose_issue_timestamp(parts: dict[str, str]) -> str | None:
     if date_value and time_value and timezone_value:
         return f"{date_value} {time_value} {timezone_value}"
     return None
+
+
+def _message_dicts(ticket_context: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    return [item for item in list(ticket_context or []) if isinstance(item, dict)]
+
+
+def _latest_assistant_message_from_context(ticket_context: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    for item in reversed(_message_dicts(ticket_context)):
+        if str(item.get("role") or "").strip().lower() == "assistant":
+            return item
+    return None
+
+
+def _assistant_message_is_investigation_clarification(message: dict[str, Any] | None) -> bool:
+    if not isinstance(message, dict):
+        return False
+    if str(message.get("role") or "assistant").strip().lower() not in {"assistant", ""}:
+        return False
+    workflow_action = str(message.get("workflow_action") or "").strip().lower()
+    if workflow_action == "clarify_customer_for_intake":
+        missing_information = _normalize_missing_information(message.get("client_intake_missing_information"))
+        if missing_information and any(item not in _ANSWER_MODE_FIELD_SET for item in missing_information):
+            return True
+    content = _clean_text(message.get("content")).lower()
+    if not content:
+        return False
+    if any(marker in content for marker in _INVESTIGATION_CLARIFY_REPLY_MARKERS):
+        return True
+    if "known so far:" in content and "please share" in content and "issue" in content:
+        if any(label in content for label in ("channel name", "problematic uid", "issue timestamp", "timezone")):
+            return True
+    return False
+
+
+def resolve_investigation_clarification_rounds_used(
+    *,
+    current_state: dict[str, Any] | None,
+    latest_assistant_message: dict[str, Any] | None = None,
+    ticket_context: list[dict[str, Any]] | None = None,
+) -> int:
+    current_mode = str((current_state or {}).get("issue_mode") or "").strip().lower()
+    if current_mode and current_mode != "investigation":
+        return 0
+    explicit_rounds = _normalize_nonnegative_int((current_state or {}).get("clarification_rounds_used"), default=0)
+    if explicit_rounds > 0:
+        return explicit_rounds
+    if _assistant_message_is_investigation_clarification(latest_assistant_message):
+        return 1
+    if _assistant_message_is_investigation_clarification(_latest_assistant_message_from_context(ticket_context)):
+        return 1
+    return 0
+
+
+def customer_follow_up_adds_requested_investigation_detail(
+    *,
+    message: str,
+    product: str | None,
+    current_state: dict[str, Any] | None,
+    message_created_at: str | None = None,
+) -> bool:
+    if str((current_state or {}).get("issue_mode") or "").strip().lower() != "investigation":
+        return False
+    missing_information = _normalize_missing_information((current_state or {}).get("missing_information"))
+    if not missing_information:
+        return False
+    extracted, timestamp_parts = _extract_from_message(
+        message,
+        product=product,
+        reference_year=_resolve_reference_year(
+            message_created_at=message_created_at,
+            current_state=current_state,
+        ),
+    )
+    current_timestamp_parts = _normalize_issue_timestamp_parts((current_state or {}).get("issue_timestamp_parts"))
+    for field_name in missing_information:
+        if field_name == "issue_timestamp":
+            if _clean_text(extracted.get("issue_timestamp")):
+                return True
+            for part_name in ("date", "time", "timezone"):
+                if _clean_text(timestamp_parts.get(part_name)) and not _clean_text(current_timestamp_parts.get(part_name)):
+                    return True
+            continue
+        if _clean_text(extracted.get(field_name)):
+            return True
+    return False
 
 
 def _normalize_complete_issue_timestamp(value: str) -> tuple[str | None, dict[str, str]]:
@@ -946,17 +1048,35 @@ def build_client_intake_state(
     product: str | None,
     now_value: str | None = None,
     pending_investigation_reason: str | None = None,
+    current_state: dict[str, Any] | None = None,
+    clarification_sent: bool = False,
+    clarification_rounds_used: int | None = None,
+    phase_override: str | None = None,
 ) -> dict[str, Any] | None:
     if result.issue_mode not in {"answer", "investigation"}:
         return None
+    rounds_used = (
+        _normalize_nonnegative_int(clarification_rounds_used, default=0)
+        if clarification_rounds_used is not None
+        else _normalize_nonnegative_int((current_state or {}).get("clarification_rounds_used"), default=0)
+    )
+    if (
+        result.issue_mode == "investigation"
+        and (clarification_sent or (not result.ready_for_engineer_ticket and bool(_clean_text(result.customer_reply))))
+    ):
+        rounds_used = max(rounds_used, 1)
     return {
-        "phase": "ready_for_engineer_ticket" if result.ready_for_engineer_ticket else "gather_customer_inputs",
+        "phase": (
+            _clean_text(phase_override)
+            or ("ready_for_engineer_ticket" if result.ready_for_engineer_ticket else "gather_customer_inputs")
+        ),
         "product": _clean_text(product) or None,
         "issue_mode": result.issue_mode,
         "known_information": dict(result.known_information),
         "missing_information": list(result.missing_information),
         "ready_for_engineer_ticket": bool(result.ready_for_engineer_ticket),
         "issue_timestamp_parts": dict(result.issue_timestamp_parts),
+        "clarification_rounds_used": rounds_used,
         "pending_investigation_reason": _clean_text(pending_investigation_reason) or None,
         "last_updated_at": _clean_text(now_value) or _utc_now(),
     }
