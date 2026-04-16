@@ -1839,6 +1839,51 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_case_buddy_current_issue_hides_structured_intake_facts_covered_by_symptom_summary(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                const sections = buildCaseBuddyOpeningRequestSections({
+                  status: "investigating",
+                  engineer_agent_state: {
+                    phase: "gather_missing_inputs",
+                    issue_understanding: "Black screen issue reported for channel zilingtest, uid 2.",
+                    knowledge_summary: "The handoff still needs the reported issue timestamp.",
+                    why_not_solved: "The current evidence is incomplete.",
+                    goal: "Collect the next missing technical detail.",
+                    known_facts: [
+                      "Issue symptom is black screen issue.",
+                      "Channel name is zilingtest.",
+                      "Problematic uid is 2.",
+                      'Web SDK log for uid 2 says "[websdk] no capture video frame"',
+                    ],
+                    missing_information: ["Issue timestamp"],
+                    next_request_for_engineer: "Confirm the reported issue timestamp.",
+                    resolution_hypothesis: "",
+                    ready_to_reply: false,
+                    last_refreshed_at: "2026-04-16T03:51:52.897458+00:00",
+                  },
+                });
+
+                if (sections[0].summary !== "Black screen issue reported for channel zilingtest, uid 2.") {
+                  throw new Error("Current issue should surface the symptom-first intake summary.");
+                }
+                if (sections[0].items.includes("Issue symptom is black screen issue.")) {
+                  throw new Error("Current issue should hide a redundant symptom fact already covered by issue_understanding.");
+                }
+                if (sections[0].items.includes("Channel name is zilingtest.")) {
+                  throw new Error("Current issue should hide a redundant channel fact already covered by issue_understanding.");
+                }
+                if (sections[0].items.includes("Problematic uid is 2.")) {
+                  throw new Error("Current issue should hide a redundant uid fact already covered by issue_understanding.");
+                }
+                if (!sections[0].items.includes('Web SDK log for uid 2 says "[websdk] no capture video frame"')) {
+                  throw new Error("Current issue should keep non-redundant technical evidence after hiding intake duplicates.");
+                }
+              """
+            )
+        )
+
     def test_engineer_detail_shows_closed_investigation_thread_without_composer(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
