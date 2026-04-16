@@ -44,7 +44,10 @@ from backend.services.embedding_provider import (
 )
 from backend.services.customer_reply_composer import ensure_customer_reply_email_style
 from backend.services.emotion_reply import build_initial_ack
-from backend.services.engineer_agent import build_engineer_agent_brief
+from backend.services.engineer_agent import (
+    build_engineer_agent_brief,
+    normalize_engineer_agent_state,
+)
 from backend.services.engineer_cases import (
     apply_case_context_to_engineer_case,
     build_engineer_case_context,
@@ -1894,7 +1897,7 @@ def _resolve_engineer_case_payload(reference_id: str) -> dict[str, Any] | None:
         include_client_messages=True,
     )
     if case_payload is not None:
-        return case_payload
+        return _normalize_engineer_case_payload_for_read(case_payload)
 
     client_ticket = ticket_repository.get_ticket(normalized_reference)
     if client_ticket is None:
@@ -1917,8 +1920,49 @@ def _resolve_engineer_case_payload(reference_id: str) -> dict[str, Any] | None:
         )
     ]
     if len(open_cases) == 1:
-        return open_cases[0]
+        return _normalize_engineer_case_payload_for_read(open_cases[0])
     return None
+
+
+def _normalize_engineer_case_payload_for_read(case_payload: dict[str, Any]) -> dict[str, Any]:
+    normalized_payload = copy.deepcopy(case_payload)
+    handoff_packet = (
+        normalized_payload.get("engineer_handoff_packet")
+        if isinstance(normalized_payload.get("engineer_handoff_packet"), dict)
+        else None
+    )
+    raw_agent_state = (
+        normalized_payload.get("engineer_agent_state")
+        if isinstance(normalized_payload.get("engineer_agent_state"), dict)
+        else None
+    )
+    active_investigation = (
+        normalized_payload.get("active_investigation")
+        if isinstance(normalized_payload.get("active_investigation"), dict)
+        else None
+    )
+    ready_to_reply = (
+        str(active_investigation.get("state") or "").strip().lower() == "awaiting_confirmation"
+        if isinstance(active_investigation, dict)
+        else False
+    )
+    normalized_agent_state = normalize_engineer_agent_state(
+        raw_agent_state,
+        ticket=normalized_payload,
+        handoff_packet=handoff_packet,
+        now_value=str(normalized_payload.get("updated_at") or normalized_payload.get("created_at") or now_iso()),
+        ready_to_reply=ready_to_reply,
+    )
+    if isinstance(raw_agent_state, dict):
+        preserved_agent_state = copy.deepcopy(raw_agent_state)
+        preserved_agent_state["issue_understanding"] = normalized_agent_state.get("issue_understanding") or ""
+        preserved_agent_state["known_facts"] = copy.deepcopy(normalized_agent_state.get("known_facts") or [])
+        if not str(preserved_agent_state.get("last_refreshed_at") or "").strip():
+            preserved_agent_state["last_refreshed_at"] = normalized_agent_state.get("last_refreshed_at")
+        normalized_payload["engineer_agent_state"] = preserved_agent_state
+    else:
+        normalized_payload["engineer_agent_state"] = normalized_agent_state
+    return normalized_payload
 
 
 @app.get("/")

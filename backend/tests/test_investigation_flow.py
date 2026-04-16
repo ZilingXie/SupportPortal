@@ -1526,6 +1526,90 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(payload["token_usage"]["related_ticket_ids"], ["TK-LITE-100-1"])
         self.assertEqual(payload["token_usage"]["total_input_tokens"], 0)
 
+    def test_engineer_ticket_detail_lightweight_normalizes_persisted_locator_only_current_issue(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-LITE-ISSUE-100",
+            subject="Black screen issue",
+            status="investigating",
+            product="audio_video_calling",
+            client_intake_state={
+                "known_information": {
+                    "issue_symptom": "black screen issue",
+                    "channel_name": "zilingtest",
+                    "problematic_uid": "2",
+                }
+            },
+        )
+        engineer_case = {
+            "engineer_case_id": "TK-LITE-ISSUE-100-1",
+            "client_ticket_id": "TK-LITE-ISSUE-100",
+            "case_sequence": 1,
+            "title": "Lightweight issue summary ticket",
+            "status": "investigating",
+            "trigger_source": "support_query",
+            "trigger_reason": "rag_insufficient_evidence",
+            "opened_at": "2026-04-16T08:01:00+00:00",
+            "updated_at": "2026-04-16T08:01:00+00:00",
+            "closed_at": None,
+            "engineer_handoff_packet": {
+                "latest_customer_message": "channel name: zilingtest, uid 2",
+                "client_intake_state": {
+                    "known_information": {
+                        "issue_symptom": "black screen issue",
+                        "channel_name": "zilingtest",
+                        "problematic_uid": "2",
+                    }
+                },
+                "unresolved_reason": "rag_insufficient_evidence",
+            },
+            "engineer_agent_state": {
+                "phase": "gather_missing_inputs",
+                "issue_understanding": "channel name: zilingtest, uid 2",
+                "knowledge_summary": "Sid still needs the supporting technical evidence.",
+                "why_not_solved": "The current handoff summary is too weak.",
+                "goal": "Capture a symptom-first current issue summary.",
+                "known_facts": ["Customer reported: channel name: zilingtest, uid 2"],
+                "missing_information": ["Web SDK log around the join time"],
+                "next_request_for_engineer": "Please capture the Web SDK log around the join time.",
+                "resolution_hypothesis": "",
+                "ready_to_reply": False,
+                "last_refreshed_at": "2026-04-16T08:01:00+00:00",
+            },
+            "messages": [],
+            "active_investigation": {
+                "id": "TK-LITE-ISSUE-100-1",
+                "state": "active",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "support_query",
+                "opened_at": "2026-04-16T08:01:00+00:00",
+                "updated_at": "2026-04-16T08:01:00+00:00",
+                "messages": [],
+            },
+        }
+        client_ticket = self.repository.get_ticket("TK-LITE-ISSUE-100")
+        assert client_ticket is not None
+        client_ticket["active_engineer_case_id"] = "TK-LITE-ISSUE-100-1"
+        client_ticket["engineer_case_count"] = 1
+        self.repository.save_ticket(client_ticket, new_messages=[])
+        self.repository.save_engineer_case(engineer_case, new_messages=[])
+
+        detail = self.client.get("/api/engineer/tickets/TK-LITE-ISSUE-100-1?include_context=false")
+
+        self.assertEqual(detail.status_code, 200, detail.text)
+        payload = detail.json()["ticket"]
+        self.assertEqual(
+            payload["engineer_agent_state"]["issue_understanding"],
+            "Black screen issue reported for channel zilingtest, uid 2.",
+        )
+        self.assertEqual(
+            payload["engineer_agent_state"]["known_facts"],
+            [
+                "Issue symptom is black screen issue.",
+                "Channel name is zilingtest.",
+                "Problematic uid is 2.",
+            ],
+        )
+
     def test_repository_normalizes_legacy_waiting_for_engineer_status_to_investigating(self) -> None:
         ticket = self._seed_ticket(status="waiting_for_engineer")
         loaded = self.repository.get_ticket(str(ticket["ticket_id"]))
@@ -2004,6 +2088,59 @@ class InvestigationFlowTests(unittest.TestCase):
         )
 
         self.assertEqual(state["issue_understanding"], "channel name: zilingtest, uid 2")
+
+    def test_normalize_engineer_agent_state_upgrades_locator_only_summary_from_intake_symptom(self) -> None:
+        state = normalize_engineer_agent_state(
+            {
+                "phase": "gather_missing_inputs",
+                "issue_understanding": "channel name: zilingtest, uid 2",
+                "knowledge_summary": "Sid still needs a defensible symptom summary.",
+                "why_not_solved": "The current summary is too weak for a useful engineer handoff.",
+                "goal": "Capture a symptom-first current issue summary.",
+                "known_facts": ["Customer reported: channel name: zilingtest, uid 2"],
+                "missing_information": ["Web SDK log around the join time"],
+                "next_request_for_engineer": "Please capture the Web SDK log around the join time.",
+                "resolution_hypothesis": "",
+                "ready_to_reply": False,
+                "last_refreshed_at": "2026-04-16T08:00:00+00:00",
+            },
+            ticket={
+                "subject": "Black screen issue",
+                "active_investigation": {
+                    "draft_customer_reply": "",
+                },
+                "engineer_agent_state": {
+                    "issue_understanding": "channel name: zilingtest, uid 2",
+                    "known_facts": ["Customer reported: channel name: zilingtest, uid 2"],
+                },
+            },
+            handoff_packet={
+                "latest_customer_message": "channel name: zilingtest, uid 2",
+                "client_intake_state": {
+                    "known_information": {
+                        "issue_symptom": "black screen issue",
+                        "channel_name": "zilingtest",
+                        "problematic_uid": "2",
+                    }
+                },
+                "unresolved_reason": "rag_insufficient_evidence",
+            },
+            now_value="2026-04-16T08:00:00+00:00",
+            ready_to_reply=False,
+        )
+
+        self.assertEqual(
+            state["issue_understanding"],
+            "Black screen issue reported for channel zilingtest, uid 2.",
+        )
+        self.assertEqual(
+            state["known_facts"],
+            [
+                "Issue symptom is black screen issue.",
+                "Channel name is zilingtest.",
+                "Problematic uid is 2.",
+            ],
+        )
 
     def test_normalize_engineer_agent_state_filters_candidate_answer_like_known_facts(self) -> None:
         state = normalize_engineer_agent_state(

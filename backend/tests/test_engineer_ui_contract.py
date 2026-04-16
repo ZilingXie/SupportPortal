@@ -1884,6 +1884,52 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_engineer_detail_current_issue_renders_symptom_first_summary_from_payload(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                const sections = buildCaseBuddyOpeningRequestSections({
+                  status: "investigating",
+                  engineer_agent_state: {
+                    phase: "gather_missing_inputs",
+                    issue_understanding: "Black screen issue reported for channel zilingtest, uid 2.",
+                    knowledge_summary: "The handoff still needs the reported issue timestamp.",
+                    why_not_solved: "The current evidence is incomplete.",
+                    goal: "Collect the next missing technical detail.",
+                    known_facts: [
+                      "Issue symptom is black screen issue.",
+                      "Channel name is zilingtest.",
+                      "Problematic uid is 2.",
+                      'Web SDK log for uid 2 says "[websdk] no capture video frame"',
+                    ],
+                    missing_information: ["Issue timestamp"],
+                    next_request_for_engineer: "Confirm the reported issue timestamp.",
+                    resolution_hypothesis: "",
+                    ready_to_reply: false,
+                    last_refreshed_at: "2026-04-16T08:10:00+00:00",
+                  },
+                });
+
+                const html = renderCaseBuddyRequestSectionsHtml(sections);
+                if (!html.includes("Black screen issue reported for channel zilingtest, uid 2.")) {
+                  throw new Error("Engineer detail should render the upgraded symptom-first current-issue summary inside the Case Buddy block.");
+                }
+                if (html.includes("Issue symptom is black screen issue.")) {
+                  throw new Error("Engineer detail should not repeat a symptom fact already covered by the current-issue summary.");
+                }
+                if (html.includes("Channel name is zilingtest.")) {
+                  throw new Error("Engineer detail should not repeat a channel fact already covered by the current-issue summary.");
+                }
+                if (html.includes("Problematic uid is 2.")) {
+                  throw new Error("Engineer detail should not repeat a uid fact already covered by the current-issue summary.");
+                }
+                if (!html.includes('Web SDK log for uid 2 says &quot;[websdk] no capture video frame&quot;')) {
+                  throw new Error("Engineer detail should keep non-redundant technical evidence in the current-issue section.");
+                }
+              """
+            )
+        )
+
     def test_engineer_detail_shows_closed_investigation_thread_without_composer(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(

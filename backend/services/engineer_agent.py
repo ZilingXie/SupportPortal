@@ -182,6 +182,68 @@ def _normalize_search_text(value: Any) -> str:
     return re.sub(r"[^a-z0-9]+", " ", lowered).strip()
 
 
+def _locator_only_text_residue(value: Any, known_information: dict[str, str]) -> str:
+    normalized = _normalize_search_text(value)
+    if not normalized:
+        return ""
+
+    residue = f" {normalized} "
+    for key in ("channel_name", "problematic_uid", "issue_timestamp", "sid"):
+        known_value = _normalize_search_text(known_information.get(key))
+        if known_value:
+            residue = residue.replace(f" {known_value} ", " ")
+
+    residue = re.sub(
+        r"\b(customer|reported|report|channel|name|problematic|uid|issue|time|timestamp|around|sid|is|for|the|a|an|at|on|in|utc)\b",
+        " ",
+        residue,
+    )
+    residue = re.sub(r"\b\d+\b", " ", residue)
+    residue = re.sub(r"\s+", " ", residue).strip()
+    return residue
+
+
+def _is_locator_only_text(value: Any, known_information: dict[str, str]) -> bool:
+    return bool(_clean_text(value)) and not _locator_only_text_residue(value, known_information)
+
+
+def _should_prefer_intake_issue_understanding(
+    current_value: Any,
+    fallback_value: Any,
+    known_information: dict[str, str],
+    *,
+    latest_customer_message: Any = None,
+) -> bool:
+    if not _clean_text(fallback_value) or not _clean_text(known_information.get("issue_symptom")):
+        return False
+
+    current_text = _clean_text(current_value)
+    if not current_text:
+        return False
+    if _normalize_search_text(current_text) == _normalize_search_text(fallback_value):
+        return False
+    if not _is_locator_only_text(current_text, known_information):
+        return False
+
+    latest_customer_text = _clean_text(latest_customer_message)
+    return (
+        not latest_customer_text
+        or _normalize_search_text(current_text) == _normalize_search_text(latest_customer_text)
+    )
+
+
+def _should_prefer_intake_known_facts(
+    current_facts: list[str],
+    fallback_facts: list[str],
+    known_information: dict[str, str],
+) -> bool:
+    if not fallback_facts or not _clean_text(known_information.get("issue_symptom")):
+        return False
+    if not current_facts:
+        return False
+    return all(_is_locator_only_text(item, known_information) for item in current_facts)
+
+
 def _append_corpus_text(items: list[str], value: Any) -> None:
     text = _clean_text(value)
     if text:
@@ -1278,13 +1340,26 @@ def fallback_engineer_agent_state(
     packet = handoff_packet if isinstance(handoff_packet, dict) else {}
     existing = ticket.get("engineer_agent_state") if isinstance(ticket.get("engineer_agent_state"), dict) else {}
     intake_known_information = _handoff_client_intake_known_information(packet)
+    latest_customer_message = _clean_text(packet.get("latest_customer_message"))
+    existing_issue_understanding = _clean_text(existing.get("issue_understanding"))
+    intake_issue_understanding = _issue_understanding_from_intake_known_information(intake_known_information)
     issue_understanding = (
-        _clean_text(existing.get("issue_understanding"))
-        or _issue_understanding_from_intake_known_information(intake_known_information)
-        or _clean_text(packet.get("latest_customer_message"))
-        or _clean_text(ticket.get("subject"))
-        or "The engineer ticket needs more technical context."
+        intake_issue_understanding
+        if _should_prefer_intake_issue_understanding(
+            existing_issue_understanding,
+            intake_issue_understanding,
+            intake_known_information,
+            latest_customer_message=latest_customer_message,
+        )
+        else existing_issue_understanding
     )
+    if not issue_understanding:
+        issue_understanding = (
+            intake_issue_understanding
+            or latest_customer_message
+            or _clean_text(ticket.get("subject"))
+            or "The engineer ticket needs more technical context."
+        )
     rag_result = packet.get("rag_result") if isinstance(packet.get("rag_result"), dict) else {}
     knowledge_summary = (
         _clean_text(existing.get("knowledge_summary"))
@@ -1311,6 +1386,17 @@ def fallback_engineer_agent_state(
         _clean_text(existing.get("resolution_hypothesis"))
         or _clean_text(rag_result.get("candidate_answer"))
     )
+    existing_known_facts = _clean_known_facts(existing.get("known_facts"))
+    fallback_known_facts = _default_known_facts(ticket, packet)
+    known_facts = (
+        fallback_known_facts
+        if _should_prefer_intake_known_facts(
+            existing_known_facts,
+            fallback_known_facts,
+            intake_known_information,
+        )
+        else (existing_known_facts or fallback_known_facts)
+    )
 
     return {
         "phase": phase,
@@ -1318,7 +1404,7 @@ def fallback_engineer_agent_state(
         "knowledge_summary": knowledge_summary,
         "why_not_solved": why_not_solved,
         "goal": goal,
-        "known_facts": _clean_known_facts(existing.get("known_facts")) or _default_known_facts(ticket, packet),
+        "known_facts": known_facts,
         "missing_information": missing_information,
         "next_request_for_engineer": next_request,
         "resolution_hypothesis": resolution_hypothesis,
@@ -1345,15 +1431,25 @@ def normalize_engineer_agent_state(
     if not isinstance(value, dict):
         return fallback
 
+    intake_known_information = _handoff_client_intake_known_information(
+        handoff_packet if isinstance(handoff_packet, dict) else None
+    )
+    latest_customer_message = (
+        _clean_text((handoff_packet or {}).get("latest_customer_message"))
+        if isinstance(handoff_packet, dict)
+        else ""
+    )
+    current_issue_understanding = _clean_text(value.get("issue_understanding"))
+    current_known_facts = _clean_known_facts(value.get("known_facts"))
     merged = dict(fallback)
     merged.update(
         {
             "phase": _clean_text(value.get("phase")) or fallback["phase"],
-            "issue_understanding": _clean_text(value.get("issue_understanding")) or fallback["issue_understanding"],
+            "issue_understanding": current_issue_understanding or fallback["issue_understanding"],
             "knowledge_summary": _clean_text(value.get("knowledge_summary")) or fallback["knowledge_summary"],
             "why_not_solved": _clean_text(value.get("why_not_solved")) or fallback["why_not_solved"],
             "goal": _clean_text(value.get("goal")) or fallback["goal"],
-            "known_facts": _clean_known_facts(value.get("known_facts")) or fallback["known_facts"],
+            "known_facts": current_known_facts or fallback["known_facts"],
             "missing_information": _clean_list(value.get("missing_information")) or fallback["missing_information"],
             "next_request_for_engineer": _clean_text(value.get("next_request_for_engineer"))
             or fallback["next_request_for_engineer"],
@@ -1362,6 +1458,19 @@ def normalize_engineer_agent_state(
             "last_refreshed_at": _clean_text(value.get("last_refreshed_at")) or now_value,
         }
     )
+    if _should_prefer_intake_issue_understanding(
+        current_issue_understanding,
+        fallback["issue_understanding"],
+        intake_known_information,
+        latest_customer_message=latest_customer_message,
+    ):
+        merged["issue_understanding"] = fallback["issue_understanding"]
+    if _should_prefer_intake_known_facts(
+        current_known_facts,
+        list(fallback["known_facts"]),
+        intake_known_information,
+    ):
+        merged["known_facts"] = list(fallback["known_facts"])
     merged["reply_readiness"] = _normalize_reply_readiness(
         value.get("reply_readiness") if isinstance(value.get("reply_readiness"), dict) else None,
         ticket=ticket,
