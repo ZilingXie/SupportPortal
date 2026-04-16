@@ -26,8 +26,8 @@ class ClientTestRouteSmokeTests(unittest.TestCase):
     def test_clienttest_html_references_local_assets(self) -> None:
         html = Path("ui/clienttest-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260416-clienttest-height-rebalance-1", html)
-        self.assertIn("./app.js?v=20260416-clienttest-height-rebalance-1", html)
+        self.assertIn("./styles.css?v=20260416-clienttest-disable-textarea-resize-1", html)
+        self.assertIn("./app.js?v=20260416-clienttest-disable-textarea-resize-1", html)
 
 
 class ClientTestUiContractTests(unittest.TestCase):
@@ -205,11 +205,16 @@ class ClientTestUiContractTests(unittest.TestCase):
         self.assertIn("--new-ticket-composer-panel-height: 284px;", css)
         self.assertIn("--new-ticket-thread-panel-height: 344px;", css)
         self.assertIn("--new-ticket-composer-panel-height: 264px;", css)
-        self.assertIn(".new-ticket-textarea {\n  width: 100%;\n  min-height: 124px;\n  height: min(176px, 100%);", css)
+        self.assertIn(
+            ".new-ticket-textarea {\n  width: 100%;\n  min-height: 124px;\n  height: min(176px, 100%);",
+            css,
+        )
+        self.assertIn("  resize: none;\n}", css)
         self.assertIn(".new-ticket-textarea {\n    min-height: 116px;\n    height: min(168px, 100%);", css)
         self.assertIn(".clienttest-main-new-ticket {\n    padding: 18px 16px 0;\n  }", css)
         self.assertIn(".new-ticket-footer-spacer {\n    height: 24px;\n  }", css)
         self.assertIn(".new-ticket-textarea {\n    min-height: 104px;\n    height: min(152px, 100%);", css)
+        self.assertNotIn("resize: vertical;", css)
         self.assertNotIn("new-ticket-summary-card", css)
         self.assertNotIn("new-ticket-composer-footer", css)
         self.assertNotIn("new-ticket-product-group", css)
