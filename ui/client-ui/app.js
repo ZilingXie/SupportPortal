@@ -630,24 +630,16 @@ function abortAllPendingSubmissions() {
   }
 }
 
-function buildNewSessionWelcomeText(userName) {
-  const greetingName = String(userName || "").trim() || "there";
-  return `Hi ${greetingName}, I'm ${CLIENT_ASSISTANT_NAME}, Agora's intelligent support assistant. I'm here to help you with Agora-related technical issues. Before we begin, please select the product you need support with.`;
+function buildNewSessionHintText() {
+  return "Describe your issue. Sid will identify the product if needed.";
 }
 
-function renderNewSessionWelcomeBubble() {
-  const welcomeText = buildNewSessionWelcomeText(state.user?.name);
+function renderNewSessionHintCard() {
+  const hintText = buildNewSessionHintText();
   return `
-    <div class="empty-chat-welcome">
-      <article class="msg-row">
-        <div class="msg-column">
-          <div class="message-meta">
-            <span class="avatar assistant"><span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span></span>
-            <span class="message-author">${CLIENT_ASSISTANT_NAME}</span>
-          </div>
-          <div class="bubble assistant"><div>${escapeHtml(welcomeText)}</div></div>
-        </div>
-      </article>
+    <div class="empty-chat-hint" aria-live="polite">
+      <p class="empty-chat-hint-eyebrow">New Session</p>
+      <p class="empty-chat-hint-copy">${escapeHtml(hintText)}</p>
     </div>
   `;
 }
@@ -1384,9 +1376,6 @@ function updateTicketProduct(ticketId, product) {
   if (idx < 0) {
     return false;
   }
-  if (!isTicketEmpty(all[idx])) {
-    return false;
-  }
   all[idx].product = normalizeTicketProduct(product);
   all[idx].updatedAt = new Date().toISOString();
   saveAllTickets(all);
@@ -1603,52 +1592,6 @@ function handleHistoryRowKeydown(event) {
 
 function getStatusFilterOption(value) {
   return STATUS_FILTER_OPTIONS.find((option) => option.value === value) || STATUS_FILTER_OPTIONS[0];
-}
-
-function renderTicketProductSelector(ticket) {
-  const selectedOption = getProductOption(ticket?.product);
-  const triggerLabel = selectedOption?.label || "Select Product";
-  return `
-    <div class="filter-select product-select" data-product-select data-ticket-id="${escapeHtml(ticket.id)}">
-      <input id="ticket-product-${escapeHtml(ticket.id)}" type="hidden" value="${escapeHtml(selectedOption?.value || "")}" />
-      <button
-        class="filter-select-trigger"
-        data-product-select-trigger
-        type="button"
-        role="combobox"
-        aria-label="Select Product"
-        aria-controls="ticket-product-listbox"
-        aria-expanded="false"
-        aria-haspopup="listbox"
-      >
-        <span class="filter-select-trigger-label">${escapeHtml(triggerLabel)}</span>
-        <span class="filter-select-trigger-icon" aria-hidden="true">
-          <span class="material-symbols-outlined">expand_more</span>
-        </span>
-      </button>
-      <div class="filter-select-panel" data-product-select-panel hidden>
-        <div class="filter-select-options" id="ticket-product-listbox" role="listbox" aria-label="Product selector">
-          ${PRODUCT_OPTIONS.map((option, index) => {
-            const isSelected = option.value === selectedOption?.value;
-            return `
-              <button
-                class="filter-select-option ${isSelected ? "is-selected" : ""}"
-                data-product-select-option
-                data-value="${escapeHtml(option.value)}"
-                id="ticket-product-option-${index}"
-                type="button"
-                role="option"
-                aria-selected="${isSelected ? "true" : "false"}"
-              >
-                <span class="filter-select-option-copy">${escapeHtml(option.label)}</span>
-                <span class="filter-select-check material-symbols-outlined" aria-hidden="true">check</span>
-              </button>
-            `;
-          }).join("")}
-        </div>
-      </div>
-    </div>
-  `;
 }
 
 function renderStatusFilter() {
@@ -2104,8 +2047,7 @@ function buildChatTicketViewState(ticket) {
   const pendingSession = getPendingSession(ticket.id);
   const sending = isTicketAwaitingDurableReply(ticket);
   const isSubmitting = pendingSession?.phase === "submitting";
-  const requiresProductSelection = isTicketEmpty(ticket) && !normalizeTicketProduct(ticket.product);
-  const canCompose = !isSubmitting && ticket.status !== "resolved" && !requiresProductSelection;
+  const canCompose = !isSubmitting && ticket.status !== "resolved";
   const isEditing = Boolean(state.editingMessageId);
 
   if (isEditing && !renderableMessages.some((message) => message.id === state.editingMessageId)) {
@@ -2120,7 +2062,6 @@ function buildChatTicketViewState(ticket) {
     renderableMessages,
     sending,
     isSubmitting,
-    requiresProductSelection,
     canCompose,
     isEditing: Boolean(state.editingMessageId),
   };
@@ -2132,8 +2073,7 @@ function renderChatMessagesHtml(viewState) {
       viewState.renderableMessages.length === 0
         ? `
           <div class="empty-chat">
-            ${renderNewSessionWelcomeBubble()}
-            ${renderTicketProductSelector(viewState.ticket)}
+            ${renderNewSessionHintCard()}
           </div>
         `
         : viewState.renderableMessages
@@ -2174,9 +2114,6 @@ function renderChatMessagesHtml(viewState) {
 function renderChatComposerNoteHtml(viewState) {
   if (viewState.isEditing) {
     return `<div class="composer-note">Editing your last message. Press Enter to resend, Shift+Enter for newline.</div>`;
-  }
-  if (viewState.requiresProductSelection) {
-    return `<div class="composer-note">Select Product before sending the first message in this session.</div>`;
   }
   return "";
 }
@@ -2799,10 +2736,6 @@ async function handleSendMessage(text, options = {}) {
     return;
   }
   const normalizedProduct = normalizeTicketProduct(ticket.product);
-  if (isTicketEmpty(ticket) && !normalizedProduct) {
-    toast("Select a product before sending your first message.", "error");
-    return;
-  }
   const existingPendingSession = getPendingSession(ticketId);
   if (existingPendingSession?.phase === "submitting") {
     return;
@@ -2864,17 +2797,20 @@ async function handleSendMessage(text, options = {}) {
   render();
 
   try {
+    const requestBody = {
+      ticket_id: ticketId,
+      customer_id: state.user.id,
+      requester: state.user.name,
+      message: text,
+    };
+    if (normalizedProduct) {
+      requestBody.product = normalizedProduct;
+    }
     const response = await fetch("/api/tickets/query", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: abortController.signal,
-      body: JSON.stringify({
-        ticket_id: ticketId,
-        customer_id: state.user.id,
-        requester: state.user.name,
-        product: normalizedProduct,
-        message: text,
-      }),
+      body: JSON.stringify(requestBody),
     });
     if (!response.ok) {
       throw new Error(`Request failed with status ${response.status}`);
@@ -3050,7 +2986,6 @@ function bindAuthedEvents() {
       render();
     });
   });
-  bindTicketProductSelect();
   bindStatusFilter();
 
   const form = document.getElementById("chat-input-form");
@@ -3274,210 +3209,6 @@ function bindStatusFilter() {
       if (event.key === "Tab") {
         closePanel();
       }
-    });
-  });
-}
-
-function bindTicketProductSelect() {
-  appRoot.querySelectorAll("[data-product-select]").forEach((root) => {
-    const ticketId = String(root.getAttribute("data-ticket-id") || "").trim();
-    if (!ticketId) {
-      return;
-    }
-
-    const trigger = root.querySelector("[data-product-select-trigger]");
-    const panel = root.querySelector("[data-product-select-panel]");
-    const hiddenInput = root.querySelector("input[type='hidden']");
-    const options = Array.from(root.querySelectorAll("[data-product-select-option]"));
-    const chatRoot = typeof root.closest === "function" ? root.closest(".chat-root") : null;
-
-    if (!trigger || !panel || options.length === 0) {
-      return;
-    }
-
-    let closeTimer = null;
-
-    const clearCloseTimer = () => {
-      if (closeTimer !== null) {
-        clearTimeout(closeTimer);
-        closeTimer = null;
-      }
-    };
-
-    const isOpen = () => root.classList.contains("is-open");
-
-    const selectedValue = () => normalizeTicketProduct(getTicketById(ticketId)?.product);
-
-    const setActiveDescendant = (option) => {
-      if (option?.id) {
-        trigger.setAttribute("aria-activedescendant", option.id);
-        return;
-      }
-      trigger.removeAttribute("aria-activedescendant");
-    };
-
-    const getSelectedOption = () =>
-      options.find((option) => option.getAttribute("data-value") === selectedValue()) || options[0];
-
-    const openPanel = (focusTarget = "selected") => {
-      clearCloseTimer();
-      root.classList.add("is-open");
-      chatRoot?.classList?.add("has-open-product-select");
-      panel.hidden = false;
-      trigger.setAttribute("aria-expanded", "true");
-
-      if (focusTarget === "trigger") {
-        setActiveDescendant(getSelectedOption());
-        return;
-      }
-
-      const target =
-        focusTarget === "first"
-          ? options[0]
-          : focusTarget === "last"
-          ? options[options.length - 1]
-          : getSelectedOption();
-
-      if (target) {
-        setActiveDescendant(target);
-        target.focus();
-      }
-    };
-
-    const closePanel = ({ restoreFocus = false } = {}) => {
-      clearCloseTimer();
-      root.classList.remove("is-open");
-      chatRoot?.classList?.remove("has-open-product-select");
-      panel.hidden = true;
-      trigger.setAttribute("aria-expanded", "false");
-      setActiveDescendant(null);
-      if (restoreFocus) {
-        trigger.focus();
-      }
-    };
-
-    const moveFocus = (currentOption, direction) => {
-      const currentIndex = options.indexOf(currentOption);
-      const nextIndex =
-        currentIndex === -1
-          ? direction > 0
-            ? 0
-            : options.length - 1
-          : (currentIndex + direction + options.length) % options.length;
-      const nextOption = options[nextIndex];
-      if (!nextOption) {
-        return;
-      }
-      setActiveDescendant(nextOption);
-      nextOption.focus();
-    };
-
-    const selectOption = (value) => {
-      const nextValue = normalizeTicketProduct(value);
-      if (!updateTicketProduct(ticketId, nextValue)) {
-        closePanel({ restoreFocus: true });
-        return;
-      }
-      if (hiddenInput) {
-        hiddenInput.value = nextValue || "";
-      }
-      closePanel({ restoreFocus: true });
-      render();
-    };
-
-    trigger.addEventListener("click", () => {
-      if (isOpen()) {
-        closePanel();
-        return;
-      }
-      openPanel("trigger");
-    });
-
-    trigger.addEventListener("keydown", (event) => {
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        openPanel("selected");
-        return;
-      }
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        openPanel("last");
-        return;
-      }
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        if (isOpen()) {
-          closePanel();
-        } else {
-          openPanel("selected");
-        }
-        return;
-      }
-      if (event.key === "Escape" && isOpen()) {
-        event.preventDefault();
-        closePanel();
-      }
-    });
-
-    root.addEventListener("focusin", () => {
-      clearCloseTimer();
-    });
-
-    root.addEventListener("focusout", (event) => {
-      const nextTarget = event.relatedTarget;
-      if (nextTarget instanceof Node && root.contains(nextTarget)) {
-        return;
-      }
-      clearCloseTimer();
-      closeTimer = setTimeout(() => {
-        closePanel();
-      }, 120);
-    });
-
-    options.forEach((option) => {
-      option.addEventListener("focus", () => {
-        setActiveDescendant(option);
-      });
-
-      option.addEventListener("click", () => {
-        selectOption(option.getAttribute("data-value") || "");
-      });
-
-      option.addEventListener("keydown", (event) => {
-        if (event.key === "ArrowDown") {
-          event.preventDefault();
-          moveFocus(option, 1);
-          return;
-        }
-        if (event.key === "ArrowUp") {
-          event.preventDefault();
-          moveFocus(option, -1);
-          return;
-        }
-        if (event.key === "Home") {
-          event.preventDefault();
-          moveFocus(options[options.length - 1], 1);
-          return;
-        }
-        if (event.key === "End") {
-          event.preventDefault();
-          moveFocus(options[0], -1);
-          return;
-        }
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          selectOption(option.getAttribute("data-value") || "");
-          return;
-        }
-        if (event.key === "Escape") {
-          event.preventDefault();
-          closePanel({ restoreFocus: true });
-          return;
-        }
-        if (event.key === "Tab") {
-          closePanel();
-        }
-      });
     });
   });
 }

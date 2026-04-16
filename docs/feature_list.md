@@ -17,7 +17,7 @@
 - 系统会用 RAG 自动答复技术问题。
 - 证据不足时会转工程师处理。
 - 查询扩展会用词典、LLM 和 PRF 优化技术检索。
-- 新会话会先选择产品，并按产品加载对应的 support prompt。
+- 系统会自动识别 RTC 或 Cloud Recording，并在不确定时向客户确认后加载对应的 support prompt。
 - 排查型问题会先向客户补齐必要信息，再自动创建工程师工单。
 - 客户工单处理支持 main agent 调度 route、RAG 和 review 子 agent。
 - Client 对话支持同 ticket 打断重发，并允许不同 ticket 并发等待 AI 回复。
@@ -78,7 +78,7 @@
 - 系统会输出 benchmark 分层诊断与失败归因。
 - 证据不足时会转工程师处理。
 - 系统已具备本地 benchmark 评测链路。
-- 新会话会先选择产品，并按产品加载对应的 support prompt。
+- 系统会自动识别 RTC 或 Cloud Recording，并在不确定时向客户确认后加载对应的 support prompt。
 - 排查型问题会先向客户补齐必要信息，再自动创建工程师工单。
 - 客户工单处理支持 main agent 调度 route、RAG 和 review 子 agent。
 - Dashboard 的 ticket detail 可在单条 RAG 回复下展开检索计划、执行轮次和最终证据。

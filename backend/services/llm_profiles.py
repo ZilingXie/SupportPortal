@@ -10,6 +10,7 @@ OPENAI_CHAT_API = "openai_chat"
 SILICONFLOW_CHAT_API = "siliconflow_openai_compatible_chat"
 
 INTENT_ROUTER_SCENARIO = "intent_router"
+PRODUCT_SELECTION_SCENARIO = "product_selection"
 WEB_SEARCH_SCENARIO = "web_search_non_technical"
 CLIENT_ACK_SCENARIO = "client_ack"
 TICKET_TITLE_SCENARIO = "ticket_title"
@@ -224,6 +225,18 @@ def resolve_model_profile(
             reasoning_effort=_first_env_text("ROUTE_AGENT_ROUTER_REASONING_EFFORT", "INTENT_ROUTER_REASONING_EFFORT") or "low",
             temperature=_safe_float_env_any(("ROUTE_AGENT_ROUTER_TEMPERATURE", "INTENT_ROUTER_TEMPERATURE"), 0.3),
             timeout_seconds=_safe_positive_float_env_any(("ROUTE_AGENT_ROUTER_TIMEOUT_SECONDS", "INTENT_ROUTER_TIMEOUT_SECONDS"), 8.0),
+            max_retries=1,
+        )
+    if scenario == PRODUCT_SELECTION_SCENARIO:
+        return ModelProfile(
+            scenario=scenario,
+            provider="openai",
+            model=_first_env_text("PRODUCT_AGENT_MODEL") or "gpt-5.4-mini",
+            api_mode=OPENAI_RESPONSES_API,
+            api_key=_openai_api_key(),
+            reasoning_effort=_first_env_text("PRODUCT_AGENT_REASONING_EFFORT") or "low",
+            temperature=_safe_float_env("PRODUCT_AGENT_TEMPERATURE", 0.2),
+            timeout_seconds=_safe_positive_float_env("PRODUCT_AGENT_TIMEOUT_SECONDS", 8.0),
             max_retries=1,
         )
     if scenario == WEB_SEARCH_SCENARIO:

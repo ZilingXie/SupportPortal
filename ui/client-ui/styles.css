@@ -1529,19 +1529,11 @@ html.material-symbols-pending .material-symbols-outlined {
   padding-top: 18px;
 }
 
-.chat-root.has-open-product-select {
-  overflow: visible;
-}
-
 .chat-main {
   flex: 1;
   min-height: 0;
   overflow: auto;
   padding: 24px 0;
-}
-
-.chat-root.has-open-product-select .chat-main {
-  overflow: visible;
 }
 
 .message-list {
@@ -1585,24 +1577,33 @@ html.material-symbols-pending .material-symbols-outlined {
   box-shadow: var(--shadow-soft);
 }
 
-.empty-chat-welcome {
-  width: min(100%, 620px);
+.empty-chat-hint {
+  width: min(100%, 520px);
   margin: 0 auto;
+  padding: 24px 26px;
+  border: 1px solid rgba(0, 100, 147, 0.12);
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(234, 244, 255, 0.86), rgba(255, 255, 255, 0.92)),
+    rgba(255, 255, 255, 0.92);
+  box-shadow: 0 16px 34px rgba(52, 61, 150, 0.08);
   text-align: left;
 }
 
-.empty-chat-welcome .msg-row {
-  justify-content: center;
+.empty-chat-hint-eyebrow {
+  margin: 0 0 8px;
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
-.empty-chat-welcome .msg-column {
-  width: 100%;
-  max-width: none;
-}
-
-.product-select {
-  width: min(100%, 620px);
-  margin: 20px auto 0;
+.empty-chat-hint-copy {
+  margin: 0;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.65;
 }
 
 .msg-row {

@@ -23,6 +23,11 @@ from backend.services.prompts.engineer_investigation_reply import (
     build_engineer_investigation_reply_system_prompt,
     build_engineer_investigation_reply_user_prompt,
 )
+from backend.services.prompts.product_selection import (
+    PRODUCT_SELECTION_PROMPT_VERSION,
+    build_product_selection_system_prompt,
+    build_product_selection_user_prompt,
+)
 from backend.services.prompts.rag_agent_planner import (
     build_rag_agent_planner_system_prompt,
     build_rag_agent_planner_user_prompt,
@@ -214,6 +219,30 @@ class PromptModuleTests(unittest.TestCase):
         self.assertIn("## Ticket Context", user_prompt)
         self.assertIn("## Query Understanding Prior", user_prompt)
         self.assertIn("error 109 meaning ios", user_prompt)
+
+    def test_product_selection_prompt_is_sectioned_and_json_only(self) -> None:
+        system_prompt = build_product_selection_system_prompt()
+        user_prompt = build_product_selection_user_prompt(
+            latest_customer_message="We call acquire, get the sid, and then no recording file is generated.",
+            ticket_subject="recording file missing",
+            ticket_context=[{"role": "customer", "content": "No recording file is generated."}],
+            current_product=None,
+            awaiting_confirmation=False,
+            allowed_products=[
+                {"value": "audio_video_calling", "label": "Audio/Video Calling"},
+                {"value": "cloud_recording", "label": "Cloud Recording"},
+            ],
+        )
+
+        self.assertEqual(PRODUCT_SELECTION_PROMPT_VERSION, "product-selection-v1")
+        self.assertIn("## Role", system_prompt)
+        self.assertIn("You only classify the product.", system_prompt)
+        self.assertIn('"unknown"', system_prompt)
+        self.assertIn('Return JSON only with keys "product", "confidence", "reason", and "matched_signals".', system_prompt)
+        self.assertIn("## Latest Customer Message", user_prompt)
+        self.assertIn("## Recent Ticket Context", user_prompt)
+        self.assertIn("## Allowed Products", user_prompt)
+        self.assertIn("sid", user_prompt)
 
     def test_rag_context_compression_prompt_is_sectioned_and_json_only(self) -> None:
         system_prompt = build_rag_context_compression_system_prompt()

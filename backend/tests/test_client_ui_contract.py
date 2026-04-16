@@ -139,8 +139,8 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
         self.assertIn("<title>Sid - AI Technical Support</title>", html)
 
-        self.assertIn("./styles.css?v=20260416-client-interrupt-concurrent-send-1", html)
-        self.assertIn('./app.js?v=20260416-client-interrupt-concurrent-send-1', html)
+        self.assertIn("./styles.css?v=20260416-client-ai-product-selection-1", html)
+        self.assertIn('./app.js?v=20260416-client-ai-product-selection-1', html)
         self.assertNotIn("AI-SOLVING", app_source)
         self.assertIn("AI Technical Support", app_source)
         self.assertNotIn(">Technical Support<", app_source)
@@ -192,6 +192,12 @@ class ClientUiContractTests(unittest.TestCase):
         app_source = Path("ui/client-ui/app.js").read_text(encoding="utf-8")
 
         self.assertIn("requester: state.user.name", app_source)
+
+    def test_client_query_payload_only_includes_product_when_known(self) -> None:
+        app_source = Path("ui/client-ui/app.js").read_text(encoding="utf-8")
+
+        self.assertIn("if (normalizedProduct) {", app_source)
+        self.assertIn("requestBody.product = normalizedProduct;", app_source)
 
     def test_client_login_uses_zac_credentials_and_identity(self) -> None:
         self.run_client_app_script(
@@ -443,192 +449,7 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
-    def test_client_new_session_requires_product_selection_and_locks_after_first_message(self) -> None:
-        self.run_client_app_script(
-            textwrap.dedent(
-                """
-                state.user = { id: "user-1", name: "Admin", email: "admin" };
-                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
-
-                const draft = getOrCreateDraftTicket(state.user.id);
-                state.view = "chat-ticket";
-                state.activeTicketId = draft.id;
-
-                const initialHtml = renderChatTicket();
-                if (!initialHtml.includes("Select Product")) {
-                  throw new Error("Empty draft session should prompt for product selection.");
-                }
-                if (!initialHtml.includes("Audio/Video Calling")) {
-                  throw new Error("Product selector should offer Audio/Video Calling.");
-                }
-                if (!initialHtml.includes("Cloud Recording")) {
-                  throw new Error("Product selector should offer Cloud Recording.");
-                }
-                if (!/id="chat-input"[^>]*disabled/.test(initialHtml)) {
-                  throw new Error("Composer should stay disabled until a product is selected.");
-                }
-
-                updateTicketProduct(draft.id, "audio_video_calling");
-                const selectedDraft = getTicketById(draft.id);
-                if (!selectedDraft || selectedDraft.product !== "audio_video_calling") {
-                  throw new Error("Selecting a product should persist on the local draft.");
-                }
-
-                const selectedHtml = renderChatTicket();
-                if (/id="chat-input"[^>]*disabled/.test(selectedHtml)) {
-                  throw new Error("Composer should unlock once a product is selected.");
-                }
-                if (!renderContextBar().includes("Audio/Video Calling")) {
-                  throw new Error("Context bar should surface the selected product.");
-                }
-
-                saveTicketMessages(draft.id, [
-                  {
-                    id: "msg-1",
-                    role: "user",
-                    content: "How do I join a channel?",
-                    createdAt: new Date().toISOString(),
-                  },
-                ]);
-                updateTicketStatus(draft.id, "communicating");
-                updateTicketProduct(draft.id, "cloud_recording");
-
-                const lockedDraft = getTicketById(draft.id);
-                if (!lockedDraft || lockedDraft.product !== "audio_video_calling") {
-                  throw new Error("Session product should lock after the first customer message.");
-                }
-              """
-            )
-        )
-
-    def test_client_product_select_toggles_chat_overlay_class_when_open(self) -> None:
-        self.run_client_app_script(
-            textwrap.dedent(
-                """
-                state.user = { id: "user-1", name: "Admin", email: "admin" };
-                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
-
-                const draft = getOrCreateDraftTicket(state.user.id);
-                state.view = "chat-ticket";
-                state.activeTicketId = draft.id;
-
-                const makeClassList = () => {
-                  const values = new Set();
-                  return {
-                    add(...tokens) {
-                      tokens.forEach((token) => values.add(token));
-                    },
-                    remove(...tokens) {
-                      tokens.forEach((token) => values.delete(token));
-                    },
-                    contains(token) {
-                      return values.has(token);
-                    },
-                  };
-                };
-
-                const triggerListeners = {};
-                const optionListeners = {};
-                const rootListeners = {};
-                const triggerAttrs = {};
-                const hiddenInput = { value: "" };
-                const chatRoot = { classList: makeClassList() };
-                const panel = { hidden: true };
-                const option = {
-                  id: "ticket-product-option-0",
-                  focus() {},
-                  getAttribute(name) {
-                    return name === "data-value" ? "audio_video_calling" : "";
-                  },
-                  addEventListener(type, handler) {
-                    optionListeners[type] = handler;
-                  },
-                };
-                const trigger = {
-                  focus() {},
-                  setAttribute(name, value) {
-                    triggerAttrs[name] = value;
-                  },
-                  removeAttribute(name) {
-                    delete triggerAttrs[name];
-                  },
-                  addEventListener(type, handler) {
-                    triggerListeners[type] = handler;
-                  },
-                };
-                const root = {
-                  classList: makeClassList(),
-                  getAttribute(name) {
-                    return name === "data-ticket-id" ? draft.id : "";
-                  },
-                  querySelector(selector) {
-                    if (selector === "[data-product-select-trigger]") return trigger;
-                    if (selector === "[data-product-select-panel]") return panel;
-                    if (selector === "input[type='hidden']") return hiddenInput;
-                    return null;
-                  },
-                  querySelectorAll(selector) {
-                    if (selector === "[data-product-select-option]") return [option];
-                    return [];
-                  },
-                  addEventListener(type, handler) {
-                    rootListeners[type] = handler;
-                  },
-                  closest(selector) {
-                    return selector === ".chat-root" ? chatRoot : null;
-                  },
-                  contains() {
-                    return false;
-                  },
-                };
-
-                appRoot.querySelectorAll = (selector) => {
-                  if (selector === "[data-product-select]") {
-                    return [root];
-                  }
-                  return [];
-                };
-
-                bindTicketProductSelect();
-                if (typeof triggerListeners.click !== "function") {
-                  throw new Error("Expected product-select trigger click handler to be bound.");
-                }
-
-                triggerListeners.click();
-                if (!root.classList.contains("is-open")) {
-                  throw new Error("Opening the product select should mark the root as open.");
-                }
-                if (panel.hidden) {
-                  throw new Error("Opening the product select should unhide the panel.");
-                }
-                if (!chatRoot.classList.contains("has-open-product-select")) {
-                  throw new Error("Opening the product select should raise the chat overlay class.");
-                }
-
-                triggerListeners.click();
-                if (root.classList.contains("is-open")) {
-                  throw new Error("Closing the product select should clear the open state.");
-                }
-                if (!panel.hidden) {
-                  throw new Error("Closing the product select should hide the panel.");
-                }
-                if (chatRoot.classList.contains("has-open-product-select")) {
-                  throw new Error("Closing the product select should remove the chat overlay class.");
-                }
-              """
-            )
-        )
-
-    def test_client_product_select_overlay_css_allows_dropdown_to_escape_chat_main(self) -> None:
-        css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
-
-        self.assertIn(".chat-root.has-open-product-select {\n  overflow: visible;", css)
-        self.assertIn(".chat-root.has-open-product-select .chat-main {\n  overflow: visible;", css)
-        self.assertIn(".filter-select.is-open {\n  z-index:", css)
-        self.assertIn(".filter-select-panel {\n  position: absolute;", css)
-        self.assertIn("z-index:", css)
-
-    def test_client_new_session_renders_transient_welcome_bubble_without_mutating_ticket_messages(self) -> None:
+    def test_client_new_session_renders_light_hint_and_keeps_composer_enabled(self) -> None:
         self.run_client_app_script(
             textwrap.dedent(
                 """
@@ -638,67 +459,39 @@ class ClientUiContractTests(unittest.TestCase):
                 const draft = getOrCreateDraftTicket(state.user.id);
                 state.view = "chat-ticket";
                 state.activeTicketId = draft.id;
-                const personalizedGreeting = "Hi Zac";
-                const sidIntro = "I&#39;m Sid, Agora&#39;s intelligent support assistant.";
-                const helpPrompt = "I&#39;m here to help you with Agora-related technical issues. Before we begin, please select the product you need support with.";
-                const alternateGreeting = "Hi Taylor";
 
-                const initialHtml = renderChatTicket();
-                if (!initialHtml.includes(personalizedGreeting)) {
-                  throw new Error("Empty draft session should render the personalized welcome bubble.");
+                const html = renderChatTicket();
+                if (!html.includes("Describe your issue. Sid will identify the product if needed.")) {
+                  throw new Error("Empty draft session should render the lightweight AI product-identification hint.");
                 }
-                if (!initialHtml.includes(sidIntro)) {
-                  throw new Error("Empty draft session should introduce Sid in the welcome bubble.");
+                if (html.includes("Select Product")) {
+                  throw new Error("Empty draft session should no longer render the product selector.");
                 }
-                if (!initialHtml.includes(helpPrompt)) {
-                  throw new Error("Empty draft session should retain the product selection prompt.");
+                if (html.includes("Hi Zac")) {
+                  throw new Error("Empty draft session should no longer render the welcome email bubble.");
                 }
-                if (initialHtml.includes(alternateGreeting)) {
-                  throw new Error("Welcome bubble should use the current signed-in user's name, not a hard-coded greeting.");
+                if (/id="chat-input"[^>]*disabled/.test(html)) {
+                  throw new Error("Composer should stay enabled without a preselected product.");
                 }
-                if (initialHtml.includes('<div class="bot-mark">')) {
-                  throw new Error("Empty draft session should not render the removed hero icon.");
-                }
-                if (initialHtml.includes("<h3>Concierge AI</h3>")) {
-                  throw new Error("Empty draft session should not render the removed hero title.");
-                }
-                if (initialHtml.includes("Describe your technical issue and Concierge AI will start with the most likely next step.")) {
-                  throw new Error("Empty draft session should not render the removed hero description.");
-                }
-                if (!initialHtml.includes('class="message-author">Sid</span>')) {
-                  throw new Error("Welcome bubble should still use the assistant identity.");
-                }
-                if (initialHtml.includes('<span class="ticket-product-kicker">Select Product</span>')) {
-                  throw new Error("Empty draft session should not render the removed product kicker block.");
-                }
-                if (initialHtml.includes("Choose the product for this session.")) {
-                  throw new Error("Empty draft session should not render the removed product title copy.");
-                }
-                if (initialHtml.includes("We use this product scope to load the matching support prompt before your first question.")) {
-                  throw new Error("Empty draft session should not render the removed product description copy.");
-                }
-                if (!initialHtml.includes('class="filter-select product-select"')) {
-                  throw new Error("Empty draft session should render the product selector directly below the welcome bubble.");
-                }
-
-                state.user = { id: "user-2", name: "Taylor", email: "taylor@example.com" };
-                const secondDraft = getOrCreateDraftTicket(state.user.id);
-                state.activeTicketId = secondDraft.id;
-                const secondHtml = renderChatTicket();
-                if (!secondHtml.includes(alternateGreeting) || !secondHtml.includes(sidIntro) || !secondHtml.includes(helpPrompt)) {
-                  throw new Error("Welcome bubble should refresh to match the current signed-in user's display name.");
-                }
-                if (secondHtml.includes(personalizedGreeting)) {
-                  throw new Error("Welcome bubble should not keep the previous user's greeting.");
-                }
-
-                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
-                state.activeTicketId = draft.id;
 
                 const draftAfterRender = getTicketById(draft.id);
                 if (!draftAfterRender || (draftAfterRender.messages || []).length !== 0) {
-                  throw new Error("Rendering the welcome bubble must not append durable ticket messages.");
+                  throw new Error("Rendering the lightweight hint must not append durable ticket messages.");
                 }
+              """
+            )
+        )
+
+    def test_client_empty_draft_hint_survives_backend_sync_without_creating_messages(self) -> None:
+        self.run_client_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const draft = getOrCreateDraftTicket(state.user.id);
+                state.view = "chat-ticket";
+                state.activeTicketId = draft.id;
 
                 fetch = async () => ({
                   ok: true,
@@ -706,20 +499,32 @@ class ClientUiContractTests(unittest.TestCase):
                     tickets: [],
                   }),
                 });
+
                 await syncTicketsFromBackend({ silent: true });
 
-                const syncedHtml = renderChatTicket();
-                if (!syncedHtml.includes(personalizedGreeting) || !syncedHtml.includes(sidIntro) || !syncedHtml.includes(helpPrompt)) {
-                  throw new Error("Backend sync should not remove the personalized transient welcome bubble from an empty draft.");
+                const html = renderChatTicket();
+                if (!html.includes("Describe your issue. Sid will identify the product if needed.")) {
+                  throw new Error("Backend sync should preserve the lightweight empty-session hint.");
                 }
-
+                if (html.includes('class="message-author">Sid</span>')) {
+                  throw new Error("Empty-session hint should not render as a durable assistant message.");
+                }
                 const syncedDraft = getTicketById(draft.id);
                 if (!syncedDraft || (syncedDraft.messages || []).length !== 0) {
-                  throw new Error("Backend sync should not turn the welcome bubble into a durable assistant message.");
+                  throw new Error("Backend sync should not turn the empty-session hint into a durable message.");
                 }
               """
             )
         )
+
+    def test_client_empty_state_css_uses_hint_card_not_product_overlay(self) -> None:
+        css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn(".empty-chat-hint {", css)
+        self.assertIn(".empty-chat-hint-eyebrow {", css)
+        self.assertIn(".empty-chat-hint-copy {", css)
+        self.assertNotIn(".chat-root.has-open-product-select {", css)
+        self.assertNotIn(".product-select {", css)
 
     def test_client_public_assistant_messages_render_sid_identity(self) -> None:
         self.run_client_app_script(
@@ -755,96 +560,6 @@ class ClientUiContractTests(unittest.TestCase):
                 }
                 if (html.includes('class="message-author">Concierge AI</span>')) {
                   throw new Error("Public assistant replies should no longer render Concierge AI as the message author.");
-                }
-              """
-            )
-        )
-
-    def test_client_new_session_hides_transient_welcome_bubble_after_first_user_message(self) -> None:
-        self.run_client_app_script(
-            textwrap.dedent(
-                """
-                state.user = { id: "user-1", name: "Admin", email: "admin" };
-                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
-
-                const draft = getOrCreateDraftTicket(state.user.id);
-                state.view = "chat-ticket";
-                state.activeTicketId = draft.id;
-
-                updateTicketProduct(draft.id, "audio_video_calling");
-                saveTicketMessages(draft.id, [
-                  {
-                    id: "msg-1",
-                    role: "user",
-                    content: "How do I join a channel?",
-                    createdAt: new Date().toISOString(),
-                  },
-                ]);
-                updateTicketStatus(draft.id, "communicating");
-
-                const html = renderChatTicket();
-                if (html.includes("Hi Zac")) {
-                  throw new Error("Welcome bubble should disappear after the first real user message.");
-                }
-              """
-            )
-        )
-
-    def test_client_new_session_welcome_falls_back_to_hi_there_when_user_name_missing(self) -> None:
-        self.run_client_app_script(
-            textwrap.dedent(
-                """
-                state.user = { id: "user-1", name: "", email: "zac@example.com" };
-                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
-
-                const draft = getOrCreateDraftTicket(state.user.id);
-                state.view = "chat-ticket";
-                state.activeTicketId = draft.id;
-
-                const html = renderChatTicket();
-                if (!html.includes("Hi there")) {
-                  throw new Error("Welcome bubble should fall back to 'Hi there' when the user name is missing.");
-                }
-                if (!html.includes("I&#39;m Sid, Agora&#39;s intelligent support assistant.")) {
-                  throw new Error("Fallback welcome should still introduce Sid.");
-                }
-                if (html.includes("Hi undefined") || html.includes("Hi null")) {
-                  throw new Error("Welcome bubble should never render an undefined or null user name.");
-                }
-              """
-            )
-        )
-
-    def test_client_sync_preserves_local_empty_draft_product_selection_until_first_send(self) -> None:
-        self.run_client_app_script(
-            textwrap.dedent(
-                """
-                state.user = { id: "user-1", name: "Admin", email: "admin" };
-                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
-
-                const draft = getOrCreateDraftTicket(state.user.id);
-                updateTicketProduct(draft.id, "cloud_recording");
-
-                fetch = async () => ({
-                  ok: true,
-                  json: async () => ({
-                    tickets: [],
-                  }),
-                });
-
-                await syncTicketsFromBackend({ silent: true });
-
-                const syncedDraft = getTicketById(draft.id);
-                if (!syncedDraft) {
-                  throw new Error("Local empty draft should survive backend sync before first send.");
-                }
-                if (syncedDraft.product !== "cloud_recording") {
-                  throw new Error("Backend sync should preserve local draft product selection.");
-                }
-
-                const historyHtml = renderHistoryRow(syncedDraft, { compact: false });
-                if (!historyHtml.includes("Cloud Recording")) {
-                  throw new Error("Session history metadata should display the selected product.");
                 }
               """
             )

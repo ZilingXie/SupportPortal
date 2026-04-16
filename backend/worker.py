@@ -47,6 +47,7 @@ from backend.services.client_ticket_agent_runtime import (
     execute_client_ticket_agent_runtime,
     resolve_next_ticket_status,
 )
+from backend.services.product_selection import resolve_support_product_context
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
 from backend.services.rag_service_client import (
     RagServiceClient,
@@ -555,38 +556,72 @@ def _orchestrate_worker_support_message(
     ticket_context: list[dict[str, str]],
     message_created_at: str = "",
     product: str | None = None,
+    product_selection_state: dict[str, object] | None = None,
     client_intake_state: dict[str, object] | None = None,
     latest_assistant_message: dict[str, Any] | None = None,
     current_ticket_status: str | None = None,
 ) -> tuple[TicketExecutionResult, dict[str, Any]]:
+    product_context = resolve_support_product_context(
+        message=customer_message,
+        ticket_subject=ticket_subject,
+        ticket_context=ticket_context,
+        product=product,
+        product_selection_state=product_selection_state,
+        latest_assistant_message=latest_assistant_message,
+        current_ticket_status=current_ticket_status,
+        requester=requester,
+        customer_id=customer_id,
+        message_created_at=message_created_at,
+        route_agent=decide_support_route,
+    )
+    effective_message = str(product_context.effective_message or customer_message).strip() or customer_message
+    effective_product = product_context.product if product_context.product is not None else product
+    effective_client_intake_state = None if product_context.product_changed else client_intake_state
+    diagnostics_context = {
+        "resolved_product": effective_product,
+        "product_selection_state": (
+            dict(product_context.product_selection_state)
+            if isinstance(product_context.product_selection_state, dict)
+            else None
+        ),
+        "product_changed": bool(product_context.product_changed),
+    }
+    if product_context.preflight_execution is not None:
+        return product_context.preflight_execution, {
+            "parallel_mode": "main_agent",
+            **diagnostics_context,
+        }
     if OPTIMISTIC_PARALLEL_ROUTE_ENABLED:
-        return _execute_parallel_ticket_query(
-            customer_message,
+        execution, diagnostics = _execute_parallel_ticket_query(
+            effective_message,
             ticket_id=ticket_id,
             customer_id=customer_id,
             requester=requester,
             ticket_subject=ticket_subject,
             ticket_context=ticket_context,
             message_created_at=message_created_at,
-            product=product,
-            client_intake_state=client_intake_state,
+            product=effective_product,
+            client_intake_state=effective_client_intake_state,
             latest_assistant_message=latest_assistant_message,
             current_ticket_status=current_ticket_status,
         )
+        diagnostics.update(diagnostics_context)
+        return execution, diagnostics
     execution, diagnostics = _execute_agent_runtime_ticket_query(
-        customer_message,
+        effective_message,
         ticket_id=ticket_id,
         customer_id=customer_id,
         requester=requester,
         ticket_subject=ticket_subject,
         ticket_context=ticket_context,
         message_created_at=message_created_at,
-        product=product,
-        client_intake_state=client_intake_state,
+        product=effective_product,
+        client_intake_state=effective_client_intake_state,
         latest_assistant_message=latest_assistant_message,
         current_ticket_status=current_ticket_status,
     )
     diagnostics["parallel_mode"] = "main_agent"
+    diagnostics.update(diagnostics_context)
     return execution, diagnostics
 
 
@@ -1015,8 +1050,14 @@ def _recover_stale_ticket_query_tasks_on_worker_start(
             customer_message=customer_message,
             message_created_at=message_created_at,
             customer_id=str(ticket.get("customer_id") or "").strip() or None,
+            requester=str(ticket.get("requester") or "").strip() or None,
             ticket_subject=str(ticket.get("subject") or "").strip() or None,
             product=str(ticket.get("product") or "").strip() or None,
+            product_selection_state=(
+                dict(ticket.get("product_selection_state"))
+                if isinstance(ticket.get("product_selection_state"), dict)
+                else None
+            ),
             route_context_tail=messages[max(0, len(messages) - 6) :],
             client_intake_state=(
                 dict(ticket.get("client_intake_state"))
@@ -1121,6 +1162,11 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         ticket_context=route_context[-6:],
         message_created_at=message_created_at,
         product=str(task.get("product") or "").strip() or None,
+        product_selection_state=(
+            dict(task.get("product_selection_state"))
+            if isinstance(task.get("product_selection_state"), dict)
+            else None
+        ),
         client_intake_state=(
             dict(task.get("client_intake_state"))
             if isinstance(task.get("client_intake_state"), dict)
@@ -1196,6 +1242,17 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         )
     else:
         initial_message_count = len(ticket.get("messages", []))
+        resolved_product = str(execution_diagnostics.get("resolved_product") or "").strip() or None
+        resolved_product_selection_state = (
+            dict(execution_diagnostics.get("product_selection_state"))
+            if isinstance(execution_diagnostics.get("product_selection_state"), dict)
+            else None
+        )
+        if resolved_product is not None:
+            ticket["product"] = resolved_product
+        ticket["product_selection_state"] = resolved_product_selection_state
+        if bool(execution_diagnostics.get("product_changed")):
+            ticket["client_intake_state"] = None
         execution_client_intake_state = (
             dict(getattr(execution, "client_intake_state"))
             if isinstance(getattr(execution, "client_intake_state", None), dict)

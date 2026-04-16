@@ -937,6 +937,37 @@ For each new entry, record:
   - `git diff --check`
 
 - Date: 2026-04-16
+- Area or subsystem: Client product selection and empty-session entry flow
+- Prompt or model version: `product-selection-v1`
+- Summary: Added a dedicated product-selection prompt/model scene that infers `Audio/Video Calling (RTC)` vs `Cloud Recording` from the customer message, removed the client welcome bubble/manual selector, and asks an email-style confirmation only when the product is still ambiguous.
+- Reason: Manual product selection blocked the first message and tied product-aware prompting to a transient UI control instead of the conversation itself, which made the product context brittle for existing tickets and follow-up turns.
+- Affected files or config:
+  - `backend/services/prompts/product_selection.py`
+  - `backend/services/product_selection.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `ui/client-ui/app.js`
+  - `ui/client-ui/styles.css`
+  - `ui/client-ui/index.html`
+  - `backend/tests/test_client_ui_contract.py`
+  - `backend/tests/test_product_selection.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_worker.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Empty client sessions no longer render a welcome email bubble or manual product selector before the first question.
+  - Technical turns without a stored product now run through a dedicated product-selection scene before route/RAG/intake prompts receive product context.
+  - Explicit customer corrections can switch the stored product mid-ticket, and ambiguous technical turns now get an email-style confirmation asking `Audio/Video Calling (RTC)` vs `Cloud Recording`.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest -q backend.tests.test_client_ui_contract backend.tests.test_repository_configuration backend.tests.test_investigation_flow backend.tests.test_product_selection backend.tests.test_llm_profiles backend.tests.test_prompt_modules backend.tests.test_worker`
+  - `node --check ui/client-ui/app.js`
+  - `python3 scripts/verify_feature_list.py`
+  - `python3 /Users/xieziling/.codex/skills/supportportal-run-report/scripts/run_supportportal_run_report.py`
+
+- Date: 2026-04-16
 - Area or subsystem: Client durable reply formatting and engineer investigation follow-up drafting
 - Prompt or model version: `customer-reply-email-composer-v1`, `engineer-investigation-reply-v7`
 - Summary: Standardized durable customer-facing replies into formal email-style messages with localized greeting/signoff, requester-aware personalization, and shared formatting across direct RAG answers, clarification requests, investigation updates, and engineer approval replies.

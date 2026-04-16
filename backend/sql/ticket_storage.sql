@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS support_tickets (
     active_engineer_case_id TEXT,
     engineer_case_count INTEGER NOT NULL DEFAULT 0,
     product TEXT,
+    product_selection_state JSONB,
     client_intake_state JSONB,
     client_agent_runtime_state JSONB,
     created_at TIMESTAMPTZ NOT NULL,

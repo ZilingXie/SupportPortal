@@ -90,6 +90,7 @@ from backend.services.llm_profiles import (
 )
 from backend.services.event_bus import AsyncRedisEventBus
 from backend.services.knowledge_monitoring import build_empty_knowledge_metrics
+from backend.services.product_selection import resolve_support_product_context
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
 from backend.services.rag_sufficiency_judge import judge_rag_answer_sufficiency
 from backend.services.rag_service_client import (
@@ -429,6 +430,11 @@ def ensure_ticket_defaults(ticket: dict[str, Any]) -> None:
     except (TypeError, ValueError):
         ticket["engineer_case_count"] = 0
     ticket["product"] = normalize_support_product(ticket.get("product"))
+    ticket["product_selection_state"] = (
+        dict(ticket.get("product_selection_state"))
+        if isinstance(ticket.get("product_selection_state"), dict)
+        else None
+    )
     ticket["client_intake_state"] = (
         dict(ticket.get("client_intake_state"))
         if isinstance(ticket.get("client_intake_state"), dict)
@@ -1353,6 +1359,7 @@ def build_query_task(
     requester: str | None = None,
     ticket_subject: str | None = None,
     product: str | None = None,
+    product_selection_state: dict[str, Any] | None = None,
     route_context_tail: list[dict[str, str]] | None = None,
     client_intake_state: dict[str, Any] | None = None,
     latest_assistant_message: dict[str, Any] | None = None,
@@ -1379,6 +1386,8 @@ def build_query_task(
         task["ticket_subject"] = str(ticket_subject).strip()
     if product:
         task["product"] = str(product).strip()
+    if isinstance(product_selection_state, dict):
+        task["product_selection_state"] = copy.deepcopy(product_selection_state)
     if isinstance(route_context_tail, list):
         task["route_context_tail"] = [
             {
@@ -2216,8 +2225,6 @@ async def create_or_update_ticket(
         selected_product = _validated_new_session_product(request.product) or normalize_support_product(
             ticket.get("product")
         )
-        if selected_product is None:
-            raise HTTPException(status_code=400, detail="product is required for a new session")
         ticket["product"] = selected_product
     else:
         ticket["product"] = normalize_support_product(ticket.get("product"))
@@ -2347,33 +2354,55 @@ async def create_or_update_ticket(
             processing_mode = "main_agent_async"
         else:
             processing_mode = "main_agent_sync"
-            runtime_execution = execute_client_ticket_agent_runtime(
-                customer_message,
-                ticket_id=ticket_id,
-                customer_id=request.customer_id,
-                requester=str(ticket.get("requester") or "").strip() or None,
+            product_context = resolve_support_product_context(
+                message=customer_message,
                 ticket_subject=str(ticket.get("subject") or "").strip() or None,
                 ticket_context=route_context,
                 product=ticket.get("product"),
-                message_id=timestamp,
-                client_intake_state=ticket.get("client_intake_state"),
+                product_selection_state=ticket.get("product_selection_state"),
                 latest_assistant_message=latest_assistant_message,
                 current_ticket_status=ticket_status_before_customer_message,
-                has_active_engineer_case=False,
+                requester=str(ticket.get("requester") or "").strip() or None,
+                customer_id=request.customer_id,
+                message_created_at=timestamp,
                 route_agent=decide_support_route,
-                route_executor=resolve_support_message,
-                rag_agent=lambda **kwargs: _build_rag_answer_detail(
-                    kwargs["message"],
-                    ticket_id=kwargs.get("ticket_id"),
-                    customer_id=kwargs.get("customer_id"),
-                    requester=kwargs.get("requester"),
-                    ticket_context=kwargs.get("ticket_context"),
-                    product=kwargs.get("product"),
-                ),
-                review_agent=_run_client_ticket_review_agent,
-                rag_canceler=None,
             )
-            execution = runtime_execution.result
+            ticket["product_selection_state"] = product_context.product_selection_state
+            if product_context.product_changed:
+                ticket["client_intake_state"] = None
+            if product_context.product is not None:
+                ticket["product"] = product_context.product
+            effective_customer_message = str(product_context.effective_message or customer_message).strip() or customer_message
+            if product_context.preflight_execution is not None:
+                execution = product_context.preflight_execution
+            else:
+                runtime_execution = execute_client_ticket_agent_runtime(
+                    effective_customer_message,
+                    ticket_id=ticket_id,
+                    customer_id=request.customer_id,
+                    requester=str(ticket.get("requester") or "").strip() or None,
+                    ticket_subject=str(ticket.get("subject") or "").strip() or None,
+                    ticket_context=route_context,
+                    product=ticket.get("product"),
+                    message_id=timestamp,
+                    client_intake_state=ticket.get("client_intake_state"),
+                    latest_assistant_message=latest_assistant_message,
+                    current_ticket_status=ticket_status_before_customer_message,
+                    has_active_engineer_case=False,
+                    route_agent=decide_support_route,
+                    route_executor=resolve_support_message,
+                    rag_agent=lambda **kwargs: _build_rag_answer_detail(
+                        kwargs["message"],
+                        ticket_id=kwargs.get("ticket_id"),
+                        customer_id=kwargs.get("customer_id"),
+                        requester=kwargs.get("requester"),
+                        ticket_context=kwargs.get("ticket_context"),
+                        product=kwargs.get("product"),
+                    ),
+                    review_agent=_run_client_ticket_review_agent,
+                    rag_canceler=None,
+                )
+                execution = runtime_execution.result
         if execution is not None:
             execution_route_payload = build_execution_route_payload(execution)
             route_payload.update(execution_route_payload)
@@ -2529,6 +2558,11 @@ async def create_or_update_ticket(
                 requester=str(ticket.get("requester") or "").strip() or None,
                 ticket_subject=str(ticket.get("subject") or "").strip() or None,
                 product=str(ticket.get("product") or "").strip() or None,
+                product_selection_state=(
+                    dict(ticket.get("product_selection_state"))
+                    if isinstance(ticket.get("product_selection_state"), dict)
+                    else None
+                ),
                 route_context_tail=route_context,
                 client_intake_state=(
                     dict(ticket.get("client_intake_state"))

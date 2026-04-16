@@ -103,6 +103,7 @@ def _build_ticket(
     customer_message: str = "Need help with token generation",
     message_created_at: str = "2026-03-22T00:00:00+00:00",
     client_intake_state: dict[str, object] | None = None,
+    product_selection_state: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         "ticket_id": ticket_id,
@@ -125,6 +126,7 @@ def _build_ticket(
             },
         ],
         "client_intake_state": client_intake_state,
+        "product_selection_state": product_selection_state,
     }
 
 
@@ -1060,7 +1062,14 @@ class WorkerResilienceTests(unittest.TestCase):
         sleep_mock.assert_called_once_with(0.5)
 
     def test_recover_stale_ticket_query_tasks_on_worker_start_reenqueues_missing_async_turn(self) -> None:
-        stuck_ticket = _build_ticket(ticket_id="TK-116")
+        stuck_ticket = _build_ticket(
+            ticket_id="TK-116",
+            product_selection_state={
+                "phase": "awaiting_product_confirmation",
+                "pending_customer_message": "I got black screen, what should I do now?",
+                "pending_message_created_at": "2026-03-22T00:03:00+00:00",
+            },
+        )
         stuck_ticket["messages"].append(
             {
                 "role": "customer",
@@ -1102,7 +1111,12 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(recovery_task["customer_message"], "i got black screen, what should i do now?")
         self.assertEqual(recovery_task["message_created_at"], "2026-03-22T00:03:00+00:00")
         self.assertEqual(recovery_task["processing_mode"], "worker_startup_recovery")
+        self.assertEqual(recovery_task["requester"], "Customer")
         self.assertEqual(recovery_task["latest_assistant_message"]["content"], "I am checking the knowledge base for you now.")
+        self.assertEqual(
+            recovery_task["product_selection_state"]["phase"],
+            "awaiting_product_confirmation",
+        )
         repository.record_event.assert_called_once()
         self.assertEqual(repository.record_event.call_args.args[0], "TK-116")
         self.assertEqual(repository.record_event.call_args.args[1], "ticket_ai_recovery_queued")
