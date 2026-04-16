@@ -2678,7 +2678,7 @@ a.citation-link:hover {
 }
 
 .clienttest-main-new-ticket {
-  padding: 28px 36px 40px;
+  padding: 28px 36px 0;
 }
 
 .clienttest-new-ticket-shell {
@@ -3426,7 +3426,7 @@ a.citation-link:hover {
   }
 
   .clienttest-main-new-ticket {
-    padding: 18px 16px 24px;
+    padding: 18px 16px 0;
   }
 
   .new-ticket-page-title {
