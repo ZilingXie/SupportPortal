@@ -2689,8 +2689,8 @@ a.citation-link:hover {
 }
 
 .new-ticket-layout {
-  --new-ticket-thread-panel-height: 320px;
-  --new-ticket-composer-panel-height: 334px;
+  --new-ticket-thread-panel-height: 480px;
+  --new-ticket-composer-panel-height: 296px;
   --new-ticket-info-card-height: 388px;
   width: min(100%, 1240px);
   margin: 0 auto;
@@ -3076,8 +3076,8 @@ a.citation-link:hover {
 
 .new-ticket-textarea {
   width: 100%;
-  min-height: 150px;
-  height: min(220px, 100%);
+  min-height: 124px;
+  height: min(176px, 100%);
   max-height: 100%;
   padding: 22px 86px 22px 22px;
   border: 0;
@@ -3246,8 +3246,8 @@ a.citation-link:hover {
 
 @media (min-width: 721px) and (max-width: 900px) {
   .new-ticket-layout {
-    --new-ticket-thread-panel-height: 304px;
-    --new-ticket-composer-panel-height: 320px;
+    --new-ticket-thread-panel-height: 376px;
+    --new-ticket-composer-panel-height: 284px;
     --new-ticket-info-card-height: 372px;
   }
 
@@ -3313,12 +3313,17 @@ a.citation-link:hover {
   .new-ticket-thread-scroll {
     max-height: none;
   }
+
+  .new-ticket-textarea {
+    min-height: 116px;
+    height: min(168px, 100%);
+  }
 }
 
 @media (max-width: 720px) {
   .new-ticket-layout {
-    --new-ticket-thread-panel-height: 284px;
-    --new-ticket-composer-panel-height: 304px;
+    --new-ticket-thread-panel-height: 344px;
+    --new-ticket-composer-panel-height: 264px;
     --new-ticket-info-card-height: 356px;
   }
 
@@ -3462,8 +3467,8 @@ a.citation-link:hover {
   }
 
   .new-ticket-textarea {
-    min-height: 132px;
-    height: min(180px, 100%);
+    min-height: 104px;
+    height: min(152px, 100%);
     padding: 18px 76px 18px 16px;
   }
 
