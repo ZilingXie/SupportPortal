@@ -3084,7 +3084,7 @@ a.citation-link:hover {
   border-radius: 0 0 22px 22px;
   background: transparent;
   overflow: auto;
-  resize: vertical;
+  resize: none;
 }
 
 .new-ticket-textarea:focus {
