@@ -146,16 +146,16 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260415-case-buddy-current-issue-1", html)
-        self.assertIn('./app.js?v=20260415-case-buddy-current-issue-1', html)
+        self.assertIn("./styles.css?v=20260416-engineer-sid-unified-ai-name-1", html)
+        self.assertIn('./app.js?v=20260416-engineer-sid-unified-ai-name-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
         self.assertIn('const ENGINEER_DISPLAY_NAME = "jack";', app_source)
-        self.assertIn('const ENGINEER_AI_DISPLAY_NAME = "Case Buddy";', app_source)
+        self.assertIn('const ENGINEER_AI_DISPLAY_NAME = "Sid";', app_source)
         self.assertIn('const PUBLIC_ASSISTANT_DISPLAY_NAME = "Sid";', app_source)
         self.assertIn("Jack / jack", html)
-        self.assertIn("Case Buddy", app_source)
+        self.assertIn("Sid", app_source)
         self.assertIn("return ENGINEER_DISPLAY_NAME;", app_source)
         self.assertIn("detail-investigation-closing-state", app_source)
         self.assertIn("Approving Reply", app_source)
@@ -1084,16 +1084,16 @@ class EngineerUiContractTests(unittest.TestCase):
                   throw new Error("Internal Review should expose a dedicated scroll body wrapper below the fixed header.");
                 }}
                 if (html.includes("AI Summary")) {{
-                  throw new Error("Detail workspace should merge the AI summary into the Case Buddy request instead of rendering a separate summary card.");
+                  throw new Error("Detail workspace should merge the AI summary into the Sid request instead of rendering a separate summary card.");
                 }}
                 if (!engineerThreadSection.includes("case-buddy-request-sections")) {{
-                  throw new Error("The opening Case Buddy request should render the merged structured request layout.");
+                  throw new Error("The opening Sid request should render the merged structured request layout.");
                 }}
                 if (!engineerThreadSection.includes("Current issue")) {{
-                  throw new Error("The merged Case Buddy request should render the Current issue section.");
+                  throw new Error("The merged Sid request should render the Current issue section.");
                 }}
                 if (!engineerThreadSection.includes("Action needed")) {{
-                  throw new Error("The merged Case Buddy request should render the Action needed section.");
+                  throw new Error("The merged Sid request should render the Action needed section.");
                 }}
                 if (!/Current issue[\\s\\S]*?<p class="case-buddy-request-summary">Android 14 token renew callback fails on SDK 4\\.2\\.1\\.<\\/p>[\\s\\S]*?<ul[\\s\\S]*?<li>Customer reported token renew callback failures on Android 14\\.<\\/li>[\\s\\S]*?<li>The engineer reproduced the issue on Android 14 with SDK 4\\.2\\.1 only\\.<\\/li>/m.test(engineerThreadSection)) {{
                   throw new Error("Current issue should render a summary paragraph followed by known-fact bullets.");
@@ -1105,7 +1105,7 @@ class EngineerUiContractTests(unittest.TestCase):
                   throw new Error("Current issue should not leak Sid candidate answer text.");
                 }}
                 if (engineerThreadSection.includes("Why Sid couldn't solve it")) {{
-                  throw new Error("The merged Case Buddy request should not render the Why Sid couldn't solve it section anymore.");
+                  throw new Error("The merged Sid request should not render the Why Sid couldn't solve it section anymore.");
                 }}
                 if (engineerThreadSection.includes("Current understanding:")) {{
                   throw new Error("The merged opening request should no longer show the old summary-style Current understanding label.");
@@ -1117,7 +1117,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 }}
                 const mergedRequestIndex = engineerThreadSection.indexOf("case-buddy-request-sections");
                 if (mergedRequestIndex === -1 || mergedRequestIndex > decisionIndex) {{
-                  throw new Error("Only the opening Case Buddy request should use the merged structured layout.");
+                  throw new Error("Only the opening Sid request should use the merged structured layout.");
                 }}
                 const draftIndex = engineerThreadSection.indexOf("detail-investigation-draft");
                 const approveIndex = engineerThreadSection.indexOf("Approve Reply");
@@ -1200,7 +1200,7 @@ class EngineerUiContractTests(unittest.TestCase):
                   throw new Error("Legacy engineer request text should no longer render the Why Sid couldn't solve it section.");
                 }}
                 if (html.includes("Engineer Request:")) {{
-                  throw new Error("Legacy engineer request text should be replaced by the merged structured Case Buddy block.");
+                  throw new Error("Legacy engineer request text should be replaced by the merged structured Sid block.");
                 }}
               """
             )
@@ -1270,7 +1270,7 @@ class EngineerUiContractTests(unittest.TestCase):
                   throw new Error("Engineer detail refresh should no longer request the summary endpoint.");
                 }}
                 if (!workspaceRegionEl.innerHTML.includes("Current issue")) {{
-                  throw new Error("Engineer detail refresh should still render the merged Case Buddy request from the ticket payload.");
+                  throw new Error("Engineer detail refresh should still render the merged Sid request from the ticket payload.");
                 }}
               """
             )
@@ -1719,7 +1719,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 });
 
                 if (!Array.isArray(sections) || sections.length !== 2) {
-                  throw new Error("Structured Case Buddy requests should return the two merged sections.");
+                  throw new Error("Structured Sid requests should return the two merged sections.");
                 }
                 if (sections[0].title !== "Current issue") {
                   throw new Error("The first merged section should be Current issue.");
@@ -1773,7 +1773,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 });
 
                 if (!Array.isArray(sections) || sections.length !== 2) {
-                  throw new Error("Structured Case Buddy requests should still return two sections after dedupe.");
+                  throw new Error("Structured Sid requests should still return two sections after dedupe.");
                 }
                 if (sections[0].summary !== "Camera/video capture failure reported for channel zilingtest, uid 2, around 2026-04-04 12:00 UTC+8.") {
                   throw new Error("Current issue should keep the issue_understanding summary as the summary paragraph.");
@@ -1834,6 +1834,51 @@ class EngineerUiContractTests(unittest.TestCase):
                 }
                 if (sections[0].summary.includes("candidate answer") || sections[0].items.some((item) => item.includes("candidate answer"))) {
                   throw new Error("Current issue should filter candidate-answer-like facts before choosing the summary and facts bullets.");
+                }
+              """
+            )
+        )
+
+    def test_case_buddy_current_issue_hides_structured_intake_facts_covered_by_symptom_summary(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                const sections = buildCaseBuddyOpeningRequestSections({
+                  status: "investigating",
+                  engineer_agent_state: {
+                    phase: "gather_missing_inputs",
+                    issue_understanding: "Black screen issue reported for channel zilingtest, uid 2.",
+                    knowledge_summary: "The handoff still needs the reported issue timestamp.",
+                    why_not_solved: "The current evidence is incomplete.",
+                    goal: "Collect the next missing technical detail.",
+                    known_facts: [
+                      "Issue symptom is black screen issue.",
+                      "Channel name is zilingtest.",
+                      "Problematic uid is 2.",
+                      'Web SDK log for uid 2 says "[websdk] no capture video frame"',
+                    ],
+                    missing_information: ["Issue timestamp"],
+                    next_request_for_engineer: "Confirm the reported issue timestamp.",
+                    resolution_hypothesis: "",
+                    ready_to_reply: false,
+                    last_refreshed_at: "2026-04-16T03:51:52.897458+00:00",
+                  },
+                });
+
+                if (sections[0].summary !== "Black screen issue reported for channel zilingtest, uid 2.") {
+                  throw new Error("Current issue should surface the symptom-first intake summary.");
+                }
+                if (sections[0].items.includes("Issue symptom is black screen issue.")) {
+                  throw new Error("Current issue should hide a redundant symptom fact already covered by issue_understanding.");
+                }
+                if (sections[0].items.includes("Channel name is zilingtest.")) {
+                  throw new Error("Current issue should hide a redundant channel fact already covered by issue_understanding.");
+                }
+                if (sections[0].items.includes("Problematic uid is 2.")) {
+                  throw new Error("Current issue should hide a redundant uid fact already covered by issue_understanding.");
+                }
+                if (!sections[0].items.includes('Web SDK log for uid 2 says "[websdk] no capture video frame"')) {
+                  throw new Error("Current issue should keep non-redundant technical evidence after hiding intake duplicates.");
                 }
               """
             )
@@ -2106,7 +2151,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!approvalHtml.includes('id="detail-investigation-input"')) {{
                   throw new Error("Approval state should keep the main investigation composer visible.");
                 }}
-                if (!approvalHtml.includes("If the draft needs changes, tell Case Buddy what to revise before replying to the customer")) {{
+                if (!approvalHtml.includes("If the draft needs changes, tell Sid what to revise before replying to the customer")) {{
                   throw new Error("Approval state should explain that the composer sends revision notes directly.");
                 }}
                 if (!approvalHtml.includes('aria-label="Send Revision Note"')) {{
@@ -2195,7 +2240,7 @@ class EngineerUiContractTests(unittest.TestCase):
                   investigation_history: [],
                   engineer_request_records: [],
                 };
-                selectedTicketSummary = "Case Buddy needs one more technical detail.";
+                selectedTicketSummary = "Sid needs one more technical detail.";
                 selectedTicketNextAction = "Share the latest Android logcat excerpt.";
 
                 let resolveFetch = null;
@@ -2233,8 +2278,8 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!optimisticHtml.includes(">jack<")) {
                   throw new Error("Optimistic engineer messages should render the jack label in the internal thread.");
                 }
-                if (!optimisticHtml.includes(">Case Buddy<")) {
-                  throw new Error("Internal engineer-thread AI messages should render the Case Buddy label.");
+                if (!optimisticHtml.includes(">Sid<")) {
+                  throw new Error("Internal engineer-thread AI messages should render the Sid label.");
                 }
                 if (!optimisticHtml.includes("message-item-pending-ai")) {
                   throw new Error("Engineer thread should render an Engineer AI placeholder bubble while waiting.");
@@ -2242,7 +2287,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!optimisticHtml.includes("detail-thinking-dots")) {
                   throw new Error("Engineer AI placeholder bubble should show the loading-dot animation.");
                 }
-                if (!optimisticHtml.includes("Case Buddy is reviewing your update")) {
+                if (!optimisticHtml.includes("Sid is reviewing your update")) {
                   throw new Error("Engineer AI placeholder bubble should explain that a reply is pending.");
                 }
                 if (tellAiDraft !== "") {
@@ -2252,7 +2297,7 @@ class EngineerUiContractTests(unittest.TestCase):
                   throw new Error("Optimistic engineer sends should still call the investigation messages endpoint.");
                 }
                 if (capturedOptions?.timeoutMs !== 100000) {
-                  throw new Error("Send Update should use the extended 100s Case Buddy timeout budget.");
+                  throw new Error("Send Update should use the extended 100s Sid timeout budget.");
                 }
 
                 resolveFetch({
@@ -2299,8 +2344,8 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (!settledHtml.includes("Thanks. Please also confirm whether clearing the cached token changes the behavior.")) {
                   throw new Error("Engineer thread should replace the placeholder with the durable Engineer AI reply.");
                 }
-                if (!settledHtml.includes(">Case Buddy<")) {
-                  throw new Error("Durable internal AI replies should keep the Case Buddy label.");
+                if (!settledHtml.includes(">Sid<")) {
+                  throw new Error("Durable internal AI replies should keep the Sid label.");
                 }
               """
             )
@@ -2341,7 +2386,7 @@ class EngineerUiContractTests(unittest.TestCase):
                   investigation_history: [],
                   engineer_request_records: [],
                 };
-                selectedTicketSummary = "Case Buddy still needs technical evidence.";
+                selectedTicketSummary = "Sid still needs technical evidence.";
                 selectedTicketNextAction = "Share the latest logs.";
 
                 tellAiSubmitting = true;
@@ -3500,7 +3545,7 @@ class EngineerUiContractTests(unittest.TestCase):
                   throw new Error("Approval-state optimistic sends should still target the confirmation endpoint.");
                 }
                 if (capturedOptions?.timeoutMs !== 100000) {
-                  throw new Error("Revision sends should also use the extended 100s Case Buddy timeout budget.");
+                  throw new Error("Revision sends should also use the extended 100s Sid timeout budget.");
                 }
                 const parsedBody = JSON.parse(capturedOptions.body);
                 if (parsedBody.decision !== "revise") {
@@ -3582,7 +3627,7 @@ class EngineerUiContractTests(unittest.TestCase):
                   investigation_history: [],
                   engineer_request_records: [],
                 };
-                selectedTicketSummary = "Case Buddy needs one more technical detail.";
+                selectedTicketSummary = "Sid needs one more technical detail.";
                 selectedTicketNextAction = "Share the latest Android logcat excerpt.";
 
                 fetchJson = async () => {
@@ -3616,7 +3661,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (failedHtml.includes("message-item-pending-ai")) {
                   throw new Error("Failed sends should remove the pending Engineer AI placeholder bubble.");
                 }
-                if (!failedHtml.includes("Case Buddy update failed: Request failed with status 500")) {
+                if (!failedHtml.includes("Sid update failed: Request failed with status 500")) {
                   throw new Error("Failed sends should append an inline system error message to the thread.");
                 }
                 if (tellAiDraft !== "Logcat now shows auth timeout before channel join.") {
@@ -3664,7 +3709,7 @@ class EngineerUiContractTests(unittest.TestCase):
                   investigation_history: [],
                   engineer_request_records: [],
                 };
-                selectedTicketSummary = "Case Buddy needs one more technical detail.";
+                selectedTicketSummary = "Sid needs one more technical detail.";
                 selectedTicketNextAction = "Share the latest Android logcat excerpt.";
 
                 localInvestigationThreadState = {
@@ -3684,7 +3729,7 @@ class EngineerUiContractTests(unittest.TestCase):
                     {
                       id: "local-engineer-ai-1",
                       role: "engineer_ai",
-                      content: "Case Buddy is reviewing your update...",
+                      content: "Sid is reviewing your update...",
                       created_at: "2026-03-24T09:10:30+00:00",
                       is_pending_ai: true,
                     },
@@ -3778,7 +3823,7 @@ class EngineerUiContractTests(unittest.TestCase):
                   investigation_history: [],
                   engineer_request_records: [],
                 };
-                selectedTicketSummary = "Case Buddy needs one more technical detail.";
+                selectedTicketSummary = "Sid needs one more technical detail.";
                 selectedTicketNextAction = "Share the latest Android logcat excerpt.";
                 const durableActionAt = new Date(Date.now() + 1000).toISOString();
 
@@ -3857,7 +3902,7 @@ class EngineerUiContractTests(unittest.TestCase):
                 await handleDetailClick({ target: sendTarget });
                 const recoveredHtml = workspaceRegionEl.innerHTML;
                 if (capturedOptions?.timeoutMs !== 100000) {
-                  throw new Error("Timeout recovery should keep using the extended 100s Case Buddy timeout budget.");
+                  throw new Error("Timeout recovery should keep using the extended 100s Sid timeout budget.");
                 }
                 if (loadCalls < 1) {
                   throw new Error("Timeout recovery should trigger at least one silent pool refresh attempt.");
@@ -3865,8 +3910,8 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (detailRefreshCalls < 1) {
                   throw new Error("Timeout recovery should re-fetch the selected ticket detail.");
                 }
-                if (recoveredHtml.includes("Case Buddy update failed:")) {
-                  throw new Error("Recovered timeout sends should not append the inline Case Buddy failure message.");
+                if (recoveredHtml.includes("Sid update failed:")) {
+                  throw new Error("Recovered timeout sends should not append the inline Sid failure message.");
                 }
                 if (recoveredHtml.includes("message-item-pending-ai")) {
                   throw new Error("Recovered timeout sends should clear the pending AI placeholder once durable success is found.");

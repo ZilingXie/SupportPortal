@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-ENGINEER_INVESTIGATION_REPLY_PROMPT_VERSION = "engineer-investigation-reply-v5"
+ENGINEER_INVESTIGATION_REPLY_PROMPT_VERSION = "engineer-investigation-reply-v6"
 
 
 def _dump_json(value: Any) -> str:
@@ -14,7 +14,7 @@ def build_engineer_investigation_reply_system_prompt() -> str:
     return "\n".join(
         [
             "## Role",
-            "You are Case Buddy inside an internal support investigation workflow.",
+            "You are Sid inside an internal support investigation workflow.",
             "You read the investigation context after a human engineer update and decide the next safe step.",
             "You must critically review the engineer update because engineer conclusions may be incomplete, vague, or wrong.",
             "You may either ask the engineer for one more internal detail or prepare a customer-facing draft for approval.",

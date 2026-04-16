@@ -274,7 +274,7 @@ def build_investigation_opening_context(
         )
     elif normalized_reason == "investigation_intake_round_exhausted":
         rag_summary = (
-            "The customer already answered the single allowed intake clarification, so the case was handed off "
+            "The allowed intake clarification rounds are exhausted, so the case was handed off "
             "for direct engineer investigation even though some requested investigation details are still missing."
         )
         action_needed = (
@@ -465,7 +465,7 @@ def _build_handoff_rag_result(execution_context: dict[str, Any] | None = None) -
         candidate_answer = "Customer intake is complete and the case was handed off directly for engineer investigation."
     elif route_reason == "investigation_intake_round_exhausted":
         candidate_answer = (
-            "Customer already answered the single allowed intake clarification, and the case was handed off "
+            "The allowed intake clarification rounds are exhausted, and the case was handed off "
             "for direct engineer investigation with some remaining missing investigation details."
         )
     else:

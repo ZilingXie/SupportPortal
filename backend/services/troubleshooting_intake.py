@@ -1113,16 +1113,14 @@ def build_client_intake_state(
 ) -> dict[str, Any] | None:
     if result.issue_mode not in {"answer", "investigation"}:
         return None
+    explicit_rounds_used = clarification_rounds_used is not None
     rounds_used = (
         _normalize_nonnegative_int(clarification_rounds_used, default=0)
-        if clarification_rounds_used is not None
+        if explicit_rounds_used
         else _normalize_nonnegative_int((current_state or {}).get("clarification_rounds_used"), default=0)
     )
-    if (
-        result.issue_mode == "investigation"
-        and (clarification_sent or (not result.ready_for_engineer_ticket and bool(_clean_text(result.customer_reply))))
-    ):
-        rounds_used = max(rounds_used, 1)
+    if result.issue_mode == "investigation" and clarification_sent and not explicit_rounds_used:
+        rounds_used += 1
     return {
         "phase": (
             _clean_text(phase_override)

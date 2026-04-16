@@ -12,6 +12,34 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-04-16 - unify engineer-facing AI identity to Sid
+
+- Area or subsystem: Engineer investigation reply persona and cross-surface user-visible AI naming
+- Prompt or model version: `engineer-investigation-reply-v6`
+- Summary: Unified the remaining engineer-side and dashboard-side user-visible AI identity from `Case Buddy` to `Sid`, so all customer- and engineer-facing AI labels now use the same public name.
+- Reason: The product still exposed two user-visible AI names across `/client`, `/engineer`, and `/dashboard`, which made the assistant identity feel inconsistent even though the same support agent experience was being presented.
+- Affected files or config:
+  - `ui/engineer-ui/app.js`
+  - `ui/engineer-ui/index.html`
+  - `ui/dashboard-ui/app.js`
+  - `ui/dashboard-ui/index.html`
+  - `backend/services/engineer_agent.py`
+  - `backend/services/prompts/engineer_investigation_reply.py`
+  - `backend/tests/test_engineer_ui_contract.py`
+  - `backend/tests/test_dashboard_ui_contract.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Engineer internal thread `engineer_ai` messages now render as `Sid` instead of `Case Buddy`.
+  - Dashboard ticket detail uses `Sid` for the internal AI author label as well as the public assistant label.
+  - The engineer investigation reply prompt persona is now `Sid`, removing the previous `Case Buddy` / `Sid` split from user-visible naming.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_engineer_ui_contract.py`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_dashboard_ui_contract.py`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_prompt_modules.py`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_client_ui_contract.py`
+
 ## 2026-04-15 - case buddy current-issue facts exclude candidate answers
 
 - Area or subsystem: Engineer investigation reply prompt and Case Buddy current-issue fact curation
