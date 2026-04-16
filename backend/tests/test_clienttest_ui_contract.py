@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -24,11 +26,110 @@ class ClientTestRouteSmokeTests(unittest.TestCase):
     def test_clienttest_html_references_local_assets(self) -> None:
         html = Path("ui/clienttest-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260416-clienttest-preview-shell-1", html)
-        self.assertIn("./app.js?v=20260416-clienttest-preview-shell-1", html)
+        self.assertIn("./styles.css?v=20260416-clienttest-new-ticket-hifi-1", html)
+        self.assertIn("./app.js?v=20260416-clienttest-new-ticket-hifi-1", html)
 
 
 class ClientTestUiContractTests(unittest.TestCase):
+    def run_clienttest_app_script(self, script: str) -> None:
+        node_script = textwrap.dedent(
+            f"""
+            (async () => {{
+            const fs = require("fs");
+            const vm = require("vm");
+            const userScript = {script!r};
+
+            let source = fs.readFileSync("ui/clienttest-ui/app.js", "utf8");
+            source = source.replace(/\\nbootstrap\\(\\);\\s*$/, "\\n");
+
+            const appRoot = {{
+              innerHTML: "",
+              querySelectorAll() {{ return []; }},
+              querySelector() {{ return null; }},
+            }};
+            const toastRoot = {{
+              appendChild() {{}},
+            }};
+            const storage = new Map();
+            const sandbox = {{
+              console,
+              URL,
+              crypto: {{
+                _counter: 0,
+                randomUUID() {{
+                  this._counter += 1;
+                  return `uuid-${{this._counter}}`;
+                }},
+              }},
+              document: {{
+                getElementById(id) {{
+                  return id === "app" ? appRoot : toastRoot;
+                }},
+                createElement() {{
+                  return {{
+                    className: "",
+                    textContent: "",
+                    remove() {{}},
+                  }};
+                }},
+              }},
+              window: {{
+                location: {{
+                  hash: "",
+                  protocol: "http:",
+                  host: "localhost:8080",
+                }},
+                addEventListener() {{}},
+              }},
+              localStorage: {{
+                getItem(key) {{
+                  return storage.has(key) ? storage.get(key) : null;
+                }},
+                setItem(key, value) {{
+                  storage.set(key, String(value));
+                }},
+                removeItem(key) {{
+                  storage.delete(key);
+                }},
+              }},
+              fetch: async () => ({{
+                ok: true,
+                json: async () => ({{ tickets: [] }}),
+              }}),
+              WebSocket: function WebSocket() {{
+                this.readyState = 1;
+                this.close = () => {{}};
+                this.send = () => {{}};
+              }},
+              setTimeout() {{
+                return 0;
+              }},
+              clearTimeout() {{}},
+              setInterval() {{
+                return 0;
+              }},
+              clearInterval() {{}},
+            }};
+
+            sandbox.globalThis = sandbox;
+            vm.createContext(sandbox);
+            vm.runInContext(source, sandbox);
+            await vm.runInContext(`(async () => {{\\n${{userScript}}\\n}})()`, sandbox);
+            }})().catch((error) => {{
+              console.error(error);
+              process.exit(1);
+            }});
+            """
+        )
+        result = subprocess.run(
+            ["node", "-e", node_script],
+            cwd=Path(__file__).resolve().parents[2],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
+
     def test_clienttest_shell_uses_preview_branding_and_rail_labels(self) -> None:
         html = Path("ui/clienttest-ui/index.html").read_text(encoding="utf-8")
         app_source = Path("ui/clienttest-ui/app.js").read_text(encoding="utf-8")
@@ -65,6 +166,135 @@ class ClientTestUiContractTests(unittest.TestCase):
         self.assertIn("ticket-detail-sidebar", css)
         self.assertIn("ticket-detail-composer", css)
         self.assertIn("ticket-detail-toolbar", css)
+
+    def test_clienttest_new_ticket_contract_uses_reference_content_shell(self) -> None:
+        app_source = Path("ui/clienttest-ui/app.js").read_text(encoding="utf-8")
+        css = Path("ui/clienttest-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("Start a new support ticket", app_source)
+        self.assertIn("Knowledge Base Articles", app_source)
+        self.assertIn("Submit Ticket", app_source)
+        self.assertIn("Send Message", app_source)
+        self.assertIn("Draft", app_source)
+        self.assertIn("Pending", app_source)
+        self.assertIn("Not submitted", app_source)
+        self.assertIn("Unassigned", app_source)
+
+        self.assertNotIn("Reply to Ticket", app_source)
+        self.assertNotIn("Send Reply", app_source)
+        self.assertNotIn("Contact Us", app_source)
+
+        self.assertIn("clienttest-new-ticket-shell", css)
+        self.assertIn("new-ticket-thread-card", css)
+        self.assertIn("new-ticket-composer-panel", css)
+        self.assertIn("new-ticket-info-card", css)
+
+    def test_clienttest_new_ticket_initial_state_renders_empty_high_fidelity_draft(self) -> None:
+        self.run_clienttest_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Alex Rivera", email: "alex.rivera@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const draft = getOrCreateDraftTicket(state.user.id);
+                state.view = "chat-ticket";
+                state.activeTicketId = draft.id;
+                state.newTicketPreviewTicketId = draft.id;
+
+                const html = renderChatTicket();
+                if (!html.includes("Start a new support ticket")) {
+                  throw new Error("New Ticket draft should render the high-fidelity title.");
+                }
+                if (!html.includes("My Tickets")) {
+                  throw new Error("New Ticket draft should keep the breadcrumb.");
+                }
+                if (!html.includes("New Ticket")) {
+                  throw new Error("New Ticket draft should label the breadcrumb destination.");
+                }
+                if (!html.includes("Ticket Information") || !html.includes("AI Summary") || !html.includes("Knowledge Base Articles")) {
+                  throw new Error("New Ticket draft should render the right sidebar cards.");
+                }
+                if (!html.includes("Draft") || !html.includes("Pending") || !html.includes("Not submitted") || !html.includes("Unassigned")) {
+                  throw new Error("New Ticket draft should render draft-safe placeholder metadata.");
+                }
+                if (!html.includes("Submit Ticket")) {
+                  throw new Error("New Ticket draft should use customer-safe submit language.");
+                }
+                if (!html.includes("Support Product")) {
+                  throw new Error("New Ticket draft should keep product selection inside the intake surface.");
+                }
+                if (/id="chat-input"[^>]*disabled/.test(html)) {
+                  throw new Error("New Ticket draft textarea should remain available before the first submission.");
+                }
+                if (html.includes("Hi Alex Rivera, I'm Sid")) {
+                  throw new Error("New Ticket draft should not reuse the legacy welcome bubble.");
+                }
+                if (html.includes("Reply to Ticket") || html.includes("Send Reply")) {
+                  throw new Error("New Ticket draft should not reuse email reply semantics.");
+                }
+                if (html.includes("Dashboard") || html.includes("Contact Us")) {
+                  throw new Error("New Ticket draft should not inject the screenshot top navigation.");
+                }
+                """
+            )
+        )
+
+    def test_clienttest_new_ticket_layout_persists_after_first_message(self) -> None:
+        self.run_clienttest_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Alex Rivera", email: "alex.rivera@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const draft = getOrCreateDraftTicket(state.user.id);
+                state.newTicketPreviewTicketId = draft.id;
+                updateTicketProduct(draft.id, "audio_video_calling");
+                saveTicketMessages(draft.id, [
+                  {
+                    id: "msg-1",
+                    role: "user",
+                    content: "The video freezes after 10 minutes on iOS.",
+                    createdAt: "2026-04-16T04:00:00.000Z",
+                  },
+                  {
+                    id: "msg-2",
+                    role: "assistant",
+                    content: "I checked the latest call path and can see a recurring freeze after the tenth minute.",
+                    createdAt: "2026-04-16T04:01:00.000Z",
+                    citations: [{ heading: "iOS freeze checklist", source_url: "https://example.com/ios-freeze" }],
+                  },
+                ]);
+                updateTicketTitle(draft.id, "The video freezes after 10 minutes");
+                updateTicketStatus(draft.id, "communicating");
+
+                state.view = "chat-ticket";
+                state.activeTicketId = draft.id;
+
+                const html = renderChatTicket();
+                if (!html.includes("The video freezes after 10 minutes")) {
+                  throw new Error("New Ticket detail should keep the updated ticket title after the first message.");
+                }
+                if (!html.includes("The video freezes after 10 minutes on iOS.")) {
+                  throw new Error("New Ticket detail should render the submitted customer message.");
+                }
+                if (!html.includes("I checked the latest call path")) {
+                  throw new Error("New Ticket detail should render the assistant thread card.");
+                }
+                if (!html.includes("Ticket Information") || !html.includes("AI Summary") || !html.includes("Knowledge Base Articles")) {
+                  throw new Error("New Ticket detail should keep the same right-column layout after the first message.");
+                }
+                if (!html.includes("Send Message")) {
+                  throw new Error("Existing New Ticket threads should keep customer-safe send language.");
+                }
+                if (html.includes("Reply to Ticket") || html.includes("Send Reply")) {
+                  throw new Error("Existing New Ticket threads should not regress to reply/email wording.");
+                }
+                if (!html.includes("new-ticket-thread-card")) {
+                  throw new Error("Existing New Ticket threads should render the dedicated high-fidelity message cards.");
+                }
+                """
+            )
+        )
 
     def test_clienttest_reuses_existing_client_runtime_contracts(self) -> None:
         app_source = Path("ui/clienttest-ui/app.js").read_text(encoding="utf-8")
