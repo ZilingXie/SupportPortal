@@ -51,6 +51,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             result,
             product="audio_video_calling",
             now_value="2026-04-04T10:00:00Z",
+            clarification_sent=True,
         )
         self.assertIsNotNone(intake_state)
         assert intake_state is not None
@@ -88,6 +89,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
             result,
             product="audio_video_calling",
             now_value="2026-04-04T10:00:00Z",
+            clarification_sent=True,
         )
         self.assertIsNotNone(intake_state)
         assert intake_state is not None
@@ -141,6 +143,61 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 message_created_at="2026-04-14T02:11:08.752498+00:00",
             )
         )
+
+    def test_build_client_intake_state_increments_rounds_used_when_second_investigation_clarify_is_sent(self) -> None:
+        result = evaluate_troubleshooting_intake(
+            message="channel name: zilingtest, uid 2",
+            product="audio_video_calling",
+            ticket_subject="Black screen issue",
+            ticket_context=[
+                {"role": "customer", "content": "i got black screen, what should i do?"},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "If the issue continues, please share channel name, problematic uid, and issue timestamp "
+                        "so I can narrow down the Audio/Video Calling investigation."
+                    ),
+                },
+            ],
+            current_state={
+                "phase": "gather_customer_inputs",
+                "product": "audio_video_calling",
+                "issue_mode": "investigation",
+                "known_information": {"issue_symptom": "black screen issue"},
+                "missing_information": ["channel_name", "problematic_uid", "issue_timestamp"],
+                "ready_for_engineer_ticket": False,
+                "clarification_rounds_used": 1,
+                "last_updated_at": "2026-04-14T02:08:33.337732+00:00",
+            },
+            rag_result={
+                "reason": "rag_insufficient_evidence",
+                "answer": "I couldn't find enough information in the available support knowledge base to answer that question.",
+                "evidence_summary": {},
+            },
+            message_created_at="2026-04-14T02:11:08.752498+00:00",
+        )
+
+        intake_state = build_client_intake_state(
+            result,
+            product="audio_video_calling",
+            now_value="2026-04-14T02:11:08.752498+00:00",
+            current_state={
+                "phase": "gather_customer_inputs",
+                "product": "audio_video_calling",
+                "issue_mode": "investigation",
+                "known_information": {"issue_symptom": "black screen issue"},
+                "missing_information": ["channel_name", "problematic_uid", "issue_timestamp"],
+                "ready_for_engineer_ticket": False,
+                "clarification_rounds_used": 1,
+                "last_updated_at": "2026-04-14T02:08:33.337732+00:00",
+            },
+            clarification_sent=True,
+            clarification_rounds_used=2,
+        )
+
+        self.assertIsNotNone(intake_state)
+        assert intake_state is not None
+        self.assertEqual(intake_state["clarification_rounds_used"], 2)
 
     def test_docs_api_semantics_mismatch_does_not_request_channel_or_timestamp(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):

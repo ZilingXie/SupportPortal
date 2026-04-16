@@ -1189,7 +1189,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.runtime_state.rag_agent.get("reason"), "investigation_intake_complete")
         self.assertEqual(execution.runtime_state.review_agent.get("reason"), "investigation_intake_complete")
 
-    def test_tk_122_follow_up_opens_engineer_ticket_after_one_intake_round_even_when_timestamp_is_partial(self) -> None:
+    def test_tk_122_follow_up_after_first_intake_round_requests_remaining_timestamp_details(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
 
         execution = execute_client_ticket_agent_runtime(
@@ -1220,20 +1220,18 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 "clarification_rounds_used": 1,
                 "last_updated_at": "2026-04-14T02:08:33.337732+00:00",
             },
-            route_agent=lambda **_kwargs: self.fail("route agent should not run once the one intake round is exhausted"),
-            route_executor=lambda **_kwargs: self.fail("route executor should not run once the one intake round is exhausted"),
-            rag_agent=lambda **_kwargs: self.fail("rag agent should not run once the one intake round is exhausted"),
-            review_agent=lambda **_kwargs: self.fail("review agent should not run once the one intake round is exhausted"),
+            route_agent=lambda **_kwargs: self.fail("route agent should not run during deterministic second clarify"),
+            route_executor=lambda **_kwargs: self.fail("route executor should not run during deterministic second clarify"),
+            rag_agent=lambda **_kwargs: self.fail("rag agent should not run during deterministic second clarify"),
+            review_agent=lambda **_kwargs: self.fail("review agent should not run during deterministic second clarify"),
             rag_canceler=None,
         )
 
-        self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
-        self.assertEqual(execution.result.route_reason, "investigation_intake_round_exhausted")
-        self.assertEqual(execution.result.investigation_reason, "investigation_intake_round_exhausted")
-        self.assertEqual(execution.result.client_intake_state["phase"], "clarification_limit_reached")
+        self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
+        self.assertEqual(execution.result.client_intake_state["phase"], "gather_customer_inputs")
         self.assertFalse(execution.result.client_intake_state["ready_for_engineer_ticket"])
         self.assertEqual(execution.result.client_intake_state["missing_information"], ["issue_timestamp"])
-        self.assertEqual(execution.result.client_intake_state["clarification_rounds_used"], 1)
+        self.assertEqual(execution.result.client_intake_state["clarification_rounds_used"], 2)
         self.assertEqual(
             execution.result.client_intake_state["known_information"]["channel_name"],
             "zilingtest",
@@ -1246,11 +1244,57 @@ The documentation states that time: 0 means the rule is applied permanently. How
             execution.result.client_intake_state["issue_timestamp_parts"],
             {"date": "2026-04-03"},
         )
+        self.assertIn("issue time", execution.result.answer.lower())
+        self.assertIn("timezone", execution.result.answer.lower())
         self.assertEqual(execution.runtime_state.route_agent.get("status"), "skipped")
         self.assertEqual(execution.runtime_state.rag_agent.get("status"), "skipped")
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
 
-    def test_one_round_investigation_intake_infers_prior_clarification_for_legacy_state(self) -> None:
+    def test_tk_123_follow_up_without_timestamp_after_first_intake_round_requests_issue_timestamp(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        execution = execute_client_ticket_agent_runtime(
+            message="channel name: zilingtest, uid 2",
+            ticket_id="TK-123",
+            customer_id="C-001",
+            ticket_subject="Black screen",
+            ticket_context=[
+                {"role": "customer", "content": "i got black screen issue"},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "If the issue continues, please share channel name, problematic uid, and issue timestamp "
+                        "so I can narrow down the Audio/Video Calling investigation."
+                    ),
+                },
+            ],
+            product="audio_video_calling",
+            message_id="2026-04-16T03:51:47.709113+00:00",
+            client_intake_state={
+                "phase": "gather_customer_inputs",
+                "product": "audio_video_calling",
+                "issue_mode": "investigation",
+                "known_information": {"issue_symptom": "black screen issue"},
+                "missing_information": ["channel_name", "problematic_uid", "issue_timestamp"],
+                "ready_for_engineer_ticket": False,
+                "pending_investigation_reason": "rag_post_check_insufficient",
+                "clarification_rounds_used": 1,
+                "last_updated_at": "2026-04-16T03:49:09.250383+00:00",
+            },
+            route_agent=lambda **_kwargs: self.fail("route agent should not run during deterministic second clarify"),
+            route_executor=lambda **_kwargs: self.fail("route executor should not run during deterministic second clarify"),
+            rag_agent=lambda **_kwargs: self.fail("rag agent should not run during deterministic second clarify"),
+            review_agent=lambda **_kwargs: self.fail("review agent should not run during deterministic second clarify"),
+            rag_canceler=None,
+        )
+
+        self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
+        self.assertEqual(execution.result.client_intake_state["clarification_rounds_used"], 2)
+        self.assertEqual(execution.result.client_intake_state["missing_information"], ["issue_timestamp"])
+        self.assertIn("issue timestamp", execution.result.answer.lower())
+        self.assertNotIn("timezone", execution.result.answer.lower())
+
+    def test_two_round_investigation_intake_infers_prior_clarification_for_legacy_state(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
 
         execution = execute_client_ticket_agent_runtime(
@@ -1280,18 +1324,18 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 "pending_investigation_reason": "rag_post_check_insufficient",
                 "last_updated_at": "2026-04-14T02:08:33.337732+00:00",
             },
-            route_agent=lambda **_kwargs: self.fail("route agent should not run once legacy clarification use is inferred"),
-            route_executor=lambda **_kwargs: self.fail("route executor should not run once legacy clarification use is inferred"),
-            rag_agent=lambda **_kwargs: self.fail("rag agent should not run once legacy clarification use is inferred"),
-            review_agent=lambda **_kwargs: self.fail("review agent should not run once legacy clarification use is inferred"),
+            route_agent=lambda **_kwargs: self.fail("route agent should not run while the legacy second clarify is inferred"),
+            route_executor=lambda **_kwargs: self.fail("route executor should not run while the legacy second clarify is inferred"),
+            rag_agent=lambda **_kwargs: self.fail("rag agent should not run while the legacy second clarify is inferred"),
+            review_agent=lambda **_kwargs: self.fail("review agent should not run while the legacy second clarify is inferred"),
             rag_canceler=None,
         )
 
-        self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
-        self.assertEqual(execution.result.route_reason, "investigation_intake_round_exhausted")
-        self.assertEqual(execution.result.client_intake_state["clarification_rounds_used"], 1)
+        self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
+        self.assertEqual(execution.result.client_intake_state["clarification_rounds_used"], 2)
+        self.assertIn("timezone", execution.result.answer.lower())
 
-    def test_exhausted_investigation_clarification_budget_converts_second_clarify_to_open_engineer(self) -> None:
+    def test_exhausted_investigation_clarification_budget_converts_third_clarify_to_open_engineer(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
 
         execution = execute_client_ticket_agent_runtime(
@@ -1324,7 +1368,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 "missing_information": ["issue_timestamp"],
                 "ready_for_engineer_ticket": False,
                 "pending_investigation_reason": "rag_post_check_insufficient",
-                "clarification_rounds_used": 1,
+                "clarification_rounds_used": 2,
                 "last_updated_at": "2026-04-14T02:11:08.752498+00:00",
             },
             route_agent=lambda **_kwargs: SupportRouteDecision(
@@ -1368,6 +1412,71 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.result.route_reason, "investigation_intake_round_exhausted")
         self.assertEqual(execution.result.client_intake_state["phase"], "clarification_limit_reached")
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "completed")
+
+    def test_follow_up_after_second_investigation_clarify_opens_engineer_ticket_without_third_prompt(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        execution = execute_client_ticket_agent_runtime(
+            message="12pm utc+8",
+            ticket_id="TK-123-TURN3",
+            customer_id="C-001",
+            ticket_subject="Black screen",
+            ticket_context=[
+                {"role": "customer", "content": "i got black screen issue"},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "If the issue continues, please share channel name, problematic uid, and issue timestamp "
+                        "so I can narrow down the Audio/Video Calling investigation."
+                    ),
+                },
+                {"role": "customer", "content": "channel name: zilingtest, uid 2"},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "Known so far: issue symptom is black screen issue; channel name is zilingtest; "
+                        "problematic uid is 2. To investigate this Audio/Video Calling issue, please share "
+                        "the issue timestamp."
+                    ),
+                    "workflow_action": "clarify_customer_for_intake",
+                    "client_intake_missing_information": ["issue_timestamp"],
+                },
+            ],
+            product="audio_video_calling",
+            message_id="2026-04-16T03:52:10+00:00",
+            client_intake_state={
+                "phase": "gather_customer_inputs",
+                "product": "audio_video_calling",
+                "issue_mode": "investigation",
+                "known_information": {
+                    "issue_symptom": "black screen issue",
+                    "channel_name": "zilingtest",
+                    "problematic_uid": "2",
+                },
+                "missing_information": ["issue_timestamp"],
+                "ready_for_engineer_ticket": False,
+                "pending_investigation_reason": "rag_post_check_insufficient",
+                "clarification_rounds_used": 2,
+                "last_updated_at": "2026-04-16T03:51:47.709113+00:00",
+            },
+            route_agent=lambda **_kwargs: self.fail("route agent should not run once two investigation clarify rounds are exhausted"),
+            route_executor=lambda **_kwargs: self.fail("route executor should not run once two investigation clarify rounds are exhausted"),
+            rag_agent=lambda **_kwargs: self.fail("rag agent should not run once two investigation clarify rounds are exhausted"),
+            review_agent=lambda **_kwargs: self.fail("review agent should not run once two investigation clarify rounds are exhausted"),
+            rag_canceler=None,
+        )
+
+        self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
+        self.assertEqual(execution.result.route_reason, "investigation_intake_round_exhausted")
+        self.assertEqual(execution.result.client_intake_state["clarification_rounds_used"], 2)
+        self.assertEqual(execution.result.client_intake_state["phase"], "clarification_limit_reached")
+        self.assertEqual(
+            execution.result.client_intake_state["issue_timestamp_parts"],
+            {"time": "12:00pm", "timezone": "UTC+8"},
+        )
+        self.assertEqual(execution.runtime_state.route_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.rag_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
 
     def test_rag_unavailable_from_knowledge_index_guard_skips_review_and_surfaces_diagnostics(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime

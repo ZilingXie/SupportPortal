@@ -48,6 +48,7 @@ WORKFLOW_ACTION_ANSWER_CUSTOMER = "answer_customer"
 WORKFLOW_ACTION_CLARIFY_CUSTOMER_FOR_INTAKE = "clarify_customer_for_intake"
 WORKFLOW_ACTION_OPEN_ENGINEER_TICKET = "open_engineer_ticket"
 WORKFLOW_ACTION_RESOLVE_TICKET = "resolve_ticket"
+MAX_INVESTIGATION_CLARIFICATION_ROUNDS = 2
 
 AGENT_NAME_MAIN = "main_agent"
 AGENT_NAME_ROUTE = "route_agent"
@@ -313,15 +314,16 @@ def _build_cited_answer_execution_result(
         current_state=current_state,
         investigation_reason=investigation_reason,
     )
+    follow_up = _build_cited_answer_follow_up(
+        review_result,
+        product=product,
+    )
     next_client_intake_state = build_client_intake_state(
         review_result,
         product=product,
         pending_investigation_reason=pending_investigation_reason,
         current_state=current_state,
-    )
-    follow_up = _build_cited_answer_follow_up(
-        review_result,
-        product=product,
+        clarification_sent=bool(follow_up),
     )
     answer_text = str(resolution.answer or "").strip()
     if follow_up:
@@ -676,6 +678,68 @@ def _build_ticket_execution_result(
     )
 
 
+@dataclass(frozen=True)
+class InvestigationIntakeShortCircuitResult:
+    review_result: TroubleshootingIntakeResult
+    workflow_action: str
+    reason: str
+    clarification_rounds_used: int
+
+
+def _build_investigation_intake_clarify_resolution(
+    *,
+    customer_reply: str,
+    route_reason: str,
+) -> SupportResolution:
+    return SupportResolution(
+        answer=customer_reply,
+        confidence=1.0,
+        sources=[],
+        citations=[],
+        needs_engineer_guidance=False,
+        answer_route="workflow",
+        scope_label="agora_technical",
+        route_family="investigation_intake",
+        execution_action=WORKFLOW_ACTION_CLARIFY_CUSTOMER_FOR_INTAKE,
+        tooling_profile="deterministic_intake",
+        route_reason=route_reason,
+        route_confidence=1.0,
+        search_used=False,
+        matched_signals=[route_reason or WORKFLOW_ACTION_CLARIFY_CUSTOMER_FOR_INTAKE],
+        evidence_summary={"diagnostics": {"intake_short_circuit": True, "remaining_information_requested": True}},
+        packed_evidence=None,
+    )
+
+
+def _build_investigation_intake_clarify_execution_result(
+    *,
+    review_result: TroubleshootingIntakeResult,
+    route_reason: str,
+    product: str | None,
+    current_state: dict[str, Any] | None,
+    message_id: str | None,
+    clarification_rounds_used: int,
+) -> TicketExecutionResult:
+    next_client_intake_state = build_client_intake_state(
+        review_result,
+        product=product,
+        now_value=message_id,
+        pending_investigation_reason=route_reason,
+        current_state=current_state,
+        clarification_rounds_used=clarification_rounds_used,
+    )
+    return _build_ticket_execution_result(
+        resolution=_build_investigation_intake_clarify_resolution(
+            customer_reply=review_result.customer_reply,
+            route_reason=route_reason,
+        ),
+        needs_investigating=False,
+        workflow_action=WORKFLOW_ACTION_CLARIFY_CUSTOMER_FOR_INTAKE,
+        investigation_reason=route_reason,
+        client_intake_state=next_client_intake_state,
+    )
+
+
 def _attach_runtime_metadata(
     result: TicketExecutionResult,
     *,
@@ -894,7 +958,7 @@ def _handle_insufficient_review(
     )
     if (
         review_result.issue_mode == "investigation"
-        and clarification_rounds_used >= 1
+        and clarification_rounds_used >= MAX_INVESTIGATION_CLARIFICATION_ROUNDS
         and bool(_clean_text(review_result.customer_reply))
     ):
         exhausted_client_intake_state = build_client_intake_state(
@@ -903,7 +967,7 @@ def _handle_insufficient_review(
             now_value=message_created_at,
             pending_investigation_reason=INVESTIGATION_INTAKE_ROUND_EXHAUSTED_REASON,
             current_state=current_state,
-            clarification_rounds_used=max(clarification_rounds_used, 1),
+            clarification_rounds_used=max(clarification_rounds_used, MAX_INVESTIGATION_CLARIFICATION_ROUNDS),
             phase_override="clarification_limit_reached",
         )
         return _build_ticket_execution_result(
@@ -920,18 +984,21 @@ def _handle_insufficient_review(
             sources=[],
             citations=[],
             needs_engineer_guidance=False,
-            answer_route=resolution.answer_route,
-            scope_label=resolution.scope_label,
+            answer_route="workflow",
+            scope_label="agora_technical",
             route_reason=pending_investigation_reason,
             route_confidence=resolution.route_confidence,
-            search_used=resolution.search_used,
-            matched_signals=list(resolution.matched_signals),
-            route_family=resolution.route_family,
-            execution_action=resolution.execution_action,
-            tooling_profile=resolution.tooling_profile,
+            search_used=False,
+            matched_signals=[pending_investigation_reason],
+            route_family="investigation_intake",
+            execution_action=WORKFLOW_ACTION_CLARIFY_CUSTOMER_FOR_INTAKE,
+            tooling_profile="deterministic_intake",
             evidence_summary=dict(resolution.evidence_summary or {}) or None,
             packed_evidence=dict(resolution.packed_evidence or {}) or None,
         )
+        next_rounds_used = clarification_rounds_used
+        if review_result.issue_mode == "investigation":
+            next_rounds_used = clarification_rounds_used + 1
         return _build_ticket_execution_result(
             resolution=clarify_resolution,
             needs_investigating=False,
@@ -942,7 +1009,7 @@ def _handle_insufficient_review(
                 product=product,
                 pending_investigation_reason=pending_investigation_reason,
                 current_state=current_state,
-                clarification_sent=True,
+                clarification_rounds_used=next_rounds_used,
             ),
         )
     return _build_ticket_execution_result(
@@ -999,7 +1066,7 @@ def _evaluate_investigation_intake_short_circuit(
     current_state: dict[str, Any] | None,
     message_id: str | None,
     latest_assistant_message: dict[str, Any] | None,
-) -> tuple[TroubleshootingIntakeResult, str, int] | None:
+) -> InvestigationIntakeShortCircuitResult | None:
     deterministic_review = evaluate_troubleshooting_intake(
         message=message,
         product=product,
@@ -1016,30 +1083,43 @@ def _evaluate_investigation_intake_short_circuit(
     )
     if deterministic_review.issue_mode != "investigation":
         return None
+    pending_investigation_reason = _resolve_pending_investigation_reason(
+        current_state=current_state,
+        investigation_reason=None,
+    )
     clarification_rounds_used = resolve_investigation_clarification_rounds_used(
         current_state=current_state,
         latest_assistant_message=latest_assistant_message,
         ticket_context=ticket_context,
     )
-    if not deterministic_review.ready_for_engineer_ticket:
-        if clarification_rounds_used < 1:
-            return None
-        if not customer_follow_up_adds_requested_investigation_detail(
-            message=message,
-            product=product,
-            current_state=current_state,
-            message_created_at=message_id,
-        ):
-            return None
-        return (
-            deterministic_review,
-            INVESTIGATION_INTAKE_ROUND_EXHAUSTED_REASON,
-            max(clarification_rounds_used, 1),
+    if deterministic_review.ready_for_engineer_ticket:
+        return InvestigationIntakeShortCircuitResult(
+            review_result=deterministic_review,
+            workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
+            reason=INVESTIGATION_INTAKE_COMPLETE_REASON,
+            clarification_rounds_used=clarification_rounds_used,
         )
-    return (
-        deterministic_review,
-        INVESTIGATION_INTAKE_COMPLETE_REASON,
-        clarification_rounds_used,
+    if clarification_rounds_used < 1:
+        return None
+    if not customer_follow_up_adds_requested_investigation_detail(
+        message=message,
+        product=product,
+        current_state=current_state,
+        message_created_at=message_id,
+    ):
+        return None
+    if clarification_rounds_used < MAX_INVESTIGATION_CLARIFICATION_ROUNDS:
+        return InvestigationIntakeShortCircuitResult(
+            review_result=deterministic_review,
+            workflow_action=WORKFLOW_ACTION_CLARIFY_CUSTOMER_FOR_INTAKE,
+            reason=pending_investigation_reason,
+            clarification_rounds_used=clarification_rounds_used + 1,
+        )
+    return InvestigationIntakeShortCircuitResult(
+        review_result=deterministic_review,
+        workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
+        reason=INVESTIGATION_INTAKE_ROUND_EXHAUSTED_REASON,
+        clarification_rounds_used=max(clarification_rounds_used, MAX_INVESTIGATION_CLARIFICATION_ROUNDS),
     )
 
 
@@ -1116,11 +1196,10 @@ def execute_client_ticket_agent_runtime(
         )
     if intake_short_circuit_result is not None:
         diagnostics["investigation_intake_short_circuit"] = True
-        (
-            intake_short_circuit_review,
-            intake_short_circuit_reason,
-            intake_short_circuit_rounds_used,
-        ) = intake_short_circuit_result
+        intake_short_circuit_review = intake_short_circuit_result.review_result
+        intake_short_circuit_reason = intake_short_circuit_result.reason
+        intake_short_circuit_rounds_used = intake_short_circuit_result.clarification_rounds_used
+        intake_short_circuit_workflow_action = intake_short_circuit_result.workflow_action
         _mark_agent_summary(
             route_summary,
             phase="skipped",
@@ -1182,21 +1261,32 @@ def execute_client_ticket_agent_runtime(
             clarification_rounds_used=intake_short_circuit_rounds_used,
             phase_override=(
                 "clarification_limit_reached"
-                if intake_short_circuit_reason == INVESTIGATION_INTAKE_ROUND_EXHAUSTED_REASON
+                if intake_short_circuit_workflow_action == WORKFLOW_ACTION_OPEN_ENGINEER_TICKET
+                and intake_short_circuit_reason == INVESTIGATION_INTAKE_ROUND_EXHAUSTED_REASON
                 else None
             ),
         )
-        result = _build_ticket_execution_result(
-            resolution=(
-                _build_intake_complete_investigation_resolution(message)
-                if intake_short_circuit_reason == INVESTIGATION_INTAKE_COMPLETE_REASON
-                else _build_intake_round_exhausted_investigation_resolution(message)
-            ),
-            needs_investigating=True,
-            workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
-            investigation_reason=intake_short_circuit_reason,
-            client_intake_state=next_client_intake_state,
-        )
+        if intake_short_circuit_workflow_action == WORKFLOW_ACTION_CLARIFY_CUSTOMER_FOR_INTAKE:
+            result = _build_investigation_intake_clarify_execution_result(
+                review_result=intake_short_circuit_review,
+                route_reason=intake_short_circuit_reason,
+                product=product,
+                current_state=client_intake_state,
+                message_id=message_id,
+                clarification_rounds_used=intake_short_circuit_rounds_used,
+            )
+        else:
+            result = _build_ticket_execution_result(
+                resolution=(
+                    _build_intake_complete_investigation_resolution(message)
+                    if intake_short_circuit_reason == INVESTIGATION_INTAKE_COMPLETE_REASON
+                    else _build_intake_round_exhausted_investigation_resolution(message)
+                ),
+                needs_investigating=True,
+                workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
+                investigation_reason=intake_short_circuit_reason,
+                client_intake_state=next_client_intake_state,
+            )
         _mark_agent_summary(
             main_summary,
             phase="completed",
