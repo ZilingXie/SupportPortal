@@ -1923,6 +1923,71 @@ class InvestigationFlowTests(unittest.TestCase):
             ],
         )
 
+    def test_fallback_engineer_agent_state_prefers_intake_symptom_summary_over_latest_customer_message(self) -> None:
+        state = fallback_engineer_agent_state(
+            {
+                "subject": "Black Screen Issue",
+                "engineer_agent_state": {},
+            },
+            {
+                "latest_customer_message": "channel name: zilingtest, uid 2",
+                "client_intake_state": {
+                    "known_information": {
+                        "issue_symptom": "black screen issue",
+                        "channel_name": "zilingtest",
+                        "problematic_uid": "2",
+                    }
+                },
+                "rag_result": {
+                    "candidate_answer": (
+                        "Customer already answered the single allowed intake clarification, "
+                        "and the case was handed off for direct engineer investigation."
+                    ),
+                    "sources": [],
+                    "citations": [],
+                },
+                "unresolved_reason": "investigation_intake_round_exhausted",
+            },
+            now_value="2026-04-16T03:51:52.897458+00:00",
+            ready_to_reply=False,
+        )
+
+        self.assertEqual(
+            state["issue_understanding"],
+            "Black screen issue reported for channel zilingtest, uid 2.",
+        )
+        self.assertEqual(
+            state["known_facts"],
+            [
+                "Issue symptom is black screen issue.",
+                "Channel name is zilingtest.",
+                "Problematic uid is 2.",
+            ],
+        )
+
+    def test_fallback_engineer_agent_state_uses_latest_customer_message_without_intake_symptom(self) -> None:
+        state = fallback_engineer_agent_state(
+            {
+                "subject": "Black Screen Issue",
+                "engineer_agent_state": {},
+            },
+            {
+                "latest_customer_message": "channel name: zilingtest, uid 2",
+                "client_intake_state": {
+                    "known_information": {
+                        "channel_name": "zilingtest",
+                        "problematic_uid": "2",
+                    }
+                },
+                "rag_result": {"candidate_answer": "", "sources": [], "citations": []},
+                "unresolved_reason": "investigation_intake_round_exhausted",
+            },
+            now_value="2026-04-16T03:51:52.897458+00:00",
+            ready_to_reply=False,
+        )
+
+        self.assertEqual(state["issue_understanding"], "channel name: zilingtest, uid 2")
+
     def test_normalize_engineer_agent_state_filters_candidate_answer_like_known_facts(self) -> None:
         state = normalize_engineer_agent_state(
             {
