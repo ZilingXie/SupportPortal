@@ -637,7 +637,7 @@ For each new entry, record:
   - Existing technical corpora must be re-ingested to reflect the new chunk boundaries and metadata
 - Verification:
   - `./.venv/bin/python -m unittest backend.tests.test_knowledge_ingestion backend.tests.test_rag_qa`
-  - Local ingestion and retrieval validation for `tech_blog.md`
+  - Local ingestion and retrieval validation for `backend/tests/fixtures/tech_blog.md`
 
 ## 2026-03-22 - Ticket worker DB retry and task recovery hardening
 

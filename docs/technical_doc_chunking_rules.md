@@ -171,7 +171,7 @@ This preserves a clean before/after comparison against the previous technical re
 ## Gold Acceptance Case
 
 Current gold case:
-- `tech_blog.md`
+- `backend/tests/fixtures/tech_blog.md`
 
 Expected primary result:
 - exactly `5` primary chunks
@@ -222,4 +222,4 @@ Verification targets:
 - parser unit tests for semantic section construction
 - chunk builder unit tests for 5 primary chunks and metadata propagation
 - rerank unit tests for technical intent detection and intent-based ranking
-- local ingestion and query validation for `tech_blog.md`
+- local ingestion and query validation for `backend/tests/fixtures/tech_blog.md`

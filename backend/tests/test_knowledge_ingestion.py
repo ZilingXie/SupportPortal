@@ -16,7 +16,7 @@ from backend.services.knowledge_ingestion import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEPLOY_TOKEN_SERVER_DOC = REPO_ROOT / "ag_docs" / "video-calling_deploy-token-server.md"
-TECH_BLOG_DOC = REPO_ROOT / "tech_blog.md"
+TECH_BLOG_DOC = REPO_ROOT / "backend" / "tests" / "fixtures" / "tech_blog.md"
 
 
 SAMPLE_OFFICIAL_MARKDOWN = """---
@@ -206,6 +206,9 @@ class KnowledgeIngestionParsingTests(unittest.TestCase):
         self.assertGreater(len(document.content_blocks), 0)
         self.assertEqual(document.sections[0].h2, "Introduction")
         self.assertTrue(any(section.h2 == "Basic information" for section in document.sections))
+
+    def test_tech_blog_fixture_exists_under_backend_test_fixtures(self) -> None:
+        self.assertTrue(TECH_BLOG_DOC.exists())
 
     def test_parse_official_markdown_content_supports_db_backed_uploads(self) -> None:
         document = parse_official_markdown_content(
