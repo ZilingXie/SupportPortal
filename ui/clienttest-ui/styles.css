@@ -2692,7 +2692,6 @@ a.citation-link:hover {
   --new-ticket-thread-panel-height: 320px;
   --new-ticket-composer-panel-height: 334px;
   --new-ticket-info-card-height: 388px;
-  --new-ticket-knowledge-card-height: 252px;
   width: min(100%, 1240px);
   margin: 0 auto;
   display: grid;
@@ -3151,7 +3150,7 @@ a.citation-link:hover {
 }
 
 .new-ticket-fixed-knowledge-card {
-  height: var(--new-ticket-knowledge-card-height);
+  height: var(--new-ticket-info-card-height);
 }
 
 .new-ticket-info-card-header {
@@ -3246,7 +3245,6 @@ a.citation-link:hover {
     --new-ticket-thread-panel-height: 304px;
     --new-ticket-composer-panel-height: 320px;
     --new-ticket-info-card-height: 372px;
-    --new-ticket-knowledge-card-height: 240px;
   }
 
   .clienttest-shell {
@@ -3318,7 +3316,6 @@ a.citation-link:hover {
     --new-ticket-thread-panel-height: 284px;
     --new-ticket-composer-panel-height: 304px;
     --new-ticket-info-card-height: 356px;
-    --new-ticket-knowledge-card-height: 224px;
   }
 
   .clienttest-shell {
