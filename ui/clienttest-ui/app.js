@@ -2053,14 +2053,36 @@ function buildNewTicketSummary(ticket) {
 }
 
 function buildNewTicketKnowledgeItems(ticket) {
-  if (isTicketEmpty(ticket)) {
-    return [
-      { title: "Write a sharp issue summary", meta: "intake starter", href: "" },
-      { title: "Prepare logs or call IDs", meta: "diagnostic checklist", href: "" },
-      { title: "Explain expected vs. actual behavior", meta: "case writing guide", href: "" },
-    ];
+  const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
+  const items = [];
+  const seenUrls = new Set();
+
+  for (const message of messages) {
+    const role = String(message?.role || "").trim().toLowerCase();
+    if (role !== "assistant" && role !== "agent") {
+      continue;
+    }
+    const citations = normalizeCitations({
+      citations: Array.isArray(message?.citations) ? message.citations : [],
+    });
+    const sources = normalizeCitations({
+      sources: Array.isArray(message?.sources) ? message.sources : [],
+    });
+
+    for (const citation of [...citations, ...sources]) {
+      const href = sanitizeUrl(citation?.sourceUrl || "");
+      if (!href || seenUrls.has(href)) {
+        continue;
+      }
+      seenUrls.add(href);
+      items.push({
+        title: citation?.heading || citation?.sourcePath || `Reference ${items.length + 1}`,
+        meta: "Agent reference",
+        href,
+      });
+    }
   }
-  return buildRelatedKnowledgeItems(ticket);
+  return items;
 }
 
 function renderNewTicketInformationPanel(ticket) {
@@ -2104,18 +2126,19 @@ function renderNewTicketKnowledgePanel(ticket) {
         <p class="new-ticket-info-kicker">Knowledge Base Articles</p>
       </div>
       <div class="new-ticket-info-body new-ticket-knowledge-list">
-        ${items
-          .map((item) => {
-            const body = `
-              <span class="new-ticket-knowledge-title">${escapeHtml(item.title)}</span>
-              <span class="new-ticket-knowledge-meta">${escapeHtml(item.meta)}</span>
-            `;
-            if (item.href) {
-              return `<a class="new-ticket-knowledge-item" href="${escapeHtml(item.href)}" target="_blank" rel="noopener noreferrer">${body}</a>`;
-            }
-            return `<div class="new-ticket-knowledge-item">${body}</div>`;
-          })
-          .join("")}
+        ${
+          items.length > 0
+            ? items
+                .map((item) => {
+                  const body = `
+                    <span class="new-ticket-knowledge-title">${escapeHtml(item.title)}</span>
+                    <span class="new-ticket-knowledge-meta">${escapeHtml(item.meta)}</span>
+                  `;
+                  return `<a class="new-ticket-knowledge-item" href="${escapeHtml(item.href)}" target="_blank" rel="noopener noreferrer">${body}</a>`;
+                })
+                .join("")
+            : `<p class="new-ticket-knowledge-placeholder">All reference links provided by agent will show up here.</p>`
+        }
       </div>
     </section>
   `;
