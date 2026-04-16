@@ -26,8 +26,8 @@ class ClientTestRouteSmokeTests(unittest.TestCase):
     def test_clienttest_html_references_local_assets(self) -> None:
         html = Path("ui/clienttest-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260416-clienttest-fixed-sections-1", html)
-        self.assertIn("./app.js?v=20260416-clienttest-fixed-sections-1", html)
+        self.assertIn("./styles.css?v=20260416-clienttest-fixed-sections-2", html)
+        self.assertIn("./app.js?v=20260416-clienttest-fixed-sections-2", html)
 
 
 class ClientTestUiContractTests(unittest.TestCase):
@@ -196,6 +196,7 @@ class ClientTestUiContractTests(unittest.TestCase):
         self.assertIn("new-ticket-fixed-info-card", css)
         self.assertIn("new-ticket-fixed-composer-panel", css)
         self.assertIn("new-ticket-fixed-knowledge-card", css)
+        self.assertIn(".new-ticket-fixed-knowledge-card {\n  height: var(--new-ticket-info-card-height);", css)
         self.assertNotIn("new-ticket-summary-card", css)
         self.assertNotIn("new-ticket-composer-footer", css)
         self.assertNotIn("new-ticket-product-group", css)
