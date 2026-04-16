@@ -103,8 +103,8 @@ class DashboardUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', source)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', source)
         self.assertIn("if (iconFontStylesheet?.sheet) {", source)
-        self.assertIn("./styles.css?v=20260408-dashboard-client-rooted-tickets-1", source)
-        self.assertIn('./app.js?v=20260408-dashboard-client-rooted-tickets-1', source)
+        self.assertIn("./styles.css?v=20260416-dashboard-sid-unified-ai-name-1", source)
+        self.assertIn('./app.js?v=20260416-dashboard-sid-unified-ai-name-1', source)
 
         self.assertRegex(
             source,
@@ -126,7 +126,7 @@ class DashboardUiContractTests(unittest.TestCase):
         role_label_block = self._extract_js_function_block(js_source, "function roleLabel(role) {")
 
         self.assertIn('const PUBLIC_ASSISTANT_DISPLAY_NAME = "Sid";', js_source)
-        self.assertIn('const ENGINEER_AI_DISPLAY_NAME = "Case Buddy";', js_source)
+        self.assertIn('const ENGINEER_AI_DISPLAY_NAME = "Sid";', js_source)
         self.assertIn('const ENGINEER_DISPLAY_NAME = "jack";', js_source)
         self.assertIn("return PUBLIC_ASSISTANT_DISPLAY_NAME;", role_label_block)
         self.assertIn("return ENGINEER_AI_DISPLAY_NAME;", role_label_block)
