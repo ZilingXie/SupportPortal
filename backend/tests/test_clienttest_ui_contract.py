@@ -26,8 +26,8 @@ class ClientTestRouteSmokeTests(unittest.TestCase):
     def test_clienttest_html_references_local_assets(self) -> None:
         html = Path("ui/clienttest-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260416-clienttest-fix-preview-product-gate-1", html)
-        self.assertIn("./app.js?v=20260416-clienttest-fix-preview-product-gate-1", html)
+        self.assertIn("./styles.css?v=20260416-clienttest-post-send-correspondence-1", html)
+        self.assertIn("./app.js?v=20260416-clienttest-post-send-correspondence-1", html)
 
 
 class ClientTestUiContractTests(unittest.TestCase):
@@ -242,6 +242,11 @@ class ClientTestUiContractTests(unittest.TestCase):
         self.assertNotIn("new-ticket-composer-top", css)
         self.assertNotIn("new-ticket-composer-heading", css)
         self.assertNotIn("new-ticket-composer-mode", css)
+        self.assertIn("new-ticket-postsend-shell", app_source)
+        self.assertIn("new-ticket-postsend-layout", css)
+        self.assertIn("new-ticket-postsend-composer", css)
+        self.assertIn("new-ticket-correspondence-card", css)
+        self.assertIn("Continue This Ticket", app_source)
 
     def test_clienttest_new_ticket_initial_state_renders_empty_high_fidelity_draft(self) -> None:
         self.run_clienttest_app_script(
@@ -390,32 +395,35 @@ class ClientTestUiContractTests(unittest.TestCase):
                 state.inputDraft = "I can add another reproduction detail.";
 
                 const html = renderChatTicket();
-                const sidebarStart = html.indexOf('<aside class="new-ticket-sidebar">');
+                const sidebarStart = html.indexOf('<aside class="new-ticket-postsend-sidebar">');
                 const sidebarEnd = html.indexOf('</aside>', sidebarStart);
                 const sidebarHtml = html.slice(sidebarStart, sidebarEnd);
-                const toolbarStart = html.indexOf('<div class="new-ticket-composer-toolbar">');
+                const toolbarStart = html.indexOf('<div class="new-ticket-postsend-composer-toolbar">');
                 const toolbarEnd = html.indexOf('</div>', toolbarStart);
                 const toolbarHtml = html.slice(toolbarStart, toolbarEnd);
                 if (!html.includes("The video freezes after 10 minutes")) {
                   throw new Error("New Ticket detail should keep the updated ticket title after the first message.");
                 }
-                if (!html.includes('class="new-ticket-body-layout"')) {
-                  throw new Error("Existing New Ticket threads should keep the shared body layout wrapper.");
+                if (!html.includes('class="new-ticket-postsend-shell"')) {
+                  throw new Error("Existing New Ticket threads should switch into the post-send correspondence shell.");
                 }
-                if (!(html.indexOf('class="new-ticket-hero"') < html.indexOf('class="new-ticket-body-layout"'))) {
-                  throw new Error("Existing New Ticket threads should keep the title above the shared body layout.");
+                if (!html.includes('class="new-ticket-postsend-layout"')) {
+                  throw new Error("Existing New Ticket threads should render the dedicated post-send layout.");
                 }
-                if (!html.includes('class="new-ticket-footer-spacer"')) {
-                  throw new Error("Existing New Ticket threads should render the restored footer spacer.");
+                if (!html.includes('class="new-ticket-postsend-breadcrumb"')) {
+                  throw new Error("Existing New Ticket threads should restore the screenshot-like breadcrumb.");
                 }
-                if (!(html.indexOf('class="new-ticket-body-layout"') < html.indexOf('class="new-ticket-footer-spacer"'))) {
-                  throw new Error("Existing New Ticket threads should keep the footer spacer after the shared body layout.");
+                if (!html.includes("My Tickets") || !html.includes(`Ticket #${draft.id}`)) {
+                  throw new Error("Existing New Ticket threads should show the ticket breadcrumb identity.");
                 }
                 if (!html.includes("The video freezes after 10 minutes on iOS.")) {
                   throw new Error("New Ticket detail should render the submitted customer message.");
                 }
                 if (!html.includes("I checked the latest call path")) {
                   throw new Error("New Ticket detail should render the assistant thread card.");
+                }
+                if (!html.includes("new-ticket-correspondence-card")) {
+                  throw new Error("Existing New Ticket threads should render the screenshot-like correspondence cards.");
                 }
                 if (!sidebarHtml.includes("https://example.com/ios-freeze")) {
                   throw new Error("Existing New Ticket threads should show assistant reference links in the knowledge sidebar.");
@@ -432,31 +440,26 @@ class ClientTestUiContractTests(unittest.TestCase):
                 if (!toolbarHtml.includes("AI Summary")) {
                   throw new Error("Existing New Ticket threads should keep the AI Summary toolbar button.");
                 }
-                if (!html.includes("new-ticket-inline-send-btn")) {
-                  throw new Error("Existing New Ticket threads should keep the inline send action.");
+                if (!html.includes("Continue This Ticket")) {
+                  throw new Error("Existing New Ticket threads should switch to the screenshot-like composer header.");
                 }
-                if (
-                  !html.includes("new-ticket-fixed-thread-panel") ||
-                  !html.includes("new-ticket-fixed-info-card") ||
-                  !html.includes("new-ticket-fixed-composer-panel") ||
-                  !html.includes("new-ticket-fixed-knowledge-card")
-                ) {
-                  throw new Error("Existing New Ticket threads should keep the fixed-size section markers.");
+                if (!html.includes("new-ticket-postsend-send-btn")) {
+                  throw new Error("Existing New Ticket threads should render the screenshot-like footer send button.");
                 }
-                if (html.includes("Continue the conversation") || html.includes("Smart intake enabled")) {
-                  throw new Error("Existing New Ticket threads should remove the composer topline row.");
+                if (html.includes("new-ticket-body-layout") || html.includes("new-ticket-fixed-thread-panel")) {
+                  throw new Error("Existing New Ticket threads should stop rendering the draft fixed-height shell.");
                 }
                 if (html.includes("Support Product")) {
                   throw new Error("Existing New Ticket threads should not restore the product selector.");
                 }
-                if (/>\\s*Send Message\\s*</.test(html) || />\\s*Submit Ticket\\s*</.test(html)) {
-                  throw new Error("Existing New Ticket threads should keep the icon-only send action.");
+                if (!/>\\s*Send Message\\s*</.test(html)) {
+                  throw new Error("Existing New Ticket threads should expose a visible Send Message action in the post-send composer.");
                 }
-                if (html.includes("Reply to Ticket") || html.includes("Send Reply")) {
+                if (html.includes("Reply to Ticket") || html.includes("Send Reply") || html.includes("Smart Reply Enabled") || html.includes("Schedule Send")) {
                   throw new Error("Existing New Ticket threads should not regress to reply/email wording.");
                 }
-                if (!html.includes("new-ticket-thread-card")) {
-                  throw new Error("Existing New Ticket threads should render the dedicated high-fidelity message cards.");
+                if (html.includes("Dashboard") || html.includes("Contact Us")) {
+                  throw new Error("Existing New Ticket threads should not introduce the screenshot top navigation.");
                 }
                 """
             )
@@ -512,12 +515,15 @@ class ClientTestUiContractTests(unittest.TestCase):
                 state.activeTicketId = draft.id;
 
                 const html = renderChatTicket();
-                const sidebarStart = html.indexOf('<aside class="new-ticket-sidebar">');
+                const sidebarStart = html.indexOf('<aside class="new-ticket-postsend-sidebar">');
                 const sidebarEnd = html.indexOf('</aside>', sidebarStart);
                 const sidebarHtml = html.slice(sidebarStart, sidebarEnd);
                 const iosMatches = sidebarHtml.match(/https:\\/\\/example.com\\/ios-freeze/g) || [];
                 const reconnectMatches = sidebarHtml.match(/https:\\/\\/example.com\\/reconnect-guide/g) || [];
 
+                if (!html.includes('class="new-ticket-postsend-shell"')) {
+                  throw new Error("New Ticket reference aggregation should render inside the post-send correspondence shell.");
+                }
                 if (iosMatches.length !== 1) {
                   throw new Error("New Ticket reference sidebar should dedupe repeated assistant links by URL.");
                 }
@@ -581,6 +587,7 @@ class ClientTestUiContractTests(unittest.TestCase):
                 await handleSendMessage("Preview route should allow the first message without product.");
 
                 const updated = getTicketById(draft.id);
+                const postSendHtml = renderChatTicket();
                 if (toastMessages.includes("Select a product before sending your first message.")) {
                   throw new Error("Preview New Ticket should not emit the legacy product-gate toast.");
                 }
@@ -598,6 +605,15 @@ class ClientTestUiContractTests(unittest.TestCase):
                 }
                 if (!updated.messages[0].content.includes("first message without product")) {
                   throw new Error("Preview New Ticket should preserve the submitted first-message content.");
+                }
+                if (!postSendHtml.includes('class="new-ticket-postsend-shell"')) {
+                  throw new Error("Preview New Ticket should switch from the draft shell into the post-send correspondence shell.");
+                }
+                if (postSendHtml.includes('class="new-ticket-body-layout"')) {
+                  throw new Error("Preview New Ticket should not stay on the draft fixed-height layout after the first send.");
+                }
+                if (!postSendHtml.includes("Continue This Ticket") || !postSendHtml.includes("new-ticket-postsend-send-btn")) {
+                  throw new Error("Preview New Ticket should render the screenshot-like post-send composer after the first send.");
                 }
               """
             )
