@@ -26,8 +26,8 @@ class ClientTestRouteSmokeTests(unittest.TestCase):
     def test_clienttest_html_references_local_assets(self) -> None:
         html = Path("ui/clienttest-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260416-clienttest-disable-textarea-resize-1", html)
-        self.assertIn("./app.js?v=20260416-clienttest-disable-textarea-resize-1", html)
+        self.assertIn("./styles.css?v=20260416-clienttest-empty-thread-fill-1", html)
+        self.assertIn("./app.js?v=20260416-clienttest-empty-thread-fill-1", html)
 
 
 class ClientTestUiContractTests(unittest.TestCase):
@@ -199,6 +199,18 @@ class ClientTestUiContractTests(unittest.TestCase):
         self.assertIn(".new-ticket-fixed-knowledge-card {\n  height: var(--new-ticket-info-card-height);", css)
         self.assertIn(".clienttest-main-new-ticket {\n  padding: 28px 36px 0;\n}", css)
         self.assertIn(".new-ticket-footer-spacer {\n  height: 40px;\n}", css)
+        self.assertIn(
+            ".new-ticket-thread-scroll {\n  padding: 16px;\n  height: 100%;\n  max-height: none;\n  overflow: auto;\n  flex: 1 1 auto;\n  display: flex;\n}",
+            css,
+        )
+        self.assertIn(
+            ".new-ticket-thread-list {\n  width: 100%;\n  margin: 0;\n  gap: 16px;\n  flex: 1 1 auto;\n  min-height: 0;\n}",
+            css,
+        )
+        self.assertIn(
+            ".new-ticket-thread-empty {\n  flex: 1 1 auto;\n  min-height: 100%;\n  height: 100%;",
+            css,
+        )
         self.assertIn("--new-ticket-thread-panel-height: 480px;", css)
         self.assertIn("--new-ticket-composer-panel-height: 296px;", css)
         self.assertIn("--new-ticket-thread-panel-height: 376px;", css)
