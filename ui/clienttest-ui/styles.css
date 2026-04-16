@@ -2692,6 +2692,11 @@ a.citation-link:hover {
   width: min(100%, 1240px);
   margin: 0 auto;
   display: grid;
+  gap: 20px;
+}
+
+.new-ticket-body-layout {
+  display: grid;
   grid-template-columns: minmax(0, 1.5fr) minmax(300px, 360px);
   gap: 28px;
   align-items: start;
@@ -3221,7 +3226,7 @@ a.citation-link:hover {
 
   .ticket-detail-layout,
   .clienttest-home-grid,
-  .new-ticket-layout {
+  .new-ticket-body-layout {
     grid-template-columns: 1fr;
   }
 
@@ -3321,7 +3326,7 @@ a.citation-link:hover {
 
   .ticket-detail-layout,
   .clienttest-home-grid,
-  .new-ticket-layout {
+  .new-ticket-body-layout {
     grid-template-columns: 1fr;
   }
 

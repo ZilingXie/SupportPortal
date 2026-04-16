@@ -2319,44 +2319,46 @@ function renderNewTicketTicketFromState(viewState) {
   return `
     <section class="chat-root clienttest-new-ticket-shell" data-chat-ticket-id="${escapeHtml(ticket.id)}">
       <div class="new-ticket-layout">
-        <div class="new-ticket-main-column">
-          <header class="new-ticket-hero">
-            <h1 class="new-ticket-page-title">${escapeHtml(buildNewTicketPageTitle(ticket))}</h1>
-          </header>
-          <section class="new-ticket-thread-panel">
-            <main class="chat-main new-ticket-thread-scroll">
-              <div class="message-list new-ticket-thread-list" data-chat-section="messages">
-                ${renderNewTicketThreadHtml(viewState)}
-              </div>
-            </main>
-          </section>
-          ${renderChatUnreadIndicatorHtml(ticket.id)}
-          <footer class="new-ticket-composer-panel">
-            <div class="new-ticket-composer-toolbar">
-              ${renderNewTicketComposerToolbar()}
-            </div>
-            <div data-chat-section="composer-note">${renderNewTicketComposerNoteHtml(viewState)}</div>
-            <form id="chat-input-form" class="chat-input-inner new-ticket-composer-form" data-chat-section="composer-form">
-              <div class="new-ticket-composer-input-shell">
-                <textarea
-                  id="chat-input"
-                  class="textarea new-ticket-textarea"
-                  rows="1"
-                  placeholder="${escapeHtml(getChatComposerPlaceholder(viewState))}"
-                  ${viewState.canCompose ? "" : "disabled"}
-                >${escapeHtml(state.inputDraft || "")}</textarea>
-                <div class="new-ticket-inline-action" data-chat-section="composer-action">
-                  ${renderNewTicketComposerActionHtml(viewState)}
+        <header class="new-ticket-hero">
+          <h1 class="new-ticket-page-title">${escapeHtml(buildNewTicketPageTitle(ticket))}</h1>
+        </header>
+        <div class="new-ticket-body-layout">
+          <div class="new-ticket-main-column">
+            <section class="new-ticket-thread-panel">
+              <main class="chat-main new-ticket-thread-scroll">
+                <div class="message-list new-ticket-thread-list" data-chat-section="messages">
+                  ${renderNewTicketThreadHtml(viewState)}
                 </div>
+              </main>
+            </section>
+            ${renderChatUnreadIndicatorHtml(ticket.id)}
+            <footer class="new-ticket-composer-panel">
+              <div class="new-ticket-composer-toolbar">
+                ${renderNewTicketComposerToolbar()}
               </div>
-            </form>
-          </footer>
+              <div data-chat-section="composer-note">${renderNewTicketComposerNoteHtml(viewState)}</div>
+              <form id="chat-input-form" class="chat-input-inner new-ticket-composer-form" data-chat-section="composer-form">
+                <div class="new-ticket-composer-input-shell">
+                  <textarea
+                    id="chat-input"
+                    class="textarea new-ticket-textarea"
+                    rows="1"
+                    placeholder="${escapeHtml(getChatComposerPlaceholder(viewState))}"
+                    ${viewState.canCompose ? "" : "disabled"}
+                  >${escapeHtml(state.inputDraft || "")}</textarea>
+                  <div class="new-ticket-inline-action" data-chat-section="composer-action">
+                    ${renderNewTicketComposerActionHtml(viewState)}
+                  </div>
+                </div>
+              </form>
+            </footer>
+          </div>
+          <aside class="new-ticket-sidebar">
+            ${renderNewTicketInformationPanel(ticket)}
+            ${renderNewTicketSummaryPanel(ticket)}
+            ${renderNewTicketKnowledgePanel(ticket)}
+          </aside>
         </div>
-        <aside class="new-ticket-sidebar">
-          ${renderNewTicketInformationPanel(ticket)}
-          ${renderNewTicketSummaryPanel(ticket)}
-          ${renderNewTicketKnowledgePanel(ticket)}
-        </aside>
       </div>
     </section>
   `;

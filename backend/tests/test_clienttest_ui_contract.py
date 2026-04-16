@@ -26,8 +26,8 @@ class ClientTestRouteSmokeTests(unittest.TestCase):
     def test_clienttest_html_references_local_assets(self) -> None:
         html = Path("ui/clienttest-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260416-clienttest-inline-send-3", html)
-        self.assertIn("./app.js?v=20260416-clienttest-inline-send-3", html)
+        self.assertIn("./styles.css?v=20260416-clienttest-sidebar-align-1", html)
+        self.assertIn("./app.js?v=20260416-clienttest-sidebar-align-1", html)
 
 
 class ClientTestUiContractTests(unittest.TestCase):
@@ -186,6 +186,7 @@ class ClientTestUiContractTests(unittest.TestCase):
         self.assertNotIn("Smart intake enabled", app_source)
 
         self.assertIn("clienttest-new-ticket-shell", css)
+        self.assertIn("new-ticket-body-layout", css)
         self.assertIn("new-ticket-thread-card", css)
         self.assertIn("new-ticket-composer-panel", css)
         self.assertIn("new-ticket-info-card", css)
@@ -211,6 +212,15 @@ class ClientTestUiContractTests(unittest.TestCase):
                 const html = renderChatTicket();
                 if (!html.includes("Start a new support ticket")) {
                   throw new Error("New Ticket draft should render the high-fidelity title.");
+                }
+                if (!html.includes('class="new-ticket-body-layout"')) {
+                  throw new Error("New Ticket draft should render the shared body layout wrapper.");
+                }
+                if (!(html.indexOf('class="new-ticket-hero"') < html.indexOf('class="new-ticket-body-layout"'))) {
+                  throw new Error("New Ticket draft hero should render before the shared body layout.");
+                }
+                if (!(html.indexOf('class="new-ticket-body-layout"') < html.indexOf('class="new-ticket-sidebar"'))) {
+                  throw new Error("New Ticket draft sidebar should render inside the shared body layout.");
                 }
                 if (html.includes("new-ticket-breadcrumb") || html.includes("chevron_right")) {
                   throw new Error("New Ticket draft should remove the breadcrumb row.");
@@ -298,6 +308,12 @@ class ClientTestUiContractTests(unittest.TestCase):
                 const html = renderChatTicket();
                 if (!html.includes("The video freezes after 10 minutes")) {
                   throw new Error("New Ticket detail should keep the updated ticket title after the first message.");
+                }
+                if (!html.includes('class="new-ticket-body-layout"')) {
+                  throw new Error("Existing New Ticket threads should keep the shared body layout wrapper.");
+                }
+                if (!(html.indexOf('class="new-ticket-hero"') < html.indexOf('class="new-ticket-body-layout"'))) {
+                  throw new Error("Existing New Ticket threads should keep the title above the shared body layout.");
                 }
                 if (!html.includes("The video freezes after 10 minutes on iOS.")) {
                   throw new Error("New Ticket detail should render the submitted customer message.");
