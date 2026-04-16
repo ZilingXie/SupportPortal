@@ -2332,10 +2332,6 @@ function renderNewTicketTicketFromState(viewState) {
           </section>
           ${renderChatUnreadIndicatorHtml(ticket.id)}
           <footer class="new-ticket-composer-panel">
-            <div class="new-ticket-composer-top">
-              <span class="new-ticket-composer-heading">${isTicketEmpty(ticket) ? "Describe your issue" : "Continue the conversation"}</span>
-              <span class="new-ticket-composer-mode">Smart intake enabled</span>
-            </div>
             <div class="new-ticket-composer-toolbar">
               ${renderNewTicketComposerToolbar()}
             </div>
