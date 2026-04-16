@@ -1067,6 +1067,11 @@ def _why_not_solved_text(unresolved_reason: str) -> str:
             f"{_PUBLIC_ASSISTANT_NAME} already collected the required troubleshooting details, "
             "so the case was handed off directly for engineer investigation."
         )
+    if normalized == "investigation_intake_round_exhausted":
+        return (
+            f"{_PUBLIC_ASSISTANT_NAME} already used the single allowed intake clarification, "
+            "so the case was handed off for engineer investigation with some troubleshooting details still missing."
+        )
     if normalized == "rag_post_check_insufficient":
         return (
             "The current grounded answer is still missing a critical technical detail, so it is not safe "
@@ -1147,6 +1152,11 @@ def _default_missing_information(ticket: dict[str, Any], handoff_packet: dict[st
         return [
             "Reproduce the issue using the confirmed customer intake details.",
             "Collect logs or traces around the reported issue timestamp and affected uid/session.",
+        ]
+    if unresolved_reason == "investigation_intake_round_exhausted":
+        return [
+            "Reproduce the issue using the customer details already collected so far.",
+            "Capture the remaining missing investigation details during engineer follow-up and collect related logs or traces.",
         ]
     if unresolved_reason == "customer_follow_up":
         return ["Confirm the new scope introduced by the customer follow-up."]

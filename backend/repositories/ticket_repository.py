@@ -135,6 +135,11 @@ def _normalize_client_intake_state(value: Any) -> dict[str, Any] | None:
         }
     else:
         normalized["issue_timestamp_parts"] = {}
+    try:
+        clarification_rounds_used = int(str(normalized.get("clarification_rounds_used") or "").strip())
+    except (TypeError, ValueError):
+        clarification_rounds_used = 0
+    normalized["clarification_rounds_used"] = clarification_rounds_used if clarification_rounds_used >= 0 else 0
     normalized["last_updated_at"] = (
         _to_iso(normalized.get("last_updated_at"))
         if normalized.get("last_updated_at") is not None

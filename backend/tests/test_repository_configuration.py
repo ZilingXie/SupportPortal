@@ -1182,6 +1182,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
                                 "known_information": {"issue_symptom": "black screen"},
                                 "missing_information": ["channel_name", "problematic_uid", "issue_timestamp"],
                                 "ready_for_engineer_ticket": False,
+                                "clarification_rounds_used": 1,
                                 "last_updated_at": "2026-04-04T00:00:00+00:00",
                             },
                             "2026-03-31T00:00:00+00:00",
@@ -1202,6 +1203,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
             ticket["client_intake_state"]["missing_information"],
             ["channel_name", "problematic_uid", "issue_timestamp"],
         )
+        self.assertEqual(ticket["client_intake_state"]["clarification_rounds_used"], 1)
 
     def test_ticket_repository_save_ticket_persists_client_agent_runtime_state(self) -> None:
         repository = PostgresTicketRepository(dsn="postgresql://example")

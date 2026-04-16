@@ -5,7 +5,12 @@ import types
 import unittest
 from unittest.mock import patch
 
-from backend.services.troubleshooting_intake import build_client_intake_state, evaluate_troubleshooting_intake
+from backend.services.troubleshooting_intake import (
+    build_client_intake_state,
+    customer_follow_up_adds_requested_investigation_detail,
+    evaluate_troubleshooting_intake,
+    resolve_investigation_clarification_rounds_used,
+)
 
 
 class TroubleshootingIntakeTests(unittest.TestCase):
@@ -78,6 +83,64 @@ The documentation states that time: 0 means the rule is applied permanently. How
         )
         self.assertFalse(result.ready_for_engineer_ticket)
         self.assertIn("Known so far", result.customer_reply)
+
+        intake_state = build_client_intake_state(
+            result,
+            product="audio_video_calling",
+            now_value="2026-04-04T10:00:00Z",
+        )
+        self.assertIsNotNone(intake_state)
+        assert intake_state is not None
+        self.assertEqual(intake_state["clarification_rounds_used"], 1)
+
+    def test_resolve_investigation_clarification_rounds_used_infers_prior_assistant_intake_prompt(self) -> None:
+        rounds_used = resolve_investigation_clarification_rounds_used(
+            current_state={
+                "phase": "gather_customer_inputs",
+                "product": "audio_video_calling",
+                "issue_mode": "investigation",
+                "known_information": {"issue_symptom": "black screen issue"},
+                "missing_information": ["channel_name", "problematic_uid", "issue_timestamp"],
+                "ready_for_engineer_ticket": False,
+                "last_updated_at": "2026-04-04T10:00:00Z",
+            },
+            latest_assistant_message=None,
+            ticket_context=[
+                {"role": "customer", "content": "i got black screen issue"},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "Known so far: issue symptom is black screen issue. "
+                        "To investigate this Audio/Video Calling issue, please share channel name, "
+                        "problematic uid, and issue timestamp."
+                    ),
+                },
+            ],
+        )
+
+        self.assertEqual(rounds_used, 1)
+
+    def test_partial_timestamp_follow_up_counts_as_added_requested_investigation_detail(self) -> None:
+        self.assertTrue(
+            customer_follow_up_adds_requested_investigation_detail(
+                message="the issue happened on april 3rd",
+                product="audio_video_calling",
+                current_state={
+                    "phase": "gather_customer_inputs",
+                    "product": "audio_video_calling",
+                    "issue_mode": "investigation",
+                    "known_information": {
+                        "issue_symptom": "black screen issue",
+                        "channel_name": "zilingtest",
+                        "problematic_uid": "2",
+                    },
+                    "missing_information": ["issue_timestamp"],
+                    "ready_for_engineer_ticket": False,
+                    "last_updated_at": "2026-04-14T02:08:33.337732+00:00",
+                },
+                message_created_at="2026-04-14T02:11:08.752498+00:00",
+            )
+        )
 
     def test_docs_api_semantics_mismatch_does_not_request_channel_or_timestamp(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
