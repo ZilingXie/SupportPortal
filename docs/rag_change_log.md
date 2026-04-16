@@ -3367,3 +3367,38 @@ For each new entry, record:
   - `python -m py_compile backend/services/ticket_resolution.py backend/services/support_router.py backend/services/support_router_prompt.py backend/services/prompts/router.py backend/services/client_ticket_agent_runtime.py backend/services/engineer_cases.py backend/services/ticket_orchestrator.py backend/worker.py backend/main.py`
   - `podman run --rm -v /Users/xieziling/.config/superpowers/worktrees/SupportPortal/ticket-resolution-gratitude-followups:/app -w /app localhost/supportportal-app:latest python -m unittest backend.tests.test_investigation_flow.InvestigationFlowTests.test_ticket_query_customer_resolved_confirmation_returns_resolved_and_records_auto_close_event backend.tests.test_investigation_flow.InvestigationFlowTests.test_ticket_query_active_engineer_case_resolution_closes_case_without_refreshing_investigation backend.tests.test_investigation_flow.InvestigationFlowTests.test_ticket_query_engineer_guidance_confirmation_resolves_when_route_agent_fails`
   - `podman run --rm -v /Users/xieziling/.config/superpowers/worktrees/SupportPortal/ticket-resolution-gratitude-followups:/app -w /app localhost/supportportal-app:latest python -m unittest backend.tests.test_worker.WorkerResilienceTests.test_process_ticket_query_starts_main_agent_from_task_snapshot_before_ticket_refresh`
+
+## 2026-04-16 - Infer support product before product-aware technical prompting
+
+- Summary:
+  - Added a dedicated product-selection stage before technical route/RAG/intake execution so the system can infer `audio_video_calling` vs `cloud_recording` from the customer message and persist pending confirmation state when the product is ambiguous.
+  - Removed the client-side welcome bubble/manual product selector and replaced it with a lightweight empty-session hint, while keeping the technical prompt chain product-aware through backend inference.
+  - Preserved product-aware routing by feeding inferred or customer-confirmed product context into the existing route prompt, RAG answer prompt, agentic planner prompt, and troubleshooting intake prompt.
+- Reason:
+  - Product-aware prompting previously depended on the client sending a manually selected product on the first turn, which blocked empty sessions and left legacy or corrected tickets without a reliable way to recover the right product scope.
+- Affected files/config:
+  - `backend/services/product_selection.py`
+  - `backend/services/prompts/product_selection.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `backend/repositories/ticket_repository.py`
+  - `backend/sql/ticket_storage.sql`
+  - `ui/client-ui/app.js`
+  - `ui/client-ui/styles.css`
+  - `ui/client-ui/index.html`
+  - `backend/tests/test_client_ui_contract.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_product_selection.py`
+  - `backend/tests/test_repository_configuration.py`
+  - `backend/tests/test_worker.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No ingestion, embedding, chunking, or vector-index changes.
+  - `support_tickets` now persists `product_selection_state` so the system can resume the original technical question after a customer confirms `RTC` or `Cloud Recording`.
+  - Existing `ticket.product` remains the canonical persisted product value and can now be backfilled or corrected by the backend product-selection stage.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest -q backend.tests.test_client_ui_contract backend.tests.test_repository_configuration backend.tests.test_investigation_flow backend.tests.test_product_selection backend.tests.test_llm_profiles backend.tests.test_prompt_modules backend.tests.test_worker`
+  - `node --check ui/client-ui/app.js`
+  - `python3 scripts/verify_feature_list.py`
+  - `python3 /Users/xieziling/.codex/skills/supportportal-run-report/scripts/run_supportportal_run_report.py`

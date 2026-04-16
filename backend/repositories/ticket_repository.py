@@ -36,7 +36,7 @@ _RETRYABLE_STORAGE_ERROR_SNIPPETS = (
 _ResultT = TypeVar("_ResultT")
 _VALID_MESSAGE_SENTIMENTS = {"good", "bad", "neutral"}
 _TICKET_SCHEMA_VERSION_KEY = "ticket_flow_schema_version"
-_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v8-message-meta"
+_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v9-product-selection-state"
 _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
     "2026-single-ai-managed-v2",
     "2026-single-ai-managed-v3",
@@ -45,6 +45,7 @@ _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
     "2026-single-ai-managed-v6",
     "2026-single-ai-managed-v7-client-agent-runtime",
     "2026-single-ai-managed-v8-message-meta",
+    "2026-single-ai-managed-v9-product-selection-state",
 }
 _TICKET_MESSAGE_PERSISTED_FIELDS = {
     "role",
@@ -98,6 +99,34 @@ def _normalize_message_sentiment_label(value: Any) -> str | None:
 def _normalize_product(value: Any) -> str | None:
     normalized = str(value or "").strip().lower()
     return normalized or None
+
+
+def _normalize_product_selection_state(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    normalized: dict[str, Any] = copy.deepcopy(value)
+    normalized["phase"] = str(normalized.get("phase") or "").strip().lower() or None
+    normalized["pending_customer_message"] = " ".join(
+        str(normalized.get("pending_customer_message") or "").split()
+    ).strip() or None
+    normalized["pending_message_created_at"] = (
+        _to_iso(normalized.get("pending_message_created_at"))
+        if normalized.get("pending_message_created_at") is not None
+        else None
+    )
+    normalized["last_confirmation_requested_at"] = (
+        _to_iso(normalized.get("last_confirmation_requested_at"))
+        if normalized.get("last_confirmation_requested_at") is not None
+        else None
+    )
+    normalized["last_updated_at"] = (
+        _to_iso(normalized.get("last_updated_at"))
+        if normalized.get("last_updated_at") is not None
+        else None
+    )
+    if not normalized["phase"]:
+        return None
+    return normalized
 
 
 def _normalize_client_intake_state(value: Any) -> dict[str, Any] | None:
@@ -574,6 +603,7 @@ class InMemoryTicketRepository:
         item["active_engineer_case_id"] = str(item.get("active_engineer_case_id") or "").strip() or None
         item["engineer_case_count"] = _safe_non_negative_int(item.get("engineer_case_count"), 0)
         item["product"] = _normalize_product(item.get("product"))
+        item["product_selection_state"] = _normalize_product_selection_state(item.get("product_selection_state"))
         item["client_intake_state"] = _normalize_client_intake_state(item.get("client_intake_state"))
         item["client_agent_runtime_state"] = _normalize_client_agent_runtime_state(item.get("client_agent_runtime_state"))
         if not isinstance(item.get("messages"), list):
@@ -608,6 +638,9 @@ class InMemoryTicketRepository:
             0,
         )
         saved_ticket["product"] = _normalize_product(saved_ticket.get("product"))
+        saved_ticket["product_selection_state"] = _normalize_product_selection_state(
+            saved_ticket.get("product_selection_state")
+        )
         saved_ticket["client_intake_state"] = _normalize_client_intake_state(saved_ticket.get("client_intake_state"))
         saved_ticket["client_agent_runtime_state"] = _normalize_client_agent_runtime_state(
             saved_ticket.get("client_agent_runtime_state")
@@ -1567,6 +1600,7 @@ class PostgresTicketRepository:
                             active_engineer_case_id TEXT,
                             engineer_case_count INTEGER NOT NULL DEFAULT 0,
                             product TEXT,
+                            product_selection_state JSONB,
                             client_intake_state JSONB,
                             client_agent_runtime_state JSONB,
                             created_at TIMESTAMPTZ NOT NULL,
@@ -1589,6 +1623,11 @@ class PostgresTicketRepository:
                     sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS product TEXT").format(
                         self._table("support_tickets")
                     )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS product_selection_state JSONB"
+                    ).format(self._table("support_tickets"))
                 )
                 cur.execute(
                     sql.SQL(
@@ -2332,17 +2371,26 @@ class PostgresTicketRepository:
         messages: list[dict[str, Any]],
     ) -> dict[str, Any]:
         has_product_column = len(row) >= 11
+        has_product_selection_state_column = len(row) >= 14
         has_client_intake_state_column = len(row) >= 12
         has_client_agent_runtime_state_column = len(row) >= 13
         product = _normalize_product(row[8]) if has_product_column else None
-        client_intake_state = (
-            _normalize_client_intake_state(row[9]) if has_client_intake_state_column else None
-        )
-        client_agent_runtime_state = (
-            _normalize_client_agent_runtime_state(row[10]) if has_client_agent_runtime_state_column else None
-        )
+        if has_product_selection_state_column:
+            product_selection_state = _normalize_product_selection_state(row[9])
+            client_intake_state = _normalize_client_intake_state(row[10]) if len(row) >= 11 else None
+            client_agent_runtime_state = _normalize_client_agent_runtime_state(row[11]) if len(row) >= 12 else None
+        else:
+            product_selection_state = None
+            client_intake_state = (
+                _normalize_client_intake_state(row[9]) if has_client_intake_state_column else None
+            )
+            client_agent_runtime_state = (
+                _normalize_client_agent_runtime_state(row[10]) if has_client_agent_runtime_state_column else None
+            )
         created_at_index = (
-            11
+            12
+            if has_product_selection_state_column
+            else 11
             if has_client_agent_runtime_state_column
             else 10
             if has_client_intake_state_column
@@ -2351,7 +2399,9 @@ class PostgresTicketRepository:
             else 8
         )
         updated_at_index = (
-            12
+            13
+            if has_product_selection_state_column
+            else 12
             if has_client_agent_runtime_state_column
             else 11
             if has_client_intake_state_column
@@ -2371,6 +2421,7 @@ class PostgresTicketRepository:
             "active_engineer_case_id": str(row[6]).strip() if row[6] is not None and str(row[6]).strip() else None,
             "engineer_case_count": _safe_non_negative_int(row[7], 0),
             "product": product,
+            "product_selection_state": product_selection_state,
             "client_intake_state": client_intake_state,
             "client_agent_runtime_state": client_agent_runtime_state,
             "created_at": created_at,
@@ -2396,6 +2447,7 @@ class PostgresTicketRepository:
                 active_engineer_case_id,
                 engineer_case_count,
                 product,
+                product_selection_state,
                 client_intake_state,
                 client_agent_runtime_state,
                 created_at,
@@ -2636,6 +2688,7 @@ class PostgresTicketRepository:
         active_engineer_case_id = str(ticket.get("active_engineer_case_id") or "").strip() or None
         engineer_case_count = _safe_non_negative_int(ticket.get("engineer_case_count"), 0)
         product = _normalize_product(ticket.get("product"))
+        product_selection_state = _normalize_product_selection_state(ticket.get("product_selection_state"))
         client_intake_state = _normalize_client_intake_state(ticket.get("client_intake_state"))
         client_agent_runtime_state = _normalize_client_agent_runtime_state(ticket.get("client_agent_runtime_state"))
 
@@ -2655,12 +2708,13 @@ class PostgresTicketRepository:
                                 active_engineer_case_id,
                                 engineer_case_count,
                                 product,
+                                product_selection_state,
                                 client_intake_state,
                                 client_agent_runtime_state,
                                 created_at,
                                 updated_at
                             )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             ON CONFLICT (ticket_id) DO UPDATE SET
                                 customer_id = EXCLUDED.customer_id,
                                 requester = EXCLUDED.requester,
@@ -2670,6 +2724,7 @@ class PostgresTicketRepository:
                                 active_engineer_case_id = EXCLUDED.active_engineer_case_id,
                                 engineer_case_count = EXCLUDED.engineer_case_count,
                                 product = EXCLUDED.product,
+                                product_selection_state = EXCLUDED.product_selection_state,
                                 client_intake_state = EXCLUDED.client_intake_state,
                                 client_agent_runtime_state = EXCLUDED.client_agent_runtime_state,
                                 updated_at = EXCLUDED.updated_at
@@ -2685,6 +2740,7 @@ class PostgresTicketRepository:
                             active_engineer_case_id,
                             engineer_case_count,
                             product,
+                            Json(product_selection_state) if product_selection_state else None,
                             Json(client_intake_state) if client_intake_state else None,
                             Json(client_agent_runtime_state) if client_agent_runtime_state else None,
                             created_at,

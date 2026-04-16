@@ -159,6 +159,7 @@ class InvestigationFlowTests(unittest.TestCase):
         engineer_handoff_packet: dict[str, object] | None = None,
         engineer_agent_state: dict[str, object] | None = None,
         client_intake_state: dict[str, object] | None = None,
+        product_selection_state: dict[str, object] | None = None,
     ) -> dict[str, object]:
         ticket = {
             "ticket_id": ticket_id,
@@ -183,6 +184,7 @@ class InvestigationFlowTests(unittest.TestCase):
             "engineer_handoff_packet": engineer_handoff_packet,
             "engineer_agent_state": engineer_agent_state,
             "client_intake_state": client_intake_state,
+            "product_selection_state": product_selection_state,
         }
         self.repository.save_ticket(ticket, new_messages=ticket["messages"])
         return ticket
@@ -947,6 +949,7 @@ class InvestigationFlowTests(unittest.TestCase):
             ticket_id="TK-040",
             subject="how to join channel",
             status="communicating",
+            product="audio_video_calling",
             messages=[
                 {
                     "role": "customer",
@@ -1006,6 +1009,7 @@ class InvestigationFlowTests(unittest.TestCase):
                 json={
                     "ticket_id": "TK-040",
                     "customer_id": "C-001",
+                    "product": "audio_video_calling",
                     "message": "i got black screen issue",
                 },
             )
@@ -1054,18 +1058,73 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(ticket["active_engineer_case_id"], "TK-040-1")
         self.assertEqual(ticket["engineer_case_count"], 1)
 
-    def test_ticket_query_requires_product_for_new_session_first_message(self) -> None:
-        response = self.client.post(
-            "/api/tickets/query",
-            json={
-                "ticket_id": "TK-PROD-001",
-                "customer_id": "C-001",
-                "message": "How do I join a channel?",
-            },
-        )
+    def test_ticket_query_allows_new_session_first_message_without_product(self) -> None:
+        with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="Thanks, I am checking this.",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main,
+            "resolve_support_product_context",
+            return_value=types.SimpleNamespace(
+                effective_message="How do I join a channel?",
+                product=None,
+                product_selection_state=None,
+                product_changed=False,
+                preflight_execution=None,
+            ),
+        ), patch.object(
+            main,
+            "execute_client_ticket_agent_runtime",
+            return_value=types.SimpleNamespace(
+                result=types.SimpleNamespace(
+                    answer="Use joinChannel with the same channel name and token.",
+                    confidence=0.88,
+                    sources=["official/quickstart.md"],
+                    citations=[],
+                    needs_investigating=False,
+                    next_status="communicating",
+                    answer_route="rag",
+                    scope_label="agora_technical",
+                    route_family="agora_docs_rag",
+                    execution_action="rag",
+                    tooling_profile="agora_docs_only",
+                    route_reason="grounded_answer",
+                    route_confidence=0.93,
+                    search_used=False,
+                    matched_signals=["join channel"],
+                    investigation_reason=None,
+                    evidence_summary=None,
+                    packed_evidence=None,
+                    workflow_action="answer_customer",
+                    client_intake_state=None,
+                ),
+            ),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-PROD-001",
+                    "customer_id": "C-001",
+                    "message": "How do I join a channel?",
+                },
+            )
 
-        self.assertEqual(response.status_code, 400, response.text)
-        self.assertEqual(response.json()["detail"], "product is required for a new session")
+        self.assertEqual(response.status_code, 200, response.text)
+        stored = self.repository.get_ticket("TK-PROD-001")
+        self.assertIsNotNone(stored)
+        assert stored is not None
+        self.assertIsNone(stored["product"])
+        self.assertEqual(stored["messages"][0]["content"], "How do I join a channel?")
+        self.assertEqual(stored["messages"][-1]["content"], "Use joinChannel with the same channel name and token.")
 
     def test_ticket_query_persists_product_for_first_customer_message(self) -> None:
         with patch.object(
@@ -1325,11 +1384,16 @@ class InvestigationFlowTests(unittest.TestCase):
         assert stored is not None
         self.assertEqual(stored["subject"], "Existing short title")
 
-    def test_existing_non_empty_session_keeps_locked_product_and_ignores_override(self) -> None:
+    def test_existing_non_empty_session_updates_product_when_customer_corrects_it(self) -> None:
         self._seed_ticket(
             ticket_id="TK-PROD-003",
             subject="RTC setup issue",
             status="communicating",
+            product="audio_video_calling",
+            client_intake_state={
+                "phase": "collecting_missing_fields",
+                "missing_information": ["channel_name"],
+            },
             messages=[
                 {
                     "role": "customer",
@@ -1343,12 +1407,12 @@ class InvestigationFlowTests(unittest.TestCase):
                 },
             ],
         )
-        seeded = self.repository.get_ticket("TK-PROD-003")
-        self.assertIsNotNone(seeded)
-        seeded["product"] = "audio_video_calling"
-        self.repository.save_ticket(seeded, new_messages=[])
 
         with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
             main,
             "build_initial_ack",
             return_value=types.SimpleNamespace(
@@ -1358,25 +1422,59 @@ class InvestigationFlowTests(unittest.TestCase):
             ),
         ), patch.object(
             main,
-            "resolve_support_message",
-            return_value=_resolution(needs_engineer_guidance=False),
+            "resolve_support_product_context",
+            return_value=types.SimpleNamespace(
+                effective_message="Actually this is Cloud Recording, not RTC.",
+                product="cloud_recording",
+                product_selection_state=None,
+                product_changed=True,
+                preflight_execution=None,
+            ),
+        ), patch.object(
+            main,
+            "execute_client_ticket_agent_runtime",
+            return_value=types.SimpleNamespace(
+                result=types.SimpleNamespace(
+                    answer="Please share the recording SID and issue timestamp.",
+                    confidence=0.52,
+                    sources=[],
+                    citations=[],
+                    needs_investigating=False,
+                    next_status="communicating",
+                    answer_route="workflow",
+                    scope_label="agora_technical",
+                    route_family="client_intake",
+                    execution_action="clarify_missing_info",
+                    tooling_profile="troubleshooting_intake",
+                    route_reason="product_corrected_by_customer",
+                    route_confidence=1.0,
+                    search_used=False,
+                    matched_signals=["Cloud Recording"],
+                    investigation_reason=None,
+                    evidence_summary=None,
+                    packed_evidence=None,
+                    workflow_action="answer_customer",
+                    client_intake_state=None,
+                ),
+            ),
         ), patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
                 "/api/tickets/query",
                 json={
                     "ticket_id": "TK-PROD-003",
                     "customer_id": "C-001",
-                    "message": "Still not working.",
-                    "product": "cloud_recording",
+                    "message": "Actually this is Cloud Recording, not RTC.",
                 },
             )
 
         self.assertEqual(response.status_code, 200, response.text)
         stored = self.repository.get_ticket("TK-PROD-003")
         self.assertIsNotNone(stored)
-        self.assertEqual(stored["product"], "audio_video_calling")
+        assert stored is not None
+        self.assertEqual(stored["product"], "cloud_recording")
+        self.assertIsNone(stored.get("client_intake_state"))
 
-    def test_legacy_non_empty_session_without_product_stays_generic(self) -> None:
+    def test_legacy_non_empty_session_without_product_can_backfill_inferred_product(self) -> None:
         self._seed_ticket(
             ticket_id="TK-PROD-004",
             subject="Existing legacy session",
@@ -1397,6 +1495,10 @@ class InvestigationFlowTests(unittest.TestCase):
 
         with patch.object(
             main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
             "build_initial_ack",
             return_value=types.SimpleNamespace(
                 text="收到，我先帮你看一下。",
@@ -1405,23 +1507,56 @@ class InvestigationFlowTests(unittest.TestCase):
             ),
         ), patch.object(
             main,
-            "resolve_support_message",
-            return_value=_resolution(needs_engineer_guidance=False),
+            "resolve_support_product_context",
+            return_value=types.SimpleNamespace(
+                effective_message="We are calling acquire and start recording, but no file is generated.",
+                product="cloud_recording",
+                product_selection_state=None,
+                product_changed=False,
+                preflight_execution=None,
+            ),
+        ), patch.object(
+            main,
+            "execute_client_ticket_agent_runtime",
+            return_value=types.SimpleNamespace(
+                result=types.SimpleNamespace(
+                    answer="Please share the recording SID and issue timestamp.",
+                    confidence=0.47,
+                    sources=[],
+                    citations=[],
+                    needs_investigating=False,
+                    next_status="communicating",
+                    answer_route="workflow",
+                    scope_label="agora_technical",
+                    route_family="client_intake",
+                    execution_action="clarify_missing_info",
+                    tooling_profile="troubleshooting_intake",
+                    route_reason="product_inferred",
+                    route_confidence=0.91,
+                    search_used=False,
+                    matched_signals=["sid", "start recording"],
+                    investigation_reason=None,
+                    evidence_summary=None,
+                    packed_evidence=None,
+                    workflow_action="answer_customer",
+                    client_intake_state=None,
+                ),
+            ),
         ), patch.object(main, "dispatch_event", AsyncMock()):
             response = self.client.post(
                 "/api/tickets/query",
                 json={
                     "ticket_id": "TK-PROD-004",
                     "customer_id": "C-001",
-                    "message": "Can I keep asking follow-up questions?",
-                    "product": "cloud_recording",
+                    "message": "We are calling acquire and start recording, but no file is generated.",
                 },
             )
 
         self.assertEqual(response.status_code, 200, response.text)
         stored = self.repository.get_ticket("TK-PROD-004")
         self.assertIsNotNone(stored)
-        self.assertIsNone(stored.get("product"))
+        assert stored is not None
+        self.assertEqual(stored.get("product"), "cloud_recording")
 
     def test_engineer_ticket_detail_includes_canonical_ticket_family_token_summary(self) -> None:
         self._seed_ticket(
@@ -3065,7 +3200,9 @@ class InvestigationFlowTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["status"], "communicating")
         self.assertEqual(payload["route_reason"], "rag_unavailable")
-        self.assertEqual(payload["answer"], clarify_reply)
+        self.assertTrue(payload["answer"].startswith("Hi there,"))
+        self.assertIn(clarify_reply, payload["answer"])
+        self.assertTrue(payload["answer"].endswith("Best Regards,\nSid"))
         stored = self.repository.get_ticket("TK-RAG-UNAVAIL-BLACK-100")
         self.assertIsNotNone(stored)
         assert stored is not None
@@ -3080,7 +3217,7 @@ class InvestigationFlowTests(unittest.TestCase):
             stored["client_intake_state"]["pending_investigation_reason"],
             "rag_unavailable",
         )
-        self.assertEqual(stored["messages"][-1]["content"], clarify_reply)
+        self.assertEqual(stored["messages"][-1]["content"], payload["answer"])
 
     def test_customer_message_sentiment_falls_back_to_background_tagging_when_queue_is_unavailable(self) -> None:
         resolution = SupportResolution(

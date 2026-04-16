@@ -235,6 +235,14 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("ALTER TABLE {} ADD COLUMN IF NOT EXISTS product TEXT", repo_source)
         self.assertIn('"product"', repo_source)
 
+    def test_ticket_storage_contract_includes_product_selection_state_field(self) -> None:
+        sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
+        repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
+
+        self.assertIn("product_selection_state JSONB", sql_source)
+        self.assertIn("ALTER TABLE {} ADD COLUMN IF NOT EXISTS product_selection_state JSONB", repo_source)
+        self.assertIn('"product_selection_state"', repo_source)
+
     def test_ticket_storage_contract_includes_client_intake_state_field(self) -> None:
         sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
         repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
@@ -1240,7 +1248,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
 
         insert_args = cursor.executed[0][0]
         self.assertIn("client_agent_runtime_state", str(insert_args[0]).lower())
-        self.assertEqual(insert_args[1][10].obj["runtime_version"], "client_ticket_agents_v1")
+        self.assertEqual(insert_args[1][11].obj["runtime_version"], "client_ticket_agents_v1")
 
     def test_ticket_repository_get_ticket_round_trips_client_agent_runtime_state(self) -> None:
         repository = PostgresTicketRepository(dsn="postgresql://example")
@@ -1258,6 +1266,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
                             None,
                             0,
                             "audio_video_calling",
+                            None,
                             {
                                 "phase": "gather_customer_inputs",
                                 "product": "audio_video_calling",
@@ -1296,6 +1305,50 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIsNotNone(ticket)
         self.assertEqual(ticket["client_agent_runtime_state"]["active_run_id"], "run-123")
         self.assertEqual(ticket["client_agent_runtime_state"]["review_agent"]["status"], "skipped")
+
+    def test_ticket_repository_get_ticket_round_trips_product_selection_state(self) -> None:
+        repository = PostgresTicketRepository(dsn="postgresql://example")
+        connection = _ReusableConnection(
+            _ReusableCursor(
+                fetchall_results=[
+                    [
+                        (
+                            "T-1",
+                            "C-1",
+                            "Requester",
+                            "Subject",
+                            "communicating",
+                            None,
+                            None,
+                            0,
+                            None,
+                            {
+                                "phase": "awaiting_product_confirmation",
+                                "pending_customer_message": "I got black screen, what should I do?",
+                                "pending_message_created_at": "2026-04-16T00:00:00+00:00",
+                                "last_confirmation_requested_at": "2026-04-16T00:01:00+00:00",
+                                "last_updated_at": "2026-04-16T00:01:00+00:00",
+                            },
+                            None,
+                            None,
+                            "2026-03-31T00:00:00+00:00",
+                            "2026-03-31T00:00:00+00:00",
+                        )
+                    ]
+                ]
+            )
+        )
+
+        with patch("backend.repositories.ticket_repository.psycopg.connect", return_value=connection):
+            with patch.object(repository, "_fetch_messages", return_value={"T-1": []}):
+                ticket = repository.get_ticket("T-1")
+
+        self.assertIsNotNone(ticket)
+        self.assertEqual(ticket["product_selection_state"]["phase"], "awaiting_product_confirmation")
+        self.assertEqual(
+            ticket["product_selection_state"]["pending_customer_message"],
+            "I got black screen, what should I do?",
+        )
 
     def test_ticket_repository_save_ticket_persists_assistant_message_meta_fields(self) -> None:
         repository = PostgresTicketRepository(dsn="postgresql://example")
