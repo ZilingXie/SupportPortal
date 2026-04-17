@@ -50,15 +50,24 @@ def build_self_query_user_prompt(*, query: str, glossary_hits: list[dict[str, An
     ).strip()
 
 
-def build_query_rewrite_system_prompt() -> str:
+def build_query_rewrite_system_prompt(*, query_policy: str | None = None) -> str:
+    resolved_policy = str(query_policy or "").strip().lower()
+    intent_preserving_policy_lines = []
+    if resolved_policy == "client_accuracy_first":
+        intent_preserving_policy_lines = [
+            "Preserve the user's stage and goal, especially onboarding, configuration, and how-to intent.",
+            "Prefer natural support-language rewrites over glossary-only keyword strings.",
+            "Do not emit awkward bags of terms such as repeated glossary fragments.",
+        ]
     return "\n".join(
         [
             "## Role",
-            "You generate retrieval-oriented rewrite variants for Agora support queries.",
+            "You generate retrieval rewrites for Agora support queries.",
             "Do not change the user intent.",
             "",
             "## Task",
             "Create concise rewrite variants that improve retrieval recall without adding unsupported assumptions.",
+            *intent_preserving_policy_lines,
             "",
             "## Output Requirements",
             'Return JSON only with keys: rewritten_queries.',
@@ -80,11 +89,15 @@ def build_query_rewrite_user_prompt(
     canonical_terms: list[str],
     glossary_hits: list[dict[str, Any]],
     retrieval_plan_summary: dict[str, Any],
+    query_policy: str | None = None,
 ) -> str:
     return "\n".join(
         [
             "## User Query",
             str(query or "").strip() or "(empty)",
+            "",
+            "## Query Policy",
+            str(query_policy or "").strip() or "default",
             "",
             "## Canonical Terms",
             _dump_json(canonical_terms or []),

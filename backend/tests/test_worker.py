@@ -187,6 +187,7 @@ class WorkerResilienceTests(unittest.TestCase):
             timeout_seconds=90.0,
             recovery_window_seconds=210.0,
             recovery_poll_interval_seconds=2.0,
+            query_policy="client_accuracy_first",
         )
 
     def test_fetch_rag_answer_detail_for_worker_timeout_with_healthy_service_returns_processing_timeout(self) -> None:

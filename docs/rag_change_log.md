@@ -3402,3 +3402,44 @@ For each new entry, record:
   - `node --check ui/client-ui/app.js`
   - `python3 scripts/verify_feature_list.py`
   - `python3 /Users/xieziling/.codex/skills/supportportal-run-report/scripts/run_supportportal_run_report.py`
+
+## 2026-04-17 - Add client-only accuracy-first RAG policy for answer-first how-to and onboarding
+
+- Summary:
+  - Added an internal-only `client_accuracy_first` RAG policy and routed client runtime/internal API calls through it without changing engineer or dashboard defaults.
+  - Rebalanced client retrieval toward accuracy-first behavior by skipping rule-only language downpush for freeform questions without explicit code context, enabling a heavier recall profile, and extending generic `join channel` recovery to long onboarding/how-to phrasing.
+  - Tightened client-side review/intake fallback so grounded how-to answers stay answer-first, `sdk/issue/problem` alone no longer force investigation, and trace payloads now record per-variant candidate counts, zero-yield reasons, downpushed filters, doc-family mix, generic-join support, and answer-vs-clarify routing decisions.
+- Reason:
+  - `TK-140` routed into the correct client RAG path but still missed `How to join channel` guidance because rewrite quality degraded into glossary bags, semantic/rewrite variants yielded zero candidates, issue-summary chunks outranked official onboarding docs, and the client fallback path escalated into investigation intake instead of answering first.
+- Affected files/config:
+  - `backend/services/client_query_intent.py`
+  - `backend/services/query_understanding.py`
+  - `backend/services/prompts/query_understanding.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/services/troubleshooting_intake.py`
+  - `backend/rag_api.py`
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `backend/tests/test_query_understanding.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_troubleshooting_intake.py`
+  - `backend/tests/test_ticket_orchestrator.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_single_host_compose.py`
+  - `backend/tests/test_worker.py`
+  - `backend/tests/test_rag_api.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, embedding, or vector-index changes.
+  - Client RAG requests now include `query_policy=client_accuracy_first` on the internal request path only.
+  - RAG trace JSON now records `query_policy`, `downpushed_hard_filters`, `variant_candidate_counts`, `variant_zero_yield_reasons`, `doc_family_mix`, `generic_join_support_pair_found`, and `answer_path_decision`.
+  - Single-host client timeout defaults now move to `180s` service timeout, `90s` recovery window, and `2s` recovery poll interval for the accuracy-first client profile.
+- Verification:
+  - `/Users/xieziling/.config/superpowers/worktrees/SupportPortal/client-rag-accuracy-first/.venv/bin/python -m unittest backend.tests.test_query_understanding backend.tests.test_rag_service_client backend.tests.test_rag_qa backend.tests.test_troubleshooting_intake backend.tests.test_ticket_orchestrator backend.tests.test_client_ticket_agent_runtime backend.tests.test_single_host_compose backend.tests.test_worker backend.tests.test_rag_api`
+  - Live `$supportportal-run-report` verification on `TK-140`, `real_case/real_user_questions.txt`, and `--profile-lexical` was run after the merged stack served the new build; results are recorded in the final task report.

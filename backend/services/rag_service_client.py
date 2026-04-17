@@ -232,15 +232,15 @@ def _shared_token() -> str:
 
 
 def _timeout_seconds() -> float:
-    return _safe_float_env("CLIENT_RAG_SERVICE_TIMEOUT_SECONDS", 40.0)
+    return _safe_float_env("CLIENT_RAG_SERVICE_TIMEOUT_SECONDS", 180.0)
 
 
 def _recovery_window_seconds() -> float:
-    return _safe_float_env("CLIENT_RAG_RECOVERY_WINDOW_SECONDS", 15.0)
+    return _safe_float_env("CLIENT_RAG_RECOVERY_WINDOW_SECONDS", 90.0)
 
 
 def _recovery_poll_interval_seconds() -> float:
-    return _safe_float_env("CLIENT_RAG_RECOVERY_POLL_INTERVAL_SECONDS", 1.0)
+    return _safe_float_env("CLIENT_RAG_RECOVERY_POLL_INTERVAL_SECONDS", 2.0)
 
 
 def _json_loads(raw: bytes) -> Any:
@@ -416,6 +416,7 @@ class RagServiceClient:
         requester: str | None = None,
         ticket_context: list[dict[str, str]] | None = None,
         product: str | None = None,
+        query_policy: str | None = None,
         top_k: int | None = None,
         timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
@@ -429,6 +430,8 @@ class RagServiceClient:
             payload["requester"] = str(requester).strip()
         if str(product or "").strip():
             payload["product"] = str(product).strip()
+        if str(query_policy or "").strip():
+            payload["query_policy"] = str(query_policy).strip()
         if ticket_context is not None:
             payload["ticket_context"] = [
                 {
@@ -463,6 +466,7 @@ class RagServiceClient:
         requester: str | None = None,
         ticket_context: list[dict[str, str]] | None = None,
         product: str | None = None,
+        query_policy: str | None = None,
         insufficient_reply: str,
         top_k: int | None = None,
         timeout_seconds: float | None = None,
@@ -478,6 +482,7 @@ class RagServiceClient:
             customer_id=customer_id,
             requester=requester,
             ticket_context=ticket_context,
+            query_policy=query_policy,
             insufficient_reply=insufficient_reply,
             top_k=top_k,
             timeout_seconds=timeout_seconds,
@@ -499,6 +504,7 @@ class RagServiceClient:
         requester: str | None = None,
         ticket_context: list[dict[str, str]] | None = None,
         product: str | None = None,
+        query_policy: str | None = None,
         insufficient_reply: str,
         top_k: int | None = None,
         timeout_seconds: float | None = None,
@@ -520,6 +526,8 @@ class RagServiceClient:
             }
             if str(product or "").strip():
                 query_kwargs["product"] = str(product).strip()
+            if str(query_policy or "").strip():
+                query_kwargs["query_policy"] = str(query_policy).strip()
             payload = self.query(
                 **query_kwargs,
             )

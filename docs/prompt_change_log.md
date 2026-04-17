@@ -936,6 +936,33 @@ For each new entry, record:
   - `node --check ui/client-ui/app.js`
   - `git diff --check`
 
+- Date: 2026-04-17
+- Area or subsystem: Client query-understanding rewrite and answer-first fallback policy
+- Prompt or model version: `query-rewrite-v1 + client_accuracy_first overlay`
+- Summary: Added a client-only query-rewrite prompt overlay that keeps onboarding/how-to intent in natural language, avoids glossary-only keyword bags, and pairs with answer-first client fallback rules for grounded how-to/configuration answers.
+- Reason: `TK-140` produced an unnatural rewrite (`Go Agora SDK join channel channel name same channel`) and then fell through to clarify/investigation because the client path treated weakly grounded onboarding questions like troubleshooting intake instead of answer-first guidance.
+- Affected files or config:
+  - `backend/services/prompts/query_understanding.py`
+  - `backend/services/query_understanding.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/services/ticket_orchestrator.py`
+  - `backend/services/troubleshooting_intake.py`
+  - `backend/main.py`
+  - `backend/worker.py`
+  - `backend/tests/test_query_understanding.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_ticket_orchestrator.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Client how-to/onboarding/configuration questions should keep intent-preserving rewrites instead of collapsing into glossary bags.
+  - Long `join channel` onboarding questions now continue to qualify for generic-join deterministic guidance even when they do not start with `how to`.
+  - When the client path has enough grounded support for a how-to answer, it responds first and only appends light follow-up requests as a fallback instead of jumping straight to investigation intake.
+- Verification:
+  - `/Users/xieziling/.config/superpowers/worktrees/SupportPortal/client-rag-accuracy-first/.venv/bin/python -m unittest backend.tests.test_query_understanding backend.tests.test_rag_qa backend.tests.test_ticket_orchestrator backend.tests.test_client_ticket_agent_runtime`
+  - Live `$supportportal-run-report` verification on `TK-140` and the client real-case batch was run after the merged stack served the new build; results are summarized in the final task report.
+
 - Date: 2026-04-16
 - Area or subsystem: Client product selection and empty-session entry flow
 - Prompt or model version: `product-selection-v1`

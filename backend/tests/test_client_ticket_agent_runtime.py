@@ -737,6 +737,68 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
         self.assertEqual(execution.runtime_state.review_agent.get("reason"), "low_risk_grounded_answer")
 
+    def test_polite_onboarding_how_to_grounded_answer_skips_review(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        message = (
+            "Hi Team, I am new to Agora and trying to integrate Agora SDK. However, I don't know "
+            "how to join the channel as requested. Could you help explain to me and guide me to "
+            "join the user into the channel?"
+        )
+
+        execution = execute_client_ticket_agent_runtime(
+            message=message,
+            ticket_id="TK-FAQ-ONBOARDING",
+            customer_id="C-001",
+            ticket_subject="Join channel",
+            ticket_context=[{"role": "customer", "content": message}],
+            product="audio_video_calling",
+            message_id="2026-04-09T00:05:00+00:00",
+            route_agent=lambda **_kwargs: SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                confidence=0.98,
+                reason="channel_joining_support",
+                matched_signals=["join channel"],
+                response_language="en",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+            ),
+            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                answer=(
+                    "To join a channel, call the SDK join-channel method with your channel name, token, "
+                    "user ID, and channel media options."
+                ),
+                confidence=0.79,
+                sources=[
+                    "https://docs.agora.io/en/video-calling/get-started/get-started-sdk",
+                ],
+                citations=[
+                    {"chunk_id": "chunk-video-join"},
+                ],
+                needs_engineer_guidance=False,
+                reason="grounded_answer",
+                evidence_summary={
+                    "quality_signals": {
+                        "query_class": "how_to_faq",
+                        "generation_mode": "structured_answer",
+                        "selected_doc_count": 1,
+                        "needs_human": False,
+                    }
+                },
+                packed_evidence=None,
+            ),
+            review_agent=lambda **_kwargs: self.fail("review agent should not run for low-risk onboarding how_to answers"),
+            rag_canceler=None,
+        )
+
+        self.assertEqual(execution.result.workflow_action, "answer_customer")
+        self.assertFalse(execution.result.needs_investigating)
+        self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.review_agent.get("reason"), "low_risk_grounded_answer")
+
     def test_short_how_to_faq_grounded_answer_without_citations_does_not_answer_customer(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
 

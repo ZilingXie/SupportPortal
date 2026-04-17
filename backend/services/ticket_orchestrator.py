@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import logging
-import re
 from typing import Any, Callable
 
+from backend.services.client_query_intent import (
+    clean_client_query_text,
+    has_explicit_troubleshooting_signal,
+    is_answer_first_how_to_message,
+)
 from backend.services.client_ticket_agent_runtime import (
     RAG_INSUFFICIENT_EVIDENCE_REASON,
     RAG_POST_CHECK_ERROR_REASON,
@@ -36,12 +40,6 @@ from backend.services.troubleshooting_intake import (
     evaluate_troubleshooting_intake,
 )
 
-_GENERIC_HOW_TO_RE = re.compile(r"^\s*(how\s+(?:do\s+i\s+)?(?:to|can\s+i)|what\s+is|what\s+are)\b", re.IGNORECASE)
-_TROUBLESHOOTING_SIGNAL_RE = re.compile(
-    r"\b(android|ios|macos|windows|linux|flutter|react native|unity|electron|sdk|version|error|"
-    r"crash|issue|problem|bug|fail|failing|failed|timeout|renew|renewal|callback|debug|troubleshoot)\b",
-    re.IGNORECASE,
-)
 LOGGER = logging.getLogger(__name__)
 
 
@@ -82,7 +80,7 @@ class SufficiencyAssessment:
 
 
 def _clean_text(value: Any) -> str:
-    return " ".join(str(value or "").split()).strip()
+    return clean_client_query_text(value)
 
 
 def _quality_signal_float(value: Any) -> float:
@@ -105,9 +103,9 @@ def _is_generic_grounded_rag_answer_candidate(
     skill_result: SkillExecutionResult,
 ) -> bool:
     normalized_message = _clean_text(message)
-    if not normalized_message or not _GENERIC_HOW_TO_RE.search(normalized_message):
+    if not normalized_message or not is_answer_first_how_to_message(normalized_message):
         return False
-    if _TROUBLESHOOTING_SIGNAL_RE.search(normalized_message):
+    if has_explicit_troubleshooting_signal(normalized_message):
         return False
 
     evidence_summary = skill_result.evidence_summary if isinstance(skill_result.evidence_summary, dict) else {}
@@ -270,6 +268,8 @@ def _compat_review_agent(
     resolution: SupportResolution,
     rag_result: dict[str, Any] | None,
     message_created_at: str | None = None,
+    requester: str | None = None,
+    customer_id: str | None = None,
 ) -> Any:
     if mode in {"rag_insufficient_evidence", "pre_engineer_intake"}:
         return _coerce_troubleshooting_intake_result(

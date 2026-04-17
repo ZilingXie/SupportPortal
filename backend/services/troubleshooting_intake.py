@@ -11,6 +11,11 @@ from backend.services.api_semantics import (
     build_api_semantics_clarification,
     is_api_semantics_mismatch_context,
 )
+from backend.services.client_query_intent import (
+    clean_client_query_text,
+    has_explicit_troubleshooting_signal,
+    is_answer_first_how_to_message,
+)
 from backend.services.customer_reply_composer import (
     compose_customer_reply_email,
     detect_customer_reply_language,
@@ -197,7 +202,7 @@ class TroubleshootingIntakeResult:
 
 
 def _clean_text(value: Any) -> str:
-    return " ".join(str(value or "").split()).strip()
+    return clean_client_query_text(value)
 
 
 def _normalize_customer_reply_text(value: Any) -> str:
@@ -621,16 +626,16 @@ def _classify_issue_mode(
     normalized_message = _clean_text(latest_message).lower()
     if not normalized_message:
         return "answer"
-    if _ANSWER_REQUEST_RE.search(normalized_message) and not _TROUBLESHOOTING_SIGNAL_RE.search(normalized_message):
+    if is_answer_first_how_to_message(normalized_message):
         return "answer"
-    if _TROUBLESHOOTING_SIGNAL_RE.search(normalized_message):
+    if has_explicit_troubleshooting_signal(normalized_message):
         return "investigation"
     for item in list(ticket_context or [])[-6:]:
         if not isinstance(item, dict):
             continue
         if str(item.get("role") or "").strip().lower() != "customer":
             continue
-        if _TROUBLESHOOTING_SIGNAL_RE.search(_clean_text(item.get("content")).lower()):
+        if has_explicit_troubleshooting_signal(_clean_text(item.get("content")).lower()):
             return "investigation"
     return "answer"
 

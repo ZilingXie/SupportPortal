@@ -404,6 +404,36 @@ class RagServiceClientTests(unittest.TestCase):
 
         self.assertEqual(captured["body"]["product"], "cloud_recording")
 
+    def test_query_includes_query_policy_in_json_payload(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+        captured: dict[str, object] = {}
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"decision":"answer","answer":"ok","confidence":0.8,"sources":[],"citations":[]}'
+
+        def _fake_urlopen(request, timeout):
+            _ = timeout
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return _FakeResponse()
+
+        with patch("urllib.request.urlopen", side_effect=_fake_urlopen):
+            client.query(
+                question="How do I join a channel?",
+                request_id="rag-policy-1",
+                ticket_id="T-001",
+                customer_id="C-001",
+                query_policy="client_accuracy_first",
+            )
+
+        self.assertEqual(captured["body"]["query_policy"], "client_accuracy_first")
+
     def test_query_answer_with_recovery_detail_forwards_selected_product(self) -> None:
         client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
 
@@ -432,6 +462,25 @@ class RagServiceClientTests(unittest.TestCase):
             top_k=None,
             timeout_seconds=None,
         )
+
+    def test_query_answer_with_recovery_detail_forwards_query_policy(self) -> None:
+        client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
+
+        with patch.object(
+            client,
+            "query",
+            return_value={"decision": "answer", "answer": "ok", "confidence": 0.8, "sources": [], "citations": []},
+        ) as query_mock:
+            client.query_answer_with_recovery_detail(
+                question="How do I join a channel?",
+                request_id="rag-policy-2",
+                ticket_id="T-001",
+                customer_id="C-001",
+                query_policy="client_accuracy_first",
+                insufficient_reply="INSUFFICIENT",
+            )
+
+        self.assertEqual(query_mock.call_args.kwargs["query_policy"], "client_accuracy_first")
 
     def test_query_answer_with_recovery_detail_forwards_timeout_override_to_query(self) -> None:
         client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
@@ -620,7 +669,7 @@ class RagServiceClientTests(unittest.TestCase):
 
         self.assertEqual(captured["timeout"], 25.0)
 
-    def test_query_uses_40_second_default_timeout_when_env_timeout_is_unset(self) -> None:
+    def test_query_uses_180_second_default_timeout_when_env_timeout_is_unset(self) -> None:
         captured: dict[str, object] = {}
 
         class _FakeResponse:
@@ -647,7 +696,7 @@ class RagServiceClientTests(unittest.TestCase):
                     customer_id="C-001",
                 )
 
-        self.assertEqual(captured["timeout"], 40.0)
+        self.assertEqual(captured["timeout"], 180.0)
 
     def test_cancel_request_posts_internal_cancel_endpoint(self) -> None:
         client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")
@@ -679,7 +728,7 @@ class RagServiceClientTests(unittest.TestCase):
             captured["url"],
             "http://rag-api.internal/internal/rag/requests/rag-cancel-1/cancel",
         )
-        self.assertEqual(captured["timeout"], 40.0)
+        self.assertEqual(captured["timeout"], 180.0)
 
     def test_get_ingestion_report_uses_report_endpoint(self) -> None:
         client = RagServiceClient(base_url="http://rag-api.internal", shared_token="token")

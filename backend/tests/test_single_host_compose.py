@@ -138,15 +138,15 @@ class SingleHostComposeTests(unittest.TestCase):
         content = COMPOSE_PATH.read_text(encoding="utf-8")
 
         self.assertIn(
-            "CLIENT_RAG_SERVICE_TIMEOUT_SECONDS: ${CLIENT_RAG_SERVICE_TIMEOUT_SECONDS:-40.0}",
+            "CLIENT_RAG_SERVICE_TIMEOUT_SECONDS: ${CLIENT_RAG_SERVICE_TIMEOUT_SECONDS:-180.0}",
             content,
         )
         self.assertIn(
-            "CLIENT_RAG_RECOVERY_WINDOW_SECONDS: ${CLIENT_RAG_RECOVERY_WINDOW_SECONDS:-15.0}",
+            "CLIENT_RAG_RECOVERY_WINDOW_SECONDS: ${CLIENT_RAG_RECOVERY_WINDOW_SECONDS:-90.0}",
             content,
         )
         self.assertIn(
-            "CLIENT_RAG_RECOVERY_POLL_INTERVAL_SECONDS: ${CLIENT_RAG_RECOVERY_POLL_INTERVAL_SECONDS:-1.0}",
+            "CLIENT_RAG_RECOVERY_POLL_INTERVAL_SECONDS: ${CLIENT_RAG_RECOVERY_POLL_INTERVAL_SECONDS:-2.0}",
             content,
         )
 
