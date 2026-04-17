@@ -26,8 +26,8 @@ class Client2RouteSmokeTests(unittest.TestCase):
     def test_client2_html_references_local_assets(self) -> None:
         html = Path("ui/client2-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260417-client2-draft-inline-footer-1", html)
-        self.assertIn("./app.js?v=20260417-client2-draft-inline-footer-1", html)
+        self.assertIn("./styles.css?v=20260417-client2-draft-communicating-footer-1", html)
+        self.assertIn("./app.js?v=20260417-client2-draft-communicating-footer-1", html)
 
 
 class Client2UiContractTests(unittest.TestCase):
@@ -172,12 +172,14 @@ class Client2UiContractTests(unittest.TestCase):
         self.assertIn("clienttest-route-footer-band", app_source)
         self.assertIn("new-ticket-tail-route", app_source)
         self.assertIn("new-ticket-draft-inline-route", app_source)
+        self.assertIn("new-ticket-thread-footer-composer", app_source)
         self.assertIn("--client2-tail-footer-block-height", css)
         self.assertIn("--new-ticket-draft-left-stack-height", css)
         self.assertIn("--new-ticket-draft-thread-height", css)
         self.assertIn("--client2-route-max-width", css)
         self.assertIn("--client2-route-top-space", css)
         self.assertIn("--client2-route-bottom-space", css)
+        self.assertIn(".new-ticket-thread-footer-composer", css)
         self.assertIn(".clienttest-route-page", css)
         self.assertIn(".clienttest-route-page-footer-band", css)
         self.assertIn(".clienttest-route-footer-band", css)
@@ -288,6 +290,9 @@ class Client2UiContractTests(unittest.TestCase):
                 }
                 if (!html.includes("new-ticket-draft-inline-composer")) {
                   throw new Error("Client2 draft should render an inline composer inside the left column.");
+                }
+                if (!html.includes("new-ticket-thread-footer-composer")) {
+                  throw new Error("Client2 draft should reuse the shared communicating-case footer shell.");
                 }
                 if (html.indexOf("new-ticket-thread-panel") >= html.indexOf("new-ticket-draft-inline-composer")) {
                   throw new Error("Client2 draft inline composer should render after the draft thread panel.");
@@ -558,6 +563,9 @@ class Client2UiContractTests(unittest.TestCase):
                 }
                 if (html.includes("new-ticket-tail-composer")) {
                   throw new Error("Existing client2 tickets should keep the current detail-style composer placement.");
+                }
+                if (!html.includes("new-ticket-thread-footer-composer")) {
+                  throw new Error("Existing client2 tickets should continue exposing the shared communicating-case footer shell.");
                 }
                 if (html.includes("clienttest-route-page-fixed-footer")) {
                   throw new Error("Existing client2 tickets should not use the removed fixed-footer reserve contract.");
