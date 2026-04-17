@@ -3397,36 +3397,13 @@ a.citation-link:hover {
   overflow: auto;
 }
 
-.new-ticket-knowledge-item {
-  padding: 14px 16px;
-  border-radius: 16px;
-  display: grid;
-  gap: 6px;
-  background: var(--surface-container-low);
-  color: inherit;
-}
-
-.new-ticket-knowledge-title {
-  color: var(--ink);
-  font-family: "Manrope", "Inter", sans-serif;
-  font-size: 16px;
-  font-weight: 800;
-  line-height: 1.2;
-}
-
-.new-ticket-knowledge-meta {
-  color: var(--ink-muted);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+.new-ticket-knowledge-sources {
+  align-content: start;
 }
 
 .new-ticket-knowledge-placeholder {
   margin: 0;
-  color: var(--ink-soft);
-  font-size: 14px;
-  line-height: 1.7;
+  color: var(--ink);
 }
 
 .new-ticket-postsend-page {
@@ -3705,7 +3682,7 @@ a.citation-link:hover {
 }
 
 .new-ticket-postsend-knowledge-card .new-ticket-info-body {
-  overflow: visible;
+  overflow: auto;
 }
 
 @media (min-width: 721px) and (max-width: 900px) {

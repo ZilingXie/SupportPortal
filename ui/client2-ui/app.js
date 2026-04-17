@@ -2212,7 +2212,6 @@ function buildNewTicketKnowledgeItems(ticket) {
       seenUrls.add(href);
       items.push({
         title: citation?.heading || citation?.sourcePath || `Reference ${items.length + 1}`,
-        meta: "Agent reference",
         href,
       });
     }
@@ -2281,16 +2280,20 @@ function renderNewTicketKnowledgePanel(ticket, options = {}) {
       <div class="new-ticket-info-body new-ticket-knowledge-list">
         ${
           items.length > 0
-            ? items
-                .map((item) => {
-                  const body = `
-                    <span class="new-ticket-knowledge-title">${escapeHtml(item.title)}</span>
-                    <span class="new-ticket-knowledge-meta">${escapeHtml(item.meta)}</span>
-                  `;
-                  return `<a class="new-ticket-knowledge-item" href="${escapeHtml(item.href)}" target="_blank" rel="noopener noreferrer">${body}</a>`;
-                })
-                .join("")
-            : `<p class="new-ticket-knowledge-placeholder">All reference links provided by agent will show up here.</p>`
+            ? `
+                <div class="new-ticket-correspondence-sources new-ticket-knowledge-sources">
+                  ${items
+                    .map((item, index) => {
+                      const label = escapeHtml(item.title || `Reference ${index + 1}`);
+                      if (item.href) {
+                        return `<a class="new-ticket-correspondence-source-chip" href="${escapeHtml(item.href)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+                      }
+                      return `<span class="new-ticket-correspondence-source-chip is-static">${label}</span>`;
+                    })
+                    .join("")}
+                </div>
+              `
+            : `<p class="new-ticket-knowledge-placeholder new-ticket-info-value">All reference links provided by agent will show up here.</p>`
         }
       </div>
     </section>
@@ -2627,7 +2630,7 @@ function renderNewTicketPostSendTicketFromState(viewState) {
             </div>
             <aside class="new-ticket-postsend-sidebar">
               ${renderNewTicketInformationPanel(ticket, { fixed: false, variant: "postsend" })}
-              ${renderNewTicketKnowledgePanel(ticket, { fixed: false, variant: "postsend" })}
+              ${renderNewTicketKnowledgePanel(ticket, { variant: "postsend" })}
             </aside>
           </div>
           ${isTailComposerRoute ? renderNewTicketTailComposer(viewState, { postsend: true }) : ""}

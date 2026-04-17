@@ -301,7 +301,8 @@
 2. 该页面允许恢复截图式 breadcrumb + issue title header，并改用自然高度的 thread / composer / sidebar 布局，不强制沿用 draft 态的 fixed-height section 规则。
 3. 该页面允许使用低对比度边框消息卡与轻色 header band，作为 correspondence card 的视觉例外；边框必须保持柔和，不得退化成高对比后台表格风格。
 4. 左侧 rail 必须继续保留，禁止引入截图中的顶栏导航。
-5. 该例外不适用于 `/client`、`/clienttest` draft 页面、`/client2` draft 页面，或 `/clienttest` 的其他 ticket detail 页面。
+5. `/client2` correspondence detail 中的 `Knowledge Base Articles` 卡允许继续使用 draft sidebar 的固定卡高，以保持 knowledge rail 一致；内容超出时在卡内滚动，不得把整页 sidebar 撑高。
+6. 该例外不适用于 `/client`、`/clienttest` draft 页面、`/client2` draft 页面，或 `/clienttest` 的其他 ticket detail 页面。
 
 ## 7. States, Motion, Accessibility
 1. 必须覆盖：
