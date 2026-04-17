@@ -2315,6 +2315,7 @@ a.citation-link:hover {
   --client2-route-max-width: 1240px;
   --client2-route-top-space: 24px;
   --client2-route-bottom-space: 28px;
+  --client2-visible-footer-band-space: 56px;
 }
 
 .clienttest-main {
@@ -2331,6 +2332,10 @@ a.citation-link:hover {
   align-content: start;
   padding-top: var(--client2-route-top-space);
   padding-bottom: var(--client2-route-bottom-space);
+}
+
+.clienttest-route-page-footer-band {
+  padding-bottom: max(var(--client2-route-bottom-space), var(--client2-visible-footer-band-space));
 }
 
 .clienttest-topbar {
@@ -3658,6 +3663,10 @@ a.citation-link:hover {
     --new-ticket-info-card-height: 372px;
   }
 
+  .clienttest-workspace {
+    --client2-visible-footer-band-space: 40px;
+  }
+
   .clienttest-shell {
     flex-direction: row;
   }
@@ -3746,6 +3755,7 @@ a.citation-link:hover {
   .clienttest-workspace {
     --client2-route-top-space: 20px;
     --client2-route-bottom-space: 24px;
+    --client2-visible-footer-band-space: 28px;
   }
 
   .clienttest-shell {
