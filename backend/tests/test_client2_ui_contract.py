@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 import textwrap
 import unittest
@@ -26,8 +27,8 @@ class Client2RouteSmokeTests(unittest.TestCase):
     def test_client2_html_references_local_assets(self) -> None:
         html = Path("ui/client2-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260417-client2-ticket-title-english-1", html)
-        self.assertIn("./app.js?v=20260417-client2-ticket-title-english-1", html)
+        self.assertIn("./styles.css?v=20260417-client2-ticket-title-english-2", html)
+        self.assertIn("./app.js?v=20260417-client2-ticket-title-english-2", html)
 
 
 class Client2UiContractTests(unittest.TestCase):
@@ -178,6 +179,49 @@ class Client2UiContractTests(unittest.TestCase):
         self.assertIn("--client2-tail-footer-block-height", css)
         self.assertIn("--new-ticket-draft-left-stack-height", css)
         self.assertIn("--new-ticket-draft-thread-height", css)
+        self.assertRegex(
+            css,
+            re.compile(
+                r"\.new-ticket-draft-inline-route \.new-ticket-fixed-thread-panel \{\s*height: var\(--new-ticket-draft-thread-height\);",
+                re.MULTILINE,
+            ),
+        )
+        self.assertNotIn("min-height: calc(100% + var(--new-ticket-composer-panel-height));", css)
+        self.assertNotRegex(
+            css,
+            re.compile(
+                r"\.new-ticket-draft-inline-route \.new-ticket-main-column \{[^}]*display: flex;[^}]*flex-direction: column;",
+                re.DOTALL,
+            ),
+        )
+        self.assertNotRegex(
+            css,
+            re.compile(
+                r"\.new-ticket-draft-inline-route \.new-ticket-fixed-thread-panel \{[^}]*flex: 1 1 auto;",
+                re.DOTALL,
+            ),
+        )
+        self.assertRegex(
+            css,
+            re.compile(
+                r"\.new-ticket-draft-inline-route \.new-ticket-thread-empty \{[^}]*padding: 40px 24px;",
+                re.DOTALL,
+            ),
+        )
+        self.assertRegex(
+            css,
+            re.compile(
+                r"\.new-ticket-draft-inline-route \.new-ticket-thread-empty h2 \{[^}]*font-size: 24px;",
+                re.DOTALL,
+            ),
+        )
+        self.assertRegex(
+            css,
+            re.compile(
+                r"\.new-ticket-draft-inline-route \.new-ticket-thread-empty p \{[^}]*max-width: 360px;",
+                re.DOTALL,
+            ),
+        )
         self.assertIn("--client2-route-max-width", css)
         self.assertIn("--client2-route-top-space", css)
         self.assertIn("--client2-route-bottom-space", css)
