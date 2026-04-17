@@ -3557,6 +3557,7 @@ a.citation-link:hover {
 
 .new-ticket-postsend-thread,
 .new-ticket-postsend-sidebar .new-ticket-info-card,
+.new-ticket-thread-footer-composer,
 .new-ticket-postsend-composer {
   background: #fff;
   border-radius: 24px;
@@ -3741,6 +3742,7 @@ a.citation-link:hover {
   cursor: default;
 }
 
+.new-ticket-thread-footer-composer,
 .new-ticket-postsend-composer {
   overflow: hidden;
 }
@@ -3980,6 +3982,7 @@ a.citation-link:hover {
   }
 
   .new-ticket-postsend-thread,
+  .new-ticket-thread-footer-composer,
   .new-ticket-postsend-composer,
   .new-ticket-postsend-sidebar .new-ticket-info-card {
     border-radius: 24px;

@@ -2561,17 +2561,30 @@ function renderNewTicketTailComposer(viewState, { postsend = false } = {}) {
   `;
 }
 
+function buildNewTicketThreadFooterComposerClass(extraClassName = "") {
+  return [
+    "new-ticket-composer-panel",
+    "new-ticket-fixed-composer-panel",
+    "new-ticket-thread-footer-composer",
+    extraClassName,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 function renderNewTicketPostSendInlineComposer(viewState) {
   return renderNewTicketComposerPanel(
     viewState,
-    "new-ticket-composer-panel new-ticket-fixed-composer-panel new-ticket-postsend-composer new-ticket-postsend-inline-composer"
+    buildNewTicketThreadFooterComposerClass(
+      "new-ticket-postsend-composer new-ticket-postsend-inline-composer"
+    )
   );
 }
 
 function renderNewTicketDraftInlineComposer(viewState) {
   return renderNewTicketComposerPanel(
     viewState,
-    "new-ticket-composer-panel new-ticket-fixed-composer-panel new-ticket-draft-inline-composer"
+    buildNewTicketThreadFooterComposerClass("new-ticket-draft-inline-composer")
   );
 }
 
