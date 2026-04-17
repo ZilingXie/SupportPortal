@@ -27,8 +27,8 @@ class Client2RouteSmokeTests(unittest.TestCase):
     def test_client2_html_references_local_assets(self) -> None:
         html = Path("ui/client2-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260417-client2-ticket-title-english-2", html)
-        self.assertIn("./app.js?v=20260417-client2-ticket-title-english-2", html)
+        self.assertIn("./styles.css?v=20260417-client2-draft-page-tail-blank-1", html)
+        self.assertIn("./app.js?v=20260417-client2-draft-page-tail-blank-1", html)
 
 
 class Client2UiContractTests(unittest.TestCase):
@@ -179,11 +179,26 @@ class Client2UiContractTests(unittest.TestCase):
         self.assertIn("--client2-tail-footer-block-height", css)
         self.assertIn("--new-ticket-draft-left-stack-height", css)
         self.assertIn("--new-ticket-draft-thread-height", css)
+        self.assertIn("--new-ticket-draft-page-tail-blank", css)
         self.assertRegex(
             css,
             re.compile(
                 r"\.new-ticket-draft-inline-route \.new-ticket-fixed-thread-panel \{\s*height: var\(--new-ticket-draft-thread-height\);",
                 re.MULTILINE,
+            ),
+        )
+        self.assertRegex(
+            css,
+            re.compile(
+                r"\.new-ticket-draft-inline-route \.new-ticket-main-column \{[^}]*padding-bottom: var\(--new-ticket-draft-page-tail-blank\);",
+                re.DOTALL,
+            ),
+        )
+        self.assertRegex(
+            css,
+            re.compile(
+                r"--new-ticket-draft-thread-height: calc\([^;]*var\(--new-ticket-draft-page-tail-blank\)",
+                re.DOTALL,
             ),
         )
         self.assertNotIn("min-height: calc(100% + var(--new-ticket-composer-panel-height));", css)

@@ -2879,9 +2879,13 @@ a.citation-link:hover {
 .new-ticket-draft-inline-route {
   --new-ticket-sidebar-stack-gap: 20px;
   --new-ticket-main-column-gap: 20px;
+  --new-ticket-draft-page-tail-blank: var(--client2-route-bottom-space);
   --new-ticket-draft-left-stack-height: calc(var(--new-ticket-info-card-height) * 2 + var(--new-ticket-sidebar-stack-gap));
   --new-ticket-draft-thread-height: calc(
-    var(--new-ticket-draft-left-stack-height) - var(--new-ticket-composer-panel-height) - var(--new-ticket-main-column-gap)
+    var(--new-ticket-draft-left-stack-height)
+      - var(--new-ticket-composer-panel-height)
+      - var(--new-ticket-main-column-gap)
+      - var(--new-ticket-draft-page-tail-blank)
   );
   align-content: start;
 }
@@ -2915,6 +2919,7 @@ a.citation-link:hover {
   gap: var(--new-ticket-main-column-gap);
   display: grid;
   align-content: start;
+  padding-bottom: var(--new-ticket-draft-page-tail-blank);
 }
 
 .new-ticket-draft-inline-route .new-ticket-body-layout {
