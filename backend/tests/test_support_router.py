@@ -267,6 +267,65 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn("it worked", decision.matched_signals)
         self.assertIn("thanks", decision.matched_signals)
 
+    def test_decide_support_route_returns_controlled_response_for_gratitude_after_non_substantive_reply(self) -> None:
+        decision = decide_support_route(
+            "thanks",
+            ticket_subject="Join channel",
+            ticket_context=[
+                {"role": "customer", "content": "how to join channel"},
+                {
+                    "role": "assistant",
+                    "content": "What error or blocker are you seeing?",
+                },
+            ],
+            latest_assistant_message={
+                "role": "assistant",
+                "content": "What error or blocker are you seeing?",
+                "workflow_action": "clarify_customer_for_intake",
+                "answer_route": "rag",
+                "route_reason": "rag_insufficient_evidence",
+                "execution_action": "rag",
+            },
+            current_ticket_status="communicating",
+        )
+
+        self.assertEqual(decision.scope_label, "small_talk")
+        self.assertEqual(decision.route_family, "general_chat")
+        self.assertEqual(decision.execution_action, "controlled_response")
+        self.assertEqual(decision.route, "controlled_response")
+        self.assertEqual(decision.reason, "gratitude_acknowledgement")
+        self.assertIn("thanks", decision.matched_signals)
+
+    def test_resolve_support_message_returns_neutral_gratitude_acknowledgement_when_not_resolving(self) -> None:
+        resolution = resolve_support_message(
+            "thanks",
+            ticket_subject="Join channel",
+            ticket_context=[
+                {"role": "customer", "content": "how to join channel"},
+                {
+                    "role": "assistant",
+                    "content": "What error or blocker are you seeing?",
+                },
+            ],
+            latest_assistant_message={
+                "role": "assistant",
+                "content": "What error or blocker are you seeing?",
+                "workflow_action": "clarify_customer_for_intake",
+                "answer_route": "rag",
+                "route_reason": "rag_insufficient_evidence",
+                "execution_action": "rag",
+            },
+            current_ticket_status="communicating",
+        )
+
+        self.assertEqual(resolution.answer_route, "controlled_response")
+        self.assertEqual(resolution.execution_action, "controlled_response")
+        self.assertEqual(resolution.route_reason, "gratitude_acknowledgement")
+        self.assertEqual(
+            resolution.answer,
+            "You're welcome. If you need anything else for this ticket, send the next detail here and I'll continue helping.",
+        )
+
     def test_decide_support_route_includes_selected_product_in_llm_prompt(self) -> None:
         captured_request: dict[str, object] = {}
         payload = {

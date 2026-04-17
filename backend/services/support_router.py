@@ -135,6 +135,7 @@ class SupportResolution:
 def _route_contract_for_scope(*, scope_label: str, action: str, reason: str) -> tuple[str, str, str]:
     clean_scope = _normalize_text(scope_label).lower()
     normalized_action = _normalize_text(action).lower()
+    normalized_reason = _normalize_text(reason).lower()
 
     if clean_scope == "ticket_resolution":
         return "ticket_resolution", "resolve_ticket", "deterministic_resolution"
@@ -148,7 +149,13 @@ def _route_contract_for_scope(*, scope_label: str, action: str, reason: str) -> 
             tooling = "no_agora_docs_refusal"
         return "web_company_info", actual_action, tooling
     if clean_scope == "small_talk":
-        return "general_chat", "refuse", "no_agora_docs_refusal"
+        actual_action = (
+            "controlled_response"
+            if normalized_action == "controlled_response" or normalized_reason == "gratitude_acknowledgement"
+            else "refuse"
+        )
+        tooling = "controlled_acknowledgement" if actual_action == "controlled_response" else "no_agora_docs_refusal"
+        return "general_chat", actual_action, tooling
     if clean_scope == "non_agora":
         return "fallback_or_refuse", "refuse", "no_agora_docs_refusal"
     return "fallback_or_refuse", "refuse", "no_agora_docs_refusal"
@@ -288,7 +295,7 @@ def _heuristic_route_decision(
     if gratitude_signals and not has_resolution_negative_marker(text) and not _looks_like_question(text):
         return _build_route_decision(
             scope_label="small_talk",
-            action="refuse",
+            action="controlled_response",
             confidence=0.91,
             reason="gratitude_acknowledgement",
             matched_signals=_sanitize_matched_signals(gratitude_signals),
@@ -482,6 +489,10 @@ def build_refusal_answer(decision: SupportRouteDecision) -> str:
 
 
 def build_controlled_response(decision: SupportRouteDecision) -> str:
+    if _normalize_text(decision.reason).lower() == "gratitude_acknowledgement":
+        if decision.response_language == "zh":
+            return "不客气。如果这个工单还有后续问题，直接在这里补充，我会继续协助。"
+        return "You're welcome. If you need anything else for this ticket, send the next detail here and I'll continue helping."
     if decision.response_language == "zh":
         if decision.route_family == "general_chat":
             return (
