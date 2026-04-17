@@ -405,8 +405,8 @@ task_queue = AsyncRedisTaskQueue()
 rag_service_client = RagServiceClient()
 
 
-def derive_subject(message: str) -> str:
-    return derive_ticket_title(message)
+def derive_subject(message: str, preferred_subject: str | None = None) -> str:
+    return derive_ticket_title(message, preferred_subject=preferred_subject)
 
 
 def latest_customer_message(ticket: dict[str, Any]) -> str:
@@ -2220,10 +2220,12 @@ async def create_or_update_ticket(
         else ticket.get("requester") or request.customer_id
     )
     existing_subject = str(ticket.get("subject") or "").strip()
-    if request.subject and request.subject.strip():
-        ticket["subject"] = request.subject.strip()
-    elif is_new_ticket or not existing_subject or existing_subject == "General support request":
-        ticket["subject"] = derive_subject(request.message)
+    normalized_requested_subject = request.subject.strip() if request.subject and request.subject.strip() else None
+    if is_new_ticket or not existing_subject or existing_subject == "General support request":
+        ticket["subject"] = derive_subject(
+            request.message,
+            preferred_subject=normalized_requested_subject,
+        )
 
     if initial_message_count == 0:
         selected_product = _validated_new_session_product(request.product) or normalize_support_product(

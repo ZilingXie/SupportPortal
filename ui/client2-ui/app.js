@@ -62,6 +62,8 @@ const PRODUCT_OPTIONS = [
 const CLIENT_ROUTE_BRAND = "Support Portal";
 const CLIENT_ROUTE_SUBLABEL = "Client Workspace";
 const CLIENT2_ROUTE_MARKER = "client2-route-shell";
+const DEFAULT_DRAFT_TICKET_TITLE = "New ticket";
+const LEGACY_DEFAULT_DRAFT_TICKET_TITLE = "New Session";
 
 const FEATURES = [
   {
@@ -120,6 +122,19 @@ let lastRenderedChatMessageSignature = {
   signature: "",
 };
 const chatUnreadStateByTicket = {};
+
+function isDefaultDraftTitle(value) {
+  const normalized = String(value || "").trim();
+  return (
+    !normalized ||
+    normalized === DEFAULT_DRAFT_TICKET_TITLE ||
+    normalized === LEGACY_DEFAULT_DRAFT_TICKET_TITLE
+  );
+}
+
+function getDefaultDraftTitle() {
+  return DEFAULT_DRAFT_TICKET_TITLE;
+}
 
 function escapeHtml(value) {
   return String(value)
@@ -643,7 +658,7 @@ function renderNewSessionHintCard() {
   const hintText = buildNewSessionHintText();
   return `
     <div class="empty-chat-hint" aria-live="polite">
-      <p class="empty-chat-hint-eyebrow">New Session</p>
+      <p class="empty-chat-hint-eyebrow">${escapeHtml(getDefaultDraftTitle())}</p>
       <p class="empty-chat-hint-copy">${escapeHtml(hintText)}</p>
     </div>
   `;
@@ -1076,11 +1091,7 @@ function pickPreferredTicket(current, candidate) {
 
   const currentTitle = String(current?.title || "").trim();
   const candidateTitle = String(candidate?.title || "").trim();
-  if (
-    currentTitle === "New Session" &&
-    candidateTitle.length > 0 &&
-    candidateTitle !== "New Session"
-  ) {
+  if (isDefaultDraftTitle(currentTitle) && candidateTitle.length > 0 && !isDefaultDraftTitle(candidateTitle)) {
     return mergeProduct(candidate, current);
   }
 
@@ -1165,7 +1176,7 @@ function normalizeBackendTicket(ticket) {
 
   return {
     id: ticketId,
-    title: String(ticket?.subject || "New Session"),
+    title: String(ticket?.subject || getDefaultDraftTitle()),
     status: mapBackendStatusToClientStatus(ticket),
     createdAt,
     updatedAt,
@@ -1334,7 +1345,7 @@ function createTicket(userId) {
   const ticketId = createUniqueTicketId();
   const ticket = {
     id: ticketId,
-    title: "New Session",
+    title: getDefaultDraftTitle(),
     status: "open",
     createdAt: now,
     updatedAt: now,
@@ -1361,7 +1372,7 @@ function isReusableDraftTicket(ticket, userId) {
   return (
     String(ticket?.userId || "").trim() === normalizedUserId &&
     String(ticket?.status || "").trim().toLowerCase() !== "resolved" &&
-    String(ticket?.title || "New Session").trim() === "New Session" &&
+    isDefaultDraftTitle(ticket?.title) &&
     isTicketEmpty(ticket)
   );
 }
@@ -2167,7 +2178,7 @@ function formatTicketDetailDateTime(value) {
 
 function buildNewTicketPageTitle(ticket) {
   if (isTicketEmpty(ticket)) {
-    return "Start a new support ticket";
+    return getDefaultDraftTitle();
   }
   return String(ticket?.title || "New Ticket").trim() || "New Ticket";
 }
@@ -3578,11 +3589,6 @@ function renderAuthed() {
   bindAuthedEvents();
 }
 
-function generateTitle(message) {
-  const words = message.trim().split(/\s+/).slice(0, 6).join(" ");
-  return words.length > 0 ? words : "New Session";
-}
-
 async function syncBackendTicketAction(ticketId, action) {
   try {
     await fetch(`/api/tickets/${encodeURIComponent(ticketId)}/action`, {
@@ -3724,9 +3730,6 @@ async function handleSendMessage(text, options = {}) {
   }
 
   saveTicketMessages(ticketId, messages);
-  if (ticket.title === "New Session") {
-    updateTicketTitle(ticketId, generateTitle(text));
-  }
   const hasEscalatedAssistance =
     String(ticket.status || "").trim().toLowerCase() === "escalated";
   updateTicketStatus(ticketId, hasEscalatedAssistance ? "escalated" : "communicating");

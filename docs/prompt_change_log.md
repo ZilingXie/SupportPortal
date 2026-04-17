@@ -12,6 +12,36 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-04-17 - client ticket titles normalize to English
+
+- Area or subsystem: Client ticket title generation and `/client2` draft title presentation
+- Prompt or model version: `ticket-title-english-v2`
+- Summary: Changed ticket-title generation so new client-ticket subjects are always normalized into concise English titles, even when the first customer message or explicit `subject` is non-English, and aligned `/client2` draft titles to keep a fixed `New ticket` placeholder until the backend subject arrives.
+- Reason: `/client2` was showing a front-end temporary title derived from the first message while backend title generation deliberately followed the customer language, which caused mixed temporary titles and persisted Chinese subjects when the product expectation is a stable English ticket title.
+- Affected files or config:
+  - `backend/services/ticket_title.py`
+  - `backend/main.py`
+  - `ui/client2-ui/app.js`
+  - `ui/client2-ui/index.html`
+  - `backend/tests/test_ticket_title.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_client2_ui_contract.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - New client-ticket subjects now resolve to concise English titles regardless of the original customer language.
+  - Explicit `subject` values on new client tickets are normalized into English before persistence unless they are already valid concise English titles.
+  - `/client2` no longer generates a local temporary title from the first message; draft and pre-sync title surfaces stay on `New ticket` until backend sync returns the persisted subject.
+- Verification:
+  - `TOKENIZERS_PARALLELISM=false /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_client2_ui_contract -q`
+  - `TOKENIZERS_PARALLELISM=false /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_ticket_title -q`
+  - `TOKENIZERS_PARALLELISM=false /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_fix_ticket_subject_cli -q`
+  - `TOKENIZERS_PARALLELISM=false /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python - <<'PY'`
+    `import os, sys, pytest`
+    `code = pytest.main(['-q', 'backend/tests/test_investigation_flow.py'])`
+    `sys.stdout.flush(); sys.stderr.flush(); os._exit(code)`
+    `PY`
+  - `node --check ui/client2-ui/app.js`
+
 ## 2026-04-16 - unify engineer-facing AI identity to Sid
 
 - Area or subsystem: Engineer investigation reply persona and cross-surface user-visible AI naming
