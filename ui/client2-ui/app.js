@@ -2499,23 +2499,7 @@ function renderNewTicketDraftComposerActionHtml(viewState) {
   `;
 }
 
-function renderNewTicketPostSendComposerActionHtml(viewState) {
-  return `
-    <button
-      class="new-ticket-postsend-send-btn"
-      type="submit"
-      ${viewState.canSubmit ? "" : "disabled"}
-    >
-      <span>Send Message</span>
-      <span class="material-symbols-outlined" aria-hidden="true">arrow_forward</span>
-    </button>
-  `;
-}
-
 function renderNewTicketComposerActionHtml(viewState) {
-  if (isNewTicketPostSendState(viewState)) {
-    return renderNewTicketPostSendComposerActionHtml(viewState);
-  }
   return renderNewTicketDraftComposerActionHtml(viewState);
 }
 
@@ -2527,13 +2511,6 @@ function buildNewTicketPostSendMetaHtml(ticket) {
     `<span class="new-ticket-postsend-meta-item">Updated ${escapeHtml(formatDate(ticket.updatedAt))}</span>`,
   ].filter(Boolean);
   return items.join("");
-}
-
-function buildNewTicketPostSendComposerHelperText(viewState) {
-  if (viewState.isEditing) {
-    return "Editing your latest message. Press Enter to resend, Shift+Enter for newline.";
-  }
-  return "Add more context or follow-up details to keep this ticket moving.";
 }
 
 function renderNewTicketDraftTicketFromState(viewState) {
@@ -2609,29 +2586,21 @@ function renderNewTicketPostSendTicketFromState(viewState) {
                 </main>
               </section>
               ${renderChatUnreadIndicatorHtml(ticket.id)}
-              <footer class="new-ticket-composer-panel new-ticket-postsend-composer">
-                <div class="new-ticket-postsend-composer-header">
-                  <div>
-                    <p class="new-ticket-postsend-composer-title">Continue This Ticket</p>
-                    <p class="new-ticket-postsend-composer-desc">Add more context while keeping the same ticket thread and assistant identity.</p>
-                  </div>
-                </div>
-                <div class="new-ticket-postsend-composer-toolbar">
+              <footer class="new-ticket-composer-panel new-ticket-fixed-composer-panel new-ticket-postsend-composer">
+                <div class="new-ticket-composer-toolbar">
                   ${renderNewTicketComposerToolbar()}
                 </div>
-                <form id="chat-input-form" class="chat-input-inner new-ticket-postsend-composer-form" data-chat-section="composer-form">
-                  <textarea
-                    id="chat-input"
-                    class="textarea new-ticket-postsend-textarea"
-                    rows="1"
-                    placeholder="${escapeHtml(getChatComposerPlaceholder(viewState))}"
-                    ${viewState.canCompose ? "" : "disabled"}
-                  >${escapeHtml(state.inputDraft || "")}</textarea>
-                  <div class="new-ticket-postsend-composer-footer">
-                    <div class="new-ticket-postsend-composer-helper">${escapeHtml(
-                      buildNewTicketPostSendComposerHelperText(viewState)
-                    )}</div>
-                    <div data-chat-section="composer-action">
+                <div data-chat-section="composer-note">${renderNewTicketComposerNoteHtml(viewState)}</div>
+                <form id="chat-input-form" class="chat-input-inner new-ticket-composer-form" data-chat-section="composer-form">
+                  <div class="new-ticket-composer-input-shell">
+                    <textarea
+                      id="chat-input"
+                      class="textarea new-ticket-textarea"
+                      rows="1"
+                      placeholder="${escapeHtml(getChatComposerPlaceholder(viewState))}"
+                      ${viewState.canCompose ? "" : "disabled"}
+                    >${escapeHtml(state.inputDraft || "")}</textarea>
+                    <div class="new-ticket-inline-action" data-chat-section="composer-action">
                       ${renderNewTicketComposerActionHtml(viewState)}
                     </div>
                   </div>
