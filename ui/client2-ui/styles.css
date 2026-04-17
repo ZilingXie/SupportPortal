@@ -2312,10 +2312,30 @@ a.citation-link:hover {
 
 .clienttest-workspace {
   background: transparent;
+  --client2-route-max-width: 1240px;
+  --client2-route-top-space: 24px;
+  --client2-route-bottom-space: 36px;
+  --client2-fixed-footer-reserved-space: 0px;
 }
 
 .clienttest-main {
   overflow: auto;
+  scroll-padding-bottom: calc(var(--client2-route-bottom-space) + 24px);
+}
+
+.clienttest-route-page {
+  width: min(100%, var(--client2-route-max-width));
+  min-height: 100%;
+  margin: 0 auto;
+  display: grid;
+  gap: 24px;
+  align-content: start;
+  padding-top: var(--client2-route-top-space);
+  padding-bottom: var(--client2-route-bottom-space);
+}
+
+.clienttest-route-page-fixed-footer {
+  padding-bottom: max(var(--client2-route-bottom-space), var(--client2-fixed-footer-reserved-space));
 }
 
 .clienttest-topbar {
@@ -2343,11 +2363,87 @@ a.citation-link:hover {
   font-size: 12px;
 }
 
-.clienttest-home-grid {
-  margin-top: 34px;
+.clienttest-home {
+  display: block;
+  padding-top: 0;
+  overflow: visible;
+}
+
+.clienttest-home-shell {
+  display: grid;
+  gap: 24px;
+}
+
+.clienttest-home-intro {
+  position: relative;
+  display: grid;
+  gap: 18px;
+  padding: 28px 30px;
+  border-radius: 30px;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.84) 0%, rgba(239, 244, 251, 0.94) 100%);
+  box-shadow: var(--shadow-soft);
+}
+
+.clienttest-home-intro::before {
+  content: "";
+  position: absolute;
+  right: -64px;
+  top: -76px;
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle, rgba(0, 176, 255, 0.16) 0%, rgba(0, 176, 255, 0) 72%);
+}
+
+.clienttest-home-intro-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+}
+
+.clienttest-home-intro .bot-mark {
+  width: 56px;
+  height: 56px;
+  flex: 0 0 56px;
+  border-radius: 18px;
+}
+
+.clienttest-home-intro-copy {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.clienttest-home-intro .welcome-kicker,
+.clienttest-home-intro .welcome-title,
+.clienttest-home-intro .welcome-desc {
+  margin: 0;
+}
+
+.clienttest-home-intro .welcome-title {
+  max-width: 760px;
+  font-size: clamp(30px, 4vw, 42px);
+  line-height: 1.04;
+  letter-spacing: -0.045em;
+}
+
+.clienttest-home-intro .welcome-desc {
+  max-width: 760px;
+  font-size: 15px;
+  line-height: 1.72;
+}
+
+.clienttest-home-intro-actions {
+  margin-top: 0;
+}
+
+.clienttest-home-content-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 20px;
+  align-items: start;
 }
 
 .clienttest-home-panel {
@@ -2357,6 +2453,7 @@ a.citation-link:hover {
   box-shadow: var(--shadow-soft);
   display: grid;
   gap: 18px;
+  height: 100%;
 }
 
 .clienttest-home-panel-header {
@@ -2387,11 +2484,16 @@ a.citation-link:hover {
 .clienttest-home-panel-body {
   display: grid;
   gap: 14px;
+  align-content: start;
 }
 
 .clienttest-empty-card {
   color: var(--ink-soft);
   background: rgba(234, 238, 245, 0.84);
+}
+
+.clienttest-tickets {
+  overflow: visible;
 }
 
 .clienttest-tickets .tickets-body {
@@ -2404,8 +2506,8 @@ a.citation-link:hover {
   grid-template-columns: minmax(0, 1.35fr) minmax(300px, 360px);
   gap: 24px;
   align-items: start;
-  overflow: auto;
-  padding: 18px 0 32px;
+  overflow: visible;
+  padding: 0;
 }
 
 .ticket-detail-main {
@@ -2419,7 +2521,7 @@ a.citation-link:hover {
   display: grid;
   gap: 16px;
   position: sticky;
-  top: 24px;
+  top: 0;
   align-self: start;
 }
 
@@ -2708,27 +2810,28 @@ a.citation-link:hover {
 
 .clienttest-workspace-new-ticket {
   background: linear-gradient(180deg, #f7faff 0%, #eef3fb 100%);
+  --client2-route-top-space: 20px;
+  --client2-route-bottom-space: 36px;
+  --client2-fixed-footer-reserved-space: 344px;
 }
 
 .clienttest-main-new-ticket {
-  padding: 28px 36px 0;
+  padding: 0 36px 0;
 }
 
 .clienttest-new-ticket-shell {
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  padding-top: 8px;
+  overflow: visible;
+  padding-top: 0;
 }
 
 .new-ticket-layout {
   --new-ticket-thread-panel-height: 480px;
   --new-ticket-composer-panel-height: 296px;
   --new-ticket-info-card-height: 388px;
-  width: min(100%, 1240px);
-  margin: 0 auto;
   display: grid;
-  gap: 20px;
+  gap: 24px;
 }
 
 .new-ticket-body-layout {
@@ -2746,9 +2849,10 @@ a.citation-link:hover {
 
 .new-ticket-sidebar {
   position: sticky;
-  top: 24px;
+  top: 0;
   display: grid;
   gap: 20px;
+  align-content: start;
 }
 
 .new-ticket-hero {
@@ -2768,7 +2872,7 @@ a.citation-link:hover {
 }
 
 .new-ticket-footer-spacer {
-  height: 40px;
+  display: none;
 }
 
 .new-ticket-thread-panel,
@@ -3278,8 +3382,6 @@ a.citation-link:hover {
 }
 
 .new-ticket-postsend-page {
-  width: min(100%, 1240px);
-  margin: 0 auto 40px;
   display: grid;
   gap: 24px;
 }
@@ -3362,7 +3464,7 @@ a.citation-link:hover {
 
 .new-ticket-postsend-sidebar {
   position: sticky;
-  top: 24px;
+  top: 0;
   display: grid;
   gap: 20px;
   align-content: start;
@@ -3563,6 +3665,10 @@ a.citation-link:hover {
     --new-ticket-info-card-height: 372px;
   }
 
+  .clienttest-workspace-new-ticket {
+    --client2-fixed-footer-reserved-space: 320px;
+  }
+
   .clienttest-shell {
     flex-direction: row;
   }
@@ -3605,7 +3711,7 @@ a.citation-link:hover {
   }
 
   .ticket-detail-layout,
-  .clienttest-home-grid,
+  .clienttest-home-content-grid,
   .new-ticket-body-layout {
     grid-template-columns: 1fr;
   }
@@ -3646,6 +3752,15 @@ a.citation-link:hover {
     --new-ticket-thread-panel-height: 344px;
     --new-ticket-composer-panel-height: 264px;
     --new-ticket-info-card-height: 356px;
+  }
+
+  .clienttest-workspace {
+    --client2-route-top-space: 20px;
+    --client2-route-bottom-space: 28px;
+  }
+
+  .clienttest-workspace-new-ticket {
+    --client2-fixed-footer-reserved-space: 292px;
   }
 
   .clienttest-shell {
@@ -3725,7 +3840,7 @@ a.citation-link:hover {
   }
 
   .ticket-detail-layout,
-  .clienttest-home-grid,
+  .clienttest-home-content-grid,
   .new-ticket-body-layout {
     grid-template-columns: 1fr;
   }
@@ -3760,7 +3875,8 @@ a.citation-link:hover {
   .ticket-detail-thread,
   .ticket-detail-composer,
   .ticket-side-card,
-  .clienttest-home-panel {
+  .clienttest-home-panel,
+  .clienttest-home-intro {
     border-radius: 24px;
   }
 
@@ -3771,15 +3887,20 @@ a.citation-link:hover {
   }
 
   .clienttest-main-new-ticket {
-    padding: 18px 16px 0;
-  }
-
-  .new-ticket-footer-spacer {
-    height: 24px;
+    padding: 0 16px 0;
   }
 
   .new-ticket-page-title {
     font-size: 32px;
+  }
+
+  .clienttest-home-intro {
+    padding: 24px 20px;
+  }
+
+  .clienttest-home-intro-head {
+    flex-direction: column;
+    gap: 14px;
   }
 
   .new-ticket-thread-empty {
