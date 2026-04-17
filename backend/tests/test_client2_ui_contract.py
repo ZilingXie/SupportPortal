@@ -26,8 +26,8 @@ class Client2RouteSmokeTests(unittest.TestCase):
     def test_client2_html_references_local_assets(self) -> None:
         html = Path("ui/client2-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260417-client2-footer-gap-contract-refresh-1", html)
-        self.assertIn("./app.js?v=20260417-client2-footer-gap-contract-refresh-1", html)
+        self.assertIn("./styles.css?v=20260417-client2-workspace-footer-band-1", html)
+        self.assertIn("./app.js?v=20260417-client2-workspace-footer-band-1", html)
 
 
 class Client2UiContractTests(unittest.TestCase):
@@ -168,10 +168,13 @@ class Client2UiContractTests(unittest.TestCase):
         self.assertIn("clienttest-home-intro", app_source)
         self.assertIn("clienttest-home-content-grid", app_source)
         self.assertIn("clienttest-route-page", app_source)
+        self.assertIn("clienttest-route-page-footer-band", app_source)
         self.assertIn("--client2-route-max-width", css)
         self.assertIn("--client2-route-top-space", css)
         self.assertIn("--client2-route-bottom-space", css)
+        self.assertIn("--client2-visible-footer-band-space", css)
         self.assertIn(".clienttest-route-page", css)
+        self.assertIn(".clienttest-route-page-footer-band", css)
         self.assertNotIn("clienttest-route-page-fixed-footer", app_source)
         self.assertNotIn("--client2-fixed-footer-reserved-space", css)
         self.assertNotIn(".clienttest-route-page-fixed-footer", css)
@@ -223,6 +226,9 @@ class Client2UiContractTests(unittest.TestCase):
                 if (!html.includes("clienttest-home-content-grid")) {
                   throw new Error("Client2 workspace should render the ticket-first content grid.");
                 }
+                if (!html.includes("clienttest-route-page-footer-band")) {
+                  throw new Error("Client2 workspace should render the visible footer-band shell.");
+                }
                 if (html.includes("welcome-inner")) {
                   throw new Error("Client2 workspace should no longer use the oversized legacy hero wrapper.");
                 }
@@ -251,6 +257,9 @@ class Client2UiContractTests(unittest.TestCase):
                 const html = renderChatTicket();
                 if (!html.includes("Start a new support ticket")) {
                   throw new Error("Client2 draft should render the approved new-ticket title.");
+                }
+                if (!html.includes("clienttest-route-page-footer-band")) {
+                  throw new Error("Client2 draft should render the visible footer-band shell.");
                 }
                 if (!html.includes("Knowledge Base Articles")) {
                   throw new Error("Client2 draft should keep the reference-links sidebar.");
@@ -344,6 +353,9 @@ class Client2UiContractTests(unittest.TestCase):
                 }
                 if (!html.includes("clienttest-route-page")) {
                   throw new Error("Client2 post-send shell should use the shared route page shell.");
+                }
+                if (!html.includes("clienttest-route-page-footer-band")) {
+                  throw new Error("Client2 first-send postsend shell should render the visible footer-band shell.");
                 }
                 if (html.includes("clienttest-route-page-fixed-footer")) {
                   throw new Error("Client2 post-send shell should not use the removed fixed-footer reserve contract.");
@@ -486,6 +498,9 @@ class Client2UiContractTests(unittest.TestCase):
                 if (!html.includes("clienttest-route-page")) {
                   throw new Error("Existing client2 tickets should use the shared route page shell.");
                 }
+                if (html.includes("clienttest-route-page-footer-band")) {
+                  throw new Error("Existing client2 tickets should keep the current detail footer depth without the visible footer-band shell.");
+                }
                 if (html.includes("clienttest-route-page-fixed-footer")) {
                   throw new Error("Existing client2 tickets should not use the removed fixed-footer reserve contract.");
                 }
@@ -515,6 +530,32 @@ class Client2UiContractTests(unittest.TestCase):
                 }
                 if (html.includes("Continue the same ticket with Sid handling the assistant turn")) {
                   throw new Error("Existing client2 tickets should not render the legacy composer header copy.");
+                }
+              """
+            )
+        )
+
+    def test_client2_my_tickets_uses_visible_footer_band_shell(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const ticket = createTicket(state.user.id);
+                updateTicketTitle(ticket.id, "Channel join question");
+                updateTicketStatus(ticket.id, "communicating");
+
+                state.view = "tickets";
+                const html = renderTicketsPage();
+                if (!html.includes("clienttest-route-page")) {
+                  throw new Error("Client2 tickets page should keep the shared route shell.");
+                }
+                if (!html.includes("clienttest-route-page-footer-band")) {
+                  throw new Error("Client2 tickets page should render the visible footer-band shell.");
+                }
+                if (!html.includes("My Tickets")) {
+                  throw new Error("Client2 tickets page should keep the tickets heading.");
                 }
               """
             )

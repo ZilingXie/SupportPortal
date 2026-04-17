@@ -2522,7 +2522,7 @@ function renderNewTicketDraftTicketFromState(viewState) {
   const ticket = viewState.ticket;
   return `
     <section class="chat-root clienttest-new-ticket-shell" data-chat-ticket-id="${escapeHtml(ticket.id)}">
-      <div class="new-ticket-layout clienttest-route-page">
+      <div class="new-ticket-layout ${buildClient2RoutePageClass({ visibleFooterBand: true })}">
         <header class="new-ticket-hero">
           <h1 class="new-ticket-page-title">${escapeHtml(buildNewTicketPageTitle(ticket))}</h1>
         </header>
@@ -2573,7 +2573,7 @@ function renderNewTicketPostSendTicketFromState(viewState) {
   return `
     <section class="chat-root clienttest-new-ticket-shell" data-chat-ticket-id="${escapeHtml(ticket.id)}">
       <div class="new-ticket-postsend-shell">
-        <div class="new-ticket-postsend-page clienttest-route-page">
+        <div class="new-ticket-postsend-page ${buildClient2RoutePageClass({ visibleFooterBand: viewState.showVisibleFooterBand })}">
           <header class="new-ticket-postsend-header">
             <div class="new-ticket-postsend-breadcrumb">My Tickets / Ticket #${escapeHtml(ticket.id)}</div>
             <div class="new-ticket-postsend-header-row">
@@ -2699,7 +2699,7 @@ function renderChatHome() {
   const recentTickets = tickets.slice(0, 3);
 
   return `
-    <section class="welcome clienttest-home clienttest-route-page">
+    <section class="welcome clienttest-home ${buildClient2RoutePageClass({ visibleFooterBand: true })}">
       <div class="clienttest-home-shell">
         <header class="clienttest-home-intro">
           <div class="clienttest-home-intro-head">
@@ -2833,6 +2833,7 @@ function buildChatTicketViewState(ticket) {
   const canCompose = ticket.status !== "resolved";
   const canSubmit = canCompose && hasComposerText;
   const isEditing = Boolean(state.editingMessageId);
+  const showVisibleFooterBand = isNewTicketPreviewTicket(ticket);
 
   if (isEditing && !renderableMessages.some((message) => message.id === state.editingMessageId)) {
     state.editingMessageId = null;
@@ -2849,6 +2850,7 @@ function buildChatTicketViewState(ticket) {
     canCompose,
     canSubmit,
     usesNewTicketShell,
+    showVisibleFooterBand,
     isEditing: Boolean(state.editingMessageId),
   };
 }
@@ -3089,7 +3091,7 @@ function renderTicketsPage() {
       : all.filter((ticket) => ticket.status === state.statusFilter);
 
   return `
-    <section class="tickets-root clienttest-tickets clienttest-route-page">
+    <section class="tickets-root clienttest-tickets ${buildClient2RoutePageClass({ visibleFooterBand: true })}">
       <header class="tickets-header">
         <div class="tickets-header-left">
           <button class="btn btn-ghost btn-icon" data-action="go-chat" type="button" aria-label="Back to workspace">
@@ -3143,6 +3145,10 @@ function prefersReducedMotion() {
   } catch {
     return false;
   }
+}
+
+function buildClient2RoutePageClass({ visibleFooterBand = false } = {}) {
+  return visibleFooterBand ? "clienttest-route-page clienttest-route-page-footer-band" : "clienttest-route-page";
 }
 
 function scrollElementToTop(element, top, behavior = "auto") {
