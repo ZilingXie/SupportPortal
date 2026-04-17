@@ -26,8 +26,8 @@ class Client2RouteSmokeTests(unittest.TestCase):
     def test_client2_html_references_local_assets(self) -> None:
         html = Path("ui/client2-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260417-client2-remove-waiting-line-1", html)
-        self.assertIn("./app.js?v=20260417-client2-remove-waiting-line-1", html)
+        self.assertIn("./styles.css?v=20260417-client2-postsend-composer-match-draft-1", html)
+        self.assertIn("./app.js?v=20260417-client2-postsend-composer-match-draft-1", html)
 
 
 class Client2UiContractTests(unittest.TestCase):
@@ -139,12 +139,14 @@ class Client2UiContractTests(unittest.TestCase):
 
         self.assertIn("<title>Support Portal</title>", html)
         self.assertIn("Support Portal", app_source)
-        self.assertIn("Continue This Ticket", app_source)
         self.assertIn('<span class="sidebar-nav-label">New Ticket</span>', app_source)
         self.assertIn('<span class="sidebar-nav-label">Workspace</span>', app_source)
         self.assertIn('<span class="sidebar-nav-label">My Tickets</span>', app_source)
         self.assertIn("client2-route-shell", app_source)
+        self.assertIn("new-ticket-inline-send-btn", app_source)
         self.assertIn("client2-route-shell", css)
+        self.assertNotIn("Continue This Ticket", app_source)
+        self.assertNotIn("new-ticket-postsend-send-btn", app_source)
 
         self.assertNotIn("Clienttest Preview", html)
         self.assertNotIn("Clienttest Preview", app_source)
@@ -273,11 +275,26 @@ class Client2UiContractTests(unittest.TestCase):
                 if (!html.includes("new-ticket-postsend-shell")) {
                   throw new Error("Client2 first send should switch into the correspondence shell.");
                 }
-                if (!html.includes("Continue This Ticket")) {
-                  throw new Error("Client2 post-send shell should keep the approved composer title.");
-                }
                 if (!html.includes(`My Tickets / Ticket #${ticket.id}`)) {
                   throw new Error("Client2 post-send shell should restore the breadcrumb header.");
+                }
+                if (!html.includes("new-ticket-composer-input-shell")) {
+                  throw new Error("Client2 post-send shell should reuse the draft composer input shell.");
+                }
+                if (!html.includes("new-ticket-inline-send-btn")) {
+                  throw new Error("Client2 post-send shell should keep the inline send button.");
+                }
+                if (!html.includes("Add more context or follow-up details...")) {
+                  throw new Error("Client2 post-send shell should keep the draft-style follow-up placeholder.");
+                }
+                if (html.includes("Continue This Ticket")) {
+                  throw new Error("Client2 post-send shell should not render the old correspondence composer header.");
+                }
+                if (html.includes("new-ticket-postsend-composer-header") || html.includes("new-ticket-postsend-composer-footer")) {
+                  throw new Error("Client2 post-send shell should not render the old correspondence composer chrome.");
+                }
+                if (html.includes("new-ticket-postsend-send-btn")) {
+                  throw new Error("Client2 post-send shell should not render the old footer send button.");
                 }
                 if (html.includes("Got it, let me check this for you.") || html.includes("I got your message and I am checking it now.")) {
                   throw new Error("Client2 should not render reassurance copy after the first send.");
