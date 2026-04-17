@@ -285,7 +285,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.runtime_state.rag_agent.get("status"), "skipped")
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
 
-    def test_resolved_confirmation_requires_previous_substantive_answer(self) -> None:
+    def test_gratitude_after_non_substantive_reply_returns_controlled_response_without_resolving(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
 
         route_called: list[bool] = []
@@ -315,30 +315,30 @@ The documentation states that time: 0 means the rule is applied permanently. How
             current_ticket_status="communicating",
             route_agent=lambda **_kwargs: route_called.append(True) or SupportRouteDecision(
                 scope_label="small_talk",
-                route="refuse",
+                route="controlled_response",
                 confidence=0.91,
-                reason="small_talk_detected",
+                reason="gratitude_acknowledgement",
                 matched_signals=["thanks"],
                 response_language="en",
                 route_family="general_chat",
-                execution_action="refuse",
-                tooling_profile="no_agora_docs_refusal",
+                execution_action="controlled_response",
+                tooling_profile="controlled_acknowledgement",
             ),
             route_executor=lambda **_kwargs: SupportResolution(
-                answer="I'm Agora's support AI and mainly answer Agora-related questions.",
+                answer="You're welcome. If you need anything else for this ticket, send the next detail here and I'll continue helping.",
                 confidence=0.82,
                 sources=[],
                 citations=[],
                 needs_engineer_guidance=False,
-                answer_route="refuse",
+                answer_route="controlled_response",
                 scope_label="small_talk",
-                route_reason="small_talk_detected",
+                route_reason="gratitude_acknowledgement",
                 route_confidence=0.91,
                 search_used=False,
                 matched_signals=["thanks"],
                 route_family="general_chat",
-                execution_action="refuse",
-                tooling_profile="no_agora_docs_refusal",
+                execution_action="controlled_response",
+                tooling_profile="controlled_acknowledgement",
             ),
             rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
                 answer="",
@@ -356,7 +356,10 @@ The documentation states that time: 0 means the rule is applied permanently. How
 
         self.assertTrue(route_called)
         self.assertNotEqual(execution.result.workflow_action, "resolve_ticket")
-        self.assertEqual(execution.result.answer_route, "refuse")
+        self.assertEqual(execution.result.answer_route, "controlled_response")
+        self.assertEqual(execution.result.execution_action, "controlled_response")
+        self.assertEqual(execution.result.route_reason, "gratitude_acknowledgement")
+        self.assertEqual(execution.runtime_state.route_agent.get("decision"), "controlled_response")
 
     def test_resolved_confirmation_rejects_remaining_problem_signals(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime

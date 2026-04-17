@@ -1227,6 +1227,92 @@ class WorkerResilienceTests(unittest.TestCase):
 
         repository.save_ticket.assert_not_called()
 
+    def test_find_existing_worker_response_returns_single_persisted_reply_for_customer_turn(self) -> None:
+        ticket = _build_ticket()
+        ticket["messages"] = [
+            ticket["messages"][0],
+            {
+                "role": "assistant",
+                "content": "Use the Node.js token builder sample.",
+                "created_at": "2026-03-22T00:01:00+00:00",
+                "answer_route": "rag",
+                "route_reason": "docs_match",
+            },
+        ]
+
+        existing = worker._find_existing_worker_response(
+            ticket,
+            self.task["customer_message"],
+            self.task["message_created_at"],
+        )
+
+        self.assertIsNotNone(existing)
+        assert existing is not None
+        self.assertEqual(existing["content"], "Use the Node.js token builder sample.")
+
+    def test_process_ticket_query_skips_duplicate_final_response_after_requeue_with_single_assistant_reply(self) -> None:
+        refreshed_ticket = _build_ticket()
+        refreshed_ticket["messages"] = [
+            refreshed_ticket["messages"][0],
+            {
+                "role": "assistant",
+                "content": "Use the Node.js token builder sample.",
+                "created_at": "2026-03-22T00:01:00+00:00",
+                "sources": ["official/deploy-token-server.md"],
+                "citations": [
+                    {
+                        "source": "official/deploy-token-server.md",
+                        "label": "Deploy a token server",
+                    }
+                ],
+            },
+        ]
+        repository = Mock()
+        repository.get_ticket.return_value = copy.deepcopy(refreshed_ticket)
+        repository.list_ticket_events.return_value = []
+        repository.save_ticket.return_value = None
+        repository.record_event.return_value = None
+        bus = Mock()
+        execution = types.SimpleNamespace(
+            answer="Use the Node.js token builder sample.",
+            confidence=0.91,
+            sources=["official/deploy-token-server.md"],
+            citations=[{"source": "official/deploy-token-server.md", "label": "Deploy a token server"}],
+            needs_engineer_guidance=False,
+            answer_route="rag",
+            scope_label="agora_technical",
+            route_reason="docs_match",
+            route_confidence=0.91,
+            search_used=False,
+            matched_signals=["token", "node.js"],
+            route_family="agora_docs_rag",
+            execution_action="rag",
+            tooling_profile="agora_docs_only",
+            needs_investigating=False,
+            next_status="communicating",
+        )
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "_orchestrate_worker_support_message",
+            return_value=execution,
+        ), patch.object(
+            worker,
+            "build_client_sync_event",
+            return_value={"event": "ticket_ai_response_ready"},
+        ), patch.object(
+            worker,
+            "ensure_ticket_defaults",
+            side_effect=lambda ticket: None,
+        ), patch.object(
+            worker,
+            "now_iso",
+            return_value="2026-03-22T00:01:05+00:00",
+        ):
+            worker._process_ticket_query(bus, dict(self.task))
+
+        repository.save_ticket.assert_not_called()
+
     def test_process_ticket_query_persists_route_metadata_without_calling_legacy_build_answer(self) -> None:
         initial_ticket = _build_ticket()
         repository = Mock()

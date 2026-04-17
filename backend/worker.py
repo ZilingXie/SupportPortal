@@ -893,10 +893,36 @@ def _find_existing_worker_response(
     for item in ticket.get("messages", [])[customer_index + 1 :]:
         if str(item.get("role", "")).strip().lower() != "assistant":
             continue
+        if not _assistant_message_looks_like_persisted_response(item):
+            continue
         assistant_messages.append(item)
-    if len(assistant_messages) < 2:
+    if not assistant_messages:
         return None
     return assistant_messages[-1]
+
+
+def _assistant_message_looks_like_persisted_response(message: dict[str, Any]) -> bool:
+    if not isinstance(message, dict):
+        return False
+    if isinstance(message.get("sources"), list) and message.get("sources"):
+        return True
+    if isinstance(message.get("citations"), list) and message.get("citations"):
+        return True
+    for key in (
+        "workflow_action",
+        "answer_route",
+        "scope_label",
+        "route_reason",
+        "execution_action",
+        "assistant_message_source",
+        "client_agent_run_id",
+        "client_agent_runtime_status",
+    ):
+        if str(message.get(key) or "").strip():
+            return True
+    if bool(message.get("supports_customer_resolution")):
+        return True
+    return False
 
 
 def _find_latest_assistant_message_before_index(
