@@ -46,13 +46,12 @@ class TicketTitleTests(unittest.TestCase):
         self.assertNotIn("How do I", title)
         self.assertTrue(title)
 
-    def test_chinese_message_stays_in_chinese(self) -> None:
+    def test_chinese_message_is_normalized_to_english_title(self) -> None:
         title = derive_ticket_title("加入频道失败，调用 joinChannel 后一直没有回调，怎么办？")
 
         self.assertTrue(title)
-        self.assertNotIn("join channel failure", title.lower())
         self.assertLessEqual(len(title), 64)
-        self.assertRegex(title, r"[\u4e00-\u9fff]")
+        self.assertNotRegex(title, r"[\u4e00-\u9fff]")
 
     def test_invalid_model_output_falls_back_to_rules(self) -> None:
         with patch(
@@ -65,6 +64,17 @@ class TicketTitleTests(unittest.TestCase):
         self.assertNotIn("https://", title)
         self.assertLessEqual(len(title), 64)
 
+    def test_invalid_model_output_for_chinese_message_falls_back_to_english_rules(self) -> None:
+        with patch(
+            "backend.services.ticket_title._invoke_title_model",
+            return_value="加入频道问题",
+        ):
+            title = derive_ticket_title("加入频道失败，调用 joinChannel 后一直没有回调，怎么办？")
+
+        self.assertTrue(title)
+        self.assertLessEqual(len(title), 64)
+        self.assertNotRegex(title, r"[\u4e00-\u9fff]")
+
     def test_model_error_falls_back_to_rules(self) -> None:
         with patch(
             "backend.services.ticket_title._invoke_title_model",
@@ -75,6 +85,17 @@ class TicketTitleTests(unittest.TestCase):
         self.assertTrue(title)
         self.assertLessEqual(len(title), 64)
         self.assertNotIn("Need help with", title)
+
+    def test_model_error_for_chinese_message_falls_back_to_english_rules(self) -> None:
+        with patch(
+            "backend.services.ticket_title._invoke_title_model",
+            side_effect=LlmInvocationError("ticket_title_request_failed"),
+        ):
+            title = derive_ticket_title("加入频道失败，调用 joinChannel 后一直没有回调，怎么办？")
+
+        self.assertTrue(title)
+        self.assertLessEqual(len(title), 64)
+        self.assertNotRegex(title, r"[\u4e00-\u9fff]")
 
     def test_model_output_is_used_when_valid(self) -> None:
         with patch(

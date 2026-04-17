@@ -1313,6 +1313,67 @@ class InvestigationFlowTests(unittest.TestCase):
         assert stored is not None
         self.assertEqual(stored["subject"], "Ban API mismatch")
 
+    def test_ticket_query_normalizes_explicit_non_english_subject_when_creating_new_ticket(self) -> None:
+        with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="Thanks, I am checking this.",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main,
+            "execute_client_ticket_agent_runtime",
+            return_value=types.SimpleNamespace(
+                result=types.SimpleNamespace(
+                    answer="Need a few more details.",
+                    confidence=0.2,
+                    sources=[],
+                    citations=[],
+                    needs_investigating=False,
+                    next_status="communicating",
+                    answer_route="rag",
+                    scope_label="agora_technical",
+                    route_family="agora_docs_rag",
+                    execution_action="rag",
+                    tooling_profile="agora_docs_only",
+                    route_reason="clarify_needed",
+                    route_confidence=0.78,
+                    search_used=False,
+                    matched_signals=["optimistic_default"],
+                    investigation_reason=None,
+                    evidence_summary=None,
+                    packed_evidence=None,
+                    workflow_action="answer_customer",
+                    client_intake_state=None,
+                ),
+            ),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-TITLE-002B",
+                    "customer_id": "C-001",
+                    "product": "audio_video_calling",
+                    "subject": "加入频道失败",
+                    "message": "加入频道失败，调用 joinChannel 后一直没有回调，怎么办？",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        stored = self.repository.get_ticket("TK-TITLE-002B")
+        self.assertIsNotNone(stored)
+        assert stored is not None
+        self.assertTrue(stored["subject"])
+        self.assertLessEqual(len(stored["subject"]), 64)
+        self.assertNotEqual(stored["subject"], "加入频道失败")
+        self.assertNotRegex(stored["subject"], r"[\u4e00-\u9fff]")
+
     def test_ticket_query_follow_up_keeps_existing_subject(self) -> None:
         self._seed_ticket(
             ticket_id="TK-TITLE-003",

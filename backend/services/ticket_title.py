@@ -88,22 +88,32 @@ def _preclean_message(message: str) -> str:
     return _remove_greetings_and_signoffs(text)
 
 
-def _build_title_prompt(message: str) -> tuple[str, str]:
-    cleaned = _preclean_message(message)
+def _build_title_prompt(message: str, *, preferred_subject: str | None = None) -> tuple[str, str]:
+    cleaned_message = _preclean_message(message)
+    cleaned_subject = _preclean_message(preferred_subject)
     system_prompt = (
-        "Generate a short support ticket title. "
+        "Generate a short support ticket title in English. "
         "Return only a concise issue label, not a sentence. "
-        "Keep the same primary language as the customer message. "
+        "Always write the ticket title in English regardless of the customer's language. "
         "Do not include greetings, URLs, lists, markdown, or code. "
         "Prefer the core technical object plus the main symptom or mismatch. "
         "English output must stay within 4 to 8 words. "
-        "CJK output must stay within 16 visible CJK characters."
+        "Do not transliterate Chinese directly; translate it into natural English issue wording."
     )
-    user_prompt = (
-        "Customer message:\n"
-        f"{cleaned or _normalize_whitespace(message)}\n\n"
-        "Return only the ticket title."
-    )
+    if cleaned_subject:
+        user_prompt = (
+            "Reported issue summary to normalize:\n"
+            f"{cleaned_subject}\n\n"
+            "Customer message:\n"
+            f"{cleaned_message or _normalize_whitespace(message)}\n\n"
+            "Return only the English ticket title."
+        )
+    else:
+        user_prompt = (
+            "Customer message:\n"
+            f"{cleaned_message or _normalize_whitespace(message)}\n\n"
+            "Return only the English ticket title."
+        )
     return system_prompt, user_prompt
 
 
@@ -156,18 +166,38 @@ def _is_valid_title(candidate: str, *, cleaned_message: str) -> bool:
     if _LEADING_GREETING_RE.match(normalized):
         return False
     if _contains_cjk(normalized):
-        visible_cjk = len(_CJK_RE.findall(normalized))
-        if visible_cjk > MAX_CJK_CHARS:
-            return False
-    else:
-        if len(normalized.split()) > MAX_ENGLISH_WORDS:
-            return False
+        return False
+    if len(normalized.split()) > MAX_ENGLISH_WORDS:
+        return False
     if _is_mechanical_prefix(normalized, cleaned_message):
         return False
     return True
 
 
 def _best_english_phrase(cleaned: str) -> str:
+    lowered = cleaned.lower()
+    has_callback_signal = "callback" in lowered or "回调" in cleaned
+    has_failure_signal = any(token in lowered for token in ("failure", "failed", "error", "issue", "problem"))
+    has_failure_signal = has_failure_signal or any(token in cleaned for token in ("失败", "错误", "异常", "问题"))
+
+    if (
+        "joinchannel" in lowered
+        or "join channel" in lowered
+        or "join a channel" in lowered
+        or "加入频道" in cleaned
+        or "进频道" in cleaned
+        or "频道加入" in cleaned
+    ):
+        if has_callback_signal:
+            return "Channel join callback issue"
+        return "Channel join issue"
+    if "黑屏" in cleaned or "black screen" in lowered:
+        return "Black screen issue"
+    if "录制" in cleaned or "recording" in lowered:
+        return "Cloud recording issue"
+    if "token renew" in lowered or ("token" in lowered and has_callback_signal):
+        return "Token renew issue"
+
     tech_terms = _TECH_TERM_RE.findall(cleaned)
     prioritized_terms = sorted(
         {_normalize_whitespace(term) for term in tech_terms if _normalize_whitespace(term)},
@@ -178,6 +208,10 @@ def _best_english_phrase(cleaned: str) -> str:
         ),
     )
     symptoms = _SYMPTOM_RE.findall(cleaned)
+    if prioritized_terms and has_callback_signal:
+        return f"{prioritized_terms[0]} callback issue"
+    if prioritized_terms and has_failure_signal:
+        return f"{prioritized_terms[0]} issue"
     if prioritized_terms and symptoms:
         symptom = symptoms[0]
         if symptom.lower() == "difference":
@@ -186,57 +220,42 @@ def _best_english_phrase(cleaned: str) -> str:
             symptom = "error"
         return f"{prioritized_terms[0]} {symptom.lower()}"
     if prioritized_terms:
-        if "join channel" in cleaned.lower():
+        if "join channel" in lowered:
             return "Channel join question"
         return prioritized_terms[0]
-    lowered = cleaned.lower()
     if "join channel" in lowered or "join a channel" in lowered:
         return "Channel join question"
     if "black screen" in lowered:
         return "Black screen issue"
     if "token renew" in lowered:
         return "Token renew issue"
+    if has_callback_signal:
+        return "Callback issue"
+    if _contains_cjk(cleaned):
+        return "General support request"
     words = cleaned.split()
     return " ".join(words[: min(len(words), 6)])
 
 
-def _best_cjk_phrase(cleaned: str) -> str:
-    compact = re.sub(r"[，。！？、；：,.!?;:()\[\]{}]", " ", cleaned)
-    compact = _normalize_whitespace(compact)
-    for phrase in ("加入频道", "频道加入", "黑屏", "Token", "API", "SDK", "回调", "超时", "失败", "问题"):
-        if phrase in compact:
-            if phrase in {"加入频道", "频道加入"}:
-                return "加入频道问题"
-            if phrase == "黑屏":
-                return "黑屏问题"
-            if phrase == "回调":
-                return "回调缺失问题"
-            if phrase == "失败":
-                return "调用失败问题"
-            if phrase == "问题":
-                return "技术问题"
-            return f"{phrase}问题"
-    chars = [char for char in compact if _contains_cjk(char)]
-    return "".join(chars[:MAX_CJK_CHARS]) or compact[:MAX_TITLE_CHARS]
-
-
-def _fallback_title(message: str) -> str:
-    cleaned = _preclean_message(message)
-    if not cleaned:
+def _fallback_title(message: str, *, preferred_subject: str | None = None) -> str:
+    cleaned_subject = _preclean_message(preferred_subject)
+    cleaned_message = _preclean_message(message)
+    cleaned_reference = " ".join(part for part in (cleaned_subject, cleaned_message) if part)
+    if not cleaned_reference:
         return "General support request"
-    candidate = _best_cjk_phrase(cleaned) if _contains_cjk(cleaned) else _best_english_phrase(cleaned)
+    candidate = _best_english_phrase(cleaned_reference)
     candidate = _trim_to_constraints(candidate)
-    if _is_valid_title(candidate, cleaned_message=cleaned):
+    if _is_valid_title(candidate, cleaned_message=cleaned_reference):
         return candidate
-    shortened = _trim_to_constraints(cleaned)
-    if _is_valid_title(shortened, cleaned_message=cleaned):
+    shortened = _trim_to_constraints(cleaned_subject or cleaned_message)
+    if _is_valid_title(shortened, cleaned_message=cleaned_reference):
         return shortened
     return "General support request"
 
 
-def _invoke_title_model(message: str) -> str:
+def _invoke_title_model(message: str, *, preferred_subject: str | None = None) -> str:
     profile = resolve_model_profile(TICKET_TITLE_SCENARIO)
-    system_prompt, user_prompt = _build_title_prompt(message)
+    system_prompt, user_prompt = _build_title_prompt(message, preferred_subject=preferred_subject)
     response = invoke_responses_text(
         profile=profile,
         system_prompt=system_prompt,
@@ -251,16 +270,22 @@ def _invoke_title_model(message: str) -> str:
     return _normalize_whitespace(response.text)
 
 
-def derive_ticket_title(message: str) -> str:
-    cleaned = _preclean_message(message)
-    if not cleaned:
+def derive_ticket_title(message: str, *, preferred_subject: str | None = None) -> str:
+    cleaned_subject = _preclean_message(preferred_subject)
+    cleaned_message = _preclean_message(message)
+    cleaned_reference = cleaned_subject or cleaned_message
+    if not cleaned_reference:
         return "General support request"
 
+    normalized_subject = _trim_to_constraints(cleaned_subject)
+    if cleaned_subject and _is_valid_title(normalized_subject, cleaned_message=cleaned_subject):
+        return normalized_subject
+
     try:
-        candidate = _trim_to_constraints(_invoke_title_model(message))
+        candidate = _trim_to_constraints(_invoke_title_model(message, preferred_subject=preferred_subject))
     except (LlmInvocationError, ValueError):
         candidate = ""
 
-    if _is_valid_title(candidate, cleaned_message=cleaned):
+    if _is_valid_title(candidate, cleaned_message=cleaned_reference):
         return candidate
-    return _fallback_title(message)
+    return _fallback_title(message, preferred_subject=preferred_subject)

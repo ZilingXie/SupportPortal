@@ -27,8 +27,8 @@ class Client2RouteSmokeTests(unittest.TestCase):
     def test_client2_html_references_local_assets(self) -> None:
         html = Path("ui/client2-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260417-client2-draft-workspace-tighten-1", html)
-        self.assertIn("./app.js?v=20260417-client2-draft-workspace-tighten-1", html)
+        self.assertIn("./styles.css?v=20260417-client2-ticket-title-english-2", html)
+        self.assertIn("./app.js?v=20260417-client2-ticket-title-english-2", html)
 
 
 class Client2UiContractTests(unittest.TestCase):
@@ -244,6 +244,13 @@ class Client2UiContractTests(unittest.TestCase):
         self.assertNotIn("AI is cross-referencing system health logs", app_source)
         self.assertNotIn("checking the knowledge base... click stop to interrupt.", app_source)
 
+    def test_client2_source_uses_fixed_new_ticket_default_title_contract(self) -> None:
+        app_source = Path("ui/client2-ui/app.js").read_text(encoding="utf-8")
+
+        self.assertIn('"New ticket"', app_source)
+        self.assertNotIn("function generateTitle(", app_source)
+        self.assertNotIn("updateTicketTitle(ticketId, generateTitle(text));", app_source)
+
     def test_client2_workspace_home_uses_compact_intro_shell(self) -> None:
         self.run_client2_app_script(
             textwrap.dedent(
@@ -324,8 +331,8 @@ class Client2UiContractTests(unittest.TestCase):
                 state.newTicketPreviewTicketId = draft.id;
 
                 const html = renderChatTicket();
-                if (!html.includes("Start a new support ticket")) {
-                  throw new Error("Client2 draft should render the approved new-ticket title.");
+                if (!html.includes("New ticket")) {
+                  throw new Error("Client2 draft should render the fixed default ticket title.");
                 }
                 if (!html.includes("new-ticket-draft-inline-route")) {
                   throw new Error("Client2 draft should render the explicit inline-draft route marker.");
@@ -365,6 +372,9 @@ class Client2UiContractTests(unittest.TestCase):
                 }
                 if (!html.includes("new-ticket-knowledge-placeholder new-ticket-info-value")) {
                   throw new Error("Client2 draft placeholder should reuse the info-value typography treatment.");
+                }
+                if (!html.includes("New ticket")) {
+                  throw new Error("Client2 draft should expose the fixed New ticket default title copy.");
                 }
                 if (html.includes("Select Product") || html.includes("Support Product")) {
                   throw new Error("Client2 draft should not render any product selector.");
@@ -445,6 +455,10 @@ class Client2UiContractTests(unittest.TestCase):
                 if (!pending || pending.phase !== "queued") {
                   throw new Error("Client2 first send should keep per-ticket queued pending state.");
                 }
+                const localTicket = getTicketById(ticket.id);
+                if (!localTicket || localTicket.title !== "New ticket") {
+                  throw new Error(`Client2 first send should keep the fixed New ticket title until backend sync, got ${localTicket && localTicket.title}.`);
+                }
 
                 const html = renderChatTicket();
                 if (!html.includes("new-ticket-postsend-shell")) {
@@ -473,6 +487,9 @@ class Client2UiContractTests(unittest.TestCase):
                 }
                 if (!html.includes(`My Tickets / Ticket #${ticket.id}`)) {
                   throw new Error("Client2 post-send shell should restore the breadcrumb header.");
+                }
+                if (!html.includes("New ticket")) {
+                  throw new Error("Client2 first-send postsend shell should still show the fixed New ticket title before backend sync.");
                 }
                 if (!html.includes("new-ticket-composer-input-shell")) {
                   throw new Error("Client2 post-send shell should reuse the draft composer input shell.");
@@ -503,6 +520,38 @@ class Client2UiContractTests(unittest.TestCase):
                 }
                 if (html.includes("new-ticket-postsend-waiting") || html.includes("new-ticket-thread-waiting")) {
                   throw new Error("Client2 should not render waiting markers after the first send.");
+                }
+              """
+            )
+        )
+
+    def test_client2_legacy_new_session_draft_is_still_reusable(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                localStorage.setItem(
+                  "helpdesk_tickets",
+                  JSON.stringify([
+                    {
+                      id: "TK-LEGACY-001",
+                      title: "New Session",
+                      status: "open",
+                      createdAt: "2026-04-17T08:00:00.000Z",
+                      updatedAt: "2026-04-17T08:00:00.000Z",
+                      userId: state.user.id,
+                      product: null,
+                      messages: [],
+                    },
+                  ])
+                );
+
+                const draft = getOrCreateDraftTicket(state.user.id);
+                if (draft.id !== "TK-LEGACY-001") {
+                  throw new Error(`Client2 should still reuse legacy New Session drafts, got ${draft.id}.`);
+                }
+                if (!isReusableDraftTicket(draft, state.user.id)) {
+                  throw new Error("Client2 should still treat legacy New Session drafts as reusable defaults.");
                 }
               """
             )
