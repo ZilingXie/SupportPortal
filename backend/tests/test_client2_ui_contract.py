@@ -26,8 +26,8 @@ class Client2RouteSmokeTests(unittest.TestCase):
     def test_client2_html_references_local_assets(self) -> None:
         html = Path("ui/client2-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260417-client2-draft-tail-route-1", html)
-        self.assertIn("./app.js?v=20260417-client2-draft-tail-route-1", html)
+        self.assertIn("./styles.css?v=20260417-client2-draft-inline-footer-1", html)
+        self.assertIn("./app.js?v=20260417-client2-draft-inline-footer-1", html)
 
 
 class Client2UiContractTests(unittest.TestCase):
@@ -171,7 +171,10 @@ class Client2UiContractTests(unittest.TestCase):
         self.assertIn("clienttest-route-page-footer-band", app_source)
         self.assertIn("clienttest-route-footer-band", app_source)
         self.assertIn("new-ticket-tail-route", app_source)
+        self.assertIn("new-ticket-draft-inline-route", app_source)
         self.assertIn("--client2-tail-footer-block-height", css)
+        self.assertIn("--new-ticket-draft-left-stack-height", css)
+        self.assertIn("--new-ticket-draft-thread-height", css)
         self.assertIn("--client2-route-max-width", css)
         self.assertIn("--client2-route-top-space", css)
         self.assertIn("--client2-route-bottom-space", css)
@@ -179,6 +182,7 @@ class Client2UiContractTests(unittest.TestCase):
         self.assertIn(".clienttest-route-page-footer-band", css)
         self.assertIn(".clienttest-route-footer-band", css)
         self.assertIn(".new-ticket-tail-route", css)
+        self.assertIn(".new-ticket-draft-inline-route", css)
         self.assertNotIn("clienttest-route-scroll-region", app_source)
         self.assertNotIn(".clienttest-route-scroll-region", css)
         self.assertNotIn("clienttest-route-page-fixed-footer", app_source)
@@ -267,20 +271,29 @@ class Client2UiContractTests(unittest.TestCase):
                 if (!html.includes("Start a new support ticket")) {
                   throw new Error("Client2 draft should render the approved new-ticket title.");
                 }
-                if (!html.includes("clienttest-route-page-footer-band")) {
-                  throw new Error("Client2 draft should render the visible footer-band shell.");
+                if (!html.includes("new-ticket-draft-inline-route")) {
+                  throw new Error("Client2 draft should render the explicit inline-draft route marker.");
                 }
-                if (!html.includes("new-ticket-tail-route")) {
-                  throw new Error("Client2 draft should mark the tail-composer route explicitly.");
+                if (html.includes("clienttest-route-page-footer-band")) {
+                  throw new Error("Client2 draft should not render the visible footer-band shell.");
                 }
-                if (!html.includes("clienttest-route-footer-band")) {
-                  throw new Error("Client2 draft should render a real in-flow footer band element.");
+                if (html.includes("new-ticket-tail-route")) {
+                  throw new Error("Client2 draft should not opt into the tail-composer route.");
                 }
-                if (!html.includes("new-ticket-tail-composer")) {
-                  throw new Error("Client2 draft should move the composer into the page tail.");
+                if (html.includes("clienttest-route-footer-band")) {
+                  throw new Error("Client2 draft should not render a tail footer band element.");
                 }
-                if (html.indexOf("new-ticket-body-layout") >= html.indexOf("new-ticket-tail-composer")) {
-                  throw new Error("Client2 draft tail composer should render after the main body layout.");
+                if (html.includes("new-ticket-tail-composer")) {
+                  throw new Error("Client2 draft should not render the tail composer.");
+                }
+                if (!html.includes("new-ticket-draft-inline-composer")) {
+                  throw new Error("Client2 draft should render an inline composer inside the left column.");
+                }
+                if (html.indexOf("new-ticket-thread-panel") >= html.indexOf("new-ticket-draft-inline-composer")) {
+                  throw new Error("Client2 draft inline composer should render after the draft thread panel.");
+                }
+                if (html.indexOf("new-ticket-main-column") >= html.indexOf("new-ticket-draft-inline-composer")) {
+                  throw new Error("Client2 draft inline composer should stay inside the draft main column.");
                 }
                 if (!html.includes("Knowledge Base Articles")) {
                   throw new Error("Client2 draft should keep the reference-links sidebar.");

@@ -2568,11 +2568,18 @@ function renderNewTicketPostSendInlineComposer(viewState) {
   );
 }
 
+function renderNewTicketDraftInlineComposer(viewState) {
+  return renderNewTicketComposerPanel(
+    viewState,
+    "new-ticket-composer-panel new-ticket-fixed-composer-panel new-ticket-draft-inline-composer"
+  );
+}
+
 function renderNewTicketDraftTicketFromState(viewState) {
   const ticket = viewState.ticket;
   return `
     <section class="chat-root clienttest-new-ticket-shell" data-chat-ticket-id="${escapeHtml(ticket.id)}">
-      <div class="new-ticket-layout ${buildClient2RoutePageClass({ visibleFooterBand: true, tailComposerRoute: true })}">
+      <div class="new-ticket-layout clienttest-route-page new-ticket-draft-inline-route">
         <header class="new-ticket-hero">
           <h1 class="new-ticket-page-title">${escapeHtml(buildNewTicketPageTitle(ticket))}</h1>
         </header>
@@ -2586,13 +2593,13 @@ function renderNewTicketDraftTicketFromState(viewState) {
               </main>
             </section>
             ${renderChatUnreadIndicatorHtml(ticket.id)}
+            ${renderNewTicketDraftInlineComposer(viewState)}
           </div>
           <aside class="new-ticket-sidebar">
             ${renderNewTicketInformationPanel(ticket)}
             ${renderNewTicketKnowledgePanel(ticket)}
           </aside>
         </div>
-        ${renderNewTicketTailComposer(viewState)}
       </div>
     </section>
   `;
