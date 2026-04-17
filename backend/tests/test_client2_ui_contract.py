@@ -26,8 +26,8 @@ class Client2RouteSmokeTests(unittest.TestCase):
     def test_client2_html_references_local_assets(self) -> None:
         html = Path("ui/client2-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260417-client2-existing-ticket-new-shell-1", html)
-        self.assertIn("./app.js?v=20260417-client2-existing-ticket-new-shell-1", html)
+        self.assertIn("./styles.css?v=20260417-client2-workspace-layout-contract-1", html)
+        self.assertIn("./app.js?v=20260417-client2-workspace-layout-contract-1", html)
 
 
 class Client2UiContractTests(unittest.TestCase):
@@ -156,6 +156,7 @@ class Client2UiContractTests(unittest.TestCase):
 
     def test_client2_source_keeps_client_runtime_contracts(self) -> None:
         app_source = Path("ui/client2-ui/app.js").read_text(encoding="utf-8")
+        css = Path("ui/client2-ui/styles.css").read_text(encoding="utf-8")
 
         self.assertIn("pendingByTicket", app_source)
         self.assertIn("supersededTurnsByTicket", app_source)
@@ -163,11 +164,77 @@ class Client2UiContractTests(unittest.TestCase):
         self.assertIn("if (normalizedProduct) {", app_source)
         self.assertIn("requestBody.product = normalizedProduct;", app_source)
         self.assertIn("cancel-pending", app_source)
+        self.assertIn("clienttest-home-shell", app_source)
+        self.assertIn("clienttest-home-intro", app_source)
+        self.assertIn("clienttest-home-content-grid", app_source)
+        self.assertIn("clienttest-route-page", app_source)
+        self.assertIn("clienttest-route-page-fixed-footer", app_source)
+        self.assertIn("--client2-route-max-width", css)
+        self.assertIn("--client2-route-top-space", css)
+        self.assertIn("--client2-route-bottom-space", css)
+        self.assertIn("--client2-fixed-footer-reserved-space", css)
+        self.assertIn(".clienttest-route-page", css)
+        self.assertIn(".clienttest-route-page-fixed-footer", css)
         self.assertNotIn("/api/client/ack", app_source)
         self.assertNotIn("Got it, let me check this for you.", app_source)
         self.assertNotIn("I got your message and I am checking it now.", app_source)
         self.assertNotIn("AI is cross-referencing system health logs", app_source)
         self.assertNotIn("checking the knowledge base... click stop to interrupt.", app_source)
+
+    def test_client2_workspace_home_uses_compact_intro_shell(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const active = createTicket(state.user.id);
+                updateTicketTitle(active.id, "Black Screen Troubleshooting Steps");
+                updateTicketStatus(active.id, "communicating");
+                saveTicketMessages(active.id, [
+                  {
+                    id: "msg-1",
+                    role: "user",
+                    content: "I got black screen, what should I do?",
+                    createdAt: "2026-04-17T10:00:00.000Z",
+                  },
+                ]);
+
+                const resolved = createTicket(state.user.id);
+                updateTicketTitle(resolved.id, "Join Channel Question");
+                updateTicketStatus(resolved.id, "resolved");
+                saveTicketMessages(resolved.id, [
+                  {
+                    id: "msg-2",
+                    role: "assistant",
+                    content: "Use joinChannel with a valid token.",
+                    createdAt: "2026-04-17T11:00:00.000Z",
+                  },
+                ]);
+
+                state.view = "workspace";
+                const html = renderChatHome();
+                if (!html.includes("clienttest-home-shell")) {
+                  throw new Error("Client2 workspace should render the shared home shell.");
+                }
+                if (!html.includes("clienttest-home-intro")) {
+                  throw new Error("Client2 workspace should render the compact intro block.");
+                }
+                if (!html.includes("clienttest-home-content-grid")) {
+                  throw new Error("Client2 workspace should render the ticket-first content grid.");
+                }
+                if (html.includes("welcome-inner")) {
+                  throw new Error("Client2 workspace should no longer use the oversized legacy hero wrapper.");
+                }
+                if (!html.includes("Continue what needs attention")) {
+                  throw new Error("Client2 workspace should keep the active tickets panel.");
+                }
+                if (!html.includes("Latest ticket movement")) {
+                  throw new Error("Client2 workspace should keep the recent activity panel.");
+                }
+              """
+            )
+        )
 
     def test_client2_new_ticket_draft_uses_merged_ui_without_product_selector(self) -> None:
         self.run_client2_app_script(
@@ -274,6 +341,9 @@ class Client2UiContractTests(unittest.TestCase):
                 const html = renderChatTicket();
                 if (!html.includes("new-ticket-postsend-shell")) {
                   throw new Error("Client2 first send should switch into the correspondence shell.");
+                }
+                if (!html.includes("clienttest-route-page clienttest-route-page-fixed-footer")) {
+                  throw new Error("Client2 post-send shell should use the shared fixed-footer route layout contract.");
                 }
                 if (!html.includes(`My Tickets / Ticket #${ticket.id}`)) {
                   throw new Error("Client2 post-send shell should restore the breadcrumb header.");
@@ -409,6 +479,9 @@ class Client2UiContractTests(unittest.TestCase):
                 const html = renderChatTicket();
                 if (!html.includes("new-ticket-postsend-shell")) {
                   throw new Error("Existing client2 tickets should render the new-ticket postsend shell.");
+                }
+                if (!html.includes("clienttest-route-page clienttest-route-page-fixed-footer")) {
+                  throw new Error("Existing client2 tickets should use the shared fixed-footer route layout contract.");
                 }
                 if (html.includes("ticket-detail-layout")) {
                   throw new Error("Existing client2 tickets should not fall back to the legacy detail layout.");

@@ -2522,7 +2522,7 @@ function renderNewTicketDraftTicketFromState(viewState) {
   const ticket = viewState.ticket;
   return `
     <section class="chat-root clienttest-new-ticket-shell" data-chat-ticket-id="${escapeHtml(ticket.id)}">
-      <div class="new-ticket-layout">
+      <div class="new-ticket-layout clienttest-route-page clienttest-route-page-fixed-footer">
         <header class="new-ticket-hero">
           <h1 class="new-ticket-page-title">${escapeHtml(buildNewTicketPageTitle(ticket))}</h1>
         </header>
@@ -2562,7 +2562,6 @@ function renderNewTicketDraftTicketFromState(viewState) {
             ${renderNewTicketKnowledgePanel(ticket)}
           </aside>
         </div>
-        <div class="new-ticket-footer-spacer" aria-hidden="true"></div>
       </div>
     </section>
   `;
@@ -2574,7 +2573,7 @@ function renderNewTicketPostSendTicketFromState(viewState) {
   return `
     <section class="chat-root clienttest-new-ticket-shell" data-chat-ticket-id="${escapeHtml(ticket.id)}">
       <div class="new-ticket-postsend-shell">
-        <div class="new-ticket-postsend-page">
+        <div class="new-ticket-postsend-page clienttest-route-page clienttest-route-page-fixed-footer">
           <header class="new-ticket-postsend-header">
             <div class="new-ticket-postsend-breadcrumb">My Tickets / Ticket #${escapeHtml(ticket.id)}</div>
             <div class="new-ticket-postsend-header-row">
@@ -2700,22 +2699,28 @@ function renderChatHome() {
   const recentTickets = tickets.slice(0, 3);
 
   return `
-    <section class="welcome clienttest-home">
-      <div class="welcome-inner">
-        <div class="bot-mark">
-          <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
-        </div>
-        <p class="welcome-kicker">${CLIENT_ROUTE_BRAND}</p>
-        <h1 class="welcome-title">A calmer client workspace with a stronger ticket-detail reading surface.</h1>
-        <p class="welcome-desc">
-          Track open work, return to recent tickets, and continue the same client support flows inside
-          the redesigned left-rail shell.
-        </p>
-        <div class="welcome-actions">
-          <button class="btn btn-primary" data-action="new-session" type="button">Start New Ticket</button>
-          <button class="btn btn-outline" data-action="go-tickets" type="button">Open My Tickets</button>
-        </div>
-        <div class="clienttest-home-grid">
+    <section class="welcome clienttest-home clienttest-route-page">
+      <div class="clienttest-home-shell">
+        <header class="clienttest-home-intro">
+          <div class="clienttest-home-intro-head">
+            <div class="bot-mark">
+              <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
+            </div>
+            <div class="clienttest-home-intro-copy">
+              <p class="welcome-kicker">${CLIENT_ROUTE_BRAND}</p>
+              <h1 class="welcome-title">A calmer client workspace with a stronger ticket-detail reading surface.</h1>
+            </div>
+          </div>
+          <p class="welcome-desc">
+            Track open work, return to recent tickets, and continue the same client support flows inside
+            the redesigned left-rail shell.
+          </p>
+          <div class="welcome-actions clienttest-home-intro-actions">
+            <button class="btn btn-primary" data-action="new-session" type="button">Start New Ticket</button>
+            <button class="btn btn-outline" data-action="go-tickets" type="button">Open My Tickets</button>
+          </div>
+        </header>
+        <div class="clienttest-home-content-grid">
           <article class="clienttest-home-panel">
             <div class="clienttest-home-panel-header">
               <div>
@@ -2941,7 +2946,7 @@ function renderChatTicketFromState(viewState) {
   const productLabel = getProductLabel(ticket.product);
   const actionButtons = renderTicketHeaderActions(ticket);
   return `
-    <section class="chat-root ticket-detail-layout" data-chat-ticket-id="${escapeHtml(ticket.id)}">
+    <section class="chat-root ticket-detail-layout clienttest-route-page clienttest-route-page-fixed-footer" data-chat-ticket-id="${escapeHtml(ticket.id)}">
       <div class="ticket-detail-main">
         <header class="ticket-detail-hero">
           <div class="ticket-detail-breadcrumb mono">My Tickets / ${escapeHtml(ticket.id)}</div>
@@ -3084,7 +3089,7 @@ function renderTicketsPage() {
       : all.filter((ticket) => ticket.status === state.statusFilter);
 
   return `
-    <section class="tickets-root clienttest-tickets">
+    <section class="tickets-root clienttest-tickets clienttest-route-page">
       <header class="tickets-header">
         <div class="tickets-header-left">
           <button class="btn btn-ghost btn-icon" data-action="go-chat" type="button" aria-label="Back to workspace">
