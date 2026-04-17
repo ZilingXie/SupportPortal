@@ -2584,7 +2584,9 @@ function renderNewTicketPostSendInlineComposer(viewState) {
 function renderNewTicketDraftInlineComposer(viewState) {
   return renderNewTicketComposerPanel(
     viewState,
-    buildNewTicketThreadFooterComposerClass("new-ticket-draft-inline-composer")
+    buildNewTicketThreadFooterComposerClass(
+      "new-ticket-postsend-composer new-ticket-postsend-inline-composer new-ticket-draft-inline-composer"
+    )
   );
 }
 

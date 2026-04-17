@@ -2869,6 +2869,9 @@ a.citation-link:hover {
   --new-ticket-draft-thread-height: calc(
     var(--new-ticket-draft-left-stack-height) - var(--new-ticket-composer-panel-height) - var(--new-ticket-main-column-gap)
   );
+  min-height: calc(100% + var(--new-ticket-composer-panel-height));
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: stretch;
 }
 
 .new-ticket-layout.clienttest-route-page-footer-band,
@@ -2898,6 +2901,14 @@ a.citation-link:hover {
 
 .new-ticket-draft-inline-route .new-ticket-main-column {
   gap: var(--new-ticket-main-column-gap);
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.new-ticket-draft-inline-route .new-ticket-body-layout {
+  min-height: 100%;
+  align-items: stretch;
 }
 
 .new-ticket-tail-route .new-ticket-body-layout,
@@ -2963,7 +2974,9 @@ a.citation-link:hover {
 }
 
 .new-ticket-draft-inline-route .new-ticket-fixed-thread-panel {
-  height: var(--new-ticket-draft-thread-height);
+  height: auto;
+  min-height: var(--new-ticket-draft-thread-height);
+  flex: 1 1 auto;
 }
 
 .new-ticket-tail-route .new-ticket-fixed-thread-panel {
@@ -2979,6 +2992,12 @@ a.citation-link:hover {
   overflow: auto;
   flex: 1 1 auto;
   display: flex;
+}
+
+.new-ticket-draft-inline-route .new-ticket-thread-scroll,
+.new-ticket-draft-inline-route .new-ticket-thread-list {
+  min-height: 100%;
+  flex: 1 1 auto;
 }
 
 .new-ticket-tail-route .new-ticket-thread-scroll,
