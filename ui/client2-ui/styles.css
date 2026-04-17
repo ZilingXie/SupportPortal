@@ -2314,8 +2314,7 @@ a.citation-link:hover {
   background: transparent;
   --client2-route-max-width: 1240px;
   --client2-route-top-space: 24px;
-  --client2-route-bottom-space: 36px;
-  --client2-fixed-footer-reserved-space: 0px;
+  --client2-route-bottom-space: 28px;
 }
 
 .clienttest-main {
@@ -2332,10 +2331,6 @@ a.citation-link:hover {
   align-content: start;
   padding-top: var(--client2-route-top-space);
   padding-bottom: var(--client2-route-bottom-space);
-}
-
-.clienttest-route-page-fixed-footer {
-  padding-bottom: max(var(--client2-route-bottom-space), var(--client2-fixed-footer-reserved-space));
 }
 
 .clienttest-topbar {
@@ -2811,8 +2806,6 @@ a.citation-link:hover {
 .clienttest-workspace-new-ticket {
   background: linear-gradient(180deg, #f7faff 0%, #eef3fb 100%);
   --client2-route-top-space: 20px;
-  --client2-route-bottom-space: 36px;
-  --client2-fixed-footer-reserved-space: 344px;
 }
 
 .clienttest-main-new-ticket {
@@ -3665,10 +3658,6 @@ a.citation-link:hover {
     --new-ticket-info-card-height: 372px;
   }
 
-  .clienttest-workspace-new-ticket {
-    --client2-fixed-footer-reserved-space: 320px;
-  }
-
   .clienttest-shell {
     flex-direction: row;
   }
@@ -3756,11 +3745,7 @@ a.citation-link:hover {
 
   .clienttest-workspace {
     --client2-route-top-space: 20px;
-    --client2-route-bottom-space: 28px;
-  }
-
-  .clienttest-workspace-new-ticket {
-    --client2-fixed-footer-reserved-space: 292px;
+    --client2-route-bottom-space: 24px;
   }
 
   .clienttest-shell {

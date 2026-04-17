@@ -26,8 +26,8 @@ class Client2RouteSmokeTests(unittest.TestCase):
     def test_client2_html_references_local_assets(self) -> None:
         html = Path("ui/client2-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260417-client2-workspace-layout-contract-1", html)
-        self.assertIn("./app.js?v=20260417-client2-workspace-layout-contract-1", html)
+        self.assertIn("./styles.css?v=20260417-client2-footer-gap-contract-refresh-1", html)
+        self.assertIn("./app.js?v=20260417-client2-footer-gap-contract-refresh-1", html)
 
 
 class Client2UiContractTests(unittest.TestCase):
@@ -168,13 +168,13 @@ class Client2UiContractTests(unittest.TestCase):
         self.assertIn("clienttest-home-intro", app_source)
         self.assertIn("clienttest-home-content-grid", app_source)
         self.assertIn("clienttest-route-page", app_source)
-        self.assertIn("clienttest-route-page-fixed-footer", app_source)
         self.assertIn("--client2-route-max-width", css)
         self.assertIn("--client2-route-top-space", css)
         self.assertIn("--client2-route-bottom-space", css)
-        self.assertIn("--client2-fixed-footer-reserved-space", css)
         self.assertIn(".clienttest-route-page", css)
-        self.assertIn(".clienttest-route-page-fixed-footer", css)
+        self.assertNotIn("clienttest-route-page-fixed-footer", app_source)
+        self.assertNotIn("--client2-fixed-footer-reserved-space", css)
+        self.assertNotIn(".clienttest-route-page-fixed-footer", css)
         self.assertNotIn("/api/client/ack", app_source)
         self.assertNotIn("Got it, let me check this for you.", app_source)
         self.assertNotIn("I got your message and I am checking it now.", app_source)
@@ -342,8 +342,11 @@ class Client2UiContractTests(unittest.TestCase):
                 if (!html.includes("new-ticket-postsend-shell")) {
                   throw new Error("Client2 first send should switch into the correspondence shell.");
                 }
-                if (!html.includes("clienttest-route-page clienttest-route-page-fixed-footer")) {
-                  throw new Error("Client2 post-send shell should use the shared fixed-footer route layout contract.");
+                if (!html.includes("clienttest-route-page")) {
+                  throw new Error("Client2 post-send shell should use the shared route page shell.");
+                }
+                if (html.includes("clienttest-route-page-fixed-footer")) {
+                  throw new Error("Client2 post-send shell should not use the removed fixed-footer reserve contract.");
                 }
                 if (!html.includes(`My Tickets / Ticket #${ticket.id}`)) {
                   throw new Error("Client2 post-send shell should restore the breadcrumb header.");
@@ -480,8 +483,11 @@ class Client2UiContractTests(unittest.TestCase):
                 if (!html.includes("new-ticket-postsend-shell")) {
                   throw new Error("Existing client2 tickets should render the new-ticket postsend shell.");
                 }
-                if (!html.includes("clienttest-route-page clienttest-route-page-fixed-footer")) {
-                  throw new Error("Existing client2 tickets should use the shared fixed-footer route layout contract.");
+                if (!html.includes("clienttest-route-page")) {
+                  throw new Error("Existing client2 tickets should use the shared route page shell.");
+                }
+                if (html.includes("clienttest-route-page-fixed-footer")) {
+                  throw new Error("Existing client2 tickets should not use the removed fixed-footer reserve contract.");
                 }
                 if (html.includes("ticket-detail-layout")) {
                   throw new Error("Existing client2 tickets should not fall back to the legacy detail layout.");

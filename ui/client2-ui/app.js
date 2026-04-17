@@ -2522,7 +2522,7 @@ function renderNewTicketDraftTicketFromState(viewState) {
   const ticket = viewState.ticket;
   return `
     <section class="chat-root clienttest-new-ticket-shell" data-chat-ticket-id="${escapeHtml(ticket.id)}">
-      <div class="new-ticket-layout clienttest-route-page clienttest-route-page-fixed-footer">
+      <div class="new-ticket-layout clienttest-route-page">
         <header class="new-ticket-hero">
           <h1 class="new-ticket-page-title">${escapeHtml(buildNewTicketPageTitle(ticket))}</h1>
         </header>
@@ -2573,7 +2573,7 @@ function renderNewTicketPostSendTicketFromState(viewState) {
   return `
     <section class="chat-root clienttest-new-ticket-shell" data-chat-ticket-id="${escapeHtml(ticket.id)}">
       <div class="new-ticket-postsend-shell">
-        <div class="new-ticket-postsend-page clienttest-route-page clienttest-route-page-fixed-footer">
+        <div class="new-ticket-postsend-page clienttest-route-page">
           <header class="new-ticket-postsend-header">
             <div class="new-ticket-postsend-breadcrumb">My Tickets / Ticket #${escapeHtml(ticket.id)}</div>
             <div class="new-ticket-postsend-header-row">
@@ -2946,7 +2946,7 @@ function renderChatTicketFromState(viewState) {
   const productLabel = getProductLabel(ticket.product);
   const actionButtons = renderTicketHeaderActions(ticket);
   return `
-    <section class="chat-root ticket-detail-layout clienttest-route-page clienttest-route-page-fixed-footer" data-chat-ticket-id="${escapeHtml(ticket.id)}">
+    <section class="chat-root ticket-detail-layout clienttest-route-page" data-chat-ticket-id="${escapeHtml(ticket.id)}">
       <div class="ticket-detail-main">
         <header class="ticket-detail-hero">
           <div class="ticket-detail-breadcrumb mono">My Tickets / ${escapeHtml(ticket.id)}</div>
