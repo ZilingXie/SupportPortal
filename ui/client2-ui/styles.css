@@ -2315,12 +2315,12 @@ a.citation-link:hover {
   --client2-route-max-width: 1240px;
   --client2-route-top-space: 24px;
   --client2-route-bottom-space: 28px;
-  --client2-visible-footer-band-space: 56px;
+  --client2-tail-footer-block-height: 296px;
 }
 
 .clienttest-main {
   overflow: auto;
-  scroll-padding-bottom: calc(var(--client2-route-bottom-space) + 24px);
+  scroll-padding-bottom: calc(var(--client2-route-bottom-space) + var(--client2-tail-footer-block-height));
 }
 
 .clienttest-route-page {
@@ -2335,17 +2335,16 @@ a.citation-link:hover {
 }
 
 .clienttest-route-page-footer-band {
+  min-height: calc(100% + var(--client2-tail-footer-block-height));
   align-content: stretch;
 }
 
 .clienttest-route-footer-band {
-  height: var(--client2-visible-footer-band-space);
-  min-height: var(--client2-visible-footer-band-space);
+  height: var(--client2-tail-footer-block-height);
+  min-height: var(--client2-tail-footer-block-height);
+  margin-top: auto;
+  flex: 0 0 auto;
   pointer-events: none;
-}
-
-.clienttest-route-scroll-region {
-  min-height: 0;
 }
 
 .clienttest-topbar {
@@ -2380,20 +2379,16 @@ a.citation-link:hover {
 }
 
 .clienttest-home.clienttest-route-page-footer-band {
-  min-height: 100%;
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
 }
 
 .clienttest-home-shell {
   display: grid;
   gap: 24px;
   min-height: 0;
-}
-
-.clienttest-home.clienttest-route-page-footer-band .clienttest-home-shell {
-  height: 100%;
-  grid-template-rows: auto minmax(0, 1fr);
+  flex: 1 0 auto;
 }
 
 .clienttest-home-intro {
@@ -2469,11 +2464,6 @@ a.citation-link:hover {
   min-height: 0;
 }
 
-.clienttest-home.clienttest-route-page-footer-band .clienttest-home-content-grid {
-  grid-auto-rows: minmax(0, 1fr);
-  align-items: stretch;
-}
-
 .clienttest-home-panel {
   padding: 24px;
   border-radius: 28px;
@@ -2517,11 +2507,6 @@ a.citation-link:hover {
   min-height: 0;
 }
 
-.clienttest-home.clienttest-route-page-footer-band .clienttest-home-panel-body {
-  overflow: auto;
-  padding-right: 6px;
-}
-
 .clienttest-empty-card {
   color: var(--ink-soft);
   background: rgba(234, 238, 245, 0.84);
@@ -2532,19 +2517,17 @@ a.citation-link:hover {
 }
 
 .clienttest-tickets.clienttest-route-page-footer-band {
-  min-height: 100%;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
 }
 
 .clienttest-tickets .tickets-body {
   display: grid;
   gap: 18px;
   min-height: 0;
-}
-
-.clienttest-tickets .clienttest-route-scroll-region {
-  overflow: auto;
-  padding-right: 6px;
+  align-content: start;
+  flex: 1 0 auto;
 }
 
 .ticket-detail-layout {
@@ -2762,6 +2745,7 @@ a.citation-link:hover {
 }
 
 .ticket-detail-composer {
+  min-height: var(--client2-tail-footer-block-height);
   padding: 20px;
   border-radius: 28px;
   background: rgba(255, 255, 255, 0.86);
@@ -2872,10 +2856,17 @@ a.citation-link:hover {
 
 .new-ticket-layout {
   --new-ticket-thread-panel-height: 480px;
-  --new-ticket-composer-panel-height: 296px;
+  --new-ticket-composer-panel-height: var(--client2-tail-footer-block-height);
   --new-ticket-info-card-height: 388px;
   display: grid;
   gap: 24px;
+}
+
+.new-ticket-layout.clienttest-route-page-footer-band,
+.new-ticket-postsend-page.clienttest-route-page-footer-band {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
 }
 
 .new-ticket-body-layout {
@@ -2883,6 +2874,7 @@ a.citation-link:hover {
   grid-template-columns: minmax(0, 1.5fr) minmax(300px, 360px);
   gap: 28px;
   align-items: start;
+  flex: 1 0 auto;
 }
 
 .new-ticket-main-column {
@@ -3149,6 +3141,18 @@ a.citation-link:hover {
   height: var(--new-ticket-composer-panel-height);
   display: grid;
   grid-template-rows: auto auto 1fr;
+}
+
+.new-ticket-tail-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(300px, 360px);
+  gap: 28px;
+  align-items: end;
+  pointer-events: auto;
+}
+
+.new-ticket-tail-composer {
+  grid-column: 1;
 }
 
 .new-ticket-composer-toolbar {
@@ -3426,6 +3430,7 @@ a.citation-link:hover {
 }
 
 .new-ticket-postsend-page {
+  --new-ticket-composer-panel-height: var(--client2-tail-footer-block-height);
   display: grid;
   gap: 24px;
 }
@@ -3504,6 +3509,7 @@ a.citation-link:hover {
   min-width: 0;
   display: grid;
   gap: 20px;
+  align-content: start;
 }
 
 .new-ticket-postsend-sidebar {
@@ -3705,12 +3711,11 @@ a.citation-link:hover {
 @media (min-width: 721px) and (max-width: 900px) {
   .new-ticket-layout {
     --new-ticket-thread-panel-height: 376px;
-    --new-ticket-composer-panel-height: 284px;
     --new-ticket-info-card-height: 372px;
   }
 
   .clienttest-workspace {
-    --client2-visible-footer-band-space: 40px;
+    --client2-tail-footer-block-height: 284px;
   }
 
   .clienttest-shell {
@@ -3772,6 +3777,10 @@ a.citation-link:hover {
     grid-template-columns: 1fr;
   }
 
+  .new-ticket-tail-row {
+    grid-template-columns: 1fr;
+  }
+
   .new-ticket-postsend-sidebar {
     position: static;
   }
@@ -3794,24 +3803,13 @@ a.citation-link:hover {
 @media (max-width: 720px) {
   .new-ticket-layout {
     --new-ticket-thread-panel-height: 344px;
-    --new-ticket-composer-panel-height: 264px;
     --new-ticket-info-card-height: 356px;
   }
 
   .clienttest-workspace {
     --client2-route-top-space: 20px;
     --client2-route-bottom-space: 24px;
-    --client2-visible-footer-band-space: 28px;
-  }
-
-  .clienttest-tickets.clienttest-route-page-footer-band {
-    min-height: auto;
-    grid-template-rows: auto auto auto;
-  }
-
-  .clienttest-tickets .clienttest-route-scroll-region {
-    overflow: visible;
-    padding-right: 0;
+    --client2-tail-footer-block-height: 264px;
   }
 
   .clienttest-shell {
@@ -3905,6 +3903,11 @@ a.citation-link:hover {
   }
 
   .new-ticket-postsend-layout {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .new-ticket-tail-row {
     grid-template-columns: 1fr;
     gap: 20px;
   }

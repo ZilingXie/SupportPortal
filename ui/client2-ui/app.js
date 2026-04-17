@@ -2518,6 +2518,53 @@ function buildNewTicketPostSendMetaHtml(ticket) {
   return items.join("");
 }
 
+function renderNewTicketComposerPanel(viewState, composerClass) {
+  return `
+    <footer class="${composerClass}">
+      <div class="new-ticket-composer-toolbar">
+        ${renderNewTicketComposerToolbar()}
+      </div>
+      <div data-chat-section="composer-note">${renderNewTicketComposerNoteHtml(viewState)}</div>
+      <form id="chat-input-form" class="chat-input-inner new-ticket-composer-form" data-chat-section="composer-form">
+        <div class="new-ticket-composer-input-shell">
+          <textarea
+            id="chat-input"
+            class="textarea new-ticket-textarea"
+            rows="1"
+            placeholder="${escapeHtml(getChatComposerPlaceholder(viewState))}"
+            ${viewState.canCompose ? "" : "disabled"}
+          >${escapeHtml(state.inputDraft || "")}</textarea>
+          <div class="new-ticket-inline-action" data-chat-section="composer-action">
+            ${renderNewTicketComposerActionHtml(viewState)}
+          </div>
+        </div>
+      </form>
+    </footer>
+  `;
+}
+
+function renderNewTicketTailComposer(viewState, { postsend = false } = {}) {
+  const tailRowClass = postsend
+    ? "clienttest-route-footer-band new-ticket-tail-row new-ticket-postsend-tail-row"
+    : "clienttest-route-footer-band new-ticket-tail-row";
+  const composerClass = postsend
+    ? "new-ticket-composer-panel new-ticket-fixed-composer-panel new-ticket-postsend-composer new-ticket-tail-composer"
+    : "new-ticket-composer-panel new-ticket-fixed-composer-panel new-ticket-tail-composer";
+
+  return `
+    <div class="${tailRowClass}">
+      ${renderNewTicketComposerPanel(viewState, composerClass)}
+    </div>
+  `;
+}
+
+function renderNewTicketPostSendInlineComposer(viewState) {
+  return renderNewTicketComposerPanel(
+    viewState,
+    "new-ticket-composer-panel new-ticket-fixed-composer-panel new-ticket-postsend-composer new-ticket-postsend-inline-composer"
+  );
+}
+
 function renderNewTicketDraftTicketFromState(viewState) {
   const ticket = viewState.ticket;
   return `
@@ -2536,33 +2583,13 @@ function renderNewTicketDraftTicketFromState(viewState) {
               </main>
             </section>
             ${renderChatUnreadIndicatorHtml(ticket.id)}
-            <footer class="new-ticket-composer-panel new-ticket-fixed-composer-panel">
-              <div class="new-ticket-composer-toolbar">
-                ${renderNewTicketComposerToolbar()}
-              </div>
-              <div data-chat-section="composer-note">${renderNewTicketComposerNoteHtml(viewState)}</div>
-              <form id="chat-input-form" class="chat-input-inner new-ticket-composer-form" data-chat-section="composer-form">
-                <div class="new-ticket-composer-input-shell">
-                  <textarea
-                    id="chat-input"
-                    class="textarea new-ticket-textarea"
-                    rows="1"
-                    placeholder="${escapeHtml(getChatComposerPlaceholder(viewState))}"
-                    ${viewState.canCompose ? "" : "disabled"}
-                  >${escapeHtml(state.inputDraft || "")}</textarea>
-                  <div class="new-ticket-inline-action" data-chat-section="composer-action">
-                    ${renderNewTicketComposerActionHtml(viewState)}
-                  </div>
-                </div>
-              </form>
-            </footer>
           </div>
           <aside class="new-ticket-sidebar">
             ${renderNewTicketInformationPanel(ticket)}
             ${renderNewTicketKnowledgePanel(ticket)}
           </aside>
         </div>
-        ${renderClient2RouteFooterBand()}
+        ${renderNewTicketTailComposer(viewState)}
       </div>
     </section>
   `;
@@ -2571,10 +2598,11 @@ function renderNewTicketDraftTicketFromState(viewState) {
 function renderNewTicketPostSendTicketFromState(viewState) {
   const ticket = viewState.ticket;
   const actionButtons = renderTicketHeaderActions(ticket);
+  const isTailComposerRoute = viewState.showVisibleFooterBand;
   return `
     <section class="chat-root clienttest-new-ticket-shell" data-chat-ticket-id="${escapeHtml(ticket.id)}">
       <div class="new-ticket-postsend-shell">
-        <div class="new-ticket-postsend-page ${buildClient2RoutePageClass({ visibleFooterBand: viewState.showVisibleFooterBand })}">
+        <div class="new-ticket-postsend-page ${buildClient2RoutePageClass({ visibleFooterBand: isTailComposerRoute })}">
           <header class="new-ticket-postsend-header">
             <div class="new-ticket-postsend-breadcrumb">My Tickets / Ticket #${escapeHtml(ticket.id)}</div>
             <div class="new-ticket-postsend-header-row">
@@ -2595,33 +2623,14 @@ function renderNewTicketPostSendTicketFromState(viewState) {
                 </main>
               </section>
               ${renderChatUnreadIndicatorHtml(ticket.id)}
-              <footer class="new-ticket-composer-panel new-ticket-fixed-composer-panel new-ticket-postsend-composer">
-                <div class="new-ticket-composer-toolbar">
-                  ${renderNewTicketComposerToolbar()}
-                </div>
-                <div data-chat-section="composer-note">${renderNewTicketComposerNoteHtml(viewState)}</div>
-                <form id="chat-input-form" class="chat-input-inner new-ticket-composer-form" data-chat-section="composer-form">
-                  <div class="new-ticket-composer-input-shell">
-                    <textarea
-                      id="chat-input"
-                      class="textarea new-ticket-textarea"
-                      rows="1"
-                      placeholder="${escapeHtml(getChatComposerPlaceholder(viewState))}"
-                      ${viewState.canCompose ? "" : "disabled"}
-                    >${escapeHtml(state.inputDraft || "")}</textarea>
-                    <div class="new-ticket-inline-action" data-chat-section="composer-action">
-                      ${renderNewTicketComposerActionHtml(viewState)}
-                    </div>
-                  </div>
-                </form>
-              </footer>
+              ${isTailComposerRoute ? "" : renderNewTicketPostSendInlineComposer(viewState)}
             </div>
             <aside class="new-ticket-postsend-sidebar">
               ${renderNewTicketInformationPanel(ticket, { fixed: false, variant: "postsend" })}
               ${renderNewTicketKnowledgePanel(ticket, { fixed: false, variant: "postsend" })}
             </aside>
           </div>
-          ${viewState.showVisibleFooterBand ? renderClient2RouteFooterBand() : ""}
+          ${isTailComposerRoute ? renderNewTicketTailComposer(viewState, { postsend: true }) : ""}
         </div>
       </div>
     </section>
@@ -3109,7 +3118,7 @@ function renderTicketsPage() {
           ${renderStatusFilter()}
         </div>
       </header>
-      <div class="tickets-body clienttest-route-scroll-region">
+      <div class="tickets-body">
         ${
           filtered.length === 0
             ? `<div class="empty-state">No sessions found.</div>`
