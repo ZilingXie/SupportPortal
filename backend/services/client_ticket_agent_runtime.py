@@ -363,6 +363,9 @@ def _build_cited_answer_execution_result(
     product: str | None,
     investigation_reason: str,
     current_state: dict[str, Any] | None = None,
+    ticket_context: list[dict[str, str]] | None = None,
+    latest_assistant_message: dict[str, Any] | None = None,
+    message_created_at: str | None = None,
     requester: str | None = None,
     customer_id: str | None = None,
 ) -> TicketExecutionResult:
@@ -378,6 +381,22 @@ def _build_cited_answer_execution_result(
         current_state=current_state,
         investigation_reason=investigation_reason,
     )
+    clarification_rounds_used, clarification_budget_exhausted = _resolve_investigation_exhaustion_state(
+        review_result=review_result,
+        current_state=current_state,
+        latest_assistant_message=latest_assistant_message,
+        ticket_context=ticket_context,
+    )
+    if clarification_budget_exhausted:
+        return _build_exhausted_investigation_execution_result(
+            review_result=review_result,
+            product=product,
+            message=message,
+            message_created_at=message_created_at,
+            requester=requester,
+            customer_id=customer_id,
+            clarification_rounds_used=clarification_rounds_used,
+        )
     follow_up = _build_cited_answer_follow_up(
         review_result,
         product=product,
@@ -409,6 +428,58 @@ def _build_cited_answer_execution_result(
         workflow_action=WORKFLOW_ACTION_ANSWER_CUSTOMER,
         investigation_reason=pending_investigation_reason,
         client_intake_state=next_client_intake_state,
+    )
+
+
+def _resolve_investigation_exhaustion_state(
+    *,
+    review_result: TroubleshootingIntakeResult,
+    current_state: dict[str, Any] | None,
+    latest_assistant_message: dict[str, Any] | None = None,
+    ticket_context: list[dict[str, str]] | None = None,
+) -> tuple[int, bool]:
+    clarification_rounds_used = resolve_investigation_clarification_rounds_used(
+        current_state=current_state,
+        latest_assistant_message=latest_assistant_message,
+        ticket_context=ticket_context,
+    )
+    clarification_budget_exhausted = (
+        str(review_result.issue_mode or "").strip().lower() == "investigation"
+        and not review_result.ready_for_engineer_ticket
+        and bool(list(review_result.missing_information or []))
+        and clarification_rounds_used >= MAX_INVESTIGATION_CLARIFICATION_ROUNDS
+    )
+    return clarification_rounds_used, clarification_budget_exhausted
+
+
+def _build_exhausted_investigation_execution_result(
+    *,
+    review_result: TroubleshootingIntakeResult,
+    product: str | None,
+    message: str,
+    message_created_at: str | None,
+    requester: str | None,
+    customer_id: str | None,
+    clarification_rounds_used: int,
+) -> TicketExecutionResult:
+    exhausted_client_intake_state = build_client_intake_state(
+        review_result,
+        product=product,
+        now_value=message_created_at,
+        pending_investigation_reason=INVESTIGATION_INTAKE_ROUND_EXHAUSTED_REASON,
+        clarification_rounds_used=max(clarification_rounds_used, MAX_INVESTIGATION_CLARIFICATION_ROUNDS),
+        phase_override="clarification_limit_reached",
+    )
+    return _build_ticket_execution_result(
+        resolution=_build_intake_round_exhausted_investigation_resolution(
+            message,
+            requester=requester,
+            customer_id=customer_id,
+        ),
+        needs_investigating=True,
+        workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
+        investigation_reason=INVESTIGATION_INTAKE_ROUND_EXHAUSTED_REASON,
+        client_intake_state=exhausted_client_intake_state,
     )
 
 
@@ -1058,35 +1129,21 @@ def _handle_insufficient_review(
             investigation_reason=pending_investigation_reason,
             client_intake_state=next_client_intake_state,
         )
-    clarification_rounds_used = resolve_investigation_clarification_rounds_used(
+    clarification_rounds_used, clarification_budget_exhausted = _resolve_investigation_exhaustion_state(
+        review_result=review_result,
         current_state=current_state,
         latest_assistant_message=latest_assistant_message,
         ticket_context=ticket_context,
     )
-    if (
-        review_result.issue_mode == "investigation"
-        and clarification_rounds_used >= MAX_INVESTIGATION_CLARIFICATION_ROUNDS
-        and bool(_clean_text(review_result.customer_reply))
-    ):
-        exhausted_client_intake_state = build_client_intake_state(
-            review_result,
+    if clarification_budget_exhausted:
+        return _build_exhausted_investigation_execution_result(
+            review_result=review_result,
             product=product,
-            now_value=message_created_at,
-            pending_investigation_reason=INVESTIGATION_INTAKE_ROUND_EXHAUSTED_REASON,
-            current_state=current_state,
-            clarification_rounds_used=max(clarification_rounds_used, MAX_INVESTIGATION_CLARIFICATION_ROUNDS),
-            phase_override="clarification_limit_reached",
-        )
-        return _build_ticket_execution_result(
-            resolution=_build_intake_round_exhausted_investigation_resolution(
-                message,
-                requester=requester,
-                customer_id=customer_id,
-            ),
-            needs_investigating=True,
-            workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
-            investigation_reason=INVESTIGATION_INTAKE_ROUND_EXHAUSTED_REASON,
-            client_intake_state=exhausted_client_intake_state,
+            message=message,
+            message_created_at=message_created_at,
+            requester=requester,
+            customer_id=customer_id,
+            clarification_rounds_used=clarification_rounds_used,
         )
     if _clean_text(review_result.customer_reply):
         clarify_resolution = SupportResolution(
@@ -1228,7 +1285,13 @@ def _evaluate_investigation_intake_short_circuit(
         message_created_at=message_id,
     ):
         return None
-    if clarification_rounds_used < MAX_INVESTIGATION_CLARIFICATION_ROUNDS:
+    _, clarification_budget_exhausted = _resolve_investigation_exhaustion_state(
+        review_result=deterministic_review,
+        current_state=current_state,
+        latest_assistant_message=latest_assistant_message,
+        ticket_context=ticket_context,
+    )
+    if not clarification_budget_exhausted:
         return InvestigationIntakeShortCircuitResult(
             review_result=deterministic_review,
             workflow_action=WORKFLOW_ACTION_CLARIFY_CUSTOMER_FOR_INTAKE,
@@ -2064,6 +2127,9 @@ def execute_client_ticket_agent_runtime(
                             product=product,
                             investigation_reason=investigation_reason,
                             current_state=client_intake_state,
+                            ticket_context=ticket_context,
+                            latest_assistant_message=latest_assistant_message,
+                            message_created_at=message_id,
                             requester=requester,
                             customer_id=customer_id,
                         )

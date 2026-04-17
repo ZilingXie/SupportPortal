@@ -154,6 +154,68 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
         )
 
+    def test_unavailable_timestamp_follow_up_counts_as_investigation_progress(self) -> None:
+        self.assertTrue(
+            customer_follow_up_adds_requested_investigation_detail(
+                message="i dont have a timestamp",
+                product="audio_video_calling",
+                current_state={
+                    "phase": "gather_customer_inputs",
+                    "product": "audio_video_calling",
+                    "issue_mode": "investigation",
+                    "known_information": {
+                        "issue_symptom": "black screen issue",
+                        "channel_name": "zilingtest",
+                        "problematic_uid": "2",
+                    },
+                    "missing_information": ["issue_timestamp"],
+                    "ready_for_engineer_ticket": False,
+                    "last_updated_at": "2026-04-14T02:08:33.337732+00:00",
+                },
+                message_created_at="2026-04-14T02:11:08.752498+00:00",
+            )
+        )
+        self.assertTrue(
+            customer_follow_up_adds_requested_investigation_detail(
+                message="no timestamp available",
+                product="audio_video_calling",
+                current_state={
+                    "phase": "gather_customer_inputs",
+                    "product": "audio_video_calling",
+                    "issue_mode": "investigation",
+                    "known_information": {
+                        "issue_symptom": "black screen issue",
+                        "channel_name": "zilingtest",
+                        "problematic_uid": "2",
+                    },
+                    "missing_information": ["issue_timestamp"],
+                    "ready_for_engineer_ticket": False,
+                    "last_updated_at": "2026-04-14T02:08:33.337732+00:00",
+                },
+                message_created_at="2026-04-14T02:11:08.752498+00:00",
+            )
+        )
+        self.assertFalse(
+            customer_follow_up_adds_requested_investigation_detail(
+                message="thanks",
+                product="audio_video_calling",
+                current_state={
+                    "phase": "gather_customer_inputs",
+                    "product": "audio_video_calling",
+                    "issue_mode": "investigation",
+                    "known_information": {
+                        "issue_symptom": "black screen issue",
+                        "channel_name": "zilingtest",
+                        "problematic_uid": "2",
+                    },
+                    "missing_information": ["issue_timestamp"],
+                    "ready_for_engineer_ticket": False,
+                    "last_updated_at": "2026-04-14T02:08:33.337732+00:00",
+                },
+                message_created_at="2026-04-14T02:11:08.752498+00:00",
+            )
+        )
+
     def test_build_client_intake_state_increments_rounds_used_when_second_investigation_clarify_is_sent(self) -> None:
         result = evaluate_troubleshooting_intake(
             message="channel name: zilingtest, uid 2",
