@@ -2347,6 +2347,20 @@ a.citation-link:hover {
   pointer-events: none;
 }
 
+.clienttest-route-footer-shell {
+  width: 100%;
+  height: 100%;
+}
+
+.clienttest-route-footer-shell-communicating,
+.new-ticket-thread-footer-composer,
+.new-ticket-postsend-composer {
+  background: #fff;
+  border-radius: 24px;
+  border: 1px solid rgba(110, 120, 130, 0.12);
+  box-shadow: 0 16px 34px rgba(52, 61, 150, 0.08);
+}
+
 .clienttest-topbar {
   position: relative;
   z-index: 15;
@@ -3575,9 +3589,7 @@ a.citation-link:hover {
 }
 
 .new-ticket-postsend-thread,
-.new-ticket-postsend-sidebar .new-ticket-info-card,
-.new-ticket-thread-footer-composer,
-.new-ticket-postsend-composer {
+.new-ticket-postsend-sidebar .new-ticket-info-card {
   background: #fff;
   border-radius: 24px;
   border: 1px solid rgba(110, 120, 130, 0.12);
@@ -4000,6 +4012,7 @@ a.citation-link:hover {
     border-radius: 24px;
   }
 
+  .clienttest-route-footer-shell-communicating,
   .new-ticket-postsend-thread,
   .new-ticket-thread-footer-composer,
   .new-ticket-postsend-composer,

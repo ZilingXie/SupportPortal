@@ -2803,7 +2803,7 @@ function renderChatHome() {
           </article>
         </div>
       </div>
-      ${renderClient2RouteFooterBand()}
+      ${renderClient2RouteFooterBand({ communicatingShell: true })}
     </section>
   `;
 }
@@ -3161,7 +3161,7 @@ function renderTicketsPage() {
         `
         }
       </div>
-      ${renderClient2RouteFooterBand()}
+      ${renderClient2RouteFooterBand({ communicatingShell: true })}
     </section>
   `;
 }
@@ -3196,8 +3196,16 @@ function buildClient2RoutePageClass({ visibleFooterBand = false, tailComposerRou
   return classNames.join(" ");
 }
 
-function renderClient2RouteFooterBand() {
-  return `<div class="clienttest-route-footer-band" aria-hidden="true"></div>`;
+function renderClient2RouteFooterBand({ communicatingShell = false } = {}) {
+  return `
+    <div class="clienttest-route-footer-band" aria-hidden="true">
+      ${
+        communicatingShell
+          ? '<div class="clienttest-route-footer-shell clienttest-route-footer-shell-communicating"></div>'
+          : ""
+      }
+    </div>
+  `;
 }
 
 function scrollElementToTop(element, top, behavior = "auto") {

@@ -26,8 +26,8 @@ class Client2RouteSmokeTests(unittest.TestCase):
     def test_client2_html_references_local_assets(self) -> None:
         html = Path("ui/client2-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260417-client2-draft-full-communicating-1", html)
-        self.assertIn("./app.js?v=20260417-client2-draft-full-communicating-1", html)
+        self.assertIn("./styles.css?v=20260417-client2-workspace-my-tickets-footer-shell-1", html)
+        self.assertIn("./app.js?v=20260417-client2-workspace-my-tickets-footer-shell-1", html)
 
 
 class Client2UiContractTests(unittest.TestCase):
@@ -170,6 +170,8 @@ class Client2UiContractTests(unittest.TestCase):
         self.assertIn("clienttest-route-page", app_source)
         self.assertIn("clienttest-route-page-footer-band", app_source)
         self.assertIn("clienttest-route-footer-band", app_source)
+        self.assertIn("clienttest-route-footer-shell", app_source)
+        self.assertIn("clienttest-route-footer-shell-communicating", app_source)
         self.assertIn("new-ticket-tail-route", app_source)
         self.assertIn("new-ticket-draft-inline-route", app_source)
         self.assertIn("new-ticket-thread-footer-composer", app_source)
@@ -179,6 +181,8 @@ class Client2UiContractTests(unittest.TestCase):
         self.assertIn("--client2-route-max-width", css)
         self.assertIn("--client2-route-top-space", css)
         self.assertIn("--client2-route-bottom-space", css)
+        self.assertIn(".clienttest-route-footer-shell", css)
+        self.assertIn(".clienttest-route-footer-shell-communicating", css)
         self.assertIn(".new-ticket-thread-footer-composer", css)
         self.assertIn(".clienttest-route-page", css)
         self.assertIn(".clienttest-route-page-footer-band", css)
@@ -243,6 +247,12 @@ class Client2UiContractTests(unittest.TestCase):
                 }
                 if (!html.includes("clienttest-route-footer-band")) {
                   throw new Error("Client2 workspace should render a real in-flow footer band element.");
+                }
+                if (!html.includes("clienttest-route-footer-shell-communicating")) {
+                  throw new Error("Client2 workspace should render the communicating-style footer shell.");
+                }
+                if (html.includes("new-ticket-composer-toolbar") || html.includes("new-ticket-inline-send-btn") || html.includes("id=\\"chat-input\\"")) {
+                  throw new Error("Client2 workspace footer should stay non-interactive and shell-only.");
                 }
                 if (html.includes("welcome-inner")) {
                   throw new Error("Client2 workspace should no longer use the oversized legacy hero wrapper.");
@@ -634,6 +644,12 @@ class Client2UiContractTests(unittest.TestCase):
                 }
                 if (!html.includes("clienttest-route-footer-band")) {
                   throw new Error("Client2 tickets page should render a real in-flow footer band element.");
+                }
+                if (!html.includes("clienttest-route-footer-shell-communicating")) {
+                  throw new Error("Client2 tickets page should render the communicating-style footer shell.");
+                }
+                if (html.includes("new-ticket-composer-toolbar") || html.includes("new-ticket-inline-send-btn") || html.includes("id=\\"chat-input\\"")) {
+                  throw new Error("Client2 tickets footer should stay non-interactive and shell-only.");
                 }
                 if (html.includes("clienttest-route-scroll-region")) {
                   throw new Error("Client2 tickets page should no longer use the scoped internal scroll region.");
