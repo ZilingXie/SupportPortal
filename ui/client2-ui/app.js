@@ -1022,12 +1022,17 @@ function isNewTicketPreviewTicket(ticket) {
   return isTicketEmpty(ticket) || (previewTicketId.length > 0 && previewTicketId === ticketId);
 }
 
-function getActiveNewTicketPreviewTicket() {
+function usesNewTicketShellTicket(ticket) {
+  const ticketId = String(ticket?.id || "").trim();
+  return ticketId.length > 0;
+}
+
+function getActiveNewTicketShellTicket() {
   if (state.view !== "chat-ticket") {
     return null;
   }
   const ticket = getTicketById(state.activeTicketId);
-  return isNewTicketPreviewTicket(ticket) ? ticket : null;
+  return usesNewTicketShellTicket(ticket) ? ticket : null;
 }
 
 function pickPreferredTicket(current, candidate) {
@@ -2216,7 +2221,7 @@ function buildNewTicketKnowledgeItems(ticket) {
 }
 
 function isNewTicketPostSendState(viewState) {
-  return Boolean(viewState?.isNewTicketPreview && !isTicketEmpty(viewState?.ticket));
+  return Boolean(viewState?.usesNewTicketShell && !isTicketEmpty(viewState?.ticket));
 }
 
 function renderNewTicketInformationPanel(ticket, options = {}) {
@@ -2469,7 +2474,7 @@ function renderNewTicketComposerNoteHtml(viewState) {
 }
 
 function getChatComposerPlaceholder(viewState) {
-  if (viewState?.isNewTicketPreview) {
+  if (viewState?.usesNewTicketShell) {
     return isTicketEmpty(viewState.ticket)
       ? "Type your request or technical issue..."
       : "Add more context or follow-up details...";
@@ -2565,15 +2570,19 @@ function renderNewTicketDraftTicketFromState(viewState) {
 
 function renderNewTicketPostSendTicketFromState(viewState) {
   const ticket = viewState.ticket;
+  const actionButtons = renderTicketHeaderActions(ticket);
   return `
     <section class="chat-root clienttest-new-ticket-shell" data-chat-ticket-id="${escapeHtml(ticket.id)}">
       <div class="new-ticket-postsend-shell">
         <div class="new-ticket-postsend-page">
           <header class="new-ticket-postsend-header">
             <div class="new-ticket-postsend-breadcrumb">My Tickets / Ticket #${escapeHtml(ticket.id)}</div>
-            <div class="new-ticket-postsend-heading">
-              <h1 class="new-ticket-page-title">${escapeHtml(buildNewTicketPageTitle(ticket))}</h1>
-              <div class="new-ticket-postsend-meta">${buildNewTicketPostSendMetaHtml(ticket)}</div>
+            <div class="new-ticket-postsend-header-row">
+              <div class="new-ticket-postsend-heading">
+                <h1 class="new-ticket-page-title">${escapeHtml(buildNewTicketPageTitle(ticket))}</h1>
+                <div class="new-ticket-postsend-meta">${buildNewTicketPostSendMetaHtml(ticket)}</div>
+              </div>
+              ${actionButtons ? `<div class="new-ticket-postsend-actions">${actionButtons}</div>` : ""}
             </div>
           </header>
           <div class="new-ticket-postsend-layout">
@@ -2813,7 +2822,7 @@ function buildChatTicketViewState(ticket) {
   }
   const renderableMessages = getRenderableMessages(ticket);
   const sending = isTicketAwaitingDurableReply(ticket);
-  const isNewTicketPreview = isNewTicketPreviewTicket(ticket);
+  const usesNewTicketShell = usesNewTicketShellTicket(ticket);
   const hasComposerText = String(state.inputDraft || "").trim().length > 0;
   const requiresProductSelection = false;
   const canCompose = ticket.status !== "resolved";
@@ -2834,7 +2843,7 @@ function buildChatTicketViewState(ticket) {
     requiresProductSelection,
     canCompose,
     canSubmit,
-    isNewTicketPreview,
+    usesNewTicketShell,
     isEditing: Boolean(state.editingMessageId),
   };
 }
@@ -2884,7 +2893,7 @@ function renderChatMessagesHtml(viewState) {
 }
 
 function renderChatComposerNoteHtml(viewState) {
-  if (viewState?.isNewTicketPreview) {
+  if (viewState?.usesNewTicketShell) {
     return renderNewTicketComposerNoteHtml(viewState);
   }
   if (viewState.isEditing) {
@@ -2894,7 +2903,7 @@ function renderChatComposerNoteHtml(viewState) {
 }
 
 function renderChatComposerActionHtml(viewState) {
-  if (viewState?.isNewTicketPreview) {
+  if (viewState?.usesNewTicketShell) {
     return renderNewTicketComposerActionHtml(viewState);
   }
 
@@ -2925,7 +2934,7 @@ function renderChatUnreadIndicatorHtml(ticketId) {
 }
 
 function renderChatTicketFromState(viewState) {
-  if (viewState?.isNewTicketPreview) {
+  if (viewState?.usesNewTicketShell) {
     return renderNewTicketTicketFromState(viewState);
   }
   const ticket = viewState.ticket;
@@ -2998,7 +3007,7 @@ function renderChatTicketFromState(viewState) {
 }
 
 function shouldPreserveActiveChatComposerOnRender(viewState) {
-  if (viewState?.isNewTicketPreview) {
+  if (viewState?.usesNewTicketShell) {
     return false;
   }
   if (!viewState?.canCompose) {
@@ -3028,8 +3037,10 @@ function patchChatTicketWhilePreservingComposer(mainRegion, viewState) {
 
   const composer = getActiveChatComposerElement();
   const snapshot = captureComposerPreservationState(composer);
-  messagesRegion.innerHTML = viewState.isNewTicketPreview
-    ? renderNewTicketThreadHtml(viewState)
+  messagesRegion.innerHTML = viewState.usesNewTicketShell
+    ? isNewTicketPostSendState(viewState)
+      ? renderNewTicketPostSendThreadHtml(viewState)
+      : renderNewTicketThreadHtml(viewState)
     : renderChatMessagesHtml(viewState);
   noteRegion.innerHTML = renderChatComposerNoteHtml(viewState);
   actionRegion.innerHTML = renderChatComposerActionHtml(viewState);
@@ -3044,7 +3055,7 @@ function patchChatTicketWhilePreservingComposer(mainRegion, viewState) {
 function refreshNewTicketInlineComposerAction() {
   const ticket = getActiveChatTicket();
   const viewState = buildChatTicketViewState(ticket);
-  if (!viewState?.isNewTicketPreview || viewState.sending) {
+  if (!viewState?.usesNewTicketShell || viewState.sending) {
     return;
   }
 
@@ -3463,7 +3474,7 @@ function renderMainRegion(mainRegion) {
 
 function renderAuthed() {
   const shell = ensureAuthedShell();
-  const activeNewTicketPreview = getActiveNewTicketPreviewTicket();
+  const activeNewTicketShell = getActiveNewTicketShellTicket();
   const workspace = shell.querySelector(".clienttest-workspace");
   const topbarRegion = shell.querySelector('[data-authed-region="topbar"]');
   const contextRegion = shell.querySelector('[data-authed-region="context"]');
@@ -3473,16 +3484,16 @@ function renderAuthed() {
   shell.querySelector('[data-authed-region="sidebar-content"]').innerHTML = renderSidebarContent();
   shell.querySelector('[data-authed-region="sidebar-footer"]').innerHTML = renderSidebarFooter();
   if (topbarRegion) {
-    topbarRegion.innerHTML = activeNewTicketPreview ? "" : renderTopbar();
+    topbarRegion.innerHTML = activeNewTicketShell ? "" : renderTopbar();
   }
   if (contextRegion) {
-    contextRegion.innerHTML = activeNewTicketPreview ? "" : renderContextBar();
+    contextRegion.innerHTML = activeNewTicketShell ? "" : renderContextBar();
   }
   if (workspace?.classList) {
-    workspace.classList.toggle("clienttest-workspace-new-ticket", Boolean(activeNewTicketPreview));
+    workspace.classList.toggle("clienttest-workspace-new-ticket", Boolean(activeNewTicketShell));
   }
   if (mainRegion?.classList) {
-    mainRegion.classList.toggle("clienttest-main-new-ticket", Boolean(activeNewTicketPreview));
+    mainRegion.classList.toggle("clienttest-main-new-ticket", Boolean(activeNewTicketShell));
   }
   renderMainRegion(mainRegion);
 

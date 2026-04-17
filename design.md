@@ -297,11 +297,11 @@
    - detail sections 通过纵向间距分段，不依赖左右分栏去硬塞证据表和答案块。
 
 ### 6.6 Client Preview Post-Send Correspondence Exception
-1. 适用于 `/clienttest` 与 `/client2` 在 `New Ticket` 首条消息发送后的 correspondence detail shell。
+1. 适用于 `/clienttest` 在 `New Ticket` 首条消息发送后的 correspondence detail shell，以及 `/client2` 的所有非 draft ticket detail。
 2. 该页面允许恢复截图式 breadcrumb + issue title header，并改用自然高度的 thread / composer / sidebar 布局，不强制沿用 draft 态的 fixed-height section 规则。
 3. 该页面允许使用低对比度边框消息卡与轻色 header band，作为 correspondence card 的视觉例外；边框必须保持柔和，不得退化成高对比后台表格风格。
 4. 左侧 rail 必须继续保留，禁止引入截图中的顶栏导航。
-5. 该例外不适用于 `/client`、`/clienttest` draft 页面、`/client2` draft 页面，或其他 ticket detail 页面。
+5. 该例外不适用于 `/client`、`/clienttest` draft 页面、`/client2` draft 页面，或 `/clienttest` 的其他 ticket detail 页面。
 
 ## 7. States, Motion, Accessibility
 1. 必须覆盖：
