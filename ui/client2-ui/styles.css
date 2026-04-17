@@ -2335,7 +2335,17 @@ a.citation-link:hover {
 }
 
 .clienttest-route-page-footer-band {
-  padding-bottom: max(var(--client2-route-bottom-space), var(--client2-visible-footer-band-space));
+  align-content: stretch;
+}
+
+.clienttest-route-footer-band {
+  height: var(--client2-visible-footer-band-space);
+  min-height: var(--client2-visible-footer-band-space);
+  pointer-events: none;
+}
+
+.clienttest-route-scroll-region {
+  min-height: 0;
 }
 
 .clienttest-topbar {
@@ -2369,9 +2379,21 @@ a.citation-link:hover {
   overflow: visible;
 }
 
+.clienttest-home.clienttest-route-page-footer-band {
+  min-height: 100%;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
 .clienttest-home-shell {
   display: grid;
   gap: 24px;
+  min-height: 0;
+}
+
+.clienttest-home.clienttest-route-page-footer-band .clienttest-home-shell {
+  height: 100%;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .clienttest-home-intro {
@@ -2444,6 +2466,12 @@ a.citation-link:hover {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 20px;
   align-items: start;
+  min-height: 0;
+}
+
+.clienttest-home.clienttest-route-page-footer-band .clienttest-home-content-grid {
+  grid-auto-rows: minmax(0, 1fr);
+  align-items: stretch;
 }
 
 .clienttest-home-panel {
@@ -2454,6 +2482,7 @@ a.citation-link:hover {
   display: grid;
   gap: 18px;
   height: 100%;
+  min-height: 0;
 }
 
 .clienttest-home-panel-header {
@@ -2485,6 +2514,12 @@ a.citation-link:hover {
   display: grid;
   gap: 14px;
   align-content: start;
+  min-height: 0;
+}
+
+.clienttest-home.clienttest-route-page-footer-band .clienttest-home-panel-body {
+  overflow: auto;
+  padding-right: 6px;
 }
 
 .clienttest-empty-card {
@@ -2496,9 +2531,20 @@ a.citation-link:hover {
   overflow: visible;
 }
 
+.clienttest-tickets.clienttest-route-page-footer-band {
+  min-height: 100%;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
 .clienttest-tickets .tickets-body {
   display: grid;
   gap: 18px;
+  min-height: 0;
+}
+
+.clienttest-tickets .clienttest-route-scroll-region {
+  overflow: auto;
+  padding-right: 6px;
 }
 
 .ticket-detail-layout {
@@ -3756,6 +3802,16 @@ a.citation-link:hover {
     --client2-route-top-space: 20px;
     --client2-route-bottom-space: 24px;
     --client2-visible-footer-band-space: 28px;
+  }
+
+  .clienttest-tickets.clienttest-route-page-footer-band {
+    min-height: auto;
+    grid-template-rows: auto auto auto;
+  }
+
+  .clienttest-tickets .clienttest-route-scroll-region {
+    overflow: visible;
+    padding-right: 0;
   }
 
   .clienttest-shell {

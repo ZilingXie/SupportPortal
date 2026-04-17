@@ -2562,6 +2562,7 @@ function renderNewTicketDraftTicketFromState(viewState) {
             ${renderNewTicketKnowledgePanel(ticket)}
           </aside>
         </div>
+        ${renderClient2RouteFooterBand()}
       </div>
     </section>
   `;
@@ -2620,6 +2621,7 @@ function renderNewTicketPostSendTicketFromState(viewState) {
               ${renderNewTicketKnowledgePanel(ticket, { fixed: false, variant: "postsend" })}
             </aside>
           </div>
+          ${viewState.showVisibleFooterBand ? renderClient2RouteFooterBand() : ""}
         </div>
       </div>
     </section>
@@ -2767,6 +2769,7 @@ function renderChatHome() {
           </article>
         </div>
       </div>
+      ${renderClient2RouteFooterBand()}
     </section>
   `;
 }
@@ -3106,7 +3109,7 @@ function renderTicketsPage() {
           ${renderStatusFilter()}
         </div>
       </header>
-      <div class="tickets-body">
+      <div class="tickets-body clienttest-route-scroll-region">
         ${
           filtered.length === 0
             ? `<div class="empty-state">No sessions found.</div>`
@@ -3124,6 +3127,7 @@ function renderTicketsPage() {
         `
         }
       </div>
+      ${renderClient2RouteFooterBand()}
     </section>
   `;
 }
@@ -3149,6 +3153,10 @@ function prefersReducedMotion() {
 
 function buildClient2RoutePageClass({ visibleFooterBand = false } = {}) {
   return visibleFooterBand ? "clienttest-route-page clienttest-route-page-footer-band" : "clienttest-route-page";
+}
+
+function renderClient2RouteFooterBand() {
+  return `<div class="clienttest-route-footer-band" aria-hidden="true"></div>`;
 }
 
 function scrollElementToTop(element, top, behavior = "auto") {
