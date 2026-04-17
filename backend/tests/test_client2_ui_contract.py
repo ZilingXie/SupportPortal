@@ -26,8 +26,8 @@ class Client2RouteSmokeTests(unittest.TestCase):
     def test_client2_html_references_local_assets(self) -> None:
         html = Path("ui/client2-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260417-client2-draft-communicating-footer-1", html)
-        self.assertIn("./app.js?v=20260417-client2-draft-communicating-footer-1", html)
+        self.assertIn("./styles.css?v=20260417-client2-draft-full-communicating-1", html)
+        self.assertIn("./app.js?v=20260417-client2-draft-full-communicating-1", html)
 
 
 class Client2UiContractTests(unittest.TestCase):
@@ -293,6 +293,9 @@ class Client2UiContractTests(unittest.TestCase):
                 }
                 if (!html.includes("new-ticket-thread-footer-composer")) {
                   throw new Error("Client2 draft should reuse the shared communicating-case footer shell.");
+                }
+                if (!html.includes("new-ticket-postsend-composer") || !html.includes("new-ticket-postsend-inline-composer")) {
+                  throw new Error("Client2 draft should reuse the full communicating-case footer class stack.");
                 }
                 if (html.indexOf("new-ticket-thread-panel") >= html.indexOf("new-ticket-draft-inline-composer")) {
                   throw new Error("Client2 draft inline composer should render after the draft thread panel.");
