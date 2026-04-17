@@ -26,8 +26,8 @@ class Client2RouteSmokeTests(unittest.TestCase):
     def test_client2_html_references_local_assets(self) -> None:
         html = Path("ui/client2-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260417-client2-workspace-my-tickets-footer-shell-1", html)
-        self.assertIn("./app.js?v=20260417-client2-workspace-my-tickets-footer-shell-1", html)
+        self.assertIn("./styles.css?v=20260417-client2-preview-exit-1", html)
+        self.assertIn("./app.js?v=20260417-client2-preview-exit-1", html)
 
 
 class Client2UiContractTests(unittest.TestCase):
@@ -409,20 +409,20 @@ class Client2UiContractTests(unittest.TestCase):
                 if (!html.includes("clienttest-route-page")) {
                   throw new Error("Client2 post-send shell should use the shared route page shell.");
                 }
-                if (!html.includes("clienttest-route-page-footer-band")) {
-                  throw new Error("Client2 first-send postsend shell should render the visible footer-band shell.");
+                if (html.includes("clienttest-route-page-footer-band")) {
+                  throw new Error("Client2 first-send postsend shell should exit preview mode as soon as the ticket has messages.");
                 }
-                if (!html.includes("new-ticket-tail-route")) {
-                  throw new Error("Client2 first-send postsend shell should mark the tail-composer route explicitly.");
+                if (html.includes("new-ticket-tail-route")) {
+                  throw new Error("Client2 first-send postsend shell should not keep the tail-composer route after the first persisted message.");
                 }
-                if (!html.includes("clienttest-route-footer-band")) {
-                  throw new Error("Client2 first-send postsend shell should render a real in-flow footer band element.");
+                if (html.includes("clienttest-route-footer-band")) {
+                  throw new Error("Client2 first-send postsend shell should not keep the in-flow footer band after leaving preview mode.");
                 }
-                if (!html.includes("new-ticket-tail-composer")) {
-                  throw new Error("Client2 first-send postsend shell should move the composer into the page tail.");
+                if (html.includes("new-ticket-tail-composer")) {
+                  throw new Error("Client2 first-send postsend shell should not keep the tail composer after the first persisted message.");
                 }
-                if (html.indexOf("new-ticket-postsend-layout") >= html.indexOf("new-ticket-tail-composer")) {
-                  throw new Error("Client2 first-send postsend tail composer should render after the main postsend layout.");
+                if (!html.includes("new-ticket-thread-footer-composer")) {
+                  throw new Error("Client2 first-send postsend shell should switch to the communicating inline footer.");
                 }
                 if (html.includes("clienttest-route-page-fixed-footer")) {
                   throw new Error("Client2 post-send shell should not use the removed fixed-footer reserve contract.");
@@ -618,6 +618,55 @@ class Client2UiContractTests(unittest.TestCase):
                 }
                 if (html.includes("Continue the same ticket with Sid handling the assistant turn")) {
                   throw new Error("Existing client2 tickets should not render the legacy composer header copy.");
+                }
+              """
+            )
+        )
+
+    def test_client2_non_empty_ticket_exits_preview_mode_even_if_preview_id_lingers(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const ticket = createTicket(state.user.id);
+                updateTicketTitle(ticket.id, "Ban User Privileges API behavior mismatch");
+                updateTicketStatus(ticket.id, "communicating");
+                saveTicketMessages(ticket.id, [
+                  {
+                    id: "msg-1",
+                    role: "user",
+                    content: "channel name: zilingtest, uid 2",
+                    createdAt: "2026-04-17T10:39:00.000Z",
+                  },
+                  {
+                    id: "msg-2",
+                    role: "assistant",
+                    content: "Please share the issue timestamp.",
+                    createdAt: "2026-04-17T10:40:00.000Z",
+                  },
+                ]);
+
+                state.view = "chat-ticket";
+                state.activeTicketId = ticket.id;
+                state.newTicketPreviewTicketId = ticket.id;
+
+                const html = renderChatTicket();
+                if (html.includes("new-ticket-tail-route")) {
+                  throw new Error("Non-empty tickets must exit preview mode even if preview id lingers.");
+                }
+                if (html.includes("clienttest-route-page-footer-band")) {
+                  throw new Error("Non-empty tickets should not keep the preview footer-band shell.");
+                }
+                if (html.includes("new-ticket-tail-composer")) {
+                  throw new Error("Non-empty tickets should not render the tail composer once real messages exist.");
+                }
+                if (!html.includes("new-ticket-thread-footer-composer")) {
+                  throw new Error("Non-empty tickets should fall back to the communicating inline composer.");
+                }
+                if (String(state.newTicketPreviewTicketId || "").trim() !== "") {
+                  throw new Error("Non-empty tickets should clear stale preview ids while building the chat view.");
                 }
               """
             )
