@@ -26,8 +26,8 @@ class Client2RouteSmokeTests(unittest.TestCase):
     def test_client2_html_references_local_assets(self) -> None:
         html = Path("ui/client2-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260417-client2-postsend-composer-match-draft-1", html)
-        self.assertIn("./app.js?v=20260417-client2-postsend-composer-match-draft-1", html)
+        self.assertIn("./styles.css?v=20260417-client2-existing-ticket-new-shell-1", html)
+        self.assertIn("./app.js?v=20260417-client2-existing-ticket-new-shell-1", html)
 
 
 class Client2UiContractTests(unittest.TestCase):
@@ -365,6 +365,77 @@ class Client2UiContractTests(unittest.TestCase):
                 }
                 if (updated.messages.length !== 1) {
                   throw new Error("Client2 engineer assistance should not append a fake transcript message.");
+                }
+              """
+            )
+        )
+
+    def test_client2_existing_ticket_uses_new_ticket_postsend_shell(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const ticket = createTicket(state.user.id);
+                updateTicketTitle(ticket.id, "Channel join question");
+                updateTicketStatus(ticket.id, "communicating");
+                updateTicketProduct(ticket.id, "audio_video_calling");
+                saveTicketMessages(ticket.id, [
+                  {
+                    id: "msg-1",
+                    role: "user",
+                    content: "How do I join a channel?",
+                    createdAt: "2026-04-17T10:39:00.000Z",
+                  },
+                  {
+                    id: "msg-2",
+                    role: "assistant",
+                    content: "Use `joinChannel` with a valid token and channel name.",
+                    createdAt: "2026-04-17T10:40:00.000Z",
+                    citations: [
+                      {
+                        heading: "Join a channel",
+                        sourceUrl: "https://docs.example.com/join-channel",
+                      },
+                    ],
+                  },
+                ]);
+
+                state.view = "chat-ticket";
+                state.activeTicketId = ticket.id;
+                state.newTicketPreviewTicketId = null;
+
+                const html = renderChatTicket();
+                if (!html.includes("new-ticket-postsend-shell")) {
+                  throw new Error("Existing client2 tickets should render the new-ticket postsend shell.");
+                }
+                if (html.includes("ticket-detail-layout")) {
+                  throw new Error("Existing client2 tickets should not fall back to the legacy detail layout.");
+                }
+                if (!html.includes(`My Tickets / Ticket #${ticket.id}`)) {
+                  throw new Error("Existing client2 tickets should keep the postsend breadcrumb.");
+                }
+                if (!html.includes("Request Engineer")) {
+                  throw new Error("Existing client2 tickets should keep the Request Engineer action.");
+                }
+                if (!html.includes("Resolve")) {
+                  throw new Error("Existing client2 tickets should keep the Resolve action.");
+                }
+                if (!html.includes("Knowledge Base Articles")) {
+                  throw new Error("Existing client2 tickets should keep the new-ticket knowledge sidebar.");
+                }
+                if (!html.includes("Join a channel")) {
+                  throw new Error("Existing client2 tickets should keep source chips in the postsend shell.");
+                }
+                if (!html.includes("new-ticket-inline-send-btn")) {
+                  throw new Error("Existing client2 tickets should keep the inline composer action.");
+                }
+                if (html.includes("ticket-summary-card")) {
+                  throw new Error("Existing client2 tickets should not render the legacy AI Summary panel.");
+                }
+                if (html.includes("Continue the same ticket with Sid handling the assistant turn")) {
+                  throw new Error("Existing client2 tickets should not render the legacy composer header copy.");
                 }
               """
             )

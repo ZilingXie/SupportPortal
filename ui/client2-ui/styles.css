@@ -3290,6 +3290,14 @@ a.citation-link:hover {
   padding: 2px 2px 0;
 }
 
+.new-ticket-postsend-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
 .new-ticket-postsend-breadcrumb {
   color: var(--ink-muted);
   font-size: 12px;
@@ -3305,6 +3313,14 @@ a.citation-link:hover {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
+}
+
+.new-ticket-postsend-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
