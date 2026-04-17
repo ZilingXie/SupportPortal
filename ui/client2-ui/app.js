@@ -2572,7 +2572,7 @@ function renderNewTicketDraftTicketFromState(viewState) {
   const ticket = viewState.ticket;
   return `
     <section class="chat-root clienttest-new-ticket-shell" data-chat-ticket-id="${escapeHtml(ticket.id)}">
-      <div class="new-ticket-layout ${buildClient2RoutePageClass({ visibleFooterBand: true })}">
+      <div class="new-ticket-layout ${buildClient2RoutePageClass({ visibleFooterBand: true, tailComposerRoute: true })}">
         <header class="new-ticket-hero">
           <h1 class="new-ticket-page-title">${escapeHtml(buildNewTicketPageTitle(ticket))}</h1>
         </header>
@@ -2605,7 +2605,7 @@ function renderNewTicketPostSendTicketFromState(viewState) {
   return `
     <section class="chat-root clienttest-new-ticket-shell" data-chat-ticket-id="${escapeHtml(ticket.id)}">
       <div class="new-ticket-postsend-shell">
-        <div class="new-ticket-postsend-page ${buildClient2RoutePageClass({ visibleFooterBand: isTailComposerRoute })}">
+        <div class="new-ticket-postsend-page ${buildClient2RoutePageClass({ visibleFooterBand: isTailComposerRoute, tailComposerRoute: isTailComposerRoute })}">
           <header class="new-ticket-postsend-header">
             <div class="new-ticket-postsend-breadcrumb">My Tickets / Ticket #${escapeHtml(ticket.id)}</div>
             <div class="new-ticket-postsend-header-row">
@@ -3163,8 +3163,15 @@ function prefersReducedMotion() {
   }
 }
 
-function buildClient2RoutePageClass({ visibleFooterBand = false } = {}) {
-  return visibleFooterBand ? "clienttest-route-page clienttest-route-page-footer-band" : "clienttest-route-page";
+function buildClient2RoutePageClass({ visibleFooterBand = false, tailComposerRoute = false } = {}) {
+  const classNames = ["clienttest-route-page"];
+  if (visibleFooterBand) {
+    classNames.push("clienttest-route-page-footer-band");
+  }
+  if (tailComposerRoute) {
+    classNames.push("new-ticket-tail-route");
+  }
+  return classNames.join(" ");
 }
 
 function renderClient2RouteFooterBand() {

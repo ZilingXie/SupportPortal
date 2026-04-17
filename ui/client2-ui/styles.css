@@ -2869,6 +2869,10 @@ a.citation-link:hover {
   align-items: stretch;
 }
 
+.new-ticket-tail-route {
+  align-content: stretch;
+}
+
 .new-ticket-body-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.5fr) minmax(300px, 360px);
@@ -2881,6 +2885,18 @@ a.citation-link:hover {
   min-width: 0;
   display: grid;
   gap: 20px;
+}
+
+.new-ticket-tail-route .new-ticket-body-layout,
+.new-ticket-tail-route .new-ticket-postsend-layout {
+  align-items: stretch;
+}
+
+.new-ticket-tail-route .new-ticket-main-column,
+.new-ticket-tail-route .new-ticket-postsend-main {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .new-ticket-sidebar {
@@ -2929,6 +2945,12 @@ a.citation-link:hover {
   display: flex;
 }
 
+.new-ticket-tail-route .new-ticket-fixed-thread-panel {
+  height: auto;
+  min-height: var(--new-ticket-thread-panel-height);
+  flex: 1 1 auto;
+}
+
 .new-ticket-thread-scroll {
   padding: 16px;
   height: 100%;
@@ -2938,12 +2960,23 @@ a.citation-link:hover {
   display: flex;
 }
 
+.new-ticket-tail-route .new-ticket-thread-scroll,
+.new-ticket-tail-route .new-ticket-postsend-thread-scroll {
+  min-height: 100%;
+  flex: 1 1 auto;
+}
+
 .new-ticket-thread-list {
   width: 100%;
   margin: 0;
   gap: 16px;
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.new-ticket-tail-route .new-ticket-thread-list,
+.new-ticket-tail-route .new-ticket-postsend-message-list {
+  min-height: 100%;
 }
 
 .new-ticket-thread-empty {
@@ -3508,6 +3541,12 @@ a.citation-link:hover {
 
 .new-ticket-postsend-thread {
   padding: 16px 20px 20px;
+}
+
+.new-ticket-tail-route .new-ticket-postsend-thread {
+  min-height: var(--new-ticket-thread-panel-height);
+  display: flex;
+  flex-direction: column;
 }
 
 .new-ticket-postsend-thread-scroll {

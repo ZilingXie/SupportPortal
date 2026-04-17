@@ -26,8 +26,8 @@ class Client2RouteSmokeTests(unittest.TestCase):
     def test_client2_html_references_local_assets(self) -> None:
         html = Path("ui/client2-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260417-client2-footer-tail-1", html)
-        self.assertIn("./app.js?v=20260417-client2-footer-tail-1", html)
+        self.assertIn("./styles.css?v=20260417-client2-draft-tail-route-1", html)
+        self.assertIn("./app.js?v=20260417-client2-draft-tail-route-1", html)
 
 
 class Client2UiContractTests(unittest.TestCase):
@@ -170,6 +170,7 @@ class Client2UiContractTests(unittest.TestCase):
         self.assertIn("clienttest-route-page", app_source)
         self.assertIn("clienttest-route-page-footer-band", app_source)
         self.assertIn("clienttest-route-footer-band", app_source)
+        self.assertIn("new-ticket-tail-route", app_source)
         self.assertIn("--client2-tail-footer-block-height", css)
         self.assertIn("--client2-route-max-width", css)
         self.assertIn("--client2-route-top-space", css)
@@ -177,6 +178,7 @@ class Client2UiContractTests(unittest.TestCase):
         self.assertIn(".clienttest-route-page", css)
         self.assertIn(".clienttest-route-page-footer-band", css)
         self.assertIn(".clienttest-route-footer-band", css)
+        self.assertIn(".new-ticket-tail-route", css)
         self.assertNotIn("clienttest-route-scroll-region", app_source)
         self.assertNotIn(".clienttest-route-scroll-region", css)
         self.assertNotIn("clienttest-route-page-fixed-footer", app_source)
@@ -267,6 +269,9 @@ class Client2UiContractTests(unittest.TestCase):
                 }
                 if (!html.includes("clienttest-route-page-footer-band")) {
                   throw new Error("Client2 draft should render the visible footer-band shell.");
+                }
+                if (!html.includes("new-ticket-tail-route")) {
+                  throw new Error("Client2 draft should mark the tail-composer route explicitly.");
                 }
                 if (!html.includes("clienttest-route-footer-band")) {
                   throw new Error("Client2 draft should render a real in-flow footer band element.");
@@ -375,6 +380,9 @@ class Client2UiContractTests(unittest.TestCase):
                 }
                 if (!html.includes("clienttest-route-page-footer-band")) {
                   throw new Error("Client2 first-send postsend shell should render the visible footer-band shell.");
+                }
+                if (!html.includes("new-ticket-tail-route")) {
+                  throw new Error("Client2 first-send postsend shell should mark the tail-composer route explicitly.");
                 }
                 if (!html.includes("clienttest-route-footer-band")) {
                   throw new Error("Client2 first-send postsend shell should render a real in-flow footer band element.");
@@ -528,6 +536,9 @@ class Client2UiContractTests(unittest.TestCase):
                 }
                 if (html.includes("clienttest-route-page-footer-band")) {
                   throw new Error("Existing client2 tickets should keep the current detail footer depth without the visible footer-band shell.");
+                }
+                if (html.includes("new-ticket-tail-route")) {
+                  throw new Error("Existing client2 tickets should not opt into the draft/preview tail-composer route.");
                 }
                 if (html.includes("clienttest-route-footer-band")) {
                   throw new Error("Existing client2 tickets should not render the new in-flow footer band element.");
