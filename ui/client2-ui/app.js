@@ -1018,8 +1018,17 @@ function isNewTicketPreviewTicket(ticket) {
   if (!ticketId) {
     return false;
   }
-  const previewTicketId = String(state.newTicketPreviewTicketId || "").trim();
-  return isTicketEmpty(ticket) || (previewTicketId.length > 0 && previewTicketId === ticketId);
+  return isTicketEmpty(ticket);
+}
+
+function clearStaleNewTicketPreviewTicketId(ticket) {
+  const ticketId = String(ticket?.id || "").trim();
+  if (!ticketId || isTicketEmpty(ticket)) {
+    return;
+  }
+  if (String(state.newTicketPreviewTicketId || "").trim() === ticketId) {
+    state.newTicketPreviewTicketId = null;
+  }
 }
 
 function usesNewTicketShellTicket(ticket) {
@@ -1591,7 +1600,7 @@ function openTicketChat(ticketId) {
   }
   if (isNewTicketPreviewTicket(ticket)) {
     state.newTicketPreviewTicketId = normalizedId;
-  } else if (String(state.newTicketPreviewTicketId || "").trim() !== normalizedId) {
+  } else if (String(state.newTicketPreviewTicketId || "").trim() === normalizedId) {
     state.newTicketPreviewTicketId = null;
   }
   navigate(`/chat/${normalizedId}`);
@@ -2862,6 +2871,7 @@ function buildChatTicketViewState(ticket) {
   if (!ticket || ticket.userId !== state.user.id) {
     return null;
   }
+  clearStaleNewTicketPreviewTicketId(ticket);
   const renderableMessages = getRenderableMessages(ticket);
   const sending = isTicketAwaitingDurableReply(ticket);
   const usesNewTicketShell = usesNewTicketShellTicket(ticket);
