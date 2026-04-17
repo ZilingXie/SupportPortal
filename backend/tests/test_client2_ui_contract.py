@@ -277,6 +277,9 @@ class Client2UiContractTests(unittest.TestCase):
                 if (!html.includes("All reference links provided by agent will show up here.")) {
                   throw new Error("Client2 draft should show the empty reference-links placeholder.");
                 }
+                if (!html.includes("new-ticket-knowledge-placeholder new-ticket-info-value")) {
+                  throw new Error("Client2 draft placeholder should reuse the info-value typography treatment.");
+                }
                 if (html.includes("Select Product") || html.includes("Support Product")) {
                   throw new Error("Client2 draft should not render any product selector.");
                 }
@@ -537,6 +540,15 @@ class Client2UiContractTests(unittest.TestCase):
                 }
                 if (!html.includes("Join a channel")) {
                   throw new Error("Existing client2 tickets should keep source chips in the postsend shell.");
+                }
+                if (!html.includes("new-ticket-fixed-knowledge-card")) {
+                  throw new Error("Existing client2 tickets should keep the knowledge card on the draft fixed-height rail.");
+                }
+                if (!html.includes("new-ticket-correspondence-source-chip")) {
+                  throw new Error("Existing client2 tickets should render knowledge references with correspondence chips.");
+                }
+                if (html.includes("Agent reference")) {
+                  throw new Error("Existing client2 tickets should not render legacy knowledge item meta copy.");
                 }
                 if (!html.includes("new-ticket-inline-send-btn")) {
                   throw new Error("Existing client2 tickets should keep the inline composer action.");
