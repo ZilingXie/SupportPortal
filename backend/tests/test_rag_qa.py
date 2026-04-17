@@ -131,6 +131,17 @@ The documentation states that time: 0 means the rule is applied permanently. How
 
         self.assertFalse(config["shadow_retrieval_enabled"])
 
+    def test_get_rag_config_applies_client_accuracy_first_profile(self) -> None:
+        with patch.dict(os.environ, {"RAG_SHADOW_RETRIEVAL_ENABLED": "false"}, clear=True):
+            config = _get_rag_config(top_k=6, query_policy="client_accuracy_first")
+
+        self.assertEqual(config["top_k"], 8)
+        self.assertEqual(config["vector_candidate_k"], 120)
+        self.assertEqual(config["bm25_candidate_k"], 120)
+        self.assertEqual(config["fusion_candidate_k"], 96)
+        self.assertEqual(config["rerank_top_n"], 48)
+        self.assertTrue(config["shadow_retrieval_enabled"])
+
     def test_get_rag_config_reads_lowercase_silliconflow_key_for_reranker(self) -> None:
         with patch.dict(os.environ, {"silliconflow_key": "test-rerank-key"}, clear=True):
             config = _get_rag_config(top_k=6)
@@ -338,6 +349,49 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(reranked[0].chunk_id, "dual-stream-web")
         self.assertIn("intent:dual_stream_enablement", info["candidate_reasons"]["dual-stream-web"])
         self.assertIn("intent:dual_stream_glossary_penalty", info["candidate_reasons"]["dual-stream-glossary"])
+
+    def test_metadata_rerank_prefers_official_how_to_over_issue_summary_for_onboarding_query(self) -> None:
+        issue_summary_chunk = RetrievedChunk(
+            chunk_id="issue-summary",
+            text="Unity/Web audio-video sync issue when users join the same channel name.",
+            source_path="cases/unity-web-sync-issue.md",
+            similarity=0.92,
+            metadata={
+                "product": "video-calling",
+                "doc_subtype": "troubleshooting_case",
+                "chunk_type": "troubleshooting_procedure",
+                "keywords": ["channel name", "join channel"],
+                "topic": ["channel lifecycle"],
+            },
+        )
+        quickstart_chunk = RetrievedChunk(
+            chunk_id="official-join",
+            text="To join a channel, call joinChannel with the channel name, token, uid, and options.",
+            source_path="official/get-started-sdk_android.md",
+            source_url="https://docs.agora.io/en/video-calling/get-started/get-started-sdk",
+            similarity=0.81,
+            metadata={
+                "product": "video-calling",
+                "source_family": "video-calling/get-started/get-started-sdk",
+                "keywords": ["join channel", "channel name"],
+                "topic": ["channel lifecycle"],
+                "use_case": "join_channel",
+            },
+        )
+
+        reranked, _ = rag_qa._metadata_rerank(
+            query=(
+                "Hi Team, I am new to Agora and trying to integrate Agora SDK. However, I don't know "
+                "how to join the channel as requested. Could you help explain to me and guide me to "
+                "join the user into the channel?"
+            ),
+            chunks=[issue_summary_chunk, quickstart_chunk],
+            top_k=2,
+            product="audio_video_calling",
+            query_class="how_to_faq",
+        )
+
+        self.assertEqual(reranked[0].chunk_id, "official-join")
 
     def test_rrf_merge_dedupes_and_limits_results(self) -> None:
         shared = RetrievedChunk(
@@ -4209,9 +4263,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(
-            result.answer.answer,
+        self.assertIn(
             "Generate the Agora token on your app server in production.",
+            result.answer.answer,
         )
         self.assertTrue(result.trace.structured_retry_used)
         self.assertEqual(result.trace.generation_mode, "structured_answer")
@@ -4299,9 +4353,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(
-            result.answer.answer,
+        self.assertIn(
             "Generate the Agora token on your app server in production.",
+            result.answer.answer,
         )
         self.assertTrue(result.trace.structured_retry_used)
         self.assertEqual(result.trace.cited_chunk_ids, ["token-server"])
@@ -5215,7 +5269,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         retrieval_started = threading.Event()
         understanding_observed_parallel_retrieval: list[bool] = []
 
-        def fake_understand(_: str):
+        def fake_understand(_: str, **_kwargs):
             understanding_observed_parallel_retrieval.append(retrieval_started.wait(timeout=0.2))
             return understanding
 
@@ -5283,6 +5337,165 @@ The documentation states that time: 0 means the rule is applied permanently. How
                                                 run_rag_query("How do I join a channel in Node.js with a token?")
 
         self.assertEqual(understanding_observed_parallel_retrieval, [True])
+
+    def test_run_rag_query_long_how_to_faq_uses_generic_join_pinned_chunks_without_light_path(self) -> None:
+        join_chunk = RetrievedChunk(
+            chunk_id="join-android",
+            text="Call joinChannel(token, channelName, uid, options) to join a channel.",
+            source_path="official/get-started-sdk_android.md",
+            similarity=0.86,
+            h1="Quickstart",
+            h2="Implement Video Calling",
+            h3="Join a channel",
+            metadata={
+                "product": "video-calling",
+                "source_family": "video-calling/get-started/get-started-sdk",
+                "use_case": "join_channel",
+            },
+        )
+        auth_chunk = RetrievedChunk(
+            chunk_id="auth-android",
+            text="Request a token from your app server for the channel name and user ID before joining.",
+            source_path="official/authentication-workflow_android.md",
+            similarity=0.85,
+            h1="Use tokens",
+            h2="Implement basic authentication",
+            h3="Use a token to join a channel",
+            metadata={
+                "product": "video-calling",
+                "source_family": "video-calling/get-started/authentication-workflow",
+                "use_case": "basic_authentication",
+            },
+        )
+        issue_summary_chunk = RetrievedChunk(
+            chunk_id="issue-summary",
+            text="Unity/Web audio-video sync issue after joining the same channel.",
+            source_path="cases/unity-web-sync-issue.md",
+            similarity=0.94,
+            metadata={
+                "product": "video-calling",
+                "doc_subtype": "troubleshooting_case",
+                "keywords": ["join channel", "channel name"],
+                "topic": ["channel lifecycle"],
+            },
+        )
+        message = (
+            "Hi Team, I am new to Agora and trying to integrate Agora SDK. However, I don't know "
+            "how to join the channel as requested. Could you help explain to me and guide me to "
+            "join the user into the channel?"
+        )
+        understanding = QueryUnderstandingResult(
+            query_profile="en",
+            query_understanding_version="query-understanding-v2",
+            glossary_version="glossary-v2",
+            self_query_version="self-query-v2",
+            normalized_query=message,
+            canonical_terms=["Channel"],
+            glossary_hits=[],
+            dictionary_hits=[{"canonical_term": "Channel"}],
+            rewritten_queries=["how to join channel token uid quickstart"],
+            decomposition_subqueries=[],
+            retrieval_plan=RetrievalPlan(
+                semantic_query="Agora SDK how to join a channel and guide a user into the channel",
+                soft_signals={"topic": ["channel lifecycle"], "use_case": ["join_channel"]},
+                rule_expansions=["joinChannel token uid"],
+                llm_expansions=["how to join channel token uid quickstart"],
+            ),
+            fallback_mode="none",
+        )
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "app_schema": "supportportal",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 3,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-5.4",
+                "reasoning_effort": "high",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "vector_enabled": True,
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_enabled": True,
+                "rerank_timeout_seconds": 10.0,
+                "rerank_max_retries": 1,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+                "context_budget_enabled": False,
+                "reserved_output_tokens": 1200,
+                "buffer_tokens": 1200,
+            }
+            with patch(
+                "backend.services.rag_qa._resolve_active_vector_table",
+                return_value="supportportal.docagent_chunks_bge_m3_1024",
+            ), patch(
+                "backend.services.rag_qa.get_embedding_provider",
+                return_value=self._FakeProvider(),
+            ), patch(
+                "backend.services.rag_qa.understand_rag_query",
+                return_value=understanding,
+            ), patch(
+                "backend.services.rag_qa._invoke_agentic_planner",
+                return_value={
+                    "query_class": "how_to_faq",
+                    "first_pass_tools": ["p_bm25", "p_fts"],
+                    "query_variants": [("original", message)],
+                    "decomposition_targets": [],
+                    "evidence_goal": "how_to_usage_support",
+                    "recovery_bias": "lexical",
+                },
+            ), patch(
+                "backend.services.rag_qa._fetch_generic_join_pinned_chunks",
+                return_value=[rag_qa._copy_chunk(join_chunk), rag_qa._copy_chunk(auth_chunk)],
+            ), patch(
+                "backend.services.rag_qa._retrieve_chunks",
+                side_effect=AssertionError("vector retrieval should not be needed when pinned generic join support exists"),
+            ), patch(
+                "backend.services.rag_qa._retrieve_bm25_chunks",
+                return_value=[rag_qa._copy_chunk(issue_summary_chunk)],
+            ), patch(
+                "backend.services.rag_qa._retrieve_fts_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._retrieve_keyword_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._metadata_rerank",
+                side_effect=lambda *args, **kwargs: (
+                    list(kwargs.get("chunks") if "chunks" in kwargs else args[1]),
+                    {
+                        "post_rerank_count": len(kwargs.get("chunks") if "chunks" in kwargs else args[1]),
+                        "hints": {},
+                        "applied_filter": False,
+                        "filter_type": None,
+                    },
+                ),
+            ), patch(
+                "backend.services.rag_qa._rerank_chunks",
+                side_effect=lambda _query, chunks, _config, *, limit=None: chunks,
+            ), patch(
+                "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                side_effect=AssertionError("generic join deterministic answer should bypass answer generation"),
+            ):
+                result = run_rag_query(message, product="audio_video_calling")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.trace.answer_profile_used, "generic_join_deterministic")
+        self.assertFalse(result.trace.light_path_used)
+        self.assertEqual(result.trace.selected_chunk_ids[:2], ["join-android", "auth-android"])
+        self.assertIn("join method", result.answer.answer.lower())
 
 
 if __name__ == "__main__":

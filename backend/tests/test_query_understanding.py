@@ -161,6 +161,40 @@ class QueryUnderstandingTests(unittest.TestCase):
         self.assertIn("agora channel join process", result.retrieval_plan.llm_expansions)
         self.assertEqual(downpush_hard_filters(result.retrieval_plan), {"language": "nodejs"})
 
+    def test_understand_rag_query_does_not_infer_go_language_from_agora_onboarding_question(self) -> None:
+        llm_outputs = [
+            LlmTextResult(
+                text=(
+                    '{"semantic_query":"Agora SDK how to join a channel and guide a user into the channel",'
+                    '"hard_filters":{},'
+                    '"soft_signals":{"topic":["channel lifecycle"],"use_case":["join_channel"]}}'
+                ),
+                model_name="gpt-5.4-mini",
+            ),
+            LlmTextResult(
+                text='{"rewritten_queries":["Go Agora SDK join channel channel name same channel"]}',
+                model_name="gpt-5.4-mini",
+            ),
+            LlmTextResult(
+                text='{"decomposition_subqueries":[]}',
+                model_name="gpt-5.4-mini",
+            ),
+        ]
+
+        with patch("backend.services.query_understanding._load_cached_llm_outputs", return_value=(None, False)), patch(
+            "backend.services.query_understanding.invoke_responses_text",
+            side_effect=llm_outputs,
+        ):
+            result = understand_rag_query(
+                "Hi Team, I am new to Agora and trying to integrate Agora SDK. However, I don't know "
+                "how to join the channel as requested. Could you help explain to me and guide me to "
+                "join the user into the channel?"
+            )
+
+        self.assertNotIn("language", result.retrieval_plan.hard_filters)
+        self.assertEqual(downpush_hard_filters(result.retrieval_plan), {})
+        self.assertEqual(result.retrieval_plan.soft_signals.get("use_case"), ["join_channel"])
+
     def test_build_prf_expansions_filters_noise_and_caps_results(self) -> None:
         chunks = [
             RetrievedChunk(

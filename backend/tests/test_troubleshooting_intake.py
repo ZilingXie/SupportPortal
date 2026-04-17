@@ -65,6 +65,33 @@ The documentation states that time: 0 means the rule is applied permanently. How
             ["desired_outcome", "blocked_step_or_error"],
         )
 
+    def test_new_to_agora_sdk_join_channel_question_stays_in_answer_mode(self) -> None:
+        message = (
+            "Hi Team, I am new to Agora and trying to integrate Agora SDK. However, I don't know "
+            "how to join the channel as requested. Could you help explain to me and guide me to "
+            "join the user into the channel?"
+        )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
+            result = evaluate_troubleshooting_intake(
+                message=message,
+                product="audio_video_calling",
+                ticket_subject="Join channel guidance",
+                ticket_context=[{"role": "customer", "content": message}],
+                current_state=None,
+                rag_result={
+                    "reason": "rag_insufficient_evidence",
+                    "answer": "I couldn't find enough information in the available support knowledge base to answer that question.",
+                    "evidence_summary": {},
+                },
+            )
+
+        self.assertEqual(result.issue_mode, "answer")
+        self.assertEqual(result.missing_information, ["desired_outcome", "blocked_step_or_error"])
+        self.assertNotIn("channel name", result.customer_reply.lower())
+        self.assertNotIn("problematic uid", result.customer_reply.lower())
+        self.assertNotIn("issue timestamp", result.customer_reply.lower())
+
     def test_audio_video_issue_requests_channel_uid_and_timestamp(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
             result = evaluate_troubleshooting_intake(

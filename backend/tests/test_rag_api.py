@@ -453,6 +453,30 @@ class RagApiTests(unittest.TestCase):
         self.assertTrue(callable(kwargs["should_cancel"]))
         self.assertTrue(callable(kwargs["record_cancel_stage"]))
 
+    def test_internal_rag_query_forwards_query_policy_to_rag_engine(self) -> None:
+        repository = _TrackingKnowledgeRepository()
+
+        with self._client(repository) as client, patch.object(
+            rag_api,
+            "run_rag_query",
+            return_value=_answer_result(),
+        ) as run_mock:
+            response = client.post(
+                "/internal/rag/query",
+                headers={"Authorization": "Bearer test-token"},
+                json={
+                    "question": "how to join channel",
+                    "request_id": "rag-api-policy-1",
+                    "ticket_id": "TK-003",
+                    "customer_id": "C-003",
+                    "query_policy": "client_accuracy_first",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        run_mock.assert_called_once()
+        self.assertEqual(run_mock.call_args.kwargs["query_policy"], "client_accuracy_first")
+
     def test_internal_rag_query_fail_closes_extractive_fallback_result(self) -> None:
         repository = _TrackingKnowledgeRepository()
         fallback_result = RagQueryResult(

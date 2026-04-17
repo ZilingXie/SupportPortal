@@ -9,6 +9,11 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from backend.services.api_semantics import is_api_semantics_mismatch_context
+from backend.services.client_query_intent import (
+    clean_client_query_text,
+    has_explicit_troubleshooting_signal,
+    is_answer_first_how_to_message,
+)
 from backend.services.customer_reply_composer import (
     append_customer_reply_email_paragraph,
     compose_customer_reply_email,
@@ -61,12 +66,6 @@ AGENT_NAME_ROUTE = "route_agent"
 AGENT_NAME_RAG = "rag_agent"
 AGENT_NAME_REVIEW = "review_agent"
 
-_TROUBLESHOOTING_SIGNAL_RE = re.compile(
-    r"\b(android|ios|macos|windows|linux|sdk|version|error|crash|issue|problem|bug|fail|failed|"
-    r"failure|timeout|callback|debug|troubleshoot|black screen|blank screen|no audio|no video)\b",
-    re.IGNORECASE,
-)
-_GENERIC_HOW_TO_RE = re.compile(r"^\s*(how\s+(?:do\s+i\s+)?(?:to|can\s+i)|what\s+is|what\s+are)\b", re.IGNORECASE)
 _ANSWER_MODE_REQUIRED_FIELDS = ("desired_outcome", "blocked_step_or_error")
 _STRUCTURED_TECHNICAL_REPLY_RE = re.compile(
     r"```|(^|\n)\s*\d+\.\s+|(^|\n)\s*[-*]\s+|\bjoinchannel\b|\bsetclientrole\b|\bengine\.\w+\b|"
@@ -111,7 +110,7 @@ def _utc_now() -> str:
 
 
 def _clean_text(value: Any) -> str:
-    return " ".join(str(value or "").split()).strip()
+    return clean_client_query_text(value)
 
 
 def _build_resolved_confirmation_resolution(message: str) -> SupportResolution:
@@ -947,8 +946,7 @@ def _is_high_risk_grounded_answer(
     if (
         query_class == "how_to_faq"
         and normalized_message
-        and _GENERIC_HOW_TO_RE.search(normalized_message)
-        and not _TROUBLESHOOTING_SIGNAL_RE.search(normalized_message.lower())
+        and is_answer_first_how_to_message(normalized_message)
     ):
         if bool(quality_signals.get("needs_human")):
             return True
@@ -961,7 +959,7 @@ def _is_high_risk_grounded_answer(
         if not resolution.citations:
             return True
         return float(resolution.confidence or 0.0) < 0.75
-    if _TROUBLESHOOTING_SIGNAL_RE.search(_clean_text(message).lower()):
+    if has_explicit_troubleshooting_signal(_clean_text(message).lower()):
         return True
     if float(resolution.confidence or 0.0) < 0.9:
         return True
@@ -995,7 +993,7 @@ def _is_troubleshooting_intake_candidate(
 ) -> bool:
     if isinstance(client_intake_state, dict) and str(client_intake_state.get("issue_mode") or "").strip().lower() == "investigation":
         return True
-    return bool(_TROUBLESHOOTING_SIGNAL_RE.search(_clean_text(message).lower()))
+    return has_explicit_troubleshooting_signal(_clean_text(message).lower())
 
 
 def _resolve_pending_investigation_reason(

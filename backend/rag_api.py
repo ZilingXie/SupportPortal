@@ -632,6 +632,7 @@ class RagQueryRequest(BaseModel):
     customer_id: str | None = Field(default=None, max_length=128)
     requester: str | None = Field(default=None, max_length=256)
     product: str | None = Field(default=None, max_length=64)
+    query_policy: str | None = Field(default=None, max_length=64)
     ticket_context: list[dict[str, str]] | None = None
     top_k: int | None = Field(default=None, ge=1, le=12)
 
@@ -1106,6 +1107,7 @@ def internal_rag_query(request: RagQueryRequest, _: None = Depends(_require_inte
             customer_id=request.customer_id,
             requester=request.requester,
             product=request.product,
+            query_policy=request.query_policy,
             should_cancel=lambda: bool(inflight_state["cancel_event"].is_set()),
             record_cancel_stage=lambda stage: _update_inflight_rag_stage(request.request_id, stage),
         )

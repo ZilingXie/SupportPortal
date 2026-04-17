@@ -476,6 +476,7 @@ def _fetch_rag_answer_detail_for_worker(
             requester=requester,
             ticket_context=ticket_context,
             product=product,
+            query_policy="client_accuracy_first",
             insufficient_reply=INSUFFICIENT_EVIDENCE_REPLY,
             timeout_seconds=timeout_seconds,
             recovery_window_seconds=recovery_window_seconds,

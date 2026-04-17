@@ -19,6 +19,10 @@ from backend.services.api_semantics import (
     extract_numbered_subqueries,
     is_api_semantics_mismatch_message,
 )
+from backend.services.client_query_intent import (
+    has_explicit_troubleshooting_signal,
+    is_answer_first_how_to_message,
+)
 from backend.services.embedding_provider import (
     DEFAULT_PGVECTOR_TABLE,
     embedding_model_id,
@@ -153,7 +157,7 @@ _LIGHT_PATH_JOIN_RECOVERY_BM25_CANDIDATE_K = 24
 _LIGHT_PATH_JOIN_RECOVERY_FTS_CANDIDATE_K = 24
 _LIGHT_PATH_JOIN_RECOVERY_FUSION_CANDIDATE_K = 18
 _GENERIC_JOIN_FOCUSED_VARIANT_KINDS = frozenset({"focused_rewrite", "focused_join_step"})
-_JOIN_CHANNEL_PATTERN = re.compile(r"\bjoin(?:\s+a)?\s+channel\b|\bjoinchannel\b", flags=re.IGNORECASE)
+_JOIN_CHANNEL_PATTERN = re.compile(r"\bjoin(?:\s+(?:a|the))?\s+channel\b|\bjoinchannel\b", flags=re.IGNORECASE)
 _AUDIO_VIDEO_CALLING_CORE_PRODUCTS = frozenset({"video-calling", "voice-calling"})
 _AUDIO_VIDEO_CALLING_SECONDARY_PRODUCTS = frozenset({"interactive-live-streaming", "broadcast-streaming"})
 _AUDIO_VIDEO_CALLING_PENALIZED_PRODUCTS = frozenset({"signaling", "iot", "cloud-recording"})
@@ -259,11 +263,13 @@ class RagQueryTrace:
     query_understanding_enabled: bool = False
     query_understanding_version: str | None = None
     query_profile: str | None = None
+    query_policy: str | None = None
     glossary_version: str | None = None
     self_query_version: str | None = None
     fallback_mode: str | None = None
     glossary_hit_terms: list[str] = field(default_factory=list)
     applied_hard_filters: dict[str, str] = field(default_factory=dict)
+    downpushed_hard_filters: dict[str, str] = field(default_factory=dict)
     applied_soft_signals: dict[str, list[str]] = field(default_factory=dict)
     rewritten_queries: list[str] = field(default_factory=list)
     decomposition_subqueries: list[str] = field(default_factory=list)
@@ -321,15 +327,20 @@ class RagQueryTrace:
     fts_latency_ms: float = 0.0
     retrieval_round_wall_clock_ms: float = 0.0
     retrieval_tool_timings: list[dict[str, Any]] = field(default_factory=list)
+    variant_candidate_counts: dict[str, dict[str, int]] = field(default_factory=dict)
+    variant_zero_yield_reasons: list[dict[str, Any]] = field(default_factory=list)
     fanout_used: bool = False
     fanout_child_count: int = 0
     fanout_children: list[dict[str, Any]] = field(default_factory=list)
     deadline_exhausted: bool = False
     anchor_hits: list[str] = field(default_factory=list)
     timeout_stage: str | None = None
+    doc_family_mix: dict[str, int] = field(default_factory=dict)
     generic_join_primary_chunk_found: bool = False
+    generic_join_support_pair_found: bool = False
     generic_join_support_chunks: list[str] = field(default_factory=list)
     generic_join_recovery_used: bool = False
+    answer_path_decision: str | None = None
 
 
 @dataclass
@@ -597,30 +608,19 @@ def _is_how_to_faq_query(
     if not normalized:
         return False
     lowered = normalized.lower()
-    if not any(lowered.startswith(prefix) for prefix in _HOW_TO_FAQ_PREFIXES):
+    answer_first_how_to = is_answer_first_how_to_message(normalized)
+    if not any(lowered.startswith(prefix) for prefix in _HOW_TO_FAQ_PREFIXES) and not answer_first_how_to:
         return False
     if re.search(r"\b(error|code)\s+\d{3,5}\b", lowered):
         return False
-    if any(
-        marker in lowered
-        for marker in [
-            "black screen",
-            "failed",
-            "failure",
-            "jitter",
-            "no audio",
-            "root cause",
-            "why ",
-            "问题",
-            "排查",
-            "故障",
-        ]
+    if has_explicit_troubleshooting_signal(lowered) or any(
+        marker in lowered for marker in ["jitter", "root cause", "why ", "问题", "排查", "故障"]
     ):
         return False
     if _is_multiple_channels_query(normalized) or _is_stream_channel_query(normalized):
         return False
     query_terms = _extract_query_terms(normalized, max_terms=8)
-    if len(normalized.split()) > 8 or len(query_terms) > 5:
+    if not answer_first_how_to and (len(normalized.split()) > 8 or len(query_terms) > 5):
         return False
     if any(term in _HOW_TO_FAQ_USAGE_TERMS for term in query_terms):
         return True
@@ -3831,6 +3831,19 @@ def _execute_agentic_round(
             if family == "fts"
             else keyword_ms
         )
+        zero_yield_reason = None
+        if not raw_chunks:
+            if used_seed_tool:
+                zero_yield_reason = "seeded_chunks_empty"
+            elif family in {"vector", "bm25", "keyword"} and downpush_hard_filters(
+                retrieval_plan,
+                query_policy=str(config.get("query_policy") or ""),
+            ):
+                zero_yield_reason = "no_match_after_downpush_filters"
+            elif query_kind in {"semantic", "rewrite"}:
+                zero_yield_reason = "variant_no_match"
+            else:
+                zero_yield_reason = "no_match"
         retrieval_tool_timings.append(
             {
                 "tool_name": current_tool_label,
@@ -3839,6 +3852,7 @@ def _execute_agentic_round(
                 "index_role": index_role,
                 "latency_ms": round(tool_latency_ms, 2),
                 "candidate_count": len(raw_chunks),
+                "zero_yield_reason": zero_yield_reason,
                 "used_seed_tool": used_seed_tool,
                 "used_cached_tool": used_cached_tool,
             }
@@ -4038,6 +4052,7 @@ def _execute_agentic_round(
                     retrieval_plan=retrieval_plan,
                     query_understanding=query_understanding,
                     product=plan.product,
+                    query_policy=str(config.get("query_policy") or ""),
                 )
                 interim_reranked_chunks = _reorder_chunks_for_rerank(
                     interim_reranked_chunks or interim_retrieved_chunks,
@@ -4195,7 +4210,7 @@ def _execute_agentic_round(
         limit=fusion_limit,
         shadow_ratio_cap=float(config.get("agent_shadow_ratio_cap") or 0.4),
     )
-    if plan.light_path and round_index == 1 and _is_generic_join_channel_query(message):
+    if round_index == 1 and _is_generic_join_channel_query(message):
         pinned_chunks = _fetch_generic_join_pinned_chunks(
             message=message,
             config=variant_config,
@@ -4209,7 +4224,7 @@ def _execute_agentic_round(
                 chunks=retrieved_chunks,
                 pinned_chunks=pinned_chunks,
             )
-    if plan.light_path and round_index == 1 and _is_generic_join_channel_query(message):
+    if round_index == 1 and _is_generic_join_channel_query(message):
         retrieved_chunks = _inject_generic_join_original_candidates(
             retrieved_chunks,
             tool_results=tool_results,
@@ -4217,7 +4232,7 @@ def _execute_agentic_round(
             limit=fusion_limit,
             query=message,
         )
-    if plan.light_path and round_index > 1 and recovery_action == "lexical_recovery" and _is_generic_join_channel_query(message):
+    if round_index > 1 and recovery_action == "lexical_recovery" and _is_generic_join_channel_query(message):
         retrieved_chunks = _inject_generic_join_recovery_candidates(
             retrieved_chunks,
             tool_results=effective_tool_results,
@@ -4249,6 +4264,7 @@ def _execute_agentic_round(
             retrieval_plan=retrieval_plan,
             query_understanding=query_understanding,
             product=plan.product,
+            query_policy=str(config.get("query_policy") or ""),
         )
         rerank_latency_ms += (time.perf_counter() - rerank_started_at) * 1000
         reranked_chunks = _reorder_chunks_for_rerank(
@@ -4600,6 +4616,51 @@ def _is_technical_case_chunk(metadata: dict[str, Any]) -> bool:
     return str(metadata.get("source_type") or "").strip() == "technical_article_api"
 
 
+def _normalize_query_policy(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized == "client_accuracy_first" else ""
+
+
+def _is_official_guidance_chunk(chunk: RetrievedChunk) -> bool:
+    metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+    source_path_lower = str(chunk.source_path or "").strip().lower()
+    source_url_lower = str(chunk.source_url or "").strip().lower()
+    source_family = str(metadata.get("source_family") or "").strip().lower()
+    chunk_type = str(metadata.get("chunk_type") or "").strip().lower()
+    use_case = str(metadata.get("use_case") or "").strip().lower()
+    section_path = " > ".join(_chunk_metadata_list(metadata.get("section_path"))).lower()
+    if source_path_lower.startswith("official/") or "docs.agora.io" in source_url_lower:
+        return True
+    if any(
+        marker in source_family
+        for marker in [
+            "get-started",
+            "quickstart",
+            "authentication-workflow",
+            "api-reference",
+            "how-to",
+        ]
+    ):
+        return True
+    if chunk_type in {"howto", "api_params", "code", "faq_index"} and any(
+        marker in section_path for marker in ["join a channel", "quickstart", "get started", "authentication"]
+    ):
+        return True
+    return use_case in {"join_channel", "basic_authentication"}
+
+
+def _doc_family_bucket(chunk: RetrievedChunk) -> str:
+    metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+    if _is_official_guidance_chunk(chunk):
+        return "official_guidance"
+    if _is_technical_case_chunk(metadata):
+        return "technical_case"
+    source_family = str(metadata.get("source_family") or "").strip().lower()
+    if source_family:
+        return source_family
+    return "other"
+
+
 def _extract_metadata_hints(query: str) -> MetadataHints:
     text = str(query or "")
     lower = text.lower()
@@ -4697,11 +4758,17 @@ def _metadata_rerank(
     retrieval_plan: RetrievalPlan | None = None,
     query_understanding: QueryUnderstandingResult | None = None,
     product: str | None = None,
+    query_class: str | None = None,
+    query_policy: str | None = None,
 ) -> tuple[list[RetrievedChunk], dict[str, Any]]:
     resolved_hints = hints or _extract_metadata_hints(query)
-    resolved_query_class = str(getattr(resolved_hints, "query_class", "") or "")
+    resolved_query_class = str(query_class or getattr(resolved_hints, "query_class", "") or "")
+    resolved_query_policy = _normalize_query_policy(query_policy)
     query_lower = str(query or "").lower()
     api_semantics_query = is_api_semantics_mismatch_message(query)
+    answer_first_guidance_query = (
+        resolved_query_class in {"how_to_faq", "configuration"} and is_answer_first_how_to_message(query)
+    )
     anchor_hits = {item.lower() for item in extract_anchor_hits(query)}
     endpoint_operation_hints = {item.lower() for item in extract_endpoint_operation_hints(query)}
     api_semantics_parameter_query = bool(
@@ -4782,6 +4849,18 @@ def _metadata_rerank(
         text_lower = chunk.text.lower()
         source_url_lower = str(chunk.source_url or "").strip().lower()
         source_path_lower = str(chunk.source_path or "").strip().lower()
+
+        if answer_first_guidance_query and _is_official_guidance_chunk(chunk):
+            official_boost = 2.1 if resolved_query_policy == "client_accuracy_first" else 1.6
+            boost += official_boost
+            reasons.append("intent:official_guidance_priority")
+            if use_case in {"join_channel", "basic_authentication"}:
+                boost += 0.9
+                reasons.append(f"intent:use_case:{use_case}")
+        if answer_first_guidance_query and _is_technical_case_chunk(metadata):
+            technical_penalty = 1.8 if resolved_query_policy == "client_accuracy_first" else 1.3
+            boost -= technical_penalty
+            reasons.append("intent:technical_case_penalty")
 
         if normalized_language and chunk_language == normalized_language:
             boost += 2.0
@@ -5021,21 +5100,67 @@ def _metadata_rerank(
             "llm_expansions": list(retrieval_plan.llm_expansions) if retrieval_plan is not None else [],
             "prf_expansions": list(retrieval_plan.prf_expansions) if retrieval_plan is not None else [],
             "hard_filter_sources": dict(retrieval_plan.hard_filter_sources) if retrieval_plan is not None else {},
+            "query_policy": resolved_query_policy or None,
             "cache_hit": bool(retrieval_plan.cache_hit) if retrieval_plan is not None else False,
             "prf_used": bool(retrieval_plan.prf_used) if retrieval_plan is not None else False,
         },
     }
 
 
-def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
+def _variant_candidate_counts_from_timings(retrieval_tool_timings: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    counts: dict[str, dict[str, int]] = {}
+    for timing in retrieval_tool_timings:
+        if not isinstance(timing, dict):
+            continue
+        query_kind = str(timing.get("query_kind") or "").strip() or "unknown"
+        tool_name = str(timing.get("tool_name") or "").strip() or "unknown"
+        counts.setdefault(query_kind, {})[tool_name] = int(timing.get("candidate_count") or 0)
+    return counts
+
+
+def _variant_zero_yield_reasons_from_timings(retrieval_tool_timings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    reasons: list[dict[str, Any]] = []
+    for timing in retrieval_tool_timings:
+        if not isinstance(timing, dict) or int(timing.get("candidate_count") or 0) > 0:
+            continue
+        reason = str(timing.get("zero_yield_reason") or "").strip() or "no_match"
+        reasons.append(
+            {
+                "tool_name": str(timing.get("tool_name") or "").strip() or None,
+                "query_kind": str(timing.get("query_kind") or "").strip() or None,
+                "round_index": int(timing.get("round_index") or 0),
+                "reason": reason,
+            }
+        )
+    return reasons
+
+
+def _doc_family_mix_for_chunks(chunks: list[RetrievedChunk]) -> dict[str, int]:
+    mix: dict[str, int] = {}
+    for chunk in chunks:
+        bucket = _doc_family_bucket(chunk)
+        mix[bucket] = mix.get(bucket, 0) + 1
+    return mix
+
+
+def _get_rag_config(top_k: int | None = None, *, query_policy: str | None = None) -> dict[str, Any]:
     dsn = (os.getenv("PGVECTOR_DSN") or "").strip()
     answer_profile = resolve_model_profile(RAG_ANSWER_SCENARIO)
     compression_profile = resolve_model_profile(RAG_CONTEXT_COMPRESSION_SCENARIO)
+    resolved_query_policy = _normalize_query_policy(query_policy)
     final_top_k = max(1, int(top_k)) if top_k is not None else _safe_int_env("RAG_TOP_K", 6)
     vector_candidate_k = _safe_int_env("RAG_VECTOR_CANDIDATE_K", max(40, final_top_k * 10))
     bm25_candidate_k = _safe_int_env("RAG_BM25_CANDIDATE_K", max(40, final_top_k * 10))
     fusion_candidate_k = _safe_int_env("RAG_FUSION_CANDIDATE_K", max(30, final_top_k * 8))
     rerank_top_n = _safe_int_env("RAG_RERANK_TOP_N", max(20, final_top_k * 4))
+    shadow_retrieval_enabled = _feature_flag_enabled("RAG_SHADOW_RETRIEVAL_ENABLED", True)
+    if resolved_query_policy == "client_accuracy_first":
+        final_top_k = max(final_top_k, 8)
+        vector_candidate_k = max(vector_candidate_k, 120)
+        bm25_candidate_k = max(bm25_candidate_k, 120)
+        fusion_candidate_k = max(fusion_candidate_k, 96)
+        rerank_top_n = max(rerank_top_n, 48)
+        shadow_retrieval_enabled = True
     schema = (os.getenv("PGVECTOR_SCHEMA") or "supportportal").strip() or "supportportal"
     raw_table = (os.getenv("PGVECTOR_TABLE") or DEFAULT_PGVECTOR_TABLE).strip() or DEFAULT_PGVECTOR_TABLE
     table_name = raw_table if "." in raw_table else f"{schema}.{raw_table}"
@@ -5093,11 +5218,12 @@ def _get_rag_config(top_k: int | None = None) -> dict[str, Any]:
         "rerank_api_key": rerank_api_key,
         "rerank_base_url": rerank_base_url,
         "rerank_enabled": rerank_enabled,
-        "shadow_retrieval_enabled": _feature_flag_enabled("RAG_SHADOW_RETRIEVAL_ENABLED", True),
+        "shadow_retrieval_enabled": shadow_retrieval_enabled,
         "rerank_timeout_seconds": _safe_float_env("RAG_RERANK_TIMEOUT_SECONDS", 10.0),
         "rerank_max_retries": _safe_int_env("RAG_RERANK_MAX_RETRIES", 1),
         "request_timeout_seconds": answer_profile.timeout_seconds,
         "max_retries": answer_profile.max_retries,
+        "query_policy": resolved_query_policy or None,
     }
 
 
@@ -5423,7 +5549,11 @@ def _retrieve_chunks(
     psycopg = _import_psycopg()
     sql = psycopg.sql
     retrieval_plan = _config_retrieval_plan(config)
-    downpush_filters = downpush_hard_filters(retrieval_plan) if retrieval_plan is not None else {}
+    downpush_filters = (
+        downpush_hard_filters(retrieval_plan, query_policy=str(config.get("query_policy") or ""))
+        if retrieval_plan is not None
+        else {}
+    )
     filter_sql, filter_params = _metadata_filter_clauses(sql, downpush_filters, metadata_ref="metadata")
 
     provider = get_embedding_provider()
@@ -5504,7 +5634,11 @@ def _retrieve_bm25_chunks(
     psycopg = _import_psycopg()
     sql = psycopg.sql
     retrieval_plan = _config_retrieval_plan(config)
-    downpush_filters = downpush_hard_filters(retrieval_plan) if retrieval_plan is not None else {}
+    downpush_filters = (
+        downpush_hard_filters(retrieval_plan, query_policy=str(config.get("query_policy") or ""))
+        if retrieval_plan is not None
+        else {}
+    )
     filter_sql, filter_params = _metadata_filter_clauses(sql, downpush_filters, metadata_ref="v.metadata")
     app_schema = str(config.get("app_schema") or "supportportal").strip() or "supportportal"
     normalized_index_role = str(index_role or "").strip().lower() or "primary"
@@ -5844,7 +5978,11 @@ def _retrieve_keyword_chunks(
     psycopg = _import_psycopg()
     sql = psycopg.sql
     retrieval_plan = _config_retrieval_plan(config)
-    downpush_filters = downpush_hard_filters(retrieval_plan) if retrieval_plan is not None else {}
+    downpush_filters = (
+        downpush_hard_filters(retrieval_plan, query_policy=str(config.get("query_policy") or ""))
+        if retrieval_plan is not None
+        else {}
+    )
     filter_sql, filter_params = _metadata_filter_clauses(sql, downpush_filters, metadata_ref="metadata")
     patterns = [f"%{term}%" for term in terms]
     candidate_limit = max(int(config["top_k"]) * 25, 50)
@@ -6747,10 +6885,11 @@ def _run_rag_query_legacy(
     requester: str | None = None,
     customer_id: str | None = None,
     product: str | None = None,
+    query_policy: str | None = None,
     should_cancel: Callable[[], bool] | None = None,
     record_cancel_stage: Callable[[str], None] | None = None,
 ) -> RagQueryResult | None:
-    config = _get_rag_config(top_k=top_k)
+    config = _get_rag_config(top_k=top_k, query_policy=query_policy)
     resolved_table = _resolve_active_vector_table(config)
     if resolved_table:
         config["table"] = resolved_table
@@ -6814,7 +6953,11 @@ def _run_rag_query_legacy(
             record_stage=record_cancel_stage,
         )
         query_understanding_executor = ThreadPoolExecutor(max_workers=1)
-        query_understanding_future = query_understanding_executor.submit(understand_rag_query, message)
+        query_understanding_future = query_understanding_executor.submit(
+            understand_rag_query,
+            message,
+            query_policy=query_policy,
+        )
     effective_plan = RetrievalPlan(semantic_query=original_query)
 
     def _retrieval_config_for(plan: RetrievalPlan) -> dict[str, Any]:
@@ -7194,6 +7337,7 @@ def _run_rag_query_legacy(
             top_k=int(config["fusion_candidate_k"]),
             retrieval_plan=effective_plan,
             query_understanding=query_understanding,
+            query_policy=str(config.get("query_policy") or ""),
         )
         rerank_latency_ms = round((time.perf_counter() - rerank_started_at) * 1000, 2)
         chunks = reranked_chunks or chunks
@@ -7301,6 +7445,11 @@ def _run_rag_query_legacy(
         extractive_fallback_used: bool,
     ) -> RagQueryTrace:
         query_meta = _query_understanding_meta(query_understanding, rerank_info)
+        resolved_query_policy = _normalize_query_policy(config.get("query_policy"))
+        downpushed_hard_filters = downpush_hard_filters(
+            effective_plan,
+            query_policy=resolved_query_policy,
+        )
         cited_chunk_ids = [str(item.get("chunk_id")) for item in answer.citations if isinstance(item, dict) and item.get("chunk_id")]
         selected_chunk_ids = [chunk.chunk_id for chunk in final_chunks if chunk.chunk_id]
         unique_selected_chunk_ids = {chunk_id for chunk_id in selected_chunk_ids if chunk_id}
@@ -7316,6 +7465,9 @@ def _run_rag_query_legacy(
             else None
         )
         compatible_lexical_latency_ms = round(bm25_latency_ms + keyword_fallback_latency_ms, 2)
+        answer_path_decision = None
+        if _is_how_to_faq_query(message, query_understanding):
+            answer_path_decision = "answer_first" if not needs_human else "clarify_first"
         return RagQueryTrace(
             query_type=query_type,
             retrieval_strategy=_retrieval_strategy_for(keyword_fallback_used=bool(keyword_fallback_chunks)),
@@ -7373,11 +7525,13 @@ def _run_rag_query_legacy(
             query_understanding_enabled=query_understanding is not None,
             query_understanding_version=query_understanding.query_understanding_version if query_understanding is not None else None,
             query_profile=query_meta["query_profile"] or None,
+            query_policy=resolved_query_policy or None,
             glossary_version=query_understanding.glossary_version if query_understanding is not None else None,
             self_query_version=query_understanding.self_query_version if query_understanding is not None else None,
             fallback_mode=query_meta["fallback_mode"] or None,
             glossary_hit_terms=list(query_meta["glossary_hit_terms"]),
             applied_hard_filters=dict(query_meta["applied_hard_filters"]),
+            downpushed_hard_filters=dict(downpushed_hard_filters),
             applied_soft_signals=dict(query_meta["applied_soft_signals"]),
             dictionary_hits=list(query_meta["dictionary_hits"]),
             rule_expansions=list(query_meta["rule_expansions"]),
@@ -7423,6 +7577,10 @@ def _run_rag_query_legacy(
             fts_latency_ms=0.0,
             retrieval_round_wall_clock_ms=compatible_lexical_latency_ms,
             retrieval_tool_timings=[],
+            variant_candidate_counts={},
+            variant_zero_yield_reasons=[],
+            doc_family_mix=_doc_family_mix_for_chunks(final_chunks),
+            answer_path_decision=answer_path_decision,
         )
 
     if payload is not None and _is_valid_response(payload, allowed_chunk_ids):
@@ -7548,12 +7706,13 @@ def _run_rag_query_agentic_single(
     customer_id: str | None = None,
     requester: str | None = None,
     product: str | None = None,
+    query_policy: str | None = None,
     should_cancel: Callable[[], bool] | None = None,
     record_cancel_stage: Callable[[str], None] | None = None,
 ) -> RagQueryResult | None:
     _ = ticket_id
     request_started_at = time.perf_counter()
-    config = _get_rag_config(top_k=top_k)
+    config = _get_rag_config(top_k=top_k, query_policy=query_policy)
     if not config["dsn"] or not config["api_key"]:
         return None
 
@@ -7598,7 +7757,7 @@ def _run_rag_query_agentic_single(
             config["_vector_runtime_available"] = False
     preflight_probe_latency_ms = round((time.perf_counter() - request_started_at) * 1000, 2)
     warm_vector_enabled = bool(config.get("vector_enabled")) and not (
-        simple_lexical_query or short_how_to_faq_query or api_semantics_query
+        simple_lexical_query or short_how_to_faq_query or api_semantics_query or _is_generic_join_channel_query(message)
     )
     query_understanding_enabled = _feature_flag_enabled("RAG_QUERY_UNDERSTANDING_ENABLED", True) and not (
         simple_lexical_query or short_how_to_faq_query or api_semantics_query
@@ -7685,7 +7844,11 @@ def _run_rag_query_agentic_single(
         query_understanding_executor = ThreadPoolExecutor(max_workers=3 if warm_vector_enabled else 2)
         warm_retrieval_config = dict(config)
         warm_retrieval_config["_retrieval_plan"] = RetrievalPlan(semantic_query=str(message or "").strip())
-        query_understanding_future = query_understanding_executor.submit(understand_rag_query, message)
+        query_understanding_future = query_understanding_executor.submit(
+            understand_rag_query,
+            message,
+            query_policy=query_policy,
+        )
         if warm_vector_enabled:
             warm_original_vector_future = query_understanding_executor.submit(
                 _timed_retrieve,
@@ -7869,6 +8032,11 @@ def _run_rag_query_agentic_single(
         extractive_fallback_used: bool,
     ) -> RagQueryTrace:
         query_meta = _query_understanding_meta(effective_query_understanding or query_understanding, final_rerank_info)
+        resolved_query_policy = _normalize_query_policy(config.get("query_policy"))
+        downpushed_hard_filters = downpush_hard_filters(
+            effective_plan,
+            query_policy=resolved_query_policy,
+        )
         cited_chunk_ids = [str(item.get("chunk_id")) for item in answer.citations if isinstance(item, dict) and item.get("chunk_id")]
         selected_chunk_ids = [chunk.chunk_id for chunk in final_chunks if chunk.chunk_id]
         unique_selected_chunk_ids = {chunk_id for chunk_id in selected_chunk_ids if chunk_id}
@@ -7884,6 +8052,7 @@ def _run_rag_query_agentic_single(
             else None
         )
         generic_join_primary_chunk_found = False
+        generic_join_support_pair_found = False
         generic_join_support_chunks: list[str] = []
         generic_join_recovery_used = False
         if _is_generic_join_channel_query(message):
@@ -7893,6 +8062,7 @@ def _run_rag_query_agentic_single(
                 query=message,
             )
             generic_join_primary_chunk_found = join_chunk is not None
+            generic_join_support_pair_found = join_chunk is not None and auth_chunk is not None
             generic_join_support_chunks = [
                 str(chunk.chunk_id or "").strip()
                 for chunk in [join_chunk, auth_chunk]
@@ -7911,6 +8081,9 @@ def _run_rag_query_agentic_single(
             "primary": sum(1 for chunk in final_chunks if str(chunk.index_role or "").strip().lower() == "primary"),
             "shadow": sum(1 for chunk in final_chunks if str(chunk.index_role or "").strip().lower() == "shadow"),
         }
+        answer_path_decision = None
+        if plan.query_class in {"how_to_faq", "configuration"}:
+            answer_path_decision = "answer_first" if not needs_human else "clarify_first"
         return RagQueryTrace(
             query_type=query_type,
             retrieval_strategy="agentic_multi_tool_v1",
@@ -7972,11 +8145,13 @@ def _run_rag_query_agentic_single(
             query_understanding_enabled=(effective_query_understanding or query_understanding) is not None,
             query_understanding_version=query_understanding.query_understanding_version if query_understanding is not None else None,
             query_profile=query_meta["query_profile"] or None,
+            query_policy=resolved_query_policy or None,
             glossary_version=query_understanding.glossary_version if query_understanding is not None else None,
             self_query_version=query_understanding.self_query_version if query_understanding is not None else None,
             fallback_mode=query_meta["fallback_mode"] or None,
             glossary_hit_terms=list(query_meta["glossary_hit_terms"]),
             applied_hard_filters=dict(query_meta["applied_hard_filters"]),
+            downpushed_hard_filters=dict(downpushed_hard_filters),
             applied_soft_signals=dict(query_meta["applied_soft_signals"]),
             dictionary_hits=list(query_meta["dictionary_hits"]),
             rule_expansions=list(query_meta["rule_expansions"]),
@@ -8055,10 +8230,15 @@ def _run_rag_query_agentic_single(
             fts_latency_ms=round(fts_latency_ms, 2),
             retrieval_round_wall_clock_ms=round(retrieval_round_wall_clock_ms, 2),
             retrieval_tool_timings=list(retrieval_tool_timings),
+            variant_candidate_counts=_variant_candidate_counts_from_timings(retrieval_tool_timings),
+            variant_zero_yield_reasons=_variant_zero_yield_reasons_from_timings(retrieval_tool_timings),
             anchor_hits=extract_anchor_hits(message),
+            doc_family_mix=_doc_family_mix_for_chunks(final_chunks),
             generic_join_primary_chunk_found=generic_join_primary_chunk_found,
+            generic_join_support_pair_found=generic_join_support_pair_found,
             generic_join_support_chunks=generic_join_support_chunks,
             generic_join_recovery_used=generic_join_recovery_used,
+            answer_path_decision=answer_path_decision,
         )
 
     if not final_chunks or final_judge is None or final_judge.decision == "escalate":
@@ -8616,6 +8796,7 @@ def _run_rag_query_agentic(
     customer_id: str | None = None,
     requester: str | None = None,
     product: str | None = None,
+    query_policy: str | None = None,
     should_cancel: Callable[[], bool] | None = None,
     record_cancel_stage: Callable[[str], None] | None = None,
 ) -> RagQueryResult | None:
@@ -8634,6 +8815,7 @@ def _run_rag_query_agentic(
             customer_id=customer_id,
             requester=requester,
             product=product,
+            query_policy=query_policy,
             should_cancel=should_cancel,
             record_cancel_stage=record_cancel_stage,
         )
@@ -8681,6 +8863,7 @@ def _run_rag_query_agentic(
             customer_id=customer_id,
             requester=requester,
             product=product,
+            query_policy=query_policy,
             should_cancel=_child_should_cancel,
             record_cancel_stage=_child_record,
         )
@@ -8765,6 +8948,7 @@ def run_rag_query(
     customer_id: str | None = None,
     requester: str | None = None,
     product: str | None = None,
+    query_policy: str | None = None,
     should_cancel: Callable[[], bool] | None = None,
     record_cancel_stage: Callable[[str], None] | None = None,
 ) -> RagQueryResult | None:
@@ -8775,6 +8959,7 @@ def run_rag_query(
             requester=requester,
             customer_id=customer_id,
             product=product,
+            query_policy=query_policy,
             should_cancel=should_cancel,
             record_cancel_stage=record_cancel_stage,
         )
@@ -8793,6 +8978,7 @@ def run_rag_query(
             customer_id=customer_id,
             requester=requester,
             product=product,
+            query_policy=query_policy,
             should_cancel=should_cancel,
             record_cancel_stage=record_cancel_stage,
         )
@@ -8811,6 +8997,7 @@ def run_rag_query(
             requester=requester,
             customer_id=customer_id,
             product=product,
+            query_policy=query_policy,
             should_cancel=should_cancel,
             record_cancel_stage=record_cancel_stage,
         )

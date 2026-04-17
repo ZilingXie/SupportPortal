@@ -10,6 +10,7 @@ import re
 import time
 from typing import TYPE_CHECKING, Any
 
+from backend.services.client_query_intent import is_answer_first_how_to_message
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import QUERY_EXPANSION_SCENARIO, resolve_model_profile
 from backend.services.prompts.query_understanding import (
@@ -118,6 +119,11 @@ _GENERIC_EXPANSION_TERMS = {
     "sdk",
     "documentation",
 }
+_LANGUAGE_CONTEXT_MARKERS = ("in", "for", "using", "with", "on", "from")
+_CODE_CONTEXT_RE = re.compile(
+    r"`[^`]+`|\b(api|method|callback|parameter|parameters|code|code sample|sample code|sdk method)\b",
+    re.IGNORECASE,
+)
 _ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_GLOSSARY_PATH = _ROOT / "dictionary" / "video-calling_glossary (1).md"
 _DEFAULT_GLOSSARY_SNAPSHOT_PATH = _ROOT / "dictionary" / "agora_glossary_en.json"
@@ -374,10 +380,38 @@ def _find_dictionary_hits(query: str, profile: QueryProfile) -> list[dict[str, A
     return ordered[:GLOSSARY_HIT_LIMIT]
 
 
+def _contains_alias(text: str, alias: str) -> bool:
+    normalized_text = _normalize_space(text).lower()
+    normalized_alias = _normalize_space(alias).lower()
+    if not normalized_text or not normalized_alias:
+        return False
+    pattern = rf"(?<![a-z0-9]){re.escape(normalized_alias)}(?![a-z0-9])"
+    return re.search(pattern, normalized_text, flags=re.IGNORECASE) is not None
+
+
+def _query_has_explicit_language_context(query: str) -> bool:
+    normalized_query = _normalize_space(query).lower()
+    if not normalized_query:
+        return False
+    if _mentioned_methods(query):
+        return True
+    if _CODE_CONTEXT_RE.search(normalized_query):
+        return True
+    for alias in _LANGUAGE_MAP:
+        if not _contains_alias(normalized_query, alias):
+            continue
+        if normalized_query.startswith(alias):
+            return True
+        for marker in _LANGUAGE_CONTEXT_MARKERS:
+            if re.search(rf"\b{re.escape(marker)}\s+{re.escape(alias)}\b", normalized_query, flags=re.IGNORECASE):
+                return True
+    return False
+
+
 def _detect_language(query: str) -> str | None:
     lowered = _normalize_space(query).lower()
     for alias, normalized in _LANGUAGE_MAP.items():
-        if alias in lowered:
+        if _contains_alias(lowered, alias):
             return normalized
     return None
 
@@ -674,16 +708,18 @@ def _invoke_query_expansion_llm(
     return _parse_llm_json_payload(result.text), usage_entry
 
 
-def _query_expansion_prompt_model_version() -> str:
+def _query_expansion_prompt_model_version(*, query_policy: str | None = None) -> str:
     profile = resolve_model_profile(QUERY_EXPANSION_SCENARIO)
     reasoning = profile.reasoning_effort or "none"
-    return f"{profile.provider}:{profile.model}:{reasoning}:{SELF_QUERY_VERSION}"
+    policy_suffix = str(query_policy or "").strip().lower() or "default"
+    return f"{profile.provider}:{profile.model}:{reasoning}:{SELF_QUERY_VERSION}:{policy_suffix}"
 
 
 def _load_cached_llm_outputs(
     *,
     normalized_query: str,
     profile: QueryProfile,
+    query_policy: str | None = None,
 ) -> tuple[dict[str, Any] | None, bool]:
     if not _query_expansion_enabled():
         return None, False
@@ -693,7 +729,7 @@ def _load_cached_llm_outputs(
         query_profile=profile.profile_id,
         query_understanding_version=QUERY_UNDERSTANDING_VERSION,
         glossary_version=profile.glossary_version,
-        prompt_model_version=_query_expansion_prompt_model_version(),
+        prompt_model_version=_query_expansion_prompt_model_version(query_policy=query_policy),
     )
     payload = cache.get_json(cache_key)
     cache.close()
@@ -705,6 +741,7 @@ def _store_cached_llm_outputs(
     normalized_query: str,
     profile: QueryProfile,
     payload: dict[str, Any],
+    query_policy: str | None = None,
 ) -> None:
     if not payload or not _query_expansion_enabled():
         return
@@ -714,7 +751,7 @@ def _store_cached_llm_outputs(
         query_profile=profile.profile_id,
         query_understanding_version=QUERY_UNDERSTANDING_VERSION,
         glossary_version=profile.glossary_version,
-        prompt_model_version=_query_expansion_prompt_model_version(),
+        prompt_model_version=_query_expansion_prompt_model_version(query_policy=query_policy),
     )
     cache.set_json(cache_key, payload)
     cache.close()
@@ -835,6 +872,7 @@ def _build_heuristic_rewrites(
     *,
     canonical_terms: list[str],
     plan: RetrievalPlan,
+    query_policy: str | None = None,
 ) -> list[str]:
     candidates: list[str] = []
     semantic_query = _normalize_space(plan.semantic_query) or _normalize_space(query)
@@ -848,6 +886,11 @@ def _build_heuristic_rewrites(
         suffix_terms = [term for term in canonical_terms if term.lower() not in semantic_query.lower()]
         if suffix_terms:
             candidates.append(_normalize_space(f"{semantic_query} {' '.join(suffix_terms[:2])}"))
+    if str(query_policy or "").strip().lower() == "client_accuracy_first" and is_answer_first_how_to_message(query):
+        lowered = semantic_query.lower()
+        if any(marker in lowered for marker in ["join channel", "join a channel", "join the channel"]):
+            candidates.append(_normalize_space(f"{semantic_query} quickstart"))
+            candidates.append(_normalize_space(f"{semantic_query} token uid"))
     return _filter_expansion_candidates(
         candidates,
         query=query,
@@ -880,12 +923,22 @@ def _build_decomposition_subqueries(
     return []
 
 
-def downpush_hard_filters(plan: RetrievalPlan) -> dict[str, str]:
-    return {
-        key: value
-        for key, value in plan.hard_filters.items()
-        if plan.hard_filter_sources.get(key) in _HARD_FILTER_DOWNPUSH_SOURCES
-    }
+def downpush_hard_filters(plan: RetrievalPlan, *, query_policy: str | None = None) -> dict[str, str]:
+    resolved_policy = str(query_policy or "").strip().lower()
+    downpushed: dict[str, str] = {}
+    for key, value in plan.hard_filters.items():
+        if plan.hard_filter_sources.get(key) not in _HARD_FILTER_DOWNPUSH_SOURCES:
+            continue
+        if (
+            key == "language"
+            and resolved_policy == "client_accuracy_first"
+            and not _query_has_explicit_language_context(plan.semantic_query)
+            and not plan.hard_filters.get("method_name")
+            and not plan.hard_filters.get("protocol")
+        ):
+            continue
+        downpushed[key] = value
+    return downpushed
 
 
 def _extract_candidate_phrases_from_chunk(chunk: RetrievedChunk) -> list[tuple[str, float]]:
@@ -959,6 +1012,7 @@ def understand_rag_query(
     *,
     locale: str | None = None,
     product: str | None = None,
+    query_policy: str | None = None,
 ) -> QueryUnderstandingResult:
     started_at = time.perf_counter()
     profile = load_query_profile(locale=locale, product=product)
@@ -1012,7 +1066,11 @@ def understand_rag_query(
 
     rewrite_started_at = time.perf_counter()
     fallback_mode = "none"
-    cache_payload, cache_hit = _load_cached_llm_outputs(normalized_query=normalized_query, profile=profile)
+    cache_payload, cache_hit = _load_cached_llm_outputs(
+        normalized_query=normalized_query,
+        profile=profile,
+        query_policy=query_policy,
+    )
     llm_self_query_raw: dict[str, Any] = {}
     llm_rewrite_raw: dict[str, Any] = {}
     llm_decomposition_raw: dict[str, Any] = {}
@@ -1037,7 +1095,7 @@ def understand_rag_query(
         try:
             llm_rewrite_raw, usage_entry = _invoke_query_expansion_llm(
                 stage="query_rewrite",
-                system_prompt=build_query_rewrite_system_prompt(),
+                system_prompt=build_query_rewrite_system_prompt(query_policy=query_policy),
                 user_prompt=build_query_rewrite_user_prompt(
                     query=normalized_query,
                     canonical_terms=canonical_terms,
@@ -1047,6 +1105,7 @@ def understand_rag_query(
                         "hard_filters": llm_self_query_raw.get("hard_filters") or seed_plan.get("hard_filters"),
                         "soft_signals": llm_self_query_raw.get("soft_signals") or seed_plan.get("soft_signals"),
                     },
+                    query_policy=query_policy,
                 ),
             )
             if usage_entry:
@@ -1084,6 +1143,7 @@ def understand_rag_query(
                     "rewrite": llm_rewrite_raw,
                     "decomposition": llm_decomposition_raw,
                 },
+                query_policy=query_policy,
             )
 
     llm_plan = validate_retrieval_plan(
@@ -1107,6 +1167,7 @@ def understand_rag_query(
             normalized_query,
             canonical_terms=canonical_terms,
             plan=merged_plan,
+            query_policy=query_policy,
         )
     decomposition_subqueries = _build_decomposition_subqueries(
         normalized_query,

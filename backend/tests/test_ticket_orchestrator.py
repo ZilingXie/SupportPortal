@@ -129,6 +129,8 @@ class TicketOrchestratorTests(unittest.TestCase):
             ticket_subject="Join a channel",
             ticket_context=[{"role": "customer", "content": "Need a Cloud Recording answer."}],
             product="cloud_recording",
+            latest_assistant_message=None,
+            current_ticket_status=None,
         )
         self.assertEqual(captured_resolution_kwargs["product"], "cloud_recording")
 
@@ -147,7 +149,7 @@ class TicketOrchestratorTests(unittest.TestCase):
 
         self.assertFalse(execution.needs_investigating)
         self.assertEqual(execution.next_status, COMMUNICATING_STATUS)
-        self.assertEqual(execution.execution_action, "rag")
+        self.assertEqual(execution.execution_action, "clarify_customer_for_intake")
         self.assertEqual(execution.investigation_reason, "rag_insufficient_evidence")
         self.assertEqual(execution.workflow_action, "clarify_customer_for_intake")
         sufficiency_mock.assert_not_called()
@@ -225,7 +227,7 @@ class TicketOrchestratorTests(unittest.TestCase):
             execution.client_intake_state["missing_information"],
             ["desired_outcome", "blocked_step_or_error"],
         )
-        self.assertIn("What are you trying to achieve", execution.answer)
+        self.assertIn("what you're trying to achieve", execution.answer.lower())
         sufficiency_mock.assert_not_called()
 
     def test_rag_insufficiency_for_troubleshooting_ready_inputs_opens_engineer_ticket(self) -> None:
@@ -344,6 +346,31 @@ class TicketOrchestratorTests(unittest.TestCase):
                 "how to join channel",
                 decision=_decision("rag"),
                 resolution_builder=lambda *_args, **_kwargs: _resolution(action="rag"),
+            )
+
+        self.assertFalse(execution.needs_investigating)
+        self.assertEqual(execution.next_status, COMMUNICATING_STATUS)
+        self.assertIsNone(execution.investigation_reason)
+        self.assertEqual(execution.workflow_action, "answer_customer")
+        sufficiency_mock.assert_not_called()
+
+    def test_polite_onboarding_how_to_question_skips_post_check_entirely(self) -> None:
+        with patch(
+            "backend.services.ticket_orchestrator.assess_rag_answer_sufficiency"
+        ) as sufficiency_mock:
+            execution = orchestrate_ticket_execution(
+                (
+                    "Hi Team, I am new to Agora and trying to integrate Agora SDK. However, I don't know "
+                    "how to join the channel as requested. Could you help explain to me and guide me to "
+                    "join the user into the channel?"
+                ),
+                decision=_decision("rag"),
+                resolution_builder=lambda *_args, **_kwargs: _resolution(
+                    action="rag",
+                    confidence=0.78,
+                    query_class="how_to_faq",
+                    top1_similarity_score=0.88,
+                ),
             )
 
         self.assertFalse(execution.needs_investigating)
