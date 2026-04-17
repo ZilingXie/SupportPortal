@@ -1488,6 +1488,153 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.runtime_state.rag_agent.get("status"), "skipped")
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
 
+    def test_follow_up_after_second_investigation_clarify_without_timestamp_opens_engineer_ticket(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        execution = execute_client_ticket_agent_runtime(
+            message="i dont have a timestamp",
+            ticket_id="TK-136-TURN3",
+            customer_id="C-001",
+            requester="Zac",
+            ticket_subject="Black screen",
+            ticket_context=[
+                {"role": "customer", "content": "i got black screen, what should i do?"},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "If the issue continues, please share channel name, problematic uid, and issue timestamp "
+                        "so I can narrow down the Audio/Video Calling investigation."
+                    ),
+                },
+                {"role": "customer", "content": "channel name: zilingtes, uid 2"},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "Hi Zac,\n\nThanks for sharing the additional info.\n\n"
+                        "To help us investigate this Audio/Video Calling issue, could you also share issue timestamp?\n\n"
+                        "Best Regards,\nSid"
+                    ),
+                    "workflow_action": "clarify_customer_for_intake",
+                    "client_intake_missing_information": ["issue_timestamp"],
+                },
+            ],
+            product="audio_video_calling",
+            message_id="2026-04-17T03:51:45.928128+00:00",
+            client_intake_state={
+                "phase": "gather_customer_inputs",
+                "product": "audio_video_calling",
+                "issue_mode": "investigation",
+                "known_information": {
+                    "issue_symptom": "black screen issue",
+                    "channel_name": "zilingtes",
+                    "problematic_uid": "2",
+                },
+                "missing_information": ["issue_timestamp"],
+                "ready_for_engineer_ticket": False,
+                "pending_investigation_reason": "rag_post_check_insufficient",
+                "clarification_rounds_used": 2,
+                "last_updated_at": "2026-04-17T03:26:04.439828+00:00",
+            },
+            route_agent=lambda **_kwargs: self.fail(
+                "route agent should not run once two investigation clarify rounds are exhausted"
+            ),
+            route_executor=lambda **_kwargs: self.fail(
+                "route executor should not run once two investigation clarify rounds are exhausted"
+            ),
+            rag_agent=lambda **_kwargs: self.fail(
+                "rag agent should not run once two investigation clarify rounds are exhausted"
+            ),
+            review_agent=lambda **_kwargs: self.fail(
+                "review agent should not run once two investigation clarify rounds are exhausted"
+            ),
+            rag_canceler=None,
+        )
+
+        self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
+        self.assertEqual(execution.result.route_reason, "investigation_intake_round_exhausted")
+        self.assertEqual(execution.result.client_intake_state["clarification_rounds_used"], 2)
+        self.assertEqual(execution.result.client_intake_state["phase"], "clarification_limit_reached")
+        self.assertEqual(execution.runtime_state.route_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.rag_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
+
+    def test_grounded_answer_fallback_with_exhausted_investigation_budget_opens_engineer_ticket(self) -> None:
+        from backend.services.client_ticket_agent_runtime import _build_cited_answer_execution_result
+
+        resolution = SupportResolution(
+            answer="Grounded answer that should not be sent as a third clarify.",
+            confidence=0.93,
+            sources=["https://docs.agora.io/en/video-calling/troubleshooting/black-screen"],
+            citations=[
+                {
+                    "heading": "Black screen troubleshooting",
+                    "chunk_id": "chunk-1",
+                    "source_url": "https://docs.agora.io/en/video-calling/troubleshooting/black-screen",
+                    "source_path": "official/black-screen.md",
+                }
+            ],
+            needs_engineer_guidance=False,
+            answer_route="rag",
+            scope_label="agora_technical",
+            route_family="agora_docs_rag",
+            execution_action="rag",
+            tooling_profile="agora_docs_only",
+            route_reason="grounded_answer",
+            route_confidence=0.92,
+            search_used=False,
+            matched_signals=["black screen"],
+            evidence_summary={},
+            packed_evidence={},
+        )
+
+        review_result = TroubleshootingIntakeResult(
+            issue_mode="investigation",
+            known_information={
+                "issue_symptom": "black screen issue",
+                "channel_name": "zilingtes",
+                "problematic_uid": "2",
+            },
+            missing_information=["issue_timestamp"],
+            ready_for_engineer_ticket=False,
+            customer_reply=(
+                "Hi Zac,\n\nThanks for sharing the additional info.\n\n"
+                "To help us investigate this Audio/Video Calling issue, could you also share issue timestamp?\n\n"
+                "Best Regards,\nSid"
+            ),
+            issue_timestamp_parts={},
+        )
+
+        result = _build_cited_answer_execution_result(
+            review_result=review_result,
+            resolution=resolution,
+            message="i dont have a timestamp",
+            product="audio_video_calling",
+            investigation_reason="rag_post_check_insufficient",
+            current_state={
+                "phase": "gather_customer_inputs",
+                "product": "audio_video_calling",
+                "issue_mode": "investigation",
+                "known_information": {
+                    "issue_symptom": "black screen issue",
+                    "channel_name": "zilingtes",
+                    "problematic_uid": "2",
+                },
+                "missing_information": ["issue_timestamp"],
+                "ready_for_engineer_ticket": False,
+                "pending_investigation_reason": "rag_post_check_insufficient",
+                "clarification_rounds_used": 2,
+                "last_updated_at": "2026-04-17T03:26:04.439828+00:00",
+            },
+            requester="Zac",
+            customer_id="C-001",
+        )
+
+        self.assertEqual(result.workflow_action, "open_engineer_ticket")
+        self.assertEqual(result.route_reason, "investigation_intake_round_exhausted")
+        self.assertEqual(result.client_intake_state["phase"], "clarification_limit_reached")
+        self.assertTrue(result.needs_investigating)
+        self.assertNotIn("could you also share issue timestamp", result.answer.lower())
+
     def test_rag_unavailable_from_knowledge_index_guard_skips_review_and_surfaces_diagnostics(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
 

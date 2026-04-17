@@ -163,6 +163,27 @@ _FORBIDDEN_CUSTOMER_REPLY_MARKERS = (
     "i couldn't verify",
     "i could not verify",
 )
+_GENERIC_UNAVAILABLE_DETAIL_MARKERS = (
+    "do not have",
+    "don't have",
+    "dont have",
+    "not available",
+    "unavailable",
+    "cannot provide",
+    "can't provide",
+    "unable to provide",
+    "cannot share",
+    "can't share",
+    "unknown",
+    "not sure",
+    "unsure",
+)
+_INVESTIGATION_UNAVAILABLE_FIELD_ALIASES = {
+    "channel_name": ("channel", "channel name"),
+    "problematic_uid": ("uid", "problematic uid", "user id"),
+    "issue_timestamp": ("timestamp", "issue timestamp", "issue time", "time", "timezone"),
+    "sid": ("sid",),
+}
 
 
 @dataclass(frozen=True)
@@ -420,6 +441,8 @@ def customer_follow_up_adds_requested_investigation_detail(
         ),
     )
     current_timestamp_parts = _normalize_issue_timestamp_parts((current_state or {}).get("issue_timestamp_parts"))
+    normalized_message = _clean_text(message).lower()
+    multiple_missing_fields = len(missing_information) > 1
     for field_name in missing_information:
         if field_name == "issue_timestamp":
             if _clean_text(extracted.get("issue_timestamp")):
@@ -427,10 +450,39 @@ def customer_follow_up_adds_requested_investigation_detail(
             for part_name in ("date", "time", "timezone"):
                 if _clean_text(timestamp_parts.get(part_name)) and not _clean_text(current_timestamp_parts.get(part_name)):
                     return True
-            continue
-        if _clean_text(extracted.get(field_name)):
+        elif _clean_text(extracted.get(field_name)):
+            return True
+        if _requested_investigation_field_is_unavailable(
+            normalized_message,
+            field_name=field_name,
+            multiple_missing_fields=multiple_missing_fields,
+        ):
             return True
     return False
+
+
+def _requested_investigation_field_is_unavailable(
+    normalized_message: str,
+    *,
+    field_name: str,
+    multiple_missing_fields: bool,
+) -> bool:
+    if not normalized_message:
+        return False
+    has_unavailable_marker = any(marker in normalized_message for marker in _GENERIC_UNAVAILABLE_DETAIL_MARKERS)
+    field_aliases = _INVESTIGATION_UNAVAILABLE_FIELD_ALIASES.get(field_name) or tuple(
+        label.lower() for label in list_support_product_field_labels([field_name])
+    )
+    field_mentioned = any(alias in normalized_message for alias in field_aliases)
+    if field_mentioned and f"no {field_name.replace('_', ' ')}" in normalized_message:
+        return True
+    if field_mentioned and "no " in normalized_message:
+        return True
+    if not has_unavailable_marker:
+        return False
+    if field_mentioned:
+        return True
+    return not multiple_missing_fields
 
 
 def _normalize_complete_issue_timestamp(value: str) -> tuple[str | None, dict[str, str]]:
