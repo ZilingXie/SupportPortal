@@ -26,8 +26,8 @@ class Client2RouteSmokeTests(unittest.TestCase):
     def test_client2_html_references_local_assets(self) -> None:
         html = Path("ui/client2-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260417-client2-merged-client-ui-1", html)
-        self.assertIn("./app.js?v=20260417-client2-merged-client-ui-1", html)
+        self.assertIn("./styles.css?v=20260417-client2-remove-waiting-line-1", html)
+        self.assertIn("./app.js?v=20260417-client2-remove-waiting-line-1", html)
 
 
 class Client2UiContractTests(unittest.TestCase):
@@ -284,6 +284,12 @@ class Client2UiContractTests(unittest.TestCase):
                 }
                 if (html.includes("AI is cross-referencing system health logs") || html.includes("checking the knowledge base... click stop to interrupt.")) {
                   throw new Error("Client2 should not render preview waiting copy after the first send.");
+                }
+                if (html.includes("Sid is preparing the next support response.")) {
+                  throw new Error("Client2 should not render the post-send waiting line after the first send.");
+                }
+                if (html.includes("new-ticket-postsend-waiting") || html.includes("new-ticket-thread-waiting")) {
+                  throw new Error("Client2 should not render waiting markers after the first send.");
                 }
               """
             )

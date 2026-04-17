@@ -2993,16 +2993,6 @@ a.citation-link:hover {
   text-transform: uppercase;
 }
 
-.new-ticket-thread-waiting {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 4px 2px 2px;
-  color: var(--ink-muted);
-  font-size: 12px;
-  font-weight: 700;
-}
-
 .new-ticket-composer-panel {
   overflow: hidden;
 }
@@ -3540,16 +3530,6 @@ a.citation-link:hover {
 
 .new-ticket-correspondence-source-chip.is-static {
   cursor: default;
-}
-
-.new-ticket-postsend-waiting {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 4px 2px 2px;
-  color: var(--ink-muted);
-  font-size: 12px;
-  font-weight: 700;
 }
 
 .new-ticket-postsend-composer {

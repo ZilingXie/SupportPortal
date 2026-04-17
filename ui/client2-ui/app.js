@@ -2429,35 +2429,11 @@ function renderNewTicketThreadHtml(viewState) {
     `;
   }
 
-  return `
-    ${viewState.renderableMessages.map((message) => renderNewTicketMessageCard(message)).join("")}
-    ${
-      viewState.sending
-        ? `
-          <div class="new-ticket-thread-waiting">
-            <span class="thinking-dots"><span></span><span></span><span></span></span>
-            <span class="thinking-label">Sid is preparing the next support response.</span>
-          </div>
-        `
-        : ""
-    }
-  `;
+  return `${viewState.renderableMessages.map((message) => renderNewTicketMessageCard(message)).join("")}`;
 }
 
 function renderNewTicketPostSendThreadHtml(viewState) {
-  return `
-    ${viewState.renderableMessages.map((message) => renderNewTicketCorrespondenceMessageCard(message)).join("")}
-    ${
-      viewState.sending
-        ? `
-          <div class="new-ticket-postsend-waiting">
-            <span class="thinking-dots"><span></span><span></span><span></span></span>
-            <span class="thinking-label">Sid is preparing the next support response.</span>
-          </div>
-        `
-        : ""
-    }
-  `;
+  return `${viewState.renderableMessages.map((message) => renderNewTicketCorrespondenceMessageCard(message)).join("")}`;
 }
 
 function renderNewTicketComposerToolbar() {
