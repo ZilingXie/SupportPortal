@@ -2862,6 +2862,15 @@ a.citation-link:hover {
   gap: 24px;
 }
 
+.new-ticket-draft-inline-route {
+  --new-ticket-sidebar-stack-gap: 20px;
+  --new-ticket-main-column-gap: 20px;
+  --new-ticket-draft-left-stack-height: calc(var(--new-ticket-info-card-height) * 2 + var(--new-ticket-sidebar-stack-gap));
+  --new-ticket-draft-thread-height: calc(
+    var(--new-ticket-draft-left-stack-height) - var(--new-ticket-composer-panel-height) - var(--new-ticket-main-column-gap)
+  );
+}
+
 .new-ticket-layout.clienttest-route-page-footer-band,
 .new-ticket-postsend-page.clienttest-route-page-footer-band {
   display: flex;
@@ -2887,6 +2896,10 @@ a.citation-link:hover {
   gap: 20px;
 }
 
+.new-ticket-draft-inline-route .new-ticket-main-column {
+  gap: var(--new-ticket-main-column-gap);
+}
+
 .new-ticket-tail-route .new-ticket-body-layout,
 .new-ticket-tail-route .new-ticket-postsend-layout {
   align-items: stretch;
@@ -2905,6 +2918,10 @@ a.citation-link:hover {
   display: grid;
   gap: 20px;
   align-content: start;
+}
+
+.new-ticket-draft-inline-route .new-ticket-sidebar {
+  gap: var(--new-ticket-sidebar-stack-gap);
 }
 
 .new-ticket-hero {
@@ -2943,6 +2960,10 @@ a.citation-link:hover {
 .new-ticket-fixed-thread-panel {
   height: var(--new-ticket-thread-panel-height);
   display: flex;
+}
+
+.new-ticket-draft-inline-route .new-ticket-fixed-thread-panel {
+  height: var(--new-ticket-draft-thread-height);
 }
 
 .new-ticket-tail-route .new-ticket-fixed-thread-panel {
@@ -3174,6 +3195,10 @@ a.citation-link:hover {
   height: var(--new-ticket-composer-panel-height);
   display: grid;
   grid-template-rows: auto auto 1fr;
+}
+
+.new-ticket-draft-inline-composer {
+  flex: 0 0 auto;
 }
 
 .new-ticket-tail-row {
@@ -3820,6 +3845,10 @@ a.citation-link:hover {
   .new-ticket-layout {
     --new-ticket-thread-panel-height: 344px;
     --new-ticket-info-card-height: 356px;
+  }
+
+  .new-ticket-draft-inline-route {
+    --new-ticket-draft-thread-height: var(--new-ticket-thread-panel-height);
   }
 
   .clienttest-workspace {
