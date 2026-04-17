@@ -125,6 +125,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 UI_DIR = BASE_DIR / "ui"
 CLIENT_DIR = UI_DIR / "client-ui"
 CLIENTTEST_DIR = UI_DIR / "clienttest-ui"
+CLIENT2_DIR = UI_DIR / "client2-ui"
 ENGINEER_DIR = UI_DIR / "engineer-ui"
 DASHBOARD_DIR = UI_DIR / "dashboard-ui"
 
@@ -389,6 +390,8 @@ if CLIENT_DIR.exists():
     app.mount("/client", StaticFiles(directory=CLIENT_DIR, html=True), name="client-ui")
 if CLIENTTEST_DIR.exists():
     app.mount("/clienttest", StaticFiles(directory=CLIENTTEST_DIR, html=True), name="clienttest-ui")
+if CLIENT2_DIR.exists():
+    app.mount("/client2", StaticFiles(directory=CLIENT2_DIR, html=True), name="client2-ui")
 if ENGINEER_DIR.exists():
     app.mount("/engineer", StaticFiles(directory=ENGINEER_DIR, html=True), name="engineer-ui")
 if DASHBOARD_DIR.exists():
