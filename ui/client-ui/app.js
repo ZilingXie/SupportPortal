@@ -25,7 +25,12 @@ const DEMO_USERS = [
     password: "Zac",
   },
 ];
-const ENGINEER_ASSISTANCE_WAIT_TEXT = "Estimate waiting time: 3 hours";
+const REPLY_COUNTDOWN_MINUTES_BY_STATUS = {
+  communicating: 10,
+  investigating: 60,
+  escalated: 180,
+};
+const REPLY_COUNTDOWN_REFRESH_INTERVAL_MS = 60 * 1000;
 
 const STATUS_CONFIG = {
   open: { label: "Open", className: "status-open", surfaceClass: "status-surface-open" },
@@ -116,6 +121,8 @@ let clientHeartbeatTimer = null;
 let pendingStatusPollTimer = null;
 let deliveredStatusRefreshTimer = null;
 let deliveredStatusRefreshDueAt = 0;
+let replyCountdownRefreshTimer = null;
+let replyCountdownRefreshTicketId = "";
 const CHAT_NEAR_BOTTOM_THRESHOLD_PX = 96;
 let pendingChatScrollRequest = null;
 let scheduledChatScrollPlan = null;
@@ -1025,6 +1032,14 @@ function clearDeliveredStatusRefreshTimer() {
   deliveredStatusRefreshDueAt = 0;
 }
 
+function clearReplyCountdownRefreshTimer() {
+  if (replyCountdownRefreshTimer) {
+    clearInterval(replyCountdownRefreshTimer);
+  }
+  replyCountdownRefreshTimer = null;
+  replyCountdownRefreshTicketId = "";
+}
+
 function shouldShowDeliveredLabel(message) {
   if (String(message?.role || "").toLowerCase() !== "user") {
     return false;
@@ -1059,6 +1074,64 @@ function scheduleDeliveredStatusRefresh(message) {
     deliveredStatusRefreshDueAt = 0;
     render();
   }, delay);
+}
+
+function getLatestRenderableMessage(ticket) {
+  const messages = getRenderableMessages(ticket);
+  return messages.length > 0 ? messages[messages.length - 1] : null;
+}
+
+function getReplyCountdownState(ticket) {
+  const normalizedStatus = String(ticket?.status || "").trim().toLowerCase();
+  const durationMinutes = REPLY_COUNTDOWN_MINUTES_BY_STATUS[normalizedStatus];
+  if (!durationMinutes) {
+    return null;
+  }
+  const latestMessage = getLatestRenderableMessage(ticket);
+  if (!latestMessage || normalizeRenderableMessageRole(latestMessage) !== "user") {
+    return null;
+  }
+  const anchorTimestamp = toTimestamp(
+    latestMessage?.createdAt || latestMessage?.created_at || ticket?.updatedAt
+  );
+  if (!anchorTimestamp) {
+    return null;
+  }
+  const remainingMs = Math.max(0, anchorTimestamp + durationMinutes * 60 * 1000 - Date.now());
+  const remainingMinutes = remainingMs > 0 ? Math.ceil(remainingMs / (60 * 1000)) : 0;
+  const hours = Math.floor(remainingMinutes / 60);
+  const minutes = remainingMinutes % 60;
+  return {
+    status: normalizedStatus,
+    text: `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`,
+  };
+}
+
+function syncReplyCountdownRefresh(ticket, countdownState) {
+  const ticketId = String(ticket?.id || "").trim();
+  const activeTicketId = String(state.activeTicketId || "").trim();
+  if (!countdownState || state.view !== "chat-ticket" || !ticketId || ticketId !== activeTicketId) {
+    clearReplyCountdownRefreshTimer();
+    return;
+  }
+  if (replyCountdownRefreshTimer && replyCountdownRefreshTicketId === ticketId) {
+    return;
+  }
+  clearReplyCountdownRefreshTimer();
+  replyCountdownRefreshTicketId = ticketId;
+  replyCountdownRefreshTimer = setInterval(() => {
+    const currentActiveTicketId = String(state.activeTicketId || "").trim();
+    if (state.view !== "chat-ticket" || !replyCountdownRefreshTicketId || currentActiveTicketId !== replyCountdownRefreshTicketId) {
+      clearReplyCountdownRefreshTimer();
+      return;
+    }
+    const activeTicket = getTicketById(replyCountdownRefreshTicketId);
+    if (!getReplyCountdownState(activeTicket)) {
+      clearReplyCountdownRefreshTimer();
+      return;
+    }
+    render();
+  }, REPLY_COUNTDOWN_REFRESH_INTERVAL_MS);
 }
 
 function normalizeTicketProduct(value) {
@@ -2058,10 +2131,11 @@ function renderTicketHeaderActions(ticket) {
   if (!ticket) {
     return "";
   }
-  const assistanceRequested = String(ticket.status || "").trim().toLowerCase() === "escalated";
-  const assistanceControl = assistanceRequested
-    ? `<span class="context-assistance-note">${escapeHtml(ENGINEER_ASSISTANCE_WAIT_TEXT)}</span>`
-    : `
+  const normalizedStatus = String(ticket.status || "").trim().toLowerCase();
+  const assistanceControl =
+    normalizedStatus === "escalated"
+      ? ""
+      : `
           <button
             class="btn btn-outline btn-inline context-assistance-btn"
             data-action="request-engineer-assistance"
@@ -2070,7 +2144,7 @@ function renderTicketHeaderActions(ticket) {
           >Request Engineer</button>
         `;
 
-  if (ticket.status === "resolved") {
+  if (normalizedStatus === "resolved") {
     return `<button class="btn btn-outline" data-action="reopen-ticket" data-ticket-id="${ticket.id}" type="button">Reopen Ticket</button>`;
   }
 
@@ -2595,10 +2669,17 @@ function renderNewTicketComposerActionHtml(viewState) {
 
 function buildNewTicketPostSendMetaHtml(ticket) {
   const productLabel = getProductLabel(ticket?.product);
+  const countdownState = getReplyCountdownState(ticket);
+  syncReplyCountdownRefresh(ticket, countdownState);
   const items = [
     statusBadge(ticket.status),
     productLabel ? `<span class="new-ticket-postsend-meta-pill">${escapeHtml(productLabel)}</span>` : "",
     `<span class="new-ticket-postsend-meta-item">Updated ${escapeHtml(formatDate(ticket.updatedAt))}</span>`,
+    countdownState
+      ? `<span class="new-ticket-postsend-meta-item new-ticket-postsend-countdown status-${escapeHtml(
+          countdownState.status
+        )}">${escapeHtml(countdownState.text)}</span>`
+      : "",
   ].filter(Boolean);
   return items.join("");
 }
@@ -2673,6 +2754,7 @@ function renderNewTicketDraftInlineComposer(viewState) {
 }
 
 function renderNewTicketDraftTicketFromState(viewState) {
+  clearReplyCountdownRefreshTimer();
   const ticket = viewState.ticket;
   return `
     <section class="chat-root clienttest-new-ticket-shell" data-chat-ticket-id="${escapeHtml(ticket.id)}">
@@ -3027,6 +3109,7 @@ function renderChatTicketFromState(viewState) {
   if (viewState?.usesNewTicketShell) {
     return renderNewTicketTicketFromState(viewState);
   }
+  clearReplyCountdownRefreshTimer();
   const ticket = viewState.ticket;
   const productLabel = getProductLabel(ticket.product);
   const actionButtons = renderTicketHeaderActions(ticket);
@@ -4427,9 +4510,13 @@ function render() {
   if (!state.user) {
     clearPendingRequestState();
     closeClientRealtimeConnection();
+    clearReplyCountdownRefreshTimer();
     resetChatScrollState();
     renderLogin();
     return;
+  }
+  if (state.view !== "chat-ticket") {
+    clearReplyCountdownRefreshTimer();
   }
 
   const nextTicketId =

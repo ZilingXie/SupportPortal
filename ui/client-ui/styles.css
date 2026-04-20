@@ -3586,6 +3586,27 @@ a.citation-link:hover {
   color: var(--ink-muted);
 }
 
+.new-ticket-postsend-countdown {
+  justify-content: center;
+  min-width: 82px;
+  font-variant-numeric: tabular-nums;
+}
+
+.new-ticket-postsend-countdown.status-communicating {
+  color: var(--primary);
+  background: rgba(202, 230, 255, 0.9);
+}
+
+.new-ticket-postsend-countdown.status-investigating {
+  color: var(--warning);
+  background: rgba(255, 232, 214, 0.94);
+}
+
+.new-ticket-postsend-countdown.status-escalated {
+  color: var(--danger);
+  background: rgba(255, 223, 228, 0.92);
+}
+
 .new-ticket-postsend-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.5fr) minmax(300px, 360px);

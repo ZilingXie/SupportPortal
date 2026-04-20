@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260420-client-new-ticket-id-1", html)
-        self.assertIn("./app.js?v=20260420-client-new-ticket-id-1", html)
+        self.assertIn("./styles.css?v=20260420-client-reply-countdown-1", html)
+        self.assertIn("./app.js?v=20260420-client-reply-countdown-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -961,6 +961,178 @@ class ClientUiContractTests(unittest.TestCase):
                 }
                 if (html.includes("Continue the same ticket with Sid handling the assistant turn")) {
                   throw new Error("Existing client2 tickets should not render the legacy composer header copy.");
+                }
+              """
+            )
+        )
+
+    def test_client2_postsend_header_reply_countdown_uses_waiting_status_durations(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                const baseNow = Date.parse("2026-04-20T09:00:00.000Z");
+                Date.now = () => baseNow;
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                function renderWaitingTicket(status, messageCreatedAt) {
+                  const ticket = createTicket(state.user.id);
+                  updateTicketTitle(ticket.id, `${status} case`);
+                  updateTicketStatus(ticket.id, status);
+                  saveTicketMessages(ticket.id, [
+                    {
+                      id: `${ticket.id}-msg-user`,
+                      role: "user",
+                      content: "Please check my issue.",
+                      createdAt: messageCreatedAt,
+                    },
+                  ]);
+                  state.view = "chat-ticket";
+                  state.activeTicketId = ticket.id;
+                  return renderChatTicket();
+                }
+
+                const communicatingHtml = renderWaitingTicket("communicating", "2026-04-20T09:00:00.000Z");
+                if (!communicatingHtml.includes("new-ticket-postsend-countdown")) {
+                  throw new Error("Client2 communicating tickets should render the reply countdown chip.");
+                }
+                if (!communicatingHtml.includes(">00:10<")) {
+                  throw new Error("Client2 communicating tickets should start the reply countdown at 00:10.");
+                }
+
+                const investigatingHtml = renderWaitingTicket("investigating", "2026-04-20T09:00:00.000Z");
+                if (!investigatingHtml.includes(">01:00<")) {
+                  throw new Error("Client2 investigating tickets should start the reply countdown at 01:00.");
+                }
+
+                const escalatedHtml = renderWaitingTicket("escalated", "2026-04-20T09:00:00.000Z");
+                if (!escalatedHtml.includes(">03:00<")) {
+                  throw new Error("Client2 escalated tickets should start the reply countdown at 03:00.");
+                }
+                if (escalatedHtml.includes("Estimate waiting time: 3 hours")) {
+                  throw new Error("Client2 escalated tickets should remove the legacy header wait note when the countdown chip is present.");
+                }
+              """
+            )
+        )
+
+    def test_client2_postsend_header_reply_countdown_hides_when_latest_message_is_assistant(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                const baseNow = Date.parse("2026-04-20T09:00:00.000Z");
+                Date.now = () => baseNow;
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const ticket = createTicket(state.user.id);
+                updateTicketTitle(ticket.id, "Assistant already replied");
+                updateTicketStatus(ticket.id, "communicating");
+                saveTicketMessages(ticket.id, [
+                  {
+                    id: "msg-user-1",
+                    role: "user",
+                    content: "How do I join a channel?",
+                    createdAt: "2026-04-20T08:58:00.000Z",
+                  },
+                  {
+                    id: "msg-agent-1",
+                    role: "assistant",
+                    content: "Use joinChannel with a valid token and channel name.",
+                    createdAt: "2026-04-20T08:59:00.000Z",
+                  },
+                ]);
+
+                state.view = "chat-ticket";
+                state.activeTicketId = ticket.id;
+                const html = renderChatTicket();
+                if (html.includes("new-ticket-postsend-countdown")) {
+                  throw new Error("Client2 should hide the reply countdown after the latest visible assistant message.");
+                }
+              """
+            )
+        )
+
+    def test_client2_postsend_header_reply_countdown_refreshes_on_minute_boundaries(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                let now = Date.parse("2026-04-20T09:00:00.000Z");
+                Date.now = () => now;
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                const intervals = [];
+                setInterval = (fn, delay) => {
+                  intervals.push({ fn, delay });
+                  return intervals.length;
+                };
+                clearInterval = () => {};
+
+                localStorage.setItem(
+                  "helpdesk_tickets",
+                  JSON.stringify([
+                    {
+                      id: "TK-COUNTDOWN-001",
+                      title: "Waiting on support reply",
+                      status: "communicating",
+                      createdAt: "2026-04-20T08:59:30.000Z",
+                      updatedAt: "2026-04-20T09:00:00.000Z",
+                      userId: state.user.id,
+                      product: "audio_video_calling",
+                      messages: [
+                        {
+                          id: "msg-user-1",
+                          role: "user",
+                          content: "I got black screen, what should I do?",
+                          createdAt: "2026-04-20T09:00:00.000Z",
+                        },
+                      ],
+                    },
+                  ])
+                );
+
+                state.view = "chat-ticket";
+                state.activeTicketId = "TK-COUNTDOWN-001";
+                render = () => {
+                  appRoot.innerHTML = renderChatTicket();
+                };
+                render();
+                if (!appRoot.innerHTML.includes(">00:10<")) {
+                  throw new Error("Client2 should render the full initial reply countdown before any minute passes.");
+                }
+                if (intervals.length !== 1) {
+                  throw new Error(`Client2 should schedule one countdown refresh interval, got ${intervals.length}.`);
+                }
+                if (intervals[0].delay !== 60000) {
+                  throw new Error(`Client2 should refresh the reply countdown every minute, got ${intervals[0].delay}.`);
+                }
+
+                now = Date.parse("2026-04-20T09:01:00.000Z");
+                intervals[0].fn();
+                if (!appRoot.innerHTML.includes(">00:09<")) {
+                  throw new Error("Client2 should decrement the reply countdown after one minute.");
+                }
+              """
+            )
+        )
+
+    def test_client2_non_detail_shells_do_not_render_reply_countdown(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+
+                const draftTicket = createTicket(state.user.id);
+                state.view = "chat-ticket";
+                state.activeTicketId = draftTicket.id;
+                const draftHtml = renderChatTicket();
+                if (draftHtml.includes("new-ticket-postsend-countdown")) {
+                  throw new Error("Client2 draft shells should not render the reply countdown.");
+                }
+
+                state.view = "tickets";
+                const ticketsHtml = renderTicketsPage();
+                if (ticketsHtml.includes("new-ticket-postsend-countdown")) {
+                  throw new Error("Client2 tickets page should not render the reply countdown.");
                 }
               """
             )
