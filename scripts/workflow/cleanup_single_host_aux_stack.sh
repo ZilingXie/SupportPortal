@@ -11,5 +11,5 @@ require_command podman-compose
 
 ensure_root_workspace_on_main
 
-info "Cleaning auxiliary single-host stack project deploymentlw if present."
+info "Cleaning stray auxiliary single-host stack project deploymentlw if present."
 podman-compose -p deploymentlw -f deployment/docker-compose.single-host.yml down

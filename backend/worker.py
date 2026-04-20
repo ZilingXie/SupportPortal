@@ -24,6 +24,7 @@ from backend.main import (
     resolve_support_message,
     ticket_repository,
 )
+from backend.services.app_build import get_app_build_info
 from backend.services.engineer_cases import (
     build_new_engineer_case,
     apply_case_context_to_engineer_case,
@@ -1072,10 +1073,12 @@ def _recover_stale_ticket_query_tasks_on_worker_start(
         )
         if completion_event is not None:
             continue
+        recovery_app_build_ref = str(get_app_build_info().get("ref") or "").strip() or None
         recovery_task = build_query_task(
             ticket_id=ticket_id,
             customer_message=customer_message,
             message_created_at=message_created_at,
+            app_build_ref=recovery_app_build_ref,
             customer_id=str(ticket.get("customer_id") or "").strip() or None,
             requester=str(ticket.get("requester") or "").strip() or None,
             ticket_subject=str(ticket.get("subject") or "").strip() or None,
@@ -1162,6 +1165,8 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
     ticket_id = str(task.get("ticket_id", "")).strip()
     customer_message = str(task.get("customer_message", "")).strip()
     message_created_at = str(task.get("message_created_at", "")).strip()
+    task_app_build_ref = str(task.get("app_build_ref") or "").strip() or None
+    execution_app_build_ref = str(get_app_build_info().get("ref") or "").strip() or None
     if not ticket_id or not customer_message:
         return
     task_dequeued_at = now_iso()
@@ -1291,6 +1296,17 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
             else None
         )
         if execution_client_agent_runtime_state is not None:
+            build_provenance = (
+                dict(execution_client_agent_runtime_state.get("build_provenance"))
+                if isinstance(execution_client_agent_runtime_state.get("build_provenance"), dict)
+                else {}
+            )
+            if task_app_build_ref:
+                build_provenance["task_app_build_ref"] = task_app_build_ref
+            if execution_app_build_ref:
+                build_provenance["execution_app_build_ref"] = execution_app_build_ref
+            if build_provenance:
+                execution_client_agent_runtime_state["build_provenance"] = build_provenance
             ticket["client_agent_runtime_state"] = execution_client_agent_runtime_state
         execution_workflow_action = str(getattr(execution, "workflow_action", "") or "").strip()
         execution_route_payload = build_execution_route_payload(execution)
@@ -1484,6 +1500,10 @@ def _process_ticket_query(bus: SyncRedisEventBus, task: dict[str, Any]) -> None:
         ).strip()
         or None,
     }
+    if task_app_build_ref:
+        event["task_app_build_ref"] = task_app_build_ref
+    if execution_app_build_ref:
+        event["execution_app_build_ref"] = execution_app_build_ref
     execution_client_intake_state = (
         dict(getattr(execution, "client_intake_state"))
         if isinstance(getattr(execution, "client_intake_state", None), dict)

@@ -35,11 +35,14 @@ set +a
 
 export APP_BUILD_REF
 export APP_BUILD_TIME
+export APP_RUNTIME_IMAGE
 APP_BUILD_REF="$(git rev-parse --short=12 HEAD)"
 APP_BUILD_TIME="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+APP_RUNTIME_IMAGE="localhost/supportportal-app:${APP_BUILD_REF}"
 
 info "Current main commit: $APP_BUILD_REF"
 info "Build timestamp: $APP_BUILD_TIME"
+info "Runtime image: $APP_RUNTIME_IMAGE"
 info "Rebuilding single-host stack in full mode."
 
 "$SCRIPT_DIR/cleanup_single_host_aux_stack.sh"

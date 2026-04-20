@@ -367,6 +367,7 @@ class InvestigationFlowTests(unittest.TestCase):
             ticket_id="TK-SNAPSHOT-001",
             customer_message="how to join channel",
             message_created_at="2026-04-05T00:00:00+00:00",
+            app_build_ref="build-admission-123",
             customer_id="C-001",
             requester="Taylor",
             ticket_subject="Join question",
@@ -392,6 +393,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertEqual(task["requester"], "Taylor")
         self.assertEqual(task["ticket_subject"], "Join question")
         self.assertEqual(task["product"], "audio_video_calling")
+        self.assertEqual(task["app_build_ref"], "build-admission-123")
         self.assertEqual(task["ticket_updated_at"], "2026-04-05T00:00:01+00:00")
         self.assertEqual(
             task["route_context_tail"],

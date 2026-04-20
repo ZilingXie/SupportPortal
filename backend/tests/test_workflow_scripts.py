@@ -643,10 +643,18 @@ class WorkflowScriptTests(unittest.TestCase):
         official_runtime_profile: str = "full",
         official_sentiment_provider: str = "model",
         official_torch_available: bool = True,
+        official_image: str = "localhost/supportportal-app:test-ref",
+        official_health_build_ref: str = "test-ref",
+        official_runtime_build_ref: str = "test-ref",
+        official_runtime_build_time: str = "2026-04-20T00:00:00Z",
         auxiliary_present: bool = False,
         auxiliary_runtime_profile: str = "local_lightweight",
         auxiliary_sentiment_provider: str = "legacy",
         auxiliary_torch_available: bool = False,
+        auxiliary_image: str = "localhost/supportportal-app:local-lightweight-verify",
+        auxiliary_health_build_ref: str = "aux-build-ref",
+        auxiliary_runtime_build_ref: str = "aux-build-ref",
+        auxiliary_runtime_build_time: str = "2026-04-20T00:00:00Z",
     ) -> tuple[Path, Path]:
         bin_dir = self.root / "restart-bin"
         state_dir = self.root / "restart-state"
@@ -669,6 +677,7 @@ class WorkflowScriptTests(unittest.TestCase):
                     "cwd": os.getcwd(),
                     "app_build_ref": os.environ.get("APP_BUILD_REF"),
                     "app_build_time": os.environ.get("APP_BUILD_TIME"),
+                    "app_runtime_image": os.environ.get("APP_RUNTIME_IMAGE"),
                 }
                 with (state_dir / "podman_calls.jsonl").open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps(payload) + "\\n")
@@ -683,7 +692,7 @@ class WorkflowScriptTests(unittest.TestCase):
         self._write_executable(
             bin_dir / "curl",
             textwrap.dedent(
-                """\
+                f"""\
                 #!/usr/bin/env python3
                 import json
                 import os
@@ -691,10 +700,13 @@ class WorkflowScriptTests(unittest.TestCase):
                 from pathlib import Path
 
                 state_dir = Path(os.environ["RESTART_TEST_STATE_DIR"])
-                payload = {"argv": sys.argv[1:], "url": sys.argv[-1]}
+                payload = {{"argv": sys.argv[1:], "url": sys.argv[-1]}}
                 with (state_dir / "curl_calls.jsonl").open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps(payload) + "\\n")
-                print('{"status":"ok","app_build":{"ref":"test-ref"}}')
+                if sys.argv[-1].endswith(":18080/health"):
+                    print({json.dumps({"status": "ok", "app_build": {"ref": auxiliary_health_build_ref}})!r})
+                else:
+                    print({json.dumps({"status": "ok", "app_build": {"ref": official_health_build_ref}})!r})
                 """
             ),
         )
@@ -715,9 +727,9 @@ class WorkflowScriptTests(unittest.TestCase):
 
                 args = sys.argv[1:]
                 if args[:2] == ["ps", "--format"]:
-                    lines = ["deployment_api_1|localhost/supportportal-app:latest"]
+                    lines = ["deployment_api_1|{official_image}"]
                     if {auxiliary_present!r}:
-                        lines.append("deploymentlw_api_1|localhost/supportportal-app:local-lightweight-verify")
+                        lines.append("deploymentlw_api_1|{auxiliary_image}")
                     print("\\n".join(lines))
                 elif args[:2] == ["pod", "ps"]:
                     lines = ["pod_deployment"]
@@ -737,12 +749,16 @@ class WorkflowScriptTests(unittest.TestCase):
                             "runtime_profile": {official_runtime_profile!r},
                             "sentiment_provider": {official_sentiment_provider!r},
                             "torch_available": {official_torch_available!r},
+                            "app_build_ref": {official_runtime_build_ref!r},
+                            "app_build_time": {official_runtime_build_time!r},
                         }}))
                     elif container == "deploymentlw_api_1":
                         print(json.dumps({{
                             "runtime_profile": {auxiliary_runtime_profile!r},
                             "sentiment_provider": {auxiliary_sentiment_provider!r},
                             "torch_available": {auxiliary_torch_available!r},
+                            "app_build_ref": {auxiliary_runtime_build_ref!r},
+                            "app_build_time": {auxiliary_runtime_build_time!r},
                         }}))
                 else:
                     print("")
@@ -906,8 +922,10 @@ class WorkflowScriptTests(unittest.TestCase):
         self.assertEqual(calls[2]["argv"][:2], ["-f", "deployment/docker-compose.single-host.yml"])
         self.assertEqual(calls[3]["argv"][:2], ["-f", "deployment/docker-compose.single-host.yml"])
         expected_ref = _git(["rev-parse", "--short=12", "HEAD"], cwd=repo).stdout.strip()
-        self.assertEqual(calls[1]["app_build_ref"], expected_ref)
-        self.assertTrue(str(calls[1]["app_build_time"]).strip())
+        for call in calls:
+            self.assertEqual(call["app_build_ref"], expected_ref)
+            self.assertEqual(call["app_runtime_image"], f"localhost/supportportal-app:{expected_ref}")
+            self.assertTrue(str(call["app_build_time"]).strip())
         curl_calls = self._read_json_lines(state_dir / "curl_calls.jsonl")
         self.assertEqual(curl_calls[0]["url"], "http://127.0.0.1:8080/health")
 
@@ -938,6 +956,7 @@ class WorkflowScriptTests(unittest.TestCase):
         calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
         self.assertEqual([call["argv"][-1] for call in calls], ["down", "down", "--build", "ps"])
         self.assertEqual(calls[0]["argv"][:4], ["-p", "deploymentlw", "-f", "deployment/docker-compose.single-host.yml"])
+        expected_ref = _git(["rev-parse", "--short=12", "HEAD"], cwd=repo).stdout.strip()
         for call in calls[1:]:
             self.assertEqual(
                 call["argv"][:4],
@@ -947,7 +966,9 @@ class WorkflowScriptTests(unittest.TestCase):
                     "-f",
                     "deployment/docker-compose.single-host.local-lightweight.yml",
                 ],
-        )
+            )
+            self.assertEqual(call["app_build_ref"], expected_ref)
+            self.assertEqual(call["app_runtime_image"], f"localhost/supportportal-app:{expected_ref}")
         curl_calls = self._read_json_lines(state_dir / "curl_calls.jsonl")
         self.assertEqual(curl_calls[0]["url"], "http://127.0.0.1:8080/health")
 
@@ -1122,10 +1143,14 @@ class WorkflowScriptTests(unittest.TestCase):
 
     def test_inspect_single_host_stack_mode_reports_full_profile(self) -> None:
         _, seed, repo = self._init_remote_repo_on_main()
+        expected_ref = _git(["rev-parse", "--short=12", "HEAD"], cwd=repo).stdout.strip()
         fake_bin, state_dir = self._install_fake_single_host_commands(
             official_runtime_profile="full",
             official_sentiment_provider="model",
             official_torch_available=True,
+            official_image=f"localhost/supportportal-app:{expected_ref}",
+            official_health_build_ref=expected_ref,
+            official_runtime_build_ref=expected_ref,
             auxiliary_present=False,
         )
 
@@ -1140,18 +1165,28 @@ class WorkflowScriptTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("official_project=deployment", result.stdout)
+        self.assertIn(f"root_main_ref={expected_ref}", result.stdout)
         self.assertIn("official_health_url=http://127.0.0.1:8080/health", result.stdout)
+        self.assertIn(f"official_image=localhost/supportportal-app:{expected_ref}", result.stdout)
+        self.assertIn(f"official_image_tag={expected_ref}", result.stdout)
+        self.assertIn(f"official_health_build_ref={expected_ref}", result.stdout)
+        self.assertIn(f"official_runtime_build_ref={expected_ref}", result.stdout)
         self.assertIn("official_runtime_profile=full", result.stdout)
         self.assertIn("official_sentiment_provider=model", result.stdout)
         self.assertIn("official_torch_available=true", result.stdout)
+        self.assertIn("build_provenance_status=matched", result.stdout)
         self.assertIn("auxiliary_stack_present=false", result.stdout)
 
-    def test_inspect_single_host_stack_mode_reports_lightweight_profile_and_auxiliary_stack(self) -> None:
+    def test_inspect_single_host_stack_mode_fails_when_auxiliary_stack_present(self) -> None:
         _, seed, repo = self._init_remote_repo_on_main()
+        expected_ref = _git(["rev-parse", "--short=12", "HEAD"], cwd=repo).stdout.strip()
         fake_bin, state_dir = self._install_fake_single_host_commands(
             official_runtime_profile="local_lightweight",
             official_sentiment_provider="legacy",
             official_torch_available=False,
+            official_image=f"localhost/supportportal-app:{expected_ref}",
+            official_health_build_ref=expected_ref,
+            official_runtime_build_ref=expected_ref,
             auxiliary_present=True,
         )
 
@@ -1164,12 +1199,35 @@ class WorkflowScriptTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertIn("official_runtime_profile=local_lightweight", result.stdout)
-        self.assertIn("official_sentiment_provider=legacy", result.stdout)
-        self.assertIn("official_torch_available=false", result.stdout)
-        self.assertIn("auxiliary_stack_present=true", result.stdout)
-        self.assertIn("auxiliary_project=deploymentlw", result.stdout)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Unsupported auxiliary single-host stack detected: deploymentlw", result.stderr)
+
+    def test_inspect_single_host_stack_mode_fails_on_build_provenance_mismatch(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        expected_ref = _git(["rev-parse", "--short=12", "HEAD"], cwd=repo).stdout.strip()
+        fake_bin, state_dir = self._install_fake_single_host_commands(
+            official_runtime_profile="full",
+            official_sentiment_provider="model",
+            official_torch_available=True,
+            official_image="localhost/supportportal-app:stale-build",
+            official_health_build_ref=expected_ref,
+            official_runtime_build_ref=expected_ref,
+            auxiliary_present=False,
+        )
+
+        result = self._run_workflow(
+            "inspect_single_host_stack_mode.sh",
+            repo,
+            extra_env={
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "RESTART_TEST_STATE_DIR": str(state_dir),
+            },
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Official single-host build provenance mismatch", result.stderr)
+        self.assertIn(expected_ref, result.stderr)
+        self.assertIn("stale-build", result.stderr)
 
     def test_rehome_task_worktree_moves_dirty_root_codex_branch(self) -> None:
         _, _, repo = self._init_remote_repo_on_main()

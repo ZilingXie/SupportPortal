@@ -60,6 +60,10 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
                     "active_run_id": "run-123",
                     "workflow_action": "answer_customer",
                     "status": "completed",
+                    "build_provenance": {
+                        "task_app_build_ref": "build-123",
+                        "execution_app_build_ref": "build-123",
+                    },
                 },
                 "messages": [
                     {
@@ -120,6 +124,8 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
                         "main_agent_to_answer_saved_ms": 358.0,
                         "response_ready_dispatch_ms": 22.0,
                         "answer_saved_to_response_ready_ms": 22.0,
+                        "task_app_build_ref": "build-123",
+                        "execution_app_build_ref": "build-123",
                     },
                     "created_at": "2026-04-04T00:00:04.100000+00:00",
                 }
@@ -292,6 +298,9 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
         self.assertEqual(summary["worker_queue"]["main_agent_to_answer_saved_ms"], 358.0)
         self.assertEqual(summary["worker_queue"]["answer_saved_to_response_ready_ms"], 22.0)
         self.assertEqual(summary["worker_queue"]["response_ready_dispatch_ms"], 22.0)
+        self.assertEqual(summary["build_provenance"]["task_app_build_ref"], "build-123")
+        self.assertEqual(summary["build_provenance"]["execution_app_build_ref"], "build-123")
+        self.assertEqual(summary["build_provenance"]["status"], "matched")
         self.assertIn("joinChannel", summary["final_result"]["answer"])
         self.assertGreater(summary["metrics"]["question_to_final_answer_ms"], 0)
         self.assertGreater(summary["metrics"]["ack_to_final_answer_ms"], 0)
@@ -308,6 +317,7 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
         self.assertIn("grounded_answer", markdown)
         self.assertIn("Admission 分段", markdown)
         self.assertIn("Queue / Dispatch", markdown)
+        self.assertIn("Build Provenance", markdown)
         self.assertIn("message_to_task_dequeued_ms", markdown)
         self.assertIn("answer_saved_to_response_ready_ms", markdown)
 

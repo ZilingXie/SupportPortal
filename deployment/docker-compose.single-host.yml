@@ -11,7 +11,7 @@ services:
     restart: unless-stopped
 
   api:
-    image: localhost/supportportal-app:latest
+    image: ${APP_RUNTIME_IMAGE:-localhost/supportportal-app:unknown}
     build:
       context: ..
       dockerfile: backend/Dockerfile
@@ -105,7 +105,7 @@ services:
     restart: unless-stopped
 
   rag_api:
-    image: localhost/supportportal-app:latest
+    image: ${APP_RUNTIME_IMAGE:-localhost/supportportal-app:unknown}
     env_file:
       - ../.env
     volumes:
@@ -198,7 +198,7 @@ services:
     restart: unless-stopped
 
   rag_worker:
-    image: localhost/supportportal-app:latest
+    image: ${APP_RUNTIME_IMAGE:-localhost/supportportal-app:unknown}
     env_file:
       - ../.env
     volumes:
@@ -208,6 +208,8 @@ services:
       - -m
       - backend.rag_worker
     environment:
+      APP_BUILD_REF: ${APP_BUILD_REF:-unknown}
+      APP_BUILD_TIME: ${APP_BUILD_TIME:-}
       RUNTIME_PROFILE: ${RUNTIME_PROFILE:-full}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_CHAT_MODEL: ${RAG_OPENAI_CHAT_MODEL:-gpt-5.4}
@@ -270,7 +272,7 @@ services:
     restart: unless-stopped
 
   ws_gateway:
-    image: localhost/supportportal-app:latest
+    image: ${APP_RUNTIME_IMAGE:-localhost/supportportal-app:unknown}
     command:
       - uvicorn
       - backend.ws_gateway:app
@@ -281,6 +283,8 @@ services:
       - --workers
       - "1"
     environment:
+      APP_BUILD_REF: ${APP_BUILD_REF:-unknown}
+      APP_BUILD_TIME: ${APP_BUILD_TIME:-}
       RUNTIME_PROFILE: ${RUNTIME_PROFILE:-full}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       EVENT_BUS_CHANNEL: ${EVENT_BUS_CHANNEL:-support.events}
@@ -290,7 +294,7 @@ services:
     restart: unless-stopped
 
   worker_query:
-    image: localhost/supportportal-app:latest
+    image: ${APP_RUNTIME_IMAGE:-localhost/supportportal-app:unknown}
     env_file:
       - ../.env
     volumes:
@@ -300,6 +304,8 @@ services:
       - -m
       - backend.worker
     environment:
+      APP_BUILD_REF: ${APP_BUILD_REF:-unknown}
+      APP_BUILD_TIME: ${APP_BUILD_TIME:-}
       RUNTIME_PROFILE: ${RUNTIME_PROFILE:-full}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       TICKET_DB_DSN: ${TICKET_DB_DSN:?TICKET_DB_DSN is required}
@@ -340,7 +346,7 @@ services:
     restart: unless-stopped
 
   worker_aux:
-    image: localhost/supportportal-app:latest
+    image: ${APP_RUNTIME_IMAGE:-localhost/supportportal-app:unknown}
     env_file:
       - ../.env
     volumes:
@@ -350,6 +356,8 @@ services:
       - -m
       - backend.worker
     environment:
+      APP_BUILD_REF: ${APP_BUILD_REF:-unknown}
+      APP_BUILD_TIME: ${APP_BUILD_TIME:-}
       RUNTIME_PROFILE: ${RUNTIME_PROFILE:-full}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       TICKET_DB_DSN: ${TICKET_DB_DSN:?TICKET_DB_DSN is required}

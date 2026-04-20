@@ -71,8 +71,8 @@ bash scripts/workflow/restart_single_host_lightweight_stack.sh
 说明：
 1. 本地开发默认使用 lightweight 重建；生产 / EC2 / 需要本地 ML 依赖的验证才使用 `bash scripts/workflow/restart_single_host_stack.sh`。
 2. 所有单机重建脚本都只能从根工作区的干净 `main` 运行；如果本地 `main` 没有同步到 `origin/main`，脚本会直接失败。
-3. 重建前脚本会先清理辅助栈 `deploymentlw`，确保本地只保留一套官方单机栈 `deployment`。
-4. 本地长期运行栈不要再从任意 task worktree 直接执行 `podman-compose ... up -d --build`，否则 `localhost/supportportal-app:latest` 可能被旧 checkout 覆盖。
+3. 官方本地单机栈只有 `deployment`；重建前脚本会先清理 stray/unsupported 的 `deploymentlw`，避免并存运行。
+4. 重建脚本会导出当前根 `main` 对应的 `APP_RUNTIME_IMAGE=localhost/supportportal-app:<app_build.ref>`；不要再从任意 task worktree 直接执行 `podman-compose ... up -d --build`，否则运行中的 API/worker 可能和根 `main` 不一致。
 
 ### 2.3.1 本地 lightweight 重建（无 PyTorch）
 
@@ -99,7 +99,8 @@ bash scripts/workflow/restart_single_host_lightweight_stack.sh
 补充：
 1. `/health` 现在会返回 `app_build.ref` 和 `app_build.built_at`，可直接核对当前在线 API / RAG 服务到底跑的是哪次构建。
 2. `/health.runtime_profile` 会直接告诉你当前官方单机栈跑的是 `full` 还是 `local_lightweight`。
-3. 在 local lightweight 模式下，如果你错误地把 `SENTIMENT_PROVIDER=model` 或 `EMBEDDING_PROVIDER=local_bge_m3` 打开，`/health.config_warnings` 会给出兼容性提示。
+3. `bash scripts/workflow/inspect_single_host_stack_mode.sh` 会同时校验根 `main` ref、容器镜像 tag、`/health.app_build.ref` 三者一致；任何不一致都应视为环境不可信。
+4. 在 local lightweight 模式下，如果你错误地把 `SENTIMENT_PROVIDER=model` 或 `EMBEDDING_PROVIDER=local_bge_m3` 打开，`/health.config_warnings` 会给出兼容性提示。
 
 ### 2.5 运维命令
 
@@ -107,10 +108,10 @@ bash scripts/workflow/restart_single_host_lightweight_stack.sh
 # 检查并补起本机 DB relay（在当前 .env 明确依赖 relay 时）
 bash scripts/workflow/ensure_local_db_relay.sh
 
-# 检查当前官方单机栈模式，并提示是否存在辅助栈 deploymentlw
+# 检查当前官方单机栈模式，并校验 build provenance
 bash scripts/workflow/inspect_single_host_stack_mode.sh
 
-# 清理辅助排障栈 deploymentlw
+# 清理 stray/unsupported 的 deploymentlw
 bash scripts/workflow/cleanup_single_host_aux_stack.sh
 
 # 查看服务状态
