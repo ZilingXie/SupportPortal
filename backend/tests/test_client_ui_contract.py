@@ -645,8 +645,102 @@ class ClientUiContractTests(unittest.TestCase):
                   throw new Error("Client2 should not render waiting markers after the first send.");
                 }
                 const deliveredMatches = html.match(/✅ Delivered/g) || [];
+                if (deliveredMatches.length !== 0) {
+                  throw new Error(`Client2 first-send postsend shell should delay the delivered label for a fresh customer message, got ${deliveredMatches.length}.`);
+                }
+              """
+            )
+        )
+
+    def test_client2_fresh_customer_message_schedules_delivered_label_after_5_seconds(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                const baseNow = Date.parse("2026-04-20T09:00:00.000Z");
+                Date.now = () => baseNow;
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                const timers = [];
+                setTimeout = (fn, delay) => {
+                  timers.push({ fn, delay });
+                  return timers.length;
+                };
+
+                localStorage.setItem(
+                  "helpdesk_tickets",
+                  JSON.stringify([
+                    {
+                      id: "TK-DELIVERED-001",
+                      title: "Need help joining a channel",
+                      status: "communicating",
+                      createdAt: "2026-04-20T08:59:58.000Z",
+                      updatedAt: "2026-04-20T09:00:00.000Z",
+                      userId: state.user.id,
+                      product: "audio_video_calling",
+                      messages: [
+                        {
+                          id: "msg-user-1",
+                          role: "user",
+                          content: "How do I join a channel?",
+                          createdAt: "2026-04-20T09:00:00.000Z",
+                        },
+                      ],
+                    },
+                  ])
+                );
+
+                state.view = "chat-ticket";
+                state.activeTicketId = "TK-DELIVERED-001";
+                const html = renderChatTicket();
+                if (html.includes("✅ Delivered")) {
+                  throw new Error("Client2 should not render delivered for a message that is less than five seconds old.");
+                }
+                if (timers.length !== 1) {
+                  throw new Error(`Client2 should schedule one delivered refresh timer, got ${timers.length}.`);
+                }
+                if (timers[0].delay !== 5000) {
+                  throw new Error(`Client2 should wait 5000ms before showing delivered, got ${timers[0].delay}.`);
+                }
+              """
+            )
+        )
+
+    def test_client2_customer_message_shows_delivered_after_5_seconds(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                const baseNow = Date.parse("2026-04-20T09:00:05.000Z");
+                Date.now = () => baseNow;
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+
+                localStorage.setItem(
+                  "helpdesk_tickets",
+                  JSON.stringify([
+                    {
+                      id: "TK-DELIVERED-002",
+                      title: "Need help joining a channel",
+                      status: "communicating",
+                      createdAt: "2026-04-20T08:59:58.000Z",
+                      updatedAt: "2026-04-20T09:00:05.000Z",
+                      userId: state.user.id,
+                      product: "audio_video_calling",
+                      messages: [
+                        {
+                          id: "msg-user-1",
+                          role: "user",
+                          content: "How do I join a channel?",
+                          createdAt: "2026-04-20T09:00:00.000Z",
+                        },
+                      ],
+                    },
+                  ])
+                );
+
+                state.view = "chat-ticket";
+                state.activeTicketId = "TK-DELIVERED-002";
+                const html = renderChatTicket();
+                const deliveredMatches = html.match(/✅ Delivered/g) || [];
                 if (deliveredMatches.length !== 1) {
-                  throw new Error(`Client2 first-send postsend shell should render one delivered label for the customer message, got ${deliveredMatches.length}.`);
+                  throw new Error(`Client2 should show delivered once the customer message is five seconds old, got ${deliveredMatches.length}.`);
                 }
               """
             )
