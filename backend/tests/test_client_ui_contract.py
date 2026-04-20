@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260420-client-route-unification-1", html)
-        self.assertIn("./app.js?v=20260420-client-route-unification-1", html)
+        self.assertIn("./styles.css?v=20260420-client-new-ticket-id-1", html)
+        self.assertIn("./app.js?v=20260420-client-new-ticket-id-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -510,6 +510,31 @@ class ClientUiContractTests(unittest.TestCase):
                 }
                 if (html.includes("✅ Delivered")) {
                   throw new Error("Client2 draft should not render the delivered status without a persisted customer message.");
+                }
+                if (!html.includes(`<div class="new-ticket-info-value mono">${draft.id}</div>`)) {
+                  throw new Error("Client2 draft should show the real ticket id in Ticket Information when the draft already has one.");
+                }
+                if (html.includes('<div class="new-ticket-info-value mono">Pending</div>')) {
+                  throw new Error("Client2 draft should not show Pending when the draft ticket already has an id.");
+                }
+              """
+            )
+        )
+
+    def test_client2_new_ticket_information_panel_falls_back_to_pending_without_ticket_id(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                const html = renderNewTicketInformationPanel({
+                  id: "   ",
+                  status: "draft",
+                  messages: [],
+                  createdAt: null,
+                  updatedAt: null,
+                });
+
+                if (!html.includes('<div class="new-ticket-info-value mono">Pending</div>')) {
+                  throw new Error("Client2 draft ticket information should fall back to Pending when no ticket id exists.");
                 }
               """
             )
