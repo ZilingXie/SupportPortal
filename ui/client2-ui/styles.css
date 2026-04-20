@@ -3717,8 +3717,17 @@ a.citation-link:hover {
 
 .new-ticket-correspondence-author,
 .new-ticket-correspondence-subtitle,
-.new-ticket-correspondence-time {
+.new-ticket-correspondence-time,
+.new-ticket-correspondence-delivered {
   margin: 0;
+}
+
+.new-ticket-correspondence-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex: 0 0 auto;
 }
 
 .new-ticket-correspondence-author {
@@ -3742,6 +3751,14 @@ a.citation-link:hover {
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+  text-align: right;
+}
+
+.new-ticket-correspondence-delivered {
+  color: #169c4d;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.1;
   text-align: right;
 }
 
