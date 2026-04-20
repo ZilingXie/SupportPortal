@@ -27,8 +27,8 @@ class Client2RouteSmokeTests(unittest.TestCase):
     def test_client2_html_references_local_assets(self) -> None:
         html = Path("ui/client2-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260420-client2-draft-kba-align-1", html)
-        self.assertIn("./app.js?v=20260420-client2-draft-kba-align-1", html)
+        self.assertIn("./styles.css?v=20260420-client2-workspace-my-tickets-tail-blank-1", html)
+        self.assertIn("./app.js?v=20260420-client2-workspace-my-tickets-tail-blank-1", html)
 
 
 class Client2UiContractTests(unittest.TestCase):
@@ -261,6 +261,27 @@ class Client2UiContractTests(unittest.TestCase):
         self.assertIn(".clienttest-route-page", css)
         self.assertIn(".clienttest-route-page-footer-band", css)
         self.assertIn(".clienttest-route-footer-band", css)
+        self.assertRegex(
+            css,
+            re.compile(
+                r"\.clienttest-route-page-footer-band \{[^}]*min-height:\s*calc\(100% \+ var\(--client2-tail-footer-block-height\) \+ var\(--client2-route-bottom-space\)\);[^}]*padding-bottom:\s*0;",
+                re.DOTALL,
+            ),
+        )
+        self.assertRegex(
+            css,
+            re.compile(
+                r"\.clienttest-route-footer-band \{[^}]*height:\s*calc\(var\(--client2-tail-footer-block-height\) \+ var\(--client2-route-bottom-space\)\);[^}]*min-height:\s*calc\(var\(--client2-tail-footer-block-height\) \+ var\(--client2-route-bottom-space\)\);",
+                re.DOTALL,
+            ),
+        )
+        self.assertRegex(
+            css,
+            re.compile(
+                r"\.clienttest-route-footer-shell \{[^}]*height:\s*var\(--client2-tail-footer-block-height\);",
+                re.DOTALL,
+            ),
+        )
         self.assertIn(".new-ticket-tail-route", css)
         self.assertIn(".new-ticket-draft-inline-route", css)
         self.assertNotIn("clienttest-route-scroll-region", app_source)
