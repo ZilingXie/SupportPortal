@@ -2292,6 +2292,7 @@ function isNewTicketPostSendState(viewState) {
 
 function renderNewTicketInformationPanel(ticket, options = {}) {
   const isDraft = isTicketEmpty(ticket);
+  const normalizedTicketId = String(ticket?.id || "").trim();
   const classes = ["new-ticket-info-card"];
   if (options.fixed !== false) {
     classes.push("new-ticket-fixed-info-card");
@@ -2311,7 +2312,7 @@ function renderNewTicketInformationPanel(ticket, options = {}) {
         </div>
         <div class="new-ticket-info-row">
           <span class="new-ticket-info-label">Ticket ID</span>
-          <div class="new-ticket-info-value mono">${escapeHtml(isDraft ? "Pending" : ticket.id)}</div>
+          <div class="new-ticket-info-value mono">${escapeHtml(normalizedTicketId || "Pending")}</div>
         </div>
         <div class="new-ticket-info-row">
           <span class="new-ticket-info-label">Created Date</span>
