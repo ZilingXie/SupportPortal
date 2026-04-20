@@ -27,8 +27,8 @@ class Client2RouteSmokeTests(unittest.TestCase):
     def test_client2_html_references_local_assets(self) -> None:
         html = Path("ui/client2-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260420-client2-workspace-my-tickets-tail-blank-1", html)
-        self.assertIn("./app.js?v=20260420-client2-workspace-my-tickets-tail-blank-1", html)
+        self.assertIn("./styles.css?v=20260420-client2-workspace-my-tickets-remove-footer-shell-1", html)
+        self.assertIn("./app.js?v=20260420-client2-workspace-my-tickets-remove-footer-shell-1", html)
 
 
 class Client2UiContractTests(unittest.TestCase):
@@ -264,14 +264,14 @@ class Client2UiContractTests(unittest.TestCase):
         self.assertRegex(
             css,
             re.compile(
-                r"\.clienttest-route-page-footer-band \{[^}]*min-height:\s*calc\(100% \+ var\(--client2-tail-footer-block-height\) \+ var\(--client2-route-bottom-space\)\);[^}]*padding-bottom:\s*0;",
+                r"\.clienttest-route-page-footer-band \{[^}]*min-height:\s*calc\(100% \+ var\(--client2-route-bottom-space\)\);[^}]*padding-bottom:\s*0;",
                 re.DOTALL,
             ),
         )
         self.assertRegex(
             css,
             re.compile(
-                r"\.clienttest-route-footer-band \{[^}]*height:\s*calc\(var\(--client2-tail-footer-block-height\) \+ var\(--client2-route-bottom-space\)\);[^}]*min-height:\s*calc\(var\(--client2-tail-footer-block-height\) \+ var\(--client2-route-bottom-space\)\);",
+                r"\.clienttest-route-footer-band \{[^}]*height:\s*var\(--client2-route-bottom-space\);[^}]*min-height:\s*var\(--client2-route-bottom-space\);",
                 re.DOTALL,
             ),
         )
@@ -350,11 +350,11 @@ class Client2UiContractTests(unittest.TestCase):
                 if (!html.includes("clienttest-route-footer-band")) {
                   throw new Error("Client2 workspace should render a real in-flow footer band element.");
                 }
-                if (!html.includes("clienttest-route-footer-shell-communicating")) {
-                  throw new Error("Client2 workspace should render the communicating-style footer shell.");
+                if (html.includes("clienttest-route-footer-shell-communicating")) {
+                  throw new Error("Client2 workspace should remove the communicating-style footer shell and keep only the bottom blank.");
                 }
                 if (html.includes("new-ticket-composer-toolbar") || html.includes("new-ticket-inline-send-btn") || html.includes("id=\\"chat-input\\"")) {
-                  throw new Error("Client2 workspace footer should stay non-interactive and shell-only.");
+                  throw new Error("Client2 workspace footer band should stay non-interactive.");
                 }
                 if (html.includes("welcome-inner")) {
                   throw new Error("Client2 workspace should no longer use the oversized legacy hero wrapper.");
@@ -849,11 +849,11 @@ class Client2UiContractTests(unittest.TestCase):
                 if (!html.includes("clienttest-route-footer-band")) {
                   throw new Error("Client2 tickets page should render a real in-flow footer band element.");
                 }
-                if (!html.includes("clienttest-route-footer-shell-communicating")) {
-                  throw new Error("Client2 tickets page should render the communicating-style footer shell.");
+                if (html.includes("clienttest-route-footer-shell-communicating")) {
+                  throw new Error("Client2 tickets page should remove the communicating-style footer shell and keep only the bottom blank.");
                 }
                 if (html.includes("new-ticket-composer-toolbar") || html.includes("new-ticket-inline-send-btn") || html.includes("id=\\"chat-input\\"")) {
-                  throw new Error("Client2 tickets footer should stay non-interactive and shell-only.");
+                  throw new Error("Client2 tickets footer band should stay non-interactive.");
                 }
                 if (html.includes("clienttest-route-scroll-region")) {
                   throw new Error("Client2 tickets page should no longer use the scoped internal scroll region.");

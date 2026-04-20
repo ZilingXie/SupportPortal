@@ -2335,14 +2335,14 @@ a.citation-link:hover {
 }
 
 .clienttest-route-page-footer-band {
-  min-height: calc(100% + var(--client2-tail-footer-block-height) + var(--client2-route-bottom-space));
+  min-height: calc(100% + var(--client2-route-bottom-space));
   align-content: stretch;
   padding-bottom: 0;
 }
 
 .clienttest-route-footer-band {
-  height: calc(var(--client2-tail-footer-block-height) + var(--client2-route-bottom-space));
-  min-height: calc(var(--client2-tail-footer-block-height) + var(--client2-route-bottom-space));
+  height: var(--client2-route-bottom-space);
+  min-height: var(--client2-route-bottom-space);
   margin-top: auto;
   flex: 0 0 auto;
   pointer-events: none;
