@@ -22,6 +22,7 @@ from fastapi import (
     File,
     HTTPException,
     Query,
+    Request,
     UploadFile,
     WebSocket,
     WebSocketDisconnect,
@@ -124,8 +125,6 @@ from backend.services.token_usage import aggregate_usage_ledger, resolve_ticket_
 BASE_DIR = Path(__file__).resolve().parent.parent
 UI_DIR = BASE_DIR / "ui"
 CLIENT_DIR = UI_DIR / "client-ui"
-CLIENTTEST_DIR = UI_DIR / "clienttest-ui"
-CLIENT2_DIR = UI_DIR / "client2-ui"
 ENGINEER_DIR = UI_DIR / "engineer-ui"
 DASHBOARD_DIR = UI_DIR / "dashboard-ui"
 
@@ -388,10 +387,6 @@ app.add_middleware(
 
 if CLIENT_DIR.exists():
     app.mount("/client", StaticFiles(directory=CLIENT_DIR, html=True), name="client-ui")
-if CLIENTTEST_DIR.exists():
-    app.mount("/clienttest", StaticFiles(directory=CLIENTTEST_DIR, html=True), name="clienttest-ui")
-if CLIENT2_DIR.exists():
-    app.mount("/client2", StaticFiles(directory=CLIENT2_DIR, html=True), name="client2-ui")
 if ENGINEER_DIR.exists():
     app.mount("/engineer", StaticFiles(directory=ENGINEER_DIR, html=True), name="engineer-ui")
 if DASHBOARD_DIR.exists():
@@ -1981,6 +1976,33 @@ def _normalize_engineer_case_payload_for_read(case_payload: dict[str, Any]) -> d
 @app.get("/")
 def root() -> RedirectResponse:
     return RedirectResponse(url="/client")
+
+
+def _client_compat_redirect_target(request: Request, legacy_path: str = "") -> str:
+    legacy_path = legacy_path or ""
+    target = "/client/"
+    if legacy_path:
+        target = f"/client/{legacy_path}"
+    query = str(request.url.query or "").strip()
+    if query:
+        target = f"{target}?{query}"
+    return target
+
+
+@app.get("/client2")
+@app.get("/client2/")
+@app.get("/client2/{legacy_path:path}")
+def client2_compat_redirect(request: Request, legacy_path: str = "") -> RedirectResponse:
+    target = _client_compat_redirect_target(request, legacy_path)
+    return RedirectResponse(url=target)
+
+
+@app.get("/clienttest")
+@app.get("/clienttest/")
+@app.get("/clienttest/{legacy_path:path}")
+def clienttest_compat_redirect(request: Request, legacy_path: str = "") -> RedirectResponse:
+    target = _client_compat_redirect_target(request, legacy_path)
+    return RedirectResponse(url=target)
 
 
 @app.get("/login")

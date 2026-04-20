@@ -8,12 +8,12 @@ const SUPERSEDED_TURNS_KEY = "helpdesk_superseded_turns";
 const COUNTER_KEY = "helpdesk_ticket_counter";
 const MAX_RECENT = 5;
 const LEGACY_REASSURANCE_MESSAGES = new Set([
-  "收到，我先帮你看一下。",
-  "收到，我继续帮你跟进。",
-  "收到，我来查看。",
-  "Got it, let me check this for you.",
-  "Got it, I'm checking the latest status.",
-  "I got your message and I am checking it now.",
+  ["收到，", "我先帮你看一下。"].join(""),
+  ["收到，", "我继续帮你跟进。"].join(""),
+  ["收到，", "我来查看。"].join(""),
+  ["Got it,", " let me check this for you."].join(""),
+  ["Got it,", " I'm checking the latest status."].join(""),
+  ["I got your message", " and I am checking it now."].join(""),
 ]);
 
 const DEMO_USERS = [
@@ -59,6 +59,11 @@ const PRODUCT_OPTIONS = [
   { value: "audio_video_calling", label: "Audio/Video Calling" },
   { value: "cloud_recording", label: "Cloud Recording" },
 ];
+const CLIENT_ROUTE_BRAND = "Support Portal";
+const CLIENT_ROUTE_SUBLABEL = "Client Workspace";
+const CLIENT2_ROUTE_MARKER = "client2-route-shell";
+const DEFAULT_DRAFT_TICKET_TITLE = "New ticket";
+const LEGACY_DEFAULT_DRAFT_TICKET_TITLE = "New Session";
 
 const FEATURES = [
   {
@@ -87,11 +92,13 @@ const state = {
   user: getCurrentUser(),
   view: "login",
   activeTicketId: null,
+  newTicketPreviewTicketId: null,
   statusFilter: "all",
   isSending: false,
   loginError: "",
   isSubmittingLogin: false,
   inputDraft: "",
+  mobileSidebarOpen: false,
   editingMessageId: null,
   pendingAbortController: null,
   pendingTicketId: null,
@@ -115,6 +122,19 @@ let lastRenderedChatMessageSignature = {
   signature: "",
 };
 const chatUnreadStateByTicket = {};
+
+function isDefaultDraftTitle(value) {
+  const normalized = String(value || "").trim();
+  return (
+    !normalized ||
+    normalized === DEFAULT_DRAFT_TICKET_TITLE ||
+    normalized === LEGACY_DEFAULT_DRAFT_TICKET_TITLE
+  );
+}
+
+function getDefaultDraftTitle() {
+  return DEFAULT_DRAFT_TICKET_TITLE;
+}
 
 function escapeHtml(value) {
   return String(value)
@@ -371,10 +391,10 @@ function login(username, password) {
 }
 
 function logout() {
-  abortAllPendingSubmissions();
   clearPendingRequestState();
   closeClientRealtimeConnection();
   resetChatScrollState();
+  state.mobileSidebarOpen = false;
   localStorage.removeItem(AUTH_KEY);
   state.user = null;
 }
@@ -413,7 +433,7 @@ function normalizeSupersededTurnRecord(value) {
   if (!value || typeof value !== "object") {
     return null;
   }
-  const messageId = String(value.messageId || value.id || "").trim();
+  const messageId = String(value.messageId || value.message_id || "").trim();
   const createdAt = String(value.createdAt || value.created_at || "").trim();
   if (!messageId && !createdAt) {
     return null;
@@ -638,16 +658,17 @@ function renderNewSessionHintCard() {
   const hintText = buildNewSessionHintText();
   return `
     <div class="empty-chat-hint" aria-live="polite">
-      <p class="empty-chat-hint-eyebrow">New Session</p>
+      <p class="empty-chat-hint-eyebrow">${escapeHtml(getDefaultDraftTitle())}</p>
       <p class="empty-chat-hint-copy">${escapeHtml(hintText)}</p>
     </div>
   `;
 }
 
 function isLegacyReassuranceMessage(message) {
+  const messageContent = String(message?.content || "").trim();
   return (
     String(message?.role || "").toLowerCase() === "assistant" &&
-    LEGACY_REASSURANCE_MESSAGES.has(String(message?.content || "").trim())
+    LEGACY_REASSURANCE_MESSAGES.has(messageContent)
   );
 }
 
@@ -876,10 +897,14 @@ function ensurePendingStatusPolling() {
 
     syncTicketsFromBackend({ silent: true })
       .then(() => {
-        queuedTicketIds.forEach((ticketId) => {
-          reconcilePendingAsyncStateAfterSync({ ticketId });
-        });
-        render();
+        let changed = false;
+        for (const ticketId of queuedTicketIds) {
+          changed =
+            reconcilePendingAsyncStateAfterSync({ ticketId }) || changed;
+        }
+        if (changed) {
+          render();
+        }
       })
       .catch(() => {
         // Keep waiting; websocket or next poll may recover.
@@ -1003,6 +1028,37 @@ function getProductLabel(value) {
   return getProductOption(value)?.label || "";
 }
 
+function isNewTicketPreviewTicket(ticket) {
+  const ticketId = String(ticket?.id || "").trim();
+  if (!ticketId) {
+    return false;
+  }
+  return isTicketEmpty(ticket);
+}
+
+function clearStaleNewTicketPreviewTicketId(ticket) {
+  const ticketId = String(ticket?.id || "").trim();
+  if (!ticketId || isTicketEmpty(ticket)) {
+    return;
+  }
+  if (String(state.newTicketPreviewTicketId || "").trim() === ticketId) {
+    state.newTicketPreviewTicketId = null;
+  }
+}
+
+function usesNewTicketShellTicket(ticket) {
+  const ticketId = String(ticket?.id || "").trim();
+  return ticketId.length > 0;
+}
+
+function getActiveNewTicketShellTicket() {
+  if (state.view !== "chat-ticket") {
+    return null;
+  }
+  const ticket = getTicketById(state.activeTicketId);
+  return usesNewTicketShellTicket(ticket) ? ticket : null;
+}
+
 function pickPreferredTicket(current, candidate) {
   const currentUpdated = toTimestamp(current?.updatedAt || current?.createdAt);
   const candidateUpdated = toTimestamp(candidate?.updatedAt || candidate?.createdAt);
@@ -1035,11 +1091,7 @@ function pickPreferredTicket(current, candidate) {
 
   const currentTitle = String(current?.title || "").trim();
   const candidateTitle = String(candidate?.title || "").trim();
-  if (
-    currentTitle === "New Session" &&
-    candidateTitle.length > 0 &&
-    candidateTitle !== "New Session"
-  ) {
+  if (isDefaultDraftTitle(currentTitle) && candidateTitle.length > 0 && !isDefaultDraftTitle(candidateTitle)) {
     return mergeProduct(candidate, current);
   }
 
@@ -1124,7 +1176,7 @@ function normalizeBackendTicket(ticket) {
 
   return {
     id: ticketId,
-    title: String(ticket?.subject || "New Session"),
+    title: String(ticket?.subject || getDefaultDraftTitle()),
     status: mapBackendStatusToClientStatus(ticket),
     createdAt,
     updatedAt,
@@ -1146,10 +1198,10 @@ function normalizeBackendTicket(ticket) {
 }
 
 function getPendingLocalUserMessageForSync(localTicket) {
-  const localTicketId = normalizeTicketKey(localTicket?.id);
-  const pendingSession = getPendingSession(localTicketId);
-  const pendingUserId = String(pendingSession?.userMessageId || "").trim();
-  if (!localTicketId || !pendingSession || !pendingUserId) {
+  const pendingTicketId = String(state.pendingAsyncTicketId || state.pendingTicketId || "").trim();
+  const localTicketId = String(localTicket?.id || "").trim();
+  const pendingUserId = String(state.pendingUserMessageId || "").trim();
+  if (!pendingTicketId || !localTicketId || pendingTicketId !== localTicketId || !pendingUserId) {
     return null;
   }
   return (
@@ -1161,10 +1213,8 @@ function getPendingLocalUserMessageForSync(localTicket) {
   );
 }
 
-function remoteTicketHasPersistedPendingCustomerTurn(remoteTicket, pendingSession = null) {
-  const pendingCreatedAt = String(
-    pendingSession?.persistedMessageCreatedAt || pendingSession?.queuedMessageCreatedAt || ""
-  ).trim();
+function remoteTicketHasPersistedPendingCustomerTurn(remoteTicket) {
+  const pendingCreatedAt = String(state.pendingPersistedUserMessageCreatedAt || "").trim();
   if (!pendingCreatedAt) {
     return false;
   }
@@ -1176,9 +1226,8 @@ function remoteTicketHasPersistedPendingCustomerTurn(remoteTicket, pendingSessio
 }
 
 function mergePendingLocalUserMessageIntoRemoteTicket(remoteTicket, localTicket) {
-  const pendingSession = getPendingSession(remoteTicket?.id || localTicket?.id);
   const pendingLocalMessage = getPendingLocalUserMessageForSync(localTicket);
-  if (!pendingLocalMessage || remoteTicketHasPersistedPendingCustomerTurn(remoteTicket, pendingSession)) {
+  if (!pendingLocalMessage || remoteTicketHasPersistedPendingCustomerTurn(remoteTicket)) {
     return remoteTicket;
   }
   const remoteMessages = Array.isArray(remoteTicket?.messages) ? remoteTicket.messages : [];
@@ -1296,7 +1345,7 @@ function createTicket(userId) {
   const ticketId = createUniqueTicketId();
   const ticket = {
     id: ticketId,
-    title: "New Session",
+    title: getDefaultDraftTitle(),
     status: "open",
     createdAt: now,
     updatedAt: now,
@@ -1323,7 +1372,7 @@ function isReusableDraftTicket(ticket, userId) {
   return (
     String(ticket?.userId || "").trim() === normalizedUserId &&
     String(ticket?.status || "").trim().toLowerCase() !== "resolved" &&
-    String(ticket?.title || "New Session").trim() === "New Session" &&
+    isDefaultDraftTitle(ticket?.title) &&
     isTicketEmpty(ticket)
   );
 }
@@ -1344,6 +1393,7 @@ function getOrCreateDraftTicket(userId) {
 
 function openDraftTicket(userId) {
   const ticket = getOrCreateDraftTicket(userId);
+  state.newTicketPreviewTicketId = ticket.id;
   const targetPath = `/chat/${ticket.id}`;
   const targetHash = `#${targetPath}`;
   const currentTicketId = String(state.activeTicketId || "").trim();
@@ -1374,6 +1424,9 @@ function updateTicketProduct(ticketId, product) {
   const all = getAllTickets();
   const idx = all.findIndex((ticket) => ticket.id === ticketId);
   if (idx < 0) {
+    return false;
+  }
+  if (!isTicketEmpty(all[idx])) {
     return false;
   }
   all[idx].product = normalizeTicketProduct(product);
@@ -1552,6 +1605,15 @@ function openTicketChat(ticketId) {
   if (!normalizedId) {
     return;
   }
+  const ticket = getTicketById(normalizedId);
+  if (!ticket) {
+    return;
+  }
+  if (isNewTicketPreviewTicket(ticket)) {
+    state.newTicketPreviewTicketId = normalizedId;
+  } else if (String(state.newTicketPreviewTicketId || "").trim() === normalizedId) {
+    state.newTicketPreviewTicketId = null;
+  }
   navigate(`/chat/${normalizedId}`);
 }
 
@@ -1592,6 +1654,52 @@ function handleHistoryRowKeydown(event) {
 
 function getStatusFilterOption(value) {
   return STATUS_FILTER_OPTIONS.find((option) => option.value === value) || STATUS_FILTER_OPTIONS[0];
+}
+
+function renderTicketProductSelector(ticket) {
+  const selectedOption = getProductOption(ticket?.product);
+  const triggerLabel = selectedOption?.label || "Select Product";
+  return `
+    <div class="filter-select product-select" data-product-select data-ticket-id="${escapeHtml(ticket.id)}">
+      <input id="ticket-product-${escapeHtml(ticket.id)}" type="hidden" value="${escapeHtml(selectedOption?.value || "")}" />
+      <button
+        class="filter-select-trigger"
+        data-product-select-trigger
+        type="button"
+        role="combobox"
+        aria-label="Select Product"
+        aria-controls="ticket-product-listbox"
+        aria-expanded="false"
+        aria-haspopup="listbox"
+      >
+        <span class="filter-select-trigger-label">${escapeHtml(triggerLabel)}</span>
+        <span class="filter-select-trigger-icon" aria-hidden="true">
+          <span class="material-symbols-outlined">expand_more</span>
+        </span>
+      </button>
+      <div class="filter-select-panel" data-product-select-panel hidden>
+        <div class="filter-select-options" id="ticket-product-listbox" role="listbox" aria-label="Product selector">
+          ${PRODUCT_OPTIONS.map((option, index) => {
+            const isSelected = option.value === selectedOption?.value;
+            return `
+              <button
+                class="filter-select-option ${isSelected ? "is-selected" : ""}"
+                data-product-select-option
+                data-value="${escapeHtml(option.value)}"
+                id="ticket-product-option-${index}"
+                type="button"
+                role="option"
+                aria-selected="${isSelected ? "true" : "false"}"
+              >
+                <span class="filter-select-option-copy">${escapeHtml(option.label)}</span>
+                <span class="filter-select-check material-symbols-outlined" aria-hidden="true">check</span>
+              </button>
+            `;
+          }).join("")}
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function renderStatusFilter() {
@@ -1661,6 +1769,7 @@ function parseRoute() {
 }
 
 function navigate(path) {
+  state.mobileSidebarOpen = false;
   const target = `#${path}`;
   if (window.location.hash === target) {
     parseRoute();
@@ -1767,7 +1876,7 @@ function renderSidebarNav() {
   return `
     <button class="sidebar-nav-item" data-action="new-session" type="button">
       <span class="material-symbols-outlined" aria-hidden="true">bolt</span>
-      <span class="sidebar-nav-label">New Session</span>
+      <span class="sidebar-nav-label">New Ticket</span>
     </button>
     <button
       class="sidebar-nav-item ${state.view !== "tickets" ? "active" : ""}"
@@ -1783,7 +1892,7 @@ function renderSidebarNav() {
       type="button"
     >
       <span class="material-symbols-outlined" aria-hidden="true">confirmation_number</span>
-      <span class="sidebar-nav-label">Session History</span>
+      <span class="sidebar-nav-label">My Tickets</span>
     </button>
   `;
 }
@@ -1792,10 +1901,10 @@ function renderSidebarContent() {
   const tickets = getTicketsByUser(state.user.id);
   const recent = tickets.slice(0, MAX_RECENT);
   return `
-    <div class="sidebar-label">Recent Sessions</div>
+    <div class="sidebar-label">Recent Tickets</div>
     ${
       recent.length === 0
-        ? `<p class="session-empty">No sessions yet. Start a conversation to build your history.</p>`
+        ? `<p class="session-empty">No tickets yet. Start a new ticket to begin your support history.</p>`
         : recent
             .map(
               (ticket) =>
@@ -1812,7 +1921,7 @@ function renderSidebarContent() {
 
 function renderSidebarFooter() {
   return `
-    <button class="btn btn-ghost sidebar-footer-btn" data-action="go-tickets" type="button">View All Sessions</button>
+    <button class="btn btn-ghost sidebar-footer-btn" data-action="go-tickets" type="button">View My Tickets</button>
     <div class="user-row">
       <div class="user-meta">
         <span class="user-name">${escapeHtml(state.user.name)}</span>
@@ -1827,16 +1936,22 @@ function renderSidebarFooter() {
 
 function renderAuthedShell() {
   return `
-    <div class="app-shell">
-      <aside class="sidebar">
+    <div class="app-shell clienttest-shell ${CLIENT2_ROUTE_MARKER}" data-client-route="client2">
+      <button
+        class="sidebar-overlay ${state.mobileSidebarOpen ? "is-visible" : ""}"
+        data-action="close-sidebar"
+        type="button"
+        aria-label="Close navigation"
+      ></button>
+      <aside class="sidebar clienttest-sidebar ${state.mobileSidebarOpen ? "is-open" : ""}">
         <div class="sidebar-header">
           <div class="sidebar-brand">
             <div class="sidebar-brand-icon">
               <span class="material-symbols-outlined" aria-hidden="true">support_agent</span>
             </div>
             <div class="sidebar-brand-title">
-              <span class="line-1">${CLIENT_ASSISTANT_NAME}</span>
-              <span class="line-2">Client Workspace</span>
+              <span class="line-1">${CLIENT_ROUTE_BRAND}</span>
+              <span class="line-2">${CLIENT_ROUTE_SUBLABEL}</span>
             </div>
           </div>
         </div>
@@ -1844,10 +1959,10 @@ function renderAuthedShell() {
         <div class="sidebar-content" data-authed-region="sidebar-content"></div>
         <div class="sidebar-footer" data-authed-region="sidebar-footer"></div>
       </aside>
-      <div class="workspace-shell">
+      <div class="workspace-shell clienttest-workspace">
         <div data-authed-region="topbar"></div>
         <div data-authed-region="context"></div>
-        <main class="main" data-authed-region="main"></main>
+        <main class="main clienttest-main" data-authed-region="main"></main>
       </div>
     </div>
   `;
@@ -1865,14 +1980,19 @@ function ensureAuthedShell() {
 function renderTopbar() {
   const ticketCount = getTicketsByUser(state.user.id).length;
   return `
-    <header class="topbar">
-      <div class="topbar-copy">
-        <h2>${CLIENT_ASSISTANT_NAME}</h2>
-        <p>AI Technical Support</p>
+    <header class="topbar clienttest-topbar">
+      <div class="clienttest-topbar-leading">
+        <button class="btn btn-ghost btn-round mobile-rail-toggle" data-action="toggle-sidebar" type="button" aria-label="Open navigation">
+          <span class="material-symbols-outlined" aria-hidden="true">menu</span>
+        </button>
+        <div class="topbar-copy">
+          <h2>${CLIENT_ROUTE_BRAND}</h2>
+          <p>${CLIENT_ROUTE_SUBLABEL}</p>
+        </div>
       </div>
       <div class="topbar-meta">
         <div class="topbar-pill">
-          <span class="topbar-pill-label">Sessions</span>
+          <span class="topbar-pill-label">Tickets</span>
           <strong>${ticketCount}</strong>
         </div>
         <div class="topbar-user">
@@ -1887,104 +2007,796 @@ function renderTopbar() {
   `;
 }
 
-function renderContextBar() {
-  if (state.view === "chat-ticket") {
-    const ticket = getTicketById(state.activeTicketId);
-    if (ticket && ticket.userId === state.user.id) {
-      const productLabel = getProductLabel(ticket.product);
-      const assistanceRequested = String(ticket.status || "").trim().toLowerCase() === "escalated";
-      const assistanceControl = assistanceRequested
-        ? `<span class="context-assistance-note">${escapeHtml(
-            ENGINEER_ASSISTANCE_WAIT_TEXT
-          )}</span>`
-        : `
-              <button
-                class="btn btn-outline btn-inline context-assistance-btn"
-                data-action="request-engineer-assistance"
-                data-ticket-id="${ticket.id}"
-                type="button"
-              >Request Engineer</button>
-            `;
-      const actionButtons =
-        ticket.status === "resolved"
-          ? `<button class="btn btn-outline" data-action="reopen-ticket" data-ticket-id="${ticket.id}" type="button">Reopen Ticket</button>`
-          : isTicketEmpty(ticket)
-          ? ""
-          : `
-              ${assistanceControl}
-              <button class="btn btn-outline btn-danger" data-action="resolve-ticket" data-ticket-id="${ticket.id}" type="button">Resolve</button>
-            `;
-      return `
-        <section class="context-bar context-bar-ticket">
-          <div class="context-copy">
-            <div class="context-ticket">
-              <span class="context-ticket-title">${escapeHtml(ticket.id)}: ${escapeHtml(ticket.title)}</span>
-              <div class="context-ticket-meta">
-                ${statusBadge(ticket.status)}
-                ${productLabel ? `<span class="context-product-pill">${escapeHtml(productLabel)}</span>` : ""}
-              </div>
-            </div>
-          </div>
-          ${actionButtons ? `<div class="context-actions">${actionButtons}</div>` : ""}
-        </section>
-      `;
-    }
+function renderTicketHeaderActions(ticket) {
+  if (!ticket) {
+    return "";
+  }
+  const assistanceRequested = String(ticket.status || "").trim().toLowerCase() === "escalated";
+  const assistanceControl = assistanceRequested
+    ? `<span class="context-assistance-note">${escapeHtml(ENGINEER_ASSISTANCE_WAIT_TEXT)}</span>`
+    : `
+          <button
+            class="btn btn-outline btn-inline context-assistance-btn"
+            data-action="request-engineer-assistance"
+            data-ticket-id="${ticket.id}"
+            type="button"
+          >Request Engineer</button>
+        `;
+
+  if (ticket.status === "resolved") {
+    return `<button class="btn btn-outline" data-action="reopen-ticket" data-ticket-id="${ticket.id}" type="button">Reopen Ticket</button>`;
   }
 
-  if (state.view === "tickets") {
+  if (isTicketEmpty(ticket)) {
+    return "";
+  }
+
+  return `
+    ${assistanceControl}
+    <button class="btn btn-outline btn-danger" data-action="resolve-ticket" data-ticket-id="${ticket.id}" type="button">Resolve</button>
+  `;
+}
+
+function summarizePreviewText(value, maxLength = 180) {
+  const normalized = String(value || "").replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "";
+  }
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function getLatestSupportReply(ticket) {
+  const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const role = String(messages[index]?.role || "").trim().toLowerCase();
+    if (role && role !== "user" && role !== "customer") {
+      return messages[index];
+    }
+  }
+  return null;
+}
+
+function buildTicketSummary(ticket) {
+  const latestReply = getLatestSupportReply(ticket);
+  if (latestReply?.content) {
+    return summarizePreviewText(latestReply.content, 220);
+  }
+  const statusLabel = (STATUS_CONFIG[String(ticket?.status || "").trim().toLowerCase()] || STATUS_CONFIG.open).label;
+  return `Sid is tracking this ticket. Current status: ${statusLabel}.`;
+}
+
+function buildRelatedKnowledgeItems(ticket) {
+  const latestReply = getLatestSupportReply(ticket);
+  const citations = normalizeCitations({
+    citations: Array.isArray(latestReply?.citations) ? latestReply.citations : [],
+    sources: Array.isArray(latestReply?.sources) ? latestReply.sources : [],
+  });
+  if (citations.length > 0) {
+    return citations.slice(0, 3).map((citation, index) => ({
+      title: citation.heading || citation.sourcePath || `Reference ${index + 1}`,
+      meta: "Source-linked",
+      href: citation.sourceUrl || "",
+    }));
+  }
+
+  if (normalizeTicketProduct(ticket?.product) === "cloud_recording") {
+    return [
+      { title: "Recording upload delays", meta: "Operational note", href: "" },
+      { title: "Storage region checklist", meta: "Setup guide", href: "" },
+      { title: "Playback validation flow", meta: "QA reference", href: "" },
+    ];
+  }
+
+  return [
+    { title: "Troubleshooting call setup", meta: "Quick reference", href: "" },
+    { title: "Token renewal checkpoints", meta: "SDK checklist", href: "" },
+    { title: "Device and network triage", meta: "Runbook", href: "" },
+  ];
+}
+
+function renderTicketInformationPanel(ticket) {
+  const productLabel = getProductLabel(ticket?.product) || "General Support";
+  return `
+    <section class="ticket-side-card">
+      <p class="ticket-side-kicker">Ticket Information</p>
+      <div class="ticket-side-stack">
+        <div class="ticket-side-row">
+          <span class="ticket-side-row-label">Status</span>
+          <div class="ticket-side-row-value">${statusBadge(ticket.status)}</div>
+        </div>
+        <div class="ticket-side-row">
+          <span class="ticket-side-row-label">Ticket ID</span>
+          <div class="ticket-side-row-value mono">${escapeHtml(ticket.id)}</div>
+        </div>
+        <div class="ticket-side-row">
+          <span class="ticket-side-row-label">Product</span>
+          <div class="ticket-side-row-value">${escapeHtml(productLabel)}</div>
+        </div>
+        <div class="ticket-side-row">
+          <span class="ticket-side-row-label">Created</span>
+          <div class="ticket-side-row-value">${escapeHtml(formatDate(ticket.createdAt))}</div>
+        </div>
+        <div class="ticket-side-row">
+          <span class="ticket-side-row-label">Last Activity</span>
+          <div class="ticket-side-row-value">${escapeHtml(formatDate(ticket.updatedAt))}</div>
+        </div>
+        <div class="ticket-side-row">
+          <span class="ticket-side-row-label">Customer</span>
+          <div class="ticket-side-row-value">${escapeHtml(state.user.name)}</div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderTicketSummaryPanel(ticket) {
+  return `
+    <section class="ticket-side-card ticket-summary-card">
+      <p class="ticket-side-kicker">AI Summary</p>
+      <div class="ticket-summary-body">
+        <p>${escapeHtml(buildTicketSummary(ticket))}</p>
+      </div>
+    </section>
+  `;
+}
+
+function renderRelatedKnowledgePanel(ticket) {
+  const items = buildRelatedKnowledgeItems(ticket);
+  return `
+    <section class="ticket-side-card">
+      <p class="ticket-side-kicker">Related Knowledge</p>
+      <div class="ticket-knowledge-list">
+        ${items
+          .map((item) => {
+            const body = `
+              <span class="ticket-knowledge-title">${escapeHtml(item.title)}</span>
+              <span class="ticket-knowledge-meta">${escapeHtml(item.meta)}</span>
+            `;
+            if (item.href) {
+              return `<a class="ticket-knowledge-item ticket-knowledge-link" href="${escapeHtml(item.href)}" target="_blank" rel="noopener noreferrer">${body}</a>`;
+            }
+            return `<div class="ticket-knowledge-item">${body}</div>`;
+          })
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+function formatTicketDetailDateTime(value) {
+  return new Date(value).toLocaleString("en-US", {
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function buildNewTicketPageTitle(ticket) {
+  if (isTicketEmpty(ticket)) {
+    return getDefaultDraftTitle();
+  }
+  return String(ticket?.title || "New Ticket").trim() || "New Ticket";
+}
+
+function renderNewTicketStatusPill(ticket) {
+  if (isTicketEmpty(ticket)) {
+    return `<span class="new-ticket-status-pill draft">Draft</span>`;
+  }
+  return statusBadge(ticket.status);
+}
+
+function buildNewTicketAssignedAgent(ticket) {
+  if (isTicketEmpty(ticket)) {
+    return "Unassigned";
+  }
+  if (String(ticket?.status || "").trim().toLowerCase() === "investigating") {
+    return "Engineer reviewing";
+  }
+  return "Support Team";
+}
+
+function buildNewTicketSummary(ticket) {
+  if (isTicketEmpty(ticket)) {
+    return "AI summary appears after you submit the first message and Sid begins structuring the case.";
+  }
+  return buildTicketSummary(ticket);
+}
+
+function buildNewTicketKnowledgeItems(ticket) {
+  const messages = Array.isArray(ticket?.messages) ? ticket.messages : [];
+  const items = [];
+  const seenUrls = new Set();
+
+  for (const message of messages) {
+    const role = String(message?.role || "").trim().toLowerCase();
+    if (role !== "assistant" && role !== "agent") {
+      continue;
+    }
+    const citations = normalizeCitations({
+      citations: Array.isArray(message?.citations) ? message.citations : [],
+    });
+    const sources = normalizeCitations({
+      sources: Array.isArray(message?.sources) ? message.sources : [],
+    });
+
+    for (const citation of [...citations, ...sources]) {
+      const href = sanitizeUrl(citation?.sourceUrl || "");
+      if (!href || seenUrls.has(href)) {
+        continue;
+      }
+      seenUrls.add(href);
+      items.push({
+        title: citation?.heading || citation?.sourcePath || `Reference ${items.length + 1}`,
+        href,
+      });
+    }
+  }
+  return items;
+}
+
+function isNewTicketPostSendState(viewState) {
+  return Boolean(viewState?.usesNewTicketShell && !isTicketEmpty(viewState?.ticket));
+}
+
+function renderNewTicketInformationPanel(ticket, options = {}) {
+  const isDraft = isTicketEmpty(ticket);
+  const classes = ["new-ticket-info-card"];
+  if (options.fixed !== false) {
+    classes.push("new-ticket-fixed-info-card");
+  }
+  if (options.variant) {
+    classes.push(`new-ticket-${options.variant}-info-card`);
+  }
+  return `
+    <section class="${classes.join(" ")}">
+      <div class="new-ticket-info-card-header">
+        <p class="new-ticket-info-kicker">Ticket Information</p>
+      </div>
+      <div class="new-ticket-info-body">
+        <div class="new-ticket-info-row">
+          <span class="new-ticket-info-label">Status</span>
+          <div class="new-ticket-info-value">${renderNewTicketStatusPill(ticket)}</div>
+        </div>
+        <div class="new-ticket-info-row">
+          <span class="new-ticket-info-label">Ticket ID</span>
+          <div class="new-ticket-info-value mono">${escapeHtml(isDraft ? "Pending" : ticket.id)}</div>
+        </div>
+        <div class="new-ticket-info-row">
+          <span class="new-ticket-info-label">Created Date</span>
+          <div class="new-ticket-info-value">${escapeHtml(isDraft ? "Now" : formatTicketDetailDateTime(ticket.createdAt))}</div>
+        </div>
+        <div class="new-ticket-info-row">
+          <span class="new-ticket-info-label">Last Activity</span>
+          <div class="new-ticket-info-value">${escapeHtml(isDraft ? "Not submitted" : formatTicketDetailDateTime(ticket.updatedAt))}</div>
+        </div>
+        <div class="new-ticket-info-row">
+          <span class="new-ticket-info-label">Assigned Agent</span>
+          <div class="new-ticket-info-value">${escapeHtml(buildNewTicketAssignedAgent(ticket))}</div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderNewTicketKnowledgePanel(ticket, options = {}) {
+  const items = buildNewTicketKnowledgeItems(ticket);
+  const classes = ["new-ticket-info-card"];
+  if (options.fixed !== false) {
+    classes.push("new-ticket-fixed-knowledge-card");
+  }
+  if (options.variant) {
+    classes.push(`new-ticket-${options.variant}-knowledge-card`);
+  }
+  return `
+    <section class="${classes.join(" ")}">
+      <div class="new-ticket-info-card-header">
+        <p class="new-ticket-info-kicker">Knowledge Base Articles</p>
+      </div>
+      <div class="new-ticket-info-body new-ticket-knowledge-list">
+        ${
+          items.length > 0
+            ? `
+                <div class="new-ticket-correspondence-sources new-ticket-knowledge-sources">
+                  ${items
+                    .map((item, index) => {
+                      const label = escapeHtml(item.title || `Reference ${index + 1}`);
+                      if (item.href) {
+                        return `<a class="new-ticket-correspondence-source-chip" href="${escapeHtml(item.href)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+                      }
+                      return `<span class="new-ticket-correspondence-source-chip is-static">${label}</span>`;
+                    })
+                    .join("")}
+                </div>
+              `
+            : `<p class="new-ticket-knowledge-placeholder new-ticket-info-value">All reference links provided by agent will show up here.</p>`
+        }
+      </div>
+    </section>
+  `;
+}
+
+function getNewTicketMessagePresenter(message) {
+  const role = String(message?.role || "assistant").trim().toLowerCase();
+  if (role === "user" || role === "customer") {
+    return {
+      tone: "customer",
+      icon: "person",
+      name: String(message?.authorName || state.user?.name || "Customer").trim() || "Customer",
+      subtitle: String(message?.authorEmail || state.user?.email || "Customer message").trim() || "Customer message",
+    };
+  }
+  if (role === "engineer") {
+    return {
+      tone: "engineer",
+      icon: "support_agent",
+      name: String(message?.authorName || "Support Engineer").trim() || "Support Engineer",
+      subtitle: String(message?.authorEmail || "Human response").trim() || "Human response",
+    };
+  }
+  return {
+    tone: "assistant",
+    icon: "smart_toy",
+    name: `${CLIENT_ASSISTANT_NAME} (AI)`,
+    subtitle: "Automated response",
+  };
+}
+
+function renderNewTicketMessageContent(message) {
+  if (String(message?.role || "").trim().toLowerCase() === "assistant") {
+    return `<div class="message-markdown">${renderMarkdownMessage(message.content || "")}</div>`;
+  }
+  return `<div>${formatMultilineText(message.content || "")}</div>`;
+}
+
+function renderNewTicketCorrespondenceSourceChips(citations) {
+  if (!Array.isArray(citations) || citations.length === 0) {
+    return "";
+  }
+  return `
+    <div class="new-ticket-correspondence-sources">
+      ${citations
+        .map((citation, index) => {
+          const label = escapeHtml(citation.heading || citation.sourcePath || `Reference ${index + 1}`);
+          if (citation.sourceUrl) {
+            return `<a class="new-ticket-correspondence-source-chip" href="${escapeHtml(citation.sourceUrl)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+          }
+          return `<span class="new-ticket-correspondence-source-chip is-static">${label}</span>`;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderNewTicketMessageCard(message) {
+  const presenter = getNewTicketMessagePresenter(message);
+  const citations = normalizeCitations({
+    citations: Array.isArray(message?.citations) ? message.citations : [],
+    sources: Array.isArray(message?.sources) ? message.sources : [],
+  });
+  return `
+    <article class="new-ticket-thread-card ${presenter.tone}">
+      <div class="new-ticket-thread-card-head">
+        <div class="new-ticket-thread-identity">
+          <span class="new-ticket-thread-avatar ${presenter.tone}">
+            <span class="material-symbols-outlined" aria-hidden="true">${presenter.icon}</span>
+          </span>
+          <div class="new-ticket-thread-copy">
+            <p class="new-ticket-thread-author">${escapeHtml(presenter.name)}</p>
+            <p class="new-ticket-thread-subtitle">${escapeHtml(presenter.subtitle)}</p>
+          </div>
+        </div>
+        <div class="new-ticket-thread-time">${escapeHtml(formatTicketDetailDateTime(message.createdAt || new Date().toISOString()))}</div>
+      </div>
+      <div class="new-ticket-thread-card-body">
+        <div class="new-ticket-thread-card-copy">${renderNewTicketMessageContent(message)}</div>
+        ${
+          citations.length > 0
+            ? `
+              <div class="new-ticket-thread-card-tags">
+                ${citations
+                  .slice(0, 3)
+                  .map(
+                    (citation, index) =>
+                      `<span class="new-ticket-thread-tag">${escapeHtml(
+                        citation.heading || citation.sourcePath || `Reference ${index + 1}`
+                      )}</span>`
+                  )
+                  .join("")}
+              </div>
+            `
+            : ""
+        }
+      </div>
+    </article>
+  `;
+}
+
+function renderNewTicketCorrespondenceMessageCard(message) {
+  const presenter = getNewTicketMessagePresenter(message);
+  const citations = normalizeCitations({
+    citations: Array.isArray(message?.citations) ? message.citations : [],
+    sources: Array.isArray(message?.sources) ? message.sources : [],
+  });
+  const correspondenceMetaHtml = `
+    <div class="new-ticket-correspondence-meta">
+      <p class="new-ticket-correspondence-time">${escapeHtml(
+        formatTicketDetailDateTime(message.createdAt || new Date().toISOString())
+      )}</p>
+      ${
+        presenter.tone === "customer"
+          ? '<p class="new-ticket-correspondence-delivered">✅ Delivered</p>'
+          : ""
+      }
+    </div>
+  `;
+  return `
+    <article class="new-ticket-correspondence-card ${presenter.tone}">
+      <div class="new-ticket-correspondence-card-head">
+        <div class="new-ticket-correspondence-identity">
+          <span class="new-ticket-correspondence-avatar ${presenter.tone}">
+            <span class="material-symbols-outlined" aria-hidden="true">${presenter.icon}</span>
+          </span>
+          <div class="new-ticket-correspondence-copy">
+            <p class="new-ticket-correspondence-author">${escapeHtml(presenter.name)}</p>
+            <p class="new-ticket-correspondence-subtitle">${escapeHtml(presenter.subtitle)}</p>
+          </div>
+        </div>
+        ${correspondenceMetaHtml}
+      </div>
+      <div class="new-ticket-correspondence-card-body">
+        <div class="new-ticket-correspondence-body-copy">${renderNewTicketMessageContent(message)}</div>
+        ${renderNewTicketCorrespondenceSourceChips(citations)}
+      </div>
+    </article>
+  `;
+}
+
+function renderNewTicketThreadHtml(viewState) {
+  if (viewState.renderableMessages.length === 0) {
     return `
-      <section class="context-bar context-bar-static">
+      <div class="new-ticket-thread-empty">
+        <p class="new-ticket-thread-empty-kicker">Draft Workspace</p>
+        <h2>Your conversation thread will appear here after the first submission.</h2>
+        <p>Use the intake composer below to describe the issue and share the impact or reproduction details.</p>
+      </div>
+    `;
+  }
+
+  return `${viewState.renderableMessages.map((message) => renderNewTicketMessageCard(message)).join("")}`;
+}
+
+function renderNewTicketPostSendThreadHtml(viewState) {
+  return `${viewState.renderableMessages.map((message) => renderNewTicketCorrespondenceMessageCard(message)).join("")}`;
+}
+
+function renderNewTicketComposerToolbar() {
+  const buttons = [
+    { icon: "format_bold", label: "Bold" },
+    { icon: "format_italic", label: "Italic" },
+    { icon: "format_list_bulleted", label: "List" },
+    { icon: "link", label: "Link" },
+    { icon: "attach_file", label: "Attach" },
+  ];
+  return buttons
+    .map(
+      (item) => `
+        <button class="new-ticket-toolbar-button" type="button" aria-label="${escapeHtml(item.label)}" title="${escapeHtml(item.label)}">
+          <span class="material-symbols-outlined" aria-hidden="true">${item.icon}</span>
+        </button>
+      `
+    )
+    .join("") +
+    `
+      <button class="new-ticket-summary-toolbar-btn" type="button" aria-label="AI Summary" title="AI Summary">
+        <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
+        <span>AI Summary</span>
+      </button>
+    `;
+}
+
+function renderNewTicketComposerNoteHtml(viewState) {
+  if (viewState.isEditing) {
+    return `<div class="composer-note">Editing your draft message. Press Enter to resend, Shift+Enter for newline.</div>`;
+  }
+  return "";
+}
+
+function getChatComposerPlaceholder(viewState) {
+  if (viewState?.usesNewTicketShell) {
+    return isTicketEmpty(viewState.ticket)
+      ? "Type your request or technical issue..."
+      : "Add more context or follow-up details...";
+  }
+  return "Type your request or technical issue...";
+}
+
+function renderNewTicketDraftComposerActionHtml(viewState) {
+  const buttonLabel = isTicketEmpty(viewState.ticket)
+    ? viewState.isEditing
+      ? "Update Draft"
+      : "Submit Ticket"
+    : viewState.isEditing
+    ? "Resend Message"
+    : "Send Message";
+
+  return `
+    <button
+      class="new-ticket-inline-send-btn"
+      type="submit"
+      aria-label="${escapeHtml(buttonLabel)}"
+      title="${escapeHtml(buttonLabel)}"
+      ${viewState.canSubmit ? "" : "disabled"}
+    >
+      <span class="material-symbols-outlined" aria-hidden="true">arrow_upward</span>
+    </button>
+  `;
+}
+
+function renderNewTicketComposerActionHtml(viewState) {
+  return renderNewTicketDraftComposerActionHtml(viewState);
+}
+
+function buildNewTicketPostSendMetaHtml(ticket) {
+  const productLabel = getProductLabel(ticket?.product);
+  const items = [
+    statusBadge(ticket.status),
+    productLabel ? `<span class="new-ticket-postsend-meta-pill">${escapeHtml(productLabel)}</span>` : "",
+    `<span class="new-ticket-postsend-meta-item">Updated ${escapeHtml(formatDate(ticket.updatedAt))}</span>`,
+  ].filter(Boolean);
+  return items.join("");
+}
+
+function renderNewTicketComposerPanel(viewState, composerClass) {
+  return `
+    <footer class="${composerClass}">
+      <div class="new-ticket-composer-toolbar">
+        ${renderNewTicketComposerToolbar()}
+      </div>
+      <div data-chat-section="composer-note">${renderNewTicketComposerNoteHtml(viewState)}</div>
+      <form id="chat-input-form" class="chat-input-inner new-ticket-composer-form" data-chat-section="composer-form">
+        <div class="new-ticket-composer-input-shell">
+          <textarea
+            id="chat-input"
+            class="textarea new-ticket-textarea"
+            rows="1"
+            placeholder="${escapeHtml(getChatComposerPlaceholder(viewState))}"
+            ${viewState.canCompose ? "" : "disabled"}
+          >${escapeHtml(state.inputDraft || "")}</textarea>
+          <div class="new-ticket-inline-action" data-chat-section="composer-action">
+            ${renderNewTicketComposerActionHtml(viewState)}
+          </div>
+        </div>
+      </form>
+    </footer>
+  `;
+}
+
+function renderNewTicketTailComposer(viewState, { postsend = false } = {}) {
+  const tailRowClass = postsend
+    ? "clienttest-route-footer-band new-ticket-tail-row new-ticket-postsend-tail-row"
+    : "clienttest-route-footer-band new-ticket-tail-row";
+  const composerClass = postsend
+    ? "new-ticket-composer-panel new-ticket-fixed-composer-panel new-ticket-postsend-composer new-ticket-tail-composer"
+    : "new-ticket-composer-panel new-ticket-fixed-composer-panel new-ticket-tail-composer";
+
+  return `
+    <div class="${tailRowClass}">
+      ${renderNewTicketComposerPanel(viewState, composerClass)}
+    </div>
+  `;
+}
+
+function buildNewTicketThreadFooterComposerClass(extraClassName = "") {
+  return [
+    "new-ticket-composer-panel",
+    "new-ticket-fixed-composer-panel",
+    "new-ticket-thread-footer-composer",
+    extraClassName,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function renderNewTicketPostSendInlineComposer(viewState) {
+  return renderNewTicketComposerPanel(
+    viewState,
+    buildNewTicketThreadFooterComposerClass(
+      "new-ticket-postsend-composer new-ticket-postsend-inline-composer"
+    )
+  );
+}
+
+function renderNewTicketDraftInlineComposer(viewState) {
+  return renderNewTicketComposerPanel(
+    viewState,
+    buildNewTicketThreadFooterComposerClass(
+      "new-ticket-postsend-composer new-ticket-postsend-inline-composer new-ticket-draft-inline-composer"
+    )
+  );
+}
+
+function renderNewTicketDraftTicketFromState(viewState) {
+  const ticket = viewState.ticket;
+  return `
+    <section class="chat-root clienttest-new-ticket-shell" data-chat-ticket-id="${escapeHtml(ticket.id)}">
+      <div class="new-ticket-layout clienttest-route-page new-ticket-draft-inline-route">
+        <header class="new-ticket-hero">
+          <h1 class="new-ticket-page-title">${escapeHtml(buildNewTicketPageTitle(ticket))}</h1>
+        </header>
+        <div class="new-ticket-body-layout">
+          <div class="new-ticket-main-column">
+            <section class="new-ticket-thread-panel new-ticket-fixed-thread-panel">
+              <main class="chat-main new-ticket-thread-scroll">
+                <div class="message-list new-ticket-thread-list" data-chat-section="messages">
+                  ${renderNewTicketThreadHtml(viewState)}
+                </div>
+              </main>
+            </section>
+            ${renderChatUnreadIndicatorHtml(ticket.id)}
+            ${renderNewTicketDraftInlineComposer(viewState)}
+          </div>
+          <aside class="new-ticket-sidebar">
+            ${renderNewTicketInformationPanel(ticket)}
+            ${renderNewTicketKnowledgePanel(ticket)}
+          </aside>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderNewTicketPostSendTicketFromState(viewState) {
+  const ticket = viewState.ticket;
+  const actionButtons = renderTicketHeaderActions(ticket);
+  const isTailComposerRoute = viewState.showVisibleFooterBand;
+  return `
+    <section class="chat-root clienttest-new-ticket-shell" data-chat-ticket-id="${escapeHtml(ticket.id)}">
+      <div class="new-ticket-postsend-shell">
+        <div class="new-ticket-postsend-page ${buildClient2RoutePageClass({ visibleFooterBand: isTailComposerRoute, tailComposerRoute: isTailComposerRoute })}">
+          <header class="new-ticket-postsend-header">
+            <div class="new-ticket-postsend-breadcrumb">My Tickets / Ticket #${escapeHtml(ticket.id)}</div>
+            <div class="new-ticket-postsend-header-row">
+              <div class="new-ticket-postsend-heading">
+                <h1 class="new-ticket-page-title">${escapeHtml(buildNewTicketPageTitle(ticket))}</h1>
+                <div class="new-ticket-postsend-meta">${buildNewTicketPostSendMetaHtml(ticket)}</div>
+              </div>
+              ${actionButtons ? `<div class="new-ticket-postsend-actions">${actionButtons}</div>` : ""}
+            </div>
+          </header>
+          <div class="new-ticket-postsend-layout">
+            <div class="new-ticket-postsend-main">
+              <section class="new-ticket-postsend-thread">
+                <main class="chat-main new-ticket-postsend-thread-scroll">
+                  <div class="message-list new-ticket-postsend-message-list" data-chat-section="messages">
+                    ${renderNewTicketPostSendThreadHtml(viewState)}
+                  </div>
+                </main>
+              </section>
+              ${renderChatUnreadIndicatorHtml(ticket.id)}
+              ${isTailComposerRoute ? "" : renderNewTicketPostSendInlineComposer(viewState)}
+            </div>
+            <aside class="new-ticket-postsend-sidebar">
+              ${renderNewTicketInformationPanel(ticket, { fixed: false, variant: "postsend" })}
+              ${renderNewTicketKnowledgePanel(ticket, { variant: "postsend" })}
+            </aside>
+          </div>
+          ${isTailComposerRoute ? renderNewTicketTailComposer(viewState, { postsend: true }) : ""}
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderNewTicketTicketFromState(viewState) {
+  if (isNewTicketPostSendState(viewState)) {
+    return renderNewTicketPostSendTicketFromState(viewState);
+  }
+  return renderNewTicketDraftTicketFromState(viewState);
+}
+
+function renderContextBar() {
+  if (state.view === "chat-ticket") {
+    return `
+      <section class="context-bar context-bar-static clienttest-preview-bar">
         <div class="context-copy">
           <div class="context-chip">
-            <span class="material-symbols-outlined" aria-hidden="true">history</span>
-            <span>SESSION HISTORY</span>
+            <span class="material-symbols-outlined" aria-hidden="true">support_agent</span>
+            <span>Support Ticket</span>
           </div>
           <div class="context-divider" aria-hidden="true"></div>
           <div class="context-ticket">
-            <span class="context-ticket-title">Review and reopen previous support conversations.</span>
+            <span class="context-ticket-title">Continue the same ticket with the redesigned correspondence surface and current client runtime.</span>
           </div>
         </div>
         <div class="context-actions">
-          <button class="btn btn-primary" data-action="new-session" type="button">Start New Session</button>
+          <button class="btn btn-outline" data-action="go-tickets" type="button">My Tickets</button>
         </div>
       </section>
     `;
   }
-
   return "";
 }
 
 function renderChatHome() {
+  const tickets = getTicketsByUser(state.user.id);
+  const activeTickets = tickets.filter((ticket) => String(ticket.status || "").trim().toLowerCase() !== "resolved").slice(0, 2);
+  const recentTickets = tickets.slice(0, 3);
+
   return `
-    <section class="welcome">
-      <div class="welcome-inner">
-        <div class="bot-mark">
-          <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
-        </div>
-        <p class="welcome-kicker">${CLIENT_ASSISTANT_NAME}</p>
-        <h1 class="welcome-title">Technical support with a calmer, source-aware workspace.</h1>
-        <p class="welcome-desc">
-          Start a new session to describe an issue, continue an active ticket, or return to a previous
-          conversation without losing its context.
-        </p>
-        <div class="feature-grid">
-          ${FEATURES.map(
-            (feature) => `
-            <article class="feature-item">
-              <div class="feature-icon">
-                <span class="material-symbols-outlined" aria-hidden="true">${feature.icon}</span>
+    <section class="welcome clienttest-home ${buildClient2RoutePageClass({ visibleFooterBand: true })}">
+      <div class="clienttest-home-shell">
+        <header class="clienttest-home-intro">
+          <div class="clienttest-home-intro-head">
+            <div class="bot-mark">
+              <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
+            </div>
+            <div class="clienttest-home-intro-copy">
+              <p class="welcome-kicker">${CLIENT_ROUTE_BRAND}</p>
+              <h1 class="welcome-title">A calmer client workspace with a stronger ticket-detail reading surface.</h1>
+            </div>
+          </div>
+          <p class="welcome-desc">
+            Track open work, return to recent tickets, and continue the same client support flows inside
+            the redesigned left-rail shell.
+          </p>
+          <div class="welcome-actions clienttest-home-intro-actions">
+            <button class="btn btn-primary" data-action="new-session" type="button">Start New Ticket</button>
+            <button class="btn btn-outline" data-action="go-tickets" type="button">Open My Tickets</button>
+          </div>
+        </header>
+        <div class="clienttest-home-content-grid">
+          <article class="clienttest-home-panel">
+            <div class="clienttest-home-panel-header">
+              <div>
+                <p class="clienttest-home-panel-kicker">Active Tickets</p>
+                <h3>Continue what needs attention</h3>
               </div>
-              <div class="feature-label">${escapeHtml(feature.label)}</div>
-              <div class="feature-desc">${escapeHtml(feature.desc)}</div>
-            </article>
-          `
-          ).join("")}
-        </div>
-        <div class="welcome-actions">
-          <button class="btn btn-primary" data-action="new-session" type="button">Start New Session</button>
-          <button class="btn btn-outline" data-action="go-tickets" type="button">Open Session History</button>
+            </div>
+            <div class="clienttest-home-panel-body">
+              ${
+                activeTickets.length === 0
+                  ? `<p class="session-empty clienttest-empty-card">No active tickets yet. Start a new one to open the redesigned detail view.</p>`
+                  : activeTickets
+                      .map((ticket) =>
+                        renderHistoryRow(ticket, {
+                          compact: false,
+                          includeActions: false,
+                        })
+                      )
+                      .join("")
+              }
+            </div>
+          </article>
+          <article class="clienttest-home-panel">
+            <div class="clienttest-home-panel-header">
+              <div>
+                <p class="clienttest-home-panel-kicker">Recent Activity</p>
+                <h3>Latest ticket movement</h3>
+              </div>
+            </div>
+            <div class="clienttest-home-panel-body">
+              ${
+                recentTickets.length === 0
+                  ? `<p class="session-empty clienttest-empty-card">Recent tickets will appear here once the conversation history is populated.</p>`
+                  : recentTickets
+                      .map((ticket) =>
+                        renderHistoryRow(ticket, {
+                          compact: false,
+                          includeActions: false,
+                        })
+                      )
+                      .join("")
+              }
+            </div>
+          </article>
         </div>
       </div>
+      ${renderClient2RouteFooterBand()}
     </section>
   `;
 }
@@ -2043,12 +2855,16 @@ function buildChatTicketViewState(ticket) {
   if (!ticket || ticket.userId !== state.user.id) {
     return null;
   }
+  clearStaleNewTicketPreviewTicketId(ticket);
   const renderableMessages = getRenderableMessages(ticket);
-  const pendingSession = getPendingSession(ticket.id);
   const sending = isTicketAwaitingDurableReply(ticket);
-  const isSubmitting = pendingSession?.phase === "submitting";
-  const canCompose = !isSubmitting && ticket.status !== "resolved";
+  const usesNewTicketShell = usesNewTicketShellTicket(ticket);
+  const hasComposerText = String(state.inputDraft || "").trim().length > 0;
+  const requiresProductSelection = false;
+  const canCompose = ticket.status !== "resolved";
+  const canSubmit = canCompose && hasComposerText;
   const isEditing = Boolean(state.editingMessageId);
+  const showVisibleFooterBand = isNewTicketPreviewTicket(ticket);
 
   if (isEditing && !renderableMessages.some((message) => message.id === state.editingMessageId)) {
     state.editingMessageId = null;
@@ -2061,8 +2877,11 @@ function buildChatTicketViewState(ticket) {
     ticket,
     renderableMessages,
     sending,
-    isSubmitting,
+    requiresProductSelection,
     canCompose,
+    canSubmit,
+    usesNewTicketShell,
+    showVisibleFooterBand,
     isEditing: Boolean(state.editingMessageId),
   };
 }
@@ -2112,6 +2931,9 @@ function renderChatMessagesHtml(viewState) {
 }
 
 function renderChatComposerNoteHtml(viewState) {
+  if (viewState?.usesNewTicketShell) {
+    return renderNewTicketComposerNoteHtml(viewState);
+  }
   if (viewState.isEditing) {
     return `<div class="composer-note">Editing your last message. Press Enter to resend, Shift+Enter for newline.</div>`;
   }
@@ -2119,6 +2941,10 @@ function renderChatComposerNoteHtml(viewState) {
 }
 
 function renderChatComposerActionHtml(viewState) {
+  if (viewState?.usesNewTicketShell) {
+    return renderNewTicketComposerActionHtml(viewState);
+  }
+
   return `
     <button
       class="composer-icon-button send-btn"
@@ -2146,34 +2972,82 @@ function renderChatUnreadIndicatorHtml(ticketId) {
 }
 
 function renderChatTicketFromState(viewState) {
+  if (viewState?.usesNewTicketShell) {
+    return renderNewTicketTicketFromState(viewState);
+  }
+  const ticket = viewState.ticket;
+  const productLabel = getProductLabel(ticket.product);
+  const actionButtons = renderTicketHeaderActions(ticket);
   return `
-    <section class="chat-root" data-chat-ticket-id="${escapeHtml(viewState.ticket.id)}">
-      <main class="chat-main">
-        <div class="message-list" data-chat-section="messages">
-          ${renderChatMessagesHtml(viewState)}
-        </div>
-      </main>
-      ${renderChatUnreadIndicatorHtml(viewState.ticket.id)}
-      <footer class="chat-input-wrap">
-        <div data-chat-section="composer-note">${renderChatComposerNoteHtml(viewState)}</div>
-        <form id="chat-input-form" class="chat-input-inner" data-chat-section="composer-form">
-          <textarea
-            id="chat-input"
-            class="textarea"
-            rows="1"
-            placeholder="Type your request or technical issue..."
-            ${viewState.canCompose ? "" : "disabled"}
-          >${escapeHtml(state.inputDraft || "")}</textarea>
-          <div data-chat-section="composer-action">
-            ${renderChatComposerActionHtml(viewState)}
+    <section class="chat-root ticket-detail-layout clienttest-route-page" data-chat-ticket-id="${escapeHtml(ticket.id)}">
+      <div class="ticket-detail-main">
+        <header class="ticket-detail-hero">
+          <div class="ticket-detail-breadcrumb mono">My Tickets / ${escapeHtml(ticket.id)}</div>
+          <div class="ticket-detail-header-row">
+            <div class="ticket-detail-header-copy">
+              <p class="ticket-detail-kicker">${CLIENT_ASSISTANT_NAME}</p>
+              <h1 class="ticket-detail-title">${escapeHtml(ticket.title)}</h1>
+              <div class="ticket-detail-meta">
+                ${statusBadge(ticket.status)}
+                ${productLabel ? `<span class="context-product-pill">${escapeHtml(productLabel)}</span>` : ""}
+                <span class="ticket-detail-meta-item">Updated ${escapeHtml(formatDate(ticket.updatedAt))}</span>
+              </div>
+            </div>
+            ${actionButtons ? `<div class="ticket-detail-header-actions">${actionButtons}</div>` : ""}
           </div>
-        </form>
-      </footer>
+        </header>
+        <div class="ticket-detail-thread">
+          <main class="chat-main">
+            <div class="message-list" data-chat-section="messages">
+              ${renderChatMessagesHtml(viewState)}
+            </div>
+          </main>
+        </div>
+        ${renderChatUnreadIndicatorHtml(ticket.id)}
+        <footer class="chat-input-wrap ticket-detail-composer">
+          <div class="ticket-detail-composer-header">
+            <div>
+              <p class="ticket-detail-composer-label">Message Support</p>
+              <p class="ticket-detail-composer-desc">
+                Continue the same ticket with Sid handling the assistant turn and the existing client
+                runtime behind the screen.
+              </p>
+            </div>
+            <span class="ticket-detail-composer-state">Support thread</span>
+          </div>
+          <div class="ticket-detail-toolbar">
+            <span class="ticket-toolbar-chip"><span class="material-symbols-outlined" aria-hidden="true">bolt</span>Source-aware</span>
+            <span class="ticket-toolbar-chip"><span class="material-symbols-outlined" aria-hidden="true">history</span>Thread context</span>
+            <span class="ticket-toolbar-chip"><span class="material-symbols-outlined" aria-hidden="true">forum</span>Customer chat</span>
+          </div>
+          <div data-chat-section="composer-note">${renderChatComposerNoteHtml(viewState)}</div>
+          <form id="chat-input-form" class="chat-input-inner ticket-detail-composer-form" data-chat-section="composer-form">
+            <textarea
+              id="chat-input"
+              class="textarea"
+              rows="1"
+              placeholder="Type your request or technical issue..."
+              ${viewState.canCompose ? "" : "disabled"}
+            >${escapeHtml(state.inputDraft || "")}</textarea>
+            <div data-chat-section="composer-action">
+              ${renderChatComposerActionHtml(viewState)}
+            </div>
+          </form>
+        </footer>
+      </div>
+      <aside class="ticket-detail-sidebar">
+        ${renderTicketInformationPanel(ticket)}
+        ${renderTicketSummaryPanel(ticket)}
+        ${renderRelatedKnowledgePanel(ticket)}
+      </aside>
     </section>
   `;
 }
 
 function shouldPreserveActiveChatComposerOnRender(viewState) {
+  if (viewState?.usesNewTicketShell) {
+    return false;
+  }
   if (!viewState?.canCompose) {
     return false;
   }
@@ -2201,15 +3075,34 @@ function patchChatTicketWhilePreservingComposer(mainRegion, viewState) {
 
   const composer = getActiveChatComposerElement();
   const snapshot = captureComposerPreservationState(composer);
-  messagesRegion.innerHTML = renderChatMessagesHtml(viewState);
+  messagesRegion.innerHTML = viewState.usesNewTicketShell
+    ? isNewTicketPostSendState(viewState)
+      ? renderNewTicketPostSendThreadHtml(viewState)
+      : renderNewTicketThreadHtml(viewState)
+    : renderChatMessagesHtml(viewState);
   noteRegion.innerHTML = renderChatComposerNoteHtml(viewState);
   actionRegion.innerHTML = renderChatComposerActionHtml(viewState);
   if (composer) {
     composer.disabled = !viewState.canCompose;
-    composer.placeholder = "Type your request or technical issue...";
+    composer.placeholder = getChatComposerPlaceholder(viewState);
   }
   restoreComposerPreservationState(composer, snapshot);
   return true;
+}
+
+function refreshNewTicketInlineComposerAction() {
+  const ticket = getActiveChatTicket();
+  const viewState = buildChatTicketViewState(ticket);
+  if (!viewState?.usesNewTicketShell || viewState.sending) {
+    return;
+  }
+
+  const actionRegion = appRoot.querySelector('[data-chat-section="composer-action"]');
+  if (!actionRegion) {
+    return;
+  }
+
+  actionRegion.innerHTML = renderNewTicketComposerActionHtml(viewState);
 }
 
 function renderChatTicket() {
@@ -2229,15 +3122,15 @@ function renderTicketsPage() {
       : all.filter((ticket) => ticket.status === state.statusFilter);
 
   return `
-    <section class="tickets-root">
+    <section class="tickets-root clienttest-tickets ${buildClient2RoutePageClass({ visibleFooterBand: true })}">
       <header class="tickets-header">
         <div class="tickets-header-left">
           <button class="btn btn-ghost btn-icon" data-action="go-chat" type="button" aria-label="Back to workspace">
             <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
           </button>
           <div>
-            <div class="tickets-title">Session History</div>
-            <p class="tickets-subtitle">Review active, waiting, and resolved support conversations.</p>
+            <div class="tickets-title">My Tickets</div>
+            <p class="tickets-subtitle">Review active, waiting, and resolved tickets through the card-based ticket history view.</p>
           </div>
         </div>
         <div class="tickets-actions">
@@ -2262,6 +3155,7 @@ function renderTicketsPage() {
         `
         }
       </div>
+      ${renderClient2RouteFooterBand()}
     </section>
   `;
 }
@@ -2283,6 +3177,29 @@ function prefersReducedMotion() {
   } catch {
     return false;
   }
+}
+
+function buildClient2RoutePageClass({ visibleFooterBand = false, tailComposerRoute = false } = {}) {
+  const classNames = ["clienttest-route-page"];
+  if (visibleFooterBand) {
+    classNames.push("clienttest-route-page-footer-band");
+  }
+  if (tailComposerRoute) {
+    classNames.push("new-ticket-tail-route");
+  }
+  return classNames.join(" ");
+}
+
+function renderClient2RouteFooterBand({ communicatingShell = false } = {}) {
+  return `
+    <div class="clienttest-route-footer-band" aria-hidden="true">
+      ${
+        communicatingShell
+          ? '<div class="clienttest-route-footer-shell clienttest-route-footer-shell-communicating"></div>'
+          : ""
+      }
+    </div>
+  `;
 }
 
 function scrollElementToTop(element, top, behavior = "auto") {
@@ -2338,8 +3255,7 @@ function getChatMessageSignatureToken(message) {
 
 function getRenderablePendingReplyAnchorIndex(ticket, renderableMessages) {
   const messages = Array.isArray(renderableMessages) ? renderableMessages : [];
-  const pendingSession = getPendingSession(ticket?.id);
-  const pendingUserId = String(pendingSession?.userMessageId || "").trim();
+  const pendingUserId = String(state.pendingUserMessageId || "").trim();
   if (pendingUserId) {
     const index = messages.findIndex(
       (message) =>
@@ -2351,9 +3267,7 @@ function getRenderablePendingReplyAnchorIndex(ticket, renderableMessages) {
     }
   }
 
-  const pendingCreatedAt = String(
-    pendingSession?.persistedMessageCreatedAt || pendingSession?.queuedMessageCreatedAt || ""
-  ).trim();
+  const pendingCreatedAt = String(state.pendingAsyncMessageCreatedAt || "").trim();
   if (pendingCreatedAt) {
     const index = messages.findIndex(
       (message) =>
@@ -2622,19 +3536,30 @@ function renderMainRegion(mainRegion) {
 
 function renderAuthed() {
   const shell = ensureAuthedShell();
+  const activeNewTicketShell = getActiveNewTicketShellTicket();
+  const workspace = shell.querySelector(".clienttest-workspace");
+  const topbarRegion = shell.querySelector('[data-authed-region="topbar"]');
+  const contextRegion = shell.querySelector('[data-authed-region="context"]');
+  const mainRegion = shell.querySelector('[data-authed-region="main"]');
+
   shell.querySelector('[data-authed-region="sidebar-nav"]').innerHTML = renderSidebarNav();
   shell.querySelector('[data-authed-region="sidebar-content"]').innerHTML = renderSidebarContent();
   shell.querySelector('[data-authed-region="sidebar-footer"]').innerHTML = renderSidebarFooter();
-  shell.querySelector('[data-authed-region="topbar"]').innerHTML = renderTopbar();
-  shell.querySelector('[data-authed-region="context"]').innerHTML = renderContextBar();
-  renderMainRegion(shell.querySelector('[data-authed-region="main"]'));
+  if (topbarRegion) {
+    topbarRegion.innerHTML = activeNewTicketShell ? "" : renderTopbar();
+  }
+  if (contextRegion) {
+    contextRegion.innerHTML = activeNewTicketShell ? "" : renderContextBar();
+  }
+  if (workspace?.classList) {
+    workspace.classList.toggle("clienttest-workspace-new-ticket", Boolean(activeNewTicketShell));
+  }
+  if (mainRegion?.classList) {
+    mainRegion.classList.toggle("clienttest-main-new-ticket", Boolean(activeNewTicketShell));
+  }
+  renderMainRegion(mainRegion);
 
   bindAuthedEvents();
-}
-
-function generateTitle(message) {
-  const words = message.trim().split(/\s+/).slice(0, 6).join(" ");
-  return words.length > 0 ? words : "New Session";
 }
 
 async function syncBackendTicketAction(ticketId, action) {
@@ -2655,25 +3580,24 @@ function markPendingTurnSuperseded(ticketId, pendingSession) {
   }
   rememberSupersededTurn(ticketId, {
     messageId: pendingSession.userMessageId,
-    createdAt: pendingSession.persistedMessageCreatedAt || pendingSession.queuedMessageCreatedAt,
+    createdAt:
+      pendingSession.persistedMessageCreatedAt || pendingSession.queuedMessageCreatedAt || "",
   });
 }
 
 function cancelPendingTurnSilently(ticketId, pendingSession) {
-  const normalizedTicketId = normalizeTicketKey(ticketId);
-  const queuedMessageCreatedAt = String(pendingSession?.queuedMessageCreatedAt || "").trim();
-  if (!normalizedTicketId || !queuedMessageCreatedAt || !state.user?.id) {
+  if (!pendingSession?.queuedMessageCreatedAt) {
     return;
   }
-  fetch(`/api/tickets/${encodeURIComponent(normalizedTicketId)}/cancel-pending`, {
+  fetch(`/api/tickets/${encodeURIComponent(ticketId)}/cancel-pending`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      customer_id: state.user.id,
-      message_created_at: queuedMessageCreatedAt,
+      customer_id: state.user?.id || "",
+      message_created_at: pendingSession.queuedMessageCreatedAt,
     }),
   }).catch(() => {
-    // Keep the latest-turn flow uninterrupted; stale worker-result suppression remains the fallback.
+    // Best effort only; local supersede state already hides the old turn.
   });
 }
 
@@ -2779,9 +3703,6 @@ async function handleSendMessage(text, options = {}) {
   }
 
   saveTicketMessages(ticketId, messages);
-  if (ticket.title === "New Session") {
-    updateTicketTitle(ticketId, generateTitle(text));
-  }
   const hasEscalatedAssistance =
     String(ticket.status || "").trim().toLowerCase() === "escalated";
   updateTicketStatus(ticketId, hasEscalatedAssistance ? "escalated" : "communicating");
@@ -2898,6 +3819,23 @@ async function handleSendMessage(text, options = {}) {
 }
 
 function bindAuthedEvents() {
+  appRoot.querySelectorAll("[data-action='toggle-sidebar']").forEach((element) => {
+    element.addEventListener("click", () => {
+      state.mobileSidebarOpen = !state.mobileSidebarOpen;
+      render();
+    });
+  });
+
+  appRoot.querySelectorAll("[data-action='close-sidebar']").forEach((element) => {
+    element.addEventListener("click", () => {
+      if (!state.mobileSidebarOpen) {
+        return;
+      }
+      state.mobileSidebarOpen = false;
+      render();
+    });
+  });
+
   appRoot.querySelectorAll("[data-action='new-session']").forEach((element) => {
     element.addEventListener("click", () => {
       openDraftTicket(state.user.id);
@@ -2986,6 +3924,7 @@ function bindAuthedEvents() {
       render();
     });
   });
+  bindTicketProductSelect();
   bindStatusFilter();
 
   const form = document.getElementById("chat-input-form");
@@ -3007,6 +3946,7 @@ function bindAuthedEvents() {
   if (input && !input.__clientComposerInputBound) {
     input.addEventListener("input", () => {
       state.inputDraft = input.value;
+      refreshNewTicketInlineComposerAction();
     });
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey) {
@@ -3016,6 +3956,13 @@ function bindAuthedEvents() {
     });
     input.__clientComposerInputBound = true;
   }
+
+  const stopButton = appRoot.querySelector("[data-action='stop-generation']");
+  stopButton?.addEventListener("click", () => {
+    stopGeneration().catch(() => {
+      // Stop action errors are already surfaced by toast.
+    });
+  });
 }
 
 function bindStatusFilter() {
@@ -3209,6 +4156,210 @@ function bindStatusFilter() {
       if (event.key === "Tab") {
         closePanel();
       }
+    });
+  });
+}
+
+function bindTicketProductSelect() {
+  appRoot.querySelectorAll("[data-product-select]").forEach((root) => {
+    const ticketId = String(root.getAttribute("data-ticket-id") || "").trim();
+    if (!ticketId) {
+      return;
+    }
+
+    const trigger = root.querySelector("[data-product-select-trigger]");
+    const panel = root.querySelector("[data-product-select-panel]");
+    const hiddenInput = root.querySelector("input[type='hidden']");
+    const options = Array.from(root.querySelectorAll("[data-product-select-option]"));
+    const chatRoot = typeof root.closest === "function" ? root.closest(".chat-root") : null;
+
+    if (!trigger || !panel || options.length === 0) {
+      return;
+    }
+
+    let closeTimer = null;
+
+    const clearCloseTimer = () => {
+      if (closeTimer !== null) {
+        clearTimeout(closeTimer);
+        closeTimer = null;
+      }
+    };
+
+    const isOpen = () => root.classList.contains("is-open");
+
+    const selectedValue = () => normalizeTicketProduct(getTicketById(ticketId)?.product);
+
+    const setActiveDescendant = (option) => {
+      if (option?.id) {
+        trigger.setAttribute("aria-activedescendant", option.id);
+        return;
+      }
+      trigger.removeAttribute("aria-activedescendant");
+    };
+
+    const getSelectedOption = () =>
+      options.find((option) => option.getAttribute("data-value") === selectedValue()) || options[0];
+
+    const openPanel = (focusTarget = "selected") => {
+      clearCloseTimer();
+      root.classList.add("is-open");
+      chatRoot?.classList?.add("has-open-product-select");
+      panel.hidden = false;
+      trigger.setAttribute("aria-expanded", "true");
+
+      if (focusTarget === "trigger") {
+        setActiveDescendant(getSelectedOption());
+        return;
+      }
+
+      const target =
+        focusTarget === "first"
+          ? options[0]
+          : focusTarget === "last"
+          ? options[options.length - 1]
+          : getSelectedOption();
+
+      if (target) {
+        setActiveDescendant(target);
+        target.focus();
+      }
+    };
+
+    const closePanel = ({ restoreFocus = false } = {}) => {
+      clearCloseTimer();
+      root.classList.remove("is-open");
+      chatRoot?.classList?.remove("has-open-product-select");
+      panel.hidden = true;
+      trigger.setAttribute("aria-expanded", "false");
+      setActiveDescendant(null);
+      if (restoreFocus) {
+        trigger.focus();
+      }
+    };
+
+    const moveFocus = (currentOption, direction) => {
+      const currentIndex = options.indexOf(currentOption);
+      const nextIndex =
+        currentIndex === -1
+          ? direction > 0
+            ? 0
+            : options.length - 1
+          : (currentIndex + direction + options.length) % options.length;
+      const nextOption = options[nextIndex];
+      if (!nextOption) {
+        return;
+      }
+      setActiveDescendant(nextOption);
+      nextOption.focus();
+    };
+
+    const selectOption = (value) => {
+      const nextValue = normalizeTicketProduct(value);
+      if (!updateTicketProduct(ticketId, nextValue)) {
+        closePanel({ restoreFocus: true });
+        return;
+      }
+      if (hiddenInput) {
+        hiddenInput.value = nextValue || "";
+      }
+      closePanel({ restoreFocus: true });
+      render();
+    };
+
+    trigger.addEventListener("click", () => {
+      if (isOpen()) {
+        closePanel();
+        return;
+      }
+      openPanel("trigger");
+    });
+
+    trigger.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        openPanel("selected");
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        openPanel("last");
+        return;
+      }
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        if (isOpen()) {
+          closePanel();
+        } else {
+          openPanel("selected");
+        }
+        return;
+      }
+      if (event.key === "Escape" && isOpen()) {
+        event.preventDefault();
+        closePanel();
+      }
+    });
+
+    root.addEventListener("focusin", () => {
+      clearCloseTimer();
+    });
+
+    root.addEventListener("focusout", (event) => {
+      const nextTarget = event.relatedTarget;
+      if (nextTarget instanceof Node && root.contains(nextTarget)) {
+        return;
+      }
+      clearCloseTimer();
+      closeTimer = setTimeout(() => {
+        closePanel();
+      }, 120);
+    });
+
+    options.forEach((option) => {
+      option.addEventListener("focus", () => {
+        setActiveDescendant(option);
+      });
+
+      option.addEventListener("click", () => {
+        selectOption(option.getAttribute("data-value") || "");
+      });
+
+      option.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          moveFocus(option, 1);
+          return;
+        }
+        if (event.key === "ArrowUp") {
+          event.preventDefault();
+          moveFocus(option, -1);
+          return;
+        }
+        if (event.key === "Home") {
+          event.preventDefault();
+          moveFocus(options[options.length - 1], 1);
+          return;
+        }
+        if (event.key === "End") {
+          event.preventDefault();
+          moveFocus(options[0], -1);
+          return;
+        }
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          selectOption(option.getAttribute("data-value") || "");
+          return;
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closePanel({ restoreFocus: true });
+          return;
+        }
+        if (event.key === "Tab") {
+          closePanel();
+        }
+      });
     });
   });
 }
