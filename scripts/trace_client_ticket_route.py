@@ -739,6 +739,33 @@ def build_trace_summary(
         message_created_at=_clean_text(request_context.get("message_created_at")) or None,
     )
     runtime_state = ticket.get("client_agent_runtime_state") if isinstance(ticket.get("client_agent_runtime_state"), dict) else {}
+    response_ready_payload = _latest_ticket_event_payload(normalized_ticket_events, "ticket_ai_response_ready")
+    processing_payload = _latest_ticket_event_payload(normalized_ticket_events, "ticket_ai_processing")
+    created_payload = _latest_ticket_event_payload(normalized_ticket_events, "ticket_created") or _latest_ticket_event_payload(
+        normalized_ticket_events,
+        "ticket_updated",
+    )
+    runtime_build_provenance = (
+        dict(runtime_state.get("build_provenance"))
+        if isinstance(runtime_state.get("build_provenance"), dict)
+        else {}
+    )
+    task_app_build_ref = (
+        _clean_text(response_ready_payload.get("task_app_build_ref"))
+        or _clean_text(processing_payload.get("task_app_build_ref"))
+        or _clean_text(runtime_build_provenance.get("task_app_build_ref"))
+        or None
+    )
+    execution_app_build_ref = (
+        _clean_text(response_ready_payload.get("execution_app_build_ref"))
+        or _clean_text(runtime_build_provenance.get("execution_app_build_ref"))
+        or None
+    )
+    build_provenance_status = "missing"
+    if task_app_build_ref and execution_app_build_ref:
+        build_provenance_status = "matched" if task_app_build_ref == execution_app_build_ref else "mismatch"
+    elif task_app_build_ref or execution_app_build_ref:
+        build_provenance_status = "partial"
     runtime_rag_summary = runtime_state.get("rag_agent") if isinstance(runtime_state.get("rag_agent"), dict) else {}
     rag_fetch_error = _clean_text((rag_run or {}).get("_fetch_error")) or None
     rag_request_id = (
@@ -748,12 +775,6 @@ def build_trace_summary(
         or None
     )
     request_id = _clean_text((rag_run or {}).get("request_id")) or rag_request_id
-    response_ready_payload = _latest_ticket_event_payload(normalized_ticket_events, "ticket_ai_response_ready")
-    processing_payload = _latest_ticket_event_payload(normalized_ticket_events, "ticket_ai_processing")
-    created_payload = _latest_ticket_event_payload(normalized_ticket_events, "ticket_created") or _latest_ticket_event_payload(
-        normalized_ticket_events,
-        "ticket_updated",
-    )
     workflow_action = (
         _clean_text(final_assistant.get("workflow_action"))
         or _clean_text(runtime_state.get("workflow_action"))
@@ -847,6 +868,11 @@ def build_trace_summary(
                 response_ready_payload.get("answer_saved_to_response_ready_ms")
             ),
         },
+        "build_provenance": {
+            "task_app_build_ref": task_app_build_ref,
+            "execution_app_build_ref": execution_app_build_ref,
+            "status": build_provenance_status,
+        },
         "main_agent": {
             **main_summary,
             "workflow_action": workflow_action,
@@ -932,6 +958,11 @@ def render_markdown_report(summary: dict[str, Any]) -> str:
     api = summary.get("api") if isinstance(summary.get("api"), dict) else {}
     admission = summary.get("admission") if isinstance(summary.get("admission"), dict) else {}
     worker_queue = summary.get("worker_queue") if isinstance(summary.get("worker_queue"), dict) else {}
+    build_provenance = (
+        summary.get("build_provenance")
+        if isinstance(summary.get("build_provenance"), dict)
+        else {}
+    )
     main_agent = summary.get("main_agent") if isinstance(summary.get("main_agent"), dict) else {}
     route_agent = summary.get("route_agent") if isinstance(summary.get("route_agent"), dict) else {}
     rag_agent = summary.get("rag_agent") if isinstance(summary.get("rag_agent"), dict) else {}
@@ -1001,6 +1032,11 @@ def render_markdown_report(summary: dict[str, Any]) -> str:
         f"- main_agent_to_answer_saved_ms: {_format_value(worker_queue.get('main_agent_to_answer_saved_ms'))}",
         f"- response_ready_dispatch_ms: {_format_value(worker_queue.get('response_ready_dispatch_ms'))}",
         f"- answer_saved_to_response_ready_ms: {_format_value(worker_queue.get('answer_saved_to_response_ready_ms'))}",
+        "",
+        "## Build Provenance",
+        f"- task_app_build_ref: `{_format_value(build_provenance.get('task_app_build_ref'))}`",
+        f"- execution_app_build_ref: `{_format_value(build_provenance.get('execution_app_build_ref'))}`",
+        f"- status: `{_format_value(build_provenance.get('status'))}`",
         "",
         "## Main Agent",
         f"- started_at: `{_format_value(main_agent.get('started_at'))}`",

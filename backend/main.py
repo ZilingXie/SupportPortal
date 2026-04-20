@@ -1354,6 +1354,7 @@ def build_query_task(
     customer_message: str,
     message_created_at: str,
     *,
+    app_build_ref: str | None = None,
     customer_id: str | None = None,
     requester: str | None = None,
     ticket_subject: str | None = None,
@@ -1377,6 +1378,8 @@ def build_query_task(
         "message_created_at": message_created_at,
         "created_at": now_iso(),
     }
+    if app_build_ref:
+        task["app_build_ref"] = str(app_build_ref).strip()
     if customer_id:
         task["customer_id"] = str(customer_id).strip()
     if requester:
@@ -2261,6 +2264,7 @@ async def create_or_update_ticket(
         ticket["status"] = COMMUNICATING_STATUS
 
     timestamp = now_iso()
+    current_app_build_ref = str(get_app_build_info().get("ref") or "").strip() or None
     ticket["messages"].append(
         {
             "role": "customer",
@@ -2582,6 +2586,7 @@ async def create_or_update_ticket(
                 ticket_id=ticket_id,
                 customer_message=customer_message,
                 message_created_at=timestamp,
+                app_build_ref=current_app_build_ref,
                 customer_id=str(ticket.get("customer_id") or "").strip() or None,
                 requester=str(ticket.get("requester") or "").strip() or None,
                 ticket_subject=str(ticket.get("subject") or "").strip() or None,
@@ -2635,6 +2640,8 @@ async def create_or_update_ticket(
         "parallel_mode": processing_mode,
         **admission_timing_payload,
     }
+    if current_app_build_ref:
+        event["admission_app_build_ref"] = current_app_build_ref
     if route_payload.get("answer_route"):
         event["answer_route"] = route_payload.get("answer_route")
         event["scope_label"] = route_payload.get("scope_label")
@@ -2714,6 +2721,8 @@ async def create_or_update_ticket(
             "record_ticket_created_event_ms": record_ticket_created_event_ms,
             "api_return_latency_ms": api_return_latency_ms,
         }
+        if current_app_build_ref:
+            processing_event["task_app_build_ref"] = current_app_build_ref
         await async_to_thread(ticket_repository.record_event, ticket_id, processing_event["event"], processing_event)
         await dispatch_event(["engineer", "dashboard"], processing_event)
         await dispatch_event(

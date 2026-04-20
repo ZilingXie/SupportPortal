@@ -12,6 +12,7 @@ DOCKERFILE_PATH = REPO_ROOT / "backend" / "Dockerfile"
 REQUIREMENTS_PATH = REPO_ROOT / "requirements.txt"
 REQUIREMENTS_BASE_PATH = REPO_ROOT / "requirements.base.txt"
 REQUIREMENTS_ML_PATH = REPO_ROOT / "requirements.ml.txt"
+RUNTIME_SERVICE_NAMES = ("api", "rag_api", "rag_worker", "ws_gateway", "worker_query", "worker_aux")
 
 
 class SingleHostComposeTests(unittest.TestCase):
@@ -212,6 +213,21 @@ class SingleHostComposeTests(unittest.TestCase):
 
         self.assertIn("APP_BUILD_REF: ${APP_BUILD_REF:-unknown}", rag_api_block)
         self.assertIn("APP_BUILD_TIME: ${APP_BUILD_TIME:-}", rag_api_block)
+
+    def test_runtime_services_share_explicit_runtime_image(self) -> None:
+        content = COMPOSE_PATH.read_text(encoding="utf-8")
+
+        self.assertNotIn("localhost/supportportal-app:latest", content)
+        self.assertEqual(content.count("${APP_RUNTIME_IMAGE:-localhost/supportportal-app:unknown}"), len(RUNTIME_SERVICE_NAMES))
+        for service_name in RUNTIME_SERVICE_NAMES:
+            service_block = self._service_block(service_name)
+            self.assertIn("image: ${APP_RUNTIME_IMAGE:-localhost/supportportal-app:unknown}", service_block)
+
+    def test_runtime_services_expose_app_build_metadata_env(self) -> None:
+        for service_name in RUNTIME_SERVICE_NAMES:
+            service_block = self._service_block(service_name)
+            self.assertIn("APP_BUILD_REF: ${APP_BUILD_REF:-unknown}", service_block)
+            self.assertIn("APP_BUILD_TIME: ${APP_BUILD_TIME:-}", service_block)
 
     def test_dockerfile_exports_app_build_env(self) -> None:
         content = DOCKERFILE_PATH.read_text(encoding="utf-8")

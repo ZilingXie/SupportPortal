@@ -701,6 +701,10 @@ class WorkerResilienceTests(unittest.TestCase):
 
         with patch.object(worker, "ticket_repository", repository), patch.object(
             worker,
+            "get_app_build_info",
+            return_value={"ref": "execution-build-456", "built_at": "2026-03-22T00:01:00Z"},
+        ), patch.object(
+            worker,
             "_orchestrate_worker_support_message",
             return_value=execution,
         ), patch.object(
@@ -732,10 +736,25 @@ class WorkerResilienceTests(unittest.TestCase):
             "now_iso",
             return_value="2026-03-22T00:01:00+00:00",
         ):
-            worker._process_ticket_query(bus, dict(self.task, ticket_id="T-RUNTIME", customer_message="how to join channel"))
+            worker._process_ticket_query(
+                bus,
+                dict(
+                    self.task,
+                    ticket_id="T-RUNTIME",
+                    customer_message="how to join channel",
+                    app_build_ref="admission-build-123",
+                ),
+            )
 
         saved_ticket = repository.save_ticket.call_args_list[0].args[0]
         self.assertEqual(saved_ticket["client_agent_runtime_state"]["active_run_id"], "run-123")
+        self.assertEqual(
+            saved_ticket["client_agent_runtime_state"]["build_provenance"],
+            {
+                "task_app_build_ref": "admission-build-123",
+                "execution_app_build_ref": "execution-build-456",
+            },
+        )
         assistant_message = saved_ticket["messages"][-1]
         self.assertEqual(assistant_message["client_agent_run_id"], "run-123")
         self.assertEqual(assistant_message["client_agent_runtime_status"], "completed")
@@ -750,6 +769,8 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertIn("main_agent_total_ms", response_ready_payload)
         self.assertIn("main_agent_to_answer_saved_ms", response_ready_payload)
         self.assertIn("answer_saved_to_response_ready_ms", response_ready_payload)
+        self.assertEqual(response_ready_payload["task_app_build_ref"], "admission-build-123")
+        self.assertEqual(response_ready_payload["execution_app_build_ref"], "execution-build-456")
         record_event_index = next(
             index
             for index, call in enumerate(repository.mock_calls)

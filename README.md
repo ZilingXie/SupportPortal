@@ -31,10 +31,16 @@ cp .env.example .env 2>/dev/null || true
 podman machine start
 export PODMAN_COMPOSE_PROVIDER=podman-compose
 
-# 首次或镜像大改动时建议重建 api 镜像
-podman-compose -f deployment/docker-compose.single-host.yml build api
-podman-compose -f deployment/docker-compose.single-host.yml up -d
+# 官方本地单机重启路径
+bash scripts/workflow/restart_single_host_lightweight_stack.sh
+
+# 检查官方 deployment 栈和 build provenance 是否一致
+bash scripts/workflow/inspect_single_host_stack_mode.sh
 ```
+
+说明：
+1. 官方本地单机栈只有 `deployment`；如果看到 `deploymentlw`，先执行 `bash scripts/workflow/cleanup_single_host_aux_stack.sh`。
+2. 重启脚本会把运行镜像固定到当前根 `main` 的 `app_build.ref`，避免旧 checkout 继续处理新 ticket。
 
 ### 访问地址
 1. 客户端: [http://localhost:8080/client/](http://localhost:8080/client/)
@@ -47,7 +53,7 @@ podman-compose -f deployment/docker-compose.single-host.yml up -d
 
 ```bash
 # 状态
-podman-compose -f deployment/docker-compose.single-host.yml ps
+bash scripts/workflow/inspect_single_host_stack_mode.sh
 
 # 日志
 podman-compose -f deployment/docker-compose.single-host.yml logs -f api ws_gateway worker nginx
@@ -61,8 +67,8 @@ podman-compose -f deployment/docker-compose.single-host.yml down
 1. 修改了 `backend/`、`ui/client-ui/`、`ui/engineer-ui/`、`ui/dashboard-ui/`：
 
 ```bash
-podman-compose -f deployment/docker-compose.single-host.yml build api
-podman-compose -f deployment/docker-compose.single-host.yml up -d api ws_gateway worker
+bash scripts/workflow/restart_single_host_lightweight_stack.sh
+bash scripts/workflow/inspect_single_host_stack_mode.sh
 ```
 
 2. 只修改了 Nginx 配置（`deployment/nginx/supportportal.conf`）：
@@ -93,6 +99,10 @@ podman-compose -f deployment/docker-compose.single-host.yml up -d --force-recrea
 4. `pip` 相关 SSL/timeout 抖动：
    - 重试 `podman-compose ... build api`。
    - 当前 Dockerfile 已加入安装重试逻辑。
+
+5. 源码已经更新，但线上行为像旧逻辑：
+   - 先跑 `bash scripts/workflow/inspect_single_host_stack_mode.sh`。
+   - 如果脚本报 auxiliary stack 或 build provenance mismatch，先清理 stray `deploymentlw` 并从根 `main` 重新执行官方重启脚本。
 
 ## EC2 部署（Docker）
 
