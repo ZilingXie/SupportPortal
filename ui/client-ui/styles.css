@@ -3588,8 +3588,12 @@ a.citation-link:hover {
 
 .new-ticket-postsend-countdown {
   justify-content: center;
-  min-width: 82px;
+  min-width: 196px;
+  padding: 0 16px;
   font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  white-space: nowrap;
 }
 
 .new-ticket-postsend-countdown.status-communicating {

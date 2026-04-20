@@ -1081,6 +1081,16 @@ function getLatestRenderableMessage(ticket) {
   return messages.length > 0 ? messages[messages.length - 1] : null;
 }
 
+function formatReplyCountdownText(remainingMinutes) {
+  const normalizedMinutes = Math.max(0, Number(remainingMinutes) || 0);
+  if (normalizedMinutes < 60) {
+    return `Next update in ${String(normalizedMinutes).padStart(2, "0")}:00`;
+  }
+  const hours = Math.floor(normalizedMinutes / 60);
+  const minutes = normalizedMinutes % 60;
+  return `Next update in ${hours}h ${String(minutes).padStart(2, "0")}m`;
+}
+
 function getReplyCountdownState(ticket) {
   const normalizedStatus = String(ticket?.status || "").trim().toLowerCase();
   const durationMinutes = REPLY_COUNTDOWN_MINUTES_BY_STATUS[normalizedStatus];
@@ -1099,11 +1109,9 @@ function getReplyCountdownState(ticket) {
   }
   const remainingMs = Math.max(0, anchorTimestamp + durationMinutes * 60 * 1000 - Date.now());
   const remainingMinutes = remainingMs > 0 ? Math.ceil(remainingMs / (60 * 1000)) : 0;
-  const hours = Math.floor(remainingMinutes / 60);
-  const minutes = remainingMinutes % 60;
   return {
     status: normalizedStatus,
-    text: `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`,
+    text: formatReplyCountdownText(remainingMinutes),
   };
 }
 
