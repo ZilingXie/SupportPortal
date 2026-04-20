@@ -2880,7 +2880,7 @@ a.citation-link:hover {
   --new-ticket-sidebar-stack-gap: 20px;
   --new-ticket-main-column-gap: 20px;
   --new-ticket-draft-page-tail-blank: var(--client2-route-bottom-space);
-  --new-ticket-draft-knowledge-card-height: var(--new-ticket-composer-panel-height);
+  --new-ticket-draft-knowledge-card-height: calc(var(--new-ticket-info-card-height) - var(--new-ticket-draft-page-tail-blank));
   --new-ticket-draft-left-stack-height: calc(var(--new-ticket-info-card-height) * 2 + var(--new-ticket-sidebar-stack-gap));
   --new-ticket-draft-thread-height: calc(
     var(--new-ticket-draft-left-stack-height)
