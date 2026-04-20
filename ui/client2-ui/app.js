@@ -2833,7 +2833,7 @@ function renderChatHome() {
           </article>
         </div>
       </div>
-      ${renderClient2RouteFooterBand({ communicatingShell: true })}
+      ${renderClient2RouteFooterBand()}
     </section>
   `;
 }
@@ -3192,7 +3192,7 @@ function renderTicketsPage() {
         `
         }
       </div>
-      ${renderClient2RouteFooterBand({ communicatingShell: true })}
+      ${renderClient2RouteFooterBand()}
     </section>
   `;
 }
