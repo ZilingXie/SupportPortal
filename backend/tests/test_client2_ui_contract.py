@@ -27,8 +27,8 @@ class Client2RouteSmokeTests(unittest.TestCase):
     def test_client2_html_references_local_assets(self) -> None:
         html = Path("ui/client2-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260420-client2-remove-context-row-1", html)
-        self.assertIn("./app.js?v=20260420-client2-remove-context-row-1", html)
+        self.assertIn("./styles.css?v=20260420-client2-workspace-top-gap-1", html)
+        self.assertIn("./app.js?v=20260420-client2-workspace-top-gap-1", html)
 
 
 class Client2UiContractTests(unittest.TestCase):
@@ -313,6 +313,20 @@ class Client2UiContractTests(unittest.TestCase):
             css,
             re.compile(
                 r"\.clienttest-route-footer-shell \{[^}]*height:\s*var\(--client2-tail-footer-block-height\);",
+                re.DOTALL,
+            ),
+        )
+        self.assertNotRegex(
+            css,
+            re.compile(
+                r"\.clienttest-home \{[^}]*padding-top:\s*0;",
+                re.DOTALL,
+            ),
+        )
+        self.assertRegex(
+            css,
+            re.compile(
+                r"\.clienttest-home \{[^}]*padding-top:\s*12px;",
                 re.DOTALL,
             ),
         )
