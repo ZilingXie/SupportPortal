@@ -27,8 +27,8 @@ class Client2RouteSmokeTests(unittest.TestCase):
     def test_client2_html_references_local_assets(self) -> None:
         html = Path("ui/client2-ui/index.html").read_text(encoding="utf-8")
 
-        self.assertIn("./styles.css?v=20260420-client2-workspace-my-tickets-remove-footer-shell-1", html)
-        self.assertIn("./app.js?v=20260420-client2-workspace-my-tickets-remove-footer-shell-1", html)
+        self.assertIn("./styles.css?v=20260420-client2-remove-context-row-1", html)
+        self.assertIn("./app.js?v=20260420-client2-remove-context-row-1", html)
 
 
 class Client2UiContractTests(unittest.TestCase):
@@ -148,12 +148,46 @@ class Client2UiContractTests(unittest.TestCase):
         self.assertIn("client2-route-shell", css)
         self.assertNotIn("Continue This Ticket", app_source)
         self.assertNotIn("new-ticket-postsend-send-btn", app_source)
+        self.assertNotIn(
+            "Support Portal keeps your ticket queue, active work, and latest correspondence in one left-rail workspace.",
+            app_source,
+        )
+        self.assertNotIn(
+            "Scan active, waiting, and resolved tickets through the card-based My Tickets surface.",
+            app_source,
+        )
+        self.assertNotIn("<span>Ticket Board</span>", app_source)
 
         self.assertNotIn("Clienttest Preview", html)
         self.assertNotIn("Clienttest Preview", app_source)
         self.assertNotIn("Preview Route", app_source)
         self.assertNotIn("/client remains unchanged", app_source)
         self.assertNotIn("CLIENTTEST PREVIEW", app_source)
+
+    def test_client2_context_bar_only_renders_for_chat_ticket(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                state.view = "workspace";
+                const workspaceBar = String(renderContextBar() || "").trim();
+                if (workspaceBar !== "") {
+                  throw new Error("Client2 workspace should not render the removed context row.");
+                }
+
+                state.view = "tickets";
+                const ticketsBar = String(renderContextBar() || "").trim();
+                if (ticketsBar !== "") {
+                  throw new Error("Client2 tickets page should not render the removed context row.");
+                }
+
+                state.view = "chat-ticket";
+                const chatBar = String(renderContextBar() || "");
+                if (!chatBar.includes("context-bar")) {
+                  throw new Error("Client2 chat-ticket should keep its ticket context bar.");
+                }
+              """
+            )
+        )
 
     def test_client2_source_keeps_client_runtime_contracts(self) -> None:
         app_source = Path("ui/client2-ui/app.js").read_text(encoding="utf-8")

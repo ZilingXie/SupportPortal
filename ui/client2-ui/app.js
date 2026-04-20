@@ -2719,44 +2719,7 @@ function renderContextBar() {
       </section>
     `;
   }
-
-  if (state.view === "tickets") {
-    return `
-      <section class="context-bar context-bar-static clienttest-preview-bar">
-        <div class="context-copy">
-          <div class="context-chip">
-            <span class="material-symbols-outlined" aria-hidden="true">confirmation_number</span>
-            <span>Ticket Board</span>
-          </div>
-          <div class="context-divider" aria-hidden="true"></div>
-          <div class="context-ticket">
-            <span class="context-ticket-title">Scan active, waiting, and resolved tickets through the card-based My Tickets surface.</span>
-          </div>
-        </div>
-        <div class="context-actions">
-          <button class="btn btn-primary" data-action="new-session" type="button">Start New Ticket</button>
-        </div>
-      </section>
-    `;
-  }
-
-  return `
-      <section class="context-bar context-bar-static clienttest-preview-bar">
-        <div class="context-copy">
-          <div class="context-chip">
-            <span class="material-symbols-outlined" aria-hidden="true">dashboard</span>
-            <span>Workspace</span>
-          </div>
-          <div class="context-divider" aria-hidden="true"></div>
-          <div class="context-ticket">
-            <span class="context-ticket-title">Support Portal keeps your ticket queue, active work, and latest correspondence in one left-rail workspace.</span>
-          </div>
-        </div>
-        <div class="context-actions">
-          <button class="btn btn-primary" data-action="new-session" type="button">Start New Ticket</button>
-      </div>
-    </section>
-  `;
+  return "";
 }
 
 function renderChatHome() {
