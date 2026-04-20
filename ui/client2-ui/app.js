@@ -2422,6 +2422,18 @@ function renderNewTicketCorrespondenceMessageCard(message) {
     citations: Array.isArray(message?.citations) ? message.citations : [],
     sources: Array.isArray(message?.sources) ? message.sources : [],
   });
+  const correspondenceMetaHtml = `
+    <div class="new-ticket-correspondence-meta">
+      <p class="new-ticket-correspondence-time">${escapeHtml(
+        formatTicketDetailDateTime(message.createdAt || new Date().toISOString())
+      )}</p>
+      ${
+        presenter.tone === "customer"
+          ? '<p class="new-ticket-correspondence-delivered">✅ Delivered</p>'
+          : ""
+      }
+    </div>
+  `;
   return `
     <article class="new-ticket-correspondence-card ${presenter.tone}">
       <div class="new-ticket-correspondence-card-head">
@@ -2434,9 +2446,7 @@ function renderNewTicketCorrespondenceMessageCard(message) {
             <p class="new-ticket-correspondence-subtitle">${escapeHtml(presenter.subtitle)}</p>
           </div>
         </div>
-        <div class="new-ticket-correspondence-time">${escapeHtml(
-          formatTicketDetailDateTime(message.createdAt || new Date().toISOString())
-        )}</div>
+        ${correspondenceMetaHtml}
       </div>
       <div class="new-ticket-correspondence-card-body">
         <div class="new-ticket-correspondence-body-copy">${renderNewTicketMessageContent(message)}</div>

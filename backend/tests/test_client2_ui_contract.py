@@ -439,7 +439,10 @@ class Client2UiContractTests(unittest.TestCase):
                 if (!html.includes("new-ticket-summary-toolbar-btn")) {
                   throw new Error("Client2 draft should keep the AI Summary toolbar button.");
                 }
-                """
+                if (html.includes("✅ Delivered")) {
+                  throw new Error("Client2 draft should not render the delivered status without a persisted customer message.");
+                }
+              """
             )
         )
 
@@ -571,6 +574,10 @@ class Client2UiContractTests(unittest.TestCase):
                 }
                 if (html.includes("new-ticket-postsend-waiting") || html.includes("new-ticket-thread-waiting")) {
                   throw new Error("Client2 should not render waiting markers after the first send.");
+                }
+                const deliveredMatches = html.match(/✅ Delivered/g) || [];
+                if (deliveredMatches.length !== 1) {
+                  throw new Error(`Client2 first-send postsend shell should render one delivered label for the customer message, got ${deliveredMatches.length}.`);
                 }
               """
             )
@@ -756,6 +763,10 @@ class Client2UiContractTests(unittest.TestCase):
                 }
                 if (!html.includes("new-ticket-inline-send-btn")) {
                   throw new Error("Existing client2 tickets should keep the inline composer action.");
+                }
+                const deliveredMatches = html.match(/✅ Delivered/g) || [];
+                if (deliveredMatches.length !== 1) {
+                  throw new Error(`Existing client2 tickets should render one delivered label for the customer message only, got ${deliveredMatches.length}.`);
                 }
                 if (html.includes("ticket-summary-card")) {
                   throw new Error("Existing client2 tickets should not render the legacy AI Summary panel.");
