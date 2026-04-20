@@ -2335,13 +2335,14 @@ a.citation-link:hover {
 }
 
 .clienttest-route-page-footer-band {
-  min-height: calc(100% + var(--client2-tail-footer-block-height));
+  min-height: calc(100% + var(--client2-tail-footer-block-height) + var(--client2-route-bottom-space));
   align-content: stretch;
+  padding-bottom: 0;
 }
 
 .clienttest-route-footer-band {
-  height: var(--client2-tail-footer-block-height);
-  min-height: var(--client2-tail-footer-block-height);
+  height: calc(var(--client2-tail-footer-block-height) + var(--client2-route-bottom-space));
+  min-height: calc(var(--client2-tail-footer-block-height) + var(--client2-route-bottom-space));
   margin-top: auto;
   flex: 0 0 auto;
   pointer-events: none;
@@ -2349,7 +2350,7 @@ a.citation-link:hover {
 
 .clienttest-route-footer-shell {
   width: 100%;
-  height: 100%;
+  height: var(--client2-tail-footer-block-height);
 }
 
 .clienttest-route-footer-shell-communicating,
