@@ -64,6 +64,7 @@ const CLIENT_ROUTE_SUBLABEL = "Client Workspace";
 const CLIENT2_ROUTE_MARKER = "client2-route-shell";
 const DEFAULT_DRAFT_TICKET_TITLE = "New ticket";
 const LEGACY_DEFAULT_DRAFT_TICKET_TITLE = "New Session";
+const DELIVERED_LABEL_DELAY_MS = 5000;
 
 const FEATURES = [
   {
@@ -113,6 +114,8 @@ let clientSocket = null;
 let clientReconnectTimer = null;
 let clientHeartbeatTimer = null;
 let pendingStatusPollTimer = null;
+let deliveredStatusRefreshTimer = null;
+let deliveredStatusRefreshDueAt = 0;
 const CHAT_NEAR_BOTTOM_THRESHOLD_PX = 96;
 let pendingChatScrollRequest = null;
 let scheduledChatScrollPlan = null;
@@ -1012,6 +1015,50 @@ function setCounter(value) {
 function toTimestamp(value) {
   const parsed = new Date(String(value || "")).getTime();
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function clearDeliveredStatusRefreshTimer() {
+  if (deliveredStatusRefreshTimer) {
+    clearTimeout(deliveredStatusRefreshTimer);
+  }
+  deliveredStatusRefreshTimer = null;
+  deliveredStatusRefreshDueAt = 0;
+}
+
+function shouldShowDeliveredLabel(message) {
+  if (String(message?.role || "").toLowerCase() !== "user") {
+    return false;
+  }
+  const createdAt = toTimestamp(message?.createdAt);
+  if (!createdAt) {
+    return true;
+  }
+  return Date.now() - createdAt >= DELIVERED_LABEL_DELAY_MS;
+}
+
+function scheduleDeliveredStatusRefresh(message) {
+  if (String(message?.role || "").toLowerCase() !== "user") {
+    return;
+  }
+  const createdAt = toTimestamp(message?.createdAt);
+  if (!createdAt) {
+    return;
+  }
+  const dueAt = createdAt + DELIVERED_LABEL_DELAY_MS;
+  const delay = dueAt - Date.now();
+  if (delay <= 0) {
+    return;
+  }
+  if (deliveredStatusRefreshTimer && deliveredStatusRefreshDueAt <= dueAt) {
+    return;
+  }
+  clearDeliveredStatusRefreshTimer();
+  deliveredStatusRefreshDueAt = dueAt;
+  deliveredStatusRefreshTimer = setTimeout(() => {
+    deliveredStatusRefreshTimer = null;
+    deliveredStatusRefreshDueAt = 0;
+    render();
+  }, delay);
 }
 
 function normalizeTicketProduct(value) {
@@ -2422,13 +2469,17 @@ function renderNewTicketCorrespondenceMessageCard(message) {
     citations: Array.isArray(message?.citations) ? message.citations : [],
     sources: Array.isArray(message?.sources) ? message.sources : [],
   });
+  const showDelivered = presenter.tone === "customer" && shouldShowDeliveredLabel(message);
+  if (presenter.tone === "customer" && !showDelivered) {
+    scheduleDeliveredStatusRefresh(message);
+  }
   const correspondenceMetaHtml = `
     <div class="new-ticket-correspondence-meta">
       <p class="new-ticket-correspondence-time">${escapeHtml(
         formatTicketDetailDateTime(message.createdAt || new Date().toISOString())
       )}</p>
       ${
-        presenter.tone === "customer"
+        showDelivered
           ? '<p class="new-ticket-correspondence-delivered">✅ Delivered</p>'
           : ""
       }
@@ -4369,6 +4420,7 @@ function render() {
   const previousTicketId = String(state.activeTicketId || "").trim();
   const previousChatScroll = captureChatScrollSnapshot();
 
+  clearDeliveredStatusRefreshTimer();
   syncLegacyPendingState();
   parseRoute();
   if (!state.user) {
