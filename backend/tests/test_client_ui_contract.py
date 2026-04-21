@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260421-client-composer-link-remove-codeblock-toggle-1", html)
-        self.assertIn("./app.js?v=20260421-client-composer-link-remove-codeblock-toggle-1", html)
+        self.assertIn("./styles.css?v=20260421-client-composer-codeblock-editable-lines-1", html)
+        self.assertIn("./app.js?v=20260421-client-composer-codeblock-editable-lines-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -1478,6 +1478,25 @@ class ClientUiContractTests(unittest.TestCase):
                   throw new Error("Hydration should recreate fenced code blocks.");
                 }
 
+                const hydratedStandaloneCode = buildRichComposerHtmlFromMarkdown("```js\\nconst answer = 42;\\n```");
+                const standaloneCodeSpacerCount = (hydratedStandaloneCode.match(/data-composer-empty-line=\"true\"/g) || []).length;
+                if (standaloneCodeSpacerCount !== 2) {
+                  throw new Error(`Standalone fenced code hydration should add editable spacer lines above and below the code block, got ${hydratedStandaloneCode}.`);
+                }
+                if (!hydratedStandaloneCode.includes('<pre><code class="language-js">const answer = 42;</code></pre>')) {
+                  throw new Error(`Standalone fenced code hydration should preserve the code block itself, got ${hydratedStandaloneCode}.`);
+                }
+                const normalizedStandaloneCode = normalizeRichComposerHtmlString(hydratedStandaloneCode);
+                const normalizedStandaloneCodeSpacerCount =
+                  (normalizedStandaloneCode.match(/data-composer-empty-line=\"true\"/g) || []).length;
+                if (normalizedStandaloneCodeSpacerCount !== 2) {
+                  throw new Error(`Rich composer normalization should preserve code-block spacer lines, got ${normalizedStandaloneCode}.`);
+                }
+                const serializedStandaloneCode = serializeRichComposerHtmlToMarkdown(hydratedStandaloneCode);
+                if (serializedStandaloneCode !== "```js\\nconst answer = 42;\\n```") {
+                  throw new Error(`Editor-only spacer lines around code blocks must stay out of markdown serialization, got ${JSON.stringify(serializedStandaloneCode)}.`);
+                }
+
                 const nestedHydrated = buildRichComposerHtmlFromMarkdown("**_[Docs](https://example.com)_**");
                 if (!nestedHydrated.includes('<strong><em><a href="https://example.com/">Docs</a></em></strong>')) {
                   throw new Error(`Hydration should recreate nested bold + italic + link formatting, got ${nestedHydrated}.`);
@@ -1703,6 +1722,12 @@ class ClientUiContractTests(unittest.TestCase):
                 if (unwrappedMultiLineCodeHtml !== "const answer = 42;<br>console.log(answer);") {
                   throw new Error(`Code block toggle should preserve multi-line breaks when unwrapping, got ${JSON.stringify(unwrappedMultiLineCodeHtml)}.`);
                 }
+
+                const hydratedStandaloneCode = buildRichComposerHtmlFromMarkdown("```\\nconst answer = 42;\\n```");
+                const reserializedStandaloneCode = serializeRichComposerHtmlToMarkdown(hydratedStandaloneCode);
+                if (reserializedStandaloneCode !== "```\\nconst answer = 42;\\n```") {
+                  throw new Error(`Code-block spacer lines should not leak into markdown when reserializing hydrated editor HTML, got ${JSON.stringify(reserializedStandaloneCode)}.`);
+                }
               """
             )
         )
@@ -1713,7 +1738,10 @@ class ClientUiContractTests(unittest.TestCase):
         code_block_toggle_source = app_source[start:end]
 
         self.assertIn("unwrapRichComposerCodeBlockHtml(existingCodeBlock.outerHTML || \"\")", code_block_toggle_source)
-        self.assertIn("placeComposerCaretAfterNode(existingCodeBlock);", code_block_toggle_source)
+        self.assertIn("ensureComposerCaretInAdjacentTextLine(existingCodeBlock, element, \"after\")", code_block_toggle_source)
+        self.assertIn("removeComposerAdjacentCodeBlockSpacerLine(fullySelectedCodeBlock.previousSibling);", code_block_toggle_source)
+        self.assertIn("removeComposerAdjacentCodeBlockSpacerLine(fullySelectedCodeBlock.nextSibling);", code_block_toggle_source)
+        self.assertNotIn("placeComposerCaretAfterNode(existingCodeBlock);", code_block_toggle_source)
         self.assertNotIn('code.appendChild(range.extractContents());', code_block_toggle_source)
 
     def test_client2_customer_markdown_messages_render_safe_subset_only_when_marked(self) -> None:
