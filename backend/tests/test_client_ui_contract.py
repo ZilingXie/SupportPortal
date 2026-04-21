@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260421-client-composer-codeblock-editable-lines-1", html)
-        self.assertIn("./app.js?v=20260421-client-composer-codeblock-editable-lines-1", html)
+        self.assertIn("./styles.css?v=20260421-client-composer-codeblock-cancel-fix-1", html)
+        self.assertIn("./app.js?v=20260421-client-composer-codeblock-cancel-fix-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -1738,9 +1738,12 @@ class ClientUiContractTests(unittest.TestCase):
         code_block_toggle_source = app_source[start:end]
 
         self.assertIn("unwrapRichComposerCodeBlockHtml(existingCodeBlock.outerHTML || \"\")", code_block_toggle_source)
-        self.assertIn("ensureComposerCaretInAdjacentTextLine(existingCodeBlock, element, \"after\")", code_block_toggle_source)
+        self.assertIn("removeComposerAdjacentCodeBlockSpacerLine(existingCodeBlock.previousSibling);", code_block_toggle_source)
+        self.assertIn("removeComposerAdjacentCodeBlockSpacerLine(existingCodeBlock.nextSibling);", code_block_toggle_source)
+        self.assertIn("replaceComposerNodeWithHtml(", code_block_toggle_source)
         self.assertIn("removeComposerAdjacentCodeBlockSpacerLine(fullySelectedCodeBlock.previousSibling);", code_block_toggle_source)
         self.assertIn("removeComposerAdjacentCodeBlockSpacerLine(fullySelectedCodeBlock.nextSibling);", code_block_toggle_source)
+        self.assertNotIn("ensureComposerCaretInAdjacentTextLine(existingCodeBlock, element, \"after\")", code_block_toggle_source)
         self.assertNotIn("placeComposerCaretAfterNode(existingCodeBlock);", code_block_toggle_source)
         self.assertNotIn('code.appendChild(range.extractContents());', code_block_toggle_source)
 
