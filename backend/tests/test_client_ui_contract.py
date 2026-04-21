@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260421-client-composer-wysiwyg-before-send-2", html)
-        self.assertIn("./app.js?v=20260421-client-composer-wysiwyg-before-send-2", html)
+        self.assertIn("./styles.css?v=20260421-client-workspace-view-all-tickets-1", html)
+        self.assertIn("./app.js?v=20260421-client-workspace-view-all-tickets-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -561,6 +561,12 @@ class ClientUiContractTests(unittest.TestCase):
                 if (renderedTicketRows !== 4) {
                   throw new Error(`Client2 workspace should render exactly four active ticket rows, got ${renderedTicketRows}.`);
                 }
+                if (!readyHtml.includes("view all tickets->")) {
+                  throw new Error("Client2 workspace should render the active tickets footer CTA.");
+                }
+                if (!readyHtml.includes('data-action="go-tickets"')) {
+                  throw new Error("Client2 workspace should reuse the go-tickets action for the footer CTA.");
+                }
                 if (readyHtml.includes("Recent Activity") || readyHtml.includes("Latest ticket movement")) {
                   throw new Error("Client2 workspace should replace the recent activity panel with service events.");
                 }
@@ -613,6 +619,27 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn("text-transform: none;", css)
         self.assertIn("font-weight: 700;", css)
         self.assertIn("color: #7faee6;", css)
+
+    def test_client2_workspace_active_tickets_footer_cta_persists_in_empty_state(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const html = renderChatHome();
+                if (!html.includes("No active tickets yet. Start a new one to open the redesigned detail view.")) {
+                  throw new Error("Client2 workspace should keep the active tickets empty-state copy.");
+                }
+                if (!html.includes("view all tickets->")) {
+                  throw new Error("Client2 workspace should keep the footer CTA even when there are no active tickets.");
+                }
+                if (!html.includes('data-action="go-tickets"')) {
+                  throw new Error("Client2 workspace empty state should keep the footer CTA wired to go-tickets.");
+                }
+              """
+            )
+        )
 
     def test_client2_workspace_fetches_service_events_when_entering_workspace(self) -> None:
         self.run_client2_app_script(

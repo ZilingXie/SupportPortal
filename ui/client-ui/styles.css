@@ -2518,6 +2518,10 @@ a.citation-link:hover {
   min-height: 0;
 }
 
+.clienttest-home-panel-active-tickets {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
 .clienttest-home-panel-header {
   display: flex;
   align-items: flex-start;
@@ -2548,6 +2552,50 @@ a.citation-link:hover {
   gap: 14px;
   align-content: start;
   min-height: 0;
+}
+
+.clienttest-home-panel-footer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.clienttest-home-panel-footer-btn {
+  min-height: 46px;
+  min-width: 220px;
+  padding: 0 28px;
+  border-radius: 16px;
+  border: 1px solid rgba(110, 120, 130, 0.18);
+  background: rgba(255, 255, 255, 0.84);
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.2;
+  text-transform: none;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    background 0.18s ease,
+    color 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.clienttest-home-panel-footer-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.clienttest-home-panel-footer-btn:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+}
+
+.clienttest-home-panel-footer-btn:focus-visible {
+  outline: none;
+  border-color: rgba(0, 100, 147, 0.48);
+  box-shadow: 0 0 0 4px rgba(0, 100, 147, 0.14);
 }
 
 .clienttest-empty-card {
