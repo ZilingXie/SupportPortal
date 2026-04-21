@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260421-client-workspace-view-all-tickets-top-shell-scroll-1", html)
-        self.assertIn("./app.js?v=20260421-client-workspace-view-all-tickets-top-shell-scroll-1", html)
+        self.assertIn("./styles.css?v=20260421-client-composer-gap-fill-1", html)
+        self.assertIn("./app.js?v=20260421-client-composer-gap-fill-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -1768,6 +1768,19 @@ class ClientUiContractTests(unittest.TestCase):
         css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
 
         self.assertRegex(css, r"\.new-ticket-fixed-composer-panel\s*\{[^}]*grid-template-rows:\s*auto\s+auto\s+auto\s+1fr;")
+        self.assertRegex(
+            css,
+            r"\.new-ticket-fixed-composer-panel\s+\.new-ticket-composer-form\s*\{[^}]*height:\s*100%;[^}]*display:\s*flex;[^}]*flex-direction:\s*column;",
+        )
+        self.assertRegex(
+            css,
+            r"\.new-ticket-fixed-composer-panel\s+\.new-ticket-composer-input-shell\s*\{[^}]*flex:\s*1\s+1\s+auto;",
+        )
+        self.assertRegex(
+            css,
+            r"\.new-ticket-fixed-composer-panel\s+\.new-ticket-textarea\s*\{[^}]*height:\s*100%;",
+        )
+        self.assertNotRegex(css, r"\.new-ticket-textarea\s*\{[^}]*height:\s*min\(")
         self.assertRegex(css, r"\[data-chat-section=\"composer-link-editor\"\]:empty\s*\{\s*display:\s*none;")
         self.assertRegex(css, r"\[data-chat-section=\"composer-note\"\]:empty\s*\{\s*display:\s*none;")
         self.assertRegex(css, r"\.composer-rich-input p\s*\{\s*margin:\s*0;")
