@@ -3004,7 +3004,7 @@ function renderChatHome() {
               .join("")}
           </div>
         `
-      : `<p class="session-empty clienttest-empty-card">Service events are temporarily unavailable. Open Agora Status Page for the latest updates.</p>`;
+      : `<p class="session-empty clienttest-empty-card">Service events are temporarily unavailable. Open Agora Status Page -> for the latest updates.</p>`;
 
   return `
     <section class="welcome clienttest-home ${buildClient2RoutePageClass({ visibleFooterBand: true })}">
@@ -3055,9 +3055,9 @@ function renderChatHome() {
             <div class="clienttest-home-panel-header">
               <div>
                 <p class="clienttest-home-panel-kicker">Service Events</p>
-                <h3>Latest Agora platform incidents</h3>
+                <h3>Latest Agora platform events</h3>
               </div>
-              <a class="clienttest-home-panel-link" href="${escapeHtml(statusPageUrl)}" target="_blank" rel="noopener noreferrer">Open Agora Status Page</a>
+              <a class="clienttest-home-panel-link" href="${escapeHtml(statusPageUrl)}" target="_blank" rel="noopener noreferrer">Open Agora Status Page -></a>
             </div>
             <div class="clienttest-home-panel-body">
               ${serviceEventsBody}

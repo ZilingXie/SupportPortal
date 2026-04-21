@@ -451,10 +451,10 @@ class ClientUiContractTests(unittest.TestCase):
                 if (!readyHtml.includes("Service Events")) {
                   throw new Error("Client2 workspace should render the service events panel.");
                 }
-                if (!readyHtml.includes("Latest Agora platform incidents")) {
+                if (!readyHtml.includes("Latest Agora platform events")) {
                   throw new Error("Client2 workspace should render the updated service events title.");
                 }
-                if (!readyHtml.includes("Open Agora Status Page")) {
+                if (!readyHtml.includes("Open Agora Status Page ->")) {
                   throw new Error("Client2 workspace should render the status page external link.");
                 }
                 if (!readyHtml.includes('href="https://status.agora.io/"') || !readyHtml.includes('target="_blank"') || !readyHtml.includes('rel="noopener noreferrer"')) {
@@ -501,15 +501,23 @@ class ClientUiContractTests(unittest.TestCase):
                 };
 
                 const unavailableHtml = renderChatHome();
-                if (!unavailableHtml.includes("Service events are temporarily unavailable. Open Agora Status Page for the latest updates.")) {
+                if (!unavailableHtml.includes("Service events are temporarily unavailable. Open Agora Status Page -> for the latest updates.")) {
                   throw new Error("Client2 workspace should render the service events fallback copy.");
                 }
-                if (!unavailableHtml.includes("Open Agora Status Page")) {
+                if (!unavailableHtml.includes("Open Agora Status Page ->")) {
                   throw new Error("Client2 workspace should keep the status page action visible when events are unavailable.");
                 }
               """
             )
         )
+
+    def test_client2_workspace_service_events_link_uses_sentence_case_light_blue_style(self) -> None:
+        css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn(".clienttest-home-panel-link", css)
+        self.assertIn("text-transform: none;", css)
+        self.assertIn("font-weight: 700;", css)
+        self.assertIn("color: #7faee6;", css)
 
     def test_client2_workspace_fetches_service_events_when_entering_workspace(self) -> None:
         self.run_client2_app_script(
