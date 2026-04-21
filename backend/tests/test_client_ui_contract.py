@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260421-client-workspace-view-all-tickets-1", html)
-        self.assertIn("./app.js?v=20260421-client-workspace-view-all-tickets-1", html)
+        self.assertIn("./styles.css?v=20260421-client-workspace-view-all-tickets-top-1", html)
+        self.assertIn("./app.js?v=20260421-client-workspace-view-all-tickets-top-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -781,8 +781,8 @@ class ClientUiContractTests(unittest.TestCase):
                 if (!readyHtml.includes("view all tickets->")) {
                   throw new Error("Client2 workspace should render the active tickets footer CTA.");
                 }
-                if (!readyHtml.includes('data-action="go-tickets"')) {
-                  throw new Error("Client2 workspace should reuse the go-tickets action for the footer CTA.");
+                if (!readyHtml.includes('data-action="go-tickets-top"')) {
+                  throw new Error("Client2 workspace should render the dedicated go-tickets-top action for the footer CTA.");
                 }
                 if (readyHtml.includes("Recent Activity") || readyHtml.includes("Latest ticket movement")) {
                   throw new Error("Client2 workspace should replace the recent activity panel with service events.");
@@ -851,8 +851,95 @@ class ClientUiContractTests(unittest.TestCase):
                 if (!html.includes("view all tickets->")) {
                   throw new Error("Client2 workspace should keep the footer CTA even when there are no active tickets.");
                 }
-                if (!html.includes('data-action="go-tickets"')) {
-                  throw new Error("Client2 workspace empty state should keep the footer CTA wired to go-tickets.");
+                if (!html.includes('data-action="go-tickets-top"')) {
+                  throw new Error("Client2 workspace empty state should keep the footer CTA wired to go-tickets-top.");
+                }
+              """
+            )
+        )
+
+    def test_client2_workspace_footer_cta_navigates_to_tickets_and_resets_page_scroll(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                setupClientRealtimeConnection = () => {};
+                renderAuthed = () => {
+                  appRoot.innerHTML = renderMainContent();
+                };
+                syncChatScrollPosition = () => {};
+
+                const scrollCalls = [];
+                window.scrollTo = (options) => {
+                  scrollCalls.push(options);
+                };
+                document.documentElement = { scrollTop: 240 };
+                document.body = { scrollTop: 160 };
+
+                window.location.hash = "#/chat";
+                navigateToTicketsTop();
+                if (window.location.hash !== "#/tickets") {
+                  throw new Error(`Footer CTA should navigate to #/tickets, got ${window.location.hash}.`);
+                }
+
+                render();
+
+                if (!appRoot.innerHTML.includes("My Tickets")) {
+                  throw new Error("Footer CTA should land on the My Tickets page.");
+                }
+                if (scrollCalls.length !== 1) {
+                  throw new Error(`Footer CTA should reset page scroll exactly once after entering tickets, got ${scrollCalls.length}.`);
+                }
+                if (scrollCalls[0]?.top !== 0 || scrollCalls[0]?.behavior !== "auto") {
+                  throw new Error("Footer CTA should reset page scroll to top using auto behavior.");
+                }
+                if (document.documentElement.scrollTop !== 0 || document.body.scrollTop !== 0) {
+                  throw new Error("Footer CTA should reset document scroll fallbacks to zero.");
+                }
+              """
+            )
+        )
+
+    def test_client2_workspace_footer_cta_resets_scroll_even_when_already_on_tickets(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                setupClientRealtimeConnection = () => {};
+                renderAuthed = () => {
+                  appRoot.innerHTML = renderMainContent();
+                };
+                syncChatScrollPosition = () => {};
+
+                const scrollCalls = [];
+                window.scrollTo = (options) => {
+                  scrollCalls.push(options);
+                };
+                document.documentElement = { scrollTop: 320 };
+                document.body = { scrollTop: 220 };
+
+                window.location.hash = "#/tickets";
+                render();
+                scrollCalls.length = 0;
+                document.documentElement.scrollTop = 320;
+                document.body.scrollTop = 220;
+
+                navigateToTicketsTop();
+
+                if (window.location.hash !== "#/tickets") {
+                  throw new Error("Same-route footer CTA should keep the tickets hash.");
+                }
+                if (scrollCalls.length !== 1) {
+                  throw new Error(`Same-route footer CTA should still reset page scroll once, got ${scrollCalls.length}.`);
+                }
+                if (scrollCalls[0]?.top !== 0 || scrollCalls[0]?.behavior !== "auto") {
+                  throw new Error("Same-route footer CTA should reset page scroll to the top.");
+                }
+                if (document.documentElement.scrollTop !== 0 || document.body.scrollTop !== 0) {
+                  throw new Error("Same-route footer CTA should reset document fallback scroll positions.");
+                }
+                if (!appRoot.innerHTML.includes("My Tickets")) {
+                  throw new Error("Same-route footer CTA should keep the My Tickets page rendered.");
                 }
               """
             )
