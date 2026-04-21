@@ -2518,6 +2518,11 @@ a.citation-link:hover {
   min-height: 0;
 }
 
+.clienttest-home-panel-active-tickets {
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
 .clienttest-home-panel-header {
   display: flex;
   align-items: flex-start;
@@ -2548,6 +2553,12 @@ a.citation-link:hover {
   gap: 14px;
   align-content: start;
   min-height: 0;
+}
+
+.clienttest-home-panel-body-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 6px;
 }
 
 .clienttest-empty-card {
