@@ -967,6 +967,21 @@ class ClientUiContractTests(unittest.TestCase):
         self.run_client2_app_script(
             textwrap.dedent(
                 """
+                const normalizedLeadingEmptyBlock = normalizeRichComposerHtmlString("<p><br></p><ul><li>Item</li></ul>");
+                if (normalizedLeadingEmptyBlock !== "<ul><li>Item</li></ul>") {
+                  throw new Error(`Rich composer should drop empty leading paragraph wrappers around lists, got ${normalizedLeadingEmptyBlock}.`);
+                }
+
+                const normalizedTrailingEmptyBlock = normalizeRichComposerHtmlString("<ul><li>Item</li></ul><div><br></div>");
+                if (normalizedTrailingEmptyBlock !== "<ul><li>Item</li></ul>") {
+                  throw new Error(`Rich composer should drop empty trailing block wrappers around lists, got ${normalizedTrailingEmptyBlock}.`);
+                }
+
+                const normalizedEmptyList = normalizeRichComposerHtmlString("<ul><li><br></li></ul>");
+                if (normalizedEmptyList !== "") {
+                  throw new Error(`Rich composer should collapse fully empty lists to an empty draft, got ${JSON.stringify(normalizedEmptyList)}.`);
+                }
+
                 const serializedBold = serializeRichComposerHtmlToMarkdown("<strong>Need</strong> help");
                 if (serializedBold !== "**Need** help") {
                   throw new Error(`Rich composer should serialize strong tags to markdown, got ${serializedBold}.`);
@@ -987,6 +1002,14 @@ class ClientUiContractTests(unittest.TestCase):
                   throw new Error(`Rich composer should serialize fenced code blocks, got ${JSON.stringify(serializedCode)}.`);
                 }
 
+                const nestedRendered = renderMarkdownMessage("**_[Docs](https://example.com)_**");
+                if (!nestedRendered.includes('<strong><em><a href="https://example.com/" target="_blank" rel="noopener noreferrer">Docs</a></em></strong>')) {
+                  throw new Error(`Nested markdown should preserve bold + italic + link formatting, got ${nestedRendered}.`);
+                }
+                if (nestedRendered.includes("**<") || nestedRendered.includes(">**") || nestedRendered.includes("_<") || nestedRendered.includes(">_")) {
+                  throw new Error(`Nested markdown should not leak raw formatting markers, got ${nestedRendered}.`);
+                }
+
                 const hydrated = buildRichComposerHtmlFromMarkdown(
                   "**Bold** _italic_ [Docs](https://example.com)\\n- Item\\n```js\\nconst answer = 42;\\n```"
                 );
@@ -1004,6 +1027,16 @@ class ClientUiContractTests(unittest.TestCase):
                 }
                 if (!hydrated.includes('<pre><code class="language-js">const answer = 42;</code></pre>')) {
                   throw new Error("Hydration should recreate fenced code blocks.");
+                }
+
+                const nestedHydrated = buildRichComposerHtmlFromMarkdown("**_[Docs](https://example.com)_**");
+                if (!nestedHydrated.includes('<strong><em><a href="https://example.com/">Docs</a></em></strong>')) {
+                  throw new Error(`Hydration should recreate nested bold + italic + link formatting, got ${nestedHydrated}.`);
+                }
+
+                const unwrappedListHtml = unwrapRichComposerListHtml("<ul><li>Alpha</li><li><strong>Beta</strong></li></ul>");
+                if (unwrappedListHtml !== "Alpha<br><strong>Beta</strong>") {
+                  throw new Error(`List toggle should unwrap list items back into composer line breaks, got ${JSON.stringify(unwrappedListHtml)}.`);
                 }
               """
             )
@@ -1157,6 +1190,27 @@ class ClientUiContractTests(unittest.TestCase):
                   throw new Error("New-ticket correspondence bubbles should render customer markdown.");
                 }
 
+                const nestedMessageHtml = renderMessageBody({
+                  role: "user",
+                  content: "**_[Docs](https://example.com)_**",
+                  content_format: "markdown",
+                });
+                if (!nestedMessageHtml.includes('<strong><em><a href="https://example.com/" target="_blank" rel="noopener noreferrer">Docs</a></em></strong>')) {
+                  throw new Error(`Customer markdown should render nested bold + italic + link formatting, got ${nestedMessageHtml}.`);
+                }
+                if (nestedMessageHtml.includes("**<") || nestedMessageHtml.includes(">**") || nestedMessageHtml.includes("_<") || nestedMessageHtml.includes(">_")) {
+                  throw new Error(`Customer markdown bubbles should not leak raw formatting markers for nested rich content, got ${nestedMessageHtml}.`);
+                }
+
+                const nestedCorrespondenceHtml = renderNewTicketMessageContent({
+                  role: "user",
+                  content: "**_[Docs](https://example.com)_**",
+                  content_format: "markdown",
+                });
+                if (!nestedCorrespondenceHtml.includes("<strong><em><a href=\\"https://example.com/\\" target=\\"_blank\\" rel=\\"noopener noreferrer\\">Docs</a></em></strong>")) {
+                  throw new Error(`Correspondence bubbles should preserve nested markdown formatting, got ${nestedCorrespondenceHtml}.`);
+                }
+
                 const unsafeLinkHtml = renderMessageBody({
                   role: "user",
                   content: "[Bad](javascript:alert(1))",
@@ -1213,6 +1267,12 @@ class ClientUiContractTests(unittest.TestCase):
               """
             )
         )
+
+    def test_client2_rich_composer_css_resets_block_margins(self) -> None:
+        css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertRegex(css, r"\.composer-rich-input p\s*\{\s*margin:\s*0;")
+        self.assertRegex(css, r"\.composer-rich-input li\s*\{\s*margin:\s*0;")
 
     def test_client2_fresh_customer_message_schedules_delivered_label_after_5_seconds(self) -> None:
         self.run_client2_app_script(
