@@ -3636,6 +3636,257 @@ function renderRichComposerHtmlNodes(nodes = []) {
   return nodes.map((node) => renderRichComposerHtmlNode(node)).join("");
 }
 
+function isRichComposerCaretMarkerNode(node) {
+  return (
+    node?.type === "element" &&
+    String(node.tag || "").toLowerCase() === "span" &&
+    String(node.attrs?.["data-composer-caret-marker"] || "").toLowerCase() === "true"
+  );
+}
+
+function isRichComposerEmptyLineMarkerNode(node) {
+  return (
+    node?.type === "element" &&
+    String(node.tag || "").toLowerCase() === "span" &&
+    String(node.attrs?.["data-composer-empty-line"] || "").toLowerCase() === "true"
+  );
+}
+
+function buildRichComposerCaretMarkerNode() {
+  return {
+    type: "element",
+    tag: "span",
+    attrs: { "data-composer-caret-marker": "true" },
+    children: [],
+  };
+}
+
+function cloneRichComposerParsedNode(node) {
+  if (!node) {
+    return null;
+  }
+  if (node.type === "text") {
+    return {
+      type: "text",
+      value: String(node.value || ""),
+    };
+  }
+  if (node.type !== "element") {
+    return null;
+  }
+  return {
+    type: "element",
+    tag: String(node.tag || "").toLowerCase(),
+    attrs: { ...(node.attrs || {}) },
+    children: cloneRichComposerParsedNodes(node.children || []),
+  };
+}
+
+function cloneRichComposerParsedNodes(nodes = []) {
+  return (Array.isArray(nodes) ? nodes : []).map((node) => cloneRichComposerParsedNode(node)).filter(Boolean);
+}
+
+function cloneRichComposerElementNodeWithChildren(node, children = []) {
+  return {
+    type: "element",
+    tag: String(node?.tag || "").toLowerCase(),
+    attrs: { ...(node?.attrs || {}) },
+    children: cloneRichComposerParsedNodes(children),
+  };
+}
+
+function hasRichComposerCaretMarkerInParsedNodes(nodes = []) {
+  return (Array.isArray(nodes) ? nodes : []).some((node) => {
+    if (!node) {
+      return false;
+    }
+    if (isRichComposerCaretMarkerNode(node)) {
+      return true;
+    }
+    return node.type === "element" && hasRichComposerCaretMarkerInParsedNodes(node.children || []);
+  });
+}
+
+function isRichComposerParsedNodeStructurallyEmpty(node, { ignoreCaretMarker = true } = {}) {
+  if (!node) {
+    return true;
+  }
+  if (node.type === "text") {
+    return stripComposerZeroWidthSpaces(String(node.value || "")).trim().length === 0;
+  }
+  if (node.type !== "element") {
+    return true;
+  }
+  if (isRichComposerBreakNode(node) || isRichComposerEmptyLineMarkerNode(node)) {
+    return true;
+  }
+  if (ignoreCaretMarker && isRichComposerCaretMarkerNode(node)) {
+    return true;
+  }
+  return (node.children || []).every((child) =>
+    isRichComposerParsedNodeStructurallyEmpty(child, { ignoreCaretMarker })
+  );
+}
+
+function areRichComposerParsedNodesStructurallyEmpty(nodes = [], options = {}) {
+  return (Array.isArray(nodes) ? nodes : []).every((node) =>
+    isRichComposerParsedNodeStructurallyEmpty(node, options)
+  );
+}
+
+function unwrapRichComposerSingleBlockChildren(nodes = []) {
+  const normalizedNodes = cloneRichComposerParsedNodes(nodes);
+  const meaningfulNodes = normalizedNodes.filter((node) => {
+    if (!node) {
+      return false;
+    }
+    if (node.type === "text") {
+      return String(node.value || "").length > 0;
+    }
+    return true;
+  });
+  if (meaningfulNodes.length !== 1) {
+    return normalizedNodes;
+  }
+  const candidate = meaningfulNodes[0];
+  if (
+    candidate?.type !== "element" ||
+    !["p", "div"].includes(String(candidate.tag || "").toLowerCase())
+  ) {
+    return normalizedNodes;
+  }
+  const hasNestedBlocks = (candidate.children || []).some(
+    (child) => child?.type === "element" && isRichComposerBlockTag(child.tag)
+  );
+  if (hasNestedBlocks) {
+    return normalizedNodes;
+  }
+  return cloneRichComposerParsedNodes(candidate.children || []);
+}
+
+function buildRichComposerListItemChildrenWithFallback(children = [], { includeCaretMarker = false } = {}) {
+  const normalizedChildren = cloneRichComposerParsedNodes(children);
+  if (!areRichComposerParsedNodesStructurallyEmpty(normalizedChildren, { ignoreCaretMarker: true })) {
+    return normalizedChildren;
+  }
+  const fallbackChildren = [];
+  if (includeCaretMarker) {
+    fallbackChildren.push(buildRichComposerCaretMarkerNode());
+  }
+  fallbackChildren.push({
+    type: "element",
+    tag: "br",
+    attrs: {},
+    children: [],
+  });
+  return fallbackChildren;
+}
+
+function splitRichComposerParsedNodesAtCaretMarker(nodes = []) {
+  const beforeNodes = [];
+  const afterNodes = [];
+  let foundMarker = false;
+
+  (Array.isArray(nodes) ? nodes : []).forEach((node) => {
+    if (!node) {
+      return;
+    }
+    if (foundMarker) {
+      afterNodes.push(cloneRichComposerParsedNode(node));
+      return;
+    }
+    if (isRichComposerCaretMarkerNode(node)) {
+      foundMarker = true;
+      afterNodes.push(buildRichComposerCaretMarkerNode());
+      return;
+    }
+    if (node.type === "element" && !isRichComposerBreakNode(node)) {
+      const splitChildren = splitRichComposerParsedNodesAtCaretMarker(node.children || []);
+      if (splitChildren.foundMarker) {
+        foundMarker = true;
+        if (!areRichComposerParsedNodesStructurallyEmpty(splitChildren.beforeNodes, { ignoreCaretMarker: false })) {
+          beforeNodes.push(cloneRichComposerElementNodeWithChildren(node, splitChildren.beforeNodes));
+        }
+        if (splitChildren.afterNodes.length > 0 && isRichComposerCaretMarkerNode(splitChildren.afterNodes[0])) {
+          afterNodes.push(buildRichComposerCaretMarkerNode());
+          const trailingChildren = splitChildren.afterNodes.slice(1);
+          if (!areRichComposerParsedNodesStructurallyEmpty(trailingChildren, { ignoreCaretMarker: false })) {
+            afterNodes.push(cloneRichComposerElementNodeWithChildren(node, trailingChildren));
+          }
+        } else if (
+          !areRichComposerParsedNodesStructurallyEmpty(splitChildren.afterNodes, { ignoreCaretMarker: false })
+        ) {
+          afterNodes.push(cloneRichComposerElementNodeWithChildren(node, splitChildren.afterNodes));
+        }
+        return;
+      }
+    }
+    beforeNodes.push(cloneRichComposerParsedNode(node));
+  });
+
+  return {
+    beforeNodes,
+    afterNodes,
+    foundMarker,
+  };
+}
+
+function wrapRichComposerBlockHtmlInList(blockHtml) {
+  const parsed = parseRichComposerHtmlFragment(String(blockHtml || ""));
+  const blockChildren = unwrapRichComposerSingleBlockChildren(parsed.children || []);
+  const listItemChildren = buildRichComposerListItemChildrenWithFallback(blockChildren, {
+    includeCaretMarker: hasRichComposerCaretMarkerInParsedNodes(blockChildren),
+  });
+  return renderRichComposerHtmlNodes([
+    {
+      type: "element",
+      tag: "ul",
+      attrs: {},
+      children: [
+        {
+          type: "element",
+          tag: "li",
+          attrs: {},
+          children: listItemChildren,
+        },
+      ],
+    },
+  ]);
+}
+
+function splitRichComposerListItemHtmlAtCaret(listItemHtml) {
+  const parsed = parseRichComposerHtmlFragment(String(listItemHtml || ""));
+  const listItemNode =
+    (parsed.children || []).find(
+      (node) => node?.type === "element" && String(node.tag || "").toLowerCase() === "li"
+    ) || null;
+  if (!listItemNode) {
+    return String(listItemHtml || "");
+  }
+  const splitChildren = splitRichComposerParsedNodesAtCaretMarker(listItemNode.children || []);
+  if (!splitChildren.foundMarker) {
+    return String(listItemHtml || "");
+  }
+  const beforeChildren = buildRichComposerListItemChildrenWithFallback(splitChildren.beforeNodes);
+  const afterChildren = buildRichComposerListItemChildrenWithFallback(splitChildren.afterNodes, {
+    includeCaretMarker: true,
+  });
+  return renderRichComposerHtmlNodes([
+    {
+      type: "element",
+      tag: "li",
+      attrs: { ...(listItemNode.attrs || {}) },
+      children: beforeChildren,
+    },
+    {
+      type: "element",
+      tag: "li",
+      attrs: { ...(listItemNode.attrs || {}) },
+      children: afterChildren,
+    },
+  ]);
+}
+
 function normalizeRichComposerHtmlString(value) {
   const normalized = String(value || "")
     .replace(/<(\/?)b>/gi, "<$1strong>")
@@ -4560,7 +4811,8 @@ function applyComposerInlineFormat(tagName, element) {
       toggleTarget,
       unwrapRichComposerInlineTagHtml(toggleTarget.outerHTML || "", tagName)
     );
-    if (!selectComposerNodes(insertedNodes)) {
+    const lastInsertedNode = insertedNodes[insertedNodes.length - 1] || null;
+    if (!placeComposerCaretAtEnd(lastInsertedNode) && !selectComposerNodes(insertedNodes)) {
       placeComposerCaretInsideNode(element, element.childNodes?.length || 0);
     }
     syncComposerDraftStateFromElement(element);
@@ -4569,7 +4821,7 @@ function applyComposerInlineFormat(tagName, element) {
   const wrapper = document.createElement(tagName);
   wrapper.appendChild(range.extractContents());
   range.insertNode(wrapper);
-  selectComposerNodeContents(wrapper);
+  placeComposerCaretAtEnd(wrapper);
   syncComposerDraftStateFromElement(element);
   return true;
 }
@@ -4724,6 +4976,107 @@ function replaceComposerNodeWithHtml(node, html) {
   return insertedNodes;
 }
 
+function replaceComposerElementContentsWithHtml(element, html) {
+  if (!element || !document?.createElement || !document?.createDocumentFragment) {
+    return [];
+  }
+  const container = document.createElement("div");
+  container.innerHTML = String(html || "");
+  const insertedNodes = Array.from(container.childNodes || []);
+  const fragment = document.createDocumentFragment();
+  insertedNodes.forEach((child) => fragment.appendChild(child));
+  element.innerHTML = "";
+  element.appendChild(fragment);
+  return Array.from(element.childNodes || []);
+}
+
+function createComposerCaretMarkerElement() {
+  if (!document?.createElement) {
+    return null;
+  }
+  const marker = document.createElement("span");
+  marker.setAttribute("data-composer-caret-marker", "true");
+  return marker;
+}
+
+function isComposerCaretMarkerElement(node) {
+  return (
+    node?.nodeType === 1 &&
+    String(node.tagName || "").toLowerCase() === "span" &&
+    String(node.getAttribute?.("data-composer-caret-marker") || "").toLowerCase() === "true"
+  );
+}
+
+function findComposerCaretMarkerInNode(node) {
+  if (!node) {
+    return null;
+  }
+  if (isComposerCaretMarkerElement(node)) {
+    return node;
+  }
+  if (node.nodeType === 1 && typeof node.querySelector === "function") {
+    return node.querySelector('[data-composer-caret-marker="true"]');
+  }
+  return null;
+}
+
+function findComposerCaretMarkerInNodes(nodes = []) {
+  for (const node of Array.isArray(nodes) ? nodes : []) {
+    const marker = findComposerCaretMarkerInNode(node);
+    if (marker) {
+      return marker;
+    }
+  }
+  return null;
+}
+
+function restoreComposerCaretFromMarker(marker) {
+  if (!marker) {
+    return false;
+  }
+  const nextSibling = marker.nextSibling || null;
+  const previousSibling = marker.previousSibling || null;
+  let restored = false;
+  if (nextSibling?.nodeType === 3) {
+    restored = placeComposerCaretInsideNode(nextSibling, 0);
+  } else if (nextSibling) {
+    restored = placeComposerCaretAtStart(nextSibling);
+  } else if (previousSibling?.nodeType === 3) {
+    restored = placeComposerCaretInsideNode(previousSibling, String(previousSibling.textContent || "").length);
+  } else if (previousSibling) {
+    restored = placeComposerCaretAtEnd(previousSibling);
+  } else if (marker.parentNode) {
+    restored = placeComposerCaretInsideNode(marker.parentNode, 0);
+  }
+  marker.remove();
+  return restored;
+}
+
+function findNearestComposerListConvertibleBlock(node, root) {
+  let current = node;
+  while (current && current !== root) {
+    if (
+      current.nodeType === 1 &&
+      ["p", "div"].includes(String(current.tagName || "").toLowerCase()) &&
+      !Array.from(current.childNodes || []).some(
+        (child) => child?.nodeType === 1 && isRichComposerBlockTag(child.tagName)
+      )
+    ) {
+      return current;
+    }
+    current = current.parentNode;
+  }
+  if (
+    root?.nodeType === 1 &&
+    !Array.from(root.childNodes || []).some(
+      (child) => child?.nodeType === 1 && isRichComposerBlockTag(child.tagName)
+    )
+  ) {
+    return root;
+  }
+  return null;
+}
+
 function applyComposerListFormat(element) {
   const range = getComposerSelectionRange(element);
   if (!range) {
@@ -4745,16 +5098,33 @@ function applyComposerListFormat(element) {
   }
   const list = document.createElement("ul");
   if (range.collapsed) {
-    const item = document.createElement("li");
-    item.appendChild(document.createElement("br"));
-    list.appendChild(item);
-    const emptyBlockAncestor = findNearestEmptyComposerBlockAncestor(range.startContainer, element);
-    if (emptyBlockAncestor?.parentNode) {
-      emptyBlockAncestor.parentNode.replaceChild(list, emptyBlockAncestor);
-    } else {
-      range.insertNode(list);
+    const marker = createComposerCaretMarkerElement();
+    if (!marker) {
+      return false;
     }
-    placeComposerCaretInsideNode(item, 0);
+    range.deleteContents();
+    range.insertNode(marker);
+    const convertibleBlock =
+      findNearestComposerListConvertibleBlock(marker, element) ||
+      findNearestEmptyComposerBlockAncestor(marker, element) ||
+      element;
+    const targetHtml =
+      convertibleBlock === element
+        ? element.innerHTML
+        : String(convertibleBlock.outerHTML || "");
+    const wrappedHtml = wrapRichComposerBlockHtmlInList(targetHtml);
+    const insertedNodes =
+      convertibleBlock === element
+        ? replaceComposerElementContentsWithHtml(element, wrappedHtml)
+        : replaceComposerNodeWithHtml(convertibleBlock, wrappedHtml);
+    const restoredMarker =
+      findComposerCaretMarkerInNodes(insertedNodes) || findComposerCaretMarkerInNode(element);
+    if (!restoreComposerCaretFromMarker(restoredMarker)) {
+      const firstItem = element.querySelector?.("li") || null;
+      if (firstItem) {
+        placeComposerCaretAtEnd(firstItem);
+      }
+    }
     syncComposerDraftStateFromElement(element);
     return true;
   }
@@ -4961,10 +5331,22 @@ function handleRichComposerShiftEnter(element) {
   }
   const listItem = findNearestComposerAncestor(range.startContainer, "li", element);
   if (listItem) {
-    const nextItem = document.createElement("li");
-    nextItem.appendChild(document.createElement("br"));
-    listItem.parentNode?.insertBefore(nextItem, listItem.nextSibling || null);
-    placeComposerCaretInsideNode(nextItem, 0);
+    const marker = createComposerCaretMarkerElement();
+    if (!marker) {
+      return false;
+    }
+    range.deleteContents();
+    range.insertNode(marker);
+    const splitHtml = splitRichComposerListItemHtmlAtCaret(listItem.outerHTML || "");
+    const insertedNodes = replaceComposerNodeWithHtml(listItem, splitHtml);
+    const restoredMarker =
+      findComposerCaretMarkerInNodes(insertedNodes) || findComposerCaretMarkerInNode(element);
+    if (!restoreComposerCaretFromMarker(restoredMarker)) {
+      const nextItem = insertedNodes[1] || insertedNodes[0] || null;
+      if (nextItem) {
+        placeComposerCaretAtStart(nextItem);
+      }
+    }
     syncComposerDraftStateFromElement(element);
     return true;
   }

@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260421-client-composer-italic-render-fix-1", html)
-        self.assertIn("./app.js?v=20260421-client-composer-italic-render-fix-1", html)
+        self.assertIn("./styles.css?v=20260421-client-composer-editing-behaviors-1", html)
+        self.assertIn("./app.js?v=20260421-client-composer-editing-behaviors-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -1579,6 +1579,78 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_client2_rich_composer_inline_format_collapses_selection_to_end(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                const createdElements = [];
+                document.createElement = (tag) => {
+                  const node = {
+                    nodeType: 1,
+                    tagName: String(tag || "").toUpperCase(),
+                    childNodes: [],
+                    appendChild(child) {
+                      this.childNodes.push(child);
+                      return child;
+                    },
+                    remove() {},
+                  };
+                  createdElements.push(node);
+                  return node;
+                };
+                document.createTextNode = (value) => ({ nodeType: 3, textContent: String(value || "") });
+
+                const fakeRange = {
+                  collapsed: false,
+                  insertedNode: null,
+                  extractContents() {
+                    return { nodeType: 11, childNodes: [] };
+                  },
+                  insertNode(node) {
+                    this.insertedNode = node;
+                  },
+                  toString() {
+                    return "Alpha";
+                  },
+                };
+
+                const caretTargets = [];
+                getComposerSelectionRange = () => fakeRange;
+                findComposerFullySelectedInlineFormatNode = () => null;
+                placeComposerCaretAtEnd = (node) => {
+                  caretTargets.push(node);
+                  return true;
+                };
+                selectComposerNodeContents = () => {
+                  throw new Error("Selected inline formatting should collapse the caret instead of reselecting the wrapped content.");
+                };
+                syncComposerDraftStateFromElement = () => {};
+
+                const handled = applyComposerInlineFormat("strong", {});
+                if (!handled) {
+                  throw new Error("Inline format toggle should report success for a selected range.");
+                }
+                if (!fakeRange.insertedNode || fakeRange.insertedNode.tagName !== "STRONG") {
+                  throw new Error("Inline format toggle should insert a strong wrapper around the selected content.");
+                }
+                if (caretTargets.length !== 1 || caretTargets[0] !== fakeRange.insertedNode) {
+                  throw new Error("Inline format toggle should collapse the caret to the end of the formatted wrapper.");
+                }
+              """
+            )
+        )
+
+    def test_client2_rich_composer_inline_format_source_collapses_instead_of_reselecting(self) -> None:
+        app_source = Path("ui/client-ui/app.js").read_text(encoding="utf-8")
+        start = app_source.index("function applyComposerInlineFormat(tagName, element) {")
+        end = app_source.index("function isRichComposerDomNodeStructurallyEmpty", start)
+        inline_toggle_source = app_source[start:end]
+
+        self.assertIn("placeComposerCaretAtEnd(wrapper);", inline_toggle_source)
+        self.assertIn("const lastInsertedNode = insertedNodes[insertedNodes.length - 1] || null;", inline_toggle_source)
+        self.assertIn("placeComposerCaretAtEnd(lastInsertedNode)", inline_toggle_source)
+        self.assertNotIn("selectComposerNodeContents(wrapper);", inline_toggle_source)
+
     def test_client2_rich_composer_list_toggle_restores_unwrapped_selection(self) -> None:
         app_source = Path("ui/client-ui/app.js").read_text(encoding="utf-8")
         start = app_source.index("function applyComposerListFormat(element) {")
@@ -1595,6 +1667,60 @@ class ClientUiContractTests(unittest.TestCase):
             list_toggle_source,
         )
         self.assertNotIn("placeComposerCaretAtEnd(lastInsertedNode);", list_toggle_source)
+
+    def test_client2_rich_composer_list_helpers_wrap_current_block_and_split_items(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                const marker = '<span data-composer-caret-marker="true"></span>';
+
+                const wrappedBlock = wrapRichComposerBlockHtmlInList(`<div>Alpha${marker}<em>Beta</em></div>`);
+                if (wrappedBlock !== `<ul><li>Alpha${marker}<em>Beta</em></li></ul>`) {
+                  throw new Error(`Collapsed list toggle should wrap the current block into a single list item, got ${wrappedBlock}.`);
+                }
+
+                const wrappedEmptyBlock = wrapRichComposerBlockHtmlInList(`<div>${marker}</div>`);
+                if (wrappedEmptyBlock !== `<ul><li>${marker}<br></li></ul>`) {
+                  throw new Error(`Collapsed list toggle should keep the empty-list fallback for empty blocks, got ${wrappedEmptyBlock}.`);
+                }
+
+                const splitMiddle = splitRichComposerListItemHtmlAtCaret(`<li>Alpha${marker}<em>Beta</em></li>`);
+                if (splitMiddle !== `<li>Alpha</li><li>${marker}<em>Beta</em></li>`) {
+                  throw new Error(`Shift+Enter inside a list item should move trailing inline markup into the next item, got ${splitMiddle}.`);
+                }
+
+                const splitStart = splitRichComposerListItemHtmlAtCaret(`<li>${marker}<strong>Alpha</strong></li>`);
+                if (splitStart !== `<li><br></li><li>${marker}<strong>Alpha</strong></li>`) {
+                  throw new Error(`Shift+Enter at the start of a list item should leave the current item empty and move content into the next item, got ${splitStart}.`);
+                }
+
+                const splitEnd = splitRichComposerListItemHtmlAtCaret(`<li><strong>Alpha</strong>${marker}</li>`);
+                if (splitEnd !== `<li><strong>Alpha</strong></li><li>${marker}<br></li>`) {
+                  throw new Error(`Shift+Enter at the end of a list item should create an empty following item, got ${splitEnd}.`);
+                }
+
+                const splitNested = splitRichComposerListItemHtmlAtCaret(`<li><strong>Al${marker}pha</strong></li>`);
+                if (splitNested !== `<li><strong>Al</strong></li><li>${marker}<strong>pha</strong></li>`) {
+                  throw new Error(`Shift+Enter should preserve nested inline formatting when splitting list items, got ${splitNested}.`);
+                }
+              """
+            )
+        )
+
+    def test_client2_rich_composer_list_source_uses_block_wrap_and_split_helpers(self) -> None:
+        app_source = Path("ui/client-ui/app.js").read_text(encoding="utf-8")
+        list_start = app_source.index("function applyComposerListFormat(element) {")
+        list_end = app_source.index("function handleRichComposerListDeletion", list_start)
+        list_toggle_source = app_source[list_start:list_end]
+
+        shift_enter_start = app_source.index("function handleRichComposerShiftEnter(element) {")
+        shift_enter_end = app_source.index("function buildChatTicketViewState(ticket) {", shift_enter_start)
+        shift_enter_source = app_source[shift_enter_start:shift_enter_end]
+
+        self.assertIn("findNearestComposerListConvertibleBlock(", list_toggle_source)
+        self.assertIn("wrapRichComposerBlockHtmlInList(", list_toggle_source)
+        self.assertIn("splitRichComposerListItemHtmlAtCaret(", shift_enter_source)
+        self.assertNotIn('nextItem.appendChild(document.createElement("br"));', shift_enter_source)
 
     def test_client2_rich_composer_renders_on_both_composer_surfaces(self) -> None:
         self.run_client2_app_script(
