@@ -3782,6 +3782,27 @@ function buildRichComposerListItemChildrenWithFallback(children = [], { includeC
   return fallbackChildren;
 }
 
+function buildRichComposerPlainTextCarrierNode(children = [], { includeCaretMarker = false } = {}) {
+  const normalizedChildren = cloneRichComposerParsedNodes(children);
+  if (!areRichComposerParsedNodesStructurallyEmpty(normalizedChildren, { ignoreCaretMarker: true })) {
+    return {
+      type: "element",
+      tag: "div",
+      attrs: {},
+      children: normalizedChildren,
+    };
+  }
+  const emptyLineChildren = cloneRichComposerParsedNodes(buildRichComposerEmptyLineBlockNode().children || []);
+  return {
+    type: "element",
+    tag: "div",
+    attrs: {},
+    children: includeCaretMarker
+      ? [buildRichComposerCaretMarkerNode(), ...emptyLineChildren]
+      : emptyLineChildren,
+  };
+}
+
 function splitRichComposerParsedNodesAtCaretMarker(nodes = []) {
   const beforeNodes = [];
   const afterNodes = [];
@@ -3885,6 +3906,50 @@ function splitRichComposerListItemHtmlAtCaret(listItemHtml) {
       children: afterChildren,
     },
   ]);
+}
+
+function exitRichComposerCurrentListItemHtml(listHtml) {
+  const parsed = parseRichComposerHtmlFragment(String(listHtml || ""));
+  const listNode =
+    (parsed.children || []).find(
+      (node) =>
+        node?.type === "element" && ["ul", "ol"].includes(String(node.tag || "").toLowerCase())
+    ) || null;
+  if (!listNode) {
+    return String(listHtml || "");
+  }
+  const listItems = (listNode.children || []).filter(
+    (node) => node?.type === "element" && String(node.tag || "").toLowerCase() === "li"
+  );
+  const exitIndex = listItems.findIndex((item) => hasRichComposerCaretMarkerInParsedNodes(item.children || []));
+  if (exitIndex < 0) {
+    return String(listHtml || "");
+  }
+  const beforeItems = cloneRichComposerParsedNodes(listItems.slice(0, exitIndex));
+  const afterItems = cloneRichComposerParsedNodes(listItems.slice(exitIndex + 1));
+  const exitItem = listItems[exitIndex];
+  const exitBlock = buildRichComposerPlainTextCarrierNode(exitItem.children || [], {
+    includeCaretMarker: hasRichComposerCaretMarkerInParsedNodes(exitItem.children || []),
+  });
+  const renderedNodes = [];
+  if (beforeItems.length > 0) {
+    renderedNodes.push({
+      type: "element",
+      tag: String(listNode.tag || "").toLowerCase(),
+      attrs: { ...(listNode.attrs || {}) },
+      children: beforeItems,
+    });
+  }
+  renderedNodes.push(exitBlock);
+  if (afterItems.length > 0) {
+    renderedNodes.push({
+      type: "element",
+      tag: String(listNode.tag || "").toLowerCase(),
+      attrs: { ...(listNode.attrs || {}) },
+      children: afterItems,
+    });
+  }
+  return renderRichComposerHtmlNodes(renderedNodes);
 }
 
 function normalizeRichComposerHtmlString(value) {
@@ -4765,7 +4830,7 @@ function syncComposerToolbarStateFromElement(element = getActiveChatComposerElem
   return state.composerToolbarState;
 }
 
-function syncComposerDraftStateFromElement(element = getActiveChatComposerElement()) {
+function syncComposerDraftStateFromElement(element = getActiveChatComposerElement(), options = {}) {
   if (isRichTextComposerElement(element)) {
     const normalizedHtml = normalizeRichComposerHtmlString(element.innerHTML);
     if (normalizedHtml !== element.innerHTML) {
@@ -4775,6 +4840,9 @@ function syncComposerDraftStateFromElement(element = getActiveChatComposerElemen
     state.inputDraft = serializeRichComposerHtmlToMarkdown(normalizedHtml);
     refreshNewTicketInlineComposerAction();
     syncComposerToolbarStateFromElement(element);
+    if (options?.selectionBookmark) {
+      restoreRichComposerSelectionBookmark(element, options.selectionBookmark);
+    }
     return state.inputDraft;
   }
   if (isTextComposerElement(element)) {
@@ -4815,14 +4883,16 @@ function applyComposerInlineFormat(tagName, element) {
     if (!placeComposerCaretAtEnd(lastInsertedNode) && !selectComposerNodes(insertedNodes)) {
       placeComposerCaretInsideNode(element, element.childNodes?.length || 0);
     }
-    syncComposerDraftStateFromElement(element);
+    const selectionBookmark = captureRichComposerSelectionBookmark(element);
+    syncComposerDraftStateFromElement(element, { selectionBookmark });
     return true;
   }
   const wrapper = document.createElement(tagName);
   wrapper.appendChild(range.extractContents());
   range.insertNode(wrapper);
   placeComposerCaretAtEnd(wrapper);
-  syncComposerDraftStateFromElement(element);
+  const selectionBookmark = captureRichComposerSelectionBookmark(element);
+  syncComposerDraftStateFromElement(element, { selectionBookmark });
   return true;
 }
 
@@ -5082,9 +5152,37 @@ function applyComposerListFormat(element) {
   if (!range) {
     return false;
   }
+  const currentListItem = range.collapsed
+    ? findNearestComposerAncestor(range.startContainer, "li", element)
+    : null;
   const existingList =
     findNearestComposerAncestor(range.startContainer, "ul", element) ||
     findNearestComposerAncestor(range.startContainer, "ol", element);
+  if (existingList && currentListItem) {
+    const marker = createComposerCaretMarkerElement();
+    if (!marker) {
+      return false;
+    }
+    range.deleteContents();
+    range.insertNode(marker);
+    const exitHtml = exitRichComposerCurrentListItemHtml(existingList.outerHTML || "");
+    const insertedNodes = replaceComposerNodeWithHtml(existingList, exitHtml);
+    const restoredMarker =
+      findComposerCaretMarkerInNodes(insertedNodes) || findComposerCaretMarkerInNode(element);
+    if (!restoreComposerCaretFromMarker(restoredMarker)) {
+      const exitBlock =
+        insertedNodes.find(
+          (node) =>
+            node?.nodeType === 1 && ["p", "div"].includes(String(node.tagName || "").toLowerCase())
+        ) || null;
+      if (exitBlock) {
+        placeComposerCaretAtEnd(exitBlock);
+      }
+    }
+    const selectionBookmark = captureRichComposerSelectionBookmark(element);
+    syncComposerDraftStateFromElement(element, { selectionBookmark });
+    return true;
+  }
   if (existingList) {
     const insertedNodes = replaceComposerNodeWithHtml(
       existingList,

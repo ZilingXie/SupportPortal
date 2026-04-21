@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260421-client-composer-editing-behaviors-1", html)
-        self.assertIn("./app.js?v=20260421-client-composer-editing-behaviors-1", html)
+        self.assertIn("./styles.css?v=20260421-client-composer-inline-list-fixes-1", html)
+        self.assertIn("./app.js?v=20260421-client-composer-inline-list-fixes-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -1640,6 +1640,98 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_client2_rich_composer_inline_format_passes_collapsed_bookmark_to_sync(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                document.createElement = (tag) => ({
+                  nodeType: 1,
+                  tagName: String(tag || "").toUpperCase(),
+                  childNodes: [],
+                  appendChild(child) {
+                    this.childNodes.push(child);
+                    return child;
+                  },
+                });
+
+                const fakeRange = {
+                  collapsed: false,
+                  insertedNode: null,
+                  extractContents() {
+                    return { nodeType: 11, childNodes: [] };
+                  },
+                  insertNode(node) {
+                    this.insertedNode = node;
+                  },
+                  toString() {
+                    return "Alpha";
+                  },
+                };
+
+                const explicitBookmark = {
+                  startPath: [0, 0],
+                  startOffset: 5,
+                  endPath: [0, 0],
+                  endOffset: 5,
+                };
+                const syncCalls = [];
+
+                getComposerSelectionRange = () => fakeRange;
+                findComposerFullySelectedInlineFormatNode = () => null;
+                placeComposerCaretAtEnd = () => true;
+                captureRichComposerSelectionBookmark = () => explicitBookmark;
+                syncComposerDraftStateFromElement = (_element, options) => {
+                  syncCalls.push(options || null);
+                };
+
+                applyComposerInlineFormat("strong", {});
+                if (syncCalls.length !== 1) {
+                  throw new Error(`Inline format toggle should sync the composer once, got ${syncCalls.length}.`);
+                }
+                if (!syncCalls[0] || syncCalls[0].selectionBookmark !== explicitBookmark) {
+                  throw new Error("Inline format toggle should pass the collapsed caret bookmark into syncComposerDraftStateFromElement.");
+                }
+              """
+            )
+        )
+
+    def test_client2_rich_composer_sync_draft_state_restores_explicit_selection_bookmark(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                const explicitBookmark = {
+                  startPath: [0, 0],
+                  startOffset: 4,
+                  endPath: [0, 0],
+                  endOffset: 4,
+                };
+                const restoredBookmarks = [];
+                const element = {
+                  innerHTML: "<strong>Alpha</strong>",
+                  childNodes: [{ nodeType: 1 }],
+                  scrollTop: 0,
+                };
+
+                isRichTextComposerElement = () => true;
+                isTextComposerElement = () => false;
+                isComposerElementDisabled = () => false;
+                normalizeRichComposerHtmlString = (html) => String(html || "");
+                serializeRichComposerHtmlToMarkdown = (html) => String(html || "");
+                refreshNewTicketInlineComposerAction = () => {};
+                syncComposerToolbarStateFromElement = () => {};
+                restoreRichComposerSelectionBookmark = (_element, bookmark) => {
+                  restoredBookmarks.push(bookmark);
+                  return true;
+                };
+
+                syncComposerDraftStateFromElement(element, { selectionBookmark: explicitBookmark });
+                if (restoredBookmarks.length !== 1 || restoredBookmarks[0] !== explicitBookmark) {
+                  throw new Error("syncComposerDraftStateFromElement should restore the explicit collapsed selection bookmark after normalization.");
+                }
+              """
+            )
+        )
+
     def test_client2_rich_composer_inline_format_source_collapses_instead_of_reselecting(self) -> None:
         app_source = Path("ui/client-ui/app.js").read_text(encoding="utf-8")
         start = app_source.index("function applyComposerInlineFormat(tagName, element) {")
@@ -1649,24 +1741,9 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn("placeComposerCaretAtEnd(wrapper);", inline_toggle_source)
         self.assertIn("const lastInsertedNode = insertedNodes[insertedNodes.length - 1] || null;", inline_toggle_source)
         self.assertIn("placeComposerCaretAtEnd(lastInsertedNode)", inline_toggle_source)
+        self.assertIn("captureRichComposerSelectionBookmark(element)", inline_toggle_source)
+        self.assertIn("selectionBookmark", inline_toggle_source)
         self.assertNotIn("selectComposerNodeContents(wrapper);", inline_toggle_source)
-
-    def test_client2_rich_composer_list_toggle_restores_unwrapped_selection(self) -> None:
-        app_source = Path("ui/client-ui/app.js").read_text(encoding="utf-8")
-        start = app_source.index("function applyComposerListFormat(element) {")
-        end = app_source.index("function handleRichComposerListDeletion", start)
-        list_toggle_source = app_source[start:end]
-
-        self.assertIn("if (!selectComposerNodes(insertedNodes)) {", list_toggle_source)
-        self.assertIn(
-            "placeComposerCaretInsideNode(element, element.childNodes?.length || 0);",
-            list_toggle_source,
-        )
-        self.assertNotIn(
-            "const lastInsertedNode = insertedNodes[insertedNodes.length - 1] || null;",
-            list_toggle_source,
-        )
-        self.assertNotIn("placeComposerCaretAtEnd(lastInsertedNode);", list_toggle_source)
 
     def test_client2_rich_composer_list_helpers_wrap_current_block_and_split_items(self) -> None:
         self.run_client2_app_script(
@@ -1707,6 +1784,35 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_client2_rich_composer_list_cancel_exits_current_item_only(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                const marker = '<span data-composer-caret-marker="true"></span>';
+
+                const singleItemExit = exitRichComposerCurrentListItemHtml(`<ul><li>Alpha${marker}<em>Beta</em></li></ul>`);
+                if (singleItemExit !== `<div>Alpha${marker}<em>Beta</em></div>`) {
+                  throw new Error(`Single-item list cancel should turn the current item into a plain block, got ${singleItemExit}.`);
+                }
+
+                const middleItemExit = exitRichComposerCurrentListItemHtml(`<ul><li>One</li><li>Two${marker}<strong>Three</strong></li><li>Four</li></ul>`);
+                if (middleItemExit !== `<ul><li>One</li></ul><div>Two${marker}<strong>Three</strong></div><ul><li>Four</li></ul>`) {
+                  throw new Error(`Cancelling list on a middle item should preserve the surrounding items as lists, got ${middleItemExit}.`);
+                }
+
+                const firstItemExit = exitRichComposerCurrentListItemHtml(`<ul><li>${marker}<em>First</em></li><li>Second</li></ul>`);
+                if (firstItemExit !== `<div>${marker}<em>First</em></div><ul><li>Second</li></ul>`) {
+                  throw new Error(`Cancelling list on the first item should keep the trailing items in a list, got ${firstItemExit}.`);
+                }
+
+                const lastItemExit = exitRichComposerCurrentListItemHtml(`<ol><li>One</li><li>Last${marker}</li></ol>`);
+                if (lastItemExit !== `<ol><li>One</li></ol><div>Last${marker}</div>`) {
+                  throw new Error(`Cancelling list on the last item should keep the leading items in the original list type, got ${lastItemExit}.`);
+                }
+              """
+            )
+        )
+
     def test_client2_rich_composer_list_source_uses_block_wrap_and_split_helpers(self) -> None:
         app_source = Path("ui/client-ui/app.js").read_text(encoding="utf-8")
         list_start = app_source.index("function applyComposerListFormat(element) {")
@@ -1717,8 +1823,10 @@ class ClientUiContractTests(unittest.TestCase):
         shift_enter_end = app_source.index("function buildChatTicketViewState(ticket) {", shift_enter_start)
         shift_enter_source = app_source[shift_enter_start:shift_enter_end]
 
+        self.assertIn("if (existingList && currentListItem) {", list_toggle_source)
         self.assertIn("findNearestComposerListConvertibleBlock(", list_toggle_source)
         self.assertIn("wrapRichComposerBlockHtmlInList(", list_toggle_source)
+        self.assertIn("exitRichComposerCurrentListItemHtml(", list_toggle_source)
         self.assertIn("splitRichComposerListItemHtmlAtCaret(", shift_enter_source)
         self.assertNotIn('nextItem.appendChild(document.createElement("br"));', shift_enter_source)
 
