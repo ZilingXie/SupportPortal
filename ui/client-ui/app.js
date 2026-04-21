@@ -2000,7 +2000,7 @@ function renderTicketProductSelector(ticket) {
 function renderStatusFilter() {
   const selectedOption = getStatusFilterOption(state.statusFilter);
   return `
-    <div class="filter-select" data-filter-select>
+    <div class="filter-select tickets-status-filter" data-filter-select>
       <input id="status-filter" type="hidden" value="${escapeHtml(selectedOption.value)}" />
       <button
         class="filter-select-trigger"

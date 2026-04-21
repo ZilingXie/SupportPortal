@@ -244,11 +244,13 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn("new-ticket-tail-route", app_source)
         self.assertIn("new-ticket-draft-inline-route", app_source)
         self.assertIn("new-ticket-thread-footer-composer", app_source)
+        self.assertIn("tickets-status-filter", app_source)
         self.assertIn("--client2-tail-footer-block-height", css)
         self.assertIn("--new-ticket-draft-left-stack-height", css)
         self.assertIn("--new-ticket-draft-thread-height", css)
         self.assertIn("--new-ticket-draft-page-tail-blank", css)
         self.assertIn("--new-ticket-draft-knowledge-card-height", css)
+        self.assertIn("--tickets-status-filter-width: 188px;", css)
         self.assertRegex(
             css,
             re.compile(
@@ -282,6 +284,20 @@ class ClientUiContractTests(unittest.TestCase):
             re.compile(
                 r"\.new-ticket-draft-inline-route \.new-ticket-fixed-knowledge-card \{[^}]*height:\s*var\(--new-ticket-draft-knowledge-card-height\);",
                 re.DOTALL,
+            ),
+        )
+        self.assertRegex(
+            css,
+            re.compile(
+                r"\.tickets-status-filter \{[^}]*width:\s*var\(--tickets-status-filter-width\);[^}]*min-width:\s*var\(--tickets-status-filter-width\);[^}]*max-width:\s*var\(--tickets-status-filter-width\);",
+                re.DOTALL,
+            ),
+        )
+        self.assertRegex(
+            css,
+            re.compile(
+                r"@media \(max-width: 960px\) \{[\s\S]*?\.tickets-status-filter \{[^}]*width:\s*var\(--tickets-status-filter-width\);[^}]*min-width:\s*var\(--tickets-status-filter-width\);[^}]*max-width:\s*var\(--tickets-status-filter-width\);",
+                re.MULTILINE,
             ),
         )
         self.assertNotIn("min-height: calc(100% + var(--new-ticket-composer-panel-height));", css)
@@ -1563,6 +1579,9 @@ class ClientUiContractTests(unittest.TestCase):
                 }
                 if (!html.includes("clienttest-route-footer-band")) {
                   throw new Error("Client2 tickets page should render a real in-flow footer band element.");
+                }
+                if (!html.includes("tickets-status-filter")) {
+                  throw new Error("Client2 tickets page should render the My Tickets specific status filter marker.");
                 }
                 if (html.includes("clienttest-route-footer-shell-communicating")) {
                   throw new Error("Client2 tickets page should remove the communicating-style footer shell and keep only the bottom blank.");

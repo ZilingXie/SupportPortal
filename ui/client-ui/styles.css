@@ -59,6 +59,7 @@
   --radius-xl: 32px;
   --shadow-soft: 0 18px 42px rgba(52, 61, 150, 0.08);
   --shadow-float: 0 22px 56px rgba(52, 61, 150, 0.16);
+  --tickets-status-filter-width: 188px;
 }
 
 * {
@@ -382,6 +383,12 @@ html.material-symbols-pending .material-symbols-outlined {
 .filter-select {
   position: relative;
   width: min(100%, 220px);
+}
+
+.tickets-status-filter {
+  width: var(--tickets-status-filter-width);
+  min-width: var(--tickets-status-filter-width);
+  max-width: var(--tickets-status-filter-width);
 }
 
 .filter-select.is-open {
@@ -2184,6 +2191,12 @@ a.citation-link:hover {
   .filter-select {
     width: 100%;
     max-width: 320px;
+  }
+
+  .tickets-status-filter {
+    width: var(--tickets-status-filter-width);
+    min-width: var(--tickets-status-filter-width);
+    max-width: var(--tickets-status-filter-width);
   }
 
   .welcome-inner,
