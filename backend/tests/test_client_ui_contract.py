@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260421-client-composer-list-toggle-fix-1", html)
-        self.assertIn("./app.js?v=20260421-client-composer-list-toggle-fix-1", html)
+        self.assertIn("./styles.css?v=20260421-client-composer-link-remove-codeblock-toggle-1", html)
+        self.assertIn("./app.js?v=20260421-client-composer-link-remove-codeblock-toggle-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -1559,8 +1559,11 @@ class ClientUiContractTests(unittest.TestCase):
                 state.activeTicketId = draftTicket.id;
                 state.newTicketPreviewTicketId = draftTicket.id;
                 const draftHtml = renderChatTicket();
-                if ((draftHtml.match(/data-composer-markdown-action=/g) || []).length < 6) {
-                  throw new Error("Draft composer should render the full markdown toolbar.");
+                if ((draftHtml.match(/data-composer-markdown-action=/g) || []).length !== 5) {
+                  throw new Error("Draft composer should render bold, italic, list, code-block, and attach only.");
+                }
+                if (draftHtml.includes('data-composer-markdown-action="link"')) {
+                  throw new Error("Draft composer should not render the removed link button.");
                 }
                 if (!draftHtml.includes('data-composer-markdown-action="code-block"')) {
                   throw new Error("Draft composer should expose the code block button.");
@@ -1598,6 +1601,9 @@ class ClientUiContractTests(unittest.TestCase):
                 if (!detailHtml.includes("ticket-detail-composer-format-toolbar")) {
                   throw new Error("Ticket detail shell should add the markdown formatting toolbar.");
                 }
+                if (detailHtml.includes('data-composer-markdown-action="link"')) {
+                  throw new Error("Ticket detail shell should not render the removed link button.");
+                }
                 if (!detailHtml.includes('data-composer-markdown-action="code-block"')) {
                   throw new Error("Ticket detail shell should expose the code block button.");
                 }
@@ -1614,7 +1620,7 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
-    def test_client2_rich_composer_toolbar_state_and_link_editor_render(self) -> None:
+    def test_client2_rich_composer_toolbar_state_render_without_link_ui(self) -> None:
         self.run_client2_app_script(
             textwrap.dedent(
                 """
@@ -1622,45 +1628,36 @@ class ClientUiContractTests(unittest.TestCase):
                   bold: true,
                   italic: false,
                   list: true,
-                  link: false,
-                  codeBlock: false,
-                };
-                state.composerLinkEditor = {
-                  open: true,
-                  url: "https://example.com",
-                  selectedText: "Docs",
-                  selectionBookmark: null,
+                  codeBlock: true,
                 };
                 const draftToolbar = renderNewTicketComposerToolbar({ canCompose: true, includeSummary: true });
                 if (!draftToolbar.includes('data-composer-markdown-action="bold"') || !draftToolbar.includes("is-active")) {
                   throw new Error(`Toolbar should render the active state for selected formatting, got ${draftToolbar}.`);
                 }
-                const linkEditor = renderComposerLinkEditor({ canCompose: true });
-                if (!linkEditor.includes("composer-link-editor")) {
-                  throw new Error("Rich composer should render the inline link editor when requested.");
+                if (!draftToolbar.includes('data-composer-markdown-action="code-block"')) {
+                  throw new Error("Toolbar should keep the code block action.");
                 }
-                if (!linkEditor.includes('value="https://example.com"')) {
-                  throw new Error("Inline link editor should keep the current URL draft.");
+                if (draftToolbar.includes('data-composer-markdown-action="link"')) {
+                  throw new Error("Toolbar should not render the removed link action.");
                 }
               """
             )
         )
 
-    def test_client2_rich_composer_empty_regions_render_as_true_empty_anchors(self) -> None:
+    def test_client2_rich_composer_no_link_editor_region_and_empty_note_anchor(self) -> None:
         self.run_client2_app_script(
             textwrap.dedent(
                 """
                 state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
                 localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
-                state.composerLinkEditor = buildDefaultComposerLinkEditorState();
 
                 const draftTicket = getOrCreateDraftTicket(state.user.id);
                 state.view = "chat-ticket";
                 state.activeTicketId = draftTicket.id;
                 state.newTicketPreviewTicketId = draftTicket.id;
                 const draftHtml = renderChatTicket();
-                if (!draftHtml.includes('<div data-chat-section="composer-link-editor"></div>')) {
-                  throw new Error(`Draft composer should render an empty link-editor anchor without spacer whitespace, got ${draftHtml}.`);
+                if (draftHtml.includes('data-chat-section="composer-link-editor"')) {
+                  throw new Error(`Draft composer should not render the removed link-editor region, got ${draftHtml}.`);
                 }
                 if (!draftHtml.includes('<div data-chat-section="composer-note"></div>')) {
                   throw new Error(`Draft composer should render an empty note anchor without spacer whitespace, got ${draftHtml}.`);
@@ -1683,8 +1680,8 @@ class ClientUiContractTests(unittest.TestCase):
                   showVisibleFooterBand: false,
                   isEditing: false,
                 });
-                if (!detailHtml.includes('<div data-chat-section="composer-link-editor"></div>')) {
-                  throw new Error(`Detail composer should render an empty link-editor anchor without spacer whitespace, got ${detailHtml}.`);
+                if (detailHtml.includes('data-chat-section="composer-link-editor"')) {
+                  throw new Error(`Detail composer should not render the removed link-editor region, got ${detailHtml}.`);
                 }
                 if (!detailHtml.includes('<div data-chat-section="composer-note"></div>')) {
                   throw new Error(`Detail composer should render an empty note anchor without spacer whitespace, got ${detailHtml}.`);
@@ -1692,6 +1689,32 @@ class ClientUiContractTests(unittest.TestCase):
               """
             )
         )
+
+    def test_client2_rich_composer_code_block_toggle_unwraps_existing_markup(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                const unwrappedSingleLineCodeHtml = unwrapRichComposerCodeBlockHtml("<pre><code>const answer = 42;</code></pre>");
+                if (unwrappedSingleLineCodeHtml !== "const answer = 42;") {
+                  throw new Error(`Code block toggle should unwrap single-line code blocks, got ${JSON.stringify(unwrappedSingleLineCodeHtml)}.`);
+                }
+
+                const unwrappedMultiLineCodeHtml = unwrapRichComposerCodeBlockHtml("<pre><code>const answer = 42;\\nconsole.log(answer);</code></pre>");
+                if (unwrappedMultiLineCodeHtml !== "const answer = 42;<br>console.log(answer);") {
+                  throw new Error(`Code block toggle should preserve multi-line breaks when unwrapping, got ${JSON.stringify(unwrappedMultiLineCodeHtml)}.`);
+                }
+              """
+            )
+        )
+
+        app_source = Path("ui/client-ui/app.js").read_text(encoding="utf-8")
+        start = app_source.index("function applyComposerCodeBlockFormat(element) {")
+        end = app_source.index("function handleComposerToolbarAction", start)
+        code_block_toggle_source = app_source[start:end]
+
+        self.assertIn("unwrapRichComposerCodeBlockHtml(existingCodeBlock.outerHTML || \"\")", code_block_toggle_source)
+        self.assertIn("placeComposerCaretAfterNode(existingCodeBlock);", code_block_toggle_source)
+        self.assertNotIn('code.appendChild(range.extractContents());', code_block_toggle_source)
 
     def test_client2_customer_markdown_messages_render_safe_subset_only_when_marked(self) -> None:
         self.run_client2_app_script(
@@ -1831,8 +1854,9 @@ class ClientUiContractTests(unittest.TestCase):
             css,
             r"\.new-ticket-fixed-composer-panel\s+\.new-ticket-textarea:focus-visible\s*\{[^}]*box-shadow:\s*none;[^}]*border-color:\s*transparent;",
         )
-        self.assertRegex(css, r"\[data-chat-section=\"composer-link-editor\"\]:empty\s*\{\s*display:\s*none;")
+        self.assertNotRegex(css, r"\[data-chat-section=\"composer-link-editor\"\]:empty\s*\{")
         self.assertRegex(css, r"\[data-chat-section=\"composer-note\"\]:empty\s*\{\s*display:\s*none;")
+        self.assertNotRegex(css, r"\.composer-link-editor")
         self.assertRegex(css, r"\.composer-rich-input p\s*\{\s*margin:\s*0;")
         self.assertRegex(css, r"\.composer-rich-input li\s*\{\s*margin:\s*0;")
 

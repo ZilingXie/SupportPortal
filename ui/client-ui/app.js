@@ -113,7 +113,6 @@ const state = {
   mobileSidebarOpen: false,
   editingMessageId: null,
   composerToolbarState: buildDefaultComposerToolbarState(),
-  composerLinkEditor: buildDefaultComposerLinkEditorState(),
   pendingAbortController: null,
   pendingTicketId: null,
   pendingUserMessageId: null,
@@ -3017,7 +3016,6 @@ function renderComposerFormattingToolbarButtons({ canCompose = true } = {}) {
     { action: "bold", icon: "format_bold", label: "Bold" },
     { action: "italic", icon: "format_italic", label: "Italic" },
     { action: "list", icon: "format_list_bulleted", label: "List" },
-    { action: "link", icon: "link", label: "Link" },
     { action: "code-block", icon: "code_blocks", label: "Code block" },
     { action: "attach", icon: "attach_file", label: "Attach" },
   ];
@@ -3058,49 +3056,6 @@ function renderNewTicketComposerToolbar({ canCompose = true, includeSummary = tr
       </button>
     `
   );
-}
-
-function renderComposerLinkEditor({ canCompose = true } = {}) {
-  const editorState = state.composerLinkEditor || buildDefaultComposerLinkEditorState();
-  if (!editorState.open) {
-    return "";
-  }
-  return `
-    <div class="composer-link-editor" data-chat-section="composer-link-editor">
-      <div class="composer-link-editor-copy">
-        <p class="composer-link-editor-label">Link URL</p>
-        <p class="composer-link-editor-hint">
-          ${escapeHtml(editorState.selectedText || "Apply a safe link to the current selection.")}
-        </p>
-      </div>
-      <div class="composer-link-editor-controls">
-        <input
-          id="composer-link-url"
-          class="composer-link-editor-input"
-          type="url"
-          inputmode="url"
-          placeholder="https://example.com"
-          value="${escapeHtml(editorState.url || "")}"
-          ${canCompose ? "" : "disabled"}
-        />
-        <button
-          type="button"
-          class="composer-link-editor-btn is-primary"
-          data-action="apply-composer-link"
-          ${canCompose ? "" : "disabled"}
-        >
-          Apply
-        </button>
-        <button
-          type="button"
-          class="composer-link-editor-btn"
-          data-action="cancel-composer-link"
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
-  `;
 }
 
 function renderNewTicketComposerNoteHtml(viewState) {
@@ -3168,7 +3123,6 @@ function renderNewTicketComposerPanel(viewState, composerClass) {
       <div class="new-ticket-composer-toolbar">
         ${renderNewTicketComposerToolbar({ canCompose: viewState.canCompose, includeSummary: true })}
       </div>
-      <div data-chat-section="composer-link-editor">${renderComposerLinkEditor({ canCompose: viewState.canCompose })}</div>
       <div data-chat-section="composer-note">${renderNewTicketComposerNoteHtml(viewState)}</div>
       <form id="chat-input-form" class="chat-input-inner new-ticket-composer-form" data-chat-section="composer-form">
         <div class="new-ticket-composer-input-shell">
@@ -3450,17 +3404,7 @@ function buildDefaultComposerToolbarState() {
     bold: false,
     italic: false,
     list: false,
-    link: false,
     codeBlock: false,
-  };
-}
-
-function buildDefaultComposerLinkEditorState() {
-  return {
-    open: false,
-    url: "https://example.com",
-    selectedText: "",
-    selectionBookmark: null,
   };
 }
 
@@ -3964,11 +3908,58 @@ function unwrapRichComposerInlineTagHtml(value, tagName) {
   return normalizeRichComposerHtmlString(renderRichComposerHtmlNodes(unwrappedNodes));
 }
 
+function buildRichComposerPlainTextBreakNodes(value) {
+  const nodes = [];
+  String(value || "")
+    .split("\n")
+    .forEach((line, index) => {
+      if (index > 0) {
+        nodes.push({
+          type: "element",
+          tag: "br",
+          attrs: {},
+          children: [],
+        });
+      }
+      if (line) {
+        nodes.push({
+          type: "text",
+          value: line,
+        });
+      }
+    });
+  return nodes;
+}
+
+function unwrapRichComposerCodeBlockHtml(value) {
+  const normalizedHtml = normalizeRichComposerHtmlString(value);
+  if (!normalizedHtml) {
+    return "";
+  }
+  const parsed = parseRichComposerHtmlFragment(normalizedHtml);
+  const unwrappedNodes = [];
+  normalizeRichComposerParsedNodes(parsed.children || []).forEach((node) => {
+    const normalizedTag = String(node?.tag || "").toLowerCase();
+    if (node?.type === "element" && normalizedTag === "pre") {
+      const codeNode =
+        (node.children || []).find(
+          (child) => child?.type === "element" && String(child.tag || "").toLowerCase() === "code"
+        ) || node;
+      const codeText = stripComposerZeroWidthSpaces(
+        serializeRichComposerPlainTextNodes(codeNode.children || [])
+      ).replace(/\n$/, "");
+      unwrappedNodes.push(...buildRichComposerPlainTextBreakNodes(codeText));
+      return;
+    }
+    unwrappedNodes.push(node);
+  });
+  return normalizeRichComposerHtmlString(renderRichComposerHtmlNodes(unwrappedNodes));
+}
+
 function setComposerDraftFromMarkdown(value) {
   state.inputDraft = String(value || "");
   state.inputDraftRichHtml = buildRichComposerHtmlFromMarkdown(state.inputDraft);
   state.composerToolbarState = buildDefaultComposerToolbarState();
-  state.composerLinkEditor = buildDefaultComposerLinkEditorState();
 }
 
 function setComposerDraftFromRichHtml(value) {
@@ -4321,12 +4312,26 @@ function findComposerFullySelectedInlineFormatNode(range, tagName, root) {
   return null;
 }
 
+function findComposerFullySelectedCodeBlockNode(range, root) {
+  const selectedNode = getComposerRangeSelectedSingleNode(range, root);
+  if (selectedNode?.nodeType === 1) {
+    const selectedTagName = String(selectedNode.tagName || "").toLowerCase();
+    if (selectedTagName === "pre") {
+      return selectedNode;
+    }
+    if (selectedTagName === "code") {
+      return findNearestComposerAncestor(selectedNode, "pre", root);
+    }
+  }
+  const selectedCodeNode = findComposerFullySelectedInlineFormatNode(range, "code", root);
+  return selectedCodeNode ? findNearestComposerAncestor(selectedCodeNode, "pre", root) : null;
+}
+
 function deriveRichComposerToolbarState(context = {}) {
   return {
     bold: Boolean(context.bold),
     italic: Boolean(context.italic),
     list: Boolean(context.list),
-    link: Boolean(context.link),
     codeBlock: Boolean(context.codeBlock),
   };
 }
@@ -4343,7 +4348,6 @@ function getRichComposerSelectionContext(element) {
     bold: Boolean(findNearestComposerAncestor(contextNode, "strong", element)),
     italic: Boolean(findNearestComposerAncestor(contextNode, "em", element)),
     list: Boolean(findNearestComposerAncestor(contextNode, "li", element)),
-    link: Boolean(findNearestComposerAncestor(contextNode, "a", element)),
     codeBlock: Boolean(findNearestComposerAncestor(contextNode, "code", element)),
   });
 }
@@ -4389,66 +4393,6 @@ function syncComposerDraftStateFromElement(element = getActiveChatComposerElemen
     return state.inputDraft;
   }
   return state.inputDraft;
-}
-
-function openComposerLinkEditor(element = getActiveChatComposerElement()) {
-  if (!isRichTextComposerElement(element) || isComposerElementDisabled(element)) {
-    return false;
-  }
-  const range = getComposerSelectionRange(element);
-  const linkAncestor = range ? findNearestComposerAncestor(range.startContainer, "a", element) : null;
-  state.composerLinkEditor = {
-    open: true,
-    url: sanitizeUrl(linkAncestor?.getAttribute?.("href")) || "https://example.com",
-    selectedText: String(range?.toString?.() || linkAncestor?.textContent || "").trim(),
-    selectionBookmark: captureRichComposerSelectionBookmark(element),
-  };
-  render();
-  return true;
-}
-
-function closeComposerLinkEditor() {
-  state.composerLinkEditor = buildDefaultComposerLinkEditorState();
-}
-
-function applyComposerLinkFromEditor() {
-  const element = getActiveChatComposerElement();
-  const editorState = state.composerLinkEditor || buildDefaultComposerLinkEditorState();
-  if (!isRichTextComposerElement(element) || !editorState.open) {
-    return false;
-  }
-  const href = sanitizeUrl(editorState.url);
-  if (!href) {
-    toast("Please enter a valid http or https URL.", "error");
-    return false;
-  }
-  restoreRichComposerSelectionBookmark(element, editorState.selectionBookmark);
-  const range = getComposerSelectionRange(element);
-  if (!range) {
-    closeComposerLinkEditor();
-    render();
-    return false;
-  }
-  const link = document.createElement("a");
-  link.setAttribute("href", href);
-  const label = String(range.toString() || editorState.selectedText || "").trim() || "link text";
-  if (range.collapsed) {
-    link.textContent = label;
-    range.insertNode(link);
-  } else {
-    const fragment = range.extractContents();
-    if (String(fragment.textContent || "").trim()) {
-      link.appendChild(fragment);
-    } else {
-      link.textContent = label;
-    }
-    range.insertNode(link);
-  }
-  placeComposerCaretAfterNode(link);
-  closeComposerLinkEditor();
-  syncComposerDraftStateFromElement(element);
-  render();
-  return true;
 }
 
 function applyComposerInlineFormat(tagName, element) {
@@ -4636,6 +4580,25 @@ function applyComposerCodeBlockFormat(element) {
   if (!range) {
     return false;
   }
+  const fullySelectedCodeBlock = findComposerFullySelectedCodeBlockNode(range, element);
+  const existingCodeBlock =
+    findNearestComposerAncestor(range.startContainer, "pre", element) || fullySelectedCodeBlock;
+  if (range.collapsed && existingCodeBlock) {
+    placeComposerCaretAfterNode(existingCodeBlock);
+    syncComposerToolbarStateFromElement(element);
+    return true;
+  }
+  if (fullySelectedCodeBlock) {
+    const insertedNodes = replaceComposerNodeWithHtml(
+      fullySelectedCodeBlock,
+      unwrapRichComposerCodeBlockHtml(existingCodeBlock.outerHTML || "")
+    );
+    if (!selectComposerNodes(insertedNodes)) {
+      placeComposerCaretInsideNode(element, element.childNodes?.length || 0);
+    }
+    syncComposerDraftStateFromElement(element);
+    return true;
+  }
   const pre = document.createElement("pre");
   const code = document.createElement("code");
   if (range.collapsed) {
@@ -4663,9 +4626,6 @@ function handleComposerToolbarAction(action, element = getActiveChatComposerElem
   if (normalizedAction === "attach") {
     toast("Attachments are not available yet.");
     return false;
-  }
-  if (normalizedAction === "link") {
-    return openComposerLinkEditor(element);
   }
   if (!isRichTextComposerElement(element) || isComposerElementDisabled(element)) {
     return false;
@@ -4899,7 +4859,6 @@ function renderChatTicketFromState(viewState) {
           <div class="new-ticket-composer-toolbar ticket-detail-composer-format-toolbar">
             ${renderNewTicketComposerToolbar({ canCompose: viewState.canCompose, includeSummary: false })}
           </div>
-          <div data-chat-section="composer-link-editor">${renderComposerLinkEditor({ canCompose: viewState.canCompose })}</div>
           <div data-chat-section="composer-note">${renderChatComposerNoteHtml(viewState)}</div>
           <form id="chat-input-form" class="chat-input-inner ticket-detail-composer-form" data-chat-section="composer-form">
             <div
@@ -4951,10 +4910,9 @@ function patchChatTicketWhilePreservingComposer(mainRegion, viewState) {
   }
   const messagesRegion = chatRoot.querySelector('[data-chat-section="messages"]');
   const toolbarRegion = chatRoot.querySelector(".ticket-detail-composer-format-toolbar");
-  const linkEditorRegion = chatRoot.querySelector('[data-chat-section="composer-link-editor"]');
   const noteRegion = chatRoot.querySelector('[data-chat-section="composer-note"]');
   const actionRegion = chatRoot.querySelector('[data-chat-section="composer-action"]');
-  if (!messagesRegion || !toolbarRegion || !linkEditorRegion || !noteRegion || !actionRegion) {
+  if (!messagesRegion || !toolbarRegion || !noteRegion || !actionRegion) {
     return false;
   }
 
@@ -4969,7 +4927,6 @@ function patchChatTicketWhilePreservingComposer(mainRegion, viewState) {
     canCompose: viewState.canCompose,
     includeSummary: false,
   });
-  linkEditorRegion.innerHTML = renderComposerLinkEditor({ canCompose: viewState.canCompose });
   noteRegion.innerHTML = renderChatComposerNoteHtml(viewState);
   actionRegion.innerHTML = renderChatComposerActionHtml(viewState);
   if (composer) {
@@ -5767,25 +5724,6 @@ function bindAuthedEvents() {
     }
   });
 
-  appRoot.querySelectorAll("[data-action='apply-composer-link']").forEach((element) => {
-    if (!element.__clientComposerLinkApplyBound) {
-      element.addEventListener("click", () => {
-        applyComposerLinkFromEditor();
-      });
-      element.__clientComposerLinkApplyBound = true;
-    }
-  });
-
-  appRoot.querySelectorAll("[data-action='cancel-composer-link']").forEach((element) => {
-    if (!element.__clientComposerLinkCancelBound) {
-      element.addEventListener("click", () => {
-        closeComposerLinkEditor();
-        render();
-      });
-      element.__clientComposerLinkCancelBound = true;
-    }
-  });
-
   const form = document.getElementById("chat-input-form");
   if (form && !form.__clientComposerSubmitBound) {
     form.addEventListener("submit", async (event) => {
@@ -5852,36 +5790,6 @@ function bindAuthedEvents() {
       });
     }
     input.__clientComposerInputBound = true;
-  }
-
-  const linkInput = document.getElementById("composer-link-url");
-  if (linkInput && !linkInput.__clientComposerLinkInputBound) {
-    linkInput.addEventListener("input", () => {
-      state.composerLinkEditor = {
-        ...(state.composerLinkEditor || buildDefaultComposerLinkEditorState()),
-        url: linkInput.value,
-      };
-    });
-    linkInput.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        applyComposerLinkFromEditor();
-      }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeComposerLinkEditor();
-        render();
-      }
-    });
-    linkInput.__clientComposerLinkInputBound = true;
-    try {
-      linkInput.focus({ preventScroll: true });
-    } catch {
-      linkInput.focus();
-    }
-    if (typeof linkInput.select === "function") {
-      linkInput.select();
-    }
   }
 
   const stopButton = appRoot.querySelector("[data-action='stop-generation']");
