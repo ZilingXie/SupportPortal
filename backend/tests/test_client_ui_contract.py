@@ -479,6 +479,23 @@ class ClientUiContractTests(unittest.TestCase):
                   },
                 ]);
 
+                const setTicketUpdatedAt = (ticketId, updatedAt) => {
+                  const tickets = getAllTickets();
+                  const target = tickets.find((ticket) => ticket.id === ticketId);
+                  if (!target) {
+                    throw new Error(`Missing ticket ${ticketId} while preparing workspace test data.`);
+                  }
+                  target.updatedAt = updatedAt;
+                  saveAllTickets(tickets);
+                };
+
+                setTicketUpdatedAt(active.id, "2026-04-17T10:00:00.000Z");
+                setTicketUpdatedAt(followUp.id, "2026-04-17T10:30:00.000Z");
+                setTicketUpdatedAt(escalated.id, "2026-04-17T10:45:00.000Z");
+                setTicketUpdatedAt(followUpTwo.id, "2026-04-17T10:50:00.000Z");
+                setTicketUpdatedAt(oldestActive.id, "2026-04-17T09:55:00.000Z");
+                setTicketUpdatedAt(resolved.id, "2026-04-17T11:00:00.000Z");
+
                 state.view = "workspace";
                 const html = renderChatHome();
                 if (!html.includes("clienttest-home-shell")) {
