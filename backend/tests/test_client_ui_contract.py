@@ -1445,6 +1445,53 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_client2_rich_composer_empty_regions_render_as_true_empty_anchors(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+                state.composerLinkEditor = buildDefaultComposerLinkEditorState();
+
+                const draftTicket = getOrCreateDraftTicket(state.user.id);
+                state.view = "chat-ticket";
+                state.activeTicketId = draftTicket.id;
+                state.newTicketPreviewTicketId = draftTicket.id;
+                const draftHtml = renderChatTicket();
+                if (!draftHtml.includes('<div data-chat-section="composer-link-editor"></div>')) {
+                  throw new Error(`Draft composer should render an empty link-editor anchor without spacer whitespace, got ${draftHtml}.`);
+                }
+                if (!draftHtml.includes('<div data-chat-section="composer-note"></div>')) {
+                  throw new Error(`Draft composer should render an empty note anchor without spacer whitespace, got ${draftHtml}.`);
+                }
+
+                const detailHtml = renderChatTicketFromState({
+                  ticket: {
+                    id: "TK-DETAIL-EMPTY-ANCHORS",
+                    title: "Legacy detail shell",
+                    status: "communicating",
+                    updatedAt: "2026-04-21T10:00:00.000Z",
+                    product: "audio_video_calling",
+                  },
+                  renderableMessages: [],
+                  sending: false,
+                  requiresProductSelection: false,
+                  canCompose: true,
+                  canSubmit: false,
+                  usesNewTicketShell: false,
+                  showVisibleFooterBand: false,
+                  isEditing: false,
+                });
+                if (!detailHtml.includes('<div data-chat-section="composer-link-editor"></div>')) {
+                  throw new Error(`Detail composer should render an empty link-editor anchor without spacer whitespace, got ${detailHtml}.`);
+                }
+                if (!detailHtml.includes('<div data-chat-section="composer-note"></div>')) {
+                  throw new Error(`Detail composer should render an empty note anchor without spacer whitespace, got ${detailHtml}.`);
+                }
+              """
+            )
+        )
+
     def test_client2_customer_markdown_messages_render_safe_subset_only_when_marked(self) -> None:
         self.run_client2_app_script(
             textwrap.dedent(
@@ -1558,6 +1605,9 @@ class ClientUiContractTests(unittest.TestCase):
     def test_client2_rich_composer_css_resets_block_margins(self) -> None:
         css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
 
+        self.assertRegex(css, r"\.new-ticket-fixed-composer-panel\s*\{[^}]*grid-template-rows:\s*auto\s+auto\s+auto\s+1fr;")
+        self.assertRegex(css, r"\[data-chat-section=\"composer-link-editor\"\]:empty\s*\{\s*display:\s*none;")
+        self.assertRegex(css, r"\[data-chat-section=\"composer-note\"\]:empty\s*\{\s*display:\s*none;")
         self.assertRegex(css, r"\.composer-rich-input p\s*\{\s*margin:\s*0;")
         self.assertRegex(css, r"\.composer-rich-input li\s*\{\s*margin:\s*0;")
 
