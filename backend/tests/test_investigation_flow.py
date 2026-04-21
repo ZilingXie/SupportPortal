@@ -224,6 +224,7 @@ class InvestigationFlowTests(unittest.TestCase):
                     "customer_id": "C-001",
                     "product": "audio_video_calling",
                     "message": "how to join channel",
+                    "content_format": "markdown",
                 },
             )
 
@@ -247,6 +248,7 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertIsNotNone(saved_ticket)
         assert saved_ticket is not None
         self.assertEqual(saved_ticket["messages"][-1]["created_at"], payload["message_created_at"])
+        self.assertEqual(saved_ticket["messages"][-1]["content_format"], "markdown")
         self.assertEqual(
             [
                 {
@@ -492,6 +494,7 @@ class InvestigationFlowTests(unittest.TestCase):
                     "customer_id": "C-001",
                     "product": "audio_video_calling",
                     "message": "got it, thanks",
+                    "content_format": "markdown",
                 },
             )
 
@@ -513,6 +516,7 @@ class InvestigationFlowTests(unittest.TestCase):
         assert stored is not None
         self.assertEqual(stored["status"], "resolved")
         self.assertEqual(stored["messages"][-2]["created_at"], payload["message_created_at"])
+        self.assertEqual(stored["messages"][-2]["content_format"], "markdown")
         self.assertEqual(stored["messages"][-1]["workflow_action"], "resolve_ticket")
         self.assertEqual(stored["messages"][-1]["answer_route"], "workflow")
         self.assertEqual(stored["messages"][-1]["route_reason"], "customer_confirmed_resolved")
@@ -521,6 +525,43 @@ class InvestigationFlowTests(unittest.TestCase):
         event_types = [item["event_type"] for item in self.repository.list_ticket_events("TK-RESOLVE-API-1")]
         self.assertIn("ticket_updated", event_types)
         self.assertIn("ticket_auto_resolved_by_customer_confirmation", event_types)
+
+    def test_ticket_query_defaults_customer_message_content_format_to_plaintext(self) -> None:
+        enqueue_mock = AsyncMock(return_value=True)
+        with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            True,
+        ), patch.object(
+            main,
+            "OPTIMISTIC_PARALLEL_ROUTE_ENABLED",
+            True,
+            create=True,
+        ), patch.object(
+            main.task_queue,
+            "enqueue",
+            enqueue_mock,
+        ), patch.object(
+            main,
+            "_enqueue_or_defer_message_sentiment_tag",
+            AsyncMock(return_value=False),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-PLAIN-001",
+                    "customer_id": "C-001",
+                    "product": "audio_video_calling",
+                    "message": "**still plain**",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        enqueue_mock.assert_awaited_once()
+        stored = self.repository.get_ticket("TK-PLAIN-001")
+        self.assertIsNotNone(stored)
+        assert stored is not None
+        self.assertEqual(stored["messages"][-1]["content_format"], "plaintext")
 
     def test_ticket_query_active_engineer_case_resolution_closes_case_without_refreshing_investigation(self) -> None:
         self._seed_ticket(
