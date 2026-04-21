@@ -132,6 +132,7 @@ let deliveredStatusRefreshTimer = null;
 let deliveredStatusRefreshDueAt = 0;
 let replyCountdownRefreshTimer = null;
 let replyCountdownRefreshTicketId = "";
+let pendingTicketsPageScrollReset = false;
 let pendingChatScrollRequest = null;
 let scheduledChatScrollPlan = null;
 let scheduledChatScrollJobId = 0;
@@ -2091,6 +2092,43 @@ function navigate(path) {
   window.location.hash = target;
 }
 
+function requestTicketsPageScrollReset() {
+  pendingTicketsPageScrollReset = true;
+}
+
+function resetTicketsPageScrollTop() {
+  if (typeof window.scrollTo === "function") {
+    try {
+      window.scrollTo({ top: 0, behavior: "auto" });
+    } catch {
+      try {
+        window.scrollTo(0, 0);
+      } catch {
+        // Best-effort only.
+      }
+    }
+  }
+  if (typeof document?.documentElement?.scrollTop === "number") {
+    document.documentElement.scrollTop = 0;
+  }
+  if (typeof document?.body?.scrollTop === "number") {
+    document.body.scrollTop = 0;
+  }
+}
+
+function consumeTicketsPageScrollReset() {
+  if (!pendingTicketsPageScrollReset || state.view !== "tickets") {
+    return;
+  }
+  pendingTicketsPageScrollReset = false;
+  resetTicketsPageScrollTop();
+}
+
+function navigateToTicketsTop() {
+  requestTicketsPageScrollReset();
+  navigate("/tickets");
+}
+
 function renderLogin() {
   appRoot.innerHTML = `
     <div class="page-auth">
@@ -3206,7 +3244,7 @@ function renderChatHome() {
               }
             </div>
             <div class="clienttest-home-panel-footer">
-              <button class="clienttest-home-panel-footer-btn" data-action="go-tickets" type="button">view all tickets-></button>
+              <button class="clienttest-home-panel-footer-btn" data-action="go-tickets-top" type="button">view all tickets-></button>
             </div>
           </article>
           <article class="clienttest-home-panel">
@@ -5118,6 +5156,10 @@ function bindAuthedEvents() {
     element.addEventListener("click", () => navigate("/tickets"));
   });
 
+  appRoot.querySelectorAll("[data-action='go-tickets-top']").forEach((element) => {
+    element.addEventListener("click", () => navigateToTicketsTop());
+  });
+
   appRoot.querySelectorAll("[data-action='go-chat']").forEach((element) => {
     element.addEventListener("click", () => navigate("/chat"));
   });
@@ -5690,6 +5732,7 @@ function render() {
 
   setupClientRealtimeConnection();
   renderAuthed();
+  consumeTicketsPageScrollReset();
   syncChatScrollPosition(previousChatScroll);
 }
 
