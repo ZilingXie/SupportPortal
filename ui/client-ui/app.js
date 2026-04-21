@@ -3928,6 +3928,42 @@ function unwrapRichComposerListHtml(value) {
   return normalizeRichComposerHtmlString(renderRichComposerHtmlNodes(unwrappedNodes));
 }
 
+function unwrapRichComposerInlineTagNodes(nodes = [], tagName) {
+  const normalizedTagName = String(tagName || "").trim().toLowerCase();
+  const unwrappedNodes = [];
+  (Array.isArray(nodes) ? nodes : []).forEach((node) => {
+    if (!node) {
+      return;
+    }
+    if (node.type !== "element") {
+      unwrappedNodes.push(node);
+      return;
+    }
+    const normalizedNode = {
+      ...node,
+      children: unwrapRichComposerInlineTagNodes(node.children || [], normalizedTagName),
+    };
+    if (String(normalizedNode.tag || "").toLowerCase() === normalizedTagName) {
+      unwrappedNodes.push(...(normalizedNode.children || []));
+      return;
+    }
+    unwrappedNodes.push(normalizedNode);
+  });
+  return unwrappedNodes;
+}
+
+function unwrapRichComposerInlineTagHtml(value, tagName) {
+  const normalizedHtml = normalizeRichComposerHtmlString(value);
+  const normalizedTagName = String(tagName || "").trim().toLowerCase();
+  if (!normalizedHtml || !normalizedTagName) {
+    return normalizedHtml;
+  }
+  const parsed = parseRichComposerHtmlFragment(normalizedHtml);
+  const normalizedNodes = normalizeRichComposerParsedNodes(parsed.children || []);
+  const unwrappedNodes = unwrapRichComposerInlineTagNodes(normalizedNodes, normalizedTagName);
+  return normalizeRichComposerHtmlString(renderRichComposerHtmlNodes(unwrappedNodes));
+}
+
 function setComposerDraftFromMarkdown(value) {
   state.inputDraft = String(value || "");
   state.inputDraftRichHtml = buildRichComposerHtmlFromMarkdown(state.inputDraft);
@@ -4162,6 +4198,20 @@ function selectComposerNodeContents(node) {
   return setComposerSelectionRange(range);
 }
 
+function selectComposerNodes(nodes = []) {
+  const normalizedNodes = (Array.isArray(nodes) ? nodes : []).filter(Boolean);
+  if (normalizedNodes.length === 0 || !document?.createRange) {
+    return false;
+  }
+  if (normalizedNodes.length === 1) {
+    return selectComposerNodeContents(normalizedNodes[0]);
+  }
+  const range = document.createRange();
+  range.setStartBefore(normalizedNodes[0]);
+  range.setEndAfter(normalizedNodes[normalizedNodes.length - 1]);
+  return setComposerSelectionRange(range);
+}
+
 function placeComposerCaretAfterNode(node) {
   if (!node || !document?.createRange) {
     return false;
@@ -4212,6 +4262,63 @@ function getComposerSelectionRange(element) {
     return null;
   }
   return range;
+}
+
+function getComposerRangeSelectedSingleNode(range, root) {
+  if (
+    !range ||
+    range.collapsed ||
+    range.startContainer !== range.endContainer ||
+    range.startContainer?.nodeType !== 1
+  ) {
+    return null;
+  }
+  if (range.endOffset - range.startOffset !== 1) {
+    return null;
+  }
+  const candidate = range.startContainer.childNodes?.[range.startOffset] || null;
+  if (!candidate || !root) {
+    return null;
+  }
+  if (candidate === root) {
+    return candidate;
+  }
+  return typeof root.contains === "function" && root.contains(candidate) ? candidate : null;
+}
+
+function doesComposerRangeCoverNodeContents(range, node) {
+  if (!range || !node || !document?.createRange || typeof range.compareBoundaryPoints !== "function") {
+    return false;
+  }
+  const nodeRange = document.createRange();
+  nodeRange.selectNodeContents(node);
+  const startToStart = typeof Range === "function" ? Range.START_TO_START : 0;
+  const endToEnd = typeof Range === "function" ? Range.END_TO_END : 2;
+  return (
+    range.compareBoundaryPoints(startToStart, nodeRange) === 0 &&
+    range.compareBoundaryPoints(endToEnd, nodeRange) === 0
+  );
+}
+
+function findComposerFullySelectedInlineFormatNode(range, tagName, root) {
+  const normalizedTagName = String(tagName || "").trim().toLowerCase();
+  const selectedNode = getComposerRangeSelectedSingleNode(range, root);
+  if (
+    selectedNode?.nodeType === 1 &&
+    String(selectedNode.tagName || "").toLowerCase() === normalizedTagName
+  ) {
+    return selectedNode;
+  }
+  const startAncestor = findNearestComposerAncestor(range.startContainer, normalizedTagName, root);
+  const endAncestor = findNearestComposerAncestor(range.endContainer, normalizedTagName, root);
+  if (
+    startAncestor &&
+    startAncestor === endAncestor &&
+    doesComposerRangeCoverNodeContents(range, startAncestor)
+  ) {
+    return startAncestor;
+  }
+  return null;
 }
 
 function deriveRichComposerToolbarState(context = {}) {
@@ -4361,6 +4468,18 @@ function applyComposerInlineFormat(tagName, element) {
     wrapper.appendChild(marker);
     range.insertNode(wrapper);
     placeComposerCaretInsideNode(marker, 1);
+    syncComposerDraftStateFromElement(element);
+    return true;
+  }
+  const toggleTarget = findComposerFullySelectedInlineFormatNode(range, tagName, element);
+  if (toggleTarget) {
+    const insertedNodes = replaceComposerNodeWithHtml(
+      toggleTarget,
+      unwrapRichComposerInlineTagHtml(toggleTarget.outerHTML || "", tagName)
+    );
+    if (!selectComposerNodes(insertedNodes)) {
+      placeComposerCaretInsideNode(element, element.childNodes?.length || 0);
+    }
     syncComposerDraftStateFromElement(element);
     return true;
   }
