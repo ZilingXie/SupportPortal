@@ -272,6 +272,7 @@ class TicketQueryRequest(BaseModel):
     requester: str | None = None
     subject: str | None = None
     product: str | None = Field(default=None, max_length=64)
+    content_format: str = Field(default="plaintext", pattern="^(plaintext|markdown)$")
     message: str = Field(min_length=1)
 
 
@@ -2265,11 +2266,13 @@ async def create_or_update_ticket(
 
     timestamp = now_iso()
     current_app_build_ref = str(get_app_build_info().get("ref") or "").strip() or None
+    customer_message_content_format = str(request.content_format or "plaintext").strip() or "plaintext"
     ticket["messages"].append(
         {
             "role": "customer",
             "content": customer_message,
             "created_at": timestamp,
+            "content_format": customer_message_content_format,
         }
     )
 

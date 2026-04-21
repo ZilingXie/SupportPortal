@@ -1768,6 +1768,21 @@ html.material-symbols-pending .material-symbols-outlined {
   font-size: 12px;
 }
 
+.message-markdown strong {
+  font-weight: 800;
+}
+
+.message-markdown em {
+  font-style: italic;
+}
+
+.message-markdown a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 0.18em;
+}
+
 .message-markdown :not(pre) > code {
   padding: 2px 6px;
   border-radius: 8px;
@@ -2815,6 +2830,14 @@ a.citation-link:hover {
   padding: 6px 0 2px;
 }
 
+.ticket-detail-composer-format-toolbar {
+  margin-top: 4px;
+  padding-left: 0;
+  padding-right: 0;
+  background: transparent;
+  border-bottom: 0;
+}
+
 .ticket-toolbar-chip {
   display: inline-flex;
   align-items: center;
@@ -3290,6 +3313,11 @@ a.citation-link:hover {
 .new-ticket-toolbar-button:hover {
   color: var(--ink);
   background: rgba(234, 238, 245, 0.92);
+}
+
+.new-ticket-toolbar-button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
 }
 
 .new-ticket-toolbar-button .material-symbols-outlined {

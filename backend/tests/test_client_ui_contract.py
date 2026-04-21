@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260420-client-reply-countdown-copy-1", html)
-        self.assertIn("./app.js?v=20260420-client-reply-countdown-copy-1", html)
+        self.assertIn("./styles.css?v=20260421-client-composer-markdown-toolbar-1", html)
+        self.assertIn("./app.js?v=20260421-client-composer-markdown-toolbar-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -596,6 +596,9 @@ class ClientUiContractTests(unittest.TestCase):
                 if (requestBody.requester !== state.user.name) {
                   throw new Error(`Client2 query should include requester name, got ${JSON.stringify(requestBody)}.`);
                 }
+                if (requestBody.content_format !== "markdown") {
+                  throw new Error(`Client2 query should default customer composer submissions to markdown, got ${JSON.stringify(requestBody)}.`);
+                }
                 if (Object.prototype.hasOwnProperty.call(requestBody, "product")) {
                   throw new Error("Client2 draft first send should omit product when none is known.");
                 }
@@ -606,6 +609,9 @@ class ClientUiContractTests(unittest.TestCase):
                 const localTicket = getTicketById(ticket.id);
                 if (!localTicket || localTicket.title !== "New ticket") {
                   throw new Error(`Client2 first send should keep the fixed New ticket title until backend sync, got ${localTicket && localTicket.title}.`);
+                }
+                if (localTicket.messages.length !== 1 || localTicket.messages[0].contentFormat !== "markdown") {
+                  throw new Error("Client2 first send should keep the optimistic customer message marked as markdown.");
                 }
 
                 const html = renderChatTicket();
@@ -672,6 +678,205 @@ class ClientUiContractTests(unittest.TestCase):
                 const deliveredMatches = html.match(/✅ Delivered/g) || [];
                 if (deliveredMatches.length !== 0) {
                   throw new Error(`Client2 first-send postsend shell should delay the delivered label for a fresh customer message, got ${deliveredMatches.length}.`);
+                }
+              """
+            )
+        )
+
+    def test_client2_markdown_toolbar_actions_are_selection_aware(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                const bold = applyComposerMarkdownToolbarAction("bold", "Need help", 0, 4);
+                if (bold.value !== "**Need** help") {
+                  throw new Error(`Bold should wrap the current selection, got ${bold.value}.`);
+                }
+                if (bold.selectionStart !== 2 || bold.selectionEnd !== 6) {
+                  throw new Error(`Bold should keep the original text selected, got ${bold.selectionStart}:${bold.selectionEnd}.`);
+                }
+
+                const italic = applyComposerMarkdownToolbarAction("italic", "Need help", 4, 4);
+                if (italic.value !== "Need__ help") {
+                  throw new Error(`Italic should insert a paired marker at the cursor, got ${italic.value}.`);
+                }
+                if (italic.selectionStart !== 5 || italic.selectionEnd !== 5) {
+                  throw new Error(`Italic should place the caret inside the marker pair, got ${italic.selectionStart}:${italic.selectionEnd}.`);
+                }
+
+                const list = applyComposerMarkdownToolbarAction("list", "alpha\\nbeta", 0, 10);
+                if (list.value !== "- alpha\\n- beta") {
+                  throw new Error(`List should prefix each selected line, got ${JSON.stringify(list.value)}.`);
+                }
+
+                const link = applyComposerMarkdownToolbarAction("link", "Read docs", 0, 4);
+                if (link.value !== "[Read](https://example.com) docs") {
+                  throw new Error(`Link should wrap the selection with markdown syntax, got ${link.value}.`);
+                }
+                const selectedUrl = link.value.slice(link.selectionStart, link.selectionEnd);
+                if (selectedUrl !== "https://example.com") {
+                  throw new Error(`Link should select the placeholder URL after insertion, got ${selectedUrl}.`);
+                }
+
+                const codeBlock = applyComposerMarkdownToolbarAction("code-block", "console.log(1);", 0, 15);
+                if (codeBlock.value !== "```\\nconsole.log(1);\\n```") {
+                  throw new Error(`Code block should wrap the selection in fenced markdown, got ${JSON.stringify(codeBlock.value)}.`);
+                }
+
+                const emptyCodeBlock = applyComposerMarkdownToolbarAction("code-block", "", 0, 0);
+                if (emptyCodeBlock.value !== "```\\n\\n```") {
+                  throw new Error(`Code block should insert an empty fenced block when nothing is selected, got ${JSON.stringify(emptyCodeBlock.value)}.`);
+                }
+                if (emptyCodeBlock.selectionStart !== 4 || emptyCodeBlock.selectionEnd !== 4) {
+                  throw new Error(`Code block should place the caret inside the new fenced block, got ${emptyCodeBlock.selectionStart}:${emptyCodeBlock.selectionEnd}.`);
+                }
+              """
+            )
+        )
+
+    def test_client2_markdown_toolbar_attach_shows_placeholder_toast(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                const notices = [];
+                toast = (message) => notices.push(message);
+                const handled = handleComposerToolbarAction("attach", null);
+                if (handled !== false) {
+                  throw new Error("Attach placeholder should not claim it edited the composer text.");
+                }
+                if (notices.length !== 1 || notices[0] !== "Attachments are not available yet.") {
+                  throw new Error(`Attach placeholder should show the not-yet-available toast, got ${JSON.stringify(notices)}.`);
+                }
+              """
+            )
+        )
+
+    def test_client2_markdown_toolbar_renders_on_both_composer_surfaces(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const draftTicket = getOrCreateDraftTicket(state.user.id);
+                state.view = "chat-ticket";
+                state.activeTicketId = draftTicket.id;
+                state.newTicketPreviewTicketId = draftTicket.id;
+                const draftHtml = renderChatTicket();
+                if ((draftHtml.match(/data-composer-markdown-action=/g) || []).length < 6) {
+                  throw new Error("Draft composer should render the full markdown toolbar.");
+                }
+                if (!draftHtml.includes('data-composer-markdown-action="code-block"')) {
+                  throw new Error("Draft composer should expose the code block button.");
+                }
+                if (!draftHtml.includes("new-ticket-summary-toolbar-btn")) {
+                  throw new Error("Draft composer should preserve the AI Summary button.");
+                }
+
+                const detailHtml = renderChatTicketFromState({
+                  ticket: {
+                    id: "TK-DETAIL-001",
+                    title: "Legacy detail shell",
+                    status: "communicating",
+                    updatedAt: "2026-04-21T10:00:00.000Z",
+                    product: "audio_video_calling",
+                  },
+                  renderableMessages: [],
+                  sending: false,
+                  requiresProductSelection: false,
+                  canCompose: true,
+                  canSubmit: false,
+                  usesNewTicketShell: false,
+                  showVisibleFooterBand: false,
+                  isEditing: false,
+                });
+                if (!detailHtml.includes("ticket-detail-toolbar")) {
+                  throw new Error("Ticket detail shell should keep the existing info chips.");
+                }
+                if (!detailHtml.includes("ticket-detail-composer-format-toolbar")) {
+                  throw new Error("Ticket detail shell should add the markdown formatting toolbar.");
+                }
+                if (!detailHtml.includes('data-composer-markdown-action="code-block"')) {
+                  throw new Error("Ticket detail shell should expose the code block button.");
+                }
+                if (detailHtml.includes("new-ticket-summary-toolbar-btn")) {
+                  throw new Error("Ticket detail shell should not add the AI Summary pill to the formatting toolbar.");
+                }
+              """
+            )
+        )
+
+    def test_client2_customer_markdown_messages_render_safe_subset_only_when_marked(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                const markdownMessage = {
+                  role: "user",
+                  content:
+                    "**Bold** _italic_ [Docs](https://example.com)\\n- First item\\n```js\\nconst answer = 42;\\n```",
+                  contentFormat: "markdown",
+                };
+                const markdownHtml = renderMessageBody(markdownMessage);
+                if (!markdownHtml.includes("<strong>Bold</strong>")) {
+                  throw new Error(`Customer markdown should render bold text, got ${markdownHtml}.`);
+                }
+                if (!markdownHtml.includes("<em>italic</em>")) {
+                  throw new Error("Customer markdown should render italic text.");
+                }
+                if (!markdownHtml.includes('<a href="https://example.com/" target="_blank" rel="noopener noreferrer">Docs</a>')) {
+                  throw new Error(`Customer markdown should render safe links, got ${markdownHtml}.`);
+                }
+                if (!markdownHtml.includes("<ul><li>First item</li></ul>")) {
+                  throw new Error("Customer markdown should render unordered lists.");
+                }
+                if (!markdownHtml.includes('<pre><code class="language-js">const answer = 42;</code></pre>')) {
+                  throw new Error("Customer markdown should render fenced code blocks.");
+                }
+
+                const correspondenceHtml = renderNewTicketMessageContent(markdownMessage);
+                if (!correspondenceHtml.includes("<strong>Bold</strong>") || !correspondenceHtml.includes("<pre><code class=\\"language-js\\">const answer = 42;</code></pre>")) {
+                  throw new Error("New-ticket correspondence bubbles should render customer markdown.");
+                }
+
+                const unsafeLinkHtml = renderMessageBody({
+                  role: "user",
+                  content: "[Bad](javascript:alert(1))",
+                  content_format: "markdown",
+                });
+                if (unsafeLinkHtml.includes("<a ")) {
+                  throw new Error("Unsafe markdown links should stay as plain text.");
+                }
+                if (!unsafeLinkHtml.includes("[Bad](javascript:alert(1))")) {
+                  throw new Error("Unsafe markdown links should preserve the original text.");
+                }
+
+                const plaintextHtml = renderMessageBody({
+                  role: "user",
+                  content: "**Still plain**",
+                });
+                if (plaintextHtml.includes("<strong>")) {
+                  throw new Error("Historical customer plaintext messages must not be retroactively parsed as markdown.");
+                }
+                if (!plaintextHtml.includes("**Still plain**")) {
+                  throw new Error("Historical customer plaintext messages should preserve their literal markdown characters.");
+                }
+
+                const normalized = normalizeBackendTicket({
+                  ticket_id: "TK-MD-001",
+                  customer_id: "user-1",
+                  status: "communicating",
+                  created_at: "2026-04-21T09:00:00.000Z",
+                  updated_at: "2026-04-21T09:00:00.000Z",
+                  messages: [
+                    {
+                      role: "customer",
+                      content: "**Backend markdown**",
+                      created_at: "2026-04-21T09:00:00.000Z",
+                      content_format: "markdown",
+                    },
+                  ],
+                });
+                if (normalized.messages[0].contentFormat !== "markdown") {
+                  throw new Error("Backend ticket normalization should preserve customer message content_format.");
                 }
               """
             )
