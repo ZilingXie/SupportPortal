@@ -3616,6 +3616,10 @@ a.citation-link:hover {
   cursor: text;
 }
 
+.composer-rich-input p {
+  margin: 0;
+}
+
 .composer-rich-input:empty::before {
   content: attr(data-placeholder);
   color: #8c97a1;
@@ -3643,6 +3647,10 @@ a.citation-link:hover {
 
 .composer-rich-input li + li {
   margin-top: 6px;
+}
+
+.composer-rich-input li {
+  margin: 0;
 }
 
 .composer-rich-input pre {
