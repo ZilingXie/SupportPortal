@@ -4813,7 +4813,15 @@ function applyComposerCodeBlockFormat(element) {
   const existingCodeBlock =
     findNearestComposerAncestor(range.startContainer, "pre", element) || fullySelectedCodeBlock;
   if (range.collapsed && existingCodeBlock) {
-    ensureComposerCaretInAdjacentTextLine(existingCodeBlock, element, "after");
+    removeComposerAdjacentCodeBlockSpacerLine(existingCodeBlock.previousSibling);
+    removeComposerAdjacentCodeBlockSpacerLine(existingCodeBlock.nextSibling);
+    const insertedNodes = replaceComposerNodeWithHtml(
+      existingCodeBlock,
+      unwrapRichComposerCodeBlockHtml(existingCodeBlock.outerHTML || "")
+    );
+    if (!selectComposerNodes(insertedNodes)) {
+      placeComposerCaretInsideNode(element, element.childNodes?.length || 0);
+    }
     syncComposerDraftStateFromElement(element);
     return true;
   }
