@@ -70,6 +70,8 @@ const CLIENT2_ROUTE_MARKER = "client2-route-shell";
 const DEFAULT_DRAFT_TICKET_TITLE = "New ticket";
 const LEGACY_DEFAULT_DRAFT_TICKET_TITLE = "New Session";
 const DELIVERED_LABEL_DELAY_MS = 5000;
+const CUSTOMER_MESSAGE_MARKDOWN_FORMAT = "markdown";
+const PLAINTEXT_MESSAGE_FORMAT = "plaintext";
 const AGORA_STATUS_PAGE_URL = "https://status.agora.io/";
 const SERVICE_EVENTS_ENDPOINT = "/api/client/service-events";
 const SERVICE_EVENTS_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
@@ -195,6 +197,31 @@ function sanitizeUrl(value) {
   return null;
 }
 
+function normalizeMessageContentFormat(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === CUSTOMER_MESSAGE_MARKDOWN_FORMAT) {
+    return CUSTOMER_MESSAGE_MARKDOWN_FORMAT;
+  }
+  if (normalized === PLAINTEXT_MESSAGE_FORMAT) {
+    return PLAINTEXT_MESSAGE_FORMAT;
+  }
+  return "";
+}
+
+function shouldRenderMarkdownForMessage(message) {
+  const normalizedRole = normalizeRenderableMessageRole(message);
+  if (normalizedRole === "assistant") {
+    return true;
+  }
+  if (normalizedRole !== "user") {
+    return false;
+  }
+  return (
+    normalizeMessageContentFormat(message?.contentFormat || message?.content_format) ===
+    CUSTOMER_MESSAGE_MARKDOWN_FORMAT
+  );
+}
+
 function normalizeSingleLineText(value) {
   return String(value || "")
     .replace(/\s+/g, " ")
@@ -285,6 +312,42 @@ function formatMultilineText(value) {
   return escapeHtml(value).replaceAll("\n", "<br>");
 }
 
+function renderInlineTextDecorations(value) {
+  const escaped = escapeHtml(value);
+  return escaped
+    .replace(/\*\*([^*\n](?:[\s\S]*?[^*\n])?)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^A-Za-z0-9])_([^_\n]+)_/g, (_, prefix, content) => `${prefix}<em>${content}</em>`)
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, (_, prefix, content) => `${prefix}<em>${content}</em>`);
+}
+
+function renderInlineMarkdownText(value) {
+  const text = String(value ?? "");
+  if (!text) {
+    return "";
+  }
+  const html = [];
+  const markdownLinkPattern = /\[([^\]\n]+)\]\(([^)\n]+)\)/g;
+  let lastIndex = 0;
+  let match = markdownLinkPattern.exec(text);
+  while (match) {
+    html.push(renderInlineTextDecorations(text.slice(lastIndex, match.index)));
+    const href = sanitizeUrl(match[2]);
+    if (href) {
+      html.push(
+        `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${renderInlineTextDecorations(
+          match[1]
+        )}</a>`
+      );
+    } else {
+      html.push(escapeHtml(match[0]));
+    }
+    lastIndex = match.index + match[0].length;
+    match = markdownLinkPattern.exec(text);
+  }
+  html.push(renderInlineTextDecorations(text.slice(lastIndex)));
+  return html.join("");
+}
+
 function renderInlineMarkdown(value) {
   const text = String(value ?? "");
   const parts = [];
@@ -292,12 +355,12 @@ function renderInlineMarkdown(value) {
   let lastIndex = 0;
   let match = inlineCodePattern.exec(text);
   while (match) {
-    parts.push(escapeHtml(text.slice(lastIndex, match.index)));
+    parts.push(renderInlineMarkdownText(text.slice(lastIndex, match.index)));
     parts.push(`<code>${escapeHtml(match[1])}</code>`);
     lastIndex = match.index + match[0].length;
     match = inlineCodePattern.exec(text);
   }
-  parts.push(escapeHtml(text.slice(lastIndex)));
+  parts.push(renderInlineMarkdownText(text.slice(lastIndex)));
   return parts.join("");
 }
 
@@ -442,10 +505,10 @@ function renderMessageBody(message) {
     sources: Array.isArray(message?.sources) ? message.sources : [],
   });
   const base =
-    message.role === "assistant"
+    shouldRenderMarkdownForMessage(message)
       ? `<div class="message-markdown">${renderMarkdownMessage(message.content || "")}</div>`
       : `<div>${formatMultilineText(message.content || "")}</div>`;
-  if (message.role !== "assistant") {
+  if (normalizeRenderableMessageRole(message) !== "assistant") {
     return base;
   }
   return `${base}${renderCitationsHtml(normalizedCitations)}`;
@@ -1418,6 +1481,9 @@ function normalizeBackendTicket(ticket) {
       role: mapBackendRoleToClientRole(message?.role),
       content: String(message?.content || ""),
       createdAt: String(message?.created_at || updatedAt),
+      contentFormat: normalizeMessageContentFormat(
+        message?.contentFormat || message?.content_format
+      ),
       citations: normalizeCitations({
         citations: Array.isArray(message?.citations) ? message.citations : [],
         sources: Array.isArray(message?.sources) ? message.sources : [],
@@ -2578,7 +2644,7 @@ function getNewTicketMessagePresenter(message) {
 }
 
 function renderNewTicketMessageContent(message) {
-  if (String(message?.role || "").trim().toLowerCase() === "assistant") {
+  if (shouldRenderMarkdownForMessage(message)) {
     return `<div class="message-markdown">${renderMarkdownMessage(message.content || "")}</div>`;
   }
   return `<div>${formatMultilineText(message.content || "")}</div>`;
@@ -2709,29 +2775,47 @@ function renderNewTicketPostSendThreadHtml(viewState) {
   return `${viewState.renderableMessages.map((message) => renderNewTicketCorrespondenceMessageCard(message)).join("")}`;
 }
 
-function renderNewTicketComposerToolbar() {
+function renderComposerFormattingToolbarButtons({ canCompose = true } = {}) {
   const buttons = [
-    { icon: "format_bold", label: "Bold" },
-    { icon: "format_italic", label: "Italic" },
-    { icon: "format_list_bulleted", label: "List" },
-    { icon: "link", label: "Link" },
-    { icon: "attach_file", label: "Attach" },
+    { action: "bold", icon: "format_bold", label: "Bold" },
+    { action: "italic", icon: "format_italic", label: "Italic" },
+    { action: "list", icon: "format_list_bulleted", label: "List" },
+    { action: "link", icon: "link", label: "Link" },
+    { action: "code-block", icon: "code_blocks", label: "Code block" },
+    { action: "attach", icon: "attach_file", label: "Attach" },
   ];
   return buttons
     .map(
       (item) => `
-        <button class="new-ticket-toolbar-button" type="button" aria-label="${escapeHtml(item.label)}" title="${escapeHtml(item.label)}">
+        <button
+          class="new-ticket-toolbar-button"
+          type="button"
+          data-composer-markdown-action="${escapeHtml(item.action)}"
+          aria-label="${escapeHtml(item.label)}"
+          title="${escapeHtml(item.label)}"
+          ${canCompose ? "" : "disabled"}
+        >
           <span class="material-symbols-outlined" aria-hidden="true">${item.icon}</span>
         </button>
       `
     )
-    .join("") +
+    .join("");
+}
+
+function renderNewTicketComposerToolbar({ canCompose = true, includeSummary = true } = {}) {
+  const formattingButtons = renderComposerFormattingToolbarButtons({ canCompose });
+  if (!includeSummary) {
+    return formattingButtons;
+  }
+  return (
+    formattingButtons +
     `
       <button class="new-ticket-summary-toolbar-btn" type="button" aria-label="AI Summary" title="AI Summary">
         <span class="material-symbols-outlined" aria-hidden="true">auto_awesome</span>
         <span>AI Summary</span>
       </button>
-    `;
+    `
+  );
 }
 
 function renderNewTicketComposerNoteHtml(viewState) {
@@ -2797,7 +2881,7 @@ function renderNewTicketComposerPanel(viewState, composerClass) {
   return `
     <footer class="${composerClass}">
       <div class="new-ticket-composer-toolbar">
-        ${renderNewTicketComposerToolbar()}
+        ${renderNewTicketComposerToolbar({ canCompose: viewState.canCompose, includeSummary: true })}
       </div>
       <div data-chat-section="composer-note">${renderNewTicketComposerNoteHtml(viewState)}</div>
       <form id="chat-input-form" class="chat-input-inner new-ticket-composer-form" data-chat-section="composer-form">
@@ -3119,6 +3203,179 @@ function getActiveChatComposerElement() {
   return isTextComposerElement(input) ? input : null;
 }
 
+function clampComposerSelectionIndex(value, index) {
+  const length = String(value || "").length;
+  const normalized = Number.isFinite(index) ? Number(index) : 0;
+  return Math.max(0, Math.min(length, normalized));
+}
+
+function normalizeComposerSelection(value, selectionStart, selectionEnd) {
+  const start = clampComposerSelectionIndex(value, selectionStart);
+  const end = clampComposerSelectionIndex(value, selectionEnd);
+  return start <= end
+    ? { start, end }
+    : {
+        start: end,
+        end: start,
+      };
+}
+
+function replaceComposerRange(value, start, end, replacement) {
+  return `${value.slice(0, start)}${replacement}${value.slice(end)}`;
+}
+
+function wrapComposerSelection(value, selectionStart, selectionEnd, prefix, suffix = prefix) {
+  const selection = normalizeComposerSelection(value, selectionStart, selectionEnd);
+  const selectedText = value.slice(selection.start, selection.end);
+  const replacement = `${prefix}${selectedText}${suffix}`;
+  if (selectedText) {
+    return {
+      value: replaceComposerRange(value, selection.start, selection.end, replacement),
+      selectionStart: selection.start + prefix.length,
+      selectionEnd: selection.start + prefix.length + selectedText.length,
+    };
+  }
+  const nextValue = replaceComposerRange(value, selection.start, selection.end, replacement);
+  const caret = selection.start + prefix.length;
+  return {
+    value: nextValue,
+    selectionStart: caret,
+    selectionEnd: caret,
+  };
+}
+
+function findComposerLineBoundary(value, index, direction) {
+  let pointer = clampComposerSelectionIndex(value, index);
+  if (direction === "backward") {
+    while (pointer > 0 && value[pointer - 1] !== "\n") {
+      pointer -= 1;
+    }
+    return pointer;
+  }
+  while (pointer < value.length && value[pointer] !== "\n") {
+    pointer += 1;
+  }
+  return pointer;
+}
+
+function applyListComposerSelection(value, selectionStart, selectionEnd) {
+  const selection = normalizeComposerSelection(value, selectionStart, selectionEnd);
+  const blockStart = findComposerLineBoundary(value, selection.start, "backward");
+  const blockEnd = findComposerLineBoundary(value, selection.end, "forward");
+  const block = value.slice(blockStart, blockEnd);
+  const lines = block.split("\n");
+  let offset = 0;
+  let selectionStartShift = 0;
+  let selectionEndShift = 0;
+  const prefixedLines = lines.map((line) => {
+    const lineStart = blockStart + offset;
+    const needsPrefix = !/^\s*-\s+/.test(line);
+    const prefix = needsPrefix ? "- " : "";
+    if (needsPrefix && selection.start >= lineStart) {
+      selectionStartShift += prefix.length;
+    }
+    if (needsPrefix && selection.end >= lineStart) {
+      selectionEndShift += prefix.length;
+    }
+    offset += line.length + 1;
+    return `${prefix}${line}`;
+  });
+  return {
+    value: replaceComposerRange(value, blockStart, blockEnd, prefixedLines.join("\n")),
+    selectionStart: selection.start + selectionStartShift,
+    selectionEnd: selection.end + selectionEndShift,
+  };
+}
+
+function applyLinkComposerSelection(value, selectionStart, selectionEnd) {
+  const selection = normalizeComposerSelection(value, selectionStart, selectionEnd);
+  const selectedText = value.slice(selection.start, selection.end) || "link text";
+  const placeholderUrl = "https://example.com";
+  const replacement = `[${selectedText}](${placeholderUrl})`;
+  const nextValue = replaceComposerRange(value, selection.start, selection.end, replacement);
+  const urlStart = selection.start + replacement.indexOf(placeholderUrl);
+  return {
+    value: nextValue,
+    selectionStart: urlStart,
+    selectionEnd: urlStart + placeholderUrl.length,
+  };
+}
+
+function applyCodeBlockComposerSelection(value, selectionStart, selectionEnd) {
+  const selection = normalizeComposerSelection(value, selectionStart, selectionEnd);
+  const selectedText = value.slice(selection.start, selection.end);
+  const replacement = selectedText ? `\`\`\`\n${selectedText}\n\`\`\`` : "```\n\n```";
+  const nextValue = replaceComposerRange(value, selection.start, selection.end, replacement);
+  const caretStart = selection.start + 4;
+  const caretEnd = selectedText ? caretStart + selectedText.length : caretStart;
+  return {
+    value: nextValue,
+    selectionStart: caretStart,
+    selectionEnd: caretEnd,
+  };
+}
+
+function applyComposerMarkdownToolbarAction(action, value, selectionStart, selectionEnd) {
+  const currentValue = String(value || "");
+  switch (String(action || "").trim()) {
+    case "bold":
+      return wrapComposerSelection(currentValue, selectionStart, selectionEnd, "**");
+    case "italic":
+      return wrapComposerSelection(currentValue, selectionStart, selectionEnd, "_");
+    case "list":
+      return applyListComposerSelection(currentValue, selectionStart, selectionEnd);
+    case "link":
+      return applyLinkComposerSelection(currentValue, selectionStart, selectionEnd);
+    case "code-block":
+      return applyCodeBlockComposerSelection(currentValue, selectionStart, selectionEnd);
+    default:
+      return {
+        value: currentValue,
+        selectionStart: clampComposerSelectionIndex(currentValue, selectionStart),
+        selectionEnd: clampComposerSelectionIndex(currentValue, selectionEnd),
+      };
+  }
+}
+
+function handleComposerToolbarAction(action, element = getActiveChatComposerElement()) {
+  const normalizedAction = String(action || "").trim();
+  if (!normalizedAction) {
+    return false;
+  }
+  if (normalizedAction === "attach") {
+    toast("Attachments are not available yet.");
+    return false;
+  }
+  if (!isTextComposerElement(element) || element.disabled) {
+    return false;
+  }
+  const nextState = applyComposerMarkdownToolbarAction(
+    normalizedAction,
+    element.value,
+    element.selectionStart,
+    element.selectionEnd
+  );
+  element.value = nextState.value;
+  state.inputDraft = nextState.value;
+  const scrollTop = typeof element.scrollTop === "number" ? element.scrollTop : 0;
+  try {
+    element.focus({ preventScroll: true });
+  } catch {
+    element.focus();
+  }
+  if (typeof element.setSelectionRange === "function") {
+    element.setSelectionRange(nextState.selectionStart, nextState.selectionEnd);
+  } else {
+    element.selectionStart = nextState.selectionStart;
+    element.selectionEnd = nextState.selectionEnd;
+  }
+  if (typeof element.scrollTop === "number") {
+    element.scrollTop = scrollTop;
+  }
+  refreshNewTicketInlineComposerAction();
+  return true;
+}
+
 function buildChatTicketViewState(ticket) {
   if (!ticket || ticket.userId !== state.user.id) {
     return null;
@@ -3288,6 +3545,9 @@ function renderChatTicketFromState(viewState) {
             <span class="ticket-toolbar-chip"><span class="material-symbols-outlined" aria-hidden="true">bolt</span>Source-aware</span>
             <span class="ticket-toolbar-chip"><span class="material-symbols-outlined" aria-hidden="true">history</span>Thread context</span>
             <span class="ticket-toolbar-chip"><span class="material-symbols-outlined" aria-hidden="true">forum</span>Customer chat</span>
+          </div>
+          <div class="new-ticket-composer-toolbar ticket-detail-composer-format-toolbar">
+            ${renderNewTicketComposerToolbar({ canCompose: viewState.canCompose, includeSummary: false })}
           </div>
           <div data-chat-section="composer-note">${renderChatComposerNoteHtml(viewState)}</div>
           <form id="chat-input-form" class="chat-input-inner ticket-detail-composer-form" data-chat-section="composer-form">
@@ -3953,6 +4213,7 @@ async function handleSendMessage(text, options = {}) {
           ...message,
           content: text,
           createdAt: now,
+          contentFormat: CUSTOMER_MESSAGE_MARKDOWN_FORMAT,
         };
       }
       return message;
@@ -3966,6 +4227,7 @@ async function handleSendMessage(text, options = {}) {
       role: "user",
       content: text,
       createdAt: now,
+      contentFormat: CUSTOMER_MESSAGE_MARKDOWN_FORMAT,
     };
     userMessageId = userMessage.id;
     messages = [...ticket.messages, userMessage];
@@ -3992,6 +4254,7 @@ async function handleSendMessage(text, options = {}) {
       customer_id: state.user.id,
       requester: state.user.name,
       message: text,
+      content_format: CUSTOMER_MESSAGE_MARKDOWN_FORMAT,
     };
     if (normalizedProduct) {
       requestBody.product = normalizedProduct;
@@ -4195,6 +4458,18 @@ function bindAuthedEvents() {
   });
   bindTicketProductSelect();
   bindStatusFilter();
+
+  appRoot.querySelectorAll("[data-composer-markdown-action]").forEach((element) => {
+    if (!element.__clientComposerToolbarBound) {
+      element.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+      });
+      element.addEventListener("click", () => {
+        handleComposerToolbarAction(element.getAttribute("data-composer-markdown-action"));
+      });
+      element.__clientComposerToolbarBound = true;
+    }
+  });
 
   const form = document.getElementById("chat-input-form");
   if (form && !form.__clientComposerSubmitBound) {
