@@ -3188,7 +3188,7 @@ function renderChatHome() {
           </div>
         </header>
         <div class="clienttest-home-content-grid">
-          <article class="clienttest-home-panel">
+          <article class="clienttest-home-panel clienttest-home-panel-active-tickets">
             <div class="clienttest-home-panel-header">
               <div>
                 <p class="clienttest-home-panel-kicker">Active Tickets</p>
@@ -3205,9 +3205,12 @@ function renderChatHome() {
                           compact: false,
                           includeActions: false,
                         })
-                      )
+                    )
                       .join("")
               }
+            </div>
+            <div class="clienttest-home-panel-footer">
+              <button class="clienttest-home-panel-footer-btn" data-action="go-tickets" type="button">view all tickets-></button>
             </div>
           </article>
           <article class="clienttest-home-panel">
