@@ -3051,9 +3051,9 @@ function renderContextBar() {
 
 function renderChatHome() {
   const tickets = getTicketsByUser(state.user.id);
-  const activeTickets = tickets.filter(
-    (ticket) => String(ticket.status || "").trim().toLowerCase() !== "resolved"
-  );
+  const activeTickets = tickets
+    .filter((ticket) => String(ticket.status || "").trim().toLowerCase() !== "resolved")
+    .slice(0, 2);
   const serviceEventsState =
     state.serviceEvents && typeof state.serviceEvents === "object"
       ? state.serviceEvents
@@ -3114,14 +3114,14 @@ function renderChatHome() {
           </div>
         </header>
         <div class="clienttest-home-content-grid">
-          <article class="clienttest-home-panel clienttest-home-panel-active-tickets">
+          <article class="clienttest-home-panel">
             <div class="clienttest-home-panel-header">
               <div>
                 <p class="clienttest-home-panel-kicker">Active Tickets</p>
                 <h3>Continue what needs attention</h3>
               </div>
             </div>
-            <div class="clienttest-home-panel-body clienttest-home-panel-body-scroll">
+            <div class="clienttest-home-panel-body">
               ${
                 activeTickets.length === 0
                   ? `<p class="session-empty clienttest-empty-card">No active tickets yet. Start a new one to open the redesigned detail view.</p>`

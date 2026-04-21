@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260421-client-workspace-active-tickets-scroll-1", html)
-        self.assertIn("./app.js?v=20260421-client-workspace-active-tickets-scroll-1", html)
+        self.assertIn("./styles.css?v=20260421-client-workspace-active-tickets-revert-1", html)
+        self.assertIn("./app.js?v=20260421-client-workspace-active-tickets-revert-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -484,12 +484,6 @@ class ClientUiContractTests(unittest.TestCase):
                 if (!html.includes("Continue what needs attention")) {
                   throw new Error("Client2 workspace should keep the active tickets panel.");
                 }
-                if (!html.includes("clienttest-home-panel-active-tickets")) {
-                  throw new Error("Client2 workspace should mark the active tickets panel with a dedicated layout class.");
-                }
-                if (!html.includes("clienttest-home-panel-body-scroll")) {
-                  throw new Error("Client2 workspace should render the active tickets list inside a scrollable body.");
-                }
                 state.serviceEvents = {
                   loadState: "ready",
                   items: [
@@ -525,11 +519,15 @@ class ClientUiContractTests(unittest.TestCase):
                 if (!readyHtml.includes("View incident")) {
                   throw new Error("Client2 workspace should render incident detail links.");
                 }
-                if (!readyHtml.includes("Black Screen Troubleshooting Steps") || !readyHtml.includes("Token Expired During Reconnect") || !readyHtml.includes("Cloud Proxy Route Check")) {
-                  throw new Error("Client2 workspace should render all active tickets instead of truncating the list to two rows.");
+                if (readyHtml.includes("Cloud Proxy Route Check")) {
+                  throw new Error("Client2 workspace should truncate the active tickets panel to two visible rows.");
                 }
                 if (readyHtml.includes("Join Channel Question")) {
                   throw new Error("Client2 workspace should keep resolved tickets out of the active tickets panel.");
+                }
+                const renderedTicketRows = (readyHtml.match(/data-history-ticket-row=\\"true\\"/g) || []).length;
+                if (renderedTicketRows !== 2) {
+                  throw new Error(`Client2 workspace should render exactly two active ticket rows, got ${renderedTicketRows}.`);
                 }
                 if (readyHtml.includes("Recent Activity") || readyHtml.includes("Latest ticket movement")) {
                   throw new Error("Client2 workspace should replace the recent activity panel with service events.");
@@ -583,14 +581,6 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn("text-transform: none;", css)
         self.assertIn("font-weight: 700;", css)
         self.assertIn("color: #7faee6;", css)
-
-    def test_client2_workspace_active_tickets_panel_uses_scroll_layout(self) -> None:
-        css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
-
-        self.assertIn(".clienttest-home-panel-active-tickets", css)
-        self.assertIn(".clienttest-home-panel-body-scroll", css)
-        self.assertIn("grid-template-rows: auto minmax(0, 1fr);", css)
-        self.assertIn("overflow-y: auto;", css)
 
     def test_client2_workspace_fetches_service_events_when_entering_workspace(self) -> None:
         self.run_client2_app_script(
