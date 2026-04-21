@@ -197,6 +197,11 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertNotIn("Preview Route", app_source)
         self.assertNotIn("/client remains unchanged", app_source)
         self.assertNotIn("CLIENTTEST PREVIEW", app_source)
+        self.assertNotIn("chat-new-messages", app_source)
+        self.assertNotIn("new-messages-btn", app_source)
+        self.assertNotIn("jump-chat-latest", app_source)
+        self.assertNotIn("chat-new-messages", css)
+        self.assertNotIn("new-messages-btn", css)
 
     def test_client2_context_bar_only_renders_for_chat_ticket(self) -> None:
         self.run_client2_app_script(
@@ -218,6 +223,201 @@ class ClientUiContractTests(unittest.TestCase):
                 const chatBar = String(renderContextBar() || "");
                 if (!chatBar.includes("context-bar")) {
                   throw new Error("Client2 chat-ticket should keep its ticket context bar.");
+                }
+              """
+            )
+        )
+
+    def test_client2_chat_scrolled_up_auto_scrolls_smoothly_for_new_message(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                const queuedFrames = [];
+                globalThis.requestAnimationFrame = (callback) => {
+                  queuedFrames.push(callback);
+                  return queuedFrames.length;
+                };
+
+                const flushFrames = () => {
+                  while (queuedFrames.length > 0) {
+                    const callback = queuedFrames.shift();
+                    callback();
+                  }
+                };
+
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                localStorage.setItem(
+                  "helpdesk_tickets",
+                  JSON.stringify([
+                    {
+                      id: "TK-SCROLL-001",
+                      title: "Need help joining a channel",
+                      status: "communicating",
+                      createdAt: "2026-04-21T09:00:00.000Z",
+                      updatedAt: "2026-04-21T09:01:00.000Z",
+                      userId: state.user.id,
+                      product: "audio_video_calling",
+                      messages: [
+                        {
+                          id: "msg-user-1",
+                          role: "user",
+                          content: "How do I join a channel?",
+                          createdAt: "2026-04-21T09:00:00.000Z",
+                        },
+                      ],
+                    },
+                  ])
+                );
+
+                window.location.hash = "#/chat/TK-SCROLL-001";
+                const inputForm = {
+                  addEventListener() {},
+                  requestSubmit() {},
+                };
+                const chatInput = {
+                  addEventListener() {},
+                  value: "",
+                  disabled: false,
+                  focus() {},
+                };
+                const linkInput = {
+                  addEventListener() {},
+                  value: "",
+                  focus() {},
+                  select() {},
+                };
+                document.getElementById = (id) => {
+                  if (id === "app") {
+                    return appRoot;
+                  }
+                  if (id === "toast-root") {
+                    return toastRoot;
+                  }
+                  if (id === "chat-input-form") {
+                    return inputForm;
+                  }
+                  if (id === "chat-input") {
+                    return chatInput;
+                  }
+                  if (id === "composer-link-url") {
+                    return linkInput;
+                  }
+                  return null;
+                };
+
+                let currentChatMain = null;
+                let topbarRegion = { innerHTML: "" };
+                let contextRegion = { innerHTML: "" };
+                let mainRegion = null;
+                let sidebarNavRegion = { innerHTML: "" };
+                let sidebarContentRegion = { innerHTML: "" };
+                let sidebarFooterRegion = { innerHTML: "" };
+                let shellRoot = null;
+                const chatScrollCalls = [];
+                const renderHeights = [];
+
+                appRoot.querySelector = (selector) => {
+                  if (selector === ".chat-main") {
+                    return currentChatMain;
+                  }
+                  if (selector === ".app-shell") {
+                    return shellRoot;
+                  }
+                  return null;
+                };
+
+                Object.defineProperty(appRoot, "innerHTML", {
+                  configurable: true,
+                  get() {
+                    return this._html || "";
+                  },
+                  set(value) {
+                    this._html = value;
+                    mainRegion = { classList: { toggle() {} } };
+                    Object.defineProperty(mainRegion, "innerHTML", {
+                      configurable: true,
+                      get() {
+                        return this._html || "";
+                      },
+                      set(regionHtml) {
+                        this._html = regionHtml;
+                        currentChatMain = {
+                          scrollTop: currentChatMain?.scrollTop || 0,
+                          scrollHeight: renderHeights.shift() ?? 0,
+                          clientHeight: 180,
+                          scrollTo(options) {
+                            chatScrollCalls.push(options);
+                            this.scrollTop = typeof options?.top === "number" ? options.top : this.scrollTop;
+                          },
+                        };
+                      },
+                    });
+                    shellRoot = {
+                      classList: { toggle() {} },
+                      querySelector(selector) {
+                        if (selector === ".clienttest-workspace") {
+                          return { classList: { toggle() {} } };
+                        }
+                        if (selector === '[data-authed-region="sidebar-nav"]') {
+                          return sidebarNavRegion;
+                        }
+                        if (selector === '[data-authed-region="sidebar-content"]') {
+                          return sidebarContentRegion;
+                        }
+                        if (selector === '[data-authed-region="sidebar-footer"]') {
+                          return sidebarFooterRegion;
+                        }
+                        if (selector === '[data-authed-region="topbar"]') {
+                          return topbarRegion;
+                        }
+                        if (selector === '[data-authed-region="context"]') {
+                          return contextRegion;
+                        }
+                        if (selector === '[data-authed-region="main"]') {
+                          return mainRegion;
+                        }
+                        return null;
+                      },
+                    };
+                  },
+                });
+
+                renderHeights.push(420);
+                render();
+                flushFrames();
+
+                currentChatMain.scrollTop = 20;
+                saveTicketMessages("TK-SCROLL-001", [
+                  {
+                    id: "msg-user-1",
+                    role: "user",
+                    content: "How do I join a channel?",
+                    createdAt: "2026-04-21T09:00:00.000Z",
+                  },
+                  {
+                    id: "msg-agent-1",
+                    role: "assistant",
+                    content: "Use joinChannel with a valid token.",
+                    createdAt: "2026-04-21T09:01:00.000Z",
+                  },
+                ]);
+
+                renderHeights.push(520);
+                render();
+                flushFrames();
+
+                const latestCall = chatScrollCalls[chatScrollCalls.length - 1];
+                if (!latestCall || latestCall.top !== 520) {
+                  throw new Error(`Expected the client chat rerender to smooth-scroll to 520, got ${JSON.stringify(latestCall)}.`);
+                }
+                if (latestCall.behavior !== "smooth") {
+                  throw new Error(`Expected the client chat rerender to smooth-scroll to bottom, got ${JSON.stringify(latestCall)}.`);
+                }
+                if (currentChatMain.scrollTop !== 520) {
+                  throw new Error(`Expected chat scrollTop 520 after auto-scroll, got ${currentChatMain.scrollTop}.`);
+                }
+                if (appRoot.innerHTML.includes("New messages")) {
+                  throw new Error("Client chat should not expose a New messages indicator after removing unread CTA logic.");
                 }
               """
             )

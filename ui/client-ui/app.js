@@ -132,7 +132,6 @@ let deliveredStatusRefreshTimer = null;
 let deliveredStatusRefreshDueAt = 0;
 let replyCountdownRefreshTimer = null;
 let replyCountdownRefreshTicketId = "";
-const CHAT_NEAR_BOTTOM_THRESHOLD_PX = 96;
 let pendingChatScrollRequest = null;
 let scheduledChatScrollPlan = null;
 let scheduledChatScrollJobId = 0;
@@ -140,7 +139,6 @@ let lastRenderedChatMessageSignature = {
   ticketId: "",
   signature: "",
 };
-const chatUnreadStateByTicket = {};
 
 function isDefaultDraftTitle(value) {
   const normalized = String(value || "").trim();
@@ -3038,7 +3036,6 @@ function renderNewTicketDraftTicketFromState(viewState) {
                 </div>
               </main>
             </section>
-            ${renderChatUnreadIndicatorHtml(ticket.id)}
             ${renderNewTicketDraftInlineComposer(viewState)}
           </div>
           <aside class="new-ticket-sidebar">
@@ -3078,7 +3075,6 @@ function renderNewTicketPostSendTicketFromState(viewState) {
                   </div>
                 </main>
               </section>
-              ${renderChatUnreadIndicatorHtml(ticket.id)}
               ${isTailComposerRoute ? "" : renderNewTicketPostSendInlineComposer(viewState)}
             </div>
             <aside class="new-ticket-postsend-sidebar">
@@ -4222,19 +4218,6 @@ function renderChatComposerActionHtml(viewState) {
   `;
 }
 
-function renderChatUnreadIndicatorHtml(ticketId) {
-  if (!getChatUnreadState(ticketId)) {
-    return "";
-  }
-  return `
-    <div class="chat-new-messages">
-      <button class="new-messages-btn" type="button" data-action="jump-chat-latest">
-        New messages
-      </button>
-    </div>
-  `;
-}
-
 function renderChatTicketFromState(viewState) {
   if (viewState?.usesNewTicketShell) {
     return renderNewTicketTicketFromState(viewState);
@@ -4268,7 +4251,6 @@ function renderChatTicketFromState(viewState) {
             </div>
           </main>
         </div>
-        ${renderChatUnreadIndicatorHtml(ticket.id)}
         <footer class="chat-input-wrap ticket-detail-composer">
           <div class="ticket-detail-composer-header">
             <div>
@@ -4510,19 +4492,6 @@ function scrollElementToTop(element, top, behavior = "auto") {
   }
 }
 
-function distanceFromBottom(element) {
-  if (!element || typeof element.scrollHeight !== "number") {
-    return Number.POSITIVE_INFINITY;
-  }
-  const scrollTop = typeof element.scrollTop === "number" ? element.scrollTop : 0;
-  const clientHeight = typeof element.clientHeight === "number" ? element.clientHeight : 0;
-  return element.scrollHeight - (scrollTop + clientHeight);
-}
-
-function isElementNearBottom(element, threshold = CHAT_NEAR_BOTTOM_THRESHOLD_PX) {
-  return distanceFromBottom(element) <= threshold;
-}
-
 function normalizeRenderableMessageRole(message) {
   const normalized = String(message?.role || "").trim().toLowerCase();
   if (normalized === "customer") {
@@ -4594,23 +4563,6 @@ function buildRenderableChatMessageSignature(ticket, renderableMessages = getRen
   return leadingTokens.join("|");
 }
 
-function getChatUnreadState(ticketId) {
-  const normalizedTicketId = String(ticketId || "").trim();
-  return normalizedTicketId ? Boolean(chatUnreadStateByTicket[normalizedTicketId]) : false;
-}
-
-function setChatUnreadState(ticketId, visible) {
-  const normalizedTicketId = String(ticketId || "").trim();
-  if (!normalizedTicketId) {
-    return;
-  }
-  if (visible) {
-    chatUnreadStateByTicket[normalizedTicketId] = true;
-    return;
-  }
-  delete chatUnreadStateByTicket[normalizedTicketId];
-}
-
 function clearRequestedChatScroll() {
   pendingChatScrollRequest = null;
 }
@@ -4630,7 +4582,6 @@ function requestChatScrollToBottom(ticketId, options = {}) {
     ticketId: normalizedId,
     behavior: String(options?.behavior || "").trim().toLowerCase() === "smooth" ? "smooth" : "auto",
   };
-  setChatUnreadState(normalizedId, false);
 }
 
 function captureChatScrollSnapshot() {
@@ -4661,9 +4612,8 @@ function captureChatScrollSnapshot() {
   }
   return {
     ticketId,
-    scrollTop: chatMain && typeof chatMain.scrollTop === "number" ? chatMain.scrollTop : null,
-    nearBottom: isElementNearBottom(chatMain),
-  };
+      scrollTop: chatMain && typeof chatMain.scrollTop === "number" ? chatMain.scrollTop : null,
+    };
 }
 
 function runOnNextFrame(callback) {
@@ -4686,7 +4636,6 @@ function syncChatScrollPosition(previousSnapshot = null) {
   }
 
   const ticketId = String(ticket.id || "").trim();
-  const unreadVisibleBeforeSync = getChatUnreadState(ticketId);
   const renderableMessages = getRenderableMessages(ticket);
   const currentSignature = buildRenderableChatMessageSignature(ticket, renderableMessages);
   const previousSignature =
@@ -4706,33 +4655,12 @@ function syncChatScrollPosition(previousSnapshot = null) {
       behavior: pendingChatScrollRequest.behavior || "auto",
     };
     clearRequestedChatScroll();
-    setChatUnreadState(ticketId, false);
   } else if (hasNewVisibleMessages) {
-    if (previousSnapshot?.preserveBottom) {
-      nextPlan = {
-        ticketId,
-        type: "restore",
-        scrollTop: previousSnapshot?.scrollTop ?? 0,
-        behavior: previousSnapshot.behavior || "auto",
-      };
-      setChatUnreadState(ticketId, false);
-    } else if (previousSnapshot?.nearBottom) {
-      nextPlan = {
-        ticketId,
-        type: "bottom",
-        behavior: "smooth",
-      };
-      setChatUnreadState(ticketId, false);
-    } else if (shouldRestoreScroll) {
-      nextPlan = {
-        ticketId,
-        type: "restore",
-        scrollTop: previousSnapshot?.scrollTop ?? 0,
-      };
-      setChatUnreadState(ticketId, true);
-    } else {
-      setChatUnreadState(ticketId, true);
-    }
+    nextPlan = {
+      ticketId,
+      type: "bottom",
+      behavior: "smooth",
+    };
   } else if (previousSnapshot?.preserveBottom) {
     nextPlan = {
       ticketId,
@@ -4748,15 +4676,6 @@ function syncChatScrollPosition(previousSnapshot = null) {
     ticketId,
     signature: currentSignature,
   };
-  const unreadVisibleAfterSync = getChatUnreadState(ticketId);
-  if (unreadVisibleBeforeSync !== unreadVisibleAfterSync) {
-    const shell = appRoot.querySelector(".app-shell");
-    const mainRegion = shell?.querySelector?.('[data-authed-region="main"]') || null;
-    if (mainRegion) {
-      renderMainRegion(mainRegion);
-      bindAuthedEvents();
-    }
-  }
 
   if (!nextPlan) {
     scheduledChatScrollPlan = null;
@@ -5201,18 +5120,6 @@ function bindAuthedEvents() {
 
   appRoot.querySelectorAll("[data-action='go-chat']").forEach((element) => {
     element.addEventListener("click", () => navigate("/chat"));
-  });
-
-  appRoot.querySelectorAll("[data-action='jump-chat-latest']").forEach((element) => {
-    element.addEventListener("click", () => {
-      const ticket = getActiveChatTicket();
-      const ticketId = String(ticket?.id || "").trim();
-      if (!ticketId) {
-        return;
-      }
-      requestChatScrollToBottom(ticketId, { behavior: "smooth" });
-      render();
-    });
   });
   bindTicketProductSelect();
   bindStatusFilter();
