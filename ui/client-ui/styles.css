@@ -3388,8 +3388,9 @@ a.citation-link:hover {
 
 .new-ticket-fixed-composer-panel {
   height: var(--new-ticket-composer-panel-height);
-  display: grid;
-  grid-template-rows: auto auto auto 1fr;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .new-ticket-draft-inline-composer {
@@ -3589,7 +3590,9 @@ a.citation-link:hover {
 }
 
 .new-ticket-fixed-composer-panel .new-ticket-composer-form {
-  height: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  height: auto;
   display: flex;
   flex-direction: column;
   padding: 0 18px;
@@ -3607,9 +3610,9 @@ a.citation-link:hover {
 }
 
 .new-ticket-fixed-composer-panel .new-ticket-composer-input-shell {
-  height: 100%;
-  display: grid;
-  align-items: stretch;
+  min-height: 0;
+  height: auto;
+  display: flex;
   flex: 1 1 auto;
 }
 
@@ -3631,9 +3634,9 @@ a.citation-link:hover {
 }
 
 .new-ticket-fixed-composer-panel .new-ticket-textarea {
+  flex: 1 1 auto;
   min-height: 0;
-  height: 100%;
-  align-self: stretch;
+  height: auto;
 }
 
 .new-ticket-fixed-composer-panel .new-ticket-textarea:focus,
