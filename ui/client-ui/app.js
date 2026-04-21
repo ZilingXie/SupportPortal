@@ -2265,6 +2265,19 @@ function requestTicketsPageScrollReset() {
 }
 
 function resetTicketsPageScrollTop() {
+  const shell = typeof ensureAuthedShell === "function" ? ensureAuthedShell() : null;
+  const mainScrollContainer =
+    shell?.querySelector?.('[data-authed-region="main"]') ||
+    appRoot?.querySelector?.(".clienttest-main") ||
+    null;
+  const ticketsScrollContainer =
+    mainScrollContainer?.querySelector?.(".tickets-root") ||
+    appRoot?.querySelector?.(".tickets-root") ||
+    null;
+
+  scrollElementToTop(mainScrollContainer, 0, "auto");
+  scrollElementToTop(ticketsScrollContainer, 0, "auto");
+
   if (typeof window.scrollTo === "function") {
     try {
       window.scrollTo({ top: 0, behavior: "auto" });

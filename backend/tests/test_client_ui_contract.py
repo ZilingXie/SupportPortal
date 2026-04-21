@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260421-client-workspace-view-all-tickets-top-1", html)
-        self.assertIn("./app.js?v=20260421-client-workspace-view-all-tickets-top-1", html)
+        self.assertIn("./styles.css?v=20260421-client-workspace-view-all-tickets-top-shell-scroll-1", html)
+        self.assertIn("./app.js?v=20260421-client-workspace-view-all-tickets-top-shell-scroll-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -864,17 +864,91 @@ class ClientUiContractTests(unittest.TestCase):
                 """
                 state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
                 setupClientRealtimeConnection = () => {};
-                renderAuthed = () => {
-                  appRoot.innerHTML = renderMainContent();
-                };
                 syncChatScrollPosition = () => {};
+
+                const createClassList = () => {
+                  const values = new Set();
+                  return {
+                    toggle(name, force) {
+                      if (force === undefined) {
+                        if (values.has(name)) {
+                          values.delete(name);
+                          return false;
+                        }
+                        values.add(name);
+                        return true;
+                      }
+                      if (force) {
+                        values.add(name);
+                        return true;
+                      }
+                      values.delete(name);
+                      return false;
+                    },
+                    contains(name) {
+                      return values.has(name);
+                    },
+                  };
+                };
+
+                const workspace = { classList: createClassList() };
+                const topbarRegion = { innerHTML: "" };
+                const contextRegion = { innerHTML: "" };
+                const sidebarRegion = { innerHTML: "" };
+                const sidebarContent = { innerHTML: "" };
+                const sidebarFooter = { innerHTML: "" };
+                const mainRegion = {
+                  classList: createClassList(),
+                  scrollTop: 240,
+                  _html: "",
+                  _ticketsRoot: null,
+                  set innerHTML(value) {
+                    this._html = String(value || "");
+                    this._ticketsRoot = this._html.includes("tickets-root")
+                      ? { scrollTop: 180 }
+                      : null;
+                  },
+                  get innerHTML() {
+                    return this._html;
+                  },
+                  querySelector(selector) {
+                    if (selector === ".tickets-root") {
+                      return this._ticketsRoot;
+                    }
+                    return null;
+                  },
+                };
+                const shell = {
+                  querySelector(selector) {
+                    switch (selector) {
+                      case ".clienttest-workspace":
+                        return workspace;
+                      case '[data-authed-region="topbar"]':
+                        return topbarRegion;
+                      case '[data-authed-region="context"]':
+                        return contextRegion;
+                      case '[data-authed-region="main"]':
+                        return mainRegion;
+                      case '[data-authed-region="sidebar-nav"]':
+                        return sidebarRegion;
+                      case '[data-authed-region="sidebar-content"]':
+                        return sidebarContent;
+                      case '[data-authed-region="sidebar-footer"]':
+                        return sidebarFooter;
+                      default:
+                        return null;
+                    }
+                  },
+                };
+                ensureAuthedShell = () => shell;
+                bindAuthedEvents = () => {};
 
                 const scrollCalls = [];
                 window.scrollTo = (options) => {
                   scrollCalls.push(options);
                 };
-                document.documentElement = { scrollTop: 240 };
-                document.body = { scrollTop: 160 };
+                document.documentElement = { scrollTop: 140 };
+                document.body = { scrollTop: 80 };
 
                 window.location.hash = "#/chat";
                 navigateToTicketsTop();
@@ -884,17 +958,21 @@ class ClientUiContractTests(unittest.TestCase):
 
                 render();
 
-                if (!appRoot.innerHTML.includes("My Tickets")) {
+                if (!mainRegion.innerHTML.includes("My Tickets")) {
                   throw new Error("Footer CTA should land on the My Tickets page.");
                 }
-                if (scrollCalls.length !== 1) {
-                  throw new Error(`Footer CTA should reset page scroll exactly once after entering tickets, got ${scrollCalls.length}.`);
+                if (mainRegion.scrollTop !== 0) {
+                  throw new Error(`Footer CTA should reset the clienttest-main scroll container, got ${mainRegion.scrollTop}.`);
                 }
-                if (scrollCalls[0]?.top !== 0 || scrollCalls[0]?.behavior !== "auto") {
-                  throw new Error("Footer CTA should reset page scroll to top using auto behavior.");
+                const ticketsRoot = mainRegion.querySelector(".tickets-root");
+                if (!ticketsRoot || ticketsRoot.scrollTop !== 0) {
+                  throw new Error(`Footer CTA should reset the tickets-root scroll container, got ${ticketsRoot?.scrollTop}.`);
+                }
+                if (scrollCalls.length < 1 || scrollCalls[0]?.top !== 0 || scrollCalls[0]?.behavior !== "auto") {
+                  throw new Error("Footer CTA should keep the window scroll fallback available.");
                 }
                 if (document.documentElement.scrollTop !== 0 || document.body.scrollTop !== 0) {
-                  throw new Error("Footer CTA should reset document scroll fallbacks to zero.");
+                  throw new Error("Footer CTA should still reset document fallback scroll positions.");
                 }
               """
             )
@@ -906,10 +984,84 @@ class ClientUiContractTests(unittest.TestCase):
                 """
                 state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
                 setupClientRealtimeConnection = () => {};
-                renderAuthed = () => {
-                  appRoot.innerHTML = renderMainContent();
-                };
                 syncChatScrollPosition = () => {};
+
+                const createClassList = () => {
+                  const values = new Set();
+                  return {
+                    toggle(name, force) {
+                      if (force === undefined) {
+                        if (values.has(name)) {
+                          values.delete(name);
+                          return false;
+                        }
+                        values.add(name);
+                        return true;
+                      }
+                      if (force) {
+                        values.add(name);
+                        return true;
+                      }
+                      values.delete(name);
+                      return false;
+                    },
+                    contains(name) {
+                      return values.has(name);
+                    },
+                  };
+                };
+
+                const workspace = { classList: createClassList() };
+                const topbarRegion = { innerHTML: "" };
+                const contextRegion = { innerHTML: "" };
+                const sidebarRegion = { innerHTML: "" };
+                const sidebarContent = { innerHTML: "" };
+                const sidebarFooter = { innerHTML: "" };
+                const mainRegion = {
+                  classList: createClassList(),
+                  scrollTop: 0,
+                  _html: "",
+                  _ticketsRoot: null,
+                  set innerHTML(value) {
+                    this._html = String(value || "");
+                    this._ticketsRoot = this._html.includes("tickets-root")
+                      ? { scrollTop: 0 }
+                      : null;
+                  },
+                  get innerHTML() {
+                    return this._html;
+                  },
+                  querySelector(selector) {
+                    if (selector === ".tickets-root") {
+                      return this._ticketsRoot;
+                    }
+                    return null;
+                  },
+                };
+                const shell = {
+                  querySelector(selector) {
+                    switch (selector) {
+                      case ".clienttest-workspace":
+                        return workspace;
+                      case '[data-authed-region="topbar"]':
+                        return topbarRegion;
+                      case '[data-authed-region="context"]':
+                        return contextRegion;
+                      case '[data-authed-region="main"]':
+                        return mainRegion;
+                      case '[data-authed-region="sidebar-nav"]':
+                        return sidebarRegion;
+                      case '[data-authed-region="sidebar-content"]':
+                        return sidebarContent;
+                      case '[data-authed-region="sidebar-footer"]':
+                        return sidebarFooter;
+                      default:
+                        return null;
+                    }
+                  },
+                };
+                ensureAuthedShell = () => shell;
+                bindAuthedEvents = () => {};
 
                 const scrollCalls = [];
                 window.scrollTo = (options) => {
@@ -920,25 +1072,35 @@ class ClientUiContractTests(unittest.TestCase):
 
                 window.location.hash = "#/tickets";
                 render();
+                const initialTicketsRoot = mainRegion.querySelector(".tickets-root");
                 scrollCalls.length = 0;
                 document.documentElement.scrollTop = 320;
                 document.body.scrollTop = 220;
+                mainRegion.scrollTop = 320;
+                if (!initialTicketsRoot) {
+                  throw new Error("Same-route footer CTA setup should render the tickets-root container.");
+                }
+                initialTicketsRoot.scrollTop = 220;
 
                 navigateToTicketsTop();
 
                 if (window.location.hash !== "#/tickets") {
                   throw new Error("Same-route footer CTA should keep the tickets hash.");
                 }
-                if (scrollCalls.length !== 1) {
-                  throw new Error(`Same-route footer CTA should still reset page scroll once, got ${scrollCalls.length}.`);
+                if (mainRegion.scrollTop !== 0) {
+                  throw new Error(`Same-route footer CTA should reset the clienttest-main scroll container, got ${mainRegion.scrollTop}.`);
                 }
-                if (scrollCalls[0]?.top !== 0 || scrollCalls[0]?.behavior !== "auto") {
-                  throw new Error("Same-route footer CTA should reset page scroll to the top.");
+                const nextTicketsRoot = mainRegion.querySelector(".tickets-root");
+                if (!nextTicketsRoot || nextTicketsRoot.scrollTop !== 0) {
+                  throw new Error(`Same-route footer CTA should reset the tickets-root scroll container, got ${nextTicketsRoot?.scrollTop}.`);
+                }
+                if (scrollCalls.length < 1 || scrollCalls[0]?.top !== 0 || scrollCalls[0]?.behavior !== "auto") {
+                  throw new Error("Same-route footer CTA should still keep the window scroll fallback available.");
                 }
                 if (document.documentElement.scrollTop !== 0 || document.body.scrollTop !== 0) {
                   throw new Error("Same-route footer CTA should reset document fallback scroll positions.");
                 }
-                if (!appRoot.innerHTML.includes("My Tickets")) {
+                if (!mainRegion.innerHTML.includes("My Tickets")) {
                   throw new Error("Same-route footer CTA should keep the My Tickets page rendered.");
                 }
               """
