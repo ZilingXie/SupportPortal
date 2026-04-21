@@ -3100,12 +3100,11 @@ function renderChatHome() {
             </div>
             <div class="clienttest-home-intro-copy">
               <p class="welcome-kicker">${CLIENT_ROUTE_BRAND}</p>
-              <h1 class="welcome-title">A calmer client workspace with a stronger ticket-detail reading surface.</h1>
+              <h1 class="welcome-title">Manage your support tickets in one place</h1>
             </div>
           </div>
           <p class="welcome-desc">
-            Track open work, return to recent tickets, and continue the same client support flows inside
-            the redesigned left-rail shell.
+            Track open tickets, return to recent conversations, and keep your support work moving.
           </p>
           <div class="welcome-actions clienttest-home-intro-actions">
             <button class="btn btn-primary" data-action="new-session" type="button">Start New Ticket</button>

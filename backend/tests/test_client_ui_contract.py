@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260421-client-composer-markdown-toolbar-2", html)
-        self.assertIn("./app.js?v=20260421-client-composer-markdown-toolbar-2", html)
+        self.assertIn("./styles.css?v=20260421-client-workspace-copy-2", html)
+        self.assertIn("./app.js?v=20260421-client-workspace-copy-2", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -175,6 +175,19 @@ class ClientUiContractTests(unittest.TestCase):
         )
         self.assertNotIn(
             "Scan active, waiting, and resolved tickets through the card-based My Tickets surface.",
+            app_source,
+        )
+        self.assertIn("Manage your support tickets in one place", app_source)
+        self.assertIn(
+            "Track open tickets, return to recent conversations, and keep your support work moving.",
+            app_source,
+        )
+        self.assertNotIn(
+            "A calmer client workspace with a stronger ticket-detail reading surface.",
+            app_source,
+        )
+        self.assertNotIn(
+            "Track open work, return to recent tickets, and continue the same client support flows inside the redesigned left-rail shell.",
             app_source,
         )
         self.assertNotIn("<span>Ticket Board</span>", app_source)
