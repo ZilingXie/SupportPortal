@@ -3592,6 +3592,7 @@ a.citation-link:hover {
   height: 100%;
   display: flex;
   flex-direction: column;
+  padding: 0 18px;
 }
 
 .new-ticket-composer-input-shell {
@@ -3606,6 +3607,9 @@ a.citation-link:hover {
 }
 
 .new-ticket-fixed-composer-panel .new-ticket-composer-input-shell {
+  height: 100%;
+  display: grid;
+  align-items: stretch;
   flex: 1 1 auto;
 }
 
@@ -3627,7 +3631,15 @@ a.citation-link:hover {
 }
 
 .new-ticket-fixed-composer-panel .new-ticket-textarea {
+  min-height: 0;
   height: 100%;
+  align-self: stretch;
+}
+
+.new-ticket-fixed-composer-panel .new-ticket-textarea:focus,
+.new-ticket-fixed-composer-panel .new-ticket-textarea:focus-visible {
+  box-shadow: none;
+  border-color: transparent;
 }
 
 .new-ticket-textarea:focus {
@@ -4464,6 +4476,10 @@ a.citation-link:hover {
     padding-left: 16px;
     padding-right: 16px;
     padding-bottom: 16px;
+  }
+
+  .new-ticket-fixed-composer-panel .new-ticket-composer-form {
+    padding: 0 16px;
   }
 
   .new-ticket-inline-action {
