@@ -43,6 +43,7 @@ from backend.services.embedding_provider import (
     embedding_model_id,
     embedding_provider_name,
 )
+from backend.services.agora_service_events import get_agora_service_events_payload
 from backend.services.customer_reply_composer import ensure_customer_reply_email_style
 from backend.services.emotion_reply import build_initial_ack
 from backend.services.engineer_agent import (
@@ -2208,6 +2209,11 @@ def get_knowledge_ingestion(ingestion_id: str) -> dict[str, Any]:
 @app.post("/api/client/ack")
 def create_client_ack(request: ClientAckRequest) -> dict[str, Any]:
     return _create_client_ack(request.message)
+
+
+@app.get("/api/client/service-events")
+def list_client_service_events() -> dict[str, Any]:
+    return get_agora_service_events_payload()
 
 
 @app.post("/api/tickets/query")

@@ -2527,6 +2527,93 @@ a.citation-link:hover {
   background: rgba(234, 238, 245, 0.84);
 }
 
+.clienttest-home-panel-link {
+  flex: 0 0 auto;
+  color: var(--secondary);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  line-height: 1.4;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.clienttest-home-panel-link:hover {
+  color: var(--primary);
+}
+
+.clienttest-service-events-list {
+  display: grid;
+  gap: 14px;
+}
+
+.clienttest-service-event-card {
+  display: grid;
+  gap: 10px;
+  padding: 18px 18px 16px;
+  border-radius: 24px;
+  background: rgba(234, 238, 245, 0.84);
+  border: 1px solid rgba(159, 174, 200, 0.18);
+}
+
+.clienttest-service-event-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+}
+
+.clienttest-service-event-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(228, 236, 247, 0.96);
+  color: var(--secondary);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.clienttest-service-event-time {
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.clienttest-service-event-title {
+  margin: 0;
+  font-family: "Manrope", "Inter", sans-serif;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.18;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.clienttest-service-event-summary {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.clienttest-service-event-link {
+  color: var(--secondary);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.clienttest-service-event-link:hover {
+  color: var(--primary);
+}
+
 .clienttest-tickets {
   overflow: visible;
 }

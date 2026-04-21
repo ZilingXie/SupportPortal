@@ -70,6 +70,9 @@ const CLIENT2_ROUTE_MARKER = "client2-route-shell";
 const DEFAULT_DRAFT_TICKET_TITLE = "New ticket";
 const LEGACY_DEFAULT_DRAFT_TICKET_TITLE = "New Session";
 const DELIVERED_LABEL_DELAY_MS = 5000;
+const AGORA_STATUS_PAGE_URL = "https://status.agora.io/";
+const SERVICE_EVENTS_ENDPOINT = "/api/client/service-events";
+const SERVICE_EVENTS_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
 const FEATURES = [
   {
@@ -114,6 +117,7 @@ const state = {
   pendingAsyncMessageCreatedAt: null,
   pendingByTicket: {},
   supersededTurnsByTicket: loadSupersededTurnsByTicket(),
+  serviceEvents: buildDefaultServiceEventsState(),
 };
 let clientSocket = null;
 let clientReconnectTimer = null;
@@ -144,6 +148,16 @@ function isDefaultDraftTitle(value) {
 
 function getDefaultDraftTitle() {
   return DEFAULT_DRAFT_TICKET_TITLE;
+}
+
+function buildDefaultServiceEventsState() {
+  return {
+    loadState: "idle",
+    items: [],
+    statusPageUrl: AGORA_STATUS_PAGE_URL,
+    fetchedAt: "",
+    lastRequestedAtMs: 0,
+  };
 }
 
 function escapeHtml(value) {
@@ -179,6 +193,92 @@ function sanitizeUrl(value) {
     return null;
   }
   return null;
+}
+
+function normalizeSingleLineText(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeServiceEventItem(item, index) {
+  const normalizedTitle = normalizeSingleLineText(item?.title);
+  return {
+    title: normalizedTitle || `Service Event ${index + 1}`,
+    summary: normalizeSingleLineText(item?.summary),
+    link: sanitizeUrl(item?.link),
+    statusLabel: normalizeSingleLineText(item?.status_label || item?.statusLabel),
+    postedAtLabel: normalizeSingleLineText(item?.posted_at_label || item?.postedAtLabel),
+  };
+}
+
+function normalizeServiceEventsPayload(payload, requestedAtMs) {
+  const items = Array.isArray(payload?.items)
+    ? payload.items.map((item, index) => normalizeServiceEventItem(item, index)).filter(Boolean)
+    : [];
+  return {
+    loadState: "ready",
+    items,
+    statusPageUrl: sanitizeUrl(payload?.status_page_url || payload?.statusPageUrl) || AGORA_STATUS_PAGE_URL,
+    fetchedAt: normalizeSingleLineText(payload?.fetched_at || payload?.fetchedAt),
+    lastRequestedAtMs: requestedAtMs,
+  };
+}
+
+function shouldRefreshWorkspaceServiceEvents() {
+  const current = state.serviceEvents || buildDefaultServiceEventsState();
+  if (current.loadState === "loading") {
+    return false;
+  }
+  if (current.loadState === "idle") {
+    return true;
+  }
+  const requestedAtMs = Number(current.lastRequestedAtMs || 0);
+  if (!requestedAtMs) {
+    return current.loadState !== "ready";
+  }
+  return Date.now() - requestedAtMs >= SERVICE_EVENTS_REFRESH_INTERVAL_MS;
+}
+
+async function fetchWorkspaceServiceEvents(requestedAtMs) {
+  let nextState = null;
+  try {
+    const response = await fetch(SERVICE_EVENTS_ENDPOINT);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    nextState = normalizeServiceEventsPayload(payload, requestedAtMs);
+  } catch (_error) {
+    nextState = {
+      ...buildDefaultServiceEventsState(),
+      loadState: "error",
+      lastRequestedAtMs: requestedAtMs,
+    };
+  }
+
+  if (Number(state.serviceEvents?.lastRequestedAtMs || 0) !== requestedAtMs) {
+    return;
+  }
+  state.serviceEvents = nextState;
+  if (state.user && state.view === "chat-home") {
+    render();
+  }
+}
+
+function ensureWorkspaceServiceEventsLoaded() {
+  if (!state.user || !shouldRefreshWorkspaceServiceEvents()) {
+    return;
+  }
+  const current = state.serviceEvents || buildDefaultServiceEventsState();
+  const requestedAtMs = Date.now();
+  state.serviceEvents = {
+    ...current,
+    loadState: "loading",
+    statusPageUrl: sanitizeUrl(current.statusPageUrl) || AGORA_STATUS_PAGE_URL,
+    lastRequestedAtMs: requestedAtMs,
+  };
+  void fetchWorkspaceServiceEvents(requestedAtMs);
 }
 
 function formatMultilineText(value) {
@@ -407,6 +507,7 @@ function logout() {
   state.mobileSidebarOpen = false;
   localStorage.removeItem(AUTH_KEY);
   state.user = null;
+  state.serviceEvents = buildDefaultServiceEventsState();
 }
 
 function closeClientRealtimeConnection() {
@@ -2867,7 +2968,43 @@ function renderContextBar() {
 function renderChatHome() {
   const tickets = getTicketsByUser(state.user.id);
   const activeTickets = tickets.filter((ticket) => String(ticket.status || "").trim().toLowerCase() !== "resolved").slice(0, 2);
-  const recentTickets = tickets.slice(0, 3);
+  const serviceEventsState =
+    state.serviceEvents && typeof state.serviceEvents === "object"
+      ? state.serviceEvents
+      : buildDefaultServiceEventsState();
+  const statusPageUrl = sanitizeUrl(serviceEventsState.statusPageUrl) || AGORA_STATUS_PAGE_URL;
+  const serviceEventsBody =
+    serviceEventsState.loadState === "loading" || serviceEventsState.loadState === "idle"
+      ? `<p class="session-empty clienttest-empty-card">Loading latest Agora service events...</p>`
+      : Array.isArray(serviceEventsState.items) && serviceEventsState.items.length > 0
+      ? `
+          <div class="clienttest-service-events-list">
+            ${serviceEventsState.items
+              .map(
+                (item) => `
+                  <article class="clienttest-service-event-card">
+                    <div class="clienttest-service-event-meta">
+                      ${item.statusLabel ? `<span class="clienttest-service-event-status">${escapeHtml(item.statusLabel)}</span>` : ""}
+                      ${item.postedAtLabel ? `<span class="clienttest-service-event-time">${escapeHtml(item.postedAtLabel)}</span>` : ""}
+                    </div>
+                    <h4 class="clienttest-service-event-title">${escapeHtml(item.title)}</h4>
+                    ${
+                      item.summary
+                        ? `<p class="clienttest-service-event-summary">${escapeHtml(item.summary)}</p>`
+                        : ""
+                    }
+                    ${
+                      item.link
+                        ? `<a class="clienttest-service-event-link" href="${escapeHtml(item.link)}" target="_blank" rel="noopener noreferrer">View incident</a>`
+                        : ""
+                    }
+                  </article>
+                `
+              )
+              .join("")}
+          </div>
+        `
+      : `<p class="session-empty clienttest-empty-card">Service events are temporarily unavailable. Open Agora Status Page for the latest updates.</p>`;
 
   return `
     <section class="welcome clienttest-home ${buildClient2RoutePageClass({ visibleFooterBand: true })}">
@@ -2917,23 +3054,13 @@ function renderChatHome() {
           <article class="clienttest-home-panel">
             <div class="clienttest-home-panel-header">
               <div>
-                <p class="clienttest-home-panel-kicker">Recent Activity</p>
-                <h3>Latest ticket movement</h3>
+                <p class="clienttest-home-panel-kicker">Service Events</p>
+                <h3>Latest Agora platform incidents</h3>
               </div>
+              <a class="clienttest-home-panel-link" href="${escapeHtml(statusPageUrl)}" target="_blank" rel="noopener noreferrer">Open Agora Status Page</a>
             </div>
             <div class="clienttest-home-panel-body">
-              ${
-                recentTickets.length === 0
-                  ? `<p class="session-empty clienttest-empty-card">Recent tickets will appear here once the conversation history is populated.</p>`
-                  : recentTickets
-                      .map((ticket) =>
-                        renderHistoryRow(ticket, {
-                          compact: false,
-                          includeActions: false,
-                        })
-                      )
-                      .join("")
-              }
+              ${serviceEventsBody}
             </div>
           </article>
         </div>
@@ -4525,6 +4652,9 @@ function render() {
   }
   if (state.view !== "chat-ticket") {
     clearReplyCountdownRefreshTimer();
+  }
+  if (state.view === "chat-home") {
+    ensureWorkspaceServiceEventsLoaded();
   }
 
   const nextTicketId =
