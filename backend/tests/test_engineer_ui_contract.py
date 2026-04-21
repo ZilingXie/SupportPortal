@@ -218,6 +218,12 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn(".status-resolved {\n  color: var(--ink-muted);", css)
         self.assertIn(".status-surface-open", css)
         self.assertIn(".status-surface-communicating", css)
+        self.assertNotIn("detail-pane-new-messages", app_source)
+        self.assertNotIn("detail-new-messages-btn", app_source)
+        self.assertNotIn("jump-detail-thread-latest", app_source)
+        self.assertNotIn("jump-detail-timeline-latest", app_source)
+        self.assertNotIn(".detail-pane-new-messages", css)
+        self.assertNotIn(".detail-new-messages-btn", css)
         self.assertIn(".status-surface-escalated", css)
         self.assertIn(".status-surface-investigating", css)
         self.assertIn(".status-surface-resolved", css)
@@ -2683,7 +2689,7 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
-    def test_engineer_detail_thread_new_internal_message_shows_new_messages_when_scrolled_up(self) -> None:
+    def test_engineer_detail_thread_scrolled_up_auto_scrolls_smoothly_for_new_internal_message(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
                 """
@@ -2845,18 +2851,18 @@ class EngineerUiContractTests(unittest.TestCase):
                 renderTicketDetail();
                 flushFrames();
 
-                if (currentThreadBody.scrollTop !== 20) {
-                  throw new Error(`Expected thread scrollTop 20 to be preserved, got ${currentThreadBody.scrollTop}.`);
-                }
                 const latestThreadCall = threadScrollCalls[threadScrollCalls.length - 1];
-                if (!latestThreadCall || latestThreadCall.top !== 20) {
-                  throw new Error(`Expected the engineer thread rerender to restore scrollTop 20, got ${JSON.stringify(latestThreadCall)}.`);
+                if (!latestThreadCall || latestThreadCall.top !== 520) {
+                  throw new Error(`Expected the engineer thread rerender to smooth-scroll to 520, got ${JSON.stringify(latestThreadCall)}.`);
                 }
-                if (latestThreadCall.behavior === "smooth") {
-                  throw new Error("Scrolled-up engineer thread should restore position instead of smooth-scrolling to bottom.");
+                if (latestThreadCall.behavior !== "smooth") {
+                  throw new Error(`Expected the engineer thread rerender to smooth-scroll to bottom, got ${JSON.stringify(latestThreadCall)}.`);
                 }
-                if (!currentThreadBody.innerHTML.includes("New messages")) {
-                  throw new Error("Engineer thread should expose a New messages indicator when a remote internal message arrives off-screen.");
+                if (currentThreadBody.scrollTop !== 520) {
+                  throw new Error(`Expected thread scrollTop 520 after auto-scroll, got ${currentThreadBody.scrollTop}.`);
+                }
+                if (currentThreadBody.innerHTML.includes("New messages")) {
+                  throw new Error("Engineer thread should not expose a New messages indicator after removing unread CTA logic.");
                 }
               """
             )
@@ -3201,7 +3207,7 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
-    def test_engineer_detail_timeline_new_customer_message_shows_new_messages_when_scrolled_up(self) -> None:
+    def test_engineer_detail_timeline_scrolled_up_auto_scrolls_smoothly_for_new_customer_message(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
                 """
@@ -3354,18 +3360,18 @@ class EngineerUiContractTests(unittest.TestCase):
                 renderTicketDetail();
                 flushFrames();
 
-                if (currentTimelineList.scrollTop !== 12) {
-                  throw new Error(`Expected timeline scrollTop 12 to be preserved, got ${currentTimelineList.scrollTop}.`);
-                }
                 const latestTimelineCall = timelineScrollCalls[timelineScrollCalls.length - 1];
-                if (!latestTimelineCall || latestTimelineCall.top !== 12) {
-                  throw new Error(`Expected the customer timeline rerender to restore scrollTop 12, got ${JSON.stringify(latestTimelineCall)}.`);
+                if (!latestTimelineCall || latestTimelineCall.top !== 520) {
+                  throw new Error(`Expected the customer timeline rerender to smooth-scroll to 520, got ${JSON.stringify(latestTimelineCall)}.`);
                 }
-                if (latestTimelineCall.behavior === "smooth") {
-                  throw new Error("Scrolled-up customer timeline should restore position instead of smooth-scrolling to bottom.");
+                if (latestTimelineCall.behavior !== "smooth") {
+                  throw new Error(`Expected the customer timeline rerender to smooth-scroll to bottom, got ${JSON.stringify(latestTimelineCall)}.`);
                 }
-                if (!insightRegion.innerHTML.includes("New messages")) {
-                  throw new Error("Customer timeline should expose a New messages indicator when a new customer-visible turn arrives off-screen.");
+                if (currentTimelineList.scrollTop !== 520) {
+                  throw new Error(`Expected timeline scrollTop 520 after auto-scroll, got ${currentTimelineList.scrollTop}.`);
+                }
+                if (insightRegion.innerHTML.includes("New messages")) {
+                  throw new Error("Customer timeline should not expose a New messages indicator after removing unread CTA logic.");
                 }
               """
             )

@@ -64,7 +64,6 @@ const INVESTIGATION_AI_TURN_FETCH_TIMEOUT_MS = 100000;
 const INVESTIGATION_TIMEOUT_RECOVERY_WINDOW_MS = 15000;
 const INVESTIGATION_TIMEOUT_RECOVERY_POLL_MS = 1500;
 const TICKET_POOL_VIEW_STORAGE_KEY = "engineer_ticket_pool_view_mode";
-const DETAIL_NEAR_BOTTOM_THRESHOLD_PX = 96;
 const DETAIL_THREAD_PANE = "thread";
 const DETAIL_TIMELINE_PANE = "timeline";
 
@@ -2559,10 +2558,6 @@ function getScrollDistanceFromBottom(element) {
   return element.scrollHeight - (scrollTop + clientHeight);
 }
 
-function isElementNearBottom(element, threshold = DETAIL_NEAR_BOTTOM_THRESHOLD_PX) {
-  return getScrollDistanceFromBottom(element) <= threshold;
-}
-
 function buildMessageSignature(messages) {
   if (!Array.isArray(messages) || messages.length === 0) {
     return "";
@@ -2589,13 +2584,11 @@ function getDetailPaneState(ticketId, pane) {
   if (!key) {
     return {
       signature: "",
-      unreadVisible: false,
     };
   }
   return (
     detailPaneStateByKey[key] || {
       signature: "",
-      unreadVisible: false,
     }
   );
 }
@@ -2611,14 +2604,6 @@ function setDetailPaneState(ticketId, pane, patch) {
   };
 }
 
-function isDetailPaneUnreadVisible(ticketId, pane) {
-  return Boolean(getDetailPaneState(ticketId, pane).unreadVisible);
-}
-
-function setDetailPaneUnreadVisible(ticketId, pane, visible) {
-  setDetailPaneState(ticketId, pane, { unreadVisible: Boolean(visible) });
-}
-
 function requestDetailPaneScrollToBottom(ticketId, pane, options = {}) {
   const key = getDetailPaneKey(ticketId, pane);
   if (!key) {
@@ -2627,7 +2612,6 @@ function requestDetailPaneScrollToBottom(ticketId, pane, options = {}) {
   detailPendingScrollRequestByKey[key] = {
     behavior: String(options?.behavior || "").trim().toLowerCase() === "smooth" ? "smooth" : "auto",
   };
-  setDetailPaneUnreadVisible(ticketId, pane, false);
 }
 
 function clearDetailPaneScrollRequest(ticketId, pane) {
@@ -2663,12 +2647,11 @@ function buildDetailPaneElementSnapshot(element, scheduledPlan = null) {
   if (scheduledPlan?.type === "restore") {
     return {
       scrollTop: typeof scheduledPlan.scrollTop === "number" ? scheduledPlan.scrollTop : null,
-      nearBottom: false,
+      behavior: scheduledPlan.behavior || "auto",
     };
   }
   return {
     scrollTop: typeof element?.scrollTop === "number" ? element.scrollTop : null,
-    nearBottom: isElementNearBottom(element),
   };
 }
 
@@ -2695,10 +2678,6 @@ function syncDetailPaneScrollPosition(previousSnapshot, viewState) {
   }
 
   const ticketId = normalizeDetailTicketId(viewState.ticketId);
-  const unreadBeforeSync = {
-    thread: isDetailPaneUnreadVisible(ticketId, DETAIL_THREAD_PANE),
-    timeline: isDetailPaneUnreadVisible(ticketId, DETAIL_TIMELINE_PANE),
-  };
   const paneDefinitions = [
     {
       pane: DETAIL_THREAD_PANE,
@@ -2731,23 +2710,11 @@ function syncDetailPaneScrollPosition(previousSnapshot, viewState) {
         behavior: request.behavior || "auto",
       };
       clearDetailPaneScrollRequest(ticketId, pane);
-      setDetailPaneUnreadVisible(ticketId, pane, false);
     } else if (hasNewMessages) {
-      if (previous?.nearBottom) {
-        nextPlans[pane] = {
-          type: "bottom",
-          behavior: "smooth",
-        };
-        setDetailPaneUnreadVisible(ticketId, pane, false);
-      } else if (shouldRestore) {
-        nextPlans[pane] = {
-          type: "restore",
-          scrollTop: previous.scrollTop,
-        };
-        setDetailPaneUnreadVisible(ticketId, pane, true);
-      } else {
-        setDetailPaneUnreadVisible(ticketId, pane, true);
-      }
+      nextPlans[pane] = {
+        type: "bottom",
+        behavior: "smooth",
+      };
     } else if (previous?.preserveBottom) {
       nextPlans[pane] = {
         type: "bottom",
@@ -2764,18 +2731,6 @@ function syncDetailPaneScrollPosition(previousSnapshot, viewState) {
       signature,
     });
   });
-  const unreadAfterSync = {
-    thread: isDetailPaneUnreadVisible(ticketId, DETAIL_THREAD_PANE),
-    timeline: isDetailPaneUnreadVisible(ticketId, DETAIL_TIMELINE_PANE),
-  };
-  if (
-    unreadBeforeSync.thread !== unreadAfterSync.thread ||
-    unreadBeforeSync.timeline !== unreadAfterSync.timeline
-  ) {
-    if (!patchTicketDetailWhilePreservingComposer(viewState)) {
-      workspaceRegionEl.innerHTML = renderTicketDetailViewFromState(viewState);
-    }
-  }
 
   if (!nextPlans.thread && !nextPlans.timeline) {
     detailScheduledScrollPlans = null;
@@ -2803,7 +2758,7 @@ function syncDetailPaneScrollPosition(previousSnapshot, viewState) {
         scrollElementToTop(element, element.scrollHeight, plan.behavior || "auto");
         return;
       }
-      scrollElementToTop(element, plan.scrollTop, "auto");
+      scrollElementToTop(element, plan.scrollTop, plan.behavior || "auto");
     });
     detailScheduledScrollPlans = null;
   });
@@ -2922,22 +2877,6 @@ function renderTicketDetailConversationStaticHtml(viewState) {
   `;
 }
 
-function renderDetailPaneUnreadHtml(viewState, pane) {
-  const ticketId = normalizeDetailTicketId(viewState?.ticketId);
-  if (!ticketId || !isDetailPaneUnreadVisible(ticketId, pane)) {
-    return "";
-  }
-  const action =
-    pane === DETAIL_TIMELINE_PANE ? "jump-detail-timeline-latest" : "jump-detail-thread-latest";
-  return `
-    <div class="detail-pane-new-messages" data-detail-pane-unread="${escapeHtml(pane)}">
-      <button class="detail-new-messages-btn" type="button" data-detail-action="${escapeHtml(action)}">
-        New messages
-      </button>
-    </div>
-  `;
-}
-
 function renderTicketDetailConversationBodyHtml(viewState) {
   return `
     ${
@@ -2961,7 +2900,6 @@ function renderTicketDetailConversationBodyHtml(viewState) {
         ? renderInvestigationDraftPreviewHtml({ draftCustomerReply: viewState.draftCustomerReply })
         : ""
     }
-    ${renderDetailPaneUnreadHtml(viewState, DETAIL_THREAD_PANE)}
   `;
 }
 
@@ -2991,7 +2929,6 @@ function renderTicketDetailInsightPanelHtml(viewState) {
       </div>
       <div class="detail-timeline-body">
         ${renderConversationHtml(viewState.messages)}
-        ${renderDetailPaneUnreadHtml(viewState, DETAIL_TIMELINE_PANE)}
       </div>
     </section>
     ${viewState.replyReadinessReviewHtml}
@@ -3515,12 +3452,6 @@ async function handleDetailClick(event) {
     return;
   }
 
-  if (action === "jump-detail-thread-latest" || action === "jump-detail-timeline-latest") {
-    const pane = action === "jump-detail-timeline-latest" ? DETAIL_TIMELINE_PANE : DETAIL_THREAD_PANE;
-    requestDetailPaneScrollToBottom(selectedTicketId, pane, { behavior: "smooth" });
-    renderTicketDetail();
-    return;
-  }
   if (action === "start-investigation" || action === "resume-communicating" || action === "resolve-ticket" || action === "reopen-ticket") {
     const actionMap = {
       "start-investigation": "investigate",
