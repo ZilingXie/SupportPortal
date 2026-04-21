@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260421-client-composer-inline-toggle-fix-1", html)
-        self.assertIn("./app.js?v=20260421-client-composer-inline-toggle-fix-1", html)
+        self.assertIn("./styles.css?v=20260421-client-composer-list-toggle-fix-1", html)
+        self.assertIn("./app.js?v=20260421-client-composer-list-toggle-fix-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -1529,6 +1529,23 @@ class ClientUiContractTests(unittest.TestCase):
               """
             )
         )
+
+    def test_client2_rich_composer_list_toggle_restores_unwrapped_selection(self) -> None:
+        app_source = Path("ui/client-ui/app.js").read_text(encoding="utf-8")
+        start = app_source.index("function applyComposerListFormat(element) {")
+        end = app_source.index("function handleRichComposerListDeletion", start)
+        list_toggle_source = app_source[start:end]
+
+        self.assertIn("if (!selectComposerNodes(insertedNodes)) {", list_toggle_source)
+        self.assertIn(
+            "placeComposerCaretInsideNode(element, element.childNodes?.length || 0);",
+            list_toggle_source,
+        )
+        self.assertNotIn(
+            "const lastInsertedNode = insertedNodes[insertedNodes.length - 1] || null;",
+            list_toggle_source,
+        )
+        self.assertNotIn("placeComposerCaretAtEnd(lastInsertedNode);", list_toggle_source)
 
     def test_client2_rich_composer_renders_on_both_composer_surfaces(self) -> None:
         self.run_client2_app_script(

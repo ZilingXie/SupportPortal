@@ -4549,13 +4549,10 @@ function applyComposerListFormat(element) {
       existingList,
       unwrapRichComposerListHtml(existingList.outerHTML || "")
     );
-    const lastInsertedNode = insertedNodes[insertedNodes.length - 1] || null;
-    syncComposerDraftStateFromElement(element);
-    if (lastInsertedNode) {
-      placeComposerCaretAtEnd(lastInsertedNode);
-    } else {
+    if (!selectComposerNodes(insertedNodes)) {
       placeComposerCaretInsideNode(element, element.childNodes?.length || 0);
     }
+    syncComposerDraftStateFromElement(element);
     return true;
   }
   const list = document.createElement("ul");
