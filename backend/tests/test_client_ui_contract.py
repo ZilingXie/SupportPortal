@@ -280,9 +280,18 @@ class ClientUiContractTests(unittest.TestCase):
                   disabled: false,
                   focus() {},
                 };
+                const linkInput = {
+                  addEventListener() {},
+                  value: "",
+                  focus() {},
+                  select() {},
+                };
                 document.getElementById = (id) => {
                   if (id === "app") {
                     return appRoot;
+                  }
+                  if (id === "toast-root") {
+                    return toastRoot;
                   }
                   if (id === "chat-input-form") {
                     return inputForm;
@@ -290,7 +299,10 @@ class ClientUiContractTests(unittest.TestCase):
                   if (id === "chat-input") {
                     return chatInput;
                   }
-                  return toastRoot;
+                  if (id === "composer-link-url") {
+                    return linkInput;
+                  }
+                  return null;
                 };
 
                 let currentChatMain = null;
