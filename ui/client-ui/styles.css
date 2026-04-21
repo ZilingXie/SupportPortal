@@ -1592,31 +1592,6 @@ html.material-symbols-pending .material-symbols-outlined {
   gap: 28px;
 }
 
-.chat-new-messages {
-  position: absolute;
-  left: 50%;
-  bottom: 128px;
-  transform: translateX(-50%);
-  z-index: 3;
-  pointer-events: none;
-}
-
-.new-messages-btn {
-  pointer-events: auto;
-  min-height: 42px;
-  padding: 0 18px;
-  border: 1px solid rgba(0, 100, 147, 0.16);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 18px 36px rgba(52, 61, 150, 0.14);
-  color: var(--primary);
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-
 .empty-chat {
   padding: 40px 24px 32px;
   border-radius: 36px;
