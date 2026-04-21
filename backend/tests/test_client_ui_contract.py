@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260421-client-composer-inline-list-fixes-1", html)
-        self.assertIn("./app.js?v=20260421-client-composer-inline-list-fixes-1", html)
+        self.assertIn("./styles.css?v=20260421-client-list-toggle-root-context-1", html)
+        self.assertIn("./app.js?v=20260421-client-list-toggle-root-context-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -1732,6 +1732,158 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_client2_rich_composer_range_context_resolves_root_child_for_collapsed_selection(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                const listItem = { nodeType: 1, tagName: "LI", childNodes: [] };
+                const list = { nodeType: 1, tagName: "UL", childNodes: [listItem] };
+                listItem.parentNode = list;
+                const root = {
+                  nodeType: 1,
+                  tagName: "DIV",
+                  childNodes: [list],
+                  contains(candidate) {
+                    return candidate === this || candidate === list || candidate === listItem;
+                  },
+                };
+                list.parentNode = root;
+
+                const collapsedAtListStart = {
+                  collapsed: true,
+                  startContainer: root,
+                  startOffset: 0,
+                  endContainer: root,
+                  endOffset: 0,
+                };
+                const collapsedAtListEnd = {
+                  collapsed: true,
+                  startContainer: root,
+                  startOffset: 1,
+                  endContainer: root,
+                  endOffset: 1,
+                };
+
+                if (getComposerRangeContextNode(collapsedAtListStart, root) !== list) {
+                  throw new Error("Collapsed root selection at the start of a list should resolve to the child list node.");
+                }
+                if (getComposerRangeContextNode(collapsedAtListEnd, root) !== list) {
+                  throw new Error("Collapsed root selection at the end of a list should still resolve to the adjacent list node.");
+                }
+              """
+            )
+        )
+
+    def test_client2_rich_composer_list_toggle_exits_current_item_from_root_collapsed_context(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                const listItem = { nodeType: 1, tagName: "LI", childNodes: [] };
+                const list = {
+                  nodeType: 1,
+                  tagName: "UL",
+                  childNodes: [listItem],
+                  outerHTML: "<ul><li>Alpha</li></ul>",
+                };
+                listItem.parentNode = list;
+                const element = {
+                  nodeType: 1,
+                  tagName: "DIV",
+                  childNodes: [list],
+                  contains(candidate) {
+                    return candidate === this || candidate === list || candidate === listItem;
+                  },
+                };
+                list.parentNode = element;
+
+                const fakeRange = {
+                  collapsed: true,
+                  startContainer: element,
+                  startOffset: 1,
+                  endContainer: element,
+                  endOffset: 1,
+                  deleted: false,
+                  insertedMarker: null,
+                  deleteContents() {
+                    this.deleted = true;
+                  },
+                  insertNode(node) {
+                    this.insertedMarker = node;
+                  },
+                };
+
+                const marker = {
+                  nodeType: 1,
+                  tagName: "SPAN",
+                  remove() {},
+                  getAttribute(name) {
+                    return name === "data-composer-caret-marker" ? "true" : null;
+                  },
+                };
+
+                const exitInputs = [];
+                const replaceCalls = [];
+                const wrapCalls = [];
+                const unwrapCalls = [];
+                const syncCalls = [];
+
+                getComposerSelectionRange = () => fakeRange;
+                createComposerCaretMarkerElement = () => marker;
+                exitRichComposerCurrentListItemHtml = (html) => {
+                  exitInputs.push(html);
+                  return "<div>Alpha</div>";
+                };
+                replaceComposerNodeWithHtml = (node, html) => {
+                  replaceCalls.push({ node, html });
+                  return [];
+                };
+                findComposerCaretMarkerInNodes = () => null;
+                findComposerCaretMarkerInNode = () => null;
+                restoreComposerCaretFromMarker = () => true;
+                captureRichComposerSelectionBookmark = () => ({
+                  startPath: [0],
+                  startOffset: 0,
+                  endPath: [0],
+                  endOffset: 0,
+                });
+                syncComposerDraftStateFromElement = (_element, options) => {
+                  syncCalls.push(options || null);
+                };
+                wrapRichComposerBlockHtmlInList = () => {
+                  wrapCalls.push(true);
+                  return "<ul><li>unexpected</li></ul>";
+                };
+                unwrapRichComposerListHtml = () => {
+                  unwrapCalls.push(true);
+                  return "<div>unexpected</div>";
+                };
+
+                const handled = applyComposerListFormat(element);
+                if (!handled) {
+                  throw new Error("Collapsed list toggle should succeed when the caret context is resolved from the root container.");
+                }
+                if (!fakeRange.deleted || fakeRange.insertedMarker !== marker) {
+                  throw new Error("Collapsed list toggle should insert a caret marker before exiting the current item.");
+                }
+                if (exitInputs.length !== 1 || exitInputs[0] !== list.outerHTML) {
+                  throw new Error(`Collapsed list toggle should exit the current list item using the existing list HTML, got ${JSON.stringify(exitInputs)}.`);
+                }
+                if (replaceCalls.length !== 1 || replaceCalls[0].node !== list || replaceCalls[0].html !== "<div>Alpha</div>") {
+                  throw new Error(`Collapsed list toggle should replace the existing list with the exited item HTML, got ${JSON.stringify(replaceCalls)}.`);
+                }
+                if (wrapCalls.length !== 0) {
+                  throw new Error("Collapsed list toggle should not re-wrap the current block into a nested list.");
+                }
+                if (unwrapCalls.length !== 0) {
+                  throw new Error("Collapsed list toggle should not unwrap the whole list when only the current item should exit.");
+                }
+                if (syncCalls.length !== 1 || !syncCalls[0] || !syncCalls[0].selectionBookmark) {
+                  throw new Error("Collapsed list toggle should preserve a collapsed selection bookmark when syncing the composer state.");
+                }
+              """
+            )
+        )
+
     def test_client2_rich_composer_inline_format_source_collapses_instead_of_reselecting(self) -> None:
         app_source = Path("ui/client-ui/app.js").read_text(encoding="utf-8")
         start = app_source.index("function applyComposerInlineFormat(tagName, element) {")
@@ -1823,12 +1975,26 @@ class ClientUiContractTests(unittest.TestCase):
         shift_enter_end = app_source.index("function buildChatTicketViewState(ticket) {", shift_enter_start)
         shift_enter_source = app_source[shift_enter_start:shift_enter_end]
 
+        self.assertIn("const contextNode = getComposerRangeContextNode(range, element);", list_toggle_source)
+        self.assertIn("const collapsedListContext = range.collapsed", list_toggle_source)
+        self.assertIn("getComposerCollapsedListContext(range, element)", list_toggle_source)
         self.assertIn("if (existingList && currentListItem) {", list_toggle_source)
         self.assertIn("findNearestComposerListConvertibleBlock(", list_toggle_source)
         self.assertIn("wrapRichComposerBlockHtmlInList(", list_toggle_source)
         self.assertIn("exitRichComposerCurrentListItemHtml(", list_toggle_source)
         self.assertIn("splitRichComposerListItemHtmlAtCaret(", shift_enter_source)
         self.assertNotIn('nextItem.appendChild(document.createElement("br"));', shift_enter_source)
+
+    def test_client2_rich_composer_toolbar_context_uses_range_context_node(self) -> None:
+        app_source = Path("ui/client-ui/app.js").read_text(encoding="utf-8")
+        start = app_source.index("function getRichComposerSelectionContext(element) {")
+        end = app_source.index("function applyComposerToolbarStateToDom()", start)
+        toolbar_context_source = app_source[start:end]
+
+        self.assertIn("const contextNode = getComposerRangeContextNode(range, element);", toolbar_context_source)
+        self.assertIn("const collapsedListContext = range.collapsed", toolbar_context_source)
+        self.assertIn("getComposerCollapsedListContext(range, element)", toolbar_context_source)
+        self.assertNotIn("const contextNode = range.collapsed", toolbar_context_source)
 
     def test_client2_rich_composer_renders_on_both_composer_surfaces(self) -> None:
         self.run_client2_app_script(
