@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260421-client-workspace-active-tickets-scroll-1", html)
-        self.assertIn("./app.js?v=20260421-client-workspace-active-tickets-scroll-1", html)
+        self.assertIn("./styles.css?v=20260421-client-composer-wysiwyg-before-send-1", html)
+        self.assertIn("./app.js?v=20260421-client-composer-wysiwyg-before-send-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -793,7 +793,8 @@ class ClientUiContractTests(unittest.TestCase):
                   throw new Error(`Unexpected fetch call to ${url}`);
                 };
 
-                await handleSendMessage("Need help with RTC join flow");
+                setComposerDraftFromRichHtml("<strong>Need</strong> help with RTC join flow");
+                await handleSendMessage(state.inputDraft);
 
                 if (calls.some((entry) => entry.url === "/api/client/ack")) {
                   throw new Error("Client2 send flow should not call the transient ack endpoint.");
@@ -805,6 +806,9 @@ class ClientUiContractTests(unittest.TestCase):
                 const requestBody = JSON.parse(queryCall.options.body);
                 if (requestBody.requester !== state.user.name) {
                   throw new Error(`Client2 query should include requester name, got ${JSON.stringify(requestBody)}.`);
+                }
+                if (requestBody.message !== "**Need** help with RTC join flow") {
+                  throw new Error(`Client2 send flow should serialize the rich composer draft to markdown, got ${JSON.stringify(requestBody)}.`);
                 }
                 if (requestBody.content_format !== "markdown") {
                   throw new Error(`Client2 query should default customer composer submissions to markdown, got ${JSON.stringify(requestBody)}.`);
@@ -893,51 +897,47 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
-    def test_client2_markdown_toolbar_actions_are_selection_aware(self) -> None:
+    def test_client2_rich_composer_serializes_supported_subset_and_escapes_literal_markdown(self) -> None:
         self.run_client2_app_script(
             textwrap.dedent(
                 """
-                const bold = applyComposerMarkdownToolbarAction("bold", "Need help", 0, 4);
-                if (bold.value !== "**Need** help") {
-                  throw new Error(`Bold should wrap the current selection, got ${bold.value}.`);
-                }
-                if (bold.selectionStart !== 2 || bold.selectionEnd !== 6) {
-                  throw new Error(`Bold should keep the original text selected, got ${bold.selectionStart}:${bold.selectionEnd}.`);
+                const serializedBold = serializeRichComposerHtmlToMarkdown("<strong>Need</strong> help");
+                if (serializedBold !== "**Need** help") {
+                  throw new Error(`Rich composer should serialize strong tags to markdown, got ${serializedBold}.`);
                 }
 
-                const italic = applyComposerMarkdownToolbarAction("italic", "Need help", 4, 4);
-                if (italic.value !== "Need__ help") {
-                  throw new Error(`Italic should insert a paired marker at the cursor, got ${italic.value}.`);
-                }
-                if (italic.selectionStart !== 5 || italic.selectionEnd !== 5) {
-                  throw new Error(`Italic should place the caret inside the marker pair, got ${italic.selectionStart}:${italic.selectionEnd}.`);
+                const serializedLiteral = serializeRichComposerHtmlToMarkdown("**literal** [Docs](https://example.com)");
+                if (serializedLiteral !== "\\\\*\\\\*literal\\\\*\\\\* \\\\[Docs\\\\](https://example.com)") {
+                  throw new Error(`Literal markdown characters should stay escaped when typed as plain text, got ${serializedLiteral}.`);
                 }
 
-                const list = applyComposerMarkdownToolbarAction("list", "alpha\\nbeta", 0, 10);
-                if (list.value !== "- alpha\\n- beta") {
-                  throw new Error(`List should prefix each selected line, got ${JSON.stringify(list.value)}.`);
+                const serializedList = serializeRichComposerHtmlToMarkdown("<ul><li>Alpha</li><li>Beta</li></ul>");
+                if (serializedList !== "- Alpha\\n- Beta") {
+                  throw new Error(`Rich composer should serialize unordered lists, got ${JSON.stringify(serializedList)}.`);
                 }
 
-                const link = applyComposerMarkdownToolbarAction("link", "Read docs", 0, 4);
-                if (link.value !== "[Read](https://example.com) docs") {
-                  throw new Error(`Link should wrap the selection with markdown syntax, got ${link.value}.`);
-                }
-                const selectedUrl = link.value.slice(link.selectionStart, link.selectionEnd);
-                if (selectedUrl !== "https://example.com") {
-                  throw new Error(`Link should select the placeholder URL after insertion, got ${selectedUrl}.`);
+                const serializedCode = serializeRichComposerHtmlToMarkdown('<pre><code class="language-js">const answer = 42;</code></pre>');
+                if (serializedCode !== "```js\\nconst answer = 42;\\n```") {
+                  throw new Error(`Rich composer should serialize fenced code blocks, got ${JSON.stringify(serializedCode)}.`);
                 }
 
-                const codeBlock = applyComposerMarkdownToolbarAction("code-block", "console.log(1);", 0, 15);
-                if (codeBlock.value !== "```\\nconsole.log(1);\\n```") {
-                  throw new Error(`Code block should wrap the selection in fenced markdown, got ${JSON.stringify(codeBlock.value)}.`);
+                const hydrated = buildRichComposerHtmlFromMarkdown(
+                  "**Bold** _italic_ [Docs](https://example.com)\\n- Item\\n```js\\nconst answer = 42;\\n```"
+                );
+                if (!hydrated.includes("<strong>Bold</strong>")) {
+                  throw new Error(`Hydration should recreate bold formatting, got ${hydrated}.`);
                 }
-
-                const emptyCodeBlock = applyComposerMarkdownToolbarAction("code-block", "", 0, 0);
-                if (emptyCodeBlock.value !== "```\\n\\n```") {
-                  throw new Error(`Code block should insert an empty fenced block when nothing is selected, got ${JSON.stringify(emptyCodeBlock.value)}.`);
+                if (!hydrated.includes("<em>italic</em>")) {
+                  throw new Error("Hydration should recreate italic formatting.");
                 }
-                if (emptyCodeBlock.selectionStart !== 4 || emptyCodeBlock.selectionEnd !== 4) {
-                  throw new Error(`Code block should place the caret inside the new fenced block, got ${emptyCodeBlock.selectionStart}:${emptyCodeBlock.selectionEnd}.`);
+                if (!hydrated.includes('href="https://example.com/"')) {
+                  throw new Error("Hydration should recreate safe links.");
+                }
+                if (!hydrated.includes("<ul><li>Item</li></ul>")) {
+                  throw new Error("Hydration should recreate unordered lists.");
+                }
+                if (!hydrated.includes('<pre><code class="language-js">const answer = 42;</code></pre>')) {
+                  throw new Error("Hydration should recreate fenced code blocks.");
                 }
               """
             )
@@ -960,7 +960,7 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
-    def test_client2_markdown_toolbar_renders_on_both_composer_surfaces(self) -> None:
+    def test_client2_rich_composer_renders_on_both_composer_surfaces(self) -> None:
         self.run_client2_app_script(
             textwrap.dedent(
                 """
@@ -977,6 +977,12 @@ class ClientUiContractTests(unittest.TestCase):
                 }
                 if (!draftHtml.includes('data-composer-markdown-action="code-block"')) {
                   throw new Error("Draft composer should expose the code block button.");
+                }
+                if (!draftHtml.includes('contenteditable="true"')) {
+                  throw new Error("Draft composer should render a rich contenteditable editor.");
+                }
+                if (draftHtml.includes("<textarea")) {
+                  throw new Error("Draft composer should no longer render the legacy textarea.");
                 }
                 if (!draftHtml.includes("new-ticket-summary-toolbar-btn")) {
                   throw new Error("Draft composer should preserve the AI Summary button.");
@@ -1008,8 +1014,46 @@ class ClientUiContractTests(unittest.TestCase):
                 if (!detailHtml.includes('data-composer-markdown-action="code-block"')) {
                   throw new Error("Ticket detail shell should expose the code block button.");
                 }
+                if (!detailHtml.includes('contenteditable="true"')) {
+                  throw new Error("Ticket detail shell should render a rich contenteditable editor.");
+                }
+                if (detailHtml.includes("<textarea")) {
+                  throw new Error("Ticket detail shell should no longer render the legacy textarea.");
+                }
                 if (detailHtml.includes("new-ticket-summary-toolbar-btn")) {
                   throw new Error("Ticket detail shell should not add the AI Summary pill to the formatting toolbar.");
+                }
+              """
+            )
+        )
+
+    def test_client2_rich_composer_toolbar_state_and_link_editor_render(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                state.composerToolbarState = {
+                  bold: true,
+                  italic: false,
+                  list: true,
+                  link: false,
+                  codeBlock: false,
+                };
+                state.composerLinkEditor = {
+                  open: true,
+                  url: "https://example.com",
+                  selectedText: "Docs",
+                  selectionBookmark: null,
+                };
+                const draftToolbar = renderNewTicketComposerToolbar({ canCompose: true, includeSummary: true });
+                if (!draftToolbar.includes('data-composer-markdown-action="bold"') || !draftToolbar.includes("is-active")) {
+                  throw new Error(`Toolbar should render the active state for selected formatting, got ${draftToolbar}.`);
+                }
+                const linkEditor = renderComposerLinkEditor({ canCompose: true });
+                if (!linkEditor.includes("composer-link-editor")) {
+                  throw new Error("Rich composer should render the inline link editor when requested.");
+                }
+                if (!linkEditor.includes('value="https://example.com"')) {
+                  throw new Error("Inline link editor should keep the current URL draft.");
                 }
               """
             )
@@ -1057,6 +1101,18 @@ class ClientUiContractTests(unittest.TestCase):
                 }
                 if (!unsafeLinkHtml.includes("[Bad](javascript:alert(1))")) {
                   throw new Error("Unsafe markdown links should preserve the original text.");
+                }
+
+                const escapedLiteralMarkdownHtml = renderMessageBody({
+                  role: "user",
+                  content: "\\\\*\\\\*literal\\\\*\\\\* \\\\[Docs\\\\](https://example.com) \\\\- item",
+                  content_format: "markdown",
+                });
+                if (escapedLiteralMarkdownHtml.includes("<strong>") || escapedLiteralMarkdownHtml.includes("<a ")) {
+                  throw new Error("Escaped markdown syntax should stay literal in customer markdown messages.");
+                }
+                if (!escapedLiteralMarkdownHtml.includes("**literal** [Docs](https://example.com) - item")) {
+                  throw new Error(`Escaped markdown syntax should render without the escape backslashes, got ${escapedLiteralMarkdownHtml}.`);
                 }
 
                 const plaintextHtml = renderMessageBody({

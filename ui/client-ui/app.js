@@ -109,8 +109,11 @@ const state = {
   loginError: "",
   isSubmittingLogin: false,
   inputDraft: "",
+  inputDraftRichHtml: "",
   mobileSidebarOpen: false,
   editingMessageId: null,
+  composerToolbarState: buildDefaultComposerToolbarState(),
+  composerLinkEditor: buildDefaultComposerLinkEditorState(),
   pendingAbortController: null,
   pendingTicketId: null,
   pendingUserMessageId: null,
@@ -320,7 +323,22 @@ function renderInlineTextDecorations(value) {
     .replace(/(^|[^*])\*([^*\n]+)\*/g, (_, prefix, content) => `${prefix}<em>${content}</em>`);
 }
 
-function renderInlineMarkdownText(value) {
+function protectMarkdownEscapeSequences(value) {
+  const replacements = [];
+  const protectedText = String(value ?? "").replace(/\\(.)/g, (_match, char) => {
+    const token = `\uE000${replacements.length}\uE000`;
+    replacements.push(escapeHtml(char));
+    return token;
+  });
+  return {
+    value: protectedText,
+    restore(html) {
+      return String(html || "").replace(/\uE000(\d+)\uE000/g, (_match, index) => replacements[Number(index)] || "");
+    },
+  };
+}
+
+function renderInlineMarkdownTextUnsafe(value) {
   const text = String(value ?? "");
   if (!text) {
     return "";
@@ -350,18 +368,19 @@ function renderInlineMarkdownText(value) {
 
 function renderInlineMarkdown(value) {
   const text = String(value ?? "");
+  const escapedText = protectMarkdownEscapeSequences(text);
   const parts = [];
   const inlineCodePattern = /`([^`\n]+)`/g;
   let lastIndex = 0;
-  let match = inlineCodePattern.exec(text);
+  let match = inlineCodePattern.exec(escapedText.value);
   while (match) {
-    parts.push(renderInlineMarkdownText(text.slice(lastIndex, match.index)));
+    parts.push(renderInlineMarkdownTextUnsafe(escapedText.value.slice(lastIndex, match.index)));
     parts.push(`<code>${escapeHtml(match[1])}</code>`);
     lastIndex = match.index + match[0].length;
-    match = inlineCodePattern.exec(text);
+    match = inlineCodePattern.exec(escapedText.value);
   }
-  parts.push(renderInlineMarkdownText(text.slice(lastIndex)));
-  return parts.join("");
+  parts.push(renderInlineMarkdownTextUnsafe(escapedText.value.slice(lastIndex)));
+  return escapedText.restore(parts.join(""));
 }
 
 function isOrderedListLine(line) {
@@ -2776,6 +2795,7 @@ function renderNewTicketPostSendThreadHtml(viewState) {
 }
 
 function renderComposerFormattingToolbarButtons({ canCompose = true } = {}) {
+  const toolbarState = state.composerToolbarState || buildDefaultComposerToolbarState();
   const buttons = [
     { action: "bold", icon: "format_bold", label: "Bold" },
     { action: "italic", icon: "format_italic", label: "Italic" },
@@ -2786,18 +2806,23 @@ function renderComposerFormattingToolbarButtons({ canCompose = true } = {}) {
   ];
   return buttons
     .map(
-      (item) => `
+      (item) => {
+        const stateKey = normalizeComposerToolbarActionStateKey(item.action);
+        const activeClass = toolbarState[stateKey] ? " is-active" : "";
+        return `
         <button
-          class="new-ticket-toolbar-button"
+          class="new-ticket-toolbar-button${activeClass}"
           type="button"
           data-composer-markdown-action="${escapeHtml(item.action)}"
           aria-label="${escapeHtml(item.label)}"
           title="${escapeHtml(item.label)}"
+          aria-pressed="${toolbarState[stateKey] ? "true" : "false"}"
           ${canCompose ? "" : "disabled"}
         >
           <span class="material-symbols-outlined" aria-hidden="true">${item.icon}</span>
         </button>
-      `
+      `;
+      }
     )
     .join("");
 }
@@ -2816,6 +2841,49 @@ function renderNewTicketComposerToolbar({ canCompose = true, includeSummary = tr
       </button>
     `
   );
+}
+
+function renderComposerLinkEditor({ canCompose = true } = {}) {
+  const editorState = state.composerLinkEditor || buildDefaultComposerLinkEditorState();
+  if (!editorState.open) {
+    return "";
+  }
+  return `
+    <div class="composer-link-editor" data-chat-section="composer-link-editor">
+      <div class="composer-link-editor-copy">
+        <p class="composer-link-editor-label">Link URL</p>
+        <p class="composer-link-editor-hint">
+          ${escapeHtml(editorState.selectedText || "Apply a safe link to the current selection.")}
+        </p>
+      </div>
+      <div class="composer-link-editor-controls">
+        <input
+          id="composer-link-url"
+          class="composer-link-editor-input"
+          type="url"
+          inputmode="url"
+          placeholder="https://example.com"
+          value="${escapeHtml(editorState.url || "")}"
+          ${canCompose ? "" : "disabled"}
+        />
+        <button
+          type="button"
+          class="composer-link-editor-btn is-primary"
+          data-action="apply-composer-link"
+          ${canCompose ? "" : "disabled"}
+        >
+          Apply
+        </button>
+        <button
+          type="button"
+          class="composer-link-editor-btn"
+          data-action="cancel-composer-link"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  `;
 }
 
 function renderNewTicketComposerNoteHtml(viewState) {
@@ -2883,16 +2951,22 @@ function renderNewTicketComposerPanel(viewState, composerClass) {
       <div class="new-ticket-composer-toolbar">
         ${renderNewTicketComposerToolbar({ canCompose: viewState.canCompose, includeSummary: true })}
       </div>
+      <div data-chat-section="composer-link-editor">
+        ${renderComposerLinkEditor({ canCompose: viewState.canCompose })}
+      </div>
       <div data-chat-section="composer-note">${renderNewTicketComposerNoteHtml(viewState)}</div>
       <form id="chat-input-form" class="chat-input-inner new-ticket-composer-form" data-chat-section="composer-form">
         <div class="new-ticket-composer-input-shell">
-          <textarea
+          <div
             id="chat-input"
-            class="textarea new-ticket-textarea"
-            rows="1"
-            placeholder="${escapeHtml(getChatComposerPlaceholder(viewState))}"
-            ${viewState.canCompose ? "" : "disabled"}
-          >${escapeHtml(state.inputDraft || "")}</textarea>
+            class="textarea new-ticket-textarea composer-rich-input"
+            contenteditable="${viewState.canCompose ? "true" : "false"}"
+            role="textbox"
+            aria-multiline="true"
+            spellcheck="true"
+            data-chat-composer-rich="true"
+            data-placeholder="${escapeHtml(getChatComposerPlaceholder(viewState))}"
+          >${ensureComposerDraftRichHtml()}</div>
           <div class="new-ticket-inline-action" data-chat-section="composer-action">
             ${renderNewTicketComposerActionHtml(viewState)}
           </div>
@@ -3155,6 +3229,340 @@ function renderChatHome() {
   `;
 }
 
+function buildDefaultComposerToolbarState() {
+  return {
+    bold: false,
+    italic: false,
+    list: false,
+    link: false,
+    codeBlock: false,
+  };
+}
+
+function buildDefaultComposerLinkEditorState() {
+  return {
+    open: false,
+    url: "https://example.com",
+    selectedText: "",
+    selectionBookmark: null,
+  };
+}
+
+function normalizeComposerToolbarActionStateKey(action) {
+  return String(action || "").trim() === "code-block" ? "codeBlock" : String(action || "").trim();
+}
+
+function stripComposerZeroWidthSpaces(value) {
+  return String(value || "").replace(/\u200B/g, "");
+}
+
+function decodeRichComposerHtmlEntities(value) {
+  return String(value || "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+function parseRichComposerHtmlAttributes(value) {
+  const attrs = {};
+  String(value || "").replace(/([A-Za-z0-9:_-]+)(?:\s*=\s*"([^"]*)")?/g, (_match, name, rawValue) => {
+    attrs[String(name || "").toLowerCase()] = rawValue ?? "";
+    return "";
+  });
+  return attrs;
+}
+
+function parseRichComposerHtmlFragment(value) {
+  const root = { type: "root", children: [] };
+  const stack = [root];
+  const tokens = String(value || "").match(/<\/?[^>]+>|[^<]+/g) || [];
+
+  tokens.forEach((token) => {
+    const current = stack[stack.length - 1];
+    if (!token) {
+      return;
+    }
+    if (token.startsWith("</")) {
+      const closingTag = token.slice(2, -1).trim().toLowerCase();
+      while (stack.length > 1) {
+        const candidate = stack.pop();
+        if (candidate?.tag === closingTag) {
+          break;
+        }
+      }
+      return;
+    }
+    if (token.startsWith("<")) {
+      const raw = token.slice(1, -1).trim();
+      const selfClosing = raw.endsWith("/");
+      const normalizedRaw = selfClosing ? raw.slice(0, -1).trim() : raw;
+      const nameMatch = normalizedRaw.match(/^([A-Za-z0-9:_-]+)/);
+      if (!nameMatch) {
+        return;
+      }
+      const tag = nameMatch[1].toLowerCase();
+      const node = {
+        type: "element",
+        tag,
+        attrs: parseRichComposerHtmlAttributes(normalizedRaw.slice(nameMatch[1].length)),
+        children: [],
+      };
+      current.children.push(node);
+      if (!selfClosing && tag !== "br") {
+        stack.push(node);
+      }
+      return;
+    }
+    current.children.push({
+      type: "text",
+      value: decodeRichComposerHtmlEntities(token),
+    });
+  });
+
+  return root;
+}
+
+function isRichComposerBlockTag(tagName) {
+  return ["p", "div", "ul", "ol", "pre"].includes(String(tagName || "").toLowerCase());
+}
+
+function normalizeRichComposerHtmlString(value) {
+  const normalized = String(value || "")
+    .replace(/<(\/?)b>/gi, "<$1strong>")
+    .replace(/<(\/?)i>/gi, "<$1em>")
+    .replace(/<span[^>]*data-composer-caret-marker="true"[^>]*><\/span>/gi, "")
+    .replace(/<div><br><\/div>/gi, "<br>");
+  const visibleContent = normalized
+    .replace(/<br\s*\/?>/gi, "")
+    .replace(/<\/?(?:div|p|span|strong|em|code|pre|ul|ol|li|a)[^>]*>/gi, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\u200B/g, "")
+    .trim();
+  if (visibleContent) {
+    return normalized;
+  }
+  return /<(?:strong|em|code|li|ul|ol|pre|a)\b/i.test(normalized) ? normalized : "";
+}
+
+function escapeMarkdownLiteralText(value) {
+  return String(value || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/`/g, "\\`")
+    .replace(/\*/g, "\\*")
+    .replace(/_/g, "\\_")
+    .replace(/\[/g, "\\[")
+    .replace(/\]/g, "\\]");
+}
+
+function escapeMarkdownParagraphLineStarts(value) {
+  return String(value || "")
+    .split("\n")
+    .map((line) =>
+      line
+        .replace(/^(-\s+)/, "\\$1")
+        .replace(/^(\d+\.\s+)/, "\\$1")
+        .replace(/^(```)/, "\\$1")
+    )
+    .join("\n");
+}
+
+function serializeRichComposerPlainTextNodes(nodes = []) {
+  return nodes
+    .map((node) => {
+      if (!node) {
+        return "";
+      }
+      if (node.type === "text") {
+        return stripComposerZeroWidthSpaces(node.value);
+      }
+      if (node.type === "element" && node.tag === "br") {
+        return "\n";
+      }
+      return serializeRichComposerPlainTextNodes(node.children || []);
+    })
+    .join("");
+}
+
+function serializeRichComposerInlineNodes(nodes = []) {
+  return nodes
+    .map((node) => {
+      if (!node) {
+        return "";
+      }
+      if (node.type === "text") {
+        return escapeMarkdownLiteralText(stripComposerZeroWidthSpaces(node.value));
+      }
+      if (node.type !== "element") {
+        return "";
+      }
+      switch (node.tag) {
+        case "br":
+          return "\n";
+        case "strong": {
+          const inner = serializeRichComposerInlineNodes(node.children || []);
+          return inner ? `**${inner}**` : "";
+        }
+        case "em": {
+          const inner = serializeRichComposerInlineNodes(node.children || []);
+          return inner ? `_${inner}_` : "";
+        }
+        case "a": {
+          const href = sanitizeUrl(node.attrs?.href);
+          const label = serializeRichComposerInlineNodes(node.children || []);
+          return href && label ? `[${label}](${href})` : label;
+        }
+        case "code": {
+          const codeText = serializeRichComposerPlainTextNodes(node.children || []);
+          return codeText ? `\`${codeText}\`` : "";
+        }
+        default:
+          return serializeRichComposerInlineNodes(node.children || []);
+      }
+    })
+    .join("");
+}
+
+function serializeRichComposerBlockNode(node) {
+  if (!node) {
+    return "";
+  }
+  if (node.type === "text") {
+    return escapeMarkdownParagraphLineStarts(
+      escapeMarkdownLiteralText(stripComposerZeroWidthSpaces(node.value))
+    ).trim();
+  }
+  if (node.type !== "element") {
+    return "";
+  }
+
+  switch (node.tag) {
+    case "ul":
+      return node.children
+        .filter((child) => child?.type === "element" && child.tag === "li")
+        .map((child) => serializeRichComposerInlineNodes(child.children || []).trim())
+        .filter(Boolean)
+        .map((item) => `- ${item}`)
+        .join("\n")
+        .trim();
+    case "ol":
+      return node.children
+        .filter((child) => child?.type === "element" && child.tag === "li")
+        .map((child) => serializeRichComposerInlineNodes(child.children || []).trim())
+        .filter(Boolean)
+        .map((item, index) => `${index + 1}. ${item}`)
+        .join("\n")
+        .trim();
+    case "pre": {
+      const codeNode =
+        (node.children || []).find((child) => child?.type === "element" && child.tag === "code") ||
+        node;
+      const className = String(codeNode.attrs?.class || "");
+      const languageMatch = className.match(/language-([A-Za-z0-9_+-]+)/i);
+      const language = languageMatch ? String(languageMatch[1] || "").trim().toLowerCase() : "";
+      const codeText = stripComposerZeroWidthSpaces(
+        serializeRichComposerPlainTextNodes(codeNode.children || [])
+      ).replace(/\n$/, "");
+      if (!codeText) {
+        return "";
+      }
+      return `\`\`\`${language}\n${codeText}\n\`\`\``.trim();
+    }
+    case "p":
+    case "div": {
+      const hasNestedBlocks = (node.children || []).some(
+        (child) => child?.type === "element" && isRichComposerBlockTag(child.tag)
+      );
+      if (hasNestedBlocks) {
+        return serializeRichComposerRootNodes(node.children || []);
+      }
+      return escapeMarkdownParagraphLineStarts(
+        serializeRichComposerInlineNodes(node.children || [])
+      ).trim();
+    }
+    default:
+      return escapeMarkdownParagraphLineStarts(
+        serializeRichComposerInlineNodes(node.children || [])
+      ).trim();
+  }
+}
+
+function serializeRichComposerRootNodes(nodes = []) {
+  const parts = [];
+  let inlineBuffer = [];
+
+  const flushInlineBuffer = () => {
+    if (inlineBuffer.length === 0) {
+      return;
+    }
+    const serialized = escapeMarkdownParagraphLineStarts(
+      serializeRichComposerInlineNodes(inlineBuffer)
+    )
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    if (serialized) {
+      parts.push(serialized);
+    }
+    inlineBuffer = [];
+  };
+
+  nodes.forEach((node) => {
+    if (node?.type === "element" && isRichComposerBlockTag(node.tag)) {
+      flushInlineBuffer();
+      const block = serializeRichComposerBlockNode(node);
+      if (block) {
+        parts.push(block);
+      }
+      return;
+    }
+    inlineBuffer.push(node);
+  });
+
+  flushInlineBuffer();
+  return parts.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function serializeRichComposerHtmlToMarkdown(value) {
+  const normalizedHtml = normalizeRichComposerHtmlString(value);
+  if (!normalizedHtml) {
+    return "";
+  }
+  const parsed = parseRichComposerHtmlFragment(normalizedHtml);
+  return serializeRichComposerRootNodes(parsed.children || []);
+}
+
+function buildRichComposerHtmlFromMarkdown(value) {
+  const markdown = String(value || "").trim();
+  if (!markdown) {
+    return "";
+  }
+  return String(renderMarkdownMessage(markdown) || "")
+    .replace(/ target="_blank"/g, "")
+    .replace(/ rel="noopener noreferrer"/g, "");
+}
+
+function setComposerDraftFromMarkdown(value) {
+  state.inputDraft = String(value || "");
+  state.inputDraftRichHtml = buildRichComposerHtmlFromMarkdown(state.inputDraft);
+  state.composerToolbarState = buildDefaultComposerToolbarState();
+  state.composerLinkEditor = buildDefaultComposerLinkEditorState();
+}
+
+function setComposerDraftFromRichHtml(value) {
+  const normalizedHtml = normalizeRichComposerHtmlString(value);
+  state.inputDraftRichHtml = normalizedHtml;
+  state.inputDraft = serializeRichComposerHtmlToMarkdown(normalizedHtml);
+}
+
+function ensureComposerDraftRichHtml() {
+  if (!state.inputDraftRichHtml && state.inputDraft) {
+    state.inputDraftRichHtml = buildRichComposerHtmlFromMarkdown(state.inputDraft);
+  }
+  return state.inputDraftRichHtml || "";
+}
+
 function isTextComposerElement(element) {
   return Boolean(
     element &&
@@ -3164,23 +3572,151 @@ function isTextComposerElement(element) {
   );
 }
 
-function captureComposerPreservationState(element) {
-  if (!isTextComposerElement(element) || document.activeElement !== element || element.disabled) {
+function isRichTextComposerElement(element) {
+  return Boolean(
+    element &&
+      typeof element === "object" &&
+      typeof element.focus === "function" &&
+      typeof element.innerHTML === "string" &&
+      typeof element.getAttribute === "function"
+  );
+}
+
+function isComposerElementDisabled(element) {
+  if (!element) {
+    return true;
+  }
+  if (typeof element.disabled === "boolean") {
+    return element.disabled;
+  }
+  return String(element.getAttribute?.("contenteditable") || "").toLowerCase() === "false";
+}
+
+function getComposerSelectionObject() {
+  if (window?.getSelection) {
+    return window.getSelection();
+  }
+  if (document?.getSelection) {
+    return document.getSelection();
+  }
+  return null;
+}
+
+function getComposerNodePath(root, node) {
+  const path = [];
+  let current = node;
+  while (current && current !== root) {
+    const parent = current.parentNode;
+    if (!parent) {
+      return null;
+    }
+    const index = Array.from(parent.childNodes || []).indexOf(current);
+    if (index < 0) {
+      return null;
+    }
+    path.unshift(index);
+    current = parent;
+  }
+  return current === root ? path : null;
+}
+
+function resolveComposerNodePath(root, path = []) {
+  let current = root;
+  for (const segment of path) {
+    if (!current?.childNodes || !current.childNodes[segment]) {
+      return null;
+    }
+    current = current.childNodes[segment];
+  }
+  return current;
+}
+
+function clampComposerNodeOffset(node, offset) {
+  const normalizedOffset = Number.isFinite(offset) ? Number(offset) : 0;
+  if (!node) {
+    return 0;
+  }
+  if (node.nodeType === 3) {
+    return Math.max(0, Math.min(String(node.textContent || "").length, normalizedOffset));
+  }
+  return Math.max(0, Math.min(node.childNodes?.length || 0, normalizedOffset));
+}
+
+function captureRichComposerSelectionBookmark(element) {
+  const selection = getComposerSelectionObject();
+  if (!isRichTextComposerElement(element) || !selection || selection.rangeCount === 0) {
+    return null;
+  }
+  const range = selection.getRangeAt(0);
+  if (!element.contains(range.startContainer) || !element.contains(range.endContainer)) {
     return null;
   }
   return {
-    selectionStart:
-      typeof element.selectionStart === "number" ? element.selectionStart : element.value.length,
-    selectionEnd:
-      typeof element.selectionEnd === "number" ? element.selectionEnd : element.value.length,
-    selectionDirection:
-      typeof element.selectionDirection === "string" ? element.selectionDirection : "none",
+    startPath: getComposerNodePath(element, range.startContainer),
+    startOffset: range.startOffset,
+    endPath: getComposerNodePath(element, range.endContainer),
+    endOffset: range.endOffset,
+  };
+}
+
+function restoreRichComposerSelectionBookmark(element, bookmark) {
+  if (!isRichTextComposerElement(element) || !bookmark || !document?.createRange) {
+    return false;
+  }
+  const selection = getComposerSelectionObject();
+  if (!selection) {
+    return false;
+  }
+  const startNode = resolveComposerNodePath(element, bookmark.startPath);
+  const endNode = resolveComposerNodePath(element, bookmark.endPath);
+  if (!startNode || !endNode) {
+    return false;
+  }
+  const range = document.createRange();
+  range.setStart(startNode, clampComposerNodeOffset(startNode, bookmark.startOffset));
+  range.setEnd(endNode, clampComposerNodeOffset(endNode, bookmark.endOffset));
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return true;
+}
+
+function captureComposerPreservationState(element) {
+  if (!element || isComposerElementDisabled(element)) {
+    return null;
+  }
+  if (isTextComposerElement(element)) {
+    if (document.activeElement !== element) {
+      return null;
+    }
+    return {
+      kind: "text",
+      selectionStart:
+        typeof element.selectionStart === "number" ? element.selectionStart : element.value.length,
+      selectionEnd:
+        typeof element.selectionEnd === "number" ? element.selectionEnd : element.value.length,
+      selectionDirection:
+        typeof element.selectionDirection === "string" ? element.selectionDirection : "none",
+      scrollTop: typeof element.scrollTop === "number" ? element.scrollTop : 0,
+    };
+  }
+  if (!isRichTextComposerElement(element)) {
+    return null;
+  }
+  const activeInside =
+    document.activeElement === element ||
+    (typeof element.contains === "function" && element.contains(document.activeElement));
+  if (!activeInside) {
+    return null;
+  }
+  return {
+    kind: "rich",
+    selectionBookmark: captureRichComposerSelectionBookmark(element),
     scrollTop: typeof element.scrollTop === "number" ? element.scrollTop : 0,
   };
 }
 
 function restoreComposerPreservationState(element, snapshot) {
-  if (!isTextComposerElement(element) || !snapshot || element.disabled) {
+  if (!element || !snapshot || isComposerElementDisabled(element)) {
     return;
   }
   try {
@@ -3188,12 +3724,17 @@ function restoreComposerPreservationState(element, snapshot) {
   } catch {
     element.focus();
   }
-  if (typeof element.setSelectionRange === "function") {
-    element.setSelectionRange(
-      snapshot.selectionStart,
-      snapshot.selectionEnd,
-      snapshot.selectionDirection || "none"
-    );
+  if (snapshot.kind === "text" && isTextComposerElement(element)) {
+    if (typeof element.setSelectionRange === "function") {
+      element.setSelectionRange(
+        snapshot.selectionStart,
+        snapshot.selectionEnd,
+        snapshot.selectionDirection || "none"
+      );
+    }
+  }
+  if (snapshot.kind === "rich" && isRichTextComposerElement(element)) {
+    restoreRichComposerSelectionBookmark(element, snapshot.selectionBookmark);
   }
   if (typeof snapshot.scrollTop === "number" && typeof element.scrollTop === "number") {
     element.scrollTop = snapshot.scrollTop;
@@ -3202,141 +3743,288 @@ function restoreComposerPreservationState(element, snapshot) {
 
 function getActiveChatComposerElement() {
   const input = document.getElementById("chat-input");
-  return isTextComposerElement(input) ? input : null;
+  return isTextComposerElement(input) || isRichTextComposerElement(input) ? input : null;
 }
 
-function clampComposerSelectionIndex(value, index) {
-  const length = String(value || "").length;
-  const normalized = Number.isFinite(index) ? Number(index) : 0;
-  return Math.max(0, Math.min(length, normalized));
-}
-
-function normalizeComposerSelection(value, selectionStart, selectionEnd) {
-  const start = clampComposerSelectionIndex(value, selectionStart);
-  const end = clampComposerSelectionIndex(value, selectionEnd);
-  return start <= end
-    ? { start, end }
-    : {
-        start: end,
-        end: start,
-      };
-}
-
-function replaceComposerRange(value, start, end, replacement) {
-  return `${value.slice(0, start)}${replacement}${value.slice(end)}`;
-}
-
-function wrapComposerSelection(value, selectionStart, selectionEnd, prefix, suffix = prefix) {
-  const selection = normalizeComposerSelection(value, selectionStart, selectionEnd);
-  const selectedText = value.slice(selection.start, selection.end);
-  const replacement = `${prefix}${selectedText}${suffix}`;
-  if (selectedText) {
-    return {
-      value: replaceComposerRange(value, selection.start, selection.end, replacement),
-      selectionStart: selection.start + prefix.length,
-      selectionEnd: selection.start + prefix.length + selectedText.length,
-    };
+function findNearestComposerAncestor(node, tagName, root) {
+  let current = node;
+  const normalizedTagName = String(tagName || "").toLowerCase();
+  while (current && current !== root) {
+    if (current.nodeType === 1 && String(current.tagName || "").toLowerCase() === normalizedTagName) {
+      return current;
+    }
+    current = current.parentNode;
   }
-  const nextValue = replaceComposerRange(value, selection.start, selection.end, replacement);
-  const caret = selection.start + prefix.length;
+  return null;
+}
+
+function setComposerSelectionRange(range) {
+  const selection = getComposerSelectionObject();
+  if (!selection || !range) {
+    return false;
+  }
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return true;
+}
+
+function selectComposerNodeContents(node) {
+  if (!node || !document?.createRange) {
+    return false;
+  }
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  return setComposerSelectionRange(range);
+}
+
+function placeComposerCaretAfterNode(node) {
+  if (!node || !document?.createRange) {
+    return false;
+  }
+  const range = document.createRange();
+  range.setStartAfter(node);
+  range.collapse(true);
+  return setComposerSelectionRange(range);
+}
+
+function placeComposerCaretInsideNode(node, offset = 0) {
+  if (!node || !document?.createRange) {
+    return false;
+  }
+  const range = document.createRange();
+  range.setStart(node, clampComposerNodeOffset(node, offset));
+  range.collapse(true);
+  return setComposerSelectionRange(range);
+}
+
+function getComposerSelectionRange(element) {
+  const selection = getComposerSelectionObject();
+  if (!isRichTextComposerElement(element) || !selection || selection.rangeCount === 0) {
+    return null;
+  }
+  const range = selection.getRangeAt(0);
+  if (!element.contains(range.startContainer) || !element.contains(range.endContainer)) {
+    return null;
+  }
+  return range;
+}
+
+function deriveRichComposerToolbarState(context = {}) {
   return {
-    value: nextValue,
-    selectionStart: caret,
-    selectionEnd: caret,
+    bold: Boolean(context.bold),
+    italic: Boolean(context.italic),
+    list: Boolean(context.list),
+    link: Boolean(context.link),
+    codeBlock: Boolean(context.codeBlock),
   };
 }
 
-function findComposerLineBoundary(value, index, direction) {
-  let pointer = clampComposerSelectionIndex(value, index);
-  if (direction === "backward") {
-    while (pointer > 0 && value[pointer - 1] !== "\n") {
-      pointer -= 1;
-    }
-    return pointer;
+function getRichComposerSelectionContext(element) {
+  const range = getComposerSelectionRange(element);
+  if (!range) {
+    return buildDefaultComposerToolbarState();
   }
-  while (pointer < value.length && value[pointer] !== "\n") {
-    pointer += 1;
-  }
-  return pointer;
-}
-
-function applyListComposerSelection(value, selectionStart, selectionEnd) {
-  const selection = normalizeComposerSelection(value, selectionStart, selectionEnd);
-  const blockStart = findComposerLineBoundary(value, selection.start, "backward");
-  const blockEnd = findComposerLineBoundary(value, selection.end, "forward");
-  const block = value.slice(blockStart, blockEnd);
-  const lines = block.split("\n");
-  let offset = 0;
-  let selectionStartShift = 0;
-  let selectionEndShift = 0;
-  const prefixedLines = lines.map((line) => {
-    const lineStart = blockStart + offset;
-    const needsPrefix = !/^\s*-\s+/.test(line);
-    const prefix = needsPrefix ? "- " : "";
-    if (needsPrefix && selection.start >= lineStart) {
-      selectionStartShift += prefix.length;
-    }
-    if (needsPrefix && selection.end >= lineStart) {
-      selectionEndShift += prefix.length;
-    }
-    offset += line.length + 1;
-    return `${prefix}${line}`;
+  const contextNode = range.collapsed
+    ? range.startContainer
+    : range.commonAncestorContainer || range.startContainer;
+  return deriveRichComposerToolbarState({
+    bold: Boolean(findNearestComposerAncestor(contextNode, "strong", element)),
+    italic: Boolean(findNearestComposerAncestor(contextNode, "em", element)),
+    list: Boolean(findNearestComposerAncestor(contextNode, "li", element)),
+    link: Boolean(findNearestComposerAncestor(contextNode, "a", element)),
+    codeBlock: Boolean(findNearestComposerAncestor(contextNode, "code", element)),
   });
-  return {
-    value: replaceComposerRange(value, blockStart, blockEnd, prefixedLines.join("\n")),
-    selectionStart: selection.start + selectionStartShift,
-    selectionEnd: selection.end + selectionEndShift,
-  };
 }
 
-function applyLinkComposerSelection(value, selectionStart, selectionEnd) {
-  const selection = normalizeComposerSelection(value, selectionStart, selectionEnd);
-  const selectedText = value.slice(selection.start, selection.end) || "link text";
-  const placeholderUrl = "https://example.com";
-  const replacement = `[${selectedText}](${placeholderUrl})`;
-  const nextValue = replaceComposerRange(value, selection.start, selection.end, replacement);
-  const urlStart = selection.start + replacement.indexOf(placeholderUrl);
-  return {
-    value: nextValue,
-    selectionStart: urlStart,
-    selectionEnd: urlStart + placeholderUrl.length,
-  };
+function applyComposerToolbarStateToDom() {
+  const toolbarState = state.composerToolbarState || buildDefaultComposerToolbarState();
+  appRoot.querySelectorAll("[data-composer-markdown-action]").forEach((button) => {
+    const stateKey = normalizeComposerToolbarActionStateKey(
+      button.getAttribute("data-composer-markdown-action")
+    );
+    const isActive = Boolean(toolbarState[stateKey]);
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+  });
 }
 
-function applyCodeBlockComposerSelection(value, selectionStart, selectionEnd) {
-  const selection = normalizeComposerSelection(value, selectionStart, selectionEnd);
-  const selectedText = value.slice(selection.start, selection.end);
-  const replacement = selectedText ? `\`\`\`\n${selectedText}\n\`\`\`` : "```\n\n```";
-  const nextValue = replaceComposerRange(value, selection.start, selection.end, replacement);
-  const caretStart = selection.start + 4;
-  const caretEnd = selectedText ? caretStart + selectedText.length : caretStart;
-  return {
-    value: nextValue,
-    selectionStart: caretStart,
-    selectionEnd: caretEnd,
-  };
-}
-
-function applyComposerMarkdownToolbarAction(action, value, selectionStart, selectionEnd) {
-  const currentValue = String(value || "");
-  switch (String(action || "").trim()) {
-    case "bold":
-      return wrapComposerSelection(currentValue, selectionStart, selectionEnd, "**");
-    case "italic":
-      return wrapComposerSelection(currentValue, selectionStart, selectionEnd, "_");
-    case "list":
-      return applyListComposerSelection(currentValue, selectionStart, selectionEnd);
-    case "link":
-      return applyLinkComposerSelection(currentValue, selectionStart, selectionEnd);
-    case "code-block":
-      return applyCodeBlockComposerSelection(currentValue, selectionStart, selectionEnd);
-    default:
-      return {
-        value: currentValue,
-        selectionStart: clampComposerSelectionIndex(currentValue, selectionStart),
-        selectionEnd: clampComposerSelectionIndex(currentValue, selectionEnd),
-      };
+function syncComposerToolbarStateFromElement(element = getActiveChatComposerElement()) {
+  if (!isRichTextComposerElement(element) || isComposerElementDisabled(element)) {
+    state.composerToolbarState = buildDefaultComposerToolbarState();
+    applyComposerToolbarStateToDom();
+    return state.composerToolbarState;
   }
+  state.composerToolbarState = getRichComposerSelectionContext(element);
+  applyComposerToolbarStateToDom();
+  return state.composerToolbarState;
+}
+
+function syncComposerDraftStateFromElement(element = getActiveChatComposerElement()) {
+  if (isRichTextComposerElement(element)) {
+    const normalizedHtml = normalizeRichComposerHtmlString(element.innerHTML);
+    if (normalizedHtml !== element.innerHTML) {
+      element.innerHTML = normalizedHtml;
+    }
+    state.inputDraftRichHtml = normalizedHtml;
+    state.inputDraft = serializeRichComposerHtmlToMarkdown(normalizedHtml);
+    refreshNewTicketInlineComposerAction();
+    syncComposerToolbarStateFromElement(element);
+    return state.inputDraft;
+  }
+  if (isTextComposerElement(element)) {
+    state.inputDraft = element.value;
+    refreshNewTicketInlineComposerAction();
+    return state.inputDraft;
+  }
+  return state.inputDraft;
+}
+
+function openComposerLinkEditor(element = getActiveChatComposerElement()) {
+  if (!isRichTextComposerElement(element) || isComposerElementDisabled(element)) {
+    return false;
+  }
+  const range = getComposerSelectionRange(element);
+  const linkAncestor = range ? findNearestComposerAncestor(range.startContainer, "a", element) : null;
+  state.composerLinkEditor = {
+    open: true,
+    url: sanitizeUrl(linkAncestor?.getAttribute?.("href")) || "https://example.com",
+    selectedText: String(range?.toString?.() || linkAncestor?.textContent || "").trim(),
+    selectionBookmark: captureRichComposerSelectionBookmark(element),
+  };
+  render();
+  return true;
+}
+
+function closeComposerLinkEditor() {
+  state.composerLinkEditor = buildDefaultComposerLinkEditorState();
+}
+
+function applyComposerLinkFromEditor() {
+  const element = getActiveChatComposerElement();
+  const editorState = state.composerLinkEditor || buildDefaultComposerLinkEditorState();
+  if (!isRichTextComposerElement(element) || !editorState.open) {
+    return false;
+  }
+  const href = sanitizeUrl(editorState.url);
+  if (!href) {
+    toast("Please enter a valid http or https URL.", "error");
+    return false;
+  }
+  restoreRichComposerSelectionBookmark(element, editorState.selectionBookmark);
+  const range = getComposerSelectionRange(element);
+  if (!range) {
+    closeComposerLinkEditor();
+    render();
+    return false;
+  }
+  const link = document.createElement("a");
+  link.setAttribute("href", href);
+  const label = String(range.toString() || editorState.selectedText || "").trim() || "link text";
+  if (range.collapsed) {
+    link.textContent = label;
+    range.insertNode(link);
+  } else {
+    const fragment = range.extractContents();
+    if (String(fragment.textContent || "").trim()) {
+      link.appendChild(fragment);
+    } else {
+      link.textContent = label;
+    }
+    range.insertNode(link);
+  }
+  placeComposerCaretAfterNode(link);
+  closeComposerLinkEditor();
+  syncComposerDraftStateFromElement(element);
+  render();
+  return true;
+}
+
+function applyComposerInlineFormat(tagName, element) {
+  const range = getComposerSelectionRange(element);
+  if (!range) {
+    return false;
+  }
+  if (range.collapsed) {
+    const existing = findNearestComposerAncestor(range.startContainer, tagName, element);
+    if (existing) {
+      placeComposerCaretAfterNode(existing);
+      syncComposerToolbarStateFromElement(element);
+      return true;
+    }
+    const wrapper = document.createElement(tagName);
+    const marker = document.createTextNode("\u200B");
+    wrapper.appendChild(marker);
+    range.insertNode(wrapper);
+    placeComposerCaretInsideNode(marker, 1);
+    syncComposerDraftStateFromElement(element);
+    return true;
+  }
+  const wrapper = document.createElement(tagName);
+  wrapper.appendChild(range.extractContents());
+  range.insertNode(wrapper);
+  selectComposerNodeContents(wrapper);
+  syncComposerDraftStateFromElement(element);
+  return true;
+}
+
+function applyComposerListFormat(element) {
+  const range = getComposerSelectionRange(element);
+  if (!range) {
+    return false;
+  }
+  const list = document.createElement("ul");
+  if (range.collapsed) {
+    const item = document.createElement("li");
+    item.appendChild(document.createElement("br"));
+    list.appendChild(item);
+    range.insertNode(list);
+    placeComposerCaretInsideNode(item, 0);
+    syncComposerDraftStateFromElement(element);
+    return true;
+  }
+  const selectedText = String(range.toString() || "");
+  if (selectedText.includes("\n")) {
+    selectedText.split("\n").forEach((line) => {
+      const item = document.createElement("li");
+      item.textContent = line;
+      list.appendChild(item);
+    });
+  } else {
+    const item = document.createElement("li");
+    item.appendChild(range.extractContents());
+    list.appendChild(item);
+  }
+  range.insertNode(list);
+  const firstItem = list.querySelector?.("li") || list.firstChild;
+  if (firstItem) {
+    selectComposerNodeContents(firstItem);
+  }
+  syncComposerDraftStateFromElement(element);
+  return true;
+}
+
+function applyComposerCodeBlockFormat(element) {
+  const range = getComposerSelectionRange(element);
+  if (!range) {
+    return false;
+  }
+  const pre = document.createElement("pre");
+  const code = document.createElement("code");
+  if (range.collapsed) {
+    const marker = document.createTextNode("\u200B");
+    code.appendChild(marker);
+    pre.appendChild(code);
+    range.insertNode(pre);
+    placeComposerCaretInsideNode(marker, 1);
+  } else {
+    code.textContent = String(range.toString() || "");
+    pre.appendChild(code);
+    range.deleteContents();
+    range.insertNode(pre);
+    selectComposerNodeContents(code);
+  }
+  syncComposerDraftStateFromElement(element);
+  return true;
 }
 
 function handleComposerToolbarAction(action, element = getActiveChatComposerElement()) {
@@ -3348,34 +4036,80 @@ function handleComposerToolbarAction(action, element = getActiveChatComposerElem
     toast("Attachments are not available yet.");
     return false;
   }
-  if (!isTextComposerElement(element) || element.disabled) {
+  if (normalizedAction === "link") {
+    return openComposerLinkEditor(element);
+  }
+  if (!isRichTextComposerElement(element) || isComposerElementDisabled(element)) {
     return false;
   }
-  const nextState = applyComposerMarkdownToolbarAction(
-    normalizedAction,
-    element.value,
-    element.selectionStart,
-    element.selectionEnd
-  );
-  element.value = nextState.value;
-  state.inputDraft = nextState.value;
-  const scrollTop = typeof element.scrollTop === "number" ? element.scrollTop : 0;
-  try {
-    element.focus({ preventScroll: true });
-  } catch {
-    element.focus();
+  switch (normalizedAction) {
+    case "bold":
+      return applyComposerInlineFormat("strong", element);
+    case "italic":
+      return applyComposerInlineFormat("em", element);
+    case "list":
+      return applyComposerListFormat(element);
+    case "code-block":
+      return applyComposerCodeBlockFormat(element);
+    default:
+      return false;
   }
-  if (typeof element.setSelectionRange === "function") {
-    element.setSelectionRange(nextState.selectionStart, nextState.selectionEnd);
-  } else {
-    element.selectionStart = nextState.selectionStart;
-    element.selectionEnd = nextState.selectionEnd;
+}
+
+function insertComposerLineBreak(element) {
+  const range = getComposerSelectionRange(element);
+  if (!range) {
+    return false;
   }
-  if (typeof element.scrollTop === "number") {
-    element.scrollTop = scrollTop;
-  }
-  refreshNewTicketInlineComposerAction();
+  range.deleteContents();
+  const lineBreak = document.createElement("br");
+  range.insertNode(lineBreak);
+  placeComposerCaretAfterNode(lineBreak);
+  syncComposerDraftStateFromElement(element);
   return true;
+}
+
+function insertComposerPlainText(element, text, { preserveNewlines = true } = {}) {
+  const range = getComposerSelectionRange(element);
+  if (!range || !document?.createTextNode) {
+    return false;
+  }
+  range.deleteContents();
+  const fragment = document.createDocumentFragment();
+  const parts = String(text || "").split("\n");
+  parts.forEach((part, index) => {
+    fragment.appendChild(document.createTextNode(part));
+    if (preserveNewlines && index < parts.length - 1) {
+      fragment.appendChild(document.createElement("br"));
+    }
+  });
+  const lastNode = fragment.lastChild;
+  range.insertNode(fragment);
+  if (lastNode) {
+    placeComposerCaretAfterNode(lastNode);
+  }
+  syncComposerDraftStateFromElement(element);
+  return true;
+}
+
+function handleRichComposerShiftEnter(element) {
+  const range = getComposerSelectionRange(element);
+  if (!range) {
+    return false;
+  }
+  const listItem = findNearestComposerAncestor(range.startContainer, "li", element);
+  if (listItem) {
+    const nextItem = document.createElement("li");
+    nextItem.appendChild(document.createElement("br"));
+    listItem.parentNode?.insertBefore(nextItem, listItem.nextSibling || null);
+    placeComposerCaretInsideNode(nextItem, 0);
+    syncComposerDraftStateFromElement(element);
+    return true;
+  }
+  if (findNearestComposerAncestor(range.startContainer, "code", element)) {
+    return insertComposerPlainText(element, "\n", { preserveNewlines: true });
+  }
+  return insertComposerLineBreak(element);
 }
 
 function buildChatTicketViewState(ticket) {
@@ -3396,7 +4130,7 @@ function buildChatTicketViewState(ticket) {
   if (isEditing && !renderableMessages.some((message) => message.id === state.editingMessageId)) {
     state.editingMessageId = null;
     if (!sending) {
-      state.inputDraft = "";
+      setComposerDraftFromMarkdown("");
     }
   }
 
@@ -3551,15 +4285,21 @@ function renderChatTicketFromState(viewState) {
           <div class="new-ticket-composer-toolbar ticket-detail-composer-format-toolbar">
             ${renderNewTicketComposerToolbar({ canCompose: viewState.canCompose, includeSummary: false })}
           </div>
+          <div data-chat-section="composer-link-editor">
+            ${renderComposerLinkEditor({ canCompose: viewState.canCompose })}
+          </div>
           <div data-chat-section="composer-note">${renderChatComposerNoteHtml(viewState)}</div>
           <form id="chat-input-form" class="chat-input-inner ticket-detail-composer-form" data-chat-section="composer-form">
-            <textarea
+            <div
               id="chat-input"
-              class="textarea"
-              rows="1"
-              placeholder="Type your request or technical issue..."
-              ${viewState.canCompose ? "" : "disabled"}
-            >${escapeHtml(state.inputDraft || "")}</textarea>
+              class="textarea composer-rich-input"
+              contenteditable="${viewState.canCompose ? "true" : "false"}"
+              role="textbox"
+              aria-multiline="true"
+              spellcheck="true"
+              data-chat-composer-rich="true"
+              data-placeholder="Type your request or technical issue..."
+            >${ensureComposerDraftRichHtml()}</div>
             <div data-chat-section="composer-action">
               ${renderChatComposerActionHtml(viewState)}
             </div>
@@ -3598,9 +4338,11 @@ function patchChatTicketWhilePreservingComposer(mainRegion, viewState) {
     return false;
   }
   const messagesRegion = chatRoot.querySelector('[data-chat-section="messages"]');
+  const toolbarRegion = chatRoot.querySelector(".ticket-detail-composer-format-toolbar");
+  const linkEditorRegion = chatRoot.querySelector('[data-chat-section="composer-link-editor"]');
   const noteRegion = chatRoot.querySelector('[data-chat-section="composer-note"]');
   const actionRegion = chatRoot.querySelector('[data-chat-section="composer-action"]');
-  if (!messagesRegion || !noteRegion || !actionRegion) {
+  if (!messagesRegion || !toolbarRegion || !linkEditorRegion || !noteRegion || !actionRegion) {
     return false;
   }
 
@@ -3611,13 +4353,24 @@ function patchChatTicketWhilePreservingComposer(mainRegion, viewState) {
       ? renderNewTicketPostSendThreadHtml(viewState)
       : renderNewTicketThreadHtml(viewState)
     : renderChatMessagesHtml(viewState);
+  toolbarRegion.innerHTML = renderNewTicketComposerToolbar({
+    canCompose: viewState.canCompose,
+    includeSummary: false,
+  });
+  linkEditorRegion.innerHTML = renderComposerLinkEditor({ canCompose: viewState.canCompose });
   noteRegion.innerHTML = renderChatComposerNoteHtml(viewState);
   actionRegion.innerHTML = renderChatComposerActionHtml(viewState);
   if (composer) {
-    composer.disabled = !viewState.canCompose;
-    composer.placeholder = getChatComposerPlaceholder(viewState);
+    if (isRichTextComposerElement(composer)) {
+      composer.setAttribute("contenteditable", viewState.canCompose ? "true" : "false");
+      composer.setAttribute("data-placeholder", getChatComposerPlaceholder(viewState));
+    } else {
+      composer.disabled = !viewState.canCompose;
+      composer.placeholder = getChatComposerPlaceholder(viewState);
+    }
   }
   restoreComposerPreservationState(composer, snapshot);
+  applyComposerToolbarStateToDom();
   return true;
 }
 
@@ -4174,7 +4927,7 @@ async function stopGeneration(ticketId = state.activeTicketId) {
     const latestUserContent =
       userMessages.length > 0 ? String(userMessages[userMessages.length - 1]?.content || "") : "";
     state.editingMessageId = pendingSession.userMessageId;
-    state.inputDraft = pendingMessage?.content || latestUserContent || "";
+    setComposerDraftFromMarkdown(pendingMessage?.content || latestUserContent || "");
     clearPendingRequestState(normalizedTicketId);
     await syncTicketsFromBackend({ silent: true });
     render();
@@ -4240,7 +4993,7 @@ async function handleSendMessage(text, options = {}) {
     String(ticket.status || "").trim().toLowerCase() === "escalated";
   updateTicketStatus(ticketId, hasEscalatedAssistance ? "escalated" : "communicating");
   state.editingMessageId = null;
-  state.inputDraft = "";
+  setComposerDraftFromMarkdown("");
   const abortController = createAbortController();
   setPendingSession(ticketId, {
     phase: "submitting",
@@ -4329,7 +5082,7 @@ async function handleSendMessage(text, options = {}) {
         (message) => message.id === userMessageId && message.role === "user"
       );
       state.editingMessageId = userMessageId;
-      state.inputDraft = pendingMessage?.content || text;
+      setComposerDraftFromMarkdown(pendingMessage?.content || text);
       toast("Generation stopped. Edit your message and resend.");
     } else {
       const updated = getTicketById(ticketId);
@@ -4473,6 +5226,25 @@ function bindAuthedEvents() {
     }
   });
 
+  appRoot.querySelectorAll("[data-action='apply-composer-link']").forEach((element) => {
+    if (!element.__clientComposerLinkApplyBound) {
+      element.addEventListener("click", () => {
+        applyComposerLinkFromEditor();
+      });
+      element.__clientComposerLinkApplyBound = true;
+    }
+  });
+
+  appRoot.querySelectorAll("[data-action='cancel-composer-link']").forEach((element) => {
+    if (!element.__clientComposerLinkCancelBound) {
+      element.addEventListener("click", () => {
+        closeComposerLinkEditor();
+        render();
+      });
+      element.__clientComposerLinkCancelBound = true;
+    }
+  });
+
   const form = document.getElementById("chat-input-form");
   if (form && !form.__clientComposerSubmitBound) {
     form.addEventListener("submit", async (event) => {
@@ -4490,17 +5262,82 @@ function bindAuthedEvents() {
 
   const input = document.getElementById("chat-input");
   if (input && !input.__clientComposerInputBound) {
-    input.addEventListener("input", () => {
-      state.inputDraft = input.value;
-      refreshNewTicketInlineComposerAction();
-    });
-    input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && !event.shiftKey) {
+    if (isRichTextComposerElement(input)) {
+      input.addEventListener("input", () => {
+        syncComposerDraftStateFromElement(input);
+      });
+      input.addEventListener("focus", () => {
+        syncComposerToolbarStateFromElement(input);
+      });
+      input.addEventListener("mouseup", () => {
+        syncComposerToolbarStateFromElement(input);
+      });
+      input.addEventListener("keyup", () => {
+        syncComposerToolbarStateFromElement(input);
+      });
+      input.addEventListener("paste", (event) => {
+        const text = event.clipboardData?.getData("text/plain");
+        if (typeof text !== "string") {
+          return;
+        }
         event.preventDefault();
-        form?.requestSubmit();
+        insertComposerPlainText(input, text, { preserveNewlines: true });
+      });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          form?.requestSubmit();
+          return;
+        }
+        if (event.key === "Enter" && event.shiftKey) {
+          event.preventDefault();
+          handleRichComposerShiftEnter(input);
+        }
+      });
+      syncComposerDraftStateFromElement(input);
+    } else {
+      input.addEventListener("input", () => {
+        state.inputDraft = input.value;
+        refreshNewTicketInlineComposerAction();
+      });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          form?.requestSubmit();
+        }
+      });
+    }
+    input.__clientComposerInputBound = true;
+  }
+
+  const linkInput = document.getElementById("composer-link-url");
+  if (linkInput && !linkInput.__clientComposerLinkInputBound) {
+    linkInput.addEventListener("input", () => {
+      state.composerLinkEditor = {
+        ...(state.composerLinkEditor || buildDefaultComposerLinkEditorState()),
+        url: linkInput.value,
+      };
+    });
+    linkInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        applyComposerLinkFromEditor();
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeComposerLinkEditor();
+        render();
       }
     });
-    input.__clientComposerInputBound = true;
+    linkInput.__clientComposerLinkInputBound = true;
+    try {
+      linkInput.focus({ preventScroll: true });
+    } catch {
+      linkInput.focus();
+    }
+    if (typeof linkInput.select === "function") {
+      linkInput.select();
+    }
   }
 
   const stopButton = appRoot.querySelector("[data-action='stop-generation']");
