@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260421-client-composer-markdown-toolbar-1", html)
-        self.assertIn("./app.js?v=20260421-client-composer-markdown-toolbar-1", html)
+        self.assertIn("./styles.css?v=20260421-client-composer-markdown-toolbar-2", html)
+        self.assertIn("./app.js?v=20260421-client-composer-markdown-toolbar-2", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -431,8 +431,145 @@ class ClientUiContractTests(unittest.TestCase):
                 if (!html.includes("Continue what needs attention")) {
                   throw new Error("Client2 workspace should keep the active tickets panel.");
                 }
-                if (!html.includes("Latest ticket movement")) {
-                  throw new Error("Client2 workspace should keep the recent activity panel.");
+                state.serviceEvents = {
+                  loadState: "ready",
+                  items: [
+                    {
+                      title: "RTC black screen issue",
+                      summary: "A limited number of users experienced black screen behavior.",
+                      link: "https://status.agora.io/events/44",
+                      statusLabel: "Resolved",
+                      postedAtLabel: "Posted Feb 24, 2026 - 01:04 PM UTC",
+                    },
+                  ],
+                  statusPageUrl: "https://status.agora.io/",
+                  fetchedAt: "2026-04-21T02:00:00.000Z",
+                  lastRequestedAtMs: 0,
+                };
+
+                const readyHtml = renderChatHome();
+                if (!readyHtml.includes("Service Events")) {
+                  throw new Error("Client2 workspace should render the service events panel.");
+                }
+                if (!readyHtml.includes("Latest Agora platform events")) {
+                  throw new Error("Client2 workspace should render the updated service events title.");
+                }
+                if (!readyHtml.includes("Open Agora Status Page ->")) {
+                  throw new Error("Client2 workspace should render the status page external link.");
+                }
+                if (!readyHtml.includes('href="https://status.agora.io/"') || !readyHtml.includes('target="_blank"') || !readyHtml.includes('rel="noopener noreferrer"')) {
+                  throw new Error("Client2 workspace should render the status page action as a safe external link.");
+                }
+                if (!readyHtml.includes("RTC black screen issue")) {
+                  throw new Error("Client2 workspace should render event titles from the service events payload.");
+                }
+                if (!readyHtml.includes("View incident")) {
+                  throw new Error("Client2 workspace should render incident detail links.");
+                }
+                if (readyHtml.includes("Recent Activity") || readyHtml.includes("Latest ticket movement")) {
+                  throw new Error("Client2 workspace should replace the recent activity panel with service events.");
+                }
+              """
+            )
+        )
+
+    def test_client2_workspace_service_events_loading_and_unavailable_states(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+
+                state.serviceEvents = {
+                  loadState: "loading",
+                  items: [],
+                  statusPageUrl: "https://status.agora.io/",
+                  fetchedAt: null,
+                  lastRequestedAtMs: 0,
+                };
+
+                const loadingHtml = renderChatHome();
+                if (!loadingHtml.includes("Loading latest Agora service events...")) {
+                  throw new Error("Client2 workspace should render the service events loading copy.");
+                }
+
+                state.serviceEvents = {
+                  loadState: "error",
+                  items: [],
+                  statusPageUrl: "https://status.agora.io/",
+                  fetchedAt: null,
+                  lastRequestedAtMs: 0,
+                };
+
+                const unavailableHtml = renderChatHome();
+                if (!unavailableHtml.includes("Service events are temporarily unavailable. Open Agora Status Page -> for the latest updates.")) {
+                  throw new Error("Client2 workspace should render the service events fallback copy.");
+                }
+                if (!unavailableHtml.includes("Open Agora Status Page ->")) {
+                  throw new Error("Client2 workspace should keep the status page action visible when events are unavailable.");
+                }
+              """
+            )
+        )
+
+    def test_client2_workspace_service_events_link_uses_sentence_case_light_blue_style(self) -> None:
+        css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn(".clienttest-home-panel-link", css)
+        self.assertIn("text-transform: none;", css)
+        self.assertIn("font-weight: 700;", css)
+        self.assertIn("color: #7faee6;", css)
+
+    def test_client2_workspace_fetches_service_events_when_entering_workspace(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                window.location.hash = "#/chat";
+                setupClientRealtimeConnection = () => {};
+                renderAuthed = () => {
+                  appRoot.innerHTML = renderMainContent();
+                };
+                syncChatScrollPosition = () => {};
+
+                const calls = [];
+                fetch = (url) => {
+                  calls.push(url);
+                  if (url === "/api/client/service-events") {
+                    return Promise.resolve({
+                      ok: true,
+                      json: async () => ({
+                        items: [
+                          {
+                            title: "RTC black screen issue",
+                            summary: "A limited number of users experienced black screen behavior.",
+                            link: "https://status.agora.io/events/44",
+                            status_label: "Resolved",
+                            posted_at_label: "Posted Feb 24, 2026 - 01:04 PM UTC",
+                          },
+                        ],
+                        status_page_url: "https://status.agora.io/",
+                        fetched_at: "2026-04-21T02:00:00.000Z",
+                      }),
+                    });
+                  }
+                  return Promise.resolve({
+                    ok: true,
+                    json: async () => ({ tickets: [] }),
+                  });
+                };
+
+                render();
+                await Promise.resolve();
+                await Promise.resolve();
+
+                if (!calls.includes("/api/client/service-events")) {
+                  throw new Error("Client2 workspace should fetch service events through the backend proxy.");
+                }
+                if (state.serviceEvents.loadState !== "ready") {
+                  throw new Error(`Client2 workspace should store the loaded service events payload, got ${state.serviceEvents.loadState}.`);
+                }
+                if (!appRoot.innerHTML.includes("RTC black screen issue")) {
+                  throw new Error("Client2 workspace should render fetched service events once the backend payload resolves.");
                 }
               """
             )
