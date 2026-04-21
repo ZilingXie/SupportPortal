@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260421-client-composer-flex-fill-1", html)
-        self.assertIn("./app.js?v=20260421-client-composer-flex-fill-1", html)
+        self.assertIn("./styles.css?v=20260421-client-composer-inline-toggle-fix-1", html)
+        self.assertIn("./app.js?v=20260421-client-composer-inline-toggle-fix-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -1503,6 +1503,28 @@ class ClientUiContractTests(unittest.TestCase):
                 }
                 if (notices.length !== 1 || notices[0] !== "Attachments are not available yet.") {
                   throw new Error(`Attach placeholder should show the not-yet-available toast, got ${JSON.stringify(notices)}.`);
+                }
+              """
+            )
+        )
+
+    def test_client2_rich_composer_inline_toggle_unwraps_existing_markup(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                const unwrappedItalicHtml = unwrapRichComposerInlineTagHtml("<em>Alpha</em>", "em");
+                if (unwrappedItalicHtml !== "Alpha") {
+                  throw new Error(`Italic toggle should unwrap existing italic markup, got ${JSON.stringify(unwrappedItalicHtml)}.`);
+                }
+
+                const unwrappedNestedItalicHtml = unwrapRichComposerInlineTagHtml("<em><strong>Beta</strong></em>", "em");
+                if (unwrappedNestedItalicHtml !== "<strong>Beta</strong>") {
+                  throw new Error(`Italic toggle should preserve nested bold content while removing italic, got ${JSON.stringify(unwrappedNestedItalicHtml)}.`);
+                }
+
+                const unwrappedBoldHtml = unwrapRichComposerInlineTagHtml("<strong><em>Gamma</em></strong>", "strong");
+                if (unwrappedBoldHtml !== "<em>Gamma</em>") {
+                  throw new Error(`Bold toggle should preserve nested italic content while removing bold, got ${JSON.stringify(unwrappedBoldHtml)}.`);
                 }
               """
             )
