@@ -3836,9 +3836,11 @@ function buildRichComposerHtmlFromMarkdown(value) {
   if (!markdown) {
     return "";
   }
-  return String(renderMarkdownMessage(markdown) || "")
-    .replace(/ target="_blank"/g, "")
-    .replace(/ rel="noopener noreferrer"/g, "");
+  return ensureRichComposerEditableLinesAroundCodeBlocksHtml(
+    String(renderMarkdownMessage(markdown) || "")
+      .replace(/ target="_blank"/g, "")
+      .replace(/ rel="noopener noreferrer"/g, "")
+  );
 }
 
 function unwrapRichComposerListHtml(value) {
@@ -3931,6 +3933,108 @@ function buildRichComposerPlainTextBreakNodes(value) {
   return nodes;
 }
 
+function isRichComposerEmptyLineInlineMarkerNode(node) {
+  return (
+    node?.type === "element" &&
+    String(node.tag || "").toLowerCase() === "span" &&
+    String(node.attrs?.["data-composer-empty-line"] || "").toLowerCase() === "true"
+  );
+}
+
+function isRichComposerEmptyLineBlockNode(node) {
+  if (
+    node?.type !== "element" ||
+    !["p", "div"].includes(String(node.tag || "").toLowerCase())
+  ) {
+    return false;
+  }
+  const children = node.children || [];
+  return (
+    children.length > 0 &&
+    children.every(
+      (child) =>
+        isRichComposerWhitespaceTextNode(child) || isRichComposerEmptyLineInlineMarkerNode(child)
+    )
+  );
+}
+
+function buildRichComposerEmptyLineBlockNode() {
+  return {
+    type: "element",
+    tag: "div",
+    attrs: {},
+    children: [
+      {
+        type: "element",
+        tag: "span",
+        attrs: {
+          "data-composer-empty-line": "true",
+        },
+        children: [
+          {
+            type: "text",
+            value: "\u200B",
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function isRichComposerPlainTextCarrierNode(node) {
+  if (!node) {
+    return false;
+  }
+  if (node.type === "text") {
+    return stripComposerZeroWidthSpaces(String(node.value || "")).trim().length > 0;
+  }
+  if (node.type !== "element") {
+    return false;
+  }
+  if (isRichComposerEmptyLineBlockNode(node)) {
+    return true;
+  }
+  const normalizedTag = String(node.tag || "").toLowerCase();
+  if (["pre", "ul", "ol"].includes(normalizedTag)) {
+    return false;
+  }
+  if (["p", "div"].includes(normalizedTag)) {
+    return !(node.children || []).some(
+      (child) => child?.type === "element" && isRichComposerBlockTag(child.tag)
+    );
+  }
+  return stripComposerZeroWidthSpaces(serializeRichComposerPlainTextNodes([node])).trim().length > 0;
+}
+
+function ensureRichComposerEditableLinesAroundCodeBlocksHtml(value) {
+  const normalizedHtml = normalizeRichComposerHtmlString(value);
+  if (!normalizedHtml) {
+    return "";
+  }
+  const parsed = parseRichComposerHtmlFragment(normalizedHtml);
+  const normalizedNodes = normalizeRichComposerParsedNodes(parsed.children || []);
+  const ensuredNodes = [];
+
+  normalizedNodes.forEach((node, index) => {
+    const normalizedTag = String(node?.tag || "").toLowerCase();
+    if (node?.type === "element" && normalizedTag === "pre") {
+      const previousNode = ensuredNodes[ensuredNodes.length - 1] || null;
+      if (!isRichComposerPlainTextCarrierNode(previousNode)) {
+        ensuredNodes.push(buildRichComposerEmptyLineBlockNode());
+      }
+      ensuredNodes.push(node);
+      const nextNode = normalizedNodes[index + 1] || null;
+      if (!isRichComposerPlainTextCarrierNode(nextNode)) {
+        ensuredNodes.push(buildRichComposerEmptyLineBlockNode());
+      }
+      return;
+    }
+    ensuredNodes.push(node);
+  });
+
+  return normalizeRichComposerHtmlString(renderRichComposerHtmlNodes(ensuredNodes));
+}
+
 function unwrapRichComposerCodeBlockHtml(value) {
   const normalizedHtml = normalizeRichComposerHtmlString(value);
   if (!normalizedHtml) {
@@ -3963,7 +4067,7 @@ function setComposerDraftFromMarkdown(value) {
 }
 
 function setComposerDraftFromRichHtml(value) {
-  const normalizedHtml = normalizeRichComposerHtmlString(value);
+  const normalizedHtml = ensureRichComposerEditableLinesAroundCodeBlocksHtml(value);
   state.inputDraftRichHtml = normalizedHtml;
   state.inputDraft = serializeRichComposerHtmlToMarkdown(normalizedHtml);
 }
@@ -4243,6 +4347,26 @@ function placeComposerCaretAtEnd(node) {
   return placeComposerCaretInsideNode(current, current.childNodes?.length || 0);
 }
 
+function placeComposerCaretAtStart(node) {
+  if (!node) {
+    return false;
+  }
+  let current = node;
+  while (current?.nodeType === 1 && current.childNodes?.length) {
+    current = current.firstChild;
+  }
+  if (!current) {
+    return false;
+  }
+  if (current.nodeType === 3) {
+    return placeComposerCaretInsideNode(current, 0);
+  }
+  if (current.nodeType === 1 && String(current.tagName || "").toLowerCase() === "br") {
+    return placeComposerCaretAfterNode(current);
+  }
+  return placeComposerCaretInsideNode(current, 0);
+}
+
 function getComposerSelectionRange(element) {
   const selection = getComposerSelectionObject();
   if (!isRichTextComposerElement(element) || !selection || selection.rangeCount === 0) {
@@ -4466,6 +4590,111 @@ function findNearestEmptyComposerBlockAncestor(node, root) {
   return null;
 }
 
+function buildComposerEmptyLineBlock() {
+  if (!document?.createElement || !document?.createTextNode) {
+    return null;
+  }
+  const line = document.createElement("div");
+  const marker = document.createElement("span");
+  marker.setAttribute("data-composer-empty-line", "true");
+  marker.appendChild(document.createTextNode("\u200B"));
+  line.appendChild(marker);
+  return line;
+}
+
+function isComposerEmptyLineInlineMarker(node) {
+  return (
+    node?.nodeType === 1 &&
+    String(node.tagName || "").toLowerCase() === "span" &&
+    String(node.getAttribute?.("data-composer-empty-line") || "").toLowerCase() === "true"
+  );
+}
+
+function isComposerEmptyLineBlock(node) {
+  if (
+    node?.nodeType !== 1 ||
+    !["p", "div"].includes(String(node.tagName || "").toLowerCase())
+  ) {
+    return false;
+  }
+  const children = Array.from(node.childNodes || []);
+  return (
+    children.length > 0 &&
+    children.every(
+      (child) => child?.nodeType === 3 || isComposerEmptyLineInlineMarker(child)
+    ) &&
+    stripComposerZeroWidthSpaces(String(node.textContent || "")).trim().length === 0
+  );
+}
+
+function isComposerPlainTextCarrierNode(node) {
+  if (!node) {
+    return false;
+  }
+  if (node.nodeType === 3) {
+    return stripComposerZeroWidthSpaces(String(node.textContent || "")).trim().length > 0;
+  }
+  if (node.nodeType !== 1) {
+    return false;
+  }
+  if (isComposerEmptyLineBlock(node)) {
+    return true;
+  }
+  const normalizedTag = String(node.tagName || "").toLowerCase();
+  if (["pre", "ul", "ol"].includes(normalizedTag)) {
+    return false;
+  }
+  if (["p", "div"].includes(normalizedTag)) {
+    return !Array.from(node.childNodes || []).some(
+      (child) => child?.nodeType === 1 && isRichComposerBlockTag(child.tagName)
+    );
+  }
+  return stripComposerZeroWidthSpaces(String(node.textContent || "")).trim().length > 0;
+}
+
+function ensureComposerAdjacentTextLine(codeBlock, root, position = "after") {
+  if (!codeBlock?.parentNode || !root) {
+    return null;
+  }
+  const sibling = position === "before" ? codeBlock.previousSibling : codeBlock.nextSibling;
+  if (isComposerPlainTextCarrierNode(sibling)) {
+    return sibling;
+  }
+  const spacerLine = buildComposerEmptyLineBlock();
+  if (!spacerLine) {
+    return null;
+  }
+  codeBlock.parentNode.insertBefore(
+    spacerLine,
+    position === "before" ? codeBlock : codeBlock.nextSibling || null
+  );
+  return spacerLine;
+}
+
+function ensureComposerCaretInAdjacentTextLine(codeBlock, root, position = "after") {
+  const line = ensureComposerAdjacentTextLine(codeBlock, root, position);
+  if (!line) {
+    return false;
+  }
+  if (position === "before") {
+    return placeComposerCaretAtEnd(line);
+  }
+  if (isComposerEmptyLineBlock(line)) {
+    const marker = line.querySelector?.('[data-composer-empty-line="true"]');
+    const markerText = marker?.firstChild || null;
+    if (markerText?.nodeType === 3) {
+      return placeComposerCaretInsideNode(markerText, 1);
+    }
+  }
+  return placeComposerCaretAtStart(line);
+}
+
+function removeComposerAdjacentCodeBlockSpacerLine(node) {
+  if (isComposerEmptyLineBlock(node)) {
+    node.remove();
+  }
+}
+
 function replaceComposerNodeWithHtml(node, html) {
   if (!node?.parentNode || !document?.createElement || !document?.createDocumentFragment) {
     return [];
@@ -4584,11 +4813,13 @@ function applyComposerCodeBlockFormat(element) {
   const existingCodeBlock =
     findNearestComposerAncestor(range.startContainer, "pre", element) || fullySelectedCodeBlock;
   if (range.collapsed && existingCodeBlock) {
-    placeComposerCaretAfterNode(existingCodeBlock);
-    syncComposerToolbarStateFromElement(element);
+    ensureComposerCaretInAdjacentTextLine(existingCodeBlock, element, "after");
+    syncComposerDraftStateFromElement(element);
     return true;
   }
   if (fullySelectedCodeBlock) {
+    removeComposerAdjacentCodeBlockSpacerLine(fullySelectedCodeBlock.previousSibling);
+    removeComposerAdjacentCodeBlockSpacerLine(fullySelectedCodeBlock.nextSibling);
     const insertedNodes = replaceComposerNodeWithHtml(
       fullySelectedCodeBlock,
       unwrapRichComposerCodeBlockHtml(existingCodeBlock.outerHTML || "")
@@ -4605,13 +4836,33 @@ function applyComposerCodeBlockFormat(element) {
     const marker = document.createTextNode("\u200B");
     code.appendChild(marker);
     pre.appendChild(code);
-    range.insertNode(pre);
+    const emptyBlockAncestor = findNearestEmptyComposerBlockAncestor(range.startContainer, element);
+    if (emptyBlockAncestor?.parentNode) {
+      const beforeLine = buildComposerEmptyLineBlock();
+      const afterLine = buildComposerEmptyLineBlock();
+      const fragment = document.createDocumentFragment();
+      if (beforeLine) {
+        fragment.appendChild(beforeLine);
+      }
+      fragment.appendChild(pre);
+      if (afterLine) {
+        fragment.appendChild(afterLine);
+      }
+      emptyBlockAncestor.parentNode.insertBefore(fragment, emptyBlockAncestor);
+      emptyBlockAncestor.remove();
+    } else {
+      range.insertNode(pre);
+      ensureComposerAdjacentTextLine(pre, element, "before");
+      ensureComposerAdjacentTextLine(pre, element, "after");
+    }
     placeComposerCaretInsideNode(marker, 1);
   } else {
     code.textContent = String(range.toString() || "");
     pre.appendChild(code);
     range.deleteContents();
     range.insertNode(pre);
+    ensureComposerAdjacentTextLine(pre, element, "before");
+    ensureComposerAdjacentTextLine(pre, element, "after");
     selectComposerNodeContents(code);
   }
   syncComposerDraftStateFromElement(element);
