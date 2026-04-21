@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260421-client-composer-focus-gap-1", html)
-        self.assertIn("./app.js?v=20260421-client-composer-focus-gap-1", html)
+        self.assertIn("./styles.css?v=20260421-client-composer-flex-fill-1", html)
+        self.assertIn("./app.js?v=20260421-client-composer-flex-fill-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -1767,18 +1767,26 @@ class ClientUiContractTests(unittest.TestCase):
     def test_client2_rich_composer_css_resets_block_margins(self) -> None:
         css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
 
-        self.assertRegex(css, r"\.new-ticket-fixed-composer-panel\s*\{[^}]*grid-template-rows:\s*auto\s+auto\s+auto\s+1fr;")
         self.assertRegex(
             css,
-            r"\.new-ticket-fixed-composer-panel\s+\.new-ticket-composer-form\s*\{[^}]*height:\s*100%;[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*padding:\s*0\s+18px;",
+            r"\.new-ticket-fixed-composer-panel\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*min-height:\s*0;",
+        )
+        self.assertNotRegex(css, r"\.new-ticket-fixed-composer-panel\s*\{[^}]*grid-template-rows:\s*auto\s+auto\s+auto\s+1fr;")
+        self.assertRegex(
+            css,
+            r"\.new-ticket-fixed-composer-panel\s+\.new-ticket-composer-form\s*\{[^}]*min-height:\s*0;[^}]*flex:\s*1\s+1\s+auto;[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*padding:\s*0\s+18px;",
         )
         self.assertRegex(
             css,
-            r"\.new-ticket-fixed-composer-panel\s+\.new-ticket-composer-input-shell\s*\{[^}]*height:\s*100%;[^}]*display:\s*grid;[^}]*align-items:\s*stretch;[^}]*flex:\s*1\s+1\s+auto;",
+            r"\.new-ticket-fixed-composer-panel\s+\.new-ticket-composer-input-shell\s*\{[^}]*min-height:\s*0;[^}]*height:\s*auto;[^}]*display:\s*flex;[^}]*flex:\s*1\s+1\s+auto;",
+        )
+        self.assertNotRegex(
+            css,
+            r"\.new-ticket-fixed-composer-panel\s+\.new-ticket-composer-input-shell\s*\{[^}]*display:\s*grid;",
         )
         self.assertRegex(
             css,
-            r"\.new-ticket-fixed-composer-panel\s+\.new-ticket-textarea\s*\{[^}]*min-height:\s*0;[^}]*height:\s*100%;[^}]*align-self:\s*stretch;",
+            r"\.new-ticket-fixed-composer-panel\s+\.new-ticket-textarea\s*\{[^}]*flex:\s*1\s+1\s+auto;[^}]*min-height:\s*0;[^}]*height:\s*auto;",
         )
         self.assertRegex(
             css,
