@@ -314,72 +314,240 @@ function formatMultilineText(value) {
   return escapeHtml(value).replaceAll("\n", "<br>");
 }
 
-function renderInlineTextDecorations(value) {
-  const escaped = escapeHtml(value);
-  return escaped
-    .replace(/\*\*([^*\n](?:[\s\S]*?[^*\n])?)\*\*/g, "<strong>$1</strong>")
-    .replace(/(^|[^A-Za-z0-9])_([^_\n]+)_/g, (_, prefix, content) => `${prefix}<em>${content}</em>`)
-    .replace(/(^|[^*])\*([^*\n]+)\*/g, (_, prefix, content) => `${prefix}<em>${content}</em>`);
-}
-
-function protectMarkdownEscapeSequences(value) {
-  const replacements = [];
-  const protectedText = String(value ?? "").replace(/\\(.)/g, (_match, char) => {
-    const token = `\uE000${replacements.length}\uE000`;
-    replacements.push(escapeHtml(char));
-    return token;
-  });
+function buildMarkdownInlineTextNode(value) {
   return {
-    value: protectedText,
-    restore(html) {
-      return String(html || "").replace(/\uE000(\d+)\uE000/g, (_match, index) => replacements[Number(index)] || "");
-    },
+    type: "text",
+    value: String(value ?? ""),
   };
 }
 
-function renderInlineMarkdownTextUnsafe(value) {
-  const text = String(value ?? "");
-  if (!text) {
-    return "";
+function collectMarkdownInlinePlainText(nodes = []) {
+  return nodes
+    .map((node) => {
+      if (!node) {
+        return "";
+      }
+      if (node.type === "text" || node.type === "code") {
+        return String(node.value ?? "");
+      }
+      return collectMarkdownInlinePlainText(node.children || []);
+    })
+    .join("");
+}
+
+function canOpenMarkdownInlineDelimiter(value, index, delimiter) {
+  const previousChar = index > 0 ? String(value[index - 1] || "") : "";
+  const nextChar = String(value[index + delimiter.length] || "");
+  if (!nextChar || /\s/.test(nextChar)) {
+    return false;
   }
-  const html = [];
-  const markdownLinkPattern = /\[([^\]\n]+)\]\(([^)\n]+)\)/g;
-  let lastIndex = 0;
-  let match = markdownLinkPattern.exec(text);
-  while (match) {
-    html.push(renderInlineTextDecorations(text.slice(lastIndex, match.index)));
-    const href = sanitizeUrl(match[2]);
-    if (href) {
-      html.push(
-        `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${renderInlineTextDecorations(
-          match[1]
-        )}</a>`
-      );
-    } else {
-      html.push(escapeHtml(match[0]));
+  if (delimiter === "_" && /[A-Za-z0-9]/.test(previousChar)) {
+    return false;
+  }
+  return true;
+}
+
+function parseMarkdownInlineCodeToken(value, startIndex) {
+  let index = startIndex + 1;
+  let codeText = "";
+  while (index < value.length) {
+    const currentChar = value[index];
+    if (currentChar === "\n") {
+      return null;
     }
-    lastIndex = match.index + match[0].length;
-    match = markdownLinkPattern.exec(text);
+    if (currentChar === "\\") {
+      if (index + 1 < value.length) {
+        codeText += value[index + 1];
+        index += 2;
+        continue;
+      }
+      return null;
+    }
+    if (currentChar === "`") {
+      return {
+        value: codeText,
+        nextIndex: index + 1,
+      };
+    }
+    codeText += currentChar;
+    index += 1;
   }
-  html.push(renderInlineTextDecorations(text.slice(lastIndex)));
-  return html.join("");
+  return null;
+}
+
+function parseMarkdownLinkUrlToken(value, startIndex) {
+  if (String(value[startIndex] || "") !== "(") {
+    return null;
+  }
+  let index = startIndex + 1;
+  let url = "";
+  while (index < value.length) {
+    const currentChar = value[index];
+    if (currentChar === "\n") {
+      return null;
+    }
+    if (currentChar === "\\") {
+      if (index + 1 < value.length) {
+        url += value[index + 1];
+        index += 2;
+        continue;
+      }
+      return null;
+    }
+    if (currentChar === ")") {
+      return {
+        url,
+        nextIndex: index + 1,
+      };
+    }
+    url += currentChar;
+    index += 1;
+  }
+  return null;
+}
+
+function parseMarkdownInlineSequence(value, startIndex = 0, stopToken = "") {
+  const nodes = [];
+  let textBuffer = "";
+  let index = startIndex;
+
+  const flushTextBuffer = () => {
+    if (!textBuffer) {
+      return;
+    }
+    nodes.push(buildMarkdownInlineTextNode(textBuffer));
+    textBuffer = "";
+  };
+
+  while (index < value.length) {
+    if (stopToken && value.startsWith(stopToken, index)) {
+      flushTextBuffer();
+      return {
+        nodes,
+        nextIndex: index + stopToken.length,
+        closed: true,
+      };
+    }
+
+    const currentChar = value[index];
+
+    if (currentChar === "\\") {
+      if (index + 1 < value.length) {
+        textBuffer += value[index + 1];
+        index += 2;
+        continue;
+      }
+      textBuffer += currentChar;
+      index += 1;
+      continue;
+    }
+
+    if (currentChar === "`") {
+      const codeToken = parseMarkdownInlineCodeToken(value, index);
+      if (codeToken) {
+        flushTextBuffer();
+        nodes.push({
+          type: "code",
+          value: codeToken.value,
+        });
+        index = codeToken.nextIndex;
+        continue;
+      }
+    }
+
+    if (value.startsWith("**", index) && canOpenMarkdownInlineDelimiter(value, index, "**")) {
+      const strongToken = parseMarkdownInlineSequence(value, index + 2, "**");
+      if (strongToken.closed && collectMarkdownInlinePlainText(strongToken.nodes).trim()) {
+        flushTextBuffer();
+        nodes.push({
+          type: "strong",
+          children: strongToken.nodes,
+        });
+        index = strongToken.nextIndex;
+        continue;
+      }
+    }
+
+    if ((currentChar === "_" || currentChar === "*") && canOpenMarkdownInlineDelimiter(value, index, currentChar)) {
+      const emphasisToken = parseMarkdownInlineSequence(value, index + 1, currentChar);
+      if (emphasisToken.closed && collectMarkdownInlinePlainText(emphasisToken.nodes).trim()) {
+        flushTextBuffer();
+        nodes.push({
+          type: "em",
+          children: emphasisToken.nodes,
+        });
+        index = emphasisToken.nextIndex;
+        continue;
+      }
+    }
+
+    if (currentChar === "[") {
+      const labelToken = parseMarkdownInlineSequence(value, index + 1, "]");
+      if (labelToken.closed) {
+        const urlToken = parseMarkdownLinkUrlToken(value, labelToken.nextIndex);
+        if (urlToken) {
+          const rawToken = value.slice(index, urlToken.nextIndex);
+          const href = sanitizeUrl(urlToken.url);
+          flushTextBuffer();
+          if (href && collectMarkdownInlinePlainText(labelToken.nodes).trim()) {
+            nodes.push({
+              type: "link",
+              href,
+              children: labelToken.nodes,
+            });
+          } else {
+            nodes.push(buildMarkdownInlineTextNode(rawToken));
+          }
+          index = urlToken.nextIndex;
+          continue;
+        }
+      }
+    }
+
+    textBuffer += currentChar;
+    index += 1;
+  }
+
+  flushTextBuffer();
+  return {
+    nodes,
+    nextIndex: index,
+    closed: false,
+  };
+}
+
+function renderMarkdownInlineNodes(nodes = []) {
+  return nodes
+    .map((node) => {
+      if (!node) {
+        return "";
+      }
+      switch (node.type) {
+        case "text":
+          return escapeHtml(node.value);
+        case "strong":
+          return `<strong>${renderMarkdownInlineNodes(node.children || [])}</strong>`;
+        case "em":
+          return `<em>${renderMarkdownInlineNodes(node.children || [])}</em>`;
+        case "link":
+          return `<a href="${escapeHtml(node.href || "")}" target="_blank" rel="noopener noreferrer">${renderMarkdownInlineNodes(
+            node.children || []
+          )}</a>`;
+        case "code":
+          return `<code>${escapeHtml(node.value)}</code>`;
+        default:
+          return "";
+      }
+    })
+    .join("");
 }
 
 function renderInlineMarkdown(value) {
   const text = String(value ?? "");
-  const escapedText = protectMarkdownEscapeSequences(text);
-  const parts = [];
-  const inlineCodePattern = /`([^`\n]+)`/g;
-  let lastIndex = 0;
-  let match = inlineCodePattern.exec(escapedText.value);
-  while (match) {
-    parts.push(renderInlineMarkdownTextUnsafe(escapedText.value.slice(lastIndex, match.index)));
-    parts.push(`<code>${escapeHtml(match[1])}</code>`);
-    lastIndex = match.index + match[0].length;
-    match = inlineCodePattern.exec(escapedText.value);
+  if (!text) {
+    return "";
   }
-  parts.push(renderInlineMarkdownTextUnsafe(escapedText.value.slice(lastIndex)));
-  return escapedText.restore(parts.join(""));
+  return renderMarkdownInlineNodes(parseMarkdownInlineSequence(text).nodes);
 }
 
 function isOrderedListLine(line) {
@@ -3366,22 +3534,160 @@ function isRichComposerBlockTag(tagName) {
   return ["p", "div", "ul", "ol", "pre"].includes(String(tagName || "").toLowerCase());
 }
 
+function isRichComposerWhitespaceTextNode(node) {
+  return (
+    node?.type === "text" && stripComposerZeroWidthSpaces(String(node.value || "")).trim().length === 0
+  );
+}
+
+function isRichComposerBreakNode(node) {
+  return node?.type === "element" && String(node.tag || "").toLowerCase() === "br";
+}
+
+function isRichComposerEmptyBlockWrapperNode(node) {
+  if (
+    node?.type !== "element" ||
+    !["p", "div"].includes(String(node.tag || "").toLowerCase())
+  ) {
+    return false;
+  }
+  return (node.children || []).every(
+    (child) => isRichComposerWhitespaceTextNode(child) || isRichComposerBreakNode(child)
+  );
+}
+
+function isRichComposerEmptyListNode(node) {
+  if (
+    node?.type !== "element" ||
+    !["ul", "ol"].includes(String(node.tag || "").toLowerCase())
+  ) {
+    return false;
+  }
+  const items = (node.children || []).filter(
+    (child) => child?.type === "element" && String(child.tag || "").toLowerCase() === "li"
+  );
+  if (items.length === 0) {
+    return true;
+  }
+  return items.every((item) =>
+    (item.children || []).every(
+      (child) => isRichComposerWhitespaceTextNode(child) || isRichComposerBreakNode(child)
+    )
+  );
+}
+
+function normalizeRichComposerParsedNodes(nodes = []) {
+  const normalized = [];
+
+  nodes.forEach((node) => {
+    if (!node) {
+      return;
+    }
+    if (node.type === "text") {
+      if (!String(node.value || "")) {
+        return;
+      }
+      normalized.push({
+        ...node,
+        value: String(node.value || ""),
+      });
+      return;
+    }
+    if (node.type !== "element") {
+      return;
+    }
+
+    const normalizedChildren = normalizeRichComposerParsedNodes(node.children || []);
+    const normalizedNode = {
+      ...node,
+      children: normalizedChildren,
+    };
+    const normalizedTag = String(normalizedNode.tag || "").toLowerCase();
+
+    if (isRichComposerEmptyBlockWrapperNode(normalizedNode)) {
+      return;
+    }
+
+    if (["ul", "ol"].includes(normalizedTag)) {
+      const items = normalizedChildren.filter(
+        (child) => child?.type === "element" && String(child.tag || "").toLowerCase() === "li"
+      );
+      const normalizedList = {
+        ...normalizedNode,
+        children: items,
+      };
+      if (isRichComposerEmptyListNode(normalizedList)) {
+        return;
+      }
+      normalized.push(normalizedList);
+      return;
+    }
+
+    if (["p", "div"].includes(normalizedTag)) {
+      const hasOnlyBlocksOrWhitespace =
+        normalizedChildren.length > 0 &&
+        normalizedChildren.every(
+          (child) =>
+            isRichComposerWhitespaceTextNode(child) ||
+            (child?.type === "element" && isRichComposerBlockTag(child.tag))
+        );
+      if (hasOnlyBlocksOrWhitespace) {
+        normalized.push(
+          ...normalizedChildren.filter(
+            (child) => child?.type === "element" && isRichComposerBlockTag(child.tag)
+          )
+        );
+        return;
+      }
+    }
+
+    normalized.push(normalizedNode);
+  });
+
+  return normalized;
+}
+
+function renderRichComposerHtmlAttributes(attrs = {}) {
+  return Object.entries(attrs)
+    .filter(([name]) => String(name || "").trim())
+    .map(([name, rawValue]) => {
+      const normalizedName = String(name || "").trim().toLowerCase();
+      const value = rawValue ?? "";
+      return ` ${normalizedName}="${escapeHtml(String(value))}"`;
+    })
+    .join("");
+}
+
+function renderRichComposerHtmlNode(node) {
+  if (!node) {
+    return "";
+  }
+  if (node.type === "text") {
+    return escapeHtml(String(node.value || ""));
+  }
+  if (node.type !== "element") {
+    return "";
+  }
+  const tag = String(node.tag || "").toLowerCase();
+  if (tag === "br") {
+    return "<br>";
+  }
+  return `<${tag}${renderRichComposerHtmlAttributes(node.attrs || {})}>${renderRichComposerHtmlNodes(
+    node.children || []
+  )}</${tag}>`;
+}
+
+function renderRichComposerHtmlNodes(nodes = []) {
+  return nodes.map((node) => renderRichComposerHtmlNode(node)).join("");
+}
+
 function normalizeRichComposerHtmlString(value) {
   const normalized = String(value || "")
     .replace(/<(\/?)b>/gi, "<$1strong>")
     .replace(/<(\/?)i>/gi, "<$1em>")
-    .replace(/<span[^>]*data-composer-caret-marker="true"[^>]*><\/span>/gi, "")
-    .replace(/<div><br><\/div>/gi, "<br>");
-  const visibleContent = normalized
-    .replace(/<br\s*\/?>/gi, "")
-    .replace(/<\/?(?:div|p|span|strong|em|code|pre|ul|ol|li|a)[^>]*>/gi, "")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/\u200B/g, "")
-    .trim();
-  if (visibleContent) {
-    return normalized;
-  }
-  return /<(?:strong|em|code|li|ul|ol|pre|a)\b/i.test(normalized) ? normalized : "";
+    .replace(/<span[^>]*data-composer-caret-marker="true"[^>]*><\/span>/gi, "");
+  const parsed = parseRichComposerHtmlFragment(normalized);
+  return renderRichComposerHtmlNodes(normalizeRichComposerParsedNodes(parsed.children || []));
 }
 
 function escapeMarkdownLiteralText(value) {
@@ -3578,6 +3884,37 @@ function buildRichComposerHtmlFromMarkdown(value) {
   return String(renderMarkdownMessage(markdown) || "")
     .replace(/ target="_blank"/g, "")
     .replace(/ rel="noopener noreferrer"/g, "");
+}
+
+function unwrapRichComposerListHtml(value) {
+  const normalizedHtml = normalizeRichComposerHtmlString(value);
+  if (!normalizedHtml) {
+    return "";
+  }
+  const parsed = parseRichComposerHtmlFragment(normalizedHtml);
+  const unwrappedNodes = [];
+  normalizeRichComposerParsedNodes(parsed.children || []).forEach((node) => {
+    const normalizedTag = String(node?.tag || "").toLowerCase();
+    if (node?.type === "element" && ["ul", "ol"].includes(normalizedTag)) {
+      const items = (node.children || []).filter(
+        (child) => child?.type === "element" && String(child.tag || "").toLowerCase() === "li"
+      );
+      items.forEach((item, index) => {
+        if (index > 0) {
+          unwrappedNodes.push({
+            type: "element",
+            tag: "br",
+            attrs: {},
+            children: [],
+          });
+        }
+        unwrappedNodes.push(...(item.children || []));
+      });
+      return;
+    }
+    unwrappedNodes.push(node);
+  });
+  return normalizeRichComposerHtmlString(renderRichComposerHtmlNodes(unwrappedNodes));
 }
 
 function setComposerDraftFromMarkdown(value) {
@@ -3834,6 +4171,26 @@ function placeComposerCaretInsideNode(node, offset = 0) {
   return setComposerSelectionRange(range);
 }
 
+function placeComposerCaretAtEnd(node) {
+  if (!node) {
+    return false;
+  }
+  let current = node;
+  while (current?.nodeType === 1 && current.childNodes?.length) {
+    current = current.lastChild;
+  }
+  if (!current) {
+    return false;
+  }
+  if (current.nodeType === 3) {
+    return placeComposerCaretInsideNode(current, String(current.textContent || "").length);
+  }
+  if (current.nodeType === 1 && String(current.tagName || "").toLowerCase() === "br") {
+    return placeComposerCaretAfterNode(current);
+  }
+  return placeComposerCaretInsideNode(current, current.childNodes?.length || 0);
+}
+
 function getComposerSelectionRange(element) {
   const selection = getComposerSelectionObject();
   if (!isRichTextComposerElement(element) || !selection || selection.rangeCount === 0) {
@@ -4004,17 +4361,84 @@ function applyComposerInlineFormat(tagName, element) {
   return true;
 }
 
+function isRichComposerDomNodeStructurallyEmpty(node) {
+  if (!node) {
+    return true;
+  }
+  if (node.nodeType === 3) {
+    return stripComposerZeroWidthSpaces(String(node.textContent || "")).trim().length === 0;
+  }
+  if (node.nodeType !== 1) {
+    return true;
+  }
+  if (String(node.tagName || "").toLowerCase() === "br") {
+    return true;
+  }
+  return Array.from(node.childNodes || []).every((child) => isRichComposerDomNodeStructurallyEmpty(child));
+}
+
+function findNearestEmptyComposerBlockAncestor(node, root) {
+  let current = node;
+  while (current && current !== root) {
+    if (
+      current.nodeType === 1 &&
+      ["p", "div"].includes(String(current.tagName || "").toLowerCase()) &&
+      isRichComposerDomNodeStructurallyEmpty(current)
+    ) {
+      return current;
+    }
+    current = current.parentNode;
+  }
+  return null;
+}
+
+function replaceComposerNodeWithHtml(node, html) {
+  if (!node?.parentNode || !document?.createElement || !document?.createDocumentFragment) {
+    return [];
+  }
+  const container = document.createElement("div");
+  container.innerHTML = String(html || "");
+  const insertedNodes = Array.from(container.childNodes || []);
+  const fragment = document.createDocumentFragment();
+  insertedNodes.forEach((child) => fragment.appendChild(child));
+  node.parentNode.insertBefore(fragment, node);
+  node.parentNode.removeChild(node);
+  return insertedNodes;
+}
+
 function applyComposerListFormat(element) {
   const range = getComposerSelectionRange(element);
   if (!range) {
     return false;
+  }
+  const existingList =
+    findNearestComposerAncestor(range.startContainer, "ul", element) ||
+    findNearestComposerAncestor(range.startContainer, "ol", element);
+  if (existingList) {
+    const insertedNodes = replaceComposerNodeWithHtml(
+      existingList,
+      unwrapRichComposerListHtml(existingList.outerHTML || "")
+    );
+    const lastInsertedNode = insertedNodes[insertedNodes.length - 1] || null;
+    syncComposerDraftStateFromElement(element);
+    if (lastInsertedNode) {
+      placeComposerCaretAtEnd(lastInsertedNode);
+    } else {
+      placeComposerCaretInsideNode(element, element.childNodes?.length || 0);
+    }
+    return true;
   }
   const list = document.createElement("ul");
   if (range.collapsed) {
     const item = document.createElement("li");
     item.appendChild(document.createElement("br"));
     list.appendChild(item);
-    range.insertNode(list);
+    const emptyBlockAncestor = findNearestEmptyComposerBlockAncestor(range.startContainer, element);
+    if (emptyBlockAncestor?.parentNode) {
+      emptyBlockAncestor.parentNode.replaceChild(list, emptyBlockAncestor);
+    } else {
+      range.insertNode(list);
+    }
     placeComposerCaretInsideNode(item, 0);
     syncComposerDraftStateFromElement(element);
     return true;
@@ -4037,6 +4461,46 @@ function applyComposerListFormat(element) {
     selectComposerNodeContents(firstItem);
   }
   syncComposerDraftStateFromElement(element);
+  return true;
+}
+
+function handleRichComposerListDeletion(event, element) {
+  const key = String(event?.key || "");
+  if (!["Backspace", "Delete"].includes(key)) {
+    return false;
+  }
+  const range = getComposerSelectionRange(element);
+  if (!range || !range.collapsed) {
+    return false;
+  }
+  const listItem = findNearestComposerAncestor(range.startContainer, "li", element);
+  if (!listItem || !isRichComposerDomNodeStructurallyEmpty(listItem)) {
+    return false;
+  }
+
+  event.preventDefault();
+  const list = listItem.parentNode;
+  const previousItem = listItem.previousElementSibling;
+  const nextItem = listItem.nextElementSibling;
+  listItem.remove();
+
+  if (!list || !list.querySelector?.("li")) {
+    list?.remove();
+    syncComposerDraftStateFromElement(element);
+    placeComposerCaretInsideNode(element, element.childNodes?.length || 0);
+    return true;
+  }
+
+  syncComposerDraftStateFromElement(element);
+  if (previousItem) {
+    placeComposerCaretAtEnd(previousItem);
+    return true;
+  }
+  if (nextItem) {
+    selectComposerNodeContents(nextItem);
+    return true;
+  }
+  placeComposerCaretInsideNode(element, element.childNodes?.length || 0);
   return true;
 }
 
@@ -5236,6 +5700,9 @@ function bindAuthedEvents() {
         insertComposerPlainText(input, text, { preserveNewlines: true });
       });
       input.addEventListener("keydown", (event) => {
+        if (handleRichComposerListDeletion(event, input)) {
+          return;
+        }
         if (event.key === "Enter" && !event.shiftKey) {
           event.preventDefault();
           form?.requestSubmit();
