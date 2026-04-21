@@ -4710,6 +4710,137 @@ function getComposerSelectionRange(element) {
   return range;
 }
 
+function getComposerRangeContextNode(range, root) {
+  if (!range) {
+    return null;
+  }
+  if (!range.collapsed) {
+    return range.commonAncestorContainer || range.startContainer;
+  }
+  const startContainer = range.startContainer || null;
+  if (!startContainer || startContainer.nodeType !== 1) {
+    return startContainer;
+  }
+  const childNodes = Array.from(startContainer.childNodes || []);
+  if (childNodes.length === 0) {
+    return startContainer;
+  }
+  const previousChild =
+    range.startOffset > 0 && range.startOffset - 1 < childNodes.length
+      ? childNodes[range.startOffset - 1]
+      : null;
+  const nextChild =
+    range.startOffset >= 0 && range.startOffset < childNodes.length
+      ? childNodes[range.startOffset]
+      : null;
+  const candidate = previousChild || nextChild || startContainer;
+  if (!root || candidate === root) {
+    return candidate;
+  }
+  return typeof root.contains === "function" && root.contains(candidate) ? candidate : startContainer;
+}
+
+function getComposerCollapsedRangeAdjacentNode(range) {
+  if (!range?.collapsed) {
+    return null;
+  }
+  const startContainer = range.startContainer || null;
+  if (!startContainer || startContainer.nodeType !== 1) {
+    return null;
+  }
+  const childNodes = Array.from(startContainer.childNodes || []);
+  if (childNodes.length === 0) {
+    return null;
+  }
+  if (range.startOffset > 0 && range.startOffset - 1 < childNodes.length) {
+    return {
+      node: childNodes[range.startOffset - 1],
+      affinity: "after",
+    };
+  }
+  if (range.startOffset >= 0 && range.startOffset < childNodes.length) {
+    return {
+      node: childNodes[range.startOffset],
+      affinity: "before",
+    };
+  }
+  return null;
+}
+
+function getComposerCollapsedListContext(range, root) {
+  if (!range?.collapsed) {
+    return {
+      listNode: null,
+      listItem: null,
+    };
+  }
+  const startContainer = range.startContainer || null;
+  const directListItem =
+    (startContainer?.nodeType === 1 && String(startContainer.tagName || "").toLowerCase() === "li"
+      ? startContainer
+      : null) || findNearestComposerAncestor(startContainer, "li", root);
+  const directListNode =
+    (startContainer?.nodeType === 1 &&
+    ["ul", "ol"].includes(String(startContainer.tagName || "").toLowerCase())
+      ? startContainer
+      : null) ||
+    findNearestComposerAncestor(startContainer, "ul", root) ||
+    findNearestComposerAncestor(startContainer, "ol", root);
+  if (directListItem) {
+    return {
+      listNode:
+        directListNode ||
+        findNearestComposerAncestor(directListItem, "ul", root) ||
+        findNearestComposerAncestor(directListItem, "ol", root),
+      listItem: directListItem,
+    };
+  }
+  const adjacent = getComposerCollapsedRangeAdjacentNode(range);
+  if (!adjacent?.node) {
+    return {
+      listNode: directListNode || null,
+      listItem: null,
+    };
+  }
+  const adjacentNode = adjacent.node;
+  const adjacentListNode =
+    (adjacentNode.nodeType === 1 &&
+    ["ul", "ol"].includes(String(adjacentNode.tagName || "").toLowerCase())
+      ? adjacentNode
+      : null) ||
+    findNearestComposerAncestor(adjacentNode, "ul", root) ||
+    findNearestComposerAncestor(adjacentNode, "ol", root);
+  if (!adjacentListNode) {
+    return {
+      listNode: directListNode || null,
+      listItem: null,
+    };
+  }
+  const adjacentListItem =
+    (adjacentNode.nodeType === 1 && String(adjacentNode.tagName || "").toLowerCase() === "li"
+      ? adjacentNode
+      : null) || findNearestComposerAncestor(adjacentNode, "li", root);
+  if (adjacentListItem) {
+    return {
+      listNode: adjacentListNode,
+      listItem: adjacentListItem,
+    };
+  }
+  const listItems = Array.from(adjacentListNode.childNodes || []).filter(
+    (child) => child?.nodeType === 1 && String(child.tagName || "").toLowerCase() === "li"
+  );
+  if (listItems.length === 0) {
+    return {
+      listNode: adjacentListNode,
+      listItem: null,
+    };
+  }
+  return {
+    listNode: adjacentListNode,
+    listItem: adjacent.affinity === "after" ? listItems[listItems.length - 1] : listItems[0],
+  };
+}
+
 function getComposerRangeSelectedSingleNode(range, root) {
   if (
     !range ||
@@ -4796,13 +4927,16 @@ function getRichComposerSelectionContext(element) {
   if (!range) {
     return buildDefaultComposerToolbarState();
   }
-  const contextNode = range.collapsed
-    ? range.startContainer
-    : range.commonAncestorContainer || range.startContainer;
+  const contextNode = getComposerRangeContextNode(range, element);
+  const collapsedListContext = range.collapsed
+    ? getComposerCollapsedListContext(range, element)
+    : null;
   return deriveRichComposerToolbarState({
     bold: Boolean(findNearestComposerAncestor(contextNode, "strong", element)),
     italic: Boolean(findNearestComposerAncestor(contextNode, "em", element)),
-    list: Boolean(findNearestComposerAncestor(contextNode, "li", element)),
+    list: Boolean(
+      collapsedListContext?.listItem || findNearestComposerAncestor(contextNode, "li", element)
+    ),
     codeBlock: Boolean(findNearestComposerAncestor(contextNode, "code", element)),
   });
 }
@@ -5152,12 +5286,15 @@ function applyComposerListFormat(element) {
   if (!range) {
     return false;
   }
-  const currentListItem = range.collapsed
-    ? findNearestComposerAncestor(range.startContainer, "li", element)
+  const contextNode = getComposerRangeContextNode(range, element);
+  const collapsedListContext = range.collapsed
+    ? getComposerCollapsedListContext(range, element)
     : null;
+  const currentListItem = collapsedListContext?.listItem || null;
   const existingList =
-    findNearestComposerAncestor(range.startContainer, "ul", element) ||
-    findNearestComposerAncestor(range.startContainer, "ol", element);
+    collapsedListContext?.listNode ||
+    findNearestComposerAncestor(contextNode, "ul", element) ||
+    findNearestComposerAncestor(contextNode, "ol", element);
   if (existingList && currentListItem) {
     const marker = createComposerCaretMarkerElement();
     if (!marker) {
