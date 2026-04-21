@@ -3168,9 +3168,7 @@ function renderNewTicketComposerPanel(viewState, composerClass) {
       <div class="new-ticket-composer-toolbar">
         ${renderNewTicketComposerToolbar({ canCompose: viewState.canCompose, includeSummary: true })}
       </div>
-      <div data-chat-section="composer-link-editor">
-        ${renderComposerLinkEditor({ canCompose: viewState.canCompose })}
-      </div>
+      <div data-chat-section="composer-link-editor">${renderComposerLinkEditor({ canCompose: viewState.canCompose })}</div>
       <div data-chat-section="composer-note">${renderNewTicketComposerNoteHtml(viewState)}</div>
       <form id="chat-input-form" class="chat-input-inner new-ticket-composer-form" data-chat-section="composer-form">
         <div class="new-ticket-composer-input-shell">
@@ -4785,9 +4783,7 @@ function renderChatTicketFromState(viewState) {
           <div class="new-ticket-composer-toolbar ticket-detail-composer-format-toolbar">
             ${renderNewTicketComposerToolbar({ canCompose: viewState.canCompose, includeSummary: false })}
           </div>
-          <div data-chat-section="composer-link-editor">
-            ${renderComposerLinkEditor({ canCompose: viewState.canCompose })}
-          </div>
+          <div data-chat-section="composer-link-editor">${renderComposerLinkEditor({ canCompose: viewState.canCompose })}</div>
           <div data-chat-section="composer-note">${renderChatComposerNoteHtml(viewState)}</div>
           <form id="chat-input-form" class="chat-input-inner ticket-detail-composer-form" data-chat-section="composer-form">
             <div

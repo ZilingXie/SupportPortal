@@ -3389,7 +3389,7 @@ a.citation-link:hover {
 .new-ticket-fixed-composer-panel {
   height: var(--new-ticket-composer-panel-height);
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto auto auto 1fr;
 }
 
 .new-ticket-draft-inline-composer {
@@ -3490,6 +3490,14 @@ a.citation-link:hover {
   color: var(--ink-muted);
   font-size: 12px;
   line-height: 1.6;
+}
+
+[data-chat-section="composer-link-editor"]:empty {
+  display: none;
+}
+
+[data-chat-section="composer-note"]:empty {
+  display: none;
 }
 
 .composer-link-editor {
