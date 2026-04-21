@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260421-client-composer-wysiwyg-before-send-1", html)
-        self.assertIn("./app.js?v=20260421-client-composer-wysiwyg-before-send-1", html)
+        self.assertIn("./styles.css?v=20260421-client-composer-wysiwyg-before-send-2", html)
+        self.assertIn("./app.js?v=20260421-client-composer-wysiwyg-before-send-2", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -443,6 +443,30 @@ class ClientUiContractTests(unittest.TestCase):
                   },
                 ]);
 
+                const followUpTwo = createTicket(state.user.id);
+                updateTicketTitle(followUpTwo.id, "UID Publish State Regression");
+                updateTicketStatus(followUpTwo.id, "communicating");
+                saveTicketMessages(followUpTwo.id, [
+                  {
+                    id: "msg-1d",
+                    role: "user",
+                    content: "The publish state changes unexpectedly after reconnect.",
+                    createdAt: "2026-04-17T10:50:00.000Z",
+                  },
+                ]);
+
+                const oldestActive = createTicket(state.user.id);
+                updateTicketTitle(oldestActive.id, "Legacy Active Ticket Hidden");
+                updateTicketStatus(oldestActive.id, "investigating");
+                saveTicketMessages(oldestActive.id, [
+                  {
+                    id: "msg-1e",
+                    role: "user",
+                    content: "This is the oldest active ticket and should not be visible in the top four.",
+                    createdAt: "2026-04-17T10:55:00.000Z",
+                  },
+                ]);
+
                 const resolved = createTicket(state.user.id);
                 updateTicketTitle(resolved.id, "Join Channel Question");
                 updateTicketStatus(resolved.id, "resolved");
@@ -484,12 +508,6 @@ class ClientUiContractTests(unittest.TestCase):
                 if (!html.includes("Continue what needs attention")) {
                   throw new Error("Client2 workspace should keep the active tickets panel.");
                 }
-                if (!html.includes("clienttest-home-panel-active-tickets")) {
-                  throw new Error("Client2 workspace should mark the active tickets panel with a dedicated layout class.");
-                }
-                if (!html.includes("clienttest-home-panel-body-scroll")) {
-                  throw new Error("Client2 workspace should render the active tickets list inside a scrollable body.");
-                }
                 state.serviceEvents = {
                   loadState: "ready",
                   items: [
@@ -525,11 +543,23 @@ class ClientUiContractTests(unittest.TestCase):
                 if (!readyHtml.includes("View incident")) {
                   throw new Error("Client2 workspace should render incident detail links.");
                 }
-                if (!readyHtml.includes("Black Screen Troubleshooting Steps") || !readyHtml.includes("Token Expired During Reconnect") || !readyHtml.includes("Cloud Proxy Route Check")) {
-                  throw new Error("Client2 workspace should render all active tickets instead of truncating the list to two rows.");
+                if (
+                  !readyHtml.includes("Black Screen Troubleshooting Steps") ||
+                  !readyHtml.includes("Token Expired During Reconnect") ||
+                  !readyHtml.includes("Cloud Proxy Route Check") ||
+                  !readyHtml.includes("UID Publish State Regression")
+                ) {
+                  throw new Error("Client2 workspace should keep the four most recent active tickets visible.");
+                }
+                if (readyHtml.includes("Legacy Active Ticket Hidden")) {
+                  throw new Error("Client2 workspace should truncate the active tickets panel to four visible rows.");
                 }
                 if (readyHtml.includes("Join Channel Question")) {
                   throw new Error("Client2 workspace should keep resolved tickets out of the active tickets panel.");
+                }
+                const renderedTicketRows = (readyHtml.match(/data-history-ticket-row=\\"true\\"/g) || []).length;
+                if (renderedTicketRows !== 4) {
+                  throw new Error(`Client2 workspace should render exactly four active ticket rows, got ${renderedTicketRows}.`);
                 }
                 if (readyHtml.includes("Recent Activity") || readyHtml.includes("Latest ticket movement")) {
                   throw new Error("Client2 workspace should replace the recent activity panel with service events.");
@@ -583,14 +613,6 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertIn("text-transform: none;", css)
         self.assertIn("font-weight: 700;", css)
         self.assertIn("color: #7faee6;", css)
-
-    def test_client2_workspace_active_tickets_panel_uses_scroll_layout(self) -> None:
-        css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
-
-        self.assertIn(".clienttest-home-panel-active-tickets", css)
-        self.assertIn(".clienttest-home-panel-body-scroll", css)
-        self.assertIn("grid-template-rows: auto minmax(0, 1fr);", css)
-        self.assertIn("overflow-y: auto;", css)
 
     def test_client2_workspace_fetches_service_events_when_entering_workspace(self) -> None:
         self.run_client2_app_script(
