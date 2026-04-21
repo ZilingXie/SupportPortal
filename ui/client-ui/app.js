@@ -3684,6 +3684,21 @@ function serializeRichComposerPlainTextNodes(nodes = []) {
     .join("");
 }
 
+function wrapSerializedInlineMarkdown(marker, inner) {
+  if (!marker || !inner) {
+    return inner || "";
+  }
+  const leadingWhitespaceMatch = inner.match(/^\s+/);
+  const trailingWhitespaceMatch = inner.match(/\s+$/);
+  const leadingWhitespace = leadingWhitespaceMatch ? leadingWhitespaceMatch[0] : "";
+  const trailingWhitespace = trailingWhitespaceMatch ? trailingWhitespaceMatch[0] : "";
+  const core = inner.slice(leadingWhitespace.length, inner.length - trailingWhitespace.length);
+  if (!core) {
+    return inner;
+  }
+  return `${leadingWhitespace}${marker}${core}${marker}${trailingWhitespace}`;
+}
+
 function serializeRichComposerInlineNodes(nodes = []) {
   return nodes
     .map((node) => {
@@ -3701,11 +3716,11 @@ function serializeRichComposerInlineNodes(nodes = []) {
           return "\n";
         case "strong": {
           const inner = serializeRichComposerInlineNodes(node.children || []);
-          return inner ? `**${inner}**` : "";
+          return wrapSerializedInlineMarkdown("**", inner);
         }
         case "em": {
           const inner = serializeRichComposerInlineNodes(node.children || []);
-          return inner ? `_${inner}_` : "";
+          return wrapSerializedInlineMarkdown("*", inner);
         }
         case "a": {
           const href = sanitizeUrl(node.attrs?.href);

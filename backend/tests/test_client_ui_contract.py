@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260421-client-composer-codeblock-cancel-fix-1", html)
-        self.assertIn("./app.js?v=20260421-client-composer-codeblock-cancel-fix-1", html)
+        self.assertIn("./styles.css?v=20260421-client-composer-italic-render-fix-1", html)
+        self.assertIn("./app.js?v=20260421-client-composer-italic-render-fix-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -1434,6 +1434,36 @@ class ClientUiContractTests(unittest.TestCase):
                 const serializedBold = serializeRichComposerHtmlToMarkdown("<strong>Need</strong> help");
                 if (serializedBold !== "**Need** help") {
                   throw new Error(`Rich composer should serialize strong tags to markdown, got ${serializedBold}.`);
+                }
+
+                const serializedItalicLeadingSpace = serializeRichComposerHtmlToMarkdown("Hello<em> Agora SDK</em>");
+                if (serializedItalicLeadingSpace !== "Hello *Agora SDK*") {
+                  throw new Error(`Italic serialization should move leading whitespace outside the markdown markers, got ${JSON.stringify(serializedItalicLeadingSpace)}.`);
+                }
+
+                const serializedItalicTrailingSpace = serializeRichComposerHtmlToMarkdown("<em>Agora SDK </em>rocks");
+                if (serializedItalicTrailingSpace !== "*Agora SDK* rocks") {
+                  throw new Error(`Italic serialization should move trailing whitespace outside the markdown markers, got ${JSON.stringify(serializedItalicTrailingSpace)}.`);
+                }
+
+                const renderedItalicBoundarySpace = renderMarkdownMessage(serializedItalicLeadingSpace);
+                if (!renderedItalicBoundarySpace.includes("Hello <em>Agora SDK</em>")) {
+                  throw new Error(`Serialized italic content should still render after send, got ${renderedItalicBoundarySpace}.`);
+                }
+
+                const renderedItalicTrailingBoundarySpace = renderMarkdownMessage(serializedItalicTrailingSpace);
+                if (!renderedItalicTrailingBoundarySpace.includes("<em>Agora SDK</em> rocks")) {
+                  throw new Error(`Serialized italic content with trailing boundary whitespace should still render after send, got ${renderedItalicTrailingBoundarySpace}.`);
+                }
+
+                const serializedBoldLeadingSpace = serializeRichComposerHtmlToMarkdown("Hello<strong> Agora SDK</strong>");
+                if (serializedBoldLeadingSpace !== "Hello **Agora SDK**") {
+                  throw new Error(`Bold serialization should move leading whitespace outside the markdown markers, got ${JSON.stringify(serializedBoldLeadingSpace)}.`);
+                }
+
+                const renderedBoldBoundarySpace = renderMarkdownMessage(serializedBoldLeadingSpace);
+                if (!renderedBoldBoundarySpace.includes("Hello <strong>Agora SDK</strong>")) {
+                  throw new Error(`Serialized bold content with boundary whitespace should still render after send, got ${renderedBoldBoundarySpace}.`);
                 }
 
                 const serializedLiteral = serializeRichComposerHtmlToMarkdown("**literal** [Docs](https://example.com)");
