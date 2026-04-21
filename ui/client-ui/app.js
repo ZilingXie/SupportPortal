@@ -3053,7 +3053,7 @@ function renderChatHome() {
   const tickets = getTicketsByUser(state.user.id);
   const activeTickets = tickets
     .filter((ticket) => String(ticket.status || "").trim().toLowerCase() !== "resolved")
-    .slice(0, 2);
+    .slice(0, 4);
   const serviceEventsState =
     state.serviceEvents && typeof state.serviceEvents === "object"
       ? state.serviceEvents

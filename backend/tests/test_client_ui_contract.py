@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260421-client-workspace-active-tickets-revert-1", html)
-        self.assertIn("./app.js?v=20260421-client-workspace-active-tickets-revert-1", html)
+        self.assertIn("./styles.css?v=20260421-client-workspace-active-tickets-four-1", html)
+        self.assertIn("./app.js?v=20260421-client-workspace-active-tickets-four-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -443,6 +443,30 @@ class ClientUiContractTests(unittest.TestCase):
                   },
                 ]);
 
+                const followUpTwo = createTicket(state.user.id);
+                updateTicketTitle(followUpTwo.id, "UID Publish State Regression");
+                updateTicketStatus(followUpTwo.id, "communicating");
+                saveTicketMessages(followUpTwo.id, [
+                  {
+                    id: "msg-1d",
+                    role: "user",
+                    content: "The publish state changes unexpectedly after reconnect.",
+                    createdAt: "2026-04-17T10:50:00.000Z",
+                  },
+                ]);
+
+                const oldestActive = createTicket(state.user.id);
+                updateTicketTitle(oldestActive.id, "Legacy Active Ticket Hidden");
+                updateTicketStatus(oldestActive.id, "investigating");
+                saveTicketMessages(oldestActive.id, [
+                  {
+                    id: "msg-1e",
+                    role: "user",
+                    content: "This is the oldest active ticket and should not be visible in the top four.",
+                    createdAt: "2026-04-17T10:55:00.000Z",
+                  },
+                ]);
+
                 const resolved = createTicket(state.user.id);
                 updateTicketTitle(resolved.id, "Join Channel Question");
                 updateTicketStatus(resolved.id, "resolved");
@@ -519,15 +543,23 @@ class ClientUiContractTests(unittest.TestCase):
                 if (!readyHtml.includes("View incident")) {
                   throw new Error("Client2 workspace should render incident detail links.");
                 }
-                if (readyHtml.includes("Cloud Proxy Route Check")) {
-                  throw new Error("Client2 workspace should truncate the active tickets panel to two visible rows.");
+                if (
+                  !readyHtml.includes("Black Screen Troubleshooting Steps") ||
+                  !readyHtml.includes("Token Expired During Reconnect") ||
+                  !readyHtml.includes("Cloud Proxy Route Check") ||
+                  !readyHtml.includes("UID Publish State Regression")
+                ) {
+                  throw new Error("Client2 workspace should keep the four most recent active tickets visible.");
+                }
+                if (readyHtml.includes("Legacy Active Ticket Hidden")) {
+                  throw new Error("Client2 workspace should truncate the active tickets panel to four visible rows.");
                 }
                 if (readyHtml.includes("Join Channel Question")) {
                   throw new Error("Client2 workspace should keep resolved tickets out of the active tickets panel.");
                 }
                 const renderedTicketRows = (readyHtml.match(/data-history-ticket-row=\\"true\\"/g) || []).length;
-                if (renderedTicketRows !== 2) {
-                  throw new Error(`Client2 workspace should render exactly two active ticket rows, got ${renderedTicketRows}.`);
+                if (renderedTicketRows !== 4) {
+                  throw new Error(`Client2 workspace should render exactly four active ticket rows, got ${renderedTicketRows}.`);
                 }
                 if (readyHtml.includes("Recent Activity") || readyHtml.includes("Latest ticket movement")) {
                   throw new Error("Client2 workspace should replace the recent activity panel with service events.");
