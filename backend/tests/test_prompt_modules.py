@@ -81,6 +81,31 @@ class PromptModuleTests(unittest.TestCase):
         self.assertIn("## Routing Hints", user_prompt)
         self.assertIn("black screen", user_prompt)
 
+    def test_router_prompt_v2_mentions_product_portfolio_as_non_technical(self) -> None:
+        system_prompt = build_router_system_prompt(
+            route_examples=[
+                {
+                    "message": "Which Agora product should we use for broadcasting?",
+                    "hints": {
+                        "agora": ["agora"],
+                        "product_portfolio": ["which agora product should we use", "broadcasting"],
+                        "flags": ["product_portfolio_pattern", "has_agora_brand"],
+                    },
+                    "output": {
+                        "scope_label": "agora_non_technical",
+                        "confidence": 0.97,
+                        "reason": "agora_product_portfolio",
+                        "matched_signals": ["which agora product should we use", "broadcasting"],
+                    },
+                }
+            ]
+        )
+
+        self.assertIn("product overview", system_prompt)
+        self.assertIn("product portfolio", system_prompt)
+        self.assertIn("agora_non_technical", system_prompt)
+        self.assertIn("agora_product_portfolio", system_prompt)
+
     def test_web_search_prompt_v2_is_grounded_and_has_insufficient_fallback(self) -> None:
         system_prompt = build_web_search_system_prompt(
             response_language="en",
@@ -94,6 +119,24 @@ class PromptModuleTests(unittest.TestCase):
         self.assertIn("## Few-shot Examples", system_prompt)
         self.assertIn("## User Question", user_prompt)
         self.assertIn("Who's the CEO of Agora?", user_prompt)
+
+    def test_web_search_prompt_v2_guides_product_portfolio_answers_without_console_first(self) -> None:
+        system_prompt = build_web_search_system_prompt(
+            response_language="en",
+            official_only=True,
+            route_reason="agora_product_portfolio",
+        )
+        user_prompt = build_web_search_user_prompt(
+            question="We are implementing agora broadcasting and need more info on Agora products.",
+            route_reason="agora_product_portfolio",
+        )
+
+        self.assertIn("Broadcast Streaming", system_prompt)
+        self.assertIn("Interactive Live Streaming", system_prompt)
+        self.assertIn("Do not send the customer to Agora Console", system_prompt)
+        self.assertIn("Talk to Us", system_prompt)
+        self.assertIn("## Route Context", user_prompt)
+        self.assertIn("agora_product_portfolio", user_prompt)
 
     def test_rag_answer_prompt_v2_is_sectioned_and_preserves_exact_insufficient_reply(self) -> None:
         insufficient_reply = "I couldn't find enough information in the available support knowledge base to answer that question."
