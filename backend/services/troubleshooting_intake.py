@@ -7,6 +7,7 @@ import logging
 import re
 from typing import Any
 
+from backend.services import openai_agent_tracing
 from backend.services.api_semantics import (
     build_api_semantics_clarification,
     is_api_semantics_mismatch_context,
@@ -1163,6 +1164,35 @@ def _parse_llm_result(
     )
 
 
+def _record_output_contract_trace(
+    *,
+    status: str,
+    used_fallback: bool,
+    result: TroubleshootingIntakeResult | None = None,
+) -> None:
+    openai_agent_tracing.record_guardrail_span(
+        name="troubleshooting_intake.output_contract",
+        triggered=bool(used_fallback),
+        data={"status": _clean_text(status) or "unknown"},
+    )
+    payload = {
+        "status": _clean_text(status) or "unknown",
+        "used_fallback": bool(used_fallback),
+    }
+    if isinstance(result, TroubleshootingIntakeResult):
+        payload.update(
+            {
+                "issue_mode": result.issue_mode,
+                "ready_for_engineer_ticket": bool(result.ready_for_engineer_ticket),
+                "missing_information": list(result.missing_information),
+            }
+        )
+    openai_agent_tracing.record_custom_span(
+        name="troubleshooting_intake.output_contract.result",
+        data=payload,
+    )
+
+
 def _evaluate_with_llm(
     *,
     message: str,
@@ -1208,8 +1238,13 @@ def _evaluate_with_llm(
         payload = json.loads(response.text or "{}")
     except json.JSONDecodeError:
         LOGGER.warning("Troubleshooting intake returned invalid JSON: %s", response.text)
+        _record_output_contract_trace(
+            status="invalid_json",
+            used_fallback=True,
+            result=fallback,
+        )
         return fallback
-    return _parse_llm_result(
+    result = _parse_llm_result(
         payload,
         fallback=fallback,
         product=product,
@@ -1217,6 +1252,12 @@ def _evaluate_with_llm(
         requester=requester,
         customer_id=customer_id,
     )
+    _record_output_contract_trace(
+        status="contract_fallback" if result is fallback else "ok",
+        used_fallback=result is fallback,
+        result=result,
+    )
+    return result
 
 
 def evaluate_troubleshooting_intake(

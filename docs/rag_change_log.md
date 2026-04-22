@@ -3443,3 +3443,32 @@ For each new entry, record:
 - Verification:
   - `/Users/xieziling/.config/superpowers/worktrees/SupportPortal/client-rag-accuracy-first/.venv/bin/python -m unittest backend.tests.test_query_understanding backend.tests.test_rag_service_client backend.tests.test_rag_qa backend.tests.test_troubleshooting_intake backend.tests.test_ticket_orchestrator backend.tests.test_client_ticket_agent_runtime backend.tests.test_single_host_compose backend.tests.test_worker backend.tests.test_rag_api`
   - Live `$supportportal-run-report` verification on `TK-140`, `real_case/real_user_questions.txt`, and `--profile-lexical` was run after the merged stack served the new build; results are recorded in the final task report.
+
+## 2026-04-22 - Add supplemental OpenAI review tracing sidecar for client runtime diagnostics
+
+- Summary:
+  - Added a supplemental OpenAI Agents SDK tracing layer for review-agent leaf calls so SupportPortal can inspect LLM, function, guardrail, and custom-event spans without changing the existing main-agent orchestration.
+  - Scoped the first phase to review-agent boundaries only: `rag_insufficient_evidence`, `grounded_postcheck`, and `pre_engineer_intake`, with `llm_factory` automatically emitting generation spans only when one of those review traces is active.
+  - Extended runtime diagnostics and the trace CLI to expose review trace identifiers alongside the durable business trace instead of replacing `run_id`, `support_ticket_agent_events`, or `client_agent_runtime_state`.
+- Reason:
+  - The durable business trace remains the source of truth for SupportPortal run reconstruction, but it did not provide native LLM/tool/guardrail/custom-event visibility for review-agent diagnosis when postcheck or intake quality needed deeper inspection.
+- Affected files/config:
+  - `backend/services/openai_agent_tracing.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/services/llm_factory.py`
+  - `backend/services/troubleshooting_intake.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_llm_factory.py`
+  - `backend/tests/test_openai_agent_tracing.py`
+  - `backend/tests/test_trace_client_ticket_route_cli.py`
+  - `backend/tests/test_troubleshooting_intake.py`
+  - `requirements.base.txt`
+  - `scripts/trace_client_ticket_route.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema changes and no durable storage rewrites; `support_ticket_agent_events` and `client_agent_runtime_state` only gain optional `openai_tracing` trace-reference fields for review-agent reporting.
+  - `run_id` continues to be the durable business correlation id and is reused as the OpenAI trace `group_id`; prompt and response bodies stay in OpenAI tracing only and are not duplicated into the durable runtime payloads.
+  - Benchmark and offline paths were intentionally left out of scope; only review-leaf calls emit supplemental tracing when the OpenAI Agents SDK is present.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_client_ticket_agent_runtime backend.tests.test_troubleshooting_intake backend.tests.test_trace_client_ticket_route_cli backend.tests.test_internal_trace_routes backend.tests.test_llm_factory backend.tests.test_openai_agent_tracing`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/openai_agent_tracing.py backend/services/client_ticket_agent_runtime.py backend/services/llm_factory.py backend/services/troubleshooting_intake.py scripts/trace_client_ticket_route.py`

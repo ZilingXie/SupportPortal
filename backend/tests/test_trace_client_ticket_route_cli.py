@@ -345,6 +345,122 @@ class TraceClientTicketRouteCliTests(unittest.TestCase):
         self.assertFalse(artifact["skill_runtime"]["trace_completed"])
         self.assertEqual(artifact["direct_probe"]["status"], "request_error")
 
+    def test_build_trace_summary_exposes_review_trace_identifiers(self) -> None:
+        module = _load_script_module()
+
+        summary = module.build_trace_summary(
+            ticket={
+                "ticket_id": "TK-TRACE-REVIEW",
+                "customer_id": "C-TRACE-REVIEW",
+                "product": "audio_video_calling",
+                "client_agent_runtime_state": {
+                    "active_run_id": "run-review-1",
+                    "workflow_action": "clarify_customer_for_intake",
+                    "status": "completed",
+                    "review_agent": {
+                        "phase": "completed",
+                        "status": "completed",
+                        "decision": "clarify_customer_for_intake",
+                        "reason": "rag_unavailable",
+                        "openai_tracing": {
+                            "group_id": "run-review-1",
+                            "latest_trace_id": "trace-rag-insufficient",
+                            "traces": [
+                                {
+                                    "mode": "rag_insufficient_evidence",
+                                    "trace_id": "trace-rag-insufficient",
+                                    "group_id": "run-review-1",
+                                    "workflow_name": "supportportal.review_agent.rag_insufficient_evidence",
+                                }
+                            ],
+                        },
+                    },
+                },
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "i got black screen, what should i do?",
+                        "created_at": "2026-04-04T00:00:01+00:00",
+                    }
+                ],
+            },
+            request_context={
+                "ticket_id": "TK-TRACE-REVIEW",
+                "customer_id": "C-TRACE-REVIEW",
+                "product": "audio_video_calling",
+                "message": "i got black screen, what should i do?",
+                "message_created_at": "2026-04-04T00:00:01+00:00",
+                "question_started_at": "2026-04-04T00:00:00+00:00",
+                "ack_received_at": "2026-04-04T00:00:00.200000+00:00",
+            },
+            ack_payload={"ack_text": "Got it", "model": "gpt-5.4-nano", "latency_ms": 200.0},
+            query_payload={"processing_mode": "main_agent_async", "queued_for_ai": True},
+            ticket_events=[],
+            agent_events=[
+                {
+                    "ticket_id": "TK-TRACE-REVIEW",
+                    "message_id": "2026-04-04T00:00:01+00:00",
+                    "run_id": "run-review-1",
+                    "agent_name": "review_agent",
+                    "phase": "running",
+                    "event_type": "started",
+                    "payload": {
+                        "mode": "rag_insufficient_evidence",
+                        "openai_tracing": {
+                            "mode": "rag_insufficient_evidence",
+                            "trace_id": "trace-rag-insufficient",
+                            "group_id": "run-review-1",
+                            "workflow_name": "supportportal.review_agent.rag_insufficient_evidence",
+                        },
+                        "created_at": "2026-04-04T00:00:01.500000+00:00",
+                    },
+                    "created_at": "2026-04-04T00:00:02+00:00",
+                },
+                {
+                    "ticket_id": "TK-TRACE-REVIEW",
+                    "message_id": "2026-04-04T00:00:01+00:00",
+                    "run_id": "run-review-1",
+                    "agent_name": "review_agent",
+                    "phase": "completed",
+                    "event_type": "completed",
+                    "payload": {
+                        "decision": "clarify_customer_for_intake",
+                        "reason": "rag_unavailable",
+                        "openai_tracing": {
+                            "mode": "rag_insufficient_evidence",
+                            "trace_id": "trace-rag-insufficient",
+                            "group_id": "run-review-1",
+                            "workflow_name": "supportportal.review_agent.rag_insufficient_evidence",
+                        },
+                        "created_at": "2026-04-04T00:00:03+00:00",
+                    },
+                    "created_at": "2026-04-04T00:00:03+00:00",
+                },
+            ],
+            rag_run=None,
+            final_assistant=None,
+        )
+
+        self.assertEqual(summary["raw_ids"]["run_id"], "run-review-1")
+        self.assertEqual(summary["raw_ids"]["latest_review_trace_id"], "trace-rag-insufficient")
+        self.assertEqual(summary["raw_ids"]["review_trace_group_id"], "run-review-1")
+        self.assertEqual(
+            summary["raw_ids"]["review_trace_refs"],
+            [
+                {
+                    "mode": "rag_insufficient_evidence",
+                    "trace_id": "trace-rag-insufficient",
+                    "group_id": "run-review-1",
+                    "workflow_name": "supportportal.review_agent.rag_insufficient_evidence",
+                }
+            ],
+        )
+        self.assertEqual(summary["review_agent"]["openai_tracing"]["latest_trace_id"], "trace-rag-insufficient")
+        markdown = module.render_markdown_report(summary)
+        self.assertIn("latest_review_trace_id", markdown)
+        self.assertIn("review_trace_group_id", markdown)
+        self.assertIn("trace-rag-insufficient", markdown)
+
     def test_build_trace_artifact_marks_query_timeout_without_final_answer(self) -> None:
         module = _load_script_module()
 

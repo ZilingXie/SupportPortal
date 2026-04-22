@@ -7,6 +7,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
+from backend.services import openai_agent_tracing
 from backend.services.llm_profiles import (
     OPENAI_CHAT_API,
     OPENAI_RESPONSES_API,
@@ -247,6 +248,17 @@ def invoke_responses_text(
             payload = raw_payload if isinstance(raw_payload, dict) else {}
             text = _responses_text(payload)
             prompt_tokens, completion_tokens = _responses_usage(payload)
+            if openai_agent_tracing.current_trace_ref() is not None:
+                openai_agent_tracing.record_generation_span(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    response_text=text,
+                    model_name=model_name,
+                    reasoning_effort=profile.reasoning_effort,
+                    temperature=temperature,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                )
             return LlmTextResult(
                 text=text,
                 model_name=model_name,

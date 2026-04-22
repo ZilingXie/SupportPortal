@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import inspect
 import os
 import types
@@ -9,6 +10,41 @@ from unittest.mock import patch
 from backend.services.rag_service_client import RagTicketAnswerDetail
 from backend.services.support_router import SupportResolution, SupportRouteDecision, resolve_support_message
 from backend.services.troubleshooting_intake import TroubleshootingIntakeResult
+
+
+class _FakeOpenAiReviewTrace:
+    def __init__(self, *, trace_id: str, group_id: str, workflow_name: str, mode: str) -> None:
+        self._ref = {
+            "trace_id": trace_id,
+            "group_id": group_id,
+            "workflow_name": workflow_name,
+            "mode": mode,
+        }
+        self.function_calls: list[dict[str, object]] = []
+        self.custom_spans: list[dict[str, object]] = []
+
+    def __enter__(self) -> "_FakeOpenAiReviewTrace":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+    def as_trace_ref(self) -> dict[str, str]:
+        return dict(self._ref)
+
+    @contextmanager
+    def function_span(
+        self,
+        name: str,
+        *,
+        input: str | None = None,
+        output: str | None = None,
+    ):
+        self.function_calls.append({"name": name, "input": input, "output": output})
+        yield
+
+    def record_custom_span(self, name: str, data: dict[str, object] | None = None) -> None:
+        self.custom_spans.append({"name": name, "data": dict(data or {})})
 
 
 class ClientTicketAgentRuntimeContractTests(unittest.TestCase):
@@ -1159,6 +1195,17 @@ The documentation states that time: 0 means the rule is applied permanently. How
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
 
         review_modes: list[str] = []
+        trace_contexts: list[_FakeOpenAiReviewTrace] = []
+
+        def _fake_start_review_trace(**kwargs: object) -> _FakeOpenAiReviewTrace:
+            context = _FakeOpenAiReviewTrace(
+                trace_id=f"trace-{kwargs['mode']}",
+                group_id=str(kwargs["run_id"]),
+                workflow_name=f"supportportal.review_agent.{kwargs['mode']}",
+                mode=str(kwargs["mode"]),
+            )
+            trace_contexts.append(context)
+            return context
 
         def _review_agent(**kwargs: object) -> object:
             mode = str(kwargs.get("mode") or "")
@@ -1179,45 +1226,49 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 )
             self.fail(f"unexpected review mode {mode!r}")
 
-        execution = execute_client_ticket_agent_runtime(
-            message="i got black screen!!! what should i do",
-            ticket_id="TK-RISK-TRBL-1",
-            customer_id="C-001",
-            ticket_subject="Black screen",
-            ticket_context=[{"role": "customer", "content": "i got black screen!!! what should i do"}],
-            product="audio_video_calling",
-            message_id="2026-04-04T00:00:00+00:00",
-            route_agent=lambda **_kwargs: SupportRouteDecision(
-                scope_label="agora_technical",
-                route="rag",
-                confidence=0.94,
-                reason="technical_question",
-                matched_signals=["black screen"],
-                response_language="en",
-                route_family="agora_docs_rag",
-                execution_action="rag",
-                tooling_profile="agora_docs_only",
-            ),
-            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
-                answer="Check whether the remote user is publishing video and the local render view is bound correctly.",
-                confidence=0.88,
-                sources=["https://docs.agora.io/en/video-calling/troubleshooting/black-screen"],
-                citations=[{"chunk_id": "chunk-black-screen"}],
-                needs_engineer_guidance=False,
-                reason="grounded_answer",
-                evidence_summary={
-                    "quality_signals": {
-                        "generation_mode": "structured_answer",
-                        "selected_doc_count": 1,
-                        "top1_similarity_score": 0.91,
-                    }
-                },
-                packed_evidence=None,
-            ),
-            review_agent=_review_agent,
-            rag_canceler=None,
-        )
+        with patch(
+            "backend.services.client_ticket_agent_runtime.openai_agent_tracing.start_review_trace",
+            side_effect=_fake_start_review_trace,
+        ):
+            execution = execute_client_ticket_agent_runtime(
+                message="i got black screen!!! what should i do",
+                ticket_id="TK-RISK-TRBL-1",
+                customer_id="C-001",
+                ticket_subject="Black screen",
+                ticket_context=[{"role": "customer", "content": "i got black screen!!! what should i do"}],
+                product="audio_video_calling",
+                message_id="2026-04-04T00:00:00+00:00",
+                route_agent=lambda **_kwargs: SupportRouteDecision(
+                    scope_label="agora_technical",
+                    route="rag",
+                    confidence=0.94,
+                    reason="technical_question",
+                    matched_signals=["black screen"],
+                    response_language="en",
+                    route_family="agora_docs_rag",
+                    execution_action="rag",
+                    tooling_profile="agora_docs_only",
+                ),
+                route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+                rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                    answer="Check whether the remote user is publishing video and the local render view is bound correctly.",
+                    confidence=0.88,
+                    sources=["https://docs.agora.io/en/video-calling/troubleshooting/black-screen"],
+                    citations=[{"chunk_id": "chunk-black-screen"}],
+                    needs_engineer_guidance=False,
+                    reason="grounded_answer",
+                    evidence_summary={
+                        "quality_signals": {
+                            "generation_mode": "structured_answer",
+                            "selected_doc_count": 1,
+                            "top1_similarity_score": 0.91,
+                        }
+                    },
+                    packed_evidence=None,
+                ),
+                review_agent=_review_agent,
+                rag_canceler=None,
+            )
 
         self.assertEqual(review_modes, ["grounded_postcheck", "pre_engineer_intake"])
         self.assertEqual(execution.result.workflow_action, "answer_customer")
@@ -1236,11 +1287,57 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn("Check whether the remote user is publishing video", execution.result.answer)
         self.assertIn("If the issue continues, please share", execution.result.answer)
         self.assertEqual(execution.runtime_state.review_agent.get("decision"), "answer_customer")
+        review_trace_state = execution.runtime_state.review_agent.get("openai_tracing") or {}
+        self.assertEqual(review_trace_state.get("group_id"), execution.result.run_id)
+        self.assertEqual(review_trace_state.get("latest_trace_id"), "trace-pre_engineer_intake")
+        self.assertEqual(
+            review_trace_state.get("traces"),
+            [
+                {
+                    "mode": "grounded_postcheck",
+                    "trace_id": "trace-grounded_postcheck",
+                    "group_id": execution.result.run_id,
+                    "workflow_name": "supportportal.review_agent.grounded_postcheck",
+                },
+                {
+                    "mode": "pre_engineer_intake",
+                    "trace_id": "trace-pre_engineer_intake",
+                    "group_id": execution.result.run_id,
+                    "workflow_name": "supportportal.review_agent.pre_engineer_intake",
+                },
+            ],
+        )
+        review_started = [
+            event for event in execution.agent_events if event.get("agent_name") == "review_agent" and event.get("event_type") == "started"
+        ]
+        self.assertEqual(
+            [event["payload"]["openai_tracing"]["mode"] for event in review_started],
+            ["grounded_postcheck", "pre_engineer_intake"],
+        )
+        review_completed = next(
+            event
+            for event in execution.agent_events
+            if event.get("agent_name") == "review_agent" and event.get("event_type") == "completed"
+        )
+        self.assertEqual(review_completed["payload"]["openai_tracing"]["mode"], "pre_engineer_intake")
+        self.assertEqual(trace_contexts[0].function_calls[0]["name"], "review_agent.grounded_postcheck")
+        self.assertEqual(trace_contexts[1].function_calls[0]["name"], "review_agent.pre_engineer_intake")
 
     def test_cited_feature_enable_postcheck_rejection_answers_customer_before_follow_up(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
 
         review_modes: list[str] = []
+        trace_contexts: list[_FakeOpenAiReviewTrace] = []
+
+        def _fake_start_review_trace(**kwargs: object) -> _FakeOpenAiReviewTrace:
+            context = _FakeOpenAiReviewTrace(
+                trace_id=f"trace-{kwargs['mode']}",
+                group_id=str(kwargs["run_id"]),
+                workflow_name=f"supportportal.review_agent.{kwargs['mode']}",
+                mode=str(kwargs["mode"]),
+            )
+            trace_contexts.append(context)
+            return context
 
         def _review_agent(**kwargs: object) -> object:
             mode = str(kwargs.get("mode") or "")
@@ -1249,56 +1346,60 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 return {"decision": "open_engineer_ticket", "reason": "review_insufficient", "confidence": 0.61}
             self.fail(f"unexpected review mode {mode!r}")
 
-        execution = execute_client_ticket_agent_runtime(
-            message="how to enable the dual stream",
-            ticket_id="TK-RISK-DUAL-1",
-            customer_id="C-001",
-            ticket_subject="Dual stream",
-            ticket_context=[{"role": "customer", "content": "how to enable the dual stream"}],
-            product="audio_video_calling",
-            message_id="2026-04-13T00:00:00+00:00",
-            client_intake_state={
-                "phase": "gather_customer_inputs",
-                "product": "audio_video_calling",
-                "issue_mode": "answer",
-                "known_information": {},
-                "missing_information": ["desired_outcome", "blocked_step_or_error"],
-                "ready_for_engineer_ticket": False,
-                "last_updated_at": "2026-04-13T00:00:00+00:00",
-            },
-            route_agent=lambda **_kwargs: SupportRouteDecision(
-                scope_label="agora_technical",
-                route="rag",
-                confidence=0.95,
-                reason="technical_question",
-                matched_signals=["dual stream"],
-                response_language="en",
-                route_family="agora_docs_rag",
-                execution_action="rag",
-                tooling_profile="agora_docs_only",
-            ),
-            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
-                answer="Call `client.enableDualStream()` before remote users subscribe to the low stream.",
-                confidence=0.9,
-                sources=["https://docs.agora.io/en/video-calling/advanced-features/media-stream-fallback?platform=web"],
-                citations=[{"chunk_id": "chunk-dual-stream"}],
-                needs_engineer_guidance=False,
-                reason="grounded_answer",
-                evidence_summary={
-                    "quality_signals": {
-                        "query_class": "configuration",
-                        "generation_mode": "structured_answer",
-                        "selected_doc_count": 2,
-                        "top1_similarity_score": 0.94,
-                        "needs_human": False,
-                    }
+        with patch(
+            "backend.services.client_ticket_agent_runtime.openai_agent_tracing.start_review_trace",
+            side_effect=_fake_start_review_trace,
+        ):
+            execution = execute_client_ticket_agent_runtime(
+                message="how to enable the dual stream",
+                ticket_id="TK-RISK-DUAL-1",
+                customer_id="C-001",
+                ticket_subject="Dual stream",
+                ticket_context=[{"role": "customer", "content": "how to enable the dual stream"}],
+                product="audio_video_calling",
+                message_id="2026-04-13T00:00:00+00:00",
+                client_intake_state={
+                    "phase": "gather_customer_inputs",
+                    "product": "audio_video_calling",
+                    "issue_mode": "answer",
+                    "known_information": {},
+                    "missing_information": ["desired_outcome", "blocked_step_or_error"],
+                    "ready_for_engineer_ticket": False,
+                    "last_updated_at": "2026-04-13T00:00:00+00:00",
                 },
-                packed_evidence=None,
-            ),
-            review_agent=_review_agent,
-            rag_canceler=None,
-        )
+                route_agent=lambda **_kwargs: SupportRouteDecision(
+                    scope_label="agora_technical",
+                    route="rag",
+                    confidence=0.95,
+                    reason="technical_question",
+                    matched_signals=["dual stream"],
+                    response_language="en",
+                    route_family="agora_docs_rag",
+                    execution_action="rag",
+                    tooling_profile="agora_docs_only",
+                ),
+                route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+                rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                    answer="Call `client.enableDualStream()` before remote users subscribe to the low stream.",
+                    confidence=0.9,
+                    sources=["https://docs.agora.io/en/video-calling/advanced-features/media-stream-fallback?platform=web"],
+                    citations=[{"chunk_id": "chunk-dual-stream"}],
+                    needs_engineer_guidance=False,
+                    reason="grounded_answer",
+                    evidence_summary={
+                        "quality_signals": {
+                            "query_class": "configuration",
+                            "generation_mode": "structured_answer",
+                            "selected_doc_count": 2,
+                            "top1_similarity_score": 0.94,
+                            "needs_human": False,
+                        }
+                    },
+                    packed_evidence=None,
+                ),
+                review_agent=_review_agent,
+                rag_canceler=None,
+            )
 
         self.assertEqual(review_modes, ["grounded_postcheck"])
         self.assertEqual(execution.result.workflow_action, "answer_customer")
@@ -1312,6 +1413,33 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn("Call `client.enableDualStream()`", execution.result.answer)
         self.assertIn("please share what you're trying to achieve", execution.result.answer.lower())
         self.assertEqual(execution.runtime_state.review_agent.get("decision"), "answer_customer")
+        review_trace_state = execution.runtime_state.review_agent.get("openai_tracing") or {}
+        self.assertEqual(review_trace_state.get("group_id"), execution.result.run_id)
+        self.assertEqual(review_trace_state.get("latest_trace_id"), "trace-grounded_postcheck")
+        self.assertEqual(
+            review_trace_state.get("traces"),
+            [
+                {
+                    "mode": "grounded_postcheck",
+                    "trace_id": "trace-grounded_postcheck",
+                    "group_id": execution.result.run_id,
+                    "workflow_name": "supportportal.review_agent.grounded_postcheck",
+                }
+            ],
+        )
+        review_started = next(
+            event
+            for event in execution.agent_events
+            if event.get("agent_name") == "review_agent" and event.get("event_type") == "started"
+        )
+        self.assertEqual(review_started["payload"]["openai_tracing"]["trace_id"], "trace-grounded_postcheck")
+        review_completed = next(
+            event
+            for event in execution.agent_events
+            if event.get("agent_name") == "review_agent" and event.get("event_type") == "completed"
+        )
+        self.assertEqual(review_completed["payload"]["openai_tracing"]["mode"], "grounded_postcheck")
+        self.assertEqual(trace_contexts[0].function_calls[0]["name"], "review_agent.grounded_postcheck")
 
     def test_ready_investigation_intake_follow_up_short_circuits_before_rag_and_uses_intake_complete_reason(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
@@ -1872,6 +2000,17 @@ The documentation states that time: 0 means the rule is applied permanently. How
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
 
         review_modes: list[str] = []
+        trace_contexts: list[_FakeOpenAiReviewTrace] = []
+
+        def _fake_start_review_trace(**kwargs: object) -> _FakeOpenAiReviewTrace:
+            context = _FakeOpenAiReviewTrace(
+                trace_id=f"trace-{kwargs['mode']}",
+                group_id=str(kwargs["run_id"]),
+                workflow_name=f"supportportal.review_agent.{kwargs['mode']}",
+                mode=str(kwargs["mode"]),
+            )
+            trace_contexts.append(context)
+            return context
 
         def _review_agent(**kwargs: object) -> TroubleshootingIntakeResult:
             mode = str(kwargs.get("mode") or "")
@@ -1889,49 +2028,53 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 ),
             )
 
-        execution = execute_client_ticket_agent_runtime(
-            message="i got black screen, what should i do?",
-            ticket_id="TK-RAG-UNAVAIL-TRBL-1",
-            customer_id="C-001",
-            ticket_subject="Black screen",
-            ticket_context=[{"role": "customer", "content": "i got black screen, what should i do?"}],
-            product="audio_video_calling",
-            message_id="2026-04-04T00:00:00+00:00",
-            route_agent=lambda **_kwargs: SupportRouteDecision(
-                scope_label="agora_technical",
-                route="rag",
-                confidence=0.94,
-                reason="technical_question",
-                matched_signals=["black screen"],
-                response_language="en",
-                route_family="agora_docs_rag",
-                execution_action="rag",
-                tooling_profile="agora_docs_only",
-            ),
-            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
-            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
-                answer="",
-                confidence=0.0,
-                sources=[],
-                citations=[],
-                needs_engineer_guidance=True,
-                reason="rag_unavailable",
-                evidence_summary={
-                    "quality_signals": {
-                        "generation_mode": "insufficient_evidence",
-                        "needs_human": True,
+        with patch(
+            "backend.services.client_ticket_agent_runtime.openai_agent_tracing.start_review_trace",
+            side_effect=_fake_start_review_trace,
+        ):
+            execution = execute_client_ticket_agent_runtime(
+                message="i got black screen, what should i do?",
+                ticket_id="TK-RAG-UNAVAIL-TRBL-1",
+                customer_id="C-001",
+                ticket_subject="Black screen",
+                ticket_context=[{"role": "customer", "content": "i got black screen, what should i do?"}],
+                product="audio_video_calling",
+                message_id="2026-04-04T00:00:00+00:00",
+                route_agent=lambda **_kwargs: SupportRouteDecision(
+                    scope_label="agora_technical",
+                    route="rag",
+                    confidence=0.94,
+                    reason="technical_question",
+                    matched_signals=["black screen"],
+                    response_language="en",
+                    route_family="agora_docs_rag",
+                    execution_action="rag",
+                    tooling_profile="agora_docs_only",
+                ),
+                route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+                rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                    answer="",
+                    confidence=0.0,
+                    sources=[],
+                    citations=[],
+                    needs_engineer_guidance=True,
+                    reason="rag_unavailable",
+                    evidence_summary={
+                        "quality_signals": {
+                            "generation_mode": "insufficient_evidence",
+                            "needs_human": True,
+                        },
+                        "diagnostics": {
+                            "knowledge_index_status": "configured_table_empty",
+                            "knowledge_index_reason": "configured_table_empty",
+                            "configured_vector_table": "supportportal.docagent_chunks_bge_m3_1024",
+                        },
                     },
-                    "diagnostics": {
-                        "knowledge_index_status": "configured_table_empty",
-                        "knowledge_index_reason": "configured_table_empty",
-                        "configured_vector_table": "supportportal.docagent_chunks_bge_m3_1024",
-                    },
-                },
-                packed_evidence=None,
-            ),
-            review_agent=_review_agent,
-            rag_canceler=None,
-        )
+                    packed_evidence=None,
+                ),
+                review_agent=_review_agent,
+                rag_canceler=None,
+            )
 
         self.assertEqual(review_modes, ["rag_insufficient_evidence"])
         self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
@@ -1948,6 +2091,33 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertTrue(execution.result.answer.startswith("Hi there,"))
         self.assertIn("Thanks for the details.", execution.result.answer)
         self.assertNotIn("known so far", execution.result.answer.lower())
+        review_trace_state = execution.runtime_state.review_agent.get("openai_tracing") or {}
+        self.assertEqual(review_trace_state.get("group_id"), execution.result.run_id)
+        self.assertEqual(review_trace_state.get("latest_trace_id"), "trace-rag_insufficient_evidence")
+        self.assertEqual(
+            review_trace_state.get("traces"),
+            [
+                {
+                    "mode": "rag_insufficient_evidence",
+                    "trace_id": "trace-rag_insufficient_evidence",
+                    "group_id": execution.result.run_id,
+                    "workflow_name": "supportportal.review_agent.rag_insufficient_evidence",
+                }
+            ],
+        )
+        review_started = next(
+            event
+            for event in execution.agent_events
+            if event.get("agent_name") == "review_agent" and event.get("event_type") == "started"
+        )
+        self.assertEqual(review_started["payload"]["openai_tracing"]["mode"], "rag_insufficient_evidence")
+        review_completed = next(
+            event
+            for event in execution.agent_events
+            if event.get("agent_name") == "review_agent" and event.get("event_type") == "completed"
+        )
+        self.assertEqual(review_completed["payload"]["openai_tracing"]["trace_id"], "trace-rag_insufficient_evidence")
+        self.assertEqual(trace_contexts[0].function_calls[0]["name"], "review_agent.rag_insufficient_evidence")
 
     def test_troubleshooting_rag_unavailable_keeps_investigation_mode_when_intake_llm_prefers_answer(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
