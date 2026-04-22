@@ -891,6 +891,182 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
         self.assertEqual(execution.runtime_state.review_agent.get("reason"), "low_risk_grounded_answer")
 
+    def test_follow_up_code_example_runtime_answers_customer_from_inherited_join_topic(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+        from backend.services.rag_qa import run_rag_query
+
+        class _FakeProvider:
+            provider_name = "siliconflow"
+            model_id = "BAAI/bge-m3"
+            vector_dim = 1024
+
+            def count_tokens(self, text: str) -> int:
+                return max(1, len(str(text or "").split()))
+
+            def drain_request_log(self) -> list[dict[str, object]]:
+                return []
+
+        def _bm25_chunk():
+            from backend.services.rag_qa import RetrievedChunk
+
+            return RetrievedChunk(
+                chunk_id="bm25-join",
+                text=(
+                    "Call joinChannel with the same channel name on each client.\n\n"
+                    "```cpp\nengine->joinChannel(token, channelName, uid, options);\n```"
+                ),
+                source_path="official/get-started.md",
+                similarity=0.95,
+            )
+
+        def _fts_auth_chunk():
+            from backend.services.rag_qa import RetrievedChunk
+
+            return RetrievedChunk(
+                chunk_id="fts-auth",
+                text="Generate a token from your authentication server before calling joinChannel.",
+                source_path="official/authentication-workflow.md",
+                similarity=0.88,
+            )
+
+        def _rag_agent(**kwargs):
+            rag_result = run_rag_query(
+                str(kwargs.get("message") or ""),
+                ticket_context=kwargs.get("ticket_context"),
+                product=kwargs.get("product"),
+            )
+            self.assertIsNotNone(rag_result)
+            assert rag_result is not None
+            return RagTicketAnswerDetail(
+                answer=rag_result.answer.answer,
+                confidence=rag_result.answer.confidence,
+                sources=list(rag_result.answer.sources),
+                citations=list(rag_result.answer.citations),
+                needs_engineer_guidance=bool(rag_result.trace.needs_human),
+                reason=str(rag_result.trace.handoff_reason or "grounded_answer"),
+                evidence_summary={
+                    "quality_signals": {
+                        "query_class": rag_result.trace.query_class,
+                        "generation_mode": rag_result.trace.generation_mode,
+                        "selected_doc_count": rag_result.trace.selected_doc_count,
+                        "needs_human": rag_result.trace.needs_human,
+                        "extractive_fallback_used": rag_result.trace.extractive_fallback_used,
+                    }
+                },
+                packed_evidence=None,
+            )
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "app_schema": "supportportal",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 2,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-5.4",
+                "reasoning_effort": "high",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "vector_enabled": True,
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_enabled": True,
+                "rerank_timeout_seconds": 10.0,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+                "fallback_models": (),
+                "query_policy": "balanced",
+                "context_budget_enabled": False,
+                "reserved_output_tokens": 1200,
+                "buffer_tokens": 1200,
+            }
+            with patch(
+                "backend.services.rag_qa._resolve_active_vector_table",
+                return_value="supportportal.docagent_chunks_bge_m3_1024",
+            ), patch(
+                "backend.services.rag_qa.get_embedding_provider",
+                return_value=_FakeProvider(),
+            ), patch(
+                "backend.services.rag_qa.understand_rag_query",
+                side_effect=AssertionError("runtime follow-up example should stay on inherited lexical light path"),
+            ), patch(
+                "backend.services.rag_qa._invoke_agentic_planner",
+                side_effect=AssertionError("planner should not run for inherited generic join examples"),
+            ), patch(
+                "backend.services.rag_qa._retrieve_chunks",
+                side_effect=AssertionError("vector retrieval should not run for inherited generic join examples"),
+            ), patch(
+                "backend.services.rag_qa._retrieve_bm25_chunks",
+                return_value=[_bm25_chunk()],
+            ), patch(
+                "backend.services.rag_qa._retrieve_fts_chunks",
+                return_value=[_fts_auth_chunk()],
+            ), patch(
+                "backend.services.rag_qa._metadata_rerank",
+                side_effect=lambda *args, **kwargs: (
+                    [_bm25_chunk(), _fts_auth_chunk()],
+                    {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None},
+                ),
+            ), patch(
+                "backend.services.rag_qa._rerank_chunks",
+                side_effect=AssertionError("external rerank should be skipped for inherited lexical light path"),
+            ), patch(
+                "backend.services.rag_qa._fetch_generic_join_pinned_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                side_effect=AssertionError("generic join deterministic answer should satisfy inherited code-example follow-ups"),
+            ):
+                execution = execute_client_ticket_agent_runtime(
+                    message="Can you share a code example?",
+                    ticket_id="TK-171-RUNTIME",
+                    customer_id="C-001",
+                    ticket_subject="Join channel",
+                    ticket_context=[
+                        {"role": "customer", "content": "How to join channel?"},
+                        {
+                            "role": "assistant",
+                            "content": (
+                                "To join a channel, initialize the engine, prepare your token, "
+                                "then call the SDK join method."
+                            ),
+                        },
+                    ],
+                    product="audio_video_calling",
+                    message_id="2026-04-22T09:00:00+00:00",
+                    route_agent=lambda **_kwargs: SupportRouteDecision(
+                        scope_label="agora_technical",
+                        route="rag",
+                        confidence=0.75,
+                        reason="conservative_agora_technical_fallback",
+                        matched_signals=[],
+                        response_language="en",
+                        route_family="agora_docs_rag",
+                        execution_action="rag",
+                        tooling_profile="agora_docs_only",
+                    ),
+                    route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+                    rag_agent=_rag_agent,
+                    review_agent=lambda **_kwargs: self.fail("review agent should not run for grounded inherited example answers"),
+                    rag_canceler=None,
+                )
+
+        self.assertEqual(execution.result.workflow_action, "answer_customer")
+        self.assertFalse(execution.result.needs_investigating)
+        self.assertIn("reference example", execution.result.answer.lower())
+        self.assertIn("joinchannel", execution.result.answer.lower())
+        self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
+        self.assertEqual(execution.runtime_state.review_agent.get("reason"), "low_risk_grounded_answer")
+
     def test_polite_onboarding_how_to_grounded_answer_skips_review(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
 

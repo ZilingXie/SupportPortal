@@ -22,6 +22,7 @@ from backend.services.api_semantics import (
 from backend.services.client_query_intent import (
     has_explicit_troubleshooting_signal,
     is_answer_first_how_to_message,
+    resolve_follow_up_example_inheritance,
 )
 from backend.services.embedding_provider import (
     DEFAULT_PGVECTOR_TABLE,
@@ -341,6 +342,9 @@ class RagQueryTrace:
     generic_join_support_chunks: list[str] = field(default_factory=list)
     generic_join_recovery_used: bool = False
     answer_path_decision: str | None = None
+    effective_question: str | None = None
+    follow_up_inheritance_used: bool = False
+    follow_up_inheritance_source: str | None = None
 
 
 @dataclass
@@ -377,6 +381,20 @@ def _raise_if_cancelled(
             pass
     if callable(should_cancel) and should_cancel():
         raise RagExecutionCancelled(normalized_stage)
+
+
+def _resolve_effective_question(
+    message: str,
+    ticket_context: list[dict[str, str]] | None,
+) -> tuple[str, Any | None]:
+    normalized_message = " ".join(str(message or "").split()).strip()
+    follow_up_inheritance = resolve_follow_up_example_inheritance(
+        message=normalized_message,
+        ticket_context=ticket_context,
+    )
+    if follow_up_inheritance is None:
+        return normalized_message, None
+    return str(follow_up_inheritance.effective_question or normalized_message).strip(), follow_up_inheritance
 
 
 @dataclass(frozen=True)
@@ -1433,7 +1451,14 @@ def _generic_join_product_compatible(chunk: RetrievedChunk, product: str | None)
     chunk_product = str(_chunk_product(chunk) or "").strip().lower()
     if normalized_product != SUPPORT_PRODUCT_AUDIO_VIDEO_CALLING:
         return chunk_product not in _AUDIO_VIDEO_CALLING_PENALIZED_PRODUCTS
-    return chunk_product in _AUDIO_VIDEO_CALLING_CORE_PRODUCTS
+    if chunk_product in _AUDIO_VIDEO_CALLING_CORE_PRODUCTS:
+        return True
+    if not chunk_product:
+        # Older or lightly normalized docs may not carry explicit product metadata.
+        # For generic join/auth guidance, treat those unlabeled chunks as compatible
+        # unless another rule later excludes them as stream/multi-channel specific.
+        return True
+    return False
 
 
 def _generic_join_support_signals(
@@ -6882,6 +6907,7 @@ def _run_rag_query_legacy(
     message: str,
     top_k: int | None = None,
     *,
+    ticket_context: list[dict[str, str]] | None = None,
     requester: str | None = None,
     customer_id: str | None = None,
     product: str | None = None,
@@ -6897,14 +6923,15 @@ def _run_rag_query_legacy(
         return None
 
     provider = get_embedding_provider()
-    original_query = str(message or "").strip()
+    effective_question, follow_up_inheritance = _resolve_effective_question(message, ticket_context)
+    original_query = str(effective_question or "").strip()
     vector_chunks: list[RetrievedChunk] = []
     bm25_chunks: list[RetrievedChunk] = []
     keyword_fallback_chunks: list[RetrievedChunk] = []
     chunks: list[RetrievedChunk] = []
     embedding_request_meta: list[dict[str, Any]] = []
     embedding_dimensions = getattr(provider, "vector_dim", None)
-    query_type = _infer_query_type(message)
+    query_type = _infer_query_type(effective_question)
     query_understanding_enabled = _feature_flag_enabled("RAG_QUERY_UNDERSTANDING_ENABLED", True)
     query_rewrite_enabled = _feature_flag_enabled("RAG_QUERY_REWRITE_ENABLED", True)
     query_decomposition_enabled = _feature_flag_enabled("RAG_QUERY_DECOMPOSITION_ENABLED", True)
@@ -6918,7 +6945,7 @@ def _run_rag_query_legacy(
     effective_prf_expansions: list[str] = []
     effective_rewrites: list[str] = []
     effective_decomposition_subqueries: list[str] = []
-    query_variants: list[tuple[str, str]] = [("original", str(message or "").strip())]
+    query_variants: list[tuple[str, str]] = [("original", original_query)]
     first_pass_candidate_count = 0
     second_pass_candidate_count = 0
     total_started_at = time.perf_counter()
@@ -6955,7 +6982,7 @@ def _run_rag_query_legacy(
         query_understanding_executor = ThreadPoolExecutor(max_workers=1)
         query_understanding_future = query_understanding_executor.submit(
             understand_rag_query,
-            message,
+            effective_question,
             query_policy=query_policy,
         )
     effective_plan = RetrievalPlan(semantic_query=original_query)
@@ -7115,7 +7142,7 @@ def _run_rag_query_legacy(
             prf_used=False,
         )
         query_variants = _build_query_variants(
-            message,
+            effective_question,
             replace(
                 query_understanding,
                 rewritten_queries=list(effective_rewrites),
@@ -7168,7 +7195,7 @@ def _run_rag_query_legacy(
     chunks = _merge_candidate_sets()
     first_pass_candidate_count = len(chunks)
 
-    weak_first_pass = (not chunks) or (not _has_grounded_keyword_overlap(message, chunks)) or (
+    weak_first_pass = (not chunks) or (not _has_grounded_keyword_overlap(effective_question, chunks)) or (
         len(chunks) < min(2, int(config["top_k"]))
     )
     if query_prf_enabled and query_understanding is not None and weak_first_pass:
@@ -7178,7 +7205,7 @@ def _run_rag_query_legacy(
             record_stage=record_cancel_stage,
         )
         prf_expansion_terms = build_prf_expansions(
-            message,
+            effective_question,
             chunks,
             canonical_terms=query_understanding.canonical_terms,
             existing_expansions=[*effective_rule_expansions, *effective_llm_expansions],
@@ -7247,7 +7274,7 @@ def _run_rag_query_legacy(
                 total_latency_ms=round((time.perf_counter() - total_started_at) * 1000, 2),
                 prompt_tokens=0,
                 completion_tokens=0,
-                embedding_tokens=_estimate_embedding_tokens(message),
+                embedding_tokens=_estimate_embedding_tokens(effective_question),
                 embedding_provider=config["embedding_provider"],
                 embedding_model=config["embedding_model"],
                 embedding_dimensions=embedding_dimensions,
@@ -7320,6 +7347,13 @@ def _run_rag_query_legacy(
                 fts_latency_ms=0.0,
                 retrieval_round_wall_clock_ms=compatible_lexical_latency_ms,
                 retrieval_tool_timings=[],
+                effective_question=effective_question,
+                follow_up_inheritance_used=follow_up_inheritance is not None,
+                follow_up_inheritance_source=(
+                    str(follow_up_inheritance.source or "").strip() or None
+                    if follow_up_inheritance is not None
+                    else None
+                ),
             )
             return RagQueryResult(answer=answer, trace=trace)
 
@@ -7332,7 +7366,7 @@ def _run_rag_query_legacy(
         )
         rerank_started_at = time.perf_counter()
         reranked_chunks, rerank_info = _metadata_rerank(
-            query=message,
+            query=effective_question,
             chunks=chunks,
             top_k=int(config["fusion_candidate_k"]),
             retrieval_plan=effective_plan,
@@ -7344,11 +7378,11 @@ def _run_rag_query_legacy(
         chunks = _reorder_chunks_for_rerank(
             chunks,
             limit=int(config["rerank_top_n"]),
-            query=message,
+            query=effective_question,
         ) or chunks
         rerank_started_at = time.perf_counter()
         externally_reranked = _rerank_chunks(
-            message,
+            effective_question,
             chunks,
             config,
             limit=int(config["rerank_top_n"]),
@@ -7356,7 +7390,11 @@ def _run_rag_query_legacy(
         rerank_latency_ms = round(rerank_latency_ms + ((time.perf_counter() - rerank_started_at) * 1000), 2)
         chunks = externally_reranked or chunks
 
-    final_chunks = _select_diverse_chunks(chunks, limit=int(config["top_k"]), query=message) or chunks[: int(config["top_k"])] or chunks
+    final_chunks = _select_diverse_chunks(
+        chunks,
+        limit=int(config["top_k"]),
+        query=effective_question,
+    ) or chunks[: int(config["top_k"])] or chunks
     if chunks and bool(config.get("context_budget_enabled")):
         compression_defaults = resolve_model_profile(RAG_CONTEXT_COMPRESSION_SCENARIO)
         compression_profile = ModelProfile(
@@ -7375,10 +7413,10 @@ def _run_rag_query_legacy(
         packing_limit = min(len(chunks), max(int(config.get("top_k") or 1), int(config.get("rerank_top_n") or len(chunks))))
         packing_candidates = list(chunks[:packing_limit]) or list(chunks)
         packed_evidence = build_packed_evidence(
-            question=message,
+            question=effective_question,
             chunks=packing_candidates,
             system_prompt_text=_build_answer_system_prompt(product),
-            user_prompt_text=_build_answer_prompt_for_mode(message, "", repair_mode=False),
+            user_prompt_text=_build_answer_prompt_for_mode(effective_question, "", repair_mode=False),
             tool_schema_text="",
             context_window=int(config.get("context_window") or model_context_window(str(config.get("chat_model") or ""))),
             reserved_output_tokens=int(config.get("reserved_output_tokens") or 0),
@@ -7392,11 +7430,11 @@ def _run_rag_query_legacy(
         if packed_chunks:
             final_chunks = packed_chunks
     allowed_chunk_ids = {chunk.chunk_id for chunk in final_chunks}
-    grounded_overlap = _has_grounded_keyword_overlap(message, final_chunks)
+    grounded_overlap = _has_grounded_keyword_overlap(effective_question, final_chunks)
     generation_config = dict(config)
     generation_config["reasoning_effort"] = _effective_answer_reasoning_effort(
         base_effort=str(config.get("reasoning_effort") or ""),
-        query_class=_classify_agentic_query(message, query_understanding),
+        query_class=_classify_agentic_query(effective_question, query_understanding),
         query_type=query_type,
     )
     payload: dict[str, Any] | None = None
@@ -7408,7 +7446,7 @@ def _run_rag_query_legacy(
         )
         generation_started_at = time.perf_counter()
         payload, prompt_tokens, completion_tokens, model_name = _invoke_llm_payload_with_trace(
-            message,
+            effective_question,
             final_chunks,
             generation_config,
             strict_retry=False,
@@ -7422,7 +7460,7 @@ def _run_rag_query_legacy(
         if retry_required:
             structured_retry_used = True
             retry_payload, retry_prompt_tokens, retry_completion_tokens, retry_model_name = _invoke_llm_payload_with_trace(
-                message,
+                effective_question,
                 final_chunks,
                 generation_config,
                 strict_retry=True,
@@ -7466,7 +7504,7 @@ def _run_rag_query_legacy(
         )
         compatible_lexical_latency_ms = round(bm25_latency_ms + keyword_fallback_latency_ms, 2)
         answer_path_decision = None
-        if _is_how_to_faq_query(message, query_understanding):
+        if _is_how_to_faq_query(effective_question, query_understanding):
             answer_path_decision = "answer_first" if not needs_human else "clarify_first"
         return RagQueryTrace(
             query_type=query_type,
@@ -7484,7 +7522,7 @@ def _run_rag_query_legacy(
             total_latency_ms=round((time.perf_counter() - total_started_at) * 1000, 2),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
-            embedding_tokens=_estimate_embedding_tokens(message),
+            embedding_tokens=_estimate_embedding_tokens(effective_question),
             embedding_provider=config["embedding_provider"],
             embedding_model=config["embedding_model"],
             embedding_dimensions=embedding_dimensions,
@@ -7581,6 +7619,13 @@ def _run_rag_query_legacy(
             variant_zero_yield_reasons=[],
             doc_family_mix=_doc_family_mix_for_chunks(final_chunks),
             answer_path_decision=answer_path_decision,
+            effective_question=effective_question,
+            follow_up_inheritance_used=follow_up_inheritance is not None,
+            follow_up_inheritance_source=(
+                str(follow_up_inheritance.source or "").strip() or None
+                if follow_up_inheritance is not None
+                else None
+            ),
         )
 
     if payload is not None and _is_valid_response(payload, allowed_chunk_ids):
@@ -7630,7 +7675,7 @@ def _run_rag_query_legacy(
             answer=_build_answer_text(
                 str(payload["answer"]),
                 payload.get("key_steps", []),
-                question=message,
+                question=effective_question,
                 requester=requester,
                 customer_id=customer_id,
             ),
@@ -7716,12 +7761,13 @@ def _run_rag_query_agentic_single(
     if not config["dsn"] or not config["api_key"]:
         return None
 
-    query_type = _infer_query_type(message)
+    effective_question, follow_up_inheritance = _resolve_effective_question(message, ticket_context)
+    query_type = _infer_query_type(effective_question)
     shadow_retrieval_enabled = _shadow_retrieval_enabled(config)
-    preliminary_query_class = _classify_agentic_query(message, None)
+    preliminary_query_class = _classify_agentic_query(effective_question, None)
     api_semantics_query = preliminary_query_class == "api_semantics_mismatch"
-    short_how_to_faq_query = preliminary_query_class == "how_to_faq" and _is_short_how_to_faq_query(message)
-    simple_lexical_query = preliminary_query_class == "lexical_exact" and _is_simple_lexical_query(message)
+    short_how_to_faq_query = preliminary_query_class == "how_to_faq" and _is_short_how_to_faq_query(effective_question)
+    simple_lexical_query = preliminary_query_class == "lexical_exact" and _is_simple_lexical_query(effective_question)
     vector_setup_skipped = simple_lexical_query or short_how_to_faq_query or api_semantics_query
     light_path_used = simple_lexical_query or short_how_to_faq_query or api_semantics_query
     skip_bm25_warmup = preliminary_query_class in {"how_to_faq", "api_semantics_mismatch"}
@@ -7757,7 +7803,10 @@ def _run_rag_query_agentic_single(
             config["_vector_runtime_available"] = False
     preflight_probe_latency_ms = round((time.perf_counter() - request_started_at) * 1000, 2)
     warm_vector_enabled = bool(config.get("vector_enabled")) and not (
-        simple_lexical_query or short_how_to_faq_query or api_semantics_query or _is_generic_join_channel_query(message)
+        simple_lexical_query
+        or short_how_to_faq_query
+        or api_semantics_query
+        or _is_generic_join_channel_query(effective_question)
     )
     query_understanding_enabled = _feature_flag_enabled("RAG_QUERY_UNDERSTANDING_ENABLED", True) and not (
         simple_lexical_query or short_how_to_faq_query or api_semantics_query
@@ -7843,17 +7892,17 @@ def _run_rag_query_agentic_single(
         )
         query_understanding_executor = ThreadPoolExecutor(max_workers=3 if warm_vector_enabled else 2)
         warm_retrieval_config = dict(config)
-        warm_retrieval_config["_retrieval_plan"] = RetrievalPlan(semantic_query=str(message or "").strip())
+        warm_retrieval_config["_retrieval_plan"] = RetrievalPlan(semantic_query=str(effective_question or "").strip())
         query_understanding_future = query_understanding_executor.submit(
             understand_rag_query,
-            message,
+            effective_question,
             query_policy=query_policy,
         )
         if warm_vector_enabled:
             warm_original_vector_future = query_understanding_executor.submit(
                 _timed_retrieve,
                 _retrieve_chunks,
-                message,
+                effective_question,
                 warm_retrieval_config,
                 limit=int(config.get("vector_candidate_k") or config.get("top_k") or 5),
                 index_role="primary",
@@ -7862,7 +7911,7 @@ def _run_rag_query_agentic_single(
             warm_original_bm25_future = query_understanding_executor.submit(
                 _timed_retrieve,
                 _retrieve_bm25_chunks,
-                message,
+                effective_question,
                 warm_retrieval_config,
                 limit=int(config.get("bm25_candidate_k") or config.get("top_k") or 5),
                 index_role="primary",
@@ -7899,7 +7948,7 @@ def _run_rag_query_agentic_single(
             list(query_understanding.decomposition_subqueries) if query_decomposition_enabled else []
         )
         effective_plan = RetrievalPlan(
-            semantic_query=query_understanding.semantic_query or str(message or "").strip(),
+            semantic_query=query_understanding.semantic_query or str(effective_question or "").strip(),
             hard_filters=dict(effective_hard_filters),
             soft_signals=dict(effective_soft_signals),
             rewritten_queries=list(effective_rewrites),
@@ -7920,10 +7969,10 @@ def _run_rag_query_agentic_single(
             retrieval_plan=effective_plan,
         )
     else:
-        effective_plan = RetrievalPlan(semantic_query=str(message or "").strip())
+        effective_plan = RetrievalPlan(semantic_query=str(effective_question or "").strip())
 
     plan = _build_agentic_retrieval_plan(
-        message=message,
+        message=effective_question,
         top_k=int(config["top_k"]),
         query_understanding=effective_query_understanding or query_understanding,
         ticket_context=ticket_context,
@@ -7960,7 +8009,7 @@ def _run_rag_query_agentic_single(
         previous_rerank_info = dict(final_rerank_info)
         previous_judge = final_judge
         round_result = _execute_agentic_round(
-            message=message,
+            message=effective_question,
             config=config,
             plan=plan,
             round_index=round_index,
@@ -8055,11 +8104,11 @@ def _run_rag_query_agentic_single(
         generic_join_support_pair_found = False
         generic_join_support_chunks: list[str] = []
         generic_join_recovery_used = False
-        if _is_generic_join_channel_query(message):
+        if _is_generic_join_channel_query(effective_question):
             join_chunk, auth_chunk = _select_generic_join_grounding_chunks(
                 final_chunks,
                 product=product,
-                query=message,
+                query=effective_question,
             )
             generic_join_primary_chunk_found = join_chunk is not None
             generic_join_support_pair_found = join_chunk is not None and auth_chunk is not None
@@ -8100,7 +8149,7 @@ def _run_rag_query_agentic_single(
             total_latency_ms=round((time.perf_counter() - total_started_at) * 1000, 2),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
-            embedding_tokens=_estimate_embedding_tokens(message),
+            embedding_tokens=_estimate_embedding_tokens(effective_question),
             embedding_provider=config["embedding_provider"],
             embedding_model=config["embedding_model"],
             embedding_dimensions=embedding_dimensions,
@@ -8239,6 +8288,13 @@ def _run_rag_query_agentic_single(
             generic_join_support_chunks=generic_join_support_chunks,
             generic_join_recovery_used=generic_join_recovery_used,
             answer_path_decision=answer_path_decision,
+            effective_question=effective_question,
+            follow_up_inheritance_used=follow_up_inheritance is not None,
+            follow_up_inheritance_source=(
+                str(follow_up_inheritance.source or "").strip() or None
+                if follow_up_inheritance is not None
+                else None
+            ),
         )
 
     if not final_chunks or final_judge is None or final_judge.decision == "escalate":
@@ -8261,7 +8317,7 @@ def _run_rag_query_agentic_single(
         )
 
     allowed_chunk_ids = {chunk.chunk_id for chunk in final_chunks if chunk.chunk_id}
-    grounded_overlap = _has_grounded_keyword_overlap(message, final_chunks)
+    grounded_overlap = _has_grounded_keyword_overlap(effective_question, final_chunks)
     generation_config = dict(config)
     generation_config["reasoning_effort"] = _effective_answer_reasoning_effort(
         base_effort=str(config.get("reasoning_effort") or ""),
@@ -8271,7 +8327,7 @@ def _run_rag_query_agentic_single(
     if plan.query_class == "api_semantics_mismatch":
         deterministic_generation_started_at = time.perf_counter()
         deterministic_answer = _build_api_semantics_grounded_answer(
-            message,
+            effective_question,
             final_chunks,
             requester=requester,
             customer_id=customer_id,
@@ -8289,10 +8345,10 @@ def _run_rag_query_agentic_single(
                     extractive_fallback_used=False,
                 ),
             )
-    if _allows_release_note_guidance_for_short_symptom_query(message):
+    if _allows_release_note_guidance_for_short_symptom_query(effective_question):
         deterministic_generation_started_at = time.perf_counter()
         deterministic_answer = _build_black_screen_guidance_grounded_answer(
-            message,
+            effective_question,
             final_chunks,
             product=product,
             requester=requester,
@@ -8311,10 +8367,10 @@ def _run_rag_query_agentic_single(
                     extractive_fallback_used=False,
                 ),
             )
-    if _is_dual_stream_enable_query(message):
+    if _is_dual_stream_enable_query(effective_question):
         deterministic_generation_started_at = time.perf_counter()
         deterministic_answer = _build_dual_stream_grounded_answer(
-            message,
+            effective_question,
             final_chunks,
             product=product,
             requester=requester,
@@ -8333,10 +8389,10 @@ def _run_rag_query_agentic_single(
                     extractive_fallback_used=False,
                 ),
             )
-    if _is_generic_join_channel_query(message):
+    if _is_generic_join_channel_query(effective_question):
         deterministic_generation_started_at = time.perf_counter()
         deterministic_answer = _build_generic_join_grounded_answer(
-            message,
+            effective_question,
             final_chunks,
             product=product,
             requester=requester,
@@ -8356,14 +8412,14 @@ def _run_rag_query_agentic_single(
                 ),
             )
     generation_chunk_limit = _generation_chunk_limit_for_agentic_query(
-        message=message,
+        message=effective_question,
         plan=plan,
         config=generation_config,
     )
     if generation_chunk_limit is not None:
         final_chunks = list(final_chunks[:generation_chunk_limit])
         allowed_chunk_ids = {chunk.chunk_id for chunk in final_chunks if chunk.chunk_id}
-        grounded_overlap = _has_grounded_keyword_overlap(message, final_chunks)
+        grounded_overlap = _has_grounded_keyword_overlap(effective_question, final_chunks)
     if final_chunks and bool(config.get("context_budget_enabled")):
         _raise_if_cancelled(
             "answer_generation",
@@ -8385,10 +8441,10 @@ def _run_rag_query_agentic_single(
             fallback_models=tuple(compression_defaults.fallback_models),
         )
         packed_evidence = build_packed_evidence(
-            question=message,
+            question=effective_question,
             chunks=list(final_chunks),
             system_prompt_text=_build_answer_system_prompt(product),
-            user_prompt_text=_build_answer_prompt_for_mode(message, "", repair_mode=False),
+            user_prompt_text=_build_answer_prompt_for_mode(effective_question, "", repair_mode=False),
             tool_schema_text="",
             context_window=int(config.get("context_window") or model_context_window(str(config.get("chat_model") or ""))),
             reserved_output_tokens=int(config.get("reserved_output_tokens") or 0),
@@ -8407,7 +8463,7 @@ def _run_rag_query_agentic_single(
         if packed_chunks:
             final_chunks = packed_chunks
             allowed_chunk_ids = {chunk.chunk_id for chunk in final_chunks if chunk.chunk_id}
-            grounded_overlap = _has_grounded_keyword_overlap(message, final_chunks)
+            grounded_overlap = _has_grounded_keyword_overlap(effective_question, final_chunks)
     payload: dict[str, Any] | None = None
     generation_started_at = time.perf_counter()
     api_semantics_fast_path = plan.query_class == "api_semantics_mismatch" and final_judge.decision == "answer_now"
@@ -8428,7 +8484,7 @@ def _run_rag_query_agentic_single(
     )
     initial_profile = fast_answer_profile or primary_answer_profile
     payload, prompt_tokens, completion_tokens, model_name = _invoke_llm_payload_with_trace(
-        message,
+        effective_question,
         final_chunks,
         generation_config,
         strict_retry=False,
@@ -8450,7 +8506,7 @@ def _run_rag_query_agentic_single(
             record_stage=record_cancel_stage,
         )
         retry_payload, retry_prompt_tokens, retry_completion_tokens, retry_model_name = _invoke_llm_payload_with_trace(
-            message,
+            effective_question,
             final_chunks,
             generation_config,
             strict_retry=False,
@@ -8476,7 +8532,7 @@ def _run_rag_query_agentic_single(
             record_stage=record_cancel_stage,
         )
         retry_payload, retry_prompt_tokens, retry_completion_tokens, retry_model_name = _invoke_llm_payload_with_trace(
-            message,
+            effective_question,
             final_chunks,
             generation_config,
             strict_retry=True,
@@ -8494,7 +8550,7 @@ def _run_rag_query_agentic_single(
         and payload is not None
         and _is_valid_response(payload, allowed_chunk_ids)
         and _requires_howto_citation_retry(
-        message=message,
+        message=effective_question,
         product=product,
         chunks=final_chunks,
         payload=payload,
@@ -8508,7 +8564,7 @@ def _run_rag_query_agentic_single(
             record_stage=record_cancel_stage,
         )
         retry_payload, retry_prompt_tokens, retry_completion_tokens, retry_model_name = _invoke_llm_payload_with_trace(
-            message,
+            effective_question,
             final_chunks,
             generation_config,
             strict_retry=True,
@@ -8567,7 +8623,7 @@ def _run_rag_query_agentic_single(
             answer=_build_answer_text(
                 str(payload["answer"]),
                 payload.get("key_steps", []),
-                question=message,
+                question=effective_question,
                 requester=requester,
                 customer_id=customer_id,
             ),
@@ -8956,6 +9012,7 @@ def run_rag_query(
         result = _run_rag_query_legacy(
             message,
             top_k=top_k,
+            ticket_context=ticket_context,
             requester=requester,
             customer_id=customer_id,
             product=product,
@@ -8994,6 +9051,7 @@ def run_rag_query(
         result = _run_rag_query_legacy(
             message,
             top_k=top_k,
+            ticket_context=ticket_context,
             requester=requester,
             customer_id=customer_id,
             product=product,

@@ -46,7 +46,10 @@ def build_troubleshooting_intake_system_prompt(
             "## Answer-Mode Clarify Requirements",
             f"Allowed answer-mode clarify fields: {', '.join(answer_clarify_fields) if answer_clarify_fields else '(none)'}",
             "Use answer-mode clarification only for direct answer requests that still lack enough grounded context.",
-            "For answer-mode clarification, use a short appreciative opening and ask natural questions about the customer's goal and blocker instead of troubleshooting field lists.",
+            "For answer-mode clarification, use a short appreciative opening and ask natural questions instead of troubleshooting field lists.",
+            "If the latest message is a short follow-up request for a code example, sample, or snippet and the recent context already makes the technical topic clear, do not ask the customer to restate the topic.",
+            "For those follow-up example requests, only ask for the missing example scope, such as platform or SDK, when that scope is still required.",
+            "Do not ask broad follow-up questions like re-explaining the goal, blocker, or whether they want to join, publish, or both when the recent context already anchors the topic.",
             "Do not mention grounded answers, support evidence, or other internal evaluation details in customer_reply.",
             "If the answer-mode clarify fields are already known and the case still needs human follow-up, set ready_for_engineer_ticket=true and leave customer_reply empty.",
             "",
@@ -54,6 +57,7 @@ def build_troubleshooting_intake_system_prompt(
             "Return strict JSON only.",
             'Allowed issue_mode values: "answer" or "investigation".',
             'Output keys: "issue_mode", "known_information", "missing_information", "ready_for_engineer_ticket", "customer_reply".',
+            'Optional output key: "answer_follow_up_kind" with allowed value "example_request".',
         ]
     )
     return "\n".join(parts).strip()

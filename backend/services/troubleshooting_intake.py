@@ -14,8 +14,10 @@ from backend.services.api_semantics import (
 )
 from backend.services.client_query_intent import (
     clean_client_query_text,
+    extract_explicit_platform_hints,
     has_explicit_troubleshooting_signal,
     is_answer_first_how_to_message,
+    resolve_follow_up_example_inheritance,
 )
 from backend.services.customer_reply_composer import (
     compose_customer_reply_email,
@@ -127,6 +129,8 @@ _MONTH_NAME_DATE_RE = re.compile(
     re.IGNORECASE,
 )
 _ANSWER_MODE_REQUIRED_FIELDS = ("desired_outcome", "blocked_step_or_error")
+_ANSWER_MODE_EXAMPLE_SCOPE_FIELD = "platform_or_sdk"
+_ANSWER_MODE_EXAMPLE_REQUEST_KIND = "example_request"
 _ANSWER_GOAL_HINT_RE = re.compile(
     r"\b(?:trying to|try to|want to|need to|would like to|looking to|aim(?:ing)? to|attempt(?:ing)? to)\s+"
     r"(.+?)(?=(?:,?\s*(?:but|however|except|although)\b)|[.?!]|$)",
@@ -200,6 +204,7 @@ class TroubleshootingIntakeResult:
     ready_for_engineer_ticket: bool
     customer_reply: str
     issue_timestamp_parts: dict[str, str] = field(default_factory=dict)
+    answer_follow_up_kind: str | None = None
 
 
 def _clean_text(value: Any) -> str:
@@ -252,6 +257,13 @@ def _normalize_nonnegative_int(value: Any, *, default: int = 0) -> int:
     except (TypeError, ValueError):
         return default
     return parsed if parsed >= 0 else default
+
+
+def _normalize_answer_follow_up_kind(value: Any) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if normalized == _ANSWER_MODE_EXAMPLE_REQUEST_KIND:
+        return normalized
+    return None
 
 
 def _extract_reference_year(value: Any) -> int | None:
@@ -705,11 +717,31 @@ def _extract_from_message(
     return extracted, timestamp_parts
 
 
-def _extract_answer_mode_information(message: str) -> dict[str, str]:
+def _extract_answer_mode_information(
+    message: str,
+    *,
+    answer_follow_up_kind: str | None = None,
+    ticket_context: list[dict[str, Any]] | None = None,
+) -> dict[str, str]:
     extracted: dict[str, str] = {}
     text = _clean_text(message).strip(" .,:;!?")
     if not text:
         return extracted
+
+    normalized_follow_up_kind = _normalize_answer_follow_up_kind(answer_follow_up_kind)
+    if normalized_follow_up_kind == _ANSWER_MODE_EXAMPLE_REQUEST_KIND:
+        inherited_follow_up = resolve_follow_up_example_inheritance(
+            message=text,
+            ticket_context=ticket_context,
+        )
+        if inherited_follow_up is not None:
+            extracted["desired_outcome"] = inherited_follow_up.effective_question
+            if inherited_follow_up.platform_hints:
+                extracted[_ANSWER_MODE_EXAMPLE_SCOPE_FIELD] = ", ".join(inherited_follow_up.platform_hints)
+        else:
+            platform_hints = extract_explicit_platform_hints(text)
+            if platform_hints:
+                extracted[_ANSWER_MODE_EXAMPLE_SCOPE_FIELD] = ", ".join(platform_hints)
 
     goal_match = _ANSWER_GOAL_HINT_RE.search(text)
     if goal_match:
@@ -730,6 +762,26 @@ def _extract_answer_mode_information(message: str) -> dict[str, str]:
     if blocker_text:
         extracted["blocked_step_or_error"] = blocker_text
     return extracted
+
+
+def _answer_mode_missing_information(
+    known_information: dict[str, str],
+    *,
+    answer_follow_up_kind: str | None = None,
+) -> list[str]:
+    normalized_follow_up_kind = _normalize_answer_follow_up_kind(answer_follow_up_kind)
+    if normalized_follow_up_kind == _ANSWER_MODE_EXAMPLE_REQUEST_KIND:
+        missing_information: list[str] = []
+        if not _clean_text(known_information.get("desired_outcome")):
+            missing_information.append("desired_outcome")
+        if not _clean_text(known_information.get(_ANSWER_MODE_EXAMPLE_SCOPE_FIELD)):
+            missing_information.append(_ANSWER_MODE_EXAMPLE_SCOPE_FIELD)
+        return missing_information
+    return [
+        field_name
+        for field_name in _ANSWER_MODE_REQUIRED_FIELDS
+        if not _clean_text(known_information.get(field_name))
+    ]
 
 
 def _merge_known_information(
@@ -753,8 +805,31 @@ def _merge_known_information(
             known_information.pop("issue_timestamp", None)
     if issue_mode == "answer":
         current_mode = str((current_state or {}).get("issue_mode") or "").strip().lower()
+        answer_follow_up_kind = _normalize_answer_follow_up_kind((current_state or {}).get("answer_follow_up_kind"))
+        if answer_follow_up_kind is None:
+            inherited_follow_up = resolve_follow_up_example_inheritance(
+                message=latest_message,
+                ticket_context=ticket_context,
+            )
+            if inherited_follow_up is not None:
+                answer_follow_up_kind = _ANSWER_MODE_EXAMPLE_REQUEST_KIND
+                known_information.setdefault("desired_outcome", inherited_follow_up.effective_question)
+                if inherited_follow_up.platform_hints:
+                    known_information[_ANSWER_MODE_EXAMPLE_SCOPE_FIELD] = ", ".join(inherited_follow_up.platform_hints)
         if current_mode == "answer":
-            for key, value in _extract_answer_mode_information(_clean_text(latest_message)).items():
+            for key, value in _extract_answer_mode_information(
+                _clean_text(latest_message),
+                answer_follow_up_kind=answer_follow_up_kind,
+                ticket_context=ticket_context,
+            ).items():
+                if value:
+                    known_information[key] = value
+        elif answer_follow_up_kind == _ANSWER_MODE_EXAMPLE_REQUEST_KIND:
+            for key, value in _extract_answer_mode_information(
+                _clean_text(latest_message),
+                answer_follow_up_kind=answer_follow_up_kind,
+                ticket_context=ticket_context,
+            ).items():
                 if value:
                     known_information[key] = value
         return known_information, {}
@@ -930,9 +1005,27 @@ def _build_answer_mode_customer_reply(
     latest_message: str,
     known_information: dict[str, str],
     missing_information: list[str],
+    answer_follow_up_kind: str | None = None,
     requester: str | None = None,
     customer_id: str | None = None,
 ) -> str:
+    normalized_follow_up_kind = _normalize_answer_follow_up_kind(answer_follow_up_kind)
+    if normalized_follow_up_kind == _ANSWER_MODE_EXAMPLE_REQUEST_KIND:
+        prompts: list[str] = []
+        if "desired_outcome" in missing_information:
+            prompts.append("the specific code example you need")
+        if _ANSWER_MODE_EXAMPLE_SCOPE_FIELD in missing_information:
+            prompts.append("which platform or SDK you need the example for")
+        if not prompts:
+            return ""
+        opening = _build_appreciative_opening(has_additional_info=bool(known_information))
+        return _compose_clarification_customer_reply(
+            latest_message=latest_message,
+            opener=opening,
+            body=f"To help us share the right code example, could you also share {_join_labels(prompts)}?",
+            requester=requester,
+            customer_id=customer_id,
+        )
     prompts: list[str] = []
     if "desired_outcome" in missing_information:
         prompts.append("what you're trying to achieve")
@@ -986,6 +1079,13 @@ def _fallback_result(
         current_state=current_state,
     )
     if issue_mode == "answer":
+        answer_follow_up_kind = _normalize_answer_follow_up_kind((current_state or {}).get("answer_follow_up_kind"))
+        inherited_follow_up = resolve_follow_up_example_inheritance(
+            message=latest_message,
+            ticket_context=ticket_context,
+        )
+        if inherited_follow_up is not None:
+            answer_follow_up_kind = _ANSWER_MODE_EXAMPLE_REQUEST_KIND
         known_information, issue_timestamp_parts = _merge_known_information(
             current_state=current_state,
             ticket_context=ticket_context,
@@ -994,11 +1094,10 @@ def _fallback_result(
             issue_mode=issue_mode,
             message_created_at=message_created_at,
         )
-        missing_information = [
-            field_name
-            for field_name in _ANSWER_MODE_REQUIRED_FIELDS
-            if not _clean_text(known_information.get(field_name))
-        ]
+        missing_information = _answer_mode_missing_information(
+            known_information,
+            answer_follow_up_kind=answer_follow_up_kind,
+        )
         ready = not missing_information and bool(known_information)
         return TroubleshootingIntakeResult(
             issue_mode="answer",
@@ -1011,10 +1110,12 @@ def _fallback_result(
                 latest_message=latest_message,
                 known_information=known_information,
                 missing_information=missing_information,
+                answer_follow_up_kind=answer_follow_up_kind,
                 requester=requester,
                 customer_id=customer_id,
             ),
             issue_timestamp_parts=issue_timestamp_parts,
+            answer_follow_up_kind=answer_follow_up_kind,
         )
     if get_support_product_profile(product) is None:
         return TroubleshootingIntakeResult(
@@ -1108,11 +1209,13 @@ def _parse_llm_result(
             known_information.pop("issue_timestamp", None)
 
     if issue_mode == "answer":
-        missing_information = [
-            field_name
-            for field_name in _ANSWER_MODE_REQUIRED_FIELDS
-            if not _clean_text(known_information.get(field_name))
-        ]
+        answer_follow_up_kind = _normalize_answer_follow_up_kind(
+            payload.get("answer_follow_up_kind") or fallback.answer_follow_up_kind
+        )
+        missing_information = _answer_mode_missing_information(
+            known_information,
+            answer_follow_up_kind=answer_follow_up_kind,
+        )
         ready_for_engineer_ticket = not missing_information and bool(known_information)
         issue_timestamp_parts = {}
     else:
@@ -1161,6 +1264,11 @@ def _parse_llm_result(
         ready_for_engineer_ticket=ready_for_engineer_ticket,
         customer_reply=customer_reply,
         issue_timestamp_parts=issue_timestamp_parts,
+        answer_follow_up_kind=(
+            _normalize_answer_follow_up_kind(payload.get("answer_follow_up_kind") or fallback.answer_follow_up_kind)
+            if issue_mode == "answer"
+            else None
+        ),
     )
 
 
@@ -1221,7 +1329,9 @@ def _evaluate_with_llm(
                 intake_role=build_support_product_intake_role(product) or "",
                 product_scope=build_support_product_prompt_scope(product),
                 required_fields=required_labels,
-                answer_clarify_fields=list_support_product_field_labels(list(_ANSWER_MODE_REQUIRED_FIELDS)),
+                answer_clarify_fields=list_support_product_field_labels(
+                    [*_ANSWER_MODE_REQUIRED_FIELDS, _ANSWER_MODE_EXAMPLE_SCOPE_FIELD]
+                ),
             ),
             user_prompt=build_troubleshooting_intake_user_prompt(
                 latest_customer_message=message,
@@ -1329,6 +1439,7 @@ def build_client_intake_state(
         "missing_information": list(result.missing_information),
         "ready_for_engineer_ticket": bool(result.ready_for_engineer_ticket),
         "issue_timestamp_parts": dict(result.issue_timestamp_parts),
+        "answer_follow_up_kind": _normalize_answer_follow_up_kind(result.answer_follow_up_kind),
         "clarification_rounds_used": rounds_used,
         "pending_investigation_reason": _clean_text(pending_investigation_reason) or None,
         "last_updated_at": _clean_text(now_value) or _utc_now(),

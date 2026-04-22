@@ -643,6 +643,39 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertTrue(result.ready_for_engineer_ticket)
         self.assertEqual(result.customer_reply, "")
 
+    def test_follow_up_code_example_inherits_join_channel_topic_and_never_asks_goal_or_blocker(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
+            result = evaluate_troubleshooting_intake(
+                message="Can you share a code example?",
+                product="audio_video_calling",
+                ticket_subject="Join channel",
+                ticket_context=[
+                    {"role": "customer", "content": "How do I join channel?"},
+                    {
+                        "role": "assistant",
+                        "content": (
+                            "To join a channel, initialize the engine, prepare your token, "
+                            "then call the SDK join method."
+                        ),
+                    },
+                ],
+                current_state=None,
+                rag_result={
+                    "reason": "rag_insufficient_evidence",
+                    "answer": "I couldn't find enough information in the available support knowledge base to answer that question.",
+                    "evidence_summary": {},
+                },
+            )
+
+        self.assertEqual(result.issue_mode, "answer")
+        self.assertIn("join channel", result.known_information["desired_outcome"].lower())
+        self.assertEqual(result.missing_information, ["platform_or_sdk"])
+        self.assertFalse(result.ready_for_engineer_ticket)
+        self.assertIn("platform", result.customer_reply.lower())
+        self.assertIn("sdk", result.customer_reply.lower())
+        self.assertNotIn("what you're trying to achieve", result.customer_reply.lower())
+        self.assertNotIn("error or blocker", result.customer_reply.lower())
+
     def test_llm_cannot_mark_investigation_ready_when_required_fields_are_missing(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
             "backend.services.troubleshooting_intake.invoke_responses_text",

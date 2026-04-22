@@ -14,6 +14,7 @@ from backend.services.client_query_intent import (
     clean_client_query_text,
     has_explicit_troubleshooting_signal,
     is_answer_first_how_to_message,
+    resolve_follow_up_example_inheritance,
 )
 from backend.services.customer_reply_composer import (
     append_customer_reply_email_paragraph,
@@ -68,6 +69,13 @@ AGENT_NAME_RAG = "rag_agent"
 AGENT_NAME_REVIEW = "review_agent"
 
 _ANSWER_MODE_REQUIRED_FIELDS = ("desired_outcome", "blocked_step_or_error")
+_ANSWER_MODE_OPTIONAL_FIELDS = ("platform_or_sdk",)
+_ANSWER_MODE_EXAMPLE_REQUEST_KIND = "example_request"
+_LOW_RISK_HOW_TO_GENERATION_MODES = {
+    "structured_answer",
+    "generic_join_deterministic",
+    "dual_stream_deterministic",
+}
 _STRUCTURED_TECHNICAL_REPLY_RE = re.compile(
     r"```|(^|\n)\s*\d+\.\s+|(^|\n)\s*[-*]\s+|\bjoinchannel\b|\bsetclientrole\b|\bengine\.\w+\b|"
     r"\btrack\.\w+\b|\bcall\s+the\s+sdk\b",
@@ -155,11 +163,36 @@ def _normalize_answer_mode_known_information(value: Any) -> dict[str, str]:
     if not isinstance(value, dict):
         return {}
     normalized: dict[str, str] = {}
-    for field_name in _ANSWER_MODE_REQUIRED_FIELDS:
+    for field_name in [*_ANSWER_MODE_REQUIRED_FIELDS, *_ANSWER_MODE_OPTIONAL_FIELDS]:
         clean_value = _clean_text(value.get(field_name))
         if clean_value:
             normalized[field_name] = clean_value
     return normalized
+
+
+def _normalize_answer_follow_up_kind(value: Any) -> str | None:
+    normalized = _clean_text(value).lower()
+    if normalized == _ANSWER_MODE_EXAMPLE_REQUEST_KIND:
+        return normalized
+    return None
+
+
+def _answer_mode_missing_information(
+    known_information: dict[str, str],
+    *,
+    answer_follow_up_kind: str | None = None,
+) -> list[str]:
+    normalized_follow_up_kind = _normalize_answer_follow_up_kind(answer_follow_up_kind)
+    if normalized_follow_up_kind == _ANSWER_MODE_EXAMPLE_REQUEST_KIND:
+        missing_information: list[str] = []
+        if not _clean_text(known_information.get("desired_outcome")):
+            missing_information.append("desired_outcome")
+        if not _clean_text(known_information.get("platform_or_sdk")):
+            missing_information.append("platform_or_sdk")
+        return missing_information
+    return [
+        field_name for field_name in _ANSWER_MODE_REQUIRED_FIELDS if not _clean_text(known_information.get(field_name))
+    ]
 
 
 def _build_answer_mode_customer_reply(
@@ -167,9 +200,28 @@ def _build_answer_mode_customer_reply(
     message: str,
     known_information: dict[str, str],
     missing_information: list[str],
+    answer_follow_up_kind: str | None = None,
     requester: str | None = None,
     customer_id: str | None = None,
 ) -> str:
+    normalized_follow_up_kind = _normalize_answer_follow_up_kind(answer_follow_up_kind)
+    if normalized_follow_up_kind == _ANSWER_MODE_EXAMPLE_REQUEST_KIND:
+        prompts: list[str] = []
+        if "desired_outcome" in missing_information:
+            prompts.append("the specific code example you need")
+        if "platform_or_sdk" in missing_information:
+            prompts.append("which platform or SDK you need the example for")
+        if not prompts:
+            return ""
+        opening = "Thanks for sharing the additional info." if known_information else "Thanks for the details."
+        return compose_customer_reply_email(
+            reply_kind="clarification",
+            body=f"To help us share the right code example, could you also share {_join_labels(prompts)}?",
+            requester=requester,
+            customer_id=customer_id,
+            language=detect_customer_reply_language(message),
+            opener=opening,
+        )
     prompts: list[str] = []
     if "desired_outcome" in missing_information:
         prompts.append("what you're trying to achieve")
@@ -196,9 +248,11 @@ def _build_answer_mode_review_result_from_state(
     customer_id: str | None = None,
 ) -> TroubleshootingIntakeResult:
     known_information = _normalize_answer_mode_known_information((current_state or {}).get("known_information"))
-    missing_information = [
-        field_name for field_name in _ANSWER_MODE_REQUIRED_FIELDS if not _clean_text(known_information.get(field_name))
-    ]
+    answer_follow_up_kind = _normalize_answer_follow_up_kind((current_state or {}).get("answer_follow_up_kind"))
+    missing_information = _answer_mode_missing_information(
+        known_information,
+        answer_follow_up_kind=answer_follow_up_kind,
+    )
     ready_for_engineer_ticket = not missing_information and bool(known_information)
     return TroubleshootingIntakeResult(
         issue_mode="answer",
@@ -211,9 +265,11 @@ def _build_answer_mode_review_result_from_state(
             message=message,
             known_information=known_information,
             missing_information=missing_information,
+            answer_follow_up_kind=answer_follow_up_kind,
             requester=requester,
             customer_id=customer_id,
         ),
+        answer_follow_up_kind=answer_follow_up_kind,
     )
 
 
@@ -244,9 +300,13 @@ def _sanitize_insufficient_review_result(
     known_information = _normalize_answer_mode_known_information(review_result.known_information)
     for field_name, field_value in _normalize_answer_mode_known_information((current_state or {}).get("known_information")).items():
         known_information.setdefault(field_name, field_value)
-    missing_information = [
-        field_name for field_name in _ANSWER_MODE_REQUIRED_FIELDS if not _clean_text(known_information.get(field_name))
-    ]
+    answer_follow_up_kind = _normalize_answer_follow_up_kind(
+        getattr(review_result, "answer_follow_up_kind", None) or (current_state or {}).get("answer_follow_up_kind")
+    )
+    missing_information = _answer_mode_missing_information(
+        known_information,
+        answer_follow_up_kind=answer_follow_up_kind,
+    )
     ready_for_engineer_ticket = not missing_information and bool(known_information)
     customer_reply = str(review_result.customer_reply or "").strip()
     if ready_for_engineer_ticket:
@@ -256,6 +316,7 @@ def _sanitize_insufficient_review_result(
             message=message,
             known_information=known_information,
             missing_information=missing_information,
+            answer_follow_up_kind=answer_follow_up_kind,
             requester=requester,
             customer_id=customer_id,
         )
@@ -272,6 +333,7 @@ def _sanitize_insufficient_review_result(
         missing_information=missing_information,
         ready_for_engineer_ticket=ready_for_engineer_ticket,
         customer_reply=customer_reply,
+        answer_follow_up_kind=answer_follow_up_kind,
     )
 
 
@@ -306,7 +368,24 @@ def _ensure_customer_reply_email(
     )
 
 
-def _build_answer_mode_follow_up(missing_information: list[str]) -> str:
+def _build_answer_mode_follow_up(
+    missing_information: list[str],
+    *,
+    answer_follow_up_kind: str | None = None,
+) -> str:
+    normalized_follow_up_kind = _normalize_answer_follow_up_kind(answer_follow_up_kind)
+    if normalized_follow_up_kind == _ANSWER_MODE_EXAMPLE_REQUEST_KIND:
+        prompts: list[str] = []
+        if "desired_outcome" in missing_information:
+            prompts.append("the specific code example you need")
+        if "platform_or_sdk" in missing_information:
+            prompts.append("which platform or SDK you need the example for")
+        if not prompts:
+            return ""
+        return (
+            "If you still need the example, "
+            f"please share {_join_labels(prompts)}."
+        )
     prompts: list[str] = []
     if "desired_outcome" in missing_information:
         prompts.append("what you're trying to achieve")
@@ -348,7 +427,10 @@ def _build_cited_answer_follow_up(
     if not missing_information or review_result.ready_for_engineer_ticket:
         return ""
     if str(review_result.issue_mode or "").strip().lower() == "answer":
-        return _build_answer_mode_follow_up(missing_information)
+        return _build_answer_mode_follow_up(
+            missing_information,
+            answer_follow_up_kind=getattr(review_result, "answer_follow_up_kind", None),
+        )
     return _build_investigation_follow_up(
         product=product,
         missing_information=missing_information,
@@ -965,6 +1047,7 @@ def _is_high_risk_grounded_answer(
     message: str,
     resolution: SupportResolution,
     client_intake_state: dict[str, Any] | None,
+    ticket_context: list[dict[str, Any]] | None = None,
 ) -> bool:
     if isinstance(client_intake_state, dict) and client_intake_state:
         return True
@@ -993,24 +1076,37 @@ def _is_high_risk_grounded_answer(
             return True
         return float(resolution.confidence or 0.0) < 0.85
     normalized_message = _clean_text(message)
+    inherited_follow_up = resolve_follow_up_example_inheritance(
+        message=normalized_message,
+        ticket_context=ticket_context,
+    )
+    effective_message = (
+        _clean_text(inherited_follow_up.effective_question)
+        if inherited_follow_up is not None
+        else normalized_message
+    )
     query_class = str(quality_signals.get("query_class") or "").strip().lower()
     if (
         query_class == "how_to_faq"
-        and normalized_message
-        and is_answer_first_how_to_message(normalized_message)
+        and effective_message
+        and is_answer_first_how_to_message(effective_message)
     ):
         if bool(quality_signals.get("needs_human")):
             return True
-        if str(quality_signals.get("generation_mode") or "").strip().lower() != "structured_answer":
+        generation_mode = str(quality_signals.get("generation_mode") or "").strip().lower()
+        if generation_mode not in _LOW_RISK_HOW_TO_GENERATION_MODES:
             return True
         if bool(quality_signals.get("extractive_fallback_used")):
             return True
-        if _safe_nonnegative_int(quality_signals.get("selected_doc_count"), 0) < 1:
+        if (
+            _safe_nonnegative_int(quality_signals.get("selected_doc_count"), 0) < 1
+            and not resolution.citations
+        ):
             return True
         if not resolution.citations:
             return True
         return float(resolution.confidence or 0.0) < 0.75
-    if has_explicit_troubleshooting_signal(_clean_text(message).lower()):
+    if has_explicit_troubleshooting_signal(effective_message.lower()):
         return True
     if float(resolution.confidence or 0.0) < 0.9:
         return True
@@ -2102,6 +2198,7 @@ def execute_client_ticket_agent_runtime(
                 message=message,
                 resolution=rag_resolution,
                 client_intake_state=client_intake_state,
+                ticket_context=ticket_context,
             )
             if should_wait_for_review:
                 _mark_agent_summary(review_summary, phase="running", status="running", decision="grounded_postcheck")

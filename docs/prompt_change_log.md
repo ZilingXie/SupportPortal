@@ -1417,6 +1417,23 @@ For each new entry, record:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_rag_qa.py backend/tests/test_rag_agentic.py`
   - Added regression asserting that a first-pass single-citation `how to join channel` answer retries and returns two RTC citations when both supporting chunks are present.
 
+- Date: 2026-04-22
+- Area or subsystem: Troubleshooting intake prompt contract
+- Prompt or model version: `troubleshooting-intake-v3`
+- Summary: Tightened the troubleshooting intake system prompt for short follow-up example requests so when recent context already anchors the technical topic, the model must not ask the customer to restate the topic and may only ask for missing example scope such as platform or SDK.
+- Reason: `TK-171` showed that a second-turn request like `Can you share a code example?` could still trigger broad clarify prompts about the customer's goal or blocker even though the earlier `join channel` topic was already clear.
+- Affected files or config:
+  - `backend/services/prompts/troubleshooting_intake.py`
+  - `backend/services/troubleshooting_intake.py`
+  - `backend/tests/test_troubleshooting_intake.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Short example/sample/snippet follow-ups with clear recent context should preserve the inherited topic instead of asking the customer to restate it.
+  - If clarification is still necessary for those follow-ups, the prompt should narrow to missing example scope such as platform or SDK.
+  - Generic clarify replies like `what you're trying to achieve`, `what error or blocker you're seeing`, or `join / publish / both` should no longer be emitted for anchored follow-up example requests.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_rag_qa.py backend/tests/test_client_ticket_agent_runtime.py backend/tests/test_troubleshooting_intake.py`
+
 - Date: 2026-04-05
 - Area or subsystem: Engineer investigation reply drafting
 - Prompt or model version: `engineer-investigation-reply-v1`
