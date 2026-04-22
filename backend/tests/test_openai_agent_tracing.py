@@ -123,6 +123,7 @@ class OpenAiAgentTracingTests(unittest.TestCase):
         generation_event = next(item for item in events if item["kind"] == "generation" and item["phase"] == "enter")
         self.assertEqual(generation_event["payload"]["model"], "gpt-5.4")
         self.assertEqual(generation_event["payload"]["usage"]["input_tokens"], 12)
+        self.assertNotIn("total_tokens", generation_event["payload"]["usage"])
         self.assertEqual(generation_event["payload"]["output"][0]["content"][0]["text"], "approved")
         guardrail_event = next(item for item in events if item["kind"] == "guardrail" and item["phase"] == "enter")
         self.assertFalse(guardrail_event["payload"]["triggered"])

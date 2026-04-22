@@ -190,9 +190,6 @@ def record_generation_span(
         "input_tokens": int(prompt_tokens or 0),
         "output_tokens": int(completion_tokens or 0),
     }
-    total_tokens = usage["input_tokens"] + usage["output_tokens"]
-    if total_tokens:
-        usage["total_tokens"] = total_tokens
     try:
         with sdk.generation_span(
             input=[

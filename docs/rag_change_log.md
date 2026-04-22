@@ -3472,3 +3472,25 @@ For each new entry, record:
 - Verification:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_client_ticket_agent_runtime backend.tests.test_troubleshooting_intake backend.tests.test_trace_client_ticket_route_cli backend.tests.test_internal_trace_routes backend.tests.test_llm_factory backend.tests.test_openai_agent_tracing`
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/openai_agent_tracing.py backend/services/client_ticket_agent_runtime.py backend/services/llm_factory.py backend/services/troubleshooting_intake.py scripts/trace_client_ticket_route.py`
+
+## 2026-04-22 - Fix OpenAI trace export compatibility for review generation spans
+
+- Summary:
+  - Removed the unsupported `usage.total_tokens` field from supplemental OpenAI review generation spans so the tracing export payload matches the ingest contract accepted by the live stack.
+  - Pinned `openai-agents` to the validated `0.4.2` build that was exercised in the local lightweight stack rebuild.
+  - Added a regression assertion to keep generation span usage payloads limited to supported token fields.
+- Reason:
+  - Post-merge live verification showed the review tracing layer exporting non-fatal `400 Bad Request` errors from `POST /v1/traces/ingest` because the runtime sent `data[0].span_data.usage.total_tokens`, which the deployed tracing ingest endpoint rejected.
+- Affected files/config:
+  - `backend/services/openai_agent_tracing.py`
+  - `backend/tests/test_openai_agent_tracing.py`
+  - `requirements.base.txt`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema or durable trace shape changes.
+  - OpenAI tracing export now emits only `input_tokens` and `output_tokens` in generation span usage, avoiding export-time rejection while preserving the existing business-trace references.
+  - Container rebuilds now install the explicitly validated `openai-agents==0.4.2` version instead of resolving an unconstrained release at build time.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_openai_agent_tracing backend.tests.test_llm_factory`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/openai_agent_tracing.py`
+  - Post-fix single-host lightweight stack rebuild and live `trace_client_ticket_route.py` verification were rerun from root `main`.
