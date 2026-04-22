@@ -10,6 +10,7 @@ from backend.services.llm_profiles import (
     CLIENT_ACK_SCENARIO,
     ENGINEER_HELPER_SCENARIO,
     ENGINEER_INVESTIGATION_REPLY_SCENARIO,
+    INPUT_GUARDRAIL_SCENARIO,
     KNOWLEDGE_INGESTION_SCENARIO,
     PRODUCT_SELECTION_SCENARIO,
     RAG_AGENT_PLANNER_SCENARIO,
@@ -35,6 +36,7 @@ class LlmProfileTests(unittest.TestCase):
             web_search = resolve_model_profile(WEB_SEARCH_SCENARIO)
             client_ack = resolve_model_profile(CLIENT_ACK_SCENARIO)
             product_selection = resolve_model_profile(PRODUCT_SELECTION_SCENARIO)
+            input_guardrail = resolve_model_profile(INPUT_GUARDRAIL_SCENARIO)
             rag_answer = resolve_model_profile(RAG_ANSWER_SCENARIO)
             sufficiency = resolve_model_profile(RAG_SUFFICIENCY_SCENARIO)
             query_expansion = resolve_model_profile(QUERY_EXPANSION_SCENARIO)
@@ -62,6 +64,14 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(product_selection.reasoning_effort, "low")
         self.assertEqual(product_selection.temperature, 0.2)
         self.assertEqual(product_selection.timeout_seconds, 8.0)
+
+        self.assertEqual(input_guardrail.provider, "openai")
+        self.assertEqual(input_guardrail.api_mode, "openai_responses")
+        self.assertEqual(input_guardrail.model, "gpt-5.4-mini")
+        self.assertEqual(input_guardrail.reasoning_effort, "low")
+        self.assertEqual(input_guardrail.temperature, 0.0)
+        self.assertEqual(input_guardrail.timeout_seconds, 6.0)
+        self.assertEqual(input_guardrail.max_retries, 1)
 
         self.assertEqual(rag_answer.provider, "openai")
         self.assertEqual(rag_answer.api_mode, "openai_responses")
@@ -179,6 +189,26 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(profile.reasoning_effort, "none")
         self.assertEqual(profile.temperature, 0.1)
         self.assertEqual(profile.timeout_seconds, 3.5)
+
+    def test_input_guardrail_profile_honors_env_overrides(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "INPUT_GUARDRAIL_MODEL": "gpt-5.4-nano",
+                "INPUT_GUARDRAIL_REASONING_EFFORT": "none",
+                "INPUT_GUARDRAIL_TEMPERATURE": "0.2",
+                "INPUT_GUARDRAIL_TIMEOUT_SECONDS": "4.5",
+                "INPUT_GUARDRAIL_MAX_RETRIES": "3",
+            },
+            clear=True,
+        ):
+            profile = resolve_model_profile(INPUT_GUARDRAIL_SCENARIO)
+
+        self.assertEqual(profile.model, "gpt-5.4-nano")
+        self.assertEqual(profile.reasoning_effort, "none")
+        self.assertEqual(profile.temperature, 0.2)
+        self.assertEqual(profile.timeout_seconds, 4.5)
+        self.assertEqual(profile.max_retries, 3)
 
     def test_agent_named_env_overrides_take_precedence_over_legacy_names(self) -> None:
         with patch.dict(

@@ -93,6 +93,10 @@ from backend.services.llm_profiles import (
 from backend.services.event_bus import AsyncRedisEventBus
 from backend.services.knowledge_monitoring import build_empty_knowledge_metrics
 from backend.services.product_selection import resolve_support_product_context
+from backend.services.openai_input_guardrail import (
+    OpenAIInputGuardrailResult,
+    evaluate_openai_input_guardrail,
+)
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
 from backend.services.rag_sufficiency_judge import judge_rag_answer_sufficiency
 from backend.services.rag_service_client import (
@@ -1301,10 +1305,39 @@ def build_answer(
     return resolution.as_answer_tuple()
 
 
+def _is_input_guardrail_blocked_message(message: dict[str, Any] | None) -> bool:
+    return isinstance(message, dict) and bool(message.get("input_guardrail_blocked"))
+
+
+def _build_input_guardrail_message_metadata(result: OpenAIInputGuardrailResult) -> dict[str, Any]:
+    return {
+        "input_guardrail_blocked": True,
+        "input_guardrail_category": result.category,
+        "input_guardrail_route_reason": result.route_reason,
+        "input_guardrail_diagnostics": dict(result.diagnostics or {}),
+    }
+
+
+def _build_input_guardrail_route_payload(result: OpenAIInputGuardrailResult) -> dict[str, Any]:
+    return {
+        "answer_route": "guardrail",
+        "scope_label": "input_guardrail",
+        "route_family": "input_guardrail",
+        "execution_action": "block_input",
+        "tooling_profile": "openai_agents_input_guardrail",
+        "route_reason": result.route_reason,
+        "route_confidence": 1.0,
+        "search_used": False,
+        "matched_signals": [result.category],
+    }
+
+
 def build_emotion_context(ticket: dict[str, Any], limit: int = 6, max_chars: int = 240) -> list[dict[str, str]]:
     messages = ticket.get("messages", [])
     context: list[dict[str, str]] = []
     for item in messages[-max(1, int(limit)) :]:
+        if _is_input_guardrail_blocked_message(item):
+            continue
         role = str(item.get("role", "system")).strip().lower() or "system"
         content = " ".join(str(item.get("content", "")).split()).strip()
         if not content:
@@ -1777,6 +1810,8 @@ def _latest_assistant_message_for_ticket(ticket: dict[str, Any]) -> dict[str, An
     )
     for message in reversed(messages):
         if not isinstance(message, dict):
+            continue
+        if _is_input_guardrail_blocked_message(message):
             continue
         if str(message.get("role") or "").strip().lower() != "assistant":
             continue
@@ -2253,11 +2288,6 @@ async def create_or_update_ticket(
     )
     existing_subject = str(ticket.get("subject") or "").strip()
     normalized_requested_subject = request.subject.strip() if request.subject and request.subject.strip() else None
-    if is_new_ticket or not existing_subject or existing_subject == "General support request":
-        ticket["subject"] = derive_subject(
-            request.message,
-            preferred_subject=normalized_requested_subject,
-        )
 
     if initial_message_count == 0:
         selected_product = _validated_new_session_product(request.product) or normalize_support_product(
@@ -2273,15 +2303,6 @@ async def create_or_update_ticket(
     timestamp = now_iso()
     current_app_build_ref = str(get_app_build_info().get("ref") or "").strip() or None
     customer_message_content_format = str(request.content_format or "plaintext").strip() or "plaintext"
-    ticket["messages"].append(
-        {
-            "role": "customer",
-            "content": customer_message,
-            "created_at": timestamp,
-            "content_format": customer_message_content_format,
-        }
-    )
-
     initial_ack = None
     follow_up_answer = ""
     follow_up_sources: list[str] = []
@@ -2302,23 +2323,69 @@ async def create_or_update_ticket(
         "search_used": False,
         "matched_signals": [],
     }
+    input_guardrail_result = await evaluate_openai_input_guardrail(
+        customer_message,
+        subject=normalized_requested_subject or existing_subject or None,
+        requester=str(ticket.get("requester") or "").strip() or None,
+        customer_id=request.customer_id,
+    )
+    persisted_customer_message = customer_message
+    active_engineer_case_payload: dict[str, Any] | None = None
+    if input_guardrail_result.blocked:
+        if is_new_ticket or not existing_subject or existing_subject == "General support request":
+            ticket["subject"] = normalized_requested_subject or existing_subject or "General support request"
+        persisted_customer_message = input_guardrail_result.sanitized_customer_placeholder
+        ticket["messages"].append(
+            {
+                "role": "customer",
+                "content": persisted_customer_message,
+                "created_at": timestamp,
+                "content_format": customer_message_content_format,
+                **_build_input_guardrail_message_metadata(input_guardrail_result),
+            }
+        )
+        route_payload.update(_build_input_guardrail_route_payload(input_guardrail_result))
+        follow_up_answer = input_guardrail_result.customer_reply
+        ack_source = "guardrail"
+        processing_mode = "input_guardrail_blocked"
+        active_engineer_case_payload = _active_engineer_case_payload(ticket)
+        if active_engineer_case_payload is None and normalize_ticket_status(ticket.get("status")) != INVESTIGATING_STATUS:
+            ticket["status"] = resolve_next_ticket_status(ticket.get("status"), COMMUNICATING_STATUS)
+    else:
+        if is_new_ticket or not existing_subject or existing_subject == "General support request":
+            ticket["subject"] = derive_subject(
+                request.message,
+                preferred_subject=normalized_requested_subject,
+            )
+        ticket["messages"].append(
+            {
+                "role": "customer",
+                "content": customer_message,
+                "created_at": timestamp,
+                "content_format": customer_message_content_format,
+            }
+        )
+        active_engineer_case_payload = _active_engineer_case_payload(ticket)
+
     route_context = build_emotion_context(ticket, limit=6, max_chars=400)
     investigation_result: dict[str, Any] | None = None
     engineer_case: dict[str, Any] | None = None
     engineer_case_created = False
     execution: TicketExecutionResult | None = None
 
-    active_engineer_case_payload = _active_engineer_case_payload(ticket)
     main_agent_async_eligible = (
-        active_engineer_case_payload is None
+        not input_guardrail_result.blocked
+        and active_engineer_case_payload is None
         and _main_agent_async_enabled()
         and not customer_resolution_signal
     )
-    if not main_agent_async_eligible:
+    if input_guardrail_result.blocked:
+        main_agent_async_eligible = False
+    elif not main_agent_async_eligible:
         initial_ack = build_initial_ack(customer_message)
         ack_source = str(getattr(initial_ack, "source", "") or "server_ack").strip() or "server_ack"
         processing_mode = "main_agent_sync"
-    if isinstance(active_engineer_case_payload, dict):
+    if not input_guardrail_result.blocked and isinstance(active_engineer_case_payload, dict):
         engineer_case = _engineer_case_payload_to_record(active_engineer_case_payload)
         active_case_route = decide_support_route(
             customer_message,
@@ -2389,7 +2456,7 @@ async def create_or_update_ticket(
             ticket["active_engineer_case_id"] = str(engineer_case.get("engineer_case_id") or "").strip() or None
             ticket["client_intake_state"] = None
             processing_mode = "active_investigation_followup"
-    else:
+    elif not input_guardrail_result.blocked:
         if main_agent_async_eligible:
             ticket["status"] = resolve_next_ticket_status(ticket.get("status"), COMMUNICATING_STATUS)
             processing_mode = "main_agent_async"
@@ -2511,7 +2578,7 @@ async def create_or_update_ticket(
         elif not main_agent_async_eligible:
             ticket["status"] = resolve_next_ticket_status(ticket.get("status"), COMMUNICATING_STATUS)
 
-    if isinstance(active_engineer_case_payload, dict) and execution is not None:
+    if not input_guardrail_result.blocked and isinstance(active_engineer_case_payload, dict) and execution is not None:
         execution_route_payload = build_execution_route_payload(execution)
         route_payload.update(execution_route_payload)
         follow_up_answer = execution.answer
@@ -2556,6 +2623,8 @@ async def create_or_update_ticket(
                 assistant_message["client_intake_missing_information"] = list(
                     route_payload.get("client_intake_missing_information") or []
                 )
+        if input_guardrail_result.blocked:
+            assistant_message.update(_build_input_guardrail_message_metadata(input_guardrail_result))
         if follow_up_sources:
             assistant_message["sources"] = follow_up_sources
         if follow_up_citations:
@@ -2622,14 +2691,15 @@ async def create_or_update_ticket(
         )
         enqueue_ticket_query_ms = round((time.perf_counter() - enqueue_started_at) * 1000, 2)
 
-    enqueue_sentiment_started_at = time.perf_counter()
-    await _enqueue_or_defer_message_sentiment_tag(
-        background_tasks,
-        ticket_id=ticket_id,
-        customer_message=customer_message,
-        message_created_at=timestamp,
-    )
-    enqueue_sentiment_ms = round((time.perf_counter() - enqueue_sentiment_started_at) * 1000, 2)
+    if not input_guardrail_result.blocked:
+        enqueue_sentiment_started_at = time.perf_counter()
+        await _enqueue_or_defer_message_sentiment_tag(
+            background_tasks,
+            ticket_id=ticket_id,
+            customer_message=customer_message,
+            message_created_at=timestamp,
+        )
+        enqueue_sentiment_ms = round((time.perf_counter() - enqueue_sentiment_started_at) * 1000, 2)
 
     admission_timing_payload = {
         "message_created_at": timestamp,
@@ -2644,7 +2714,7 @@ async def create_or_update_ticket(
         "event": "ticket_created" if is_new_ticket else "ticket_updated",
         "ticket_id": ticket_id,
         "status": ticket["status"],
-        "message": customer_message,
+        "message": persisted_customer_message,
         "created_at": now_iso(),
         "parallel_mode": processing_mode,
         **admission_timing_payload,
@@ -2677,7 +2747,7 @@ async def create_or_update_ticket(
     await dispatch_event(["engineer", "dashboard"], event)
     await dispatch_event(
         ["client"],
-        build_client_sync_event(ticket, event["event"], customer_message[:200]),
+        build_client_sync_event(ticket, event["event"], persisted_customer_message[:200]),
     )
     if execution is not None and str(getattr(execution, "workflow_action", "") or "").strip() == "resolve_ticket":
         auto_resolved_event = _build_ticket_auto_resolved_by_customer_confirmation_event(
