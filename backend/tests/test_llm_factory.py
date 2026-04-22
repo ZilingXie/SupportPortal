@@ -158,6 +158,63 @@ class LlmFactoryTests(unittest.TestCase):
         self.assertEqual(attempts, 1)
         self.assertIn("HTTP Error 400", str(context.exception))
 
+    def test_invoke_responses_text_skips_generation_span_without_ambient_trace(self) -> None:
+        def _fake_urlopen(request, timeout):
+            return _FakeResponse(
+                {
+                    "output_text": "No trace.",
+                    "usage": {"input_tokens": 5, "output_tokens": 2},
+                }
+            )
+
+        with patch("backend.services.llm_factory.openai_agent_tracing.current_trace_ref", return_value=None), patch(
+            "backend.services.llm_factory.openai_agent_tracing.record_generation_span"
+        ) as record_generation_span, patch(
+            "backend.services.llm_factory.urllib.request.urlopen",
+            side_effect=_fake_urlopen,
+        ):
+            result = invoke_responses_text(
+                profile=self._profile(api_mode=OPENAI_RESPONSES_API),
+                system_prompt="system",
+                user_prompt="user",
+            )
+
+        self.assertEqual(result.text, "No trace.")
+        record_generation_span.assert_not_called()
+
+    def test_invoke_responses_text_records_generation_span_with_ambient_trace(self) -> None:
+        def _fake_urlopen(request, timeout):
+            return _FakeResponse(
+                {
+                    "output_text": "Trace me.",
+                    "usage": {"input_tokens": 8, "output_tokens": 3},
+                }
+            )
+
+        with patch(
+            "backend.services.llm_factory.openai_agent_tracing.current_trace_ref",
+            return_value={"trace_id": "trace-123"},
+        ), patch(
+            "backend.services.llm_factory.openai_agent_tracing.record_generation_span"
+        ) as record_generation_span, patch(
+            "backend.services.llm_factory.urllib.request.urlopen",
+            side_effect=_fake_urlopen,
+        ):
+            result = invoke_responses_text(
+                profile=self._profile(api_mode=OPENAI_RESPONSES_API),
+                system_prompt="system",
+                user_prompt="user",
+            )
+
+        self.assertEqual(result.text, "Trace me.")
+        record_generation_span.assert_called_once()
+        self.assertEqual(record_generation_span.call_args.kwargs["system_prompt"], "system")
+        self.assertEqual(record_generation_span.call_args.kwargs["user_prompt"], "user")
+        self.assertEqual(record_generation_span.call_args.kwargs["response_text"], "Trace me.")
+        self.assertEqual(record_generation_span.call_args.kwargs["model_name"], "gpt-5.4")
+        self.assertEqual(record_generation_span.call_args.kwargs["prompt_tokens"], 8)
+        self.assertEqual(record_generation_span.call_args.kwargs["completion_tokens"], 3)
+
     def test_invoke_chat_text_retries_timeout_once_before_success(self) -> None:
         attempts = 0
 

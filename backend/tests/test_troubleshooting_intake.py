@@ -827,6 +827,109 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn("problematic uid", result.customer_reply.lower())
         self.assertIn("issue timestamp", result.customer_reply.lower())
 
+    def test_llm_valid_json_records_non_triggered_output_contract_trace(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "backend.services.troubleshooting_intake.invoke_responses_text",
+            return_value=types.SimpleNamespace(
+                text=(
+                    '{"issue_mode":"answer","known_information":{"desired_outcome":"join a channel"},'
+                    '"missing_information":["blocked_step_or_error"],'
+                    '"ready_for_engineer_ticket":false,'
+                    '"customer_reply":"What exact error or blocker are you seeing?"}'
+                )
+            ),
+        ), patch(
+            "backend.services.troubleshooting_intake.openai_agent_tracing.record_guardrail_span"
+        ) as record_guardrail_span, patch(
+            "backend.services.troubleshooting_intake.openai_agent_tracing.record_custom_span"
+        ) as record_custom_span:
+            result = evaluate_troubleshooting_intake(
+                message="How do I join channel?",
+                product="audio_video_calling",
+                ticket_subject="Join channel",
+                ticket_context=[{"role": "customer", "content": "How do I join channel?"}],
+                current_state=None,
+                rag_result={
+                    "reason": "rag_insufficient_evidence",
+                    "answer": "I couldn't find enough information in the available support knowledge base to answer that question.",
+                    "evidence_summary": {},
+                },
+            )
+
+        self.assertEqual(result.issue_mode, "answer")
+        self.assertEqual(result.missing_information, ["blocked_step_or_error"])
+        record_guardrail_span.assert_called_once()
+        self.assertEqual(record_guardrail_span.call_args.kwargs["name"], "troubleshooting_intake.output_contract")
+        self.assertFalse(record_guardrail_span.call_args.kwargs["triggered"])
+        self.assertEqual(record_guardrail_span.call_args.kwargs["data"]["status"], "ok")
+        record_custom_span.assert_called_once()
+        self.assertEqual(record_custom_span.call_args.kwargs["name"], "troubleshooting_intake.output_contract.result")
+        self.assertFalse(record_custom_span.call_args.kwargs["data"]["used_fallback"])
+
+    def test_llm_invalid_json_records_triggered_output_contract_trace(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "backend.services.troubleshooting_intake.invoke_responses_text",
+            return_value=types.SimpleNamespace(text="not-json"),
+        ), patch(
+            "backend.services.troubleshooting_intake.openai_agent_tracing.record_guardrail_span"
+        ) as record_guardrail_span, patch(
+            "backend.services.troubleshooting_intake.openai_agent_tracing.record_custom_span"
+        ) as record_custom_span:
+            result = evaluate_troubleshooting_intake(
+                message="How do I join channel?",
+                product="audio_video_calling",
+                ticket_subject="Join channel",
+                ticket_context=[{"role": "customer", "content": "How do I join channel?"}],
+                current_state=None,
+                rag_result={
+                    "reason": "rag_insufficient_evidence",
+                    "answer": "I couldn't find enough information in the available support knowledge base to answer that question.",
+                    "evidence_summary": {},
+                },
+            )
+
+        self.assertEqual(result.issue_mode, "answer")
+        self.assertEqual(result.missing_information, ["desired_outcome", "blocked_step_or_error"])
+        record_guardrail_span.assert_called_once()
+        self.assertTrue(record_guardrail_span.call_args.kwargs["triggered"])
+        self.assertEqual(record_guardrail_span.call_args.kwargs["data"]["status"], "invalid_json")
+        record_custom_span.assert_called_once()
+        self.assertTrue(record_custom_span.call_args.kwargs["data"]["used_fallback"])
+        self.assertEqual(record_custom_span.call_args.kwargs["data"]["status"], "invalid_json")
+
+    def test_llm_contract_fallback_records_triggered_output_contract_trace(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "backend.services.troubleshooting_intake.invoke_responses_text",
+            return_value=types.SimpleNamespace(
+                text='{"issue_mode":"maybe","known_information":{},"missing_information":[],"ready_for_engineer_ticket":false,"customer_reply":""}'
+            ),
+        ), patch(
+            "backend.services.troubleshooting_intake.openai_agent_tracing.record_guardrail_span"
+        ) as record_guardrail_span, patch(
+            "backend.services.troubleshooting_intake.openai_agent_tracing.record_custom_span"
+        ) as record_custom_span:
+            result = evaluate_troubleshooting_intake(
+                message="How do I join channel?",
+                product="audio_video_calling",
+                ticket_subject="Join channel",
+                ticket_context=[{"role": "customer", "content": "How do I join channel?"}],
+                current_state=None,
+                rag_result={
+                    "reason": "rag_insufficient_evidence",
+                    "answer": "I couldn't find enough information in the available support knowledge base to answer that question.",
+                    "evidence_summary": {},
+                },
+            )
+
+        self.assertEqual(result.issue_mode, "answer")
+        self.assertEqual(result.missing_information, ["desired_outcome", "blocked_step_or_error"])
+        record_guardrail_span.assert_called_once()
+        self.assertTrue(record_guardrail_span.call_args.kwargs["triggered"])
+        self.assertEqual(record_guardrail_span.call_args.kwargs["data"]["status"], "contract_fallback")
+        record_custom_span.assert_called_once()
+        self.assertTrue(record_custom_span.call_args.kwargs["data"]["used_fallback"])
+        self.assertEqual(record_custom_span.call_args.kwargs["data"]["status"], "contract_fallback")
+
 
 if __name__ == "__main__":
     unittest.main()

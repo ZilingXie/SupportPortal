@@ -696,6 +696,66 @@ def _extract_rag_request_id(agent_events: list[dict[str, Any]]) -> str | None:
     return None
 
 
+def _normalize_review_trace_ref(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    trace_id = _clean_text(value.get("trace_id"))
+    if not trace_id:
+        return None
+    normalized: dict[str, Any] = {"trace_id": trace_id}
+    for key in ("mode", "group_id", "workflow_name"):
+        cleaned = _clean_text(value.get(key))
+        if cleaned:
+            normalized[key] = cleaned
+    return normalized
+
+
+def _extract_review_openai_tracing(
+    *,
+    runtime_summary: dict[str, Any] | None,
+    agent_events: list[dict[str, Any]],
+) -> dict[str, Any]:
+    runtime_summary = dict(runtime_summary or {})
+    runtime_tracing = (
+        dict(runtime_summary.get("openai_tracing"))
+        if isinstance(runtime_summary.get("openai_tracing"), dict)
+        else {}
+    )
+    trace_refs: list[dict[str, Any]] = []
+    seen_trace_ids: set[str] = set()
+
+    for item in list(runtime_tracing.get("traces") or []):
+        normalized = _normalize_review_trace_ref(item)
+        if normalized is None or normalized["trace_id"] in seen_trace_ids:
+            continue
+        seen_trace_ids.add(normalized["trace_id"])
+        trace_refs.append(normalized)
+
+    for event in agent_events:
+        if _clean_text(event.get("agent_name")) != "review_agent":
+            continue
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        normalized = _normalize_review_trace_ref(payload.get("openai_tracing"))
+        if normalized is None or normalized["trace_id"] in seen_trace_ids:
+            continue
+        seen_trace_ids.add(normalized["trace_id"])
+        trace_refs.append(normalized)
+
+    latest_trace_id = _clean_text(runtime_tracing.get("latest_trace_id")) or (
+        trace_refs[-1]["trace_id"] if trace_refs else None
+    )
+    group_id = _clean_text(runtime_tracing.get("group_id")) or next(
+        (_clean_text(item.get("group_id")) for item in trace_refs if _clean_text(item.get("group_id"))),
+        None,
+    )
+    summary = {
+        "latest_trace_id": latest_trace_id or None,
+        "group_id": group_id or None,
+        "traces": trace_refs,
+    }
+    return summary if summary["latest_trace_id"] or summary["group_id"] or summary["traces"] else {}
+
+
 def _latest_ticket_event_payload(ticket_events: list[dict[str, Any]], event_type: str) -> dict[str, Any]:
     payloads = [
         dict(event.get("payload") or {})
@@ -804,6 +864,12 @@ def build_trace_summary(
         events=filtered_agent_events,
         runtime_summary=(runtime_state.get("review_agent") if isinstance(runtime_state.get("review_agent"), dict) else None),
     )
+    review_openai_tracing = _extract_review_openai_tracing(
+        runtime_summary=(runtime_state.get("review_agent") if isinstance(runtime_state.get("review_agent"), dict) else None),
+        agent_events=filtered_agent_events,
+    )
+    if review_openai_tracing:
+        review_summary["openai_tracing"] = review_openai_tracing
     summary = {
         "request": {
             "ticket_id": _clean_text(ticket.get("ticket_id")) or _clean_text(request_context.get("ticket_id")),
@@ -935,6 +1001,9 @@ def build_trace_summary(
             "run_id": run_id,
             "rag_request_id": rag_request_id,
             "request_id": request_id,
+            "latest_review_trace_id": review_openai_tracing.get("latest_trace_id"),
+            "review_trace_group_id": review_openai_tracing.get("group_id"),
+            "review_trace_refs": list(review_openai_tracing.get("traces") or []),
         },
         "ticket_events": normalized_ticket_events,
         "agent_events": filtered_agent_events,
@@ -967,6 +1036,11 @@ def render_markdown_report(summary: dict[str, Any]) -> str:
     route_agent = summary.get("route_agent") if isinstance(summary.get("route_agent"), dict) else {}
     rag_agent = summary.get("rag_agent") if isinstance(summary.get("rag_agent"), dict) else {}
     review_agent = summary.get("review_agent") if isinstance(summary.get("review_agent"), dict) else {}
+    review_openai_tracing = (
+        review_agent.get("openai_tracing")
+        if isinstance(review_agent.get("openai_tracing"), dict)
+        else {}
+    )
     rag_internal = summary.get("rag_internal_telemetry") if isinstance(summary.get("rag_internal_telemetry"), dict) else {}
     final_result = summary.get("final_result") if isinstance(summary.get("final_result"), dict) else {}
     metrics = summary.get("metrics") if isinstance(summary.get("metrics"), dict) else {}
@@ -1097,6 +1171,8 @@ def render_markdown_report(summary: dict[str, Any]) -> str:
             f"- total_latency_ms: {_format_value(review_agent.get('duration_ms'))}",
             f"- decision: `{_format_value(review_agent.get('decision'))}`",
             f"- reason: `{_format_value(review_agent.get('reason'))}`",
+            f"- openai_latest_trace_id: `{_format_value(review_openai_tracing.get('latest_trace_id'))}`",
+            f"- openai_trace_group_id: `{_format_value(review_openai_tracing.get('group_id'))}`",
             "",
             "## 最终结果",
             f"- answer_route: `{_format_value(final_result.get('answer_route'))}`",
@@ -1114,6 +1190,9 @@ def render_markdown_report(summary: dict[str, Any]) -> str:
             f"- run_id: `{_format_value(raw_ids.get('run_id'))}`",
             f"- rag_request_id: `{_format_value(raw_ids.get('rag_request_id'))}`",
             f"- request_id: `{_format_value(raw_ids.get('request_id'))}`",
+            f"- latest_review_trace_id: `{_format_value(raw_ids.get('latest_review_trace_id'))}`",
+            f"- review_trace_group_id: `{_format_value(raw_ids.get('review_trace_group_id'))}`",
+            f"- review_trace_refs: `{_format_value(json.dumps(raw_ids.get('review_trace_refs') or [], ensure_ascii=False))}`",
         ]
     )
     return "\n".join(lines).strip() + "\n"
