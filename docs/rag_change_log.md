@@ -3494,3 +3494,28 @@ For each new entry, record:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_openai_agent_tracing backend.tests.test_llm_factory`
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/openai_agent_tracing.py`
   - Post-fix single-host lightweight stack rebuild and live `trace_client_ticket_route.py` verification were rerun from root `main`.
+
+## 2026-04-22 - Inherit short follow-up code-example topics into RAG effective queries
+
+- Summary:
+  - Added a shared deterministic resolver for short follow-up requests like `code example`, `sample code`, and `snippet` so RAG can inherit the prior technical topic from recent customer context instead of treating the follow-up as a standalone query.
+  - Wired the inherited `effective_question` through both agentic and legacy RAG paths, including classification, retrieval planning, retrieval, deterministic join-channel answering, final generation, and trace output.
+  - Relaxed generic join-channel product compatibility for unlabeled official join/auth chunks so `audio_video_calling` follow-ups can still ground on valid join/auth evidence even when older docs do not carry explicit product metadata.
+- Reason:
+  - `TK-171` showed that a second-turn message like `Can you share a code example?` was losing the prior `join channel` topic and falling into generic clarify or insufficient-evidence behavior even when the recent context and retrieved join/auth chunks were already enough to answer directly.
+- Affected files/config:
+  - `backend/services/client_query_intent.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/services/troubleshooting_intake.py`
+  - `backend/services/support_products.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_troubleshooting_intake.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, embedding, or vector-table changes.
+  - RAG traces now record `effective_question`, `follow_up_inheritance_used`, and `follow_up_inheritance_source` for inherited follow-up queries.
+  - Generic join-channel evidence selection now accepts unlabeled official join/auth chunks as product-compatible support when the query product is `audio_video_calling`.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_rag_qa.py backend/tests/test_client_ticket_agent_runtime.py backend/tests/test_troubleshooting_intake.py`

@@ -1084,6 +1084,127 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(result.trace.answer_profile_used, "generic_join_deterministic")
         self.assertFalse(result.trace.answer_profile_fallback_used)
 
+    def test_run_rag_query_follow_up_code_example_inherits_prior_join_channel_topic(self) -> None:
+        def _bm25_chunk() -> RetrievedChunk:
+            return RetrievedChunk(
+                chunk_id="bm25-join",
+                text=(
+                    "Call joinChannel with the same channel name on each client.\n\n"
+                    "```cpp\nengine->joinChannel(token, channelName, uid, options);\n```"
+                ),
+                source_path="official/get-started.md",
+                similarity=0.95,
+            )
+
+        def _fts_auth_chunk() -> RetrievedChunk:
+            return RetrievedChunk(
+                chunk_id="fts-auth",
+                text="Generate a token from your authentication server before calling joinChannel.",
+                source_path="official/authentication-workflow.md",
+                similarity=0.88,
+            )
+
+        ticket_context = [
+            {"role": "customer", "content": "How to join channel?"},
+            {
+                "role": "assistant",
+                "content": (
+                    "To join a channel, initialize the engine, prepare your token, "
+                    "then call the SDK join method."
+                ),
+            },
+        ]
+
+        with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+            config_mock.return_value = {
+                "dsn": "postgresql://example",
+                "api_key": "test-key",
+                "app_schema": "supportportal",
+                "table": "supportportal.docagent_chunks_bge_m3_1024",
+                "top_k": 2,
+                "vector_candidate_k": 10,
+                "bm25_candidate_k": 10,
+                "keyword_candidate_k": 10,
+                "fusion_candidate_k": 10,
+                "rerank_top_n": 5,
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+                "chat_model": "gpt-5.4",
+                "reasoning_effort": "high",
+                "embedding_provider": "siliconflow",
+                "embedding_model": "BAAI/bge-m3",
+                "vector_enabled": True,
+                "rerank_provider": "siliconflow",
+                "rerank_model": "BAAI/bge-reranker-v2-m3",
+                "rerank_api_key": "test-rerank-key",
+                "rerank_base_url": "https://api.siliconflow.cn/v1",
+                "rerank_enabled": True,
+                "rerank_timeout_seconds": 10.0,
+                "request_timeout_seconds": 20.0,
+                "max_retries": 1,
+                "fallback_models": (),
+                "query_policy": "balanced",
+                "context_budget_enabled": False,
+                "reserved_output_tokens": 1200,
+                "buffer_tokens": 1200,
+            }
+            with patch(
+                "backend.services.rag_qa._resolve_active_vector_table",
+                return_value="supportportal.docagent_chunks_bge_m3_1024",
+            ), patch(
+                "backend.services.rag_qa.get_embedding_provider",
+                return_value=self._FakeProvider(),
+            ), patch(
+                "backend.services.rag_qa.understand_rag_query",
+                side_effect=AssertionError("follow-up inherited join examples should stay on the lexical light path"),
+            ), patch(
+                "backend.services.rag_qa._invoke_agentic_planner",
+                side_effect=AssertionError("planner should be skipped for inherited generic join examples"),
+            ), patch(
+                "backend.services.rag_qa._retrieve_chunks",
+                side_effect=AssertionError("vector retrieval should not run for inherited generic join examples"),
+            ), patch(
+                "backend.services.rag_qa._retrieve_bm25_chunks",
+                return_value=[_bm25_chunk()],
+            ), patch(
+                "backend.services.rag_qa._retrieve_fts_chunks",
+                return_value=[_fts_auth_chunk()],
+            ), patch(
+                "backend.services.rag_qa._metadata_rerank",
+                side_effect=lambda *args, **kwargs: (
+                    [_bm25_chunk(), _fts_auth_chunk()],
+                    {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None},
+                ),
+            ), patch(
+                "backend.services.rag_qa._rerank_chunks",
+                side_effect=AssertionError("external rerank should be skipped for inherited lexical light path"),
+            ), patch(
+                "backend.services.rag_qa._fetch_generic_join_pinned_chunks",
+                return_value=[],
+            ), patch(
+                "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                side_effect=AssertionError("generic join deterministic answer should satisfy code-example follow-ups"),
+            ):
+                result = run_rag_query(
+                    "Can you share a code example?",
+                    product="audio_video_calling",
+                    ticket_context=ticket_context,
+                )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertIn("reference example", result.answer.answer.lower())
+        self.assertIn("joinchannel", result.answer.answer.lower())
+        self.assertEqual(result.trace.query_class, "how_to_faq")
+        self.assertTrue(result.trace.light_path_used)
+        self.assertTrue(result.trace.vector_setup_skipped)
+        self.assertTrue(result.trace.follow_up_inheritance_used)
+        self.assertEqual(result.trace.follow_up_inheritance_source, "prior_customer_message")
+        self.assertIn("join channel", str(result.trace.effective_question).lower())
+        self.assertEqual(result.trace.answer_profile_used, "generic_join_deterministic")
+        self.assertTrue(result.trace.generic_join_primary_chunk_found)
+        self.assertEqual(result.trace.generic_join_support_chunks[:2], ["bm25-join", "fts-auth"])
+
     def test_run_rag_query_exact_error_lookup_uses_light_path_fast_answer_profile_then_falls_back_to_main_model(self) -> None:
         bm25_chunk = RetrievedChunk(
             chunk_id="bm25-error-109",

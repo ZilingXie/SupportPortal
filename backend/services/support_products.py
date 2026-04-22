@@ -69,6 +69,7 @@ _INTAKE_FIELD_LABELS = {
     "sid": "sid",
     "desired_outcome": "desired outcome",
     "blocked_step_or_error": "blocked step or error",
+    "platform_or_sdk": "platform or SDK",
 }
 
 
