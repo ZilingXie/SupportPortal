@@ -967,6 +967,27 @@ For each new entry, record:
   - `git diff --check`
 
 - Date: 2026-04-22
+- Area or subsystem: Client support routing and non-technical web-search answering
+- Prompt or model version: `router-v2 + web-search-v3`
+- Summary: Added a product-portfolio routing path for Agora product-overview questions and upgraded the non-technical web-search prompt so broadcasting-related product inquiries lead with `Broadcast Streaming` versus `Interactive Live Streaming`, grouped official product coverage, and no Console-first guidance.
+- Reason: `TK-165` showed that product-portfolio questions about broadcasting were falling into technical-docs RAG and being answered with Console usage guidance instead of official product-overview guidance.
+- Affected files or config:
+  - `backend/services/support_router.py`
+  - `backend/services/support_router_prompt.py`
+  - `backend/services/prompts/router.py`
+  - `backend/services/prompts/web_search.py`
+  - `backend/tests/test_support_router.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Messages asking what Agora products exist, which Agora product fits a scenario, or requesting broadcasting-oriented product guidance now fast-path to `agora_non_technical -> web_search` with reason `agora_product_portfolio`.
+  - Product-portfolio web-search answers now stay on official Agora product pages, explain `Broadcast Streaming` versus `Interactive Live Streaming` first when broadcasting is mentioned, and then summarize grouped products or add-ons instead of redirecting to Console.
+  - If the customer asks to connect with someone, the answer keeps the product overview as the main body and only adds a short official sales-contact CTA at the end.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_support_router.py backend/tests/test_prompt_modules.py backend/tests/test_client_ticket_agent_runtime.py`
+
+- Date: 2026-04-22
 - Area or subsystem: Client front-door input guardrail
 - Prompt or model version: `input-guardrail-front-door-v1`
 - Summary: Added a dedicated OpenAI Agents SDK front-door input guardrail scene and blocking response path ahead of ticket subject generation and the existing route/main-agent chain, with a unified safe-restate reply for blocked turns.

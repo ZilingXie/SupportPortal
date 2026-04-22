@@ -44,6 +44,19 @@ SMALL_TALK_TERMS = (
     "早上好",
     "晚上好",
 )
+PRODUCT_PORTFOLIO_TERMS = (
+    "what products does agora provide",
+    "what products does agora offer",
+    "what products does agora have",
+    "products that agora provides",
+    "products that agora has",
+    "which agora product should we use",
+    "which product should we use",
+    "guide us on products",
+    "agora products",
+    "product portfolio",
+    "product overview",
+)
 PUBLIC_INFO_TERMS = (
     "ceo",
     "founder",
@@ -176,6 +189,20 @@ CJK_RE = re.compile(r"[\u3400-\u9fff]")
 JOIN_CHANNEL_RE = re.compile(r"\b(join|leave|create|publish|subscribe)\b.{0,24}\bchannel\b", re.IGNORECASE)
 COMPARISON_RE = re.compile(r"\b(difference|compare|comparison|versus|vs\.?)\b", re.IGNORECASE)
 CHOICE_RE = re.compile(r"\b(should i use|right fit|which .* use|choose|avoid|better than)\b", re.IGNORECASE)
+_PRODUCT_PORTFOLIO_PATTERN_RULES = (
+    (re.compile(r"\bwhat\s+products?\s+does\s+agora\s+(?:provide|offer|have)\b", re.IGNORECASE), "what products does agora provide"),
+    (re.compile(r"\bproducts?\s+that\s+agora\s+provides\b", re.IGNORECASE), "products that agora provides"),
+    (re.compile(r"\bproducts?\s+that\s+agora\s+has\b", re.IGNORECASE), "products that agora has"),
+    (re.compile(r"\bwhich\s+agora\s+products?\s+should\s+(?:i|we)\s+use\b", re.IGNORECASE), "which agora product should we use"),
+    (re.compile(r"\bguide\s+(?:me|us)\s+on\s+(?:agora\s+)?products?\b", re.IGNORECASE), "guide us on products"),
+    (re.compile(r"\bproduct\s+(?:portfolio|overview|lineup)\b", re.IGNORECASE), "product portfolio"),
+)
+_PRODUCT_PORTFOLIO_GENERIC_WHICH_RE = re.compile(r"\bwhich\s+products?\s+should\s+(?:i|we)\s+use\b", re.IGNORECASE)
+_PRODUCT_PORTFOLIO_AGORA_PRODUCTS_RE = re.compile(r"\bagora\s+products?\b", re.IGNORECASE)
+_PRODUCT_PORTFOLIO_BROADCASTING_RE = re.compile(r"\b(?:broadcasting|broadcast\s+streaming)\b", re.IGNORECASE)
+_PRODUCT_PORTFOLIO_PRODUCT_RE = re.compile(r"\bproducts?\b", re.IGNORECASE)
+_PRODUCT_PORTFOLIO_GUIDE_RE = re.compile(r"\bguide\s+(?:me|us)\b", re.IGNORECASE)
+_PRODUCT_PORTFOLIO_CONNECT_RE = re.compile(r"\bconnect\s+with\s+someone\b", re.IGNORECASE)
 
 ROUTE_FEW_SHOT_EXAMPLES = (
     {
@@ -216,6 +243,37 @@ ROUTE_FEW_SHOT_EXAMPLES = (
             "confidence": 0.91,
             "reason": "docs_eval_auth_reasoning",
             "matched_signals": ["parameter mismatch", "docs-based rag", "docs_eval_anchor"],
+        },
+    },
+    {
+        "message": (
+            "We are implementing Agora broadcasting and need more info on products that Agora provides. "
+            "Could you guide us on Agora products?"
+        ),
+        "hints": {
+            "agora": ["agora"],
+            "product_portfolio": ["products that agora provides", "guide us on products", "broadcasting"],
+            "flags": ["product_portfolio_pattern", "has_agora_brand"],
+        },
+        "output": {
+            "scope_label": "agora_non_technical",
+            "confidence": 0.98,
+            "reason": "agora_product_portfolio",
+            "matched_signals": ["products that agora provides", "guide us on products", "broadcasting"],
+        },
+    },
+    {
+        "message": "Which Agora product should we use for broadcasting versus interactive live events?",
+        "hints": {
+            "agora": ["agora"],
+            "product_portfolio": ["which agora product should we use", "broadcasting"],
+            "flags": ["product_portfolio_pattern", "choice_pattern", "has_agora_brand"],
+        },
+        "output": {
+            "scope_label": "agora_non_technical",
+            "confidence": 0.97,
+            "reason": "agora_product_portfolio",
+            "matched_signals": ["which agora product should we use", "broadcasting"],
         },
     },
     {
@@ -322,6 +380,45 @@ def _looks_like_question(text: str) -> bool:
     return "?" in compact or bool(QUESTION_PREFIX_RE.match(compact))
 
 
+def detect_product_portfolio_signals(text: str) -> list[str]:
+    normalized_text = _normalize_text(text)
+    if not normalized_text:
+        return []
+    has_agora_brand = bool(_contains_any(normalized_text, AGORA_SIGNALS))
+    signals: list[str] = []
+    for pattern, label in _PRODUCT_PORTFOLIO_PATTERN_RULES:
+        if pattern.search(normalized_text) and label not in signals:
+            signals.append(label)
+    if has_agora_brand and _PRODUCT_PORTFOLIO_GENERIC_WHICH_RE.search(normalized_text):
+        signals.append("which product should we use")
+    if has_agora_brand and _PRODUCT_PORTFOLIO_AGORA_PRODUCTS_RE.search(normalized_text):
+        signals.append("agora products")
+    if _PRODUCT_PORTFOLIO_BROADCASTING_RE.search(normalized_text) and (
+        signals
+        or (
+            has_agora_brand
+            and (
+                _PRODUCT_PORTFOLIO_PRODUCT_RE.search(normalized_text)
+                or _PRODUCT_PORTFOLIO_GUIDE_RE.search(normalized_text)
+                or _PRODUCT_PORTFOLIO_CONNECT_RE.search(normalized_text)
+            )
+        )
+    ):
+        signals.append("broadcasting")
+    if not has_agora_brand and not any("agora" in signal for signal in signals):
+        return []
+    return _sanitize_portfolio_signals(signals)
+
+
+def _sanitize_portfolio_signals(signals: list[str]) -> list[str]:
+    sanitized: list[str] = []
+    for signal in signals:
+        clean = _normalize_text(signal)
+        if clean and clean not in sanitized:
+            sanitized.append(clean)
+    return sanitized
+
+
 def build_route_prompt_hints(
     message: str,
     *,
@@ -337,6 +434,7 @@ def build_route_prompt_hints(
     message_matches = {
         "agora": _contains_any(normalized_message, AGORA_SIGNALS),
         "technical": _contains_any(normalized_message, TECHNICAL_TERMS),
+        "product_portfolio": detect_product_portfolio_signals(normalized_message),
         "public_info": _contains_any(normalized_message, PUBLIC_INFO_TERMS),
         "follow_up": _contains_any(normalized_message, FOLLOW_UP_TERMS),
         "small_talk": _contains_any(normalized_message, SMALL_TALK_TERMS),
@@ -345,6 +443,7 @@ def build_route_prompt_hints(
     context_matches = {
         "agora": _contains_any(context_text, AGORA_SIGNALS),
         "technical": _contains_any(context_text, TECHNICAL_TERMS),
+        "product_portfolio": detect_product_portfolio_signals(context_text),
         "public_info": _contains_any(context_text, PUBLIC_INFO_TERMS),
         "follow_up": _contains_any(context_text, FOLLOW_UP_TERMS),
         "small_talk": _contains_any(context_text, SMALL_TALK_TERMS),
@@ -359,6 +458,7 @@ def build_route_prompt_hints(
         "join_channel_pattern": bool(JOIN_CHANNEL_RE.search(normalized_message)),
         "comparison_pattern": bool(COMPARISON_RE.search(normalized_message)),
         "choice_pattern": bool(CHOICE_RE.search(normalized_message)),
+        "product_portfolio_pattern": bool(message_matches["product_portfolio"] or context_matches["product_portfolio"]),
         "docs_eval_anchor": docs_eval_anchor,
         "has_agora_brand": bool(message_matches["agora"] or context_matches["agora"]),
         "customer_resolution_candidate": bool(resolution_signals) and not has_resolution_negative_marker(normalized_message),
