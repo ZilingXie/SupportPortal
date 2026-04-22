@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -103,6 +104,12 @@ def _fake_sdk(*, exploding: bool = False) -> SimpleNamespace:
 
 
 class OpenAIInputGuardrailTests(unittest.IsolatedAsyncioTestCase):
+    def test_requirements_base_includes_openai_agents_sdk(self) -> None:
+        requirements_path = Path(__file__).resolve().parents[2] / "requirements.base.txt"
+        requirements = requirements_path.read_text(encoding="utf-8")
+
+        self.assertIn("openai-agents", requirements)
+
     async def test_normal_support_question_passes_guardrail_in_blocking_mode(self) -> None:
         with patch("backend.services.openai_input_guardrail._load_agents_sdk", return_value=_fake_sdk()):
             result = await evaluate_openai_input_guardrail("how to join channel")
