@@ -11,6 +11,14 @@ MAX_TITLE_CHARS = 64
 MAX_ENGLISH_WORDS = 8
 MAX_CJK_CHARS = 16
 DEFAULT_TITLE_MAX_OUTPUT_TOKENS = 24
+_HIGH_CONFIDENCE_CANONICAL_TITLES = frozenset(
+    {
+        "Black screen issue",
+        "Channel join issue",
+        "Cloud recording issue",
+        "Token renew issue",
+    }
+)
 
 _URL_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
 _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)]+)\)")
@@ -253,6 +261,16 @@ def _fallback_title(message: str, *, preferred_subject: str | None = None) -> st
     return "General support request"
 
 
+def _high_confidence_canonical_title(message: str, *, preferred_subject: str | None = None) -> str:
+    cleaned_message = _preclean_message(message)
+    cleaned_subject = _preclean_message(preferred_subject)
+    reference = cleaned_message or cleaned_subject
+    if not reference:
+        return ""
+    candidate = _best_english_phrase(reference)
+    return candidate if candidate in _HIGH_CONFIDENCE_CANONICAL_TITLES else ""
+
+
 def _invoke_title_model(message: str, *, preferred_subject: str | None = None) -> str:
     profile = resolve_model_profile(TICKET_TITLE_SCENARIO)
     system_prompt, user_prompt = _build_title_prompt(message, preferred_subject=preferred_subject)
@@ -276,6 +294,10 @@ def derive_ticket_title(message: str, *, preferred_subject: str | None = None) -
     cleaned_reference = cleaned_subject or cleaned_message
     if not cleaned_reference:
         return "General support request"
+
+    canonical_title = _high_confidence_canonical_title(message, preferred_subject=preferred_subject)
+    if canonical_title:
+        return canonical_title
 
     normalized_subject = _trim_to_constraints(cleaned_subject)
     if cleaned_subject and _is_valid_title(normalized_subject, cleaned_message=cleaned_subject):

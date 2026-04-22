@@ -1521,3 +1521,22 @@ For each new entry, record:
   - `python -m unittest backend.tests.test_client_ui_contract`
   - `node --check ui/client-ui/app.js`
   - `git diff --check`
+
+- Date: 2026-04-22
+- Area or subsystem: Intent routing and ticket-title normalization
+- Prompt or model version: `intent-router-fastpath-v1` / `ticket-title-canonical-fastpath-v1`
+- Summary: Added a deterministic pre-LLM route for short symptom-led troubleshooting prompts and a canonical ticket-title shortcut for high-confidence issue labels, so black-screen questions no longer depend on route-model/title-model drift to reach the docs-grounded answer path.
+- Reason: `TK-176` showed that the route model could classify `I got black screen, what should I do?` as `non_agora / general_it_support`, and the title helper could accept `Black Screen After Startup`, together causing a `route_flip` cancellation and refusal fallback instead of the `TK-124` style RAG answer.
+- Affected files or config:
+  - `backend/services/support_router.py`
+  - `backend/services/ticket_title.py`
+  - `backend/tests/test_support_router.py`
+  - `backend/tests/test_ticket_title.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Short troubleshooting questions with approved symptom markers such as `black screen`, `blank screen`, `no audio`, `no video`, `join failed`, `disconnect`, or `network quality` now route straight to `agora_technical / rag` when the latest message is a question or follow-up and carries no explicit public-info, product-portfolio, or general-IT signal.
+  - Explicit general IT requests such as computer blue screens, printers, Outlook, Excel, and office Wi-Fi remain deterministic `non_agora / refuse` cases instead of competing with the troubleshooting fast path.
+  - High-confidence canonical symptom tickets now resolve to fixed English labels like `Black screen issue` before the title model runs, so model outputs such as `Black Screen After Startup` no longer become the saved subject for those cases.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_support_router.py backend/tests/test_ticket_title.py backend/tests/test_client_ticket_agent_runtime.py`

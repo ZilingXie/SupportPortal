@@ -53,6 +53,11 @@ class TicketTitleTests(unittest.TestCase):
         self.assertLessEqual(len(title), 64)
         self.assertNotRegex(title, r"[\u4e00-\u9fff]")
 
+    def test_short_black_screen_question_prefers_canonical_issue_title(self) -> None:
+        title = derive_ticket_title("I got black screen, what should I do?")
+
+        self.assertEqual(title, "Black screen issue")
+
     def test_invalid_model_output_falls_back_to_rules(self) -> None:
         with patch(
             "backend.services.ticket_title._invoke_title_model",
@@ -96,6 +101,23 @@ class TicketTitleTests(unittest.TestCase):
         self.assertTrue(title)
         self.assertLessEqual(len(title), 64)
         self.assertNotRegex(title, r"[\u4e00-\u9fff]")
+
+    def test_black_screen_canonical_title_ignores_llm_added_startup_context(self) -> None:
+        with patch(
+            "backend.services.ticket_title._invoke_title_model",
+            return_value="Black Screen After Startup",
+        ):
+            title = derive_ticket_title("I got black screen, what should I do?")
+
+        self.assertEqual(title, "Black screen issue")
+
+    def test_black_screen_canonical_title_overrides_misleading_preferred_subject(self) -> None:
+        title = derive_ticket_title(
+            "I got black screen, what should I do?",
+            preferred_subject="Black Screen After Startup",
+        )
+
+        self.assertEqual(title, "Black screen issue")
 
     def test_model_output_is_used_when_valid(self) -> None:
         with patch(

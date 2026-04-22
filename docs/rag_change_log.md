@@ -3519,3 +3519,25 @@ For each new entry, record:
   - Generic join-channel evidence selection now accepts unlabeled official join/auth chunks as product-compatible support when the query product is `audio_video_calling`.
 - Verification:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_rag_qa.py backend/tests/test_client_ticket_agent_runtime.py backend/tests/test_troubleshooting_intake.py`
+
+## 2026-04-22 - Restore deterministic black-screen troubleshooting routing into docs-grounded RAG
+
+- Summary:
+  - Added a pre-LLM router fast path for short symptom-led troubleshooting prompts so messages like `I got black screen, what should I do?` route directly to `agora_technical / rag` with `technical_troubleshooting_symptom` instead of waiting for LLM classification.
+  - Scoped the fast path to approved technical symptom markers and question or follow-up shaped prompts, while adding a deterministic general-IT guard for explicit system-help requests such as computer blue screens, printers, Outlook, Excel, and office Wi-Fi.
+  - Hardened ticket-title normalization for high-confidence canonical symptom tickets so black-screen prompts resolve to `Black screen issue`, preventing subject drift from reinforcing the wrong route on subsequent runs.
+- Reason:
+  - `TK-176` on April 22, 2026 was flipping from RAG into `non_agora / general_it_support` and returning the refusal fallback because the route agent classified the short black-screen question as general IT and the title helper emitted misleading subjects like `Black Screen After Startup`.
+- Affected files/config:
+  - `backend/services/support_router.py`
+  - `backend/services/ticket_title.py`
+  - `backend/tests/test_support_router.py`
+  - `backend/tests/test_ticket_title.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema, ingestion, embedding, or vector-table changes.
+  - Short canonical troubleshooting tickets now enter the docs-grounded RAG path deterministically when the latest message clearly describes a supported symptom.
+  - Canonical black-screen ticket subjects now normalize to `Black screen issue`, which also lets one-off subject-repair scripts converge existing tickets onto the same stable label.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_support_router.py backend/tests/test_ticket_title.py backend/tests/test_client_ticket_agent_runtime.py`

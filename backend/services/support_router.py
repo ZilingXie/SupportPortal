@@ -13,6 +13,7 @@ from backend.services.llm_factory import LlmInvocationError, invoke_responses_te
 from backend.services.llm_profiles import INTENT_ROUTER_SCENARIO, WEB_SEARCH_SCENARIO, resolve_model_profile
 from backend.services.prompts.web_search import build_web_search_system_prompt, build_web_search_user_prompt
 from backend.services.support_router_prompt import (
+    build_route_prompt_hints,
     build_route_system_prompt,
     build_route_user_payload,
     detect_product_portfolio_signals,
@@ -66,6 +67,35 @@ _BARE_URL_RE = re.compile(r"https?://[^\s)]+", re.IGNORECASE)
 _URLISH_LABEL_RE = re.compile(r"^(?:https?://)?(?:[\w-]+\.)+[a-z]{2,}(?:/[^\s]*)?$", re.IGNORECASE)
 _QUESTION_PREFIX_RE = re.compile(r"^\s*(how|what|why|when|where|can|could|do|does|is|are|should)\b", re.IGNORECASE)
 _JOIN_CHANNEL_RE = re.compile(r"\bjoin(?:ing)?\s+(?:a\s+|the\s+)?channel\b", re.IGNORECASE)
+_GENERAL_SYSTEM_HELP_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bblue[ -]?screen(?:ed)?\b", re.IGNORECASE), "blue screen"),
+    (re.compile(r"\bprinter\b", re.IGNORECASE), "printer"),
+    (re.compile(r"\boutlook\b", re.IGNORECASE), "outlook"),
+    (re.compile(r"\bexcel\b", re.IGNORECASE), "excel"),
+    (re.compile(r"\boffice\s+(?:wi-?fi|wifi)\b", re.IGNORECASE), "office wifi"),
+)
+_FASTPATH_TROUBLESHOOTING_SIGNALS = frozenset(
+    {
+        "black screen",
+        "blank screen",
+        "black video",
+        "no video",
+        "no audio",
+        "frozen video",
+        "can't see remote video",
+        "cannot see remote video",
+        "can't hear",
+        "cannot hear",
+        "join failed",
+        "cannot join",
+        "can't join",
+        "disconnect",
+        "disconnected",
+        "network quality",
+    }
+)
+_SHORT_TROUBLESHOOTING_MESSAGE_MAX_WORDS = 24
+_SHORT_TROUBLESHOOTING_MESSAGE_MAX_CHARS = 180
 
 
 @dataclass(frozen=True)
@@ -265,9 +295,33 @@ def _looks_like_question(message: str) -> bool:
     return bool(_QUESTION_PREFIX_RE.search(text) or text.endswith("?"))
 
 
+def _match_general_system_help_signals(text: str) -> list[str]:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return []
+    matches: list[str] = []
+    for pattern, label in _GENERAL_SYSTEM_HELP_PATTERNS:
+        if label in matches:
+            continue
+        if pattern.search(normalized):
+            matches.append(label)
+    return matches
+
+
+def _is_short_troubleshooting_message(text: str) -> bool:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return False
+    if len(normalized) > _SHORT_TROUBLESHOOTING_MESSAGE_MAX_CHARS:
+        return False
+    return len(normalized.split()) <= _SHORT_TROUBLESHOOTING_MESSAGE_MAX_WORDS
+
+
 def _heuristic_route_decision(
     message: str,
     *,
+    ticket_subject: str | None = None,
+    ticket_context: list[dict[str, str]] | None = None,
     response_language: str,
     latest_assistant_message: dict[str, Any] | None = None,
     current_ticket_status: str | None = None,
@@ -310,6 +364,60 @@ def _heuristic_route_decision(
             matched_signals=_sanitize_matched_signals(gratitude_signals),
             response_language=response_language,
         )
+
+    if _is_short_troubleshooting_message(text):
+        hints = build_route_prompt_hints(
+            text,
+            ticket_subject=ticket_subject,
+            ticket_context=ticket_context,
+            latest_assistant_message=latest_assistant_message,
+            current_ticket_status=current_ticket_status,
+            has_active_engineer_case=has_active_engineer_case,
+        )
+        message_matches = hints.get("message_matches") if isinstance(hints.get("message_matches"), dict) else {}
+        flags = hints.get("flags") if isinstance(hints.get("flags"), dict) else {}
+        follow_up_signals = message_matches.get("follow_up") if isinstance(message_matches.get("follow_up"), list) else []
+        looks_like_question = bool(flags.get("looks_like_question"))
+        question_or_follow_up = looks_like_question or bool(follow_up_signals)
+
+        system_signals = _match_general_system_help_signals(text)
+        if system_signals and question_or_follow_up:
+            matched_signals = list(system_signals)
+            if looks_like_question:
+                matched_signals.append("looks_like_question")
+            return _build_route_decision(
+                scope_label="non_agora",
+                action="refuse",
+                confidence=0.99,
+                reason="general_it_support",
+                matched_signals=_sanitize_matched_signals(matched_signals),
+                response_language=response_language,
+            )
+
+        technical_signals = [
+            signal
+            for signal in list(message_matches.get("technical") or [])
+            if signal in _FASTPATH_TROUBLESHOOTING_SIGNALS
+        ]
+        explicit_non_agora_signal = bool(
+            system_signals
+            or list(message_matches.get("public_info") or [])
+            or list(message_matches.get("product_portfolio") or [])
+        )
+        if technical_signals and question_or_follow_up and not explicit_non_agora_signal:
+            matched_signals = list(technical_signals)
+            if looks_like_question:
+                matched_signals.append("looks_like_question")
+            elif follow_up_signals:
+                matched_signals.append("follow_up")
+            return _build_route_decision(
+                scope_label="agora_technical",
+                action="rag",
+                confidence=0.99,
+                reason="technical_troubleshooting_symptom",
+                matched_signals=_sanitize_matched_signals(matched_signals),
+                response_language=response_language,
+            )
 
     if is_api_semantics_mismatch_message(text):
         matched_signals = ["docs_url", "endpoint_path"]
@@ -459,6 +567,8 @@ def decide_support_route(
 
     heuristic_decision = _heuristic_route_decision(
         text,
+        ticket_subject=ticket_subject,
+        ticket_context=ticket_context,
         response_language=response_language,
         latest_assistant_message=latest_assistant_message,
         current_ticket_status=current_ticket_status,
