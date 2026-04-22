@@ -72,6 +72,15 @@ class _FakeInputGuardrail:
         self.__class__.instances.append(self)
 
 
+class _CompatInputGuardrail:
+    instances: list["_CompatInputGuardrail"] = []
+
+    def __init__(self, *, guardrail_function, name: str | None = None) -> None:
+        self.guardrail_function = guardrail_function
+        self.name = name
+        self.__class__.instances.append(self)
+
+
 class _FakeAgent:
     def __init__(self, **kwargs) -> None:
         self.kwargs = dict(kwargs)
@@ -103,6 +112,16 @@ def _fake_sdk(*, exploding: bool = False) -> SimpleNamespace:
     )
 
 
+def _fake_sdk_without_run_in_parallel() -> SimpleNamespace:
+    _CompatInputGuardrail.instances = []
+    return SimpleNamespace(
+        Agent=_FakeAgent,
+        Runner=_FakeRunner,
+        InputGuardrail=_CompatInputGuardrail,
+        GuardrailFunctionOutput=_FakeGuardrailFunctionOutput,
+    )
+
+
 class OpenAIInputGuardrailTests(unittest.IsolatedAsyncioTestCase):
     def test_requirements_base_includes_openai_agents_sdk(self) -> None:
         requirements_path = Path(__file__).resolve().parents[2] / "requirements.base.txt"
@@ -123,6 +142,18 @@ class OpenAIInputGuardrailTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.sanitized_customer_placeholder)
         self.assertEqual(len(_FakeInputGuardrail.instances), 1)
         self.assertFalse(_FakeInputGuardrail.instances[0].run_in_parallel)
+
+    async def test_guardrail_sdk_without_run_in_parallel_kwarg_is_supported(self) -> None:
+        with patch(
+            "backend.services.openai_input_guardrail._load_agents_sdk",
+            return_value=_fake_sdk_without_run_in_parallel(),
+        ):
+            result = await evaluate_openai_input_guardrail("how to join channel")
+
+        self.assertTrue(result.allowed)
+        self.assertFalse(result.blocked)
+        self.assertEqual(result.route_reason, "input_guardrail_allowed")
+        self.assertEqual(len(_CompatInputGuardrail.instances), 1)
 
     async def test_jailbreak_is_blocked(self) -> None:
         with patch("backend.services.openai_input_guardrail._load_agents_sdk", return_value=_fake_sdk()):
