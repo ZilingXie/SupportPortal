@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from backend.services.rag_service_client import RagTicketAnswerDetail
-from backend.services.support_router import SupportResolution, SupportRouteDecision
+from backend.services.support_router import SupportResolution, SupportRouteDecision, resolve_support_message
 from backend.services.troubleshooting_intake import TroubleshootingIntakeResult
 
 
@@ -59,6 +59,11 @@ According to the documentation
 
 2. Cannot create a permanent rule with time: 0
 The documentation states that time: 0 means the rule is applied permanently. However, when we actually send time: 0, the API returns {"status":"success","id":0}, but no rule is created."""
+    _TK_165_MESSAGE = (
+        "Hi, We are implementing agora broadcasting and currently need some more info on products that "
+        "agora provides. Would be great if we can connect with someone who can guide us on products "
+        'that Agora has and could help us."'
+    )
 
     def test_runtime_contract_exposes_explicit_agents_and_run_state(self) -> None:
         from backend.services.client_ticket_agent_runtime import (
@@ -536,6 +541,119 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 event.get("agent_name") == AGENT_NAME_REVIEW and event.get("event_type") == "skipped"
                 for event in execution.agent_events
             )
+        )
+
+    def test_product_portfolio_route_uses_real_web_search_resolution_builder(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        cancelled: list[str] = []
+        payload = {
+            "output_text": (
+                "Broadcast Streaming is best for large-scale one-way broadcasting, while "
+                "Interactive Live Streaming is better when hosts and audiences need low-latency interaction."
+            ),
+            "output": [
+                {
+                    "type": "web_search_call",
+                    "action": {
+                        "sources": [
+                            {
+                                "url": "https://www.agora.io/en/products/broadcast-streaming/",
+                                "title": "Broadcast Streaming",
+                            }
+                        ]
+                    },
+                },
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": (
+                                "Broadcast Streaming is best for large-scale one-way broadcasting, while "
+                                "Interactive Live Streaming is better when hosts and audiences need low-latency interaction."
+                            ),
+                            "annotations": [
+                                {
+                                    "type": "url_citation",
+                                    "url": "https://www.agora.io/en/products/broadcast-streaming/",
+                                    "title": "Broadcast Streaming",
+                                }
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        class _FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self) -> bytes:
+                import json
+
+                return json.dumps(payload).encode("utf-8")
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen",
+            return_value=_FakeResponse(),
+        ):
+            execution = execute_client_ticket_agent_runtime(
+                message=self._TK_165_MESSAGE,
+                ticket_id="TK-165",
+                customer_id="C-001",
+                ticket_subject="Agora products for broadcasting",
+                ticket_context=[{"role": "customer", "content": self._TK_165_MESSAGE}],
+                product="audio_video_calling",
+                message_id="2026-04-22T00:00:00+00:00",
+                route_agent=lambda **_kwargs: SupportRouteDecision(
+                    scope_label="agora_non_technical",
+                    route="web_search",
+                    confidence=0.97,
+                    reason="agora_product_portfolio",
+                    matched_signals=["broadcasting", "products that agora provides"],
+                    response_language="en",
+                    route_family="web_company_info",
+                    execution_action="web_search",
+                    tooling_profile="official_web_search",
+                ),
+                route_executor=lambda **kwargs: resolve_support_message(
+                    kwargs["message"],
+                    ticket_subject=kwargs.get("ticket_subject"),
+                    ticket_context=kwargs.get("ticket_context"),
+                    product=kwargs.get("product"),
+                    latest_assistant_message=kwargs.get("latest_assistant_message"),
+                    current_ticket_status=kwargs.get("current_ticket_status"),
+                    has_active_engineer_case=bool(kwargs.get("has_active_engineer_case")),
+                    decision=kwargs.get("decision"),
+                ),
+                rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                    answer="Use joinChannel with a valid token.",
+                    confidence=0.91,
+                    sources=["https://docs.agora.io/en/video-calling/get-started"],
+                    citations=[{"chunk_id": "chunk-1"}],
+                    needs_engineer_guidance=False,
+                    reason="grounded_answer",
+                    evidence_summary={},
+                    packed_evidence=None,
+                ),
+                review_agent=lambda **_kwargs: self.fail("review agent should not run for product portfolio route"),
+                rag_canceler=lambda request_id: cancelled.append(request_id) or {"cancelled": True, "stage": "route_flip"},
+            )
+
+        self.assertEqual(execution.result.answer_route, "web_search")
+        self.assertEqual(execution.result.execution_action, "web_search")
+        self.assertEqual(execution.result.route_reason, "agora_product_portfolio")
+        self.assertIn("Broadcast Streaming", execution.result.answer)
+        self.assertEqual(execution.runtime_state.route_agent.get("decision"), "web_search")
+        self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
+        self.assertTrue(cancelled)
+        self.assertTrue(
+            all("agora.io" in citation["source_url"] for citation in execution.result.citations),
         )
 
     def test_rag_insufficient_routes_into_review_agent_clarification(self) -> None:

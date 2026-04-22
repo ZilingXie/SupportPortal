@@ -44,6 +44,11 @@ According to the documentation
 
 2. Cannot create a permanent rule with time: 0
 The documentation states that time: 0 means the rule is applied permanently. However, when we actually send time: 0, the API returns {"status":"success","id":0}, but no rule is created."""
+    _TK_165_MESSAGE = (
+        "Hi, We are implementing agora broadcasting and currently need some more info on products that "
+        "agora provides. Would be great if we can connect with someone who can guide us on products "
+        'that Agora has and could help us."'
+    )
 
     def test_build_route_prompt_hints_captures_product_mode_and_context_signals(self) -> None:
         hints = build_route_prompt_hints(
@@ -81,6 +86,14 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn("black screen", hints["message_matches"]["technical"])
         self.assertNotIn("black screen", hints["message_matches"]["system"])
         self.assertTrue(hints["flags"]["looks_like_question"])
+
+    def test_build_route_prompt_hints_marks_agora_product_portfolio_signals(self) -> None:
+        hints = build_route_prompt_hints(self._TK_165_MESSAGE)
+
+        self.assertIn("products that agora provides", hints["message_matches"]["product_portfolio"])
+        self.assertIn("guide us on products", hints["message_matches"]["product_portfolio"])
+        self.assertIn("broadcasting", hints["message_matches"]["product_portfolio"])
+        self.assertTrue(hints["flags"]["product_portfolio_pattern"])
 
     def test_decide_support_route_uses_llm_classification_for_small_talk(self) -> None:
         payload = {
@@ -156,6 +169,42 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(decision.reason, "docs_api_semantics_support")
         self.assertIn("docs_url", decision.matched_signals)
         self.assertIn("endpoint_path", decision.matched_signals)
+        urlopen_mock.assert_not_called()
+
+    def test_decide_support_route_fast_paths_agora_product_portfolio_without_llm(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen"
+        ) as urlopen_mock:
+            decision = decide_support_route(self._TK_165_MESSAGE)
+
+        self.assertEqual(decision.scope_label, "agora_non_technical")
+        self.assertEqual(decision.route_family, "web_company_info")
+        self.assertEqual(decision.execution_action, "web_search")
+        self.assertEqual(decision.tooling_profile, "official_web_search")
+        self.assertEqual(decision.route, "web_search")
+        self.assertEqual(decision.reason, "agora_product_portfolio")
+        self.assertIn("products that agora provides", decision.matched_signals)
+        self.assertIn("guide us on products", decision.matched_signals)
+        self.assertIn("broadcasting", decision.matched_signals)
+        urlopen_mock.assert_not_called()
+
+    def test_decide_support_route_fast_paths_agora_product_portfolio_variants_without_llm(self) -> None:
+        variants = (
+            "What products does Agora provide for broadcasting?",
+            "Which Agora product should we use for broadcasting?",
+            "Could you guide us on Agora products for broadcasting?",
+        )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen"
+        ) as urlopen_mock:
+            for message in variants:
+                with self.subTest(message=message):
+                    decision = decide_support_route(message)
+                    self.assertEqual(decision.scope_label, "agora_non_technical")
+                    self.assertEqual(decision.execution_action, "web_search")
+                    self.assertEqual(decision.reason, "agora_product_portfolio")
+
         urlopen_mock.assert_not_called()
 
     def test_decide_support_route_uses_llm_classification_for_public_info(self) -> None:
@@ -715,6 +764,102 @@ class AgoraPublicInfoSearchTests(unittest.TestCase):
         self.assertIn(
             "https://investor.agora.io/corporate/senior-leadership/?utm_source=openai",
             answer.sources,
+        )
+
+    def test_search_agora_public_info_product_portfolio_uses_official_product_domains_only(self) -> None:
+        calls: list[dict[str, object]] = []
+        payload = {
+            "output_text": "INSUFFICIENT",
+            "output": [],
+        }
+
+        def _capture(request, timeout=None):
+            calls.append(json.loads(request.data.decode("utf-8")))
+            return _FakeResponse(payload)
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen",
+            side_effect=_capture,
+        ):
+            answer = search_agora_public_info(
+                SupportRouterTests._TK_165_MESSAGE,
+                response_language="en",
+                route_reason="agora_product_portfolio",
+            )
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(
+            calls[0]["tools"][0]["filters"]["allowed_domains"],
+            ["agora.io", "www.agora.io"],
+        )
+        self.assertEqual(answer.answer, "INSUFFICIENT")
+
+    def test_resolve_support_message_routes_product_portfolio_via_web_search(self) -> None:
+        payload = {
+            "output_text": (
+                "Broadcast Streaming is designed for large-scale one-way broadcasting, while "
+                "Interactive Live Streaming is better for low-latency audience interaction."
+            ),
+            "output": [
+                {
+                    "type": "web_search_call",
+                    "action": {
+                        "sources": [
+                            {
+                                "url": "https://www.agora.io/en/products/broadcast-streaming/",
+                                "title": "Broadcast Streaming",
+                            }
+                        ]
+                    },
+                },
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": (
+                                "Broadcast Streaming is designed for large-scale one-way broadcasting, while "
+                                "Interactive Live Streaming is better for low-latency audience interaction."
+                            ),
+                            "annotations": [
+                                {
+                                    "type": "url_citation",
+                                    "url": "https://www.agora.io/en/products/broadcast-streaming/",
+                                    "title": "Broadcast Streaming",
+                                }
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        decision = SupportRouteDecision(
+            scope_label="agora_non_technical",
+            route="web_search",
+            confidence=0.97,
+            reason="agora_product_portfolio",
+            matched_signals=["broadcasting", "products that agora provides"],
+            response_language="en",
+        )
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen",
+            return_value=_FakeResponse(payload),
+        ):
+            resolution = resolve_support_message(
+                SupportRouterTests._TK_165_MESSAGE,
+                decision=decision,
+            )
+
+        self.assertEqual(resolution.answer_route, "web_search")
+        self.assertEqual(resolution.execution_action, "web_search")
+        self.assertEqual(resolution.route_reason, "agora_product_portfolio")
+        self.assertTrue(resolution.search_used)
+        self.assertIn("Broadcast Streaming", resolution.answer)
+        self.assertEqual(
+            resolution.citations[0]["source_url"],
+            "https://www.agora.io/en/products/broadcast-streaming/",
         )
 
     def test_search_agora_public_info_uses_controlled_fallback_when_openai_is_unavailable(self) -> None:

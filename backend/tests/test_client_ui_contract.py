@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260421-client-list-toggle-root-context-1", html)
-        self.assertIn("./app.js?v=20260421-client-list-toggle-root-context-1", html)
+        self.assertIn("./styles.css?v=20260422-client-session-not-found-fix-1", html)
+        self.assertIn("./app.js?v=20260422-client-session-not-found-fix-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -2282,6 +2282,74 @@ class ClientUiContractTests(unittest.TestCase):
                 });
                 if (normalized.messages[0].contentFormat !== "markdown") {
                   throw new Error("Backend ticket normalization should preserve customer message content_format.");
+                }
+              """
+            )
+        )
+
+    def test_client2_sync_preserves_pending_local_ticket_when_backend_list_temporarily_misses_it(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                localStorage.setItem(
+                  "helpdesk_tickets",
+                  JSON.stringify([
+                    {
+                      id: "TK-171",
+                      title: "New ticket",
+                      status: "communicating",
+                      createdAt: "2026-04-22T09:00:00.000Z",
+                      updatedAt: "2026-04-22T09:00:00.000Z",
+                      userId: state.user.id,
+                      product: null,
+                      messages: [
+                        {
+                          id: "msg-user-1",
+                          role: "user",
+                          content: "i got black screen, what should i do?",
+                          createdAt: "2026-04-22T09:00:00.000Z",
+                          contentFormat: "markdown",
+                        },
+                      ],
+                    },
+                  ])
+                );
+
+                state.view = "chat-ticket";
+                state.activeTicketId = "TK-171";
+                setPendingSession("TK-171", {
+                  phase: "queued",
+                  userMessageId: "msg-user-1",
+                  persistedMessageCreatedAt: "2026-04-22T09:00:00.000Z",
+                  queuedMessageCreatedAt: "2026-04-22T09:00:00.000Z",
+                  waitingForDurableReply: true,
+                });
+
+                fetch = async (url) => {
+                  if (!String(url).startsWith("/api/tickets?")) {
+                    throw new Error(`Unexpected fetch call: ${url}`);
+                  }
+                  return {
+                    ok: true,
+                    json: async () => ({
+                      tickets: [],
+                    }),
+                  };
+                };
+
+                await syncTicketsFromBackend({ silent: true });
+
+                const preserved = getTicketById("TK-171");
+                if (!preserved) {
+                  throw new Error("Pending local ticket should not disappear when the backend list temporarily omits it.");
+                }
+                if (preserved.messages.length !== 1 || preserved.messages[0].content !== "i got black screen, what should i do?") {
+                  throw new Error(`Pending local ticket should keep its optimistic customer message, got ${JSON.stringify(preserved)}.`);
+                }
+                const html = renderChatTicket();
+                if (html.includes("Session not found.")) {
+                  throw new Error(`Pending local ticket sync should not leave the chat route in the Session not found state, got ${html}.`);
                 }
               """
             )

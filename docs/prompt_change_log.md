@@ -966,6 +966,47 @@ For each new entry, record:
   - `node --check ui/client-ui/app.js`
   - `git diff --check`
 
+- Date: 2026-04-22
+- Area or subsystem: Client support routing and non-technical web-search answering
+- Prompt or model version: `router-v2 + web-search-v3`
+- Summary: Added a product-portfolio routing path for Agora product-overview questions and upgraded the non-technical web-search prompt so broadcasting-related product inquiries lead with `Broadcast Streaming` versus `Interactive Live Streaming`, grouped official product coverage, and no Console-first guidance.
+- Reason: `TK-165` showed that product-portfolio questions about broadcasting were falling into technical-docs RAG and being answered with Console usage guidance instead of official product-overview guidance.
+- Affected files or config:
+  - `backend/services/support_router.py`
+  - `backend/services/support_router_prompt.py`
+  - `backend/services/prompts/router.py`
+  - `backend/services/prompts/web_search.py`
+  - `backend/tests/test_support_router.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Messages asking what Agora products exist, which Agora product fits a scenario, or requesting broadcasting-oriented product guidance now fast-path to `agora_non_technical -> web_search` with reason `agora_product_portfolio`.
+  - Product-portfolio web-search answers now stay on official Agora product pages, explain `Broadcast Streaming` versus `Interactive Live Streaming` first when broadcasting is mentioned, and then summarize grouped products or add-ons instead of redirecting to Console.
+  - If the customer asks to connect with someone, the answer keeps the product overview as the main body and only adds a short official sales-contact CTA at the end.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_support_router.py backend/tests/test_prompt_modules.py backend/tests/test_client_ticket_agent_runtime.py`
+
+- Date: 2026-04-22
+- Area or subsystem: Client front-door input guardrail
+- Prompt or model version: `input-guardrail-front-door-v1`
+- Summary: Added a dedicated OpenAI Agents SDK front-door input guardrail scene and blocking response path ahead of ticket subject generation and the existing route/main-agent chain, with a unified safe-restate reply for blocked turns.
+- Reason: The ticket admission path needed a conservative boundary check for jailbreak or prompt injection attempts, obvious abuse, PII, and clearly invalid or dangerous inputs without changing the existing route agent, RAG, review, or investigation workflow for normal technical questions.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/services/openai_input_guardrail.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/tests/test_openai_input_guardrail.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Every `/api/tickets/query` turn now runs a blocking front-door guardrail before `derive_subject()`, route decisions, RAG, review, async queueing, investigation refresh, or deferred sentiment tagging.
+  - Normal technical questions such as `how to join channel` still pass through to the existing route and RAG flow when the guardrail allows them.
+  - Blocked turns now persist only a sanitized placeholder customer message plus one unified safe-restate reply, with route metadata under `answer_route=guardrail` and category-specific `route_reason` values like `input_guardrail_pii`.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_openai_input_guardrail backend.tests.test_llm_profiles backend.tests.test_investigation_flow -q`
+
 - Date: 2026-04-17
 - Area or subsystem: Client query-understanding rewrite and answer-first fallback policy
 - Prompt or model version: `query-rewrite-v1 + client_accuracy_first overlay`

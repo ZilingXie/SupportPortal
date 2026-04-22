@@ -12,7 +12,11 @@ from backend.services.api_semantics import is_api_semantics_mismatch_message
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import INTENT_ROUTER_SCENARIO, WEB_SEARCH_SCENARIO, resolve_model_profile
 from backend.services.prompts.web_search import build_web_search_system_prompt, build_web_search_user_prompt
-from backend.services.support_router_prompt import build_route_system_prompt, build_route_user_payload
+from backend.services.support_router_prompt import (
+    build_route_system_prompt,
+    build_route_user_payload,
+    detect_product_portfolio_signals,
+)
 from backend.services.ticket_resolution import (
     build_resolved_confirmation_reply,
     has_resolution_negative_marker,
@@ -25,12 +29,17 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_INTENT_ROUTER_TIMEOUT_SECONDS = 8.0
 DEFAULT_INTENT_ROUTER_CONFIDENCE_THRESHOLD = 0.7
 DEFAULT_OPENAI_WEB_SEARCH_TIMEOUT_SECONDS = 30.0
+PRODUCT_PORTFOLIO_ROUTE_REASON = "agora_product_portfolio"
 OFFICIAL_AGORA_DOMAINS = [
     "agora.io",
     "www.agora.io",
     "docs.agora.io",
     "docs-preview.agora.io",
     "investor.agora.io",
+]
+OFFICIAL_AGORA_PRODUCT_PORTFOLIO_DOMAINS = [
+    "agora.io",
+    "www.agora.io",
 ]
 AUTHORITATIVE_WEB_SOURCE_TIERS = {
     "tier_1": [
@@ -328,6 +337,17 @@ def _heuristic_route_decision(
             response_language=response_language,
         )
 
+    product_portfolio_signals = detect_product_portfolio_signals(text)
+    if product_portfolio_signals:
+        return _build_route_decision(
+            scope_label="agora_non_technical",
+            action="web_search",
+            confidence=0.98,
+            reason=PRODUCT_PORTFOLIO_ROUTE_REASON,
+            matched_signals=_sanitize_matched_signals(product_portfolio_signals),
+            response_language=response_language,
+        )
+
     return None
 
 
@@ -597,6 +617,7 @@ def _openai_web_search(
     *,
     response_language: str,
     allowed_domains: list[str] | None,
+    route_reason: str | None = None,
 ) -> WebSearchAnswer | None:
     profile = resolve_model_profile(WEB_SEARCH_SCENARIO)
     if not profile.api_key:
@@ -610,8 +631,9 @@ def _openai_web_search(
     system_prompt = build_web_search_system_prompt(
         response_language=response_language,
         official_only=bool(allowed_domains),
+        route_reason=route_reason,
     )
-    user_prompt = build_web_search_user_prompt(question=question)
+    user_prompt = build_web_search_user_prompt(question=question, route_reason=route_reason)
     extra_payload = {
         "tools": [tool],
         "include": ["web_search_call.action.sources"],
@@ -637,18 +659,41 @@ def _openai_web_search(
     )
 
 
-def search_agora_public_info(question: str, *, response_language: str) -> WebSearchAnswer:
+def search_agora_public_info(
+    question: str,
+    *,
+    response_language: str,
+    route_reason: str | None = None,
+) -> WebSearchAnswer:
+    normalized_reason = _normalize_text(route_reason).lower()
+    official_only_product_portfolio = normalized_reason == PRODUCT_PORTFOLIO_ROUTE_REASON
+    allowed_domains = (
+        list(OFFICIAL_AGORA_PRODUCT_PORTFOLIO_DOMAINS)
+        if official_only_product_portfolio
+        else list(OFFICIAL_AGORA_DOMAINS)
+    )
     primary = _openai_web_search(
         question,
         response_language=response_language,
-        allowed_domains=list(OFFICIAL_AGORA_DOMAINS),
+        allowed_domains=allowed_domains,
+        route_reason=normalized_reason or None,
     )
     if primary and primary.answer.strip() and "INSUFFICIENT" not in primary.answer.upper():
         return primary
+    if official_only_product_portfolio:
+        if primary and primary.answer.strip():
+            return primary
+        return WebSearchAnswer(
+            answer=_search_fallback_answer(response_language),
+            sources=[],
+            citations=[],
+            search_used=False,
+        )
     secondary = _openai_web_search(
         question,
         response_language=response_language,
         allowed_domains=None,
+        route_reason=normalized_reason or None,
     )
     if secondary and secondary.answer.strip():
         return secondary
@@ -734,7 +779,11 @@ def resolve_support_message(
             matched_signals=list(decision.matched_signals),
         )
     if decision.execution_action == "web_search":
-        search_result = search_agora_public_info(message, response_language=decision.response_language)
+        search_result = search_agora_public_info(
+            message,
+            response_language=decision.response_language,
+            route_reason=decision.reason,
+        )
         return SupportResolution(
             answer=search_result.answer,
             confidence=round(decision.confidence, 2),
