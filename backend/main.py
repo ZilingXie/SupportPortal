@@ -193,6 +193,7 @@ def _safe_float_env(name: str, default: float) -> float:
 
 ASYNC_QUERY_ENABLED = _env_flag("ASYNC_QUERY_ENABLED", default=False)
 OPTIMISTIC_PARALLEL_ROUTE_ENABLED = _env_flag("OPTIMISTIC_PARALLEL_ROUTE_ENABLED", default=True)
+INPUT_GUARDRAIL_ENABLED = _env_flag("INPUT_GUARDRAIL_ENABLED", default=False)
 KNOWLEDGE_OFFICIAL_MAX_BYTES = _safe_int_env("KNOWLEDGE_OFFICIAL_MAX_BYTES", 5 * 1024 * 1024)
 KNOWLEDGE_ARTICLE_MAX_CHARS = _safe_int_env("KNOWLEDGE_ARTICLE_MAX_CHARS", 120000)
 CLIENT_ACK_MAX_OUTPUT_TOKENS = _safe_int_env("CLIENT_ACK_MAX_OUTPUT_TOKENS", 32)
@@ -2323,12 +2324,23 @@ async def create_or_update_ticket(
         "search_used": False,
         "matched_signals": [],
     }
-    input_guardrail_result = await evaluate_openai_input_guardrail(
-        customer_message,
-        subject=normalized_requested_subject or existing_subject or None,
-        requester=str(ticket.get("requester") or "").strip() or None,
-        customer_id=request.customer_id,
-    )
+    if INPUT_GUARDRAIL_ENABLED:
+        input_guardrail_result = await evaluate_openai_input_guardrail(
+            customer_message,
+            subject=normalized_requested_subject or existing_subject or None,
+            requester=str(ticket.get("requester") or "").strip() or None,
+            customer_id=request.customer_id,
+        )
+    else:
+        input_guardrail_result = OpenAIInputGuardrailResult.allow_result(
+            reason="input guardrail disabled by feature flag",
+            diagnostics={
+                "guardrail_mode": "disabled",
+                "source": "feature_flag",
+                "feature_flag": "INPUT_GUARDRAIL_ENABLED",
+                "enabled": False,
+            },
+        )
     persisted_customer_message = customer_message
     active_engineer_case_payload: dict[str, Any] | None = None
     if input_guardrail_result.blocked:

@@ -110,6 +110,13 @@ class InvestigationFlowTests(unittest.TestCase):
         self.repository.initialize()
         self.original_repository = main.ticket_repository
         main.ticket_repository = self.repository
+        self.input_guardrail_enabled_patcher = patch.object(
+            main,
+            "INPUT_GUARDRAIL_ENABLED",
+            False,
+            create=True,
+        )
+        self.input_guardrail_enabled_patcher.start()
         self.guardrail_patcher = patch.object(
             main,
             "evaluate_openai_input_guardrail",
@@ -121,6 +128,7 @@ class InvestigationFlowTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.client.close()
         self.guardrail_patcher.stop()
+        self.input_guardrail_enabled_patcher.stop()
         main.ticket_repository = self.original_repository
 
     def test_health_returns_app_build_metadata(self) -> None:
@@ -303,8 +311,79 @@ class InvestigationFlowTests(unittest.TestCase):
         self.assertIn("record_ticket_created_event_ms", payload_data)
         self.assertGreaterEqual(float(payload_data.get("record_ticket_created_event_ms") or 0.0), 0.0)
 
+    def test_default_disabled_guardrail_bypasses_guardrail_call_and_keeps_runtime_flow(self) -> None:
+        with patch.object(
+            main,
+            "ASYNC_QUERY_ENABLED",
+            False,
+        ), patch.object(
+            main,
+            "evaluate_openai_input_guardrail",
+            AsyncMock(side_effect=AssertionError("disabled guardrail should not be called")),
+        ), patch.object(
+            main,
+            "build_initial_ack",
+            return_value=types.SimpleNamespace(
+                text="Got it, let me check this for you.",
+                source="rule",
+                intent="question",
+            ),
+        ), patch.object(
+            main,
+            "execute_client_ticket_agent_runtime",
+            return_value=types.SimpleNamespace(
+                result=types.SimpleNamespace(
+                    answer="Use joinChannel with the same token and channel name.",
+                    confidence=0.82,
+                    sources=["https://docs.agora.io/en/video-calling/get-started/get-started-sdk"],
+                    citations=[{"title": "Join a channel", "url": "https://docs.agora.io/example"}],
+                    needs_investigating=False,
+                    next_status="communicating",
+                    answer_route="rag",
+                    scope_label="agora_technical",
+                    route_family="agora_docs_rag",
+                    execution_action="rag",
+                    tooling_profile="agora_docs_only",
+                    route_reason="grounded_answer",
+                    route_confidence=0.91,
+                    search_used=False,
+                    matched_signals=["join channel"],
+                    investigation_reason=None,
+                    evidence_summary=None,
+                    packed_evidence=None,
+                    workflow_action="answer_customer",
+                    client_intake_state=None,
+                ),
+            ),
+        ) as runtime_mock, patch.object(
+            main,
+            "_enqueue_or_defer_message_sentiment_tag",
+            AsyncMock(return_value=False),
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/tickets/query",
+                json={
+                    "ticket_id": "TK-GR-DISABLED-001",
+                    "customer_id": "C-001",
+                    "product": "audio_video_calling",
+                    "message": "how to join channel",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["answer_route"], "rag")
+        self.assertEqual(payload["route_reason"], "grounded_answer")
+        self.assertEqual(payload["processing_mode"], "main_agent_sync")
+        self.assertEqual(payload["ack_source"], "rule")
+        runtime_mock.assert_called_once()
+
     def test_guardrail_allowed_how_to_join_channel_keeps_existing_runtime_flow(self) -> None:
         with patch.object(
+            main,
+            "INPUT_GUARDRAIL_ENABLED",
+            True,
+        ), patch.object(
             main,
             "ASYNC_QUERY_ENABLED",
             False,
@@ -373,6 +452,10 @@ class InvestigationFlowTests(unittest.TestCase):
             reason="prompt injection attempt detected",
         )
         with patch.object(
+            main,
+            "INPUT_GUARDRAIL_ENABLED",
+            True,
+        ), patch.object(
             main,
             "ASYNC_QUERY_ENABLED",
             False,
@@ -449,6 +532,10 @@ class InvestigationFlowTests(unittest.TestCase):
         )
         with patch.object(
             main,
+            "INPUT_GUARDRAIL_ENABLED",
+            True,
+        ), patch.object(
+            main,
             "ASYNC_QUERY_ENABLED",
             False,
         ), patch.object(
@@ -482,6 +569,10 @@ class InvestigationFlowTests(unittest.TestCase):
             reason="dangerous input detected",
         )
         with patch.object(
+            main,
+            "INPUT_GUARDRAIL_ENABLED",
+            True,
+        ), patch.object(
             main,
             "ASYNC_QUERY_ENABLED",
             False,
@@ -1213,6 +1304,10 @@ class InvestigationFlowTests(unittest.TestCase):
 
         with patch.object(
             main,
+            "INPUT_GUARDRAIL_ENABLED",
+            True,
+        ), patch.object(
+            main,
             "ASYNC_QUERY_ENABLED",
             False,
         ), patch.object(
@@ -1643,6 +1738,10 @@ class InvestigationFlowTests(unittest.TestCase):
 
         with patch.object(
             main,
+            "INPUT_GUARDRAIL_ENABLED",
+            True,
+        ), patch.object(
+            main,
             "ASYNC_QUERY_ENABLED",
             False,
         ), patch.object(
@@ -1722,6 +1821,10 @@ class InvestigationFlowTests(unittest.TestCase):
         )
 
         with patch.object(
+            main,
+            "INPUT_GUARDRAIL_ENABLED",
+            True,
+        ), patch.object(
             main,
             "ASYNC_QUERY_ENABLED",
             False,
@@ -2777,6 +2880,10 @@ class InvestigationFlowTests(unittest.TestCase):
         )
 
         with patch.object(
+            main,
+            "INPUT_GUARDRAIL_ENABLED",
+            True,
+        ), patch.object(
             main,
             "build_initial_ack",
             return_value=types.SimpleNamespace(
