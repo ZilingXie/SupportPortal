@@ -25,6 +25,7 @@ ENGINEER_INVESTIGATION_REPLY_SCENARIO = "engineer_investigation_reply"
 KNOWLEDGE_INGESTION_SCENARIO = "knowledge_ingestion_metadata"
 BENCHMARK_JUDGE_SCENARIO = "benchmark_judge"
 AUTO_DEPLOY_REPORT_SCENARIO = "auto_deploy_report"
+INPUT_GUARDRAIL_SCENARIO = "input_guardrail"
 
 ProviderName = Literal["openai", "siliconflow"]
 ApiModeName = Literal[
@@ -264,6 +265,19 @@ def resolve_model_profile(
             temperature=0.0,
             timeout_seconds=_safe_positive_float_env("CLIENT_ACK_TIMEOUT_SECONDS", 5.0),
             max_retries=1,
+            fallback_models=(),
+        )
+    if scenario == INPUT_GUARDRAIL_SCENARIO:
+        return ModelProfile(
+            scenario=scenario,
+            provider="openai",
+            model=_clean_text(os.getenv("INPUT_GUARDRAIL_MODEL")) or "gpt-5.4-mini",
+            api_mode=OPENAI_RESPONSES_API,
+            api_key=_openai_api_key(),
+            reasoning_effort=_clean_text(os.getenv("INPUT_GUARDRAIL_REASONING_EFFORT")) or "low",
+            temperature=_safe_float_env("INPUT_GUARDRAIL_TEMPERATURE", 0.0),
+            timeout_seconds=_safe_positive_float_env("INPUT_GUARDRAIL_TIMEOUT_SECONDS", 6.0),
+            max_retries=_safe_int_env("INPUT_GUARDRAIL_MAX_RETRIES", 1),
             fallback_models=(),
         )
     if scenario == TICKET_TITLE_SCENARIO:
