@@ -2502,6 +2502,65 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "completed")
         self.assertEqual(execution.runtime_state.review_agent.get("decision"), "approve_answer")
 
+    def test_black_screen_runtime_uses_real_route_agent_fast_path_with_misleading_subject(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+        from backend.services.support_router import decide_support_route
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen",
+            side_effect=AssertionError("route llm should not run for black-screen symptom fast path"),
+        ):
+            execution = execute_client_ticket_agent_runtime(
+                message="I got black screen, what should I do?",
+                ticket_id="TK-176-RUNTIME",
+                customer_id="C-001",
+                ticket_subject="Black Screen After Startup",
+                ticket_context=[
+                    {"role": "customer", "content": "I got black screen, what should I do?"},
+                ],
+                product="audio_video_calling",
+                message_id="2026-04-22T00:00:00+00:00",
+                route_agent=decide_support_route,
+                route_executor=lambda **_kwargs: self.fail("route executor should not run when route=rag"),
+                rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                    answer="Check whether the remote user is publishing video and whether the local render view is bound correctly.",
+                    confidence=0.9,
+                    sources=["https://docs.agora.io/en/video-calling/troubleshooting/black-screen"],
+                    citations=[{"chunk_id": "chunk-black-screen"}],
+                    needs_engineer_guidance=False,
+                    reason="grounded_answer",
+                    evidence_summary={
+                        "quality_signals": {
+                            "generation_mode": "structured_answer",
+                            "selected_doc_count": 1,
+                            "top1_similarity_score": 0.93,
+                        }
+                    },
+                    packed_evidence=None,
+                ),
+                review_agent=lambda **_kwargs: {
+                    "decision": "approve_answer",
+                    "reason": "postcheck_passed",
+                    "confidence": 0.88,
+                },
+                rag_canceler=None,
+            )
+
+        self.assertEqual(execution.result.answer_route, "rag")
+        self.assertEqual(execution.result.route_reason, "grounded_answer")
+        self.assertEqual(execution.result.workflow_action, "answer_customer")
+        self.assertEqual(execution.runtime_state.route_agent.get("status"), "completed")
+        self.assertEqual(execution.runtime_state.route_agent.get("decision"), "rag")
+        self.assertEqual(execution.runtime_state.route_agent.get("reason"), "technical_troubleshooting_symptom")
+        self.assertEqual(execution.runtime_state.rag_agent.get("status"), "completed")
+        self.assertEqual(execution.runtime_state.review_agent.get("status"), "completed")
+        self.assertFalse(
+            any(
+                event.get("agent_name") == "rag_agent" and event.get("event_type") == "cancel_requested"
+                for event in execution.agent_events
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

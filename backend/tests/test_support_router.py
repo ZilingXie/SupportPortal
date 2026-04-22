@@ -157,6 +157,50 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(decision.matched_signals, ["join channel", "channel", "looks_like_question"])
         urlopen_mock.assert_not_called()
 
+    def test_decide_support_route_fast_paths_black_screen_troubleshooting_without_llm(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen"
+        ) as urlopen_mock:
+            decision = decide_support_route("I got black screen, what should I do?")
+
+        self.assertEqual(decision.scope_label, "agora_technical")
+        self.assertEqual(decision.route_family, "agora_docs_rag")
+        self.assertEqual(decision.execution_action, "rag")
+        self.assertEqual(decision.reason, "technical_troubleshooting_symptom")
+        self.assertIn("black screen", decision.matched_signals)
+        self.assertIn("looks_like_question", decision.matched_signals)
+        urlopen_mock.assert_not_called()
+
+    def test_decide_support_route_black_screen_troubleshooting_ignores_misleading_subject_without_llm(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen"
+        ) as urlopen_mock:
+            decision = decide_support_route(
+                "I got black screen, what should I do?",
+                ticket_subject="Black Screen After Startup",
+            )
+
+        self.assertEqual(decision.scope_label, "agora_technical")
+        self.assertEqual(decision.route_family, "agora_docs_rag")
+        self.assertEqual(decision.execution_action, "rag")
+        self.assertEqual(decision.reason, "technical_troubleshooting_symptom")
+        self.assertIn("black screen", decision.matched_signals)
+        urlopen_mock.assert_not_called()
+
+    def test_decide_support_route_fast_paths_general_system_help_without_llm(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen"
+        ) as urlopen_mock:
+            decision = decide_support_route("My computer blue-screened. What should I do?")
+
+        self.assertEqual(decision.scope_label, "non_agora")
+        self.assertEqual(decision.route_family, "fallback_or_refuse")
+        self.assertEqual(decision.execution_action, "refuse")
+        self.assertEqual(decision.reason, "general_it_support")
+        self.assertIn("blue screen", decision.matched_signals)
+        self.assertIn("looks_like_question", decision.matched_signals)
+        urlopen_mock.assert_not_called()
+
     def test_decide_support_route_fast_paths_docs_api_semantics_without_llm(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
             "urllib.request.urlopen"
