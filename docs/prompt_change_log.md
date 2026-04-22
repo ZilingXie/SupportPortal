@@ -967,6 +967,27 @@ For each new entry, record:
   - `git diff --check`
 
 - Date: 2026-04-22
+- Area or subsystem: Client front-door input guardrail
+- Prompt or model version: `input-guardrail-front-door-v1-default-disabled`
+- Summary: Default-disabled the front-door OpenAI input guardrail at admission time behind `INPUT_GUARDRAIL_ENABLED`, so the existing route, RAG, review, and investigation chain resumes unchanged unless the feature flag is explicitly turned on.
+- Reason: `TK-174` and `TK-175` showed that normal technical questions could be blocked at the front door, so the safest rollback is to bypass guardrail evaluation globally by default while preserving the implementation and tests for explicit re-enable.
+- Affected files or config:
+  - `backend/main.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `docs/prompt_change_log.md`
+  - `INPUT_GUARDRAIL_ENABLED`
+- Expected behavior change:
+  - `/api/tickets/query` now skips the front-door input guardrail by default and continues directly into the existing main route and runtime chain.
+  - Normal technical questions should no longer return `answer_route=guardrail` or `processing_mode=input_guardrail_blocked` unless `INPUT_GUARDRAIL_ENABLED=true`.
+  - Guardrail-specific block behavior remains available for future explicit re-enable, and dedicated tests still cover the enabled blocking path.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_investigation_flow -q`
+  - `bash scripts/workflow/inspect_single_host_stack_mode.sh`
+  - `bash scripts/workflow/restart_single_host_lightweight_stack.sh`
+  - `curl -fsS http://127.0.0.1:8080/health`
+  - `python3 /Users/xieziling/.codex/skills/supportportal-run-report/scripts/run_supportportal_run_report.py`
+
+- Date: 2026-04-22
 - Area or subsystem: Client support routing and non-technical web-search answering
 - Prompt or model version: `router-v2 + web-search-v3`
 - Summary: Added a product-portfolio routing path for Agora product-overview questions and upgraded the non-technical web-search prompt so broadcasting-related product inquiries lead with `Broadcast Streaming` versus `Interactive Live Streaming`, grouped official product coverage, and no Console-first guidance.
