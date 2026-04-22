@@ -225,6 +225,39 @@ def _build_classifier_agent(sdk: SimpleNamespace, *, model: str, reasoning_effor
     return sdk.Agent(**agent_kwargs)
 
 
+def _build_input_guardrail(
+    sdk: SimpleNamespace,
+    *,
+    guardrail_function: Any,
+    name: str,
+) -> Any:
+    input_guardrail_kwargs: dict[str, Any] = {
+        "guardrail_function": guardrail_function,
+        "name": name,
+    }
+    try:
+        input_guardrail_signature = inspect.signature(sdk.InputGuardrail)
+    except (TypeError, ValueError):
+        input_guardrail_signature = None
+    if input_guardrail_signature is None:
+        input_guardrail_kwargs["run_in_parallel"] = False
+    else:
+        supports_run_in_parallel = "run_in_parallel" in input_guardrail_signature.parameters
+        supports_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in input_guardrail_signature.parameters.values()
+        )
+        if supports_run_in_parallel or supports_kwargs:
+            input_guardrail_kwargs["run_in_parallel"] = False
+    try:
+        return sdk.InputGuardrail(**input_guardrail_kwargs)
+    except TypeError as exc:
+        if "run_in_parallel" not in str(exc) or "unexpected keyword argument" not in str(exc):
+            raise
+        input_guardrail_kwargs.pop("run_in_parallel", None)
+        return sdk.InputGuardrail(**input_guardrail_kwargs)
+
+
 async def _run_classifier(sdk: SimpleNamespace, classifier_agent: Any, prompt: str, *, timeout_seconds: float, max_retries: int) -> Any:
     attempts = max(1, int(max_retries or 1))
     last_exc: Exception | None = None
@@ -366,10 +399,10 @@ async def evaluate_openai_input_guardrail(
                 tripwire_triggered=bool(payload.get("blocked")),
             )
 
-        input_guardrail = sdk.InputGuardrail(
+        input_guardrail = _build_input_guardrail(
+            sdk,
             guardrail_function=guardrail_function,
             name="supportportal_front_door_input_guardrail",
-            run_in_parallel=False,
         )
         guardrail_output = input_guardrail.guardrail_function(None, classifier_agent, prompt)
         if inspect.isawaitable(guardrail_output):
