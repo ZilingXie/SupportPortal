@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260422-client-session-not-found-fix-1", html)
-        self.assertIn("./app.js?v=20260422-client-session-not-found-fix-1", html)
+        self.assertIn("./styles.css?v=20260423-client-header-two-columns-1", html)
+        self.assertIn("./app.js?v=20260423-client-header-two-columns-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -2726,6 +2726,32 @@ class ClientUiContractTests(unittest.TestCase):
                 }
               """
             )
+        )
+
+    def test_client2_postsend_header_keeps_desktop_two_column_layout_and_mobile_stack(self) -> None:
+        css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn(".new-ticket-postsend-header-row {", css)
+        self.assertIn("grid-template-columns: minmax(0, 1fr) auto;", css)
+        self.assertNotIn(
+            ".new-ticket-postsend-header-row {\n  display: flex;\n  align-items: flex-start;\n  justify-content: space-between;\n  gap: 20px;\n  flex-wrap: wrap;\n}",
+            css,
+        )
+        self.assertIn(".new-ticket-postsend-actions {", css)
+        self.assertIn("justify-self: end;", css)
+        self.assertIn("align-self: start;", css)
+        self.assertIn("flex-wrap: nowrap;", css)
+        self.assertRegex(
+            css,
+            re.compile(
+                r"@media \(max-width: 720px\) \{[\s\S]*?\.new-ticket-postsend-header-row \{\n\s+grid-template-columns: 1fr;\n\s+\}",
+            ),
+        )
+        self.assertRegex(
+            css,
+            re.compile(
+                r"@media \(max-width: 720px\) \{[\s\S]*?\.new-ticket-postsend-actions \{\n\s+justify-self: start;\n\s+flex-wrap: wrap;\n\s+\}",
+            ),
         )
 
     def test_client2_postsend_header_reply_countdown_hides_when_latest_message_is_assistant(self) -> None:
