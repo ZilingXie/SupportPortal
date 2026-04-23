@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260423-client-header-two-columns-1", html)
-        self.assertIn("./app.js?v=20260423-client-header-two-columns-1", html)
+        self.assertIn("./styles.css?v=20260423-client-send-button-engineer-parity-1", html)
+        self.assertIn("./app.js?v=20260423-client-send-button-engineer-parity-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -2388,6 +2388,38 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertNotRegex(css, r"\.composer-link-editor")
         self.assertRegex(css, r"\.composer-rich-input p\s*\{\s*margin:\s*0;")
         self.assertRegex(css, r"\.composer-rich-input li\s*\{\s*margin:\s*0;")
+
+    def test_client2_send_button_css_matches_engineer_visual_contract(self) -> None:
+        css = Path("ui/client-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertRegex(
+            css,
+            r"\.composer-icon-button,\s*\.new-ticket-inline-send-btn\s*\{[^}]*width:\s*48px;[^}]*height:\s*48px;[^}]*border:\s*1px solid rgba\(110,\s*120,\s*130,\s*0\.14\);[^}]*border-radius:\s*16px;",
+        )
+        self.assertRegex(
+            css,
+            r"\.send-btn,\s*\.new-ticket-inline-send-btn\s*\{[^}]*color:\s*#fff;[^}]*border-color:\s*transparent;[^}]*background:\s*linear-gradient\(135deg,\s*var\(--primary\)\s*0%,\s*var\(--primary-container\)\s*100%\);[^}]*box-shadow:\s*0 18px 34px rgba\(0,\s*100,\s*147,\s*0\.22\);",
+        )
+        self.assertRegex(
+            css,
+            r"\.composer-icon-button:focus-visible,\s*\.send-btn:focus-visible,\s*\.new-ticket-inline-send-btn:focus-visible\s*\{[^}]*outline:\s*none;[^}]*box-shadow:\s*0 0 0 4px rgba\(0,\s*100,\s*147,\s*0\.14\),\s*0 18px 32px rgba\(52,\s*61,\s*150,\s*0\.14\);",
+        )
+        self.assertRegex(
+            css,
+            r"\.btn:disabled,[^}]*\.send-btn:disabled,[^}]*\.new-ticket-inline-send-btn:disabled\s*\{[^}]*cursor:\s*not-allowed;[^}]*opacity:\s*0\.56;",
+        )
+        self.assertRegex(
+            css,
+            r"\.composer-icon-button:hover:not\(:disabled\),\s*\.new-ticket-inline-send-btn:hover:not\(:disabled\)\s*\{[^}]*transform:\s*translateY\(-1px\);[^}]*box-shadow:\s*0 18px 32px rgba\(52,\s*61,\s*150,\s*0\.14\);",
+        )
+        self.assertRegex(
+            css,
+            r"(?s)@media[^{]*\{.*?\.new-ticket-inline-send-btn\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px;[^}]*border-radius:\s*14px;",
+        )
+        self.assertNotRegex(
+            css,
+            r"\.new-ticket-inline-send-btn\s*\{[^}]*background:\s*linear-gradient\(135deg,\s*#97cff6\s*0%,\s*#74bdec\s*100%\);",
+        )
 
     def test_client2_fresh_customer_message_schedules_delivered_label_after_5_seconds(self) -> None:
         self.run_client2_app_script(

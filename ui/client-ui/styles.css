@@ -372,12 +372,19 @@ html.material-symbols-pending .material-symbols-outlined {
 .btn:focus-visible,
 .session-btn:focus-visible,
 .history-row:focus-visible,
-.sidebar-nav-item:focus-visible,
-.composer-icon-button:focus-visible,
-.send-btn:focus-visible {
+.sidebar-nav-item:focus-visible {
   outline: none;
   border-color: rgba(0, 100, 147, 0.48);
   box-shadow: 0 0 0 4px rgba(0, 100, 147, 0.14);
+}
+
+.composer-icon-button:focus-visible,
+.send-btn:focus-visible,
+.new-ticket-inline-send-btn:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 4px rgba(0, 100, 147, 0.14),
+    0 18px 32px rgba(52, 61, 150, 0.14);
 }
 
 .filter-select {
@@ -572,9 +579,10 @@ html.material-symbols-pending .material-symbols-outlined {
 }
 
 .btn:disabled,
-.send-btn:disabled {
-  opacity: 0.55;
+.send-btn:disabled,
+.new-ticket-inline-send-btn:disabled {
   cursor: not-allowed;
+  opacity: 0.56;
   transform: none;
 }
 
@@ -1909,10 +1917,8 @@ a.citation-link:hover {
   padding: 22px 88px 24px 24px;
 }
 
-.composer-icon-button {
-  position: absolute;
-  right: 18px;
-  bottom: 18px;
+.composer-icon-button,
+.new-ticket-inline-send-btn {
   width: 48px;
   height: 48px;
   display: inline-flex;
@@ -1920,9 +1926,6 @@ a.citation-link:hover {
   justify-content: center;
   border: 1px solid rgba(110, 120, 130, 0.14);
   border-radius: 16px;
-  background: rgba(239, 244, 251, 0.96);
-  color: var(--ink-soft);
-  box-shadow: 0 14px 28px rgba(52, 61, 150, 0.1);
   transition:
     transform 0.18s ease,
     box-shadow 0.18s ease,
@@ -1931,12 +1934,23 @@ a.citation-link:hover {
     opacity 0.18s ease;
 }
 
-.composer-icon-button .material-symbols-outlined {
+.composer-icon-button {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  background: rgba(239, 244, 251, 0.96);
+  color: var(--ink-soft);
+  box-shadow: 0 14px 28px rgba(52, 61, 150, 0.1);
+}
+
+.composer-icon-button .material-symbols-outlined,
+.new-ticket-inline-send-btn .material-symbols-outlined {
   font-size: 20px;
   font-variation-settings: "FILL" 1, "wght" 500, "GRAD" 0, "opsz" 20;
 }
 
-.send-btn {
+.send-btn,
+.new-ticket-inline-send-btn {
   color: #fff;
   border-color: transparent;
   background: linear-gradient(135deg, var(--primary) 0%, var(--primary-container) 100%);
@@ -1948,7 +1962,8 @@ a.citation-link:hover {
   color: var(--secondary);
 }
 
-.composer-icon-button:hover:not(:disabled) {
+.composer-icon-button:hover:not(:disabled),
+.new-ticket-inline-send-btn:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: 0 18px 32px rgba(52, 61, 150, 0.14);
 }
@@ -1957,7 +1972,8 @@ a.citation-link:hover {
   background: rgba(224, 224, 255, 0.7);
 }
 
-.composer-icon-button:active:not(:disabled) {
+.composer-icon-button:active:not(:disabled),
+.new-ticket-inline-send-btn:active:not(:disabled) {
   transform: scale(0.98);
 }
 
@@ -3634,44 +3650,16 @@ a.citation-link:hover {
   justify-content: flex-end;
 }
 
-.new-ticket-inline-send-btn {
-  width: 48px;
-  height: 48px;
-  border-radius: 18px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #97cff6 0%, #74bdec 100%);
-  color: #fff;
-  box-shadow: 0 12px 28px rgba(69, 135, 188, 0.26);
-  cursor: pointer;
-  transition:
-    transform 0.18s ease,
-    box-shadow 0.18s ease,
-    opacity 0.18s ease,
-    background 0.18s ease;
-}
-
-.new-ticket-inline-send-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 16px 34px rgba(69, 135, 188, 0.28);
-}
-
-.new-ticket-inline-send-btn:disabled {
-  opacity: 0.4;
-  box-shadow: none;
-  cursor: not-allowed;
-}
-
 .new-ticket-inline-send-btn.is-stop {
+  border-color: transparent;
   background: rgba(23, 28, 33, 0.08);
   color: var(--ink);
   box-shadow: none;
 }
 
-.new-ticket-inline-send-btn .material-symbols-outlined {
-  font-size: 20px;
-  font-variation-settings: "wght" 700;
+.new-ticket-inline-send-btn.is-stop:hover:not(:disabled) {
+  transform: none;
+  box-shadow: none;
 }
 
 .new-ticket-info-card {
@@ -4424,7 +4412,7 @@ a.citation-link:hover {
   .new-ticket-inline-send-btn {
     width: 44px;
     height: 44px;
-    border-radius: 16px;
+    border-radius: 14px;
   }
 
 }
