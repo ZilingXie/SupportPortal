@@ -1540,3 +1540,24 @@ For each new entry, record:
   - High-confidence canonical symptom tickets now resolve to fixed English labels like `Black screen issue` before the title model runs, so model outputs such as `Black Screen After Startup` no longer become the saved subject for those cases.
 - Verification:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_support_router.py backend/tests/test_ticket_title.py backend/tests/test_client_ticket_agent_runtime.py`
+
+- Date: 2026-04-23
+- Area or subsystem: Engineer investigation reply recovery and context hygiene
+- Prompt or model version: `engineer-investigation-reply-v8`
+- Summary: Added an explicit instruction to ignore earlier unverified root-cause wording when regenerating customer drafts, while the backend now auto-recovers symptom-level customer replies whenever proof and workaround are sufficient but the model still overstates the root cause in its draft.
+- Reason: `TK-179-1` showed that verified Web SDK evidence (`no input frame received` plus a conservative `try a different device` workaround) was still rejected because a prior `the camera is broken` hypothesis polluted the investigation context and the mixed LLM output kept the case in `active`.
+- Affected files or config:
+  - `backend/services/prompts/engineer_investigation_reply.py`
+  - `backend/services/engineer_agent.py`
+  - `backend/tests/test_investigation_flow.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - When the investigation evidence only supports `symptom_and_workaround_only`, stale root-cause guesses from earlier engineer turns are no longer repeated in the summary context sent back to the reply model.
+  - If the model returns a mixed output where `reply_readiness` is symptom-safe but `draft_customer_reply` still overstates the root cause, the backend now rewrites the draft to symptom-level wording and keeps the case in `awaiting_confirmation` instead of forcing another engineer loop.
+  - Unsupported root-cause claims still remain blocked when proof is missing, proof anchors are unverifiable, the next step is absent, or the reply truly depends on `root_cause_confirmed`.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_investigation_flow.InvestigationFlowTests.test_engineer_internal_message_allows_symptom_level_workaround_without_explicit_conclusion backend.tests.test_investigation_flow.InvestigationFlowTests.test_engineer_internal_message_rejects_missing_conclusion_when_reply_scope_claims_root_cause backend.tests.test_investigation_flow.InvestigationFlowTests.test_engineer_internal_message_recovers_symptom_scope_when_draft_overstates_root_cause backend.tests.test_investigation_flow.InvestigationFlowTests.test_engineer_internal_message_sanitizes_prior_unverified_root_cause_from_prompt_context backend.tests.test_investigation_flow.InvestigationFlowTests.test_engineer_internal_message_rejects_unverifiable_proof_anchors`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_prompt_modules.PromptModuleTests.test_engineer_investigation_reply_prompt_is_sectioned_and_json_only`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/engineer_agent.py backend/services/prompts/engineer_investigation_reply.py backend/tests/test_investigation_flow.py backend/tests/test_prompt_modules.py`
+  - `git diff --check`
