@@ -715,6 +715,66 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertEqual(payloads[0]["engineer_case_id"], "TK-ENG-001-1")
         self.assertEqual(payloads[0]["active_investigation"]["messages"], [])
 
+    def test_ticket_repository_list_engineer_cases_preserves_awaiting_confirmation_state(self) -> None:
+        repository = PostgresTicketRepository(dsn="postgresql://example")
+        dummy_conn = object()
+        engineer_row = (
+            "TK-ENG-AC-001-1",
+            "TK-ENG-AC-001",
+            1,
+            "Engineer case",
+            "investigating",
+            "worker_async_rag",
+            "rag_processing_timeout",
+            "Draft reply",
+            "2026-04-09T10:05:00+00:00",
+            None,
+            {"phase": "awaiting_confirmation"},
+            "2026-04-09T10:00:00+00:00",
+            "2026-04-09T10:05:00+00:00",
+            None,
+        )
+        with patch.object(
+            repository,
+            "_run_with_connection_retry",
+            side_effect=lambda _label, op: op(dummy_conn),
+        ), patch.object(
+            repository,
+            "_fetch_engineer_case_rows",
+            return_value=[engineer_row],
+        ), patch.object(
+            repository,
+            "_fetch_engineer_case_messages",
+            return_value={"TK-ENG-AC-001-1": []},
+        ), patch.object(
+            repository,
+            "_fetch_ticket_map",
+            return_value={
+                "TK-ENG-AC-001": {
+                    "ticket_id": "TK-ENG-AC-001",
+                    "customer_id": "C-1",
+                    "requester": "customer-1",
+                    "subject": "black screen",
+                    "status": "investigating",
+                    "created_at": "2026-04-09T10:00:00+00:00",
+                    "updated_at": "2026-04-09T10:05:00+00:00",
+                    "messages": [],
+                }
+            },
+        ):
+            payloads = repository.list_engineer_cases(
+                include_client_messages=False,
+                include_investigation_messages=True,
+            )
+
+        self.assertEqual(len(payloads), 1)
+        self.assertEqual(payloads[0]["engineer_case_id"], "TK-ENG-AC-001-1")
+        self.assertEqual(payloads[0]["active_investigation"]["state"], "awaiting_confirmation")
+        self.assertEqual(
+            payloads[0]["active_investigation"]["final_confirmation_requested_at"],
+            "2026-04-09T10:05:00+00:00",
+        )
+
     def test_in_memory_ticket_repository_list_engineer_case_headers_returns_lightweight_payload(self) -> None:
         repository = InMemoryTicketRepository()
         repository.initialize()
