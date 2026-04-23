@@ -91,6 +91,18 @@ def _normalize_investigation_state(value: Any) -> str:
     return state if state in _VALID_INVESTIGATION_STATES else "active"
 
 
+def _derive_engineer_case_investigation_state(
+    *,
+    final_confirmation_requested_at: Any,
+    closed_at: Any,
+) -> str:
+    if closed_at is not None:
+        return "closed"
+    if final_confirmation_requested_at is not None:
+        return "awaiting_confirmation"
+    return "active"
+
+
 def _normalize_message_sentiment_label(value: Any) -> str | None:
     label = str(value or "").strip().lower()
     return label if label in _VALID_MESSAGE_SENTIMENTS else None
@@ -2346,6 +2358,10 @@ class PostgresTicketRepository:
         row: tuple[Any, ...],
         messages: list[dict[str, Any]],
     ) -> dict[str, Any]:
+        investigation_state = _derive_engineer_case_investigation_state(
+            final_confirmation_requested_at=row[8],
+            closed_at=row[13],
+        )
         return {
             "engineer_case_id": str(row[0]),
             "client_ticket_id": str(row[1]),
@@ -2361,7 +2377,7 @@ class PostgresTicketRepository:
             "opened_at": _to_iso(row[11]),
             "updated_at": _to_iso(row[12]),
             "closed_at": _to_iso(row[13]) if row[13] is not None else None,
-            "investigation_state": "closed" if row[13] is not None else "active",
+            "investigation_state": investigation_state,
             "messages": messages,
         }
 
