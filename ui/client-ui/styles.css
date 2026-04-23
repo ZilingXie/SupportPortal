@@ -3780,11 +3780,10 @@ a.citation-link:hover {
 }
 
 .new-ticket-postsend-header-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 20px;
-  flex-wrap: wrap;
 }
 
 .new-ticket-postsend-breadcrumb {
@@ -3796,6 +3795,7 @@ a.citation-link:hover {
 .new-ticket-postsend-heading {
   display: grid;
   gap: 14px;
+  min-width: 0;
 }
 
 .new-ticket-postsend-meta {
@@ -3809,8 +3809,10 @@ a.citation-link:hover {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  justify-self: end;
+  align-self: start;
   gap: 12px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .new-ticket-postsend-meta-pill,
@@ -4364,6 +4366,15 @@ a.citation-link:hover {
 
   .new-ticket-postsend-header {
     gap: 8px;
+  }
+
+  .new-ticket-postsend-header-row {
+    grid-template-columns: 1fr;
+  }
+
+  .new-ticket-postsend-actions {
+    justify-self: start;
+    flex-wrap: wrap;
   }
 
   .new-ticket-postsend-thread {
