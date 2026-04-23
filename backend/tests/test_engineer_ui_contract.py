@@ -151,10 +151,10 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn('/shared-ui/composer.css?v=20260423-shared-rich-composer-rollout-1', html)
-        self.assertIn('/shared-ui/composer.js?v=20260423-shared-rich-composer-rollout-1', html)
-        self.assertIn("./styles.css?v=20260423-shared-rich-composer-rollout-1", html)
-        self.assertIn('./app.js?v=20260423-shared-rich-composer-rollout-1', html)
+        self.assertIn('/shared-ui/composer.css?v=20260423-shared-composer-toolbar-reset-1', html)
+        self.assertIn('/shared-ui/composer.js?v=20260423-shared-composer-toolbar-reset-1', html)
+        self.assertIn("./styles.css?v=20260423-shared-composer-toolbar-reset-1", html)
+        self.assertIn('./app.js?v=20260423-shared-composer-toolbar-reset-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
@@ -254,6 +254,21 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn("captureComposerPreservationState", shared_source)
         self.assertNotIn("function captureComposerPreservationState(", app_source)
         self.assertNotIn("function restoreComposerPreservationState(", app_source)
+
+    def test_engineer_shared_composer_toolbar_buttons_reset_native_button_chrome(self) -> None:
+        shared_css = Path("ui/shared-ui/composer.css").read_text(encoding="utf-8")
+        engineer_css = Path("ui/engineer-ui/styles.css").read_text(encoding="utf-8")
+
+        self.assertRegex(
+            shared_css,
+            r"\.new-ticket-toolbar-button\s*\{[^}]*padding:\s*0;[^}]*border:\s*0;[^}]*appearance:\s*none;[^}]*-webkit-appearance:\s*none;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;",
+        )
+        self.assertRegex(
+            shared_css,
+            r"\.new-ticket-summary-toolbar-btn\s*\{[^}]*padding:\s*0\s+14px;[^}]*border:\s*0;[^}]*appearance:\s*none;[^}]*-webkit-appearance:\s*none;[^}]*box-shadow:\s*none;",
+        )
+        self.assertNotRegex(engineer_css, r"\.new-ticket-toolbar-button\s*\{")
+        self.assertNotRegex(engineer_css, r"\.new-ticket-summary-toolbar-btn\s*\{")
 
     def test_engineer_ticket_pool_defaults_to_investigating_tab_and_excludes_open(self) -> None:
         self.run_engineer_app_script(

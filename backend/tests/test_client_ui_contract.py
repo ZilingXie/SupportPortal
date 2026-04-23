@@ -35,10 +35,10 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn('/shared-ui/composer.css?v=20260423-shared-rich-composer-rollout-1', html)
-        self.assertIn('/shared-ui/composer.js?v=20260423-shared-rich-composer-rollout-1', html)
-        self.assertIn("./styles.css?v=20260423-shared-rich-composer-rollout-1", html)
-        self.assertIn("./app.js?v=20260423-shared-rich-composer-rollout-1", html)
+        self.assertIn('/shared-ui/composer.css?v=20260423-shared-composer-toolbar-reset-1', html)
+        self.assertIn('/shared-ui/composer.js?v=20260423-shared-composer-toolbar-reset-1', html)
+        self.assertIn("./styles.css?v=20260423-shared-composer-toolbar-reset-1", html)
+        self.assertIn("./app.js?v=20260423-shared-composer-toolbar-reset-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):

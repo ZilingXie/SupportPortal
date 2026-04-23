@@ -77,12 +77,17 @@
 .new-ticket-toolbar-button {
   width: 34px;
   height: 34px;
+  padding: 0;
+  border: 0;
   border-radius: 10px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  appearance: none;
+  -webkit-appearance: none;
   color: var(--ink-soft);
   background: transparent;
+  box-shadow: none;
   cursor: pointer;
   transition:
     background 0.18s ease,
@@ -112,11 +117,15 @@
   margin-left: auto;
   min-height: 34px;
   padding: 0 14px;
+  border: 0;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  appearance: none;
+  -webkit-appearance: none;
   background: rgba(224, 224, 255, 0.72);
+  box-shadow: none;
   color: var(--secondary);
   font-size: 11px;
   font-weight: 800;
