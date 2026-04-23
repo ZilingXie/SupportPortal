@@ -11,16 +11,20 @@ class ClientRouteSmokeTests(unittest.TestCase):
     def test_client_mount_and_archived_legacy_ui_directories_exist(self) -> None:
         main_source = Path("backend/main.py").read_text(encoding="utf-8")
         self.assertIn('CLIENT_DIR = UI_DIR / "client-ui"', main_source)
+        self.assertIn('SHARED_UI_DIR = UI_DIR / "shared-ui"', main_source)
         self.assertNotIn('CLIENT2_DIR = UI_DIR / "client2-ui"', main_source)
         self.assertNotIn('CLIENTTEST_DIR = UI_DIR / "clienttest-ui"', main_source)
         self.assertNotIn('app.mount("/client2", StaticFiles(directory=CLIENT2_DIR, html=True), name="client2-ui")', main_source)
         self.assertNotIn('app.mount("/clienttest", StaticFiles(directory=CLIENTTEST_DIR, html=True), name="clienttest-ui")', main_source)
         self.assertIn('app.mount("/client", StaticFiles(directory=CLIENT_DIR, html=True), name="client-ui")', main_source)
+        self.assertIn('app.mount("/shared-ui", StaticFiles(directory=SHARED_UI_DIR), name="shared-ui")', main_source)
 
         expected_files = [
             Path("ui/client-ui/index.html"),
             Path("ui/client-ui/styles.css"),
             Path("ui/client-ui/app.js"),
+            Path("ui/shared-ui/composer.css"),
+            Path("ui/shared-ui/composer.js"),
             Path("ui/archive/client-ui-legacy/index.html"),
             Path("ui/archive/clienttest-ui-legacy/index.html"),
         ]
@@ -31,8 +35,10 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260423-client-resolved-hide-composer-1", html)
-        self.assertIn("./app.js?v=20260423-client-resolved-hide-composer-1", html)
+        self.assertIn('/shared-ui/composer.css?v=20260423-shared-rich-composer-rollout-1', html)
+        self.assertIn('/shared-ui/composer.js?v=20260423-shared-rich-composer-rollout-1', html)
+        self.assertIn("./styles.css?v=20260423-shared-rich-composer-rollout-1", html)
+        self.assertIn("./app.js?v=20260423-shared-rich-composer-rollout-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -58,6 +64,7 @@ class ClientUiContractTests(unittest.TestCase):
             const fs = require("fs");
             const vm = require("vm");
             const userScript = {script!r};
+            const sharedComposerPath = "ui/shared-ui/composer.js";
 
             let source = fs.readFileSync("ui/client-ui/app.js", "utf8");
             source = source.replace(/\\nbootstrap\\(\\);\\s*$/, "\\n");
@@ -135,6 +142,10 @@ class ClientUiContractTests(unittest.TestCase):
 
             sandbox.globalThis = sandbox;
             vm.createContext(sandbox);
+            if (fs.existsSync(sharedComposerPath)) {{
+              const sharedSource = fs.readFileSync(sharedComposerPath, "utf8");
+              vm.runInContext(sharedSource, sandbox);
+            }}
             vm.runInContext(source, sandbox);
             await vm.runInContext(`(async () => {{\\n${{userScript}}\\n}})()`, sandbox);
             }})().catch((error) => {{
@@ -202,6 +213,18 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertNotIn("jump-chat-latest", app_source)
         self.assertNotIn("chat-new-messages", css)
         self.assertNotIn("new-messages-btn", css)
+
+    def test_client2_uses_shared_composer_bundle_contract(self) -> None:
+        app_source = Path("ui/client-ui/app.js").read_text(encoding="utf-8")
+        shared_source = Path("ui/shared-ui/composer.js").read_text(encoding="utf-8")
+
+        self.assertIn("globalThis.SupportPortalComposer", app_source)
+        self.assertIn("renderMarkdownMessage", shared_source)
+        self.assertIn("buildDefaultComposerToolbarState", shared_source)
+        self.assertIn("serializeRichComposerHtmlToMarkdown", shared_source)
+        self.assertNotIn("function renderMarkdownMessage(", app_source)
+        self.assertNotIn("function buildDefaultComposerToolbarState(", app_source)
+        self.assertNotIn("function serializeRichComposerHtmlToMarkdown(", app_source)
 
     def test_client2_context_bar_only_renders_for_chat_ticket(self) -> None:
         self.run_client2_app_script(

@@ -166,7 +166,15 @@
 2. `AI Managing` 这类状态切换，必须清晰标明当前模式。
 3. 过滤器区要稳定、可扫描，不可做成嘈杂的工具栏。
 
-### 5.7 Ticket Identity
+### 5.7 Shared Rich Composer
+1. `/client` 和 `/engineer` 的富文本输入框必须共用同一套 `shared-ui/composer` 实现，禁止在两个应用中长期维护分叉的 toolbar、markdown、selection 和 code-block 编辑逻辑。
+2. 共享 composer 的基础 toolbar 动作固定为 `bold`、`italic`、`list`、`code-block`、`attach`，顺序固定，不得为 engineer 再造一套独立按钮体系。
+3. `AI Summary` 不是共享 composer 的内建动作；它只能作为 client 专属的可选辅助槽位出现在 toolbar 右侧。
+4. 共享 composer 的发送按钮视觉、圆角、阴影、hover / active / focus-visible / disabled 状态必须在 client 与 engineer 两端保持一致；client 的 `stop` 态可以作为例外扩展。
+5. 代码块必须在编辑器内自动拥有上下普通输入行，便于继续书写自然文本；这些 spacer line 仅存在于编辑 DOM，不能污染最终 markdown payload。
+6. 共享 composer 输出的 markdown subset 只允许安全 inline / list / fenced code 结构；发送后线程展示也必须使用同一套安全渲染器，避免一端富文本、一端原始 markdown 的割裂体验。
+
+### 5.8 Ticket Identity
 1. SupportPortal 现在存在两种一等身份：
    - `client ticket`：客户侧工单，ID 形如 `TK-040`
    - `engineer case`：工程师侧 case，ID 形如 `TK-040-1`

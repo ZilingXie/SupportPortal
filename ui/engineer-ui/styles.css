@@ -1581,6 +1581,11 @@ html.material-symbols-pending .material-symbols-outlined {
   box-shadow: 0 -8px 24px rgba(17, 28, 33, 0.04);
 }
 
+.detail-investigation-composer-shell {
+  display: grid;
+  gap: 0;
+}
+
 .detail-investigation-composer-inner {
   position: relative;
   overflow: hidden;
@@ -1594,6 +1599,15 @@ html.material-symbols-pending .material-symbols-outlined {
   box-shadow:
     0 0 0 4px rgba(0, 100, 147, 0.12),
     0 24px 44px rgba(52, 61, 150, 0.1);
+}
+
+.detail-investigation-composer-form {
+  width: 100%;
+}
+
+.detail-investigation-composer-form.chat-input-inner {
+  width: 100%;
+  margin: 0;
 }
 
 .detail-ticket-actions {
