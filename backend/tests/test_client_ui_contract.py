@@ -31,8 +31,8 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn("./styles.css?v=20260423-client-send-button-engineer-parity-1", html)
-        self.assertIn("./app.js?v=20260423-client-send-button-engineer-parity-1", html)
+        self.assertIn("./styles.css?v=20260423-client-resolved-hide-composer-1", html)
+        self.assertIn("./app.js?v=20260423-client-resolved-hide-composer-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -2139,6 +2139,45 @@ class ClientUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_client2_legacy_resolved_detail_hides_entire_composer_region(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                const detailHtml = renderChatTicketFromState({
+                  ticket: {
+                    id: "TK-DETAIL-RESOLVED-001",
+                    title: "Legacy resolved detail shell",
+                    status: "resolved",
+                    updatedAt: "2026-04-21T10:00:00.000Z",
+                    product: "audio_video_calling",
+                    userId: state.user.id,
+                  },
+                  renderableMessages: [],
+                  sending: false,
+                  requiresProductSelection: false,
+                  canCompose: false,
+                  canSubmit: false,
+                  usesNewTicketShell: false,
+                  showVisibleFooterBand: false,
+                  isEditing: false,
+                });
+                if (detailHtml.includes("ticket-detail-composer")) {
+                  throw new Error("Resolved legacy detail tickets should hide the entire composer region.");
+                }
+                if (detailHtml.includes("ticket-detail-composer-format-toolbar")) {
+                  throw new Error("Resolved legacy detail tickets should not render the composer toolbar.");
+                }
+                if (detailHtml.includes('data-chat-section="composer-form"')) {
+                  throw new Error("Resolved legacy detail tickets should not render the composer form.");
+                }
+                if (detailHtml.includes('id=\"chat-input\"')) {
+                  throw new Error("Resolved legacy detail tickets should not render the chat input.");
+                }
+              """
+            )
+        )
+
     def test_client2_rich_composer_code_block_toggle_unwraps_existing_markup(self) -> None:
         self.run_client2_app_script(
             textwrap.dedent(
@@ -2705,6 +2744,56 @@ class ClientUiContractTests(unittest.TestCase):
                 }
                 if (html.includes("Continue the same ticket with Sid handling the assistant turn")) {
                   throw new Error("Existing client2 tickets should not render the legacy composer header copy.");
+                }
+              """
+            )
+        )
+
+    def test_client2_resolved_postsend_ticket_hides_entire_composer_region(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                state.user = { id: "user-1", name: "Zac", email: "zac@example.com" };
+                localStorage.setItem("helpdesk_tickets", JSON.stringify([]));
+
+                const ticket = createTicket(state.user.id);
+                updateTicketTitle(ticket.id, "Resolved channel join question");
+                updateTicketStatus(ticket.id, "resolved");
+                updateTicketProduct(ticket.id, "audio_video_calling");
+                saveTicketMessages(ticket.id, [
+                  {
+                    id: "msg-1",
+                    role: "user",
+                    content: "How do I join a channel?",
+                    createdAt: "2026-04-17T10:39:00.000Z",
+                  },
+                  {
+                    id: "msg-2",
+                    role: "assistant",
+                    content: "Use `joinChannel` with a valid token and channel name.",
+                    createdAt: "2026-04-17T10:40:00.000Z",
+                  },
+                ]);
+
+                state.view = "chat-ticket";
+                state.activeTicketId = ticket.id;
+                state.newTicketPreviewTicketId = null;
+
+                const html = renderChatTicket();
+                if (!html.includes("new-ticket-postsend-shell")) {
+                  throw new Error("Resolved tickets should continue using the postsend shell.");
+                }
+                if (html.includes("new-ticket-thread-footer-composer")) {
+                  throw new Error("Resolved postsend tickets should hide the entire composer region.");
+                }
+                if (html.includes("new-ticket-postsend-composer")) {
+                  throw new Error("Resolved postsend tickets should not render the postsend composer shell.");
+                }
+                if (html.includes("new-ticket-inline-send-btn")) {
+                  throw new Error("Resolved postsend tickets should not render the inline send button.");
+                }
+                if (html.includes('id=\"chat-input\"')) {
+                  throw new Error("Resolved postsend tickets should not render the chat input.");
                 }
               """
             )

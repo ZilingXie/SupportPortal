@@ -3243,6 +3243,8 @@ function renderNewTicketPostSendTicketFromState(viewState) {
   const ticket = viewState.ticket;
   const actionButtons = renderTicketHeaderActions(ticket);
   const isTailComposerRoute = viewState.showVisibleFooterBand;
+  const showInlineComposer = viewState.canCompose && !isTailComposerRoute;
+  const showTailComposer = viewState.canCompose && isTailComposerRoute;
   return `
     <section class="chat-root clienttest-new-ticket-shell" data-chat-ticket-id="${escapeHtml(ticket.id)}">
       <div class="new-ticket-postsend-shell">
@@ -3266,14 +3268,14 @@ function renderNewTicketPostSendTicketFromState(viewState) {
                   </div>
                 </main>
               </section>
-              ${isTailComposerRoute ? "" : renderNewTicketPostSendInlineComposer(viewState)}
+              ${showInlineComposer ? renderNewTicketPostSendInlineComposer(viewState) : ""}
             </div>
             <aside class="new-ticket-postsend-sidebar">
               ${renderNewTicketInformationPanel(ticket, { fixed: false, variant: "postsend" })}
               ${renderNewTicketKnowledgePanel(ticket, { variant: "postsend" })}
             </aside>
           </div>
-          ${isTailComposerRoute ? renderNewTicketTailComposer(viewState, { postsend: true }) : ""}
+          ${showTailComposer ? renderNewTicketTailComposer(viewState, { postsend: true }) : ""}
         </div>
       </div>
     </section>
@@ -5751,6 +5753,9 @@ function renderChatTicketFromState(viewState) {
             </div>
           </main>
         </div>
+        ${
+          viewState.canCompose
+            ? `
         <footer class="chat-input-wrap ticket-detail-composer">
           <div class="ticket-detail-composer-header">
             <div>
@@ -5786,7 +5791,9 @@ function renderChatTicketFromState(viewState) {
               ${renderChatComposerActionHtml(viewState)}
             </div>
           </form>
-        </footer>
+        </footer>`
+            : ""
+        }
       </div>
       <aside class="ticket-detail-sidebar">
         ${renderTicketInformationPanel(ticket)}
