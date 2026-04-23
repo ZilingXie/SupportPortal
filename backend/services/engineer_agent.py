@@ -76,6 +76,19 @@ _ROOT_CAUSE_DISPROVING_PREFIXES = (
     "not enough to say",
     "does not mean",
 )
+_ROOT_CAUSE_NON_ASSERTION_PHRASES = (
+    "root cause is not confirmed",
+    "root cause is not yet confirmed",
+    "root cause is still unconfirmed",
+    "root cause is unconfirmed",
+    "root cause is unknown",
+)
+_ROOT_CAUSE_OVERSTATEMENT_BLOCKER = (
+    "Customer-facing wording overstates the root cause. Keep the conclusion and draft at symptom level unless the root cause is confirmed."
+)
+_UNVERIFIED_ROOT_CAUSE_CONTEXT_SUMMARY = (
+    "Earlier unverified hypothesis suggested a specific root cause, but it was not confirmed."
+)
 
 
 def _truncate_text(value: Any, max_chars: int = _MAX_SUMMARY_TEXT_CHARS) -> str:
@@ -283,10 +296,33 @@ def _contains_strong_root_cause_claim(value: Any) -> bool:
     for pattern in _ROOT_CAUSE_ASSERTION_PATTERNS:
         for match in pattern.finditer(text):
             prefix = text[max(0, match.start() - 48) : match.start()]
+            suffix_window = text[match.start() : min(len(text), match.end() + 48)]
             if any(token in prefix for token in _ROOT_CAUSE_DISPROVING_PREFIXES):
+                continue
+            if any(token in suffix_window for token in _ROOT_CAUSE_NON_ASSERTION_PHRASES):
                 continue
             return True
     return False
+
+
+def _sanitize_unverified_root_cause_text(value: Any) -> str:
+    text = _clean_text(value)
+    if not text or not _contains_strong_root_cause_claim(text):
+        return text
+    return _UNVERIFIED_ROOT_CAUSE_CONTEXT_SUMMARY
+
+
+def _reply_readiness_scope(reply_readiness: dict[str, Any] | None) -> str:
+    if not isinstance(reply_readiness, dict):
+        return ""
+    return _normalize_reply_scope(reply_readiness.get("reply_scope"))
+
+
+def _should_sanitize_unverified_root_cause_context(ticket: dict[str, Any]) -> bool:
+    agent_state = ticket.get("engineer_agent_state")
+    if not isinstance(agent_state, dict):
+        return True
+    return _reply_readiness_scope(agent_state.get("reply_readiness")) != _REPLY_SCOPE_ROOT_CAUSE_CONFIRMED
 
 
 def _reply_readiness_search_corpus(
@@ -453,9 +489,7 @@ def _normalize_reply_readiness(
         (reply_scope == _REPLY_SCOPE_SYMPTOM_AND_WORKAROUND_ONLY and strong_root_cause_claim)
         or (not has_conclusion and strong_root_cause_claim)
     ):
-        blockers.append(
-            "Customer-facing wording overstates the root cause. Keep the conclusion and draft at symptom level unless the root cause is confirmed."
-        )
+        blockers.append(_ROOT_CAUSE_OVERSTATEMENT_BLOCKER)
 
     deduped_blockers = _dedupe_clean_list(blockers)
     deduped_advisories = _dedupe_clean_list(advisory_followups)
@@ -514,6 +548,149 @@ def _build_reply_readiness_followup_message(
             f"Please add: {details} Current critique: {critique}"
         )
     return f"I can't prepare a customer-safe reply yet. Please add: {details}"
+
+
+def _reply_readiness_has_only_root_cause_overstatement_blockers(reply_readiness: dict[str, Any]) -> bool:
+    blockers = _clean_list(reply_readiness.get("blockers"))
+    return bool(blockers) and all(item == _ROOT_CAUSE_OVERSTATEMENT_BLOCKER for item in blockers)
+
+
+def _reply_readiness_evidence_corpus(reply_readiness: dict[str, Any]) -> str:
+    parts = [
+        _clean_text(reply_readiness.get("conclusion_summary")),
+        _clean_text(reply_readiness.get("proof_summary")),
+        *_clean_list(reply_readiness.get("proof_anchors")),
+    ]
+    return _normalize_search_text(" || ".join(part for part in parts if part))
+
+
+def _symptom_level_customer_summary(reply_readiness: dict[str, Any]) -> str:
+    corpus = _reply_readiness_evidence_corpus(reply_readiness)
+    if any(marker in corpus for marker in ("no input frame", "no capture video frame", "input video frame")):
+        return "the available Web SDK logs show that the affected client was not receiving input video frames"
+    if any(marker in corpus for marker in ("capture device unavailable", "different device", "another device")):
+        return "the available Web SDK logs show a local video capture symptom on the affected client"
+
+    summary = _clean_text(reply_readiness.get("proof_summary"))
+    if summary:
+        summary = re.sub(
+            r"(?i)^the engineer (reported|cited) (?:a |an )?(?:web sdk )?log lines? showing that\s+",
+            "The available logs show that ",
+            summary,
+        )
+        summary = re.sub(r"(?i)^the engineer (reported|cited)\s+", "The available evidence shows ", summary)
+        summary = re.sub(r"(?i)^(verified|internal) evidence supports\s+", "The available evidence supports ", summary)
+        summary = _clean_text(summary)
+        if summary and not _contains_strong_root_cause_claim(summary):
+            return summary[:1].lower() + summary[1:] if len(summary) > 1 else summary.lower()
+
+    return "the available evidence supports a symptom-level issue on the affected client"
+
+
+def _customerize_solution_or_next_step(value: Any) -> str:
+    text = _clean_text(value)
+    if not text:
+        return ""
+
+    substitutions = (
+        (r"(?i)^ask (?:the )?customer to\s+", "Please "),
+        (r"(?i)^advise (?:the )?customer to\s+", "Please "),
+        (r"(?i)^suggest (?:that\s+)?(?:the\s+)?customer to\s+", "Please "),
+        (r"(?i)^we could suggest (?:the )?(?:cx|customer) to\s+", "Please "),
+        (r"(?i)^if it persists,\s*ask for\s+", "If the issue persists, please share "),
+        (r"(?i)^if the retry fails,\s*collect\s+", "If the issue persists, please share "),
+        (r"(?i)^if it persists,\s*collect\s+", "If the issue persists, please share "),
+    )
+    normalized = text
+    for pattern, replacement in substitutions:
+        normalized = re.sub(pattern, replacement, normalized)
+    normalized = _clean_text(normalized)
+    if not normalized:
+        return ""
+    return _ensure_sentence(_sentence_case(normalized))
+
+
+def _recovered_symptom_level_conclusion(reply_readiness: dict[str, Any]) -> str:
+    conclusion_summary = _clean_text(reply_readiness.get("conclusion_summary"))
+    if conclusion_summary and not _contains_strong_root_cause_claim(conclusion_summary):
+        return conclusion_summary
+
+    summary = _ensure_sentence(_sentence_case(_symptom_level_customer_summary(reply_readiness)))
+    if "root cause is not confirmed" in summary.lower():
+        return summary
+    return f"{summary} Root cause is not confirmed."
+
+
+def _build_recovered_symptom_level_draft(ticket: dict[str, Any], reply_readiness: dict[str, Any]) -> str:
+    language = _customer_language_hint(ticket)
+    symptom_summary = _ensure_sentence(_sentence_case(_symptom_level_customer_summary(reply_readiness)))
+    next_step = _customerize_solution_or_next_step(reply_readiness.get("solution_or_next_step"))
+
+    if language == "zh":
+        parts = ["我们查看了现有日志。"]
+        if symptom_summary:
+            parts.append(f"目前可以确认的是：{symptom_summary}")
+        if next_step:
+            parts.append(next_step)
+        body = " ".join(part for part in parts if part)
+    else:
+        body_parts = ["We reviewed the available logs."]
+        if symptom_summary:
+            body_parts.append(symptom_summary)
+        if next_step:
+            body_parts.append(next_step)
+        body = " ".join(part for part in body_parts if part)
+
+    return _normalize_customer_draft_reply(ticket, body)
+
+
+def _attempt_symptom_level_reply_recovery(
+    *,
+    ticket: dict[str, Any],
+    investigation: dict[str, Any],
+    handoff_packet: dict[str, Any] | None,
+    reply_readiness: dict[str, Any],
+    engineer_message: str | None = None,
+    revision_note: str | None = None,
+) -> tuple[str, dict[str, Any]] | None:
+    if _reply_readiness_scope(reply_readiness) != _REPLY_SCOPE_SYMPTOM_AND_WORKAROUND_ONLY:
+        return None
+    if not bool(reply_readiness.get("has_proof")) or not bool(reply_readiness.get("has_solution_or_next_step")):
+        return None
+    if not _clean_list(reply_readiness.get("proof_anchors")):
+        return None
+    if not _reply_readiness_has_only_root_cause_overstatement_blockers(reply_readiness):
+        return None
+
+    recovered_draft = _build_recovered_symptom_level_draft(ticket, reply_readiness)
+    if not recovered_draft or _contains_strong_root_cause_claim(recovered_draft):
+        return None
+
+    recovered_raw = copy.deepcopy(reply_readiness)
+    recovered_conclusion = _recovered_symptom_level_conclusion(reply_readiness)
+    recovered_raw["conclusion_summary"] = recovered_conclusion
+    recovered_raw["has_conclusion"] = bool(recovered_conclusion)
+    recovered_raw["blockers"] = []
+    recovered_raw["advisory_followups"] = [
+        item
+        for item in _clean_list(reply_readiness.get("advisory_followups"))
+        if item != _ROOT_CAUSE_OVERSTATEMENT_BLOCKER
+    ]
+    recovered_raw["critique"] = ""
+    recovered_raw["ready_for_customer_reply"] = True
+
+    recovered_readiness = _normalize_reply_readiness(
+        recovered_raw,
+        ticket=ticket,
+        investigation=investigation,
+        handoff_packet=handoff_packet,
+        engineer_message=engineer_message,
+        revision_note=revision_note,
+        draft_customer_reply=recovered_draft,
+    )
+    if not recovered_readiness.get("ready_for_customer_reply"):
+        return None
+    return recovered_draft, recovered_readiness
 
 
 def _extract_json_dict(text: str) -> dict[str, Any] | None:
@@ -587,13 +764,20 @@ def _build_conversation_summary(ticket: dict[str, Any], *, max_messages: int = 6
     return " | ".join(recent_lines)
 
 
-def _build_investigation_thread_summary(investigation: dict[str, Any], *, max_messages: int = _MAX_SUMMARY_MESSAGES) -> str:
+def _build_investigation_thread_summary(
+    investigation: dict[str, Any],
+    *,
+    max_messages: int = _MAX_SUMMARY_MESSAGES,
+    sanitize_unverified_root_cause: bool = False,
+) -> str:
     messages = investigation.get("messages")
     if not isinstance(messages, list):
         return ""
     recent_lines: list[str] = []
     for message in messages[-max_messages:]:
         content = _truncate_text(message.get("content"))
+        if sanitize_unverified_root_cause:
+            content = _sanitize_unverified_root_cause_text(content)
         if not content:
             continue
         recent_lines.append(f"{_role_label(str(message.get('role') or 'system'))}: {content}")
@@ -680,23 +864,44 @@ def _summarize_handoff_packet(handoff_packet: dict[str, Any] | None) -> str:
     return json.dumps(summary, ensure_ascii=False, sort_keys=True)
 
 
-def _summarize_agent_state(state: dict[str, Any] | None) -> str:
+def _summarize_agent_state(
+    state: dict[str, Any] | None,
+    *,
+    sanitize_unverified_root_cause: bool = False,
+) -> str:
     agent_state = state if isinstance(state, dict) else {}
     reply_readiness = (
         agent_state.get("reply_readiness")
         if isinstance(agent_state.get("reply_readiness"), dict)
         else _default_reply_readiness()
     )
+    clean_known_facts = _clean_known_facts(agent_state.get("known_facts"))[:4]
+    clean_missing_information = _clean_list(agent_state.get("missing_information"))[:4]
+    if sanitize_unverified_root_cause:
+        clean_known_facts = [_sanitize_unverified_root_cause_text(item) for item in clean_known_facts]
+        clean_missing_information = [_sanitize_unverified_root_cause_text(item) for item in clean_missing_information]
     summary = {
         "phase": _clean_text(agent_state.get("phase")),
         "issue_understanding": _truncate_text(agent_state.get("issue_understanding")),
-        "knowledge_summary": _truncate_text(agent_state.get("knowledge_summary")),
-        "why_not_solved": _truncate_text(agent_state.get("why_not_solved")),
+        "knowledge_summary": _sanitize_unverified_root_cause_text(_truncate_text(agent_state.get("knowledge_summary")))
+        if sanitize_unverified_root_cause
+        else _truncate_text(agent_state.get("knowledge_summary")),
+        "why_not_solved": _sanitize_unverified_root_cause_text(_truncate_text(agent_state.get("why_not_solved")))
+        if sanitize_unverified_root_cause
+        else _truncate_text(agent_state.get("why_not_solved")),
         "goal": _truncate_text(agent_state.get("goal")),
-        "known_facts": _clean_known_facts(agent_state.get("known_facts"))[:4],
-        "missing_information": _clean_list(agent_state.get("missing_information"))[:4],
-        "next_request_for_engineer": _truncate_text(agent_state.get("next_request_for_engineer")),
-        "resolution_hypothesis": _truncate_text(agent_state.get("resolution_hypothesis")),
+        "known_facts": clean_known_facts,
+        "missing_information": clean_missing_information,
+        "next_request_for_engineer": _sanitize_unverified_root_cause_text(
+            _truncate_text(agent_state.get("next_request_for_engineer"))
+        )
+        if sanitize_unverified_root_cause
+        else _truncate_text(agent_state.get("next_request_for_engineer")),
+        "resolution_hypothesis": _sanitize_unverified_root_cause_text(
+            _truncate_text(agent_state.get("resolution_hypothesis"))
+        )
+        if sanitize_unverified_root_cause
+        else _truncate_text(agent_state.get("resolution_hypothesis")),
         "ready_to_reply": bool(agent_state.get("ready_to_reply")),
         "reply_readiness": {
             "has_conclusion": bool(reply_readiness.get("has_conclusion")),
@@ -879,6 +1084,7 @@ def _generate_investigation_reply_turn(
     profile = resolve_model_profile(ENGINEER_INVESTIGATION_REPLY_SCENARIO)
     model_name = profile.model
     reasoning_effort = profile.reasoning_effort
+    sanitize_unverified_root_cause = _should_sanitize_unverified_root_cause_context(ticket)
     engineer_thread_language_hint = _engineer_thread_language_hint(
         investigation,
         engineer_message=engineer_message,
@@ -903,10 +1109,15 @@ def _generate_investigation_reply_turn(
         latest_public_assistant_reply=latest_public_assistant_message(ticket),
         ticket_conversation_summary=_build_conversation_summary(ticket, max_messages=_MAX_SUMMARY_MESSAGES),
         investigation_thread_summary=_build_investigation_thread_summary(
-            investigation, max_messages=_MAX_SUMMARY_MESSAGES
+            investigation,
+            max_messages=_MAX_SUMMARY_MESSAGES,
+            sanitize_unverified_root_cause=sanitize_unverified_root_cause,
         ),
         handoff_packet_summary=_summarize_handoff_packet(handoff_packet),
-        agent_state_summary=_summarize_agent_state(ticket.get("engineer_agent_state")),
+        agent_state_summary=_summarize_agent_state(
+            ticket.get("engineer_agent_state"),
+            sanitize_unverified_root_cause=sanitize_unverified_root_cause,
+        ),
         engineer_message=_clean_text(engineer_message),
         revision_note=_clean_text(revision_note),
         current_draft_customer_reply=_clean_text(investigation.get("draft_customer_reply")),
@@ -982,6 +1193,18 @@ def _generate_investigation_reply_turn(
         draft_customer_reply=draft_customer_reply,
     )
     raw_agent_state["reply_readiness"] = reply_readiness
+    if next_state == _AWAITING_CONFIRMATION_STATE and not reply_readiness.get("ready_for_customer_reply"):
+        recovered = _attempt_symptom_level_reply_recovery(
+            ticket=ticket,
+            investigation=investigation,
+            handoff_packet=handoff_packet,
+            reply_readiness=reply_readiness,
+            engineer_message=engineer_message,
+            revision_note=revision_note,
+        )
+        if recovered is not None:
+            draft_customer_reply, reply_readiness = recovered
+            raw_agent_state["reply_readiness"] = reply_readiness
     if next_state == _AWAITING_CONFIRMATION_STATE and not reply_readiness.get("ready_for_customer_reply"):
         next_state = _ACTIVE_STATE
         draft_customer_reply = ""

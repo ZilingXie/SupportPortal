@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-ENGINEER_INVESTIGATION_REPLY_PROMPT_VERSION = "engineer-investigation-reply-v7"
+ENGINEER_INVESTIGATION_REPLY_PROMPT_VERSION = "engineer-investigation-reply-v8"
 
 
 def _dump_json(value: Any) -> str:
@@ -32,6 +32,7 @@ def build_engineer_investigation_reply_system_prompt() -> str:
             "Proof must be traceable internal evidence such as a reproduction result, log or error trace, version/config difference, or a cited doc path.",
             "Do not treat a bare engineer conclusion or intuition as proof.",
             "If the engineer overstates the root cause but the evidence only supports a symptom, automatically downgrade conclusion_summary and draft_customer_reply to symptom-level wording.",
+            "If earlier thread messages contain an unverified root-cause claim, ignore that wording and regenerate the customer draft from the verified symptom proof and conservative workaround.",
             "Do not say that the camera is broken, that a permission issue is confirmed, that browser incompatibility is confirmed, or that an SDK bug is confirmed unless the evidence directly supports that root-cause claim.",
             "Use proof_anchors to quote short exact phrases, IDs, URLs, versions, or other snippets that already exist in the engineer update or handoff context.",
             "Never copy the engineer note directly into the customer draft.",

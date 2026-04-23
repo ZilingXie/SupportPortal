@@ -4639,7 +4639,7 @@ class InvestigationFlowTests(unittest.TestCase):
             )
         )
 
-    def test_engineer_internal_message_rejects_symptom_scope_when_draft_overstates_root_cause(self) -> None:
+    def test_engineer_internal_message_recovers_symptom_scope_when_draft_overstates_root_cause(self) -> None:
         self._seed_ticket(
             ticket_id="TK-INV-LLM-SYMPTOM-OVERSTATE",
             subject="Black screen after joining the call",
@@ -4730,17 +4730,171 @@ class InvestigationFlowTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         payload = response.json()
-        self.assertEqual(payload["active_investigation"]["state"], "active")
-        self.assertEqual(payload["active_investigation"]["draft_customer_reply"], "")
-        self.assertFalse(payload["engineer_agent_state"]["reply_readiness"]["ready_for_customer_reply"])
-        self.assertTrue(
-            any(
-                "root cause" in item.lower() or "symptom level" in item.lower()
-                for item in payload["engineer_agent_state"]["reply_readiness"]["blockers"]
-            )
+        self.assertEqual(payload["active_investigation"]["state"], "awaiting_confirmation")
+        draft_reply = payload["active_investigation"]["draft_customer_reply"]
+        self.assertTrue(draft_reply)
+        self.assertNotIn("camera is broken", draft_reply.lower())
+        self.assertIn("different capture device", draft_reply.lower())
+        self.assertTrue(payload["engineer_agent_state"]["reply_readiness"]["ready_for_customer_reply"])
+        self.assertEqual(payload["engineer_agent_state"]["reply_readiness"]["blockers"], [])
+        self.assertEqual(
+            payload["engineer_agent_state"]["reply_readiness"]["reply_scope"],
+            "symptom_and_workaround_only",
         )
-        latest_message = payload["active_investigation"]["messages"][-1]
-        self.assertIn("root cause", latest_message["content"].lower())
+
+    def test_engineer_internal_message_sanitizes_prior_unverified_root_cause_from_prompt_context(self) -> None:
+        self._seed_ticket(
+            ticket_id="TK-INV-LLM-SYMPTOM-CONTAMINATED",
+            subject="Black screen after joining the call",
+            status="investigating",
+            messages=[
+                {
+                    "role": "customer",
+                    "content": "I got a black screen after joining the call.",
+                    "created_at": "2026-03-29T09:00:00+00:00",
+                }
+            ],
+            active_investigation={
+                "id": "INV-LLM-SYMPTOM-CONTAMINATED",
+                "state": "active",
+                "trigger_reason": "rag_insufficient_evidence",
+                "trigger_source": "support_query",
+                "draft_customer_reply": "",
+                "final_confirmation_requested_at": None,
+                "opened_at": "2026-03-29T09:00:00+00:00",
+                "updated_at": "2026-03-29T09:00:00+00:00",
+                "messages": [
+                    {
+                        "id": "INV-LLM-SYMPTOM-CONTAMINATED-m1",
+                        "role": "engineer_ai",
+                        "content": "Please share the next diagnostic clue from the logs.",
+                        "created_at": "2026-03-29T09:00:00+00:00",
+                    },
+                    {
+                        "id": "INV-LLM-SYMPTOM-CONTAMINATED-m2",
+                        "role": "engineer",
+                        "content": "the camera is broken",
+                        "created_at": "2026-03-29T09:02:00+00:00",
+                    },
+                    {
+                        "id": "INV-LLM-SYMPTOM-CONTAMINATED-m3",
+                        "role": "engineer_ai",
+                        "content": (
+                            "Please share one verifiable internal detail that supports your assessment. "
+                            "If root cause is not confirmed, restate the finding at symptom level only."
+                        ),
+                        "created_at": "2026-03-29T09:02:00+00:00",
+                    },
+                ],
+            },
+            engineer_agent_state={
+                "phase": "gather_missing_inputs",
+                "issue_understanding": "The customer sees a black screen after joining the call.",
+                "knowledge_summary": "The prior engineer update claimed that the camera is broken.",
+                "why_not_solved": "The root cause is not confirmed yet.",
+                "goal": "Get proof and prepare a safe customer reply.",
+                "known_facts": [
+                    "The customer sees a black screen after joining the call.",
+                ],
+                "missing_information": [
+                    "One verifiable internal detail.",
+                ],
+                "next_request_for_engineer": (
+                    "Please share one verifiable internal detail that supports your assessment."
+                ),
+                "resolution_hypothesis": "The camera is broken on the affected client.",
+                "ready_to_reply": False,
+                "reply_readiness": {
+                    "has_conclusion": False,
+                    "has_proof": False,
+                    "has_solution_or_next_step": False,
+                    "reply_scope": "needs_more_evidence",
+                    "conclusion_summary": "",
+                    "proof_summary": "",
+                    "proof_anchors": [],
+                    "solution_or_next_step": "",
+                    "blockers": [
+                        "Explicit proof is missing or not verifiable. Add a reproduction result, log/error, config/version difference, or doc path.",
+                    ],
+                    "advisory_followups": [],
+                    "critique": "",
+                    "ready_for_customer_reply": False,
+                },
+                "last_refreshed_at": "2026-03-29T09:02:00+00:00",
+            },
+        )
+
+        llm_text = """
+        {
+          "state": "awaiting_confirmation",
+          "message": "We have enough information now. Please confirm this draft.",
+          "draft_customer_reply": "The camera is broken on the affected client. Please try another capture device and test again.",
+          "reply_readiness": {
+            "has_conclusion": true,
+            "has_proof": true,
+            "has_solution_or_next_step": true,
+            "reply_scope": "symptom_and_workaround_only",
+            "conclusion_summary": "The camera is broken on the affected client.",
+            "proof_summary": "The engineer cited a Web SDK log line showing that no input video frames were received.",
+            "proof_anchors": [
+              "[websdk] no input frame received",
+              "different device"
+            ],
+            "solution_or_next_step": "Ask the customer to try a different camera or device and retest.",
+            "blockers": [],
+            "advisory_followups": [],
+            "critique": "The current evidence supports a symptom-level workaround.",
+            "ready_for_customer_reply": true
+          },
+          "engineer_agent_state": {
+            "phase": "awaiting_confirmation",
+            "issue_understanding": "The customer sees a black screen after joining the call.",
+            "knowledge_summary": "The engineer found a Web SDK log line for missing input frames.",
+            "why_not_solved": "The customer-safe answer still needs engineer confirmation.",
+            "goal": "Send the workaround to the customer.",
+            "known_facts": [
+              "The Web SDK reported that no input frame was received."
+            ],
+            "missing_information": [],
+            "next_request_for_engineer": "Approve the prepared customer reply if it is safe to send.",
+            "resolution_hypothesis": "The camera is broken on the affected client.",
+            "ready_to_reply": true,
+            "last_refreshed_at": "2026-03-29T09:04:00+00:00"
+          }
+        }
+        """
+
+        def _fake_invoke(*args: Any, **kwargs: Any) -> LlmTextResult:
+            user_prompt = kwargs.get("user_prompt") or ""
+            self.assertNotIn("the camera is broken", user_prompt.lower())
+            self.assertIn("earlier unverified hypothesis", user_prompt.lower())
+            return LlmTextResult(text=llm_text, model_name="gpt-5.4")
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "backend.services.engineer_agent.invoke_responses_text",
+            side_effect=_fake_invoke,
+        ), patch.object(main, "dispatch_event", AsyncMock()):
+            response = self.client.post(
+                "/api/engineer/tickets/TK-INV-LLM-SYMPTOM-CONTAMINATED-1/investigation/messages",
+                json={
+                    "engineer_id": "eng",
+                    "message": (
+                        "i checked the websdk logs:\n"
+                        "[websdk] no input frame received. Please try a different device\n"
+                        "could suggest the customer to try with a different device"
+                    ),
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["active_investigation"]["state"], "awaiting_confirmation")
+        draft_reply = payload["active_investigation"]["draft_customer_reply"]
+        self.assertTrue(draft_reply)
+        self.assertNotIn("camera is broken", draft_reply.lower())
+        self.assertIn("different camera or device", draft_reply.lower())
+        self.assertTrue(payload["engineer_agent_state"]["reply_readiness"]["ready_for_customer_reply"])
+        self.assertEqual(payload["engineer_agent_state"]["reply_readiness"]["blockers"], [])
 
     def test_engineer_internal_message_rejects_unverifiable_proof_anchors(self) -> None:
         self._seed_ticket(
