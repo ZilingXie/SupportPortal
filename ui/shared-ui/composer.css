@@ -1,0 +1,389 @@
+.message-markdown {
+  display: grid;
+  gap: 14px;
+}
+
+.message-markdown p {
+  margin: 0;
+}
+
+.message-markdown ol,
+.message-markdown ul {
+  margin: 0;
+  padding-left: 22px;
+  display: grid;
+  gap: 10px;
+}
+
+.message-markdown li {
+  padding-left: 4px;
+}
+
+.message-markdown pre {
+  margin: 0;
+  padding: 16px 18px;
+  border-radius: 18px;
+  background: rgba(12, 18, 68, 0.92);
+  color: rgba(246, 248, 255, 0.96);
+  overflow-x: auto;
+  line-height: 1.6;
+}
+
+.message-markdown code {
+  font-family: "SFMono-Regular", "SF Mono", "Roboto Mono", Menlo, monospace;
+  font-size: 12px;
+}
+
+.message-markdown strong {
+  font-weight: 800;
+}
+
+.message-markdown em {
+  font-style: italic;
+}
+
+.message-markdown a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 0.18em;
+}
+
+.message-markdown :not(pre) > code {
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: rgba(239, 244, 251, 0.96);
+}
+
+.new-ticket-composer-panel {
+  overflow: hidden;
+  border-radius: 28px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(243, 247, 251, 0.92)),
+    rgba(255, 255, 255, 0.9);
+  box-shadow: 0 24px 44px rgba(52, 61, 150, 0.1);
+}
+
+.new-ticket-composer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  background: rgba(246, 249, 255, 0.98);
+  border-bottom: 1px solid rgba(110, 120, 130, 0.08);
+}
+
+.new-ticket-toolbar-button {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-soft);
+  background: transparent;
+  cursor: pointer;
+  transition:
+    background 0.18s ease,
+    color 0.18s ease;
+}
+
+.new-ticket-toolbar-button:hover {
+  color: var(--ink);
+  background: rgba(234, 238, 245, 0.92);
+}
+
+.new-ticket-toolbar-button.is-active {
+  color: var(--primary);
+  background: rgba(202, 230, 255, 0.8);
+}
+
+.new-ticket-toolbar-button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.new-ticket-toolbar-button .material-symbols-outlined {
+  font-size: 18px;
+}
+
+.new-ticket-summary-toolbar-btn {
+  margin-left: auto;
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(224, 224, 255, 0.72);
+  color: var(--secondary);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    background 0.18s ease,
+    color 0.18s ease,
+    transform 0.18s ease;
+}
+
+.new-ticket-summary-toolbar-btn:hover {
+  background: rgba(214, 219, 255, 0.9);
+  color: #3f48a2;
+  transform: translateY(-1px);
+}
+
+.new-ticket-summary-toolbar-btn .material-symbols-outlined {
+  font-size: 16px;
+  font-variation-settings: "FILL" 1, "wght" 600, "GRAD" 0, "opsz" 24;
+}
+
+.new-ticket-composer-panel .composer-note {
+  margin: 0;
+  padding: 12px 18px 0;
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+[data-chat-section="composer-note"]:empty {
+  display: none;
+}
+
+.new-ticket-composer-form {
+  margin-top: 0;
+  min-height: 0;
+  height: 100%;
+  padding: 0 18px 18px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  display: flex;
+}
+
+.new-ticket-composer-input-shell {
+  position: relative;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex: 1 1 auto;
+  overflow: hidden;
+  border-top: 1px solid rgba(110, 120, 130, 0.08);
+  background: #fff;
+}
+
+.chat-input-inner {
+  position: relative;
+  width: min(100%, 980px);
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 24px 44px rgba(52, 61, 150, 0.1);
+  transition: box-shadow 0.18s ease;
+}
+
+.chat-input-inner:focus-within {
+  box-shadow:
+    0 0 0 4px rgba(0, 100, 147, 0.12),
+    0 24px 44px rgba(52, 61, 150, 0.1);
+}
+
+.chat-input-inner .textarea {
+  min-height: 132px;
+  padding: 22px 88px 24px 24px;
+}
+
+.new-ticket-textarea {
+  display: block;
+  width: 100%;
+  min-height: 124px;
+  flex: 1 1 auto;
+  height: 100%;
+  max-height: none;
+  padding: 22px 86px 22px 22px;
+  border: 0;
+  border-radius: 0 0 22px 22px;
+  background: transparent;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.new-ticket-textarea:focus {
+  box-shadow: none;
+}
+
+.composer-rich-input {
+  outline: none;
+  cursor: text;
+}
+
+.composer-rich-input p {
+  margin: 0;
+}
+
+.composer-rich-input:empty::before {
+  content: attr(data-placeholder);
+  color: #8c97a1;
+  pointer-events: none;
+}
+
+.composer-rich-input strong {
+  font-weight: 800;
+}
+
+.composer-rich-input em {
+  font-style: italic;
+}
+
+.composer-rich-input a {
+  color: var(--primary);
+  text-decoration: underline;
+}
+
+.composer-rich-input ul,
+.composer-rich-input ol {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.composer-rich-input li + li {
+  margin-top: 6px;
+}
+
+.composer-rich-input li {
+  margin: 0;
+}
+
+.composer-rich-input pre {
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: #f3f7fb;
+  font-family: "SFMono-Regular", SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.composer-rich-input code {
+  font-family: "SFMono-Regular", SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+.new-ticket-inline-action {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.composer-icon-button,
+.new-ticket-inline-send-btn {
+  width: 48px;
+  height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(110, 120, 130, 0.14);
+  border-radius: 16px;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    background 0.18s ease,
+    color 0.18s ease,
+    opacity 0.18s ease;
+}
+
+.composer-icon-button {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  background: rgba(239, 244, 251, 0.96);
+  color: var(--ink-soft);
+  box-shadow: 0 14px 28px rgba(52, 61, 150, 0.1);
+}
+
+.composer-icon-button .material-symbols-outlined,
+.new-ticket-inline-send-btn .material-symbols-outlined {
+  font-size: 20px;
+  font-variation-settings: "FILL" 1, "wght" 500, "GRAD" 0, "opsz" 20;
+}
+
+.send-btn,
+.new-ticket-inline-send-btn {
+  color: #fff;
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-container) 100%);
+  box-shadow: 0 18px 34px rgba(0, 100, 147, 0.22);
+}
+
+.composer-icon-button:hover:not(:disabled),
+.new-ticket-inline-send-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 18px 32px rgba(52, 61, 150, 0.14);
+}
+
+.composer-icon-button:active:not(:disabled),
+.new-ticket-inline-send-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.composer-icon-button:focus-visible,
+.send-btn:focus-visible,
+.new-ticket-inline-send-btn:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 4px rgba(0, 100, 147, 0.14),
+    0 18px 32px rgba(52, 61, 150, 0.14);
+}
+
+.composer-icon-button:disabled,
+.send-btn:disabled,
+.new-ticket-inline-send-btn:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.new-ticket-inline-send-btn.is-stop {
+  border-color: transparent;
+  background: rgba(23, 28, 33, 0.08);
+  color: var(--ink);
+  box-shadow: none;
+}
+
+.new-ticket-inline-send-btn.is-stop:hover:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+}
+
+@media (max-width: 960px) {
+  .new-ticket-textarea {
+    min-height: 104px;
+    padding: 18px 76px 18px 16px;
+  }
+
+  .new-ticket-composer-form {
+    padding-left: 16px;
+    padding-right: 16px;
+    padding-bottom: 16px;
+  }
+
+  .new-ticket-inline-action,
+  .composer-icon-button {
+    right: 16px;
+    bottom: 16px;
+  }
+
+  .new-ticket-inline-send-btn,
+  .composer-icon-button {
+    width: 44px;
+    height: 44px;
+    border-radius: 14px;
+  }
+}

@@ -75,6 +75,30 @@ const PLAINTEXT_MESSAGE_FORMAT = "plaintext";
 const AGORA_STATUS_PAGE_URL = "https://status.agora.io/";
 const SERVICE_EVENTS_ENDPOINT = "/api/client/service-events";
 const SERVICE_EVENTS_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const SharedComposer = globalThis.SupportPortalComposer || {};
+let renderMarkdownMessage =
+  SharedComposer.renderMarkdownMessage ||
+  ((value) =>
+    String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll("\n", "<br>"));
+let buildDefaultComposerToolbarState =
+  SharedComposer.buildDefaultComposerToolbarState ||
+  (() => ({
+    bold: false,
+    italic: false,
+    list: false,
+    codeBlock: false,
+  }));
+let serializeRichComposerHtmlToMarkdown =
+  SharedComposer.serializeRichComposerHtmlToMarkdown || ((value) => String(value || ""));
+const renderSharedComposerFormattingToolbarButtons =
+  SharedComposer.renderComposerFormattingToolbarButtons || (() => "");
+const applySharedComposerToolbarStateToButtons =
+  SharedComposer.applyComposerToolbarStateToButtons || (() => {});
+let clientComposerRuntime = null;
 
 const FEATURES = [
   {
@@ -557,7 +581,7 @@ function isUnorderedListLine(line) {
   return /^\s*[-*]\s+/.test(String(line || ""));
 }
 
-function renderMarkdownMessage(value) {
+function legacyRenderMarkdownMessage(value) {
   const lines = String(value ?? "").replace(/\r\n?/g, "\n").split("\n");
   const html = [];
   let index = 0;
@@ -3032,34 +3056,10 @@ function renderNewTicketPostSendThreadHtml(viewState) {
 
 function renderComposerFormattingToolbarButtons({ canCompose = true } = {}) {
   const toolbarState = state.composerToolbarState || buildDefaultComposerToolbarState();
-  const buttons = [
-    { action: "bold", icon: "format_bold", label: "Bold" },
-    { action: "italic", icon: "format_italic", label: "Italic" },
-    { action: "list", icon: "format_list_bulleted", label: "List" },
-    { action: "code-block", icon: "code_blocks", label: "Code block" },
-    { action: "attach", icon: "attach_file", label: "Attach" },
-  ];
-  return buttons
-    .map(
-      (item) => {
-        const stateKey = normalizeComposerToolbarActionStateKey(item.action);
-        const activeClass = toolbarState[stateKey] ? " is-active" : "";
-        return `
-        <button
-          class="new-ticket-toolbar-button${activeClass}"
-          type="button"
-          data-composer-markdown-action="${escapeHtml(item.action)}"
-          aria-label="${escapeHtml(item.label)}"
-          title="${escapeHtml(item.label)}"
-          aria-pressed="${toolbarState[stateKey] ? "true" : "false"}"
-          ${canCompose ? "" : "disabled"}
-        >
-          <span class="material-symbols-outlined" aria-hidden="true">${item.icon}</span>
-        </button>
-      `;
-      }
-    )
-    .join("");
+  return renderSharedComposerFormattingToolbarButtons({
+    canCompose,
+    toolbarState,
+  });
 }
 
 function renderNewTicketComposerToolbar({ canCompose = true, includeSummary = true } = {}) {
@@ -3421,7 +3421,7 @@ function renderChatHome() {
   `;
 }
 
-function buildDefaultComposerToolbarState() {
+function legacyBuildDefaultComposerToolbarState() {
   return {
     bold: false,
     italic: false,
@@ -4175,7 +4175,7 @@ function serializeRichComposerRootNodes(nodes = []) {
   return parts.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-function serializeRichComposerHtmlToMarkdown(value) {
+function legacySerializeRichComposerHtmlToMarkdown(value) {
   const normalizedHtml = normalizeRichComposerHtmlString(value);
   if (!normalizedHtml) {
     return "";
@@ -4965,14 +4965,7 @@ function getRichComposerSelectionContext(element) {
 
 function applyComposerToolbarStateToDom() {
   const toolbarState = state.composerToolbarState || buildDefaultComposerToolbarState();
-  appRoot.querySelectorAll("[data-composer-markdown-action]").forEach((button) => {
-    const stateKey = normalizeComposerToolbarActionStateKey(
-      button.getAttribute("data-composer-markdown-action")
-    );
-    const isActive = Boolean(toolbarState[stateKey]);
-    button.classList.toggle("is-active", isActive);
-    button.setAttribute("aria-pressed", isActive ? "true" : "false");
-  });
+  applySharedComposerToolbarStateToButtons(appRoot, toolbarState);
 }
 
 function syncComposerToolbarStateFromElement(element = getActiveChatComposerElement()) {
@@ -5007,6 +5000,18 @@ function syncComposerDraftStateFromElement(element = getActiveChatComposerElemen
     return state.inputDraft;
   }
   return state.inputDraft;
+}
+
+function getClientComposerRuntime() {
+  if (clientComposerRuntime || !SharedComposer.createRichComposerRuntime) {
+    return clientComposerRuntime;
+  }
+  clientComposerRuntime = SharedComposer.createRichComposerRuntime({
+    getToolbarRoot: () => appRoot,
+    onAttach: () => toast("Attachments are not available yet."),
+    syncState: syncComposerDraftStateFromElement,
+  });
+  return clientComposerRuntime;
 }
 
 function applyComposerInlineFormat(tagName, element) {
@@ -5407,6 +5412,10 @@ function applyComposerListFormat(element) {
 }
 
 function handleRichComposerListDeletion(event, element) {
+  const runtime = getClientComposerRuntime();
+  if (runtime) {
+    return runtime.handleListDeletion(event, element);
+  }
   const key = String(event?.key || "");
   if (!["Backspace", "Delete"].includes(key)) {
     return false;
@@ -5520,6 +5529,10 @@ function applyComposerCodeBlockFormat(element) {
 }
 
 function handleComposerToolbarAction(action, element = getActiveChatComposerElement()) {
+  const runtime = getClientComposerRuntime();
+  if (runtime) {
+    return runtime.handleToolbarAction(action, element);
+  }
   const normalizedAction = String(action || "").trim();
   if (!normalizedAction) {
     return false;
@@ -5559,6 +5572,10 @@ function insertComposerLineBreak(element) {
 }
 
 function insertComposerPlainText(element, text, { preserveNewlines = true } = {}) {
+  const runtime = getClientComposerRuntime();
+  if (runtime) {
+    return runtime.insertPlainText(element, text, { preserveNewlines });
+  }
   const range = getComposerSelectionRange(element);
   if (!range || !document?.createTextNode) {
     return false;
@@ -5582,6 +5599,10 @@ function insertComposerPlainText(element, text, { preserveNewlines = true } = {}
 }
 
 function handleRichComposerShiftEnter(element) {
+  const runtime = getClientComposerRuntime();
+  if (runtime) {
+    return runtime.handleShiftEnter(element);
+  }
   const range = getComposerSelectionRange(element);
   if (!range) {
     return false;

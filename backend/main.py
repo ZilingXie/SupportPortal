@@ -132,6 +132,7 @@ UI_DIR = BASE_DIR / "ui"
 CLIENT_DIR = UI_DIR / "client-ui"
 ENGINEER_DIR = UI_DIR / "engineer-ui"
 DASHBOARD_DIR = UI_DIR / "dashboard-ui"
+SHARED_UI_DIR = UI_DIR / "shared-ui"
 
 PRIMARY_RAG_WORKBENCH_PAGES = (
     "scorecard",
@@ -398,6 +399,8 @@ if ENGINEER_DIR.exists():
     app.mount("/engineer", StaticFiles(directory=ENGINEER_DIR, html=True), name="engineer-ui")
 if DASHBOARD_DIR.exists():
     app.mount("/dashboard", StaticFiles(directory=DASHBOARD_DIR, html=True), name="dashboard-ui")
+if SHARED_UI_DIR.exists():
+    app.mount("/shared-ui", StaticFiles(directory=SHARED_UI_DIR), name="shared-ui")
 
 
 ticket_repository: TicketRepository = create_ticket_repository()

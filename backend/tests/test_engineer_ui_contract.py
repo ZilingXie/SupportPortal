@@ -14,6 +14,7 @@ class EngineerUiContractTests(unittest.TestCase):
             const fs = require("fs");
             const vm = require("vm");
             const userScript = {script!r};
+            const sharedComposerPath = "ui/shared-ui/composer.js";
 
             let source = fs.readFileSync("ui/engineer-ui/app.js", "utf8");
             source = source.replace(/\\nloginFormEl\\.addEventListener\\([\\s\\S]*$/, "\\n");
@@ -100,6 +101,10 @@ class EngineerUiContractTests(unittest.TestCase):
 
             sandbox.globalThis = sandbox;
             vm.createContext(sandbox);
+            if (fs.existsSync(sharedComposerPath)) {{
+              const sharedSource = fs.readFileSync(sharedComposerPath, "utf8");
+              vm.runInContext(sharedSource, sandbox);
+            }}
             vm.runInContext(source, sandbox);
             await vm.runInContext(`(async () => {{\\n${{userScript}}\\n}})()`, sandbox);
             }})().catch((error) => {{
@@ -146,8 +151,10 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertIn('addEventListener("load", waitForMaterialSymbols, { once: true })', html)
         self.assertIn('load(\'24px "Material Symbols Outlined"\')', html)
         self.assertIn("if (iconFontStylesheet?.sheet) {", html)
-        self.assertIn("./styles.css?v=20260416-engineer-sid-unified-ai-name-1", html)
-        self.assertIn('./app.js?v=20260416-engineer-sid-unified-ai-name-1', html)
+        self.assertIn('/shared-ui/composer.css?v=20260423-shared-rich-composer-rollout-1', html)
+        self.assertIn('/shared-ui/composer.js?v=20260423-shared-rich-composer-rollout-1', html)
+        self.assertIn("./styles.css?v=20260423-shared-rich-composer-rollout-1", html)
+        self.assertIn('./app.js?v=20260423-shared-rich-composer-rollout-1', html)
         self.assertIn('const LOGIN_USER = "Jack";', app_source)
         self.assertIn('const LOGIN_PASS = "jack";', app_source)
         self.assertIn('const ENGINEER_ID = "Jack";', app_source)
@@ -235,6 +242,18 @@ class EngineerUiContractTests(unittest.TestCase):
         self.assertNotIn("priorityLabel(", app_source)
         self.assertNotIn(".priority-badge", css)
         self.assertNotIn('FILTER_KEYS = ["priority"]', app_source)
+
+    def test_engineer_ui_uses_shared_composer_bundle_contract(self) -> None:
+        app_source = Path("ui/engineer-ui/app.js").read_text(encoding="utf-8")
+        shared_source = Path("ui/shared-ui/composer.js").read_text(encoding="utf-8")
+
+        self.assertIn("globalThis.SupportPortalComposer", app_source)
+        self.assertIn("renderMarkdownMessage", shared_source)
+        self.assertIn("buildDefaultComposerToolbarState", shared_source)
+        self.assertIn("serializeRichComposerHtmlToMarkdown", shared_source)
+        self.assertIn("captureComposerPreservationState", shared_source)
+        self.assertNotIn("function captureComposerPreservationState(", app_source)
+        self.assertNotIn("function restoreComposerPreservationState(", app_source)
 
     def test_engineer_ticket_pool_defaults_to_investigating_tab_and_excludes_open(self) -> None:
         self.run_engineer_app_script(
@@ -1936,6 +1955,84 @@ class EngineerUiContractTests(unittest.TestCase):
             )
         )
 
+    def test_engineer_detail_renders_shared_rich_composer_in_active_and_approval_states(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                selectedTicketId = "TK-DETAIL-RICH";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-RICH",
+                  subject: "Android 14 token renew regression",
+                  requester: "user-7",
+                  status: "investigating",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: {
+                    id: "INV-DETAIL-RICH",
+                    state: "active",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "",
+                    final_confirmation_requested_at: null,
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-RICH-m1",
+                        role: "engineer_ai",
+                        content: "Please share the Android version and latest logcat excerpt.",
+                        created_at: "2026-03-24T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  investigation_history: [],
+                  engineer_request_records: [],
+                  engineer_agent_state: {
+                    reply_readiness: {
+                      ready_for_customer_reply: false,
+                    },
+                  },
+                };
+                selectedTicketSummary = "Sid needs one more technical detail.";
+                selectedTicketNextAction = "Share the latest Android logcat excerpt.";
+
+                const activeHtml = renderTicketDetailView();
+                if (!activeHtml.includes('id="detail-investigation-input"')) {
+                  throw new Error("Active engineer detail should keep the investigation composer visible.");
+                }
+                if (!activeHtml.includes('data-chat-composer-rich="true"')) {
+                  throw new Error("Engineer detail should render the shared rich contenteditable composer.");
+                }
+                if (!activeHtml.includes('contenteditable="true"')) {
+                  throw new Error("Engineer detail rich composer should stay editable while controls are enabled.");
+                }
+                if ((activeHtml.match(/data-composer-markdown-action=/g) || []).length !== 5) {
+                  throw new Error("Engineer detail composer should expose bold, italic, list, code-block, and attach actions.");
+                }
+                if (activeHtml.includes("new-ticket-summary-toolbar-btn")) {
+                  throw new Error("Engineer detail composer should not render the client-only AI Summary control.");
+                }
+                if (activeHtml.includes("<textarea")) {
+                  throw new Error("Engineer detail should no longer render the legacy textarea composer.");
+                }
+
+                selectedTicket.active_investigation.draft_customer_reply = "Please retry token renewal after clearing the cached token.";
+                selectedTicket.engineer_agent_state.reply_readiness.ready_for_customer_reply = true;
+                const approvalHtml = renderTicketDetailView();
+                if (!approvalHtml.includes('data-chat-composer-rich="true"')) {
+                  throw new Error("Approval state should keep the shared rich composer visible for revision notes.");
+                }
+                if ((approvalHtml.match(/data-composer-markdown-action=/g) || []).length !== 5) {
+                  throw new Error("Approval state should preserve the shared toolbar actions.");
+                }
+                if (!approvalHtml.includes('aria-label="Send Revision Note"')) {
+                  throw new Error("Approval state should keep the revision-note send label.");
+                }
+              """
+            )
+        )
+
     def test_engineer_detail_shows_closed_investigation_thread_without_composer(self) -> None:
         self.run_engineer_app_script(
             textwrap.dedent(
@@ -2018,6 +2115,63 @@ class EngineerUiContractTests(unittest.TestCase):
                 if (html.includes("Approve Reply") || html.includes("Ask AI to Revise")) {{
                   throw new Error("Closed investigations should not keep rendering confirmation actions.");
                 }}
+              """
+            )
+        )
+
+    def test_engineer_detail_renders_safe_markdown_for_internal_thread_messages(self) -> None:
+        self.run_engineer_app_script(
+            textwrap.dedent(
+                """
+                selectedTicketId = "TK-DETAIL-MARKDOWN";
+                selectedTicket = {
+                  ticket_id: "TK-DETAIL-MARKDOWN",
+                  subject: "Android 14 token renew regression",
+                  requester: "user-7",
+                  status: "investigating",
+                  created_at: "2026-03-24T08:00:00+00:00",
+                  updated_at: "2026-03-24T09:10:00+00:00",
+                  messages: [],
+                  active_investigation: {
+                    id: "INV-DETAIL-MARKDOWN",
+                    state: "active",
+                    trigger_reason: "rag_insufficient_evidence",
+                    trigger_source: "support_query",
+                    draft_customer_reply: "",
+                    final_confirmation_requested_at: null,
+                    opened_at: "2026-03-24T08:01:00+00:00",
+                    updated_at: "2026-03-24T09:05:00+00:00",
+                    messages: [
+                      {
+                        id: "INV-DETAIL-MARKDOWN-m1",
+                        role: "engineer",
+                        content: "Use **token renew** on *Android 14*\\n- clear cache\\n- retry token request\\n```js\\nconst renew = true;\\n```",
+                        created_at: "2026-03-24T09:05:00+00:00",
+                      },
+                    ],
+                  },
+                  investigation_history: [],
+                  engineer_request_records: [],
+                };
+                selectedTicketSummary = "Render markdown in the engineer thread.";
+                selectedTicketNextAction = "Verify internal formatting keeps the safe markdown subset.";
+
+                const html = renderTicketDetailView();
+                if (!html.includes("<strong>token renew</strong>")) {
+                  throw new Error("Engineer internal thread should render strong markdown.");
+                }
+                if (!html.includes("<em>Android 14</em>")) {
+                  throw new Error("Engineer internal thread should render emphasis markdown.");
+                }
+                if (!html.includes("<ul><li>clear cache</li><li>retry token request</li></ul>")) {
+                  throw new Error("Engineer internal thread should render unordered lists from markdown.");
+                }
+                if (!html.includes("<pre><code")) {
+                  throw new Error("Engineer internal thread should render fenced code blocks.");
+                }
+                if (html.includes("**token renew**") || html.includes("*Android 14*")) {
+                  throw new Error("Engineer internal thread should not leak raw markdown markers after rendering.");
+                }
               """
             )
         )

@@ -7,6 +7,51 @@ const ENGINEER_AI_DISPLAY_NAME = "Sid";
 const PUBLIC_ASSISTANT_DISPLAY_NAME = "Sid";
 const CASE_BUDDY_CURRENT_ISSUE_FALLBACK = "The current issue summary is still being clarified.";
 const CASE_BUDDY_ACTION_FALLBACK = "Review the current evidence and decide the next technical check.";
+const SharedComposer = globalThis.SupportPortalComposer || {};
+const renderMarkdownMessage =
+  SharedComposer.renderMarkdownMessage ||
+  ((value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("\n", "<br>"));
+const buildDefaultComposerToolbarState =
+  SharedComposer.buildDefaultComposerToolbarState ||
+  (() => ({
+    bold: false,
+    italic: false,
+    list: false,
+    codeBlock: false,
+  }));
+const renderSharedComposerFormattingToolbarButtons =
+  SharedComposer.renderComposerFormattingToolbarButtons || (() => "");
+const serializeRichComposerHtmlToMarkdown =
+  SharedComposer.serializeRichComposerHtmlToMarkdown || ((value) => String(value || ""));
+const buildRichComposerHtmlFromMarkdown =
+  SharedComposer.buildRichComposerHtmlFromMarkdown || ((value) => String(value || ""));
+const normalizeRichComposerHtmlString =
+  SharedComposer.normalizeRichComposerHtmlString || ((value) => String(value || ""));
+const captureComposerPreservationState =
+  SharedComposer.captureComposerPreservationState || (() => null);
+const restoreComposerPreservationState =
+  SharedComposer.restoreComposerPreservationState || (() => {});
+const restoreSharedRichComposerSelectionBookmark =
+  SharedComposer.restoreRichComposerSelectionBookmark || (() => false);
+const isRichTextComposerElement =
+  SharedComposer.isRichTextComposerElement ||
+  ((element) =>
+    Boolean(
+      element &&
+        typeof element === "object" &&
+        typeof element.focus === "function" &&
+        typeof element.innerHTML === "string" &&
+        typeof element.getAttribute === "function"
+    ));
+const isComposerElementDisabled =
+  SharedComposer.isComposerElementDisabled ||
+  ((element) =>
+    !element || String(element.getAttribute?.("contenteditable") || "").toLowerCase() === "false");
+const getRichComposerSelectionContext =
+  SharedComposer.getRichComposerSelectionContext || buildDefaultComposerToolbarState;
+const applySharedComposerToolbarStateToButtons =
+  SharedComposer.applyComposerToolbarStateToButtons || (() => {});
+const placeSharedComposerCaretAtEnd = SharedComposer.placeComposerCaretAtEnd || (() => false);
 
 const loginScreenEl = document.getElementById("login-screen");
 const engineerScreenEl = document.getElementById("engineer-screen");
@@ -26,8 +71,11 @@ let selectedTicketId = null;
 let selectedTicket = null;
 let detailLoading = false;
 let tellAiDraft = "";
+let tellAiDraftRichHtml = "";
 let investigationReviseMode = false;
 let tellAiSubmitting = false;
+let investigationComposerToolbarState = buildDefaultComposerToolbarState();
+let engineerComposerRuntime = null;
 let localInvestigationThreadState = null;
 let localInvestigationMessageSequence = 0;
 const detailRefreshState = {
@@ -2212,8 +2260,73 @@ function resetDetailWorkspaceState() {
   selectedTicket = null;
   detailLoading = false;
   tellAiDraft = "";
+  tellAiDraftRichHtml = "";
   investigationReviseMode = false;
   tellAiSubmitting = false;
+  investigationComposerToolbarState = buildDefaultComposerToolbarState();
+}
+
+function setInvestigationComposerDraftFromMarkdown(value) {
+  tellAiDraft = String(value || "");
+  tellAiDraftRichHtml = buildRichComposerHtmlFromMarkdown(tellAiDraft);
+  investigationComposerToolbarState = buildDefaultComposerToolbarState();
+}
+
+function setInvestigationComposerDraftFromRichHtml(value) {
+  const normalizedHtml = normalizeRichComposerHtmlString(value);
+  tellAiDraftRichHtml = normalizedHtml;
+  tellAiDraft = serializeRichComposerHtmlToMarkdown(normalizedHtml);
+}
+
+function ensureInvestigationComposerDraftRichHtml() {
+  if (!tellAiDraftRichHtml && tellAiDraft) {
+    tellAiDraftRichHtml = buildRichComposerHtmlFromMarkdown(tellAiDraft);
+  }
+  return tellAiDraftRichHtml || "";
+}
+
+function syncInvestigationComposerToolbarStateFromElement(element = getActiveInvestigationComposerElement()) {
+  if (!isRichTextComposerElement(element) || isComposerElementDisabled(element)) {
+    investigationComposerToolbarState = buildDefaultComposerToolbarState();
+    applySharedComposerToolbarStateToButtons(workspaceRegionEl, investigationComposerToolbarState);
+    return investigationComposerToolbarState;
+  }
+  investigationComposerToolbarState = getRichComposerSelectionContext(element);
+  applySharedComposerToolbarStateToButtons(workspaceRegionEl, investigationComposerToolbarState);
+  return investigationComposerToolbarState;
+}
+
+function syncInvestigationComposerDraftStateFromElement(element = getActiveInvestigationComposerElement(), options = {}) {
+  if (isRichTextComposerElement(element)) {
+    const normalizedHtml = normalizeRichComposerHtmlString(element.innerHTML);
+    if (normalizedHtml !== element.innerHTML) {
+      element.innerHTML = normalizedHtml;
+    }
+    tellAiDraftRichHtml = normalizedHtml;
+    tellAiDraft = serializeRichComposerHtmlToMarkdown(normalizedHtml);
+    syncInvestigationComposerToolbarStateFromElement(element);
+    if (options?.selectionBookmark) {
+      restoreSharedRichComposerSelectionBookmark(element, options.selectionBookmark);
+    }
+    return tellAiDraft;
+  }
+  if (isTextComposerElement(element)) {
+    tellAiDraft = String(element.value || "");
+    return tellAiDraft;
+  }
+  return tellAiDraft;
+}
+
+function getEngineerComposerRuntime() {
+  if (engineerComposerRuntime || !SharedComposer.createRichComposerRuntime) {
+    return engineerComposerRuntime;
+  }
+  engineerComposerRuntime = SharedComposer.createRichComposerRuntime({
+    getToolbarRoot: () => workspaceRegionEl,
+    onAttach: () => window.alert("Attachments are not available yet."),
+    syncState: syncInvestigationComposerDraftStateFromElement,
+  });
+  return engineerComposerRuntime;
 }
 
 function renderInvestigationDecisionHtml({
@@ -2267,26 +2380,43 @@ function renderInvestigationComposerHtml({ draft, controlsDisabled, reviseMode, 
     ? `If the draft needs changes, tell ${ENGINEER_AI_DISPLAY_NAME} what to revise before replying to the customer...`
     : `Share the next technical detail for ${ENGINEER_AI_DISPLAY_NAME}. Include your conclusion, proof, and solution or next step when you have them...`;
   const submitLabel = revisionMode ? "Send Revision Note" : "Send Update";
+  const canCompose = !controlsDisabled;
 
   return `
     <div class="detail-investigation-composer">
-      <div class="detail-investigation-composer-inner">
-        <textarea
-          id="detail-investigation-input"
-          class="detail-textarea"
-          placeholder="${escapeHtml(placeholder)}"
-          ${controlsDisabled ? "disabled" : ""}
-        >${escapeHtml(draft)}</textarea>
-        <button
-          type="button"
-          class="composer-icon-button send-btn"
-          data-detail-action="send-tell-ai"
-          aria-label="${escapeHtml(submitLabel)}"
-          title="${escapeHtml(submitLabel)}"
-          ${controlsDisabled ? "disabled" : ""}
-        >
-          <span class="material-symbols-outlined" aria-hidden="true">arrow_upward</span>
-        </button>
+      <div class="detail-investigation-composer-shell new-ticket-composer-panel">
+        <div class="new-ticket-composer-toolbar">
+          ${renderSharedComposerFormattingToolbarButtons({
+            canCompose,
+            toolbarState: investigationComposerToolbarState,
+          })}
+        </div>
+        <form class="chat-input-inner new-ticket-composer-form detail-investigation-composer-form">
+          <div class="new-ticket-composer-input-shell">
+            <div
+              id="detail-investigation-input"
+              class="textarea new-ticket-textarea detail-textarea composer-rich-input"
+              contenteditable="${canCompose ? "true" : "false"}"
+              role="textbox"
+              aria-multiline="true"
+              spellcheck="true"
+              data-chat-composer-rich="true"
+              data-placeholder="${escapeHtml(placeholder)}"
+            >${ensureInvestigationComposerDraftRichHtml() || buildRichComposerHtmlFromMarkdown(draft)}</div>
+            <div class="new-ticket-inline-action" data-detail-section="investigation-composer-action">
+              <button
+                type="button"
+                class="composer-icon-button send-btn"
+                data-detail-action="send-tell-ai"
+                aria-label="${escapeHtml(submitLabel)}"
+                title="${escapeHtml(submitLabel)}"
+                ${canCompose ? "" : "disabled"}
+              >
+                <span class="material-symbols-outlined" aria-hidden="true">arrow_upward</span>
+              </button>
+            </div>
+          </div>
+        </form>
       </div>
     </div>
   `;
@@ -2402,6 +2532,8 @@ function renderConversationHtml(messages, options = {}) {
                     `
                     : shouldRenderStructuredCaseBuddyRequest
                     ? renderCaseBuddyRequestSectionsHtml(structuredCaseBuddySections)
+                    : compactThread
+                    ? `<div class="message-markdown">${renderMarkdownMessage(String(message.content || ""))}</div>`
                     : formatMultiline(String(message.content || ""))
                 }
               </div>
@@ -2471,7 +2603,7 @@ function isTextComposerElement(element) {
   );
 }
 
-function captureComposerPreservationState(element) {
+function legacyCaptureComposerPreservationState(element) {
   if (!isTextComposerElement(element) || document.activeElement !== element || element.disabled) {
     return null;
   }
@@ -2486,7 +2618,7 @@ function captureComposerPreservationState(element) {
   };
 }
 
-function restoreComposerPreservationState(element, snapshot) {
+function legacyRestoreComposerPreservationState(element, snapshot) {
   if (!isTextComposerElement(element) || !snapshot || element.disabled) {
     return;
   }
@@ -2509,7 +2641,7 @@ function restoreComposerPreservationState(element, snapshot) {
 
 function getActiveInvestigationComposerElement() {
   const input = document.getElementById("detail-investigation-input");
-  return isTextComposerElement(input) ? input : null;
+  return isTextComposerElement(input) || isRichTextComposerElement(input) ? input : null;
 }
 
 function prefersReducedMotion() {
@@ -3024,7 +3156,7 @@ function renderTicketDetailView() {
 
 function focusInvestigationComposerInput(retries = 8) {
   const input = document.getElementById("detail-investigation-input");
-  if (!(input instanceof HTMLTextAreaElement)) {
+  if (!isTextComposerElement(input) && !isRichTextComposerElement(input)) {
     if (retries > 0) {
       setTimeout(() => focusInvestigationComposerInput(retries - 1), 90);
     }
@@ -3036,6 +3168,11 @@ function focusInvestigationComposerInput(retries = 8) {
     input.focus({ preventScroll: true });
   } catch {
     input.focus();
+  }
+  if (isRichTextComposerElement(input)) {
+    placeSharedComposerCaretAtEnd(input);
+    syncInvestigationComposerToolbarStateFromElement(input);
+    return;
   }
   const end = input.value.length;
   input.setSelectionRange(end, end);
@@ -3470,7 +3607,7 @@ async function handleDetailClick(event) {
       await updateTicketStatus(selectedTicketId, actionMap[action]);
       setSelectedPoolStatus(nextPoolStatusMap[action], { render: false });
       investigationReviseMode = false;
-      tellAiDraft = "";
+      setInvestigationComposerDraftFromMarkdown("");
       await loadTickets({ refreshDetail: false });
       await refreshSelectedTicket({ silent: true });
     } catch (error) {
@@ -3507,7 +3644,7 @@ async function handleDetailClick(event) {
       isRevisionFlow ? "investigation_revise" : "investigation_message"
     );
     requestDetailPaneScrollToBottom(requestTicketId, DETAIL_THREAD_PANE, { behavior: "smooth" });
-    tellAiDraft = "";
+    setInvestigationComposerDraftFromMarkdown("");
     tellAiSubmitting = true;
     renderTicketDetail();
     try {
@@ -3536,7 +3673,7 @@ async function handleDetailClick(event) {
       }
       if (!recovered) {
         failLocalInvestigationOptimisticSend(requestTicketId, error.message);
-        tellAiDraft = cleaned;
+        setInvestigationComposerDraftFromMarkdown(cleaned);
       }
     } finally {
       tellAiSubmitting = false;
@@ -3566,7 +3703,7 @@ async function handleDetailClick(event) {
     try {
       const responsePayload = await submitInvestigationConfirmation(selectedTicketId, "approve");
       investigationReviseMode = false;
-      tellAiDraft = "";
+      setInvestigationComposerDraftFromMarkdown("");
       applyInvestigationResponseToSelectedTicket(selectedTicketId, responsePayload);
       setSelectedPoolStatus("resolved", { render: false });
       renderTicketDetail();
@@ -3589,7 +3726,7 @@ async function handleDetailClick(event) {
       return;
     }
     investigationReviseMode = true;
-    tellAiDraft = "";
+    setInvestigationComposerDraftFromMarkdown("");
     renderTicketDetail();
     focusInvestigationComposerInput();
     return;
@@ -3599,15 +3736,73 @@ async function handleDetailClick(event) {
 function handleDetailInput(event) {
   const tellAiInput = event.target.closest("#detail-investigation-input");
   if (tellAiInput) {
+    if (isRichTextComposerElement(tellAiInput)) {
+      syncInvestigationComposerDraftStateFromElement(tellAiInput);
+      return;
+    }
     tellAiDraft = String(tellAiInput.value || "");
   }
 }
 
-function handleDetailFocusIn() {}
+function handleDetailFocusIn(event) {
+  const tellAiInput = event.target.closest("#detail-investigation-input");
+  if (tellAiInput && isRichTextComposerElement(tellAiInput)) {
+    syncInvestigationComposerToolbarStateFromElement(tellAiInput);
+  }
+}
 
 function handleDetailFocusOut() {}
 
-function handleDetailKeydown() {}
+function handleDetailPaste(event) {
+  const tellAiInput = event.target.closest?.("#detail-investigation-input");
+  if (!tellAiInput || !isRichTextComposerElement(tellAiInput)) {
+    return;
+  }
+  const text = event.clipboardData?.getData("text/plain");
+  if (typeof text !== "string") {
+    return;
+  }
+  event.preventDefault();
+  getEngineerComposerRuntime()?.insertPlainText(tellAiInput, text, {
+    preserveNewlines: true,
+  });
+}
+
+function handleDetailSelectionChange(event) {
+  const tellAiInput = event.target.closest?.("#detail-investigation-input");
+  if (tellAiInput && isRichTextComposerElement(tellAiInput)) {
+    syncInvestigationComposerToolbarStateFromElement(tellAiInput);
+  }
+}
+
+function handleDetailKeydown(event) {
+  const tellAiInput = event.target.closest("#detail-investigation-input");
+  if (!tellAiInput) {
+    return;
+  }
+  if (isRichTextComposerElement(tellAiInput)) {
+    const runtime = getEngineerComposerRuntime();
+    if (runtime?.handleListDeletion(event, tellAiInput)) {
+      return;
+    }
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      workspaceRegionEl
+        ?.querySelector('button[data-detail-action="send-tell-ai"]')
+        ?.click();
+      return;
+    }
+    if (event.key === "Enter" && event.shiftKey) {
+      event.preventDefault();
+      runtime?.handleShiftEnter(tellAiInput);
+    }
+    return;
+  }
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    workspaceRegionEl?.querySelector('button[data-detail-action="send-tell-ai"]')?.click();
+  }
+}
 
 async function handleDetailChange() {}
 
@@ -3962,6 +4157,15 @@ filterControlsEl?.addEventListener("focusin", handleFilterControlsFocusIn);
 filterControlsEl?.addEventListener("focusout", handleFilterControlsFocusOut);
 filterControlsEl?.addEventListener("keydown", handleFilterControlsKeydown);
 workspaceRegionEl?.addEventListener("click", (event) => {
+  const composerToolbarButton = event.target.closest("[data-composer-markdown-action]");
+  if (composerToolbarButton) {
+    getEngineerComposerRuntime()?.handleToolbarAction(
+      composerToolbarButton.getAttribute("data-composer-markdown-action"),
+      getActiveInvestigationComposerElement()
+    );
+    return;
+  }
+
   if (event.target.closest("button[data-detail-action]")) {
     handleDetailClick(event).catch((error) => {
       window.alert(`Operation failed: ${error.message}`);
@@ -3973,9 +4177,17 @@ workspaceRegionEl?.addEventListener("click", (event) => {
     showBoardError(`Operation failed: ${error.message}`);
   });
 });
+workspaceRegionEl?.addEventListener("mousedown", (event) => {
+  if (event.target.closest("[data-composer-markdown-action]")) {
+    event.preventDefault();
+  }
+});
 workspaceRegionEl?.addEventListener("input", handleDetailInput);
 workspaceRegionEl?.addEventListener("focusin", handleDetailFocusIn);
 workspaceRegionEl?.addEventListener("focusout", handleDetailFocusOut);
+workspaceRegionEl?.addEventListener("paste", handleDetailPaste);
+workspaceRegionEl?.addEventListener("mouseup", handleDetailSelectionChange);
+workspaceRegionEl?.addEventListener("keyup", handleDetailSelectionChange);
 workspaceRegionEl?.addEventListener("keydown", (event) => {
   handleTableKeydown(event);
   handleDetailKeydown(event);
