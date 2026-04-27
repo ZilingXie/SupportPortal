@@ -1,8 +1,11 @@
 # 本地 DB Relay 恢复手册
 
+> 这是兼容线上/RDS 数据库调试路径的恢复手册。普通本地开发默认使用 `bash scripts/workflow/restart_single_host_local_stack.sh`，该路径会启动本地 `pgvector/pgvector:pg16`，不会依赖 DB relay 或 Shadowrocket 访问线上 DB。
+
 适用范围：
 1. 当前这台 macOS + Podman + Shadowrocket 的本地 SupportPortal 单机环境。
-2. `.env` 中的 `TICKET_DB_DSN` / `PGVECTOR_DSN` 通过 `hostaddr=192.168.127.254` 和 `:15433` 依赖宿主机本地 relay。
+2. 你明确使用 `restart_single_host_lightweight_stack.sh` 复用 `.env` 中的线上/RDS `TICKET_DB_DSN` / `PGVECTOR_DSN`。
+3. `.env` 中的 `TICKET_DB_DSN` / `PGVECTOR_DSN` 通过 `hostaddr=192.168.127.254` 和 `:15433` 依赖宿主机本地 relay。
 
 ## 1. 典型症状
 

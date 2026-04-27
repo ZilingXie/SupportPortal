@@ -17,6 +17,7 @@ env/
 *.log
 artifacts/
 .env
+.env.local
 .deploy_ec2.lock
 .DS_Store
 .superpowers/

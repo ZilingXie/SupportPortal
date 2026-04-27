@@ -678,6 +678,12 @@ class WorkflowScriptTests(unittest.TestCase):
                     "app_build_ref": os.environ.get("APP_BUILD_REF"),
                     "app_build_time": os.environ.get("APP_BUILD_TIME"),
                     "app_runtime_image": os.environ.get("APP_RUNTIME_IMAGE"),
+                    "ticket_db_dsn": os.environ.get("TICKET_DB_DSN"),
+                    "pgvector_dsn": os.environ.get("PGVECTOR_DSN"),
+                    "ticket_db_schema": os.environ.get("TICKET_DB_SCHEMA"),
+                    "pgvector_schema": os.environ.get("PGVECTOR_SCHEMA"),
+                    "pgvector_table": os.environ.get("PGVECTOR_TABLE"),
+                    "pgvector_dim": os.environ.get("PGVECTOR_DIM"),
                 }
                 with (state_dir / "podman_calls.jsonl").open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps(payload) + "\\n")
@@ -1115,6 +1121,139 @@ class WorkflowScriptTests(unittest.TestCase):
             self.assertEqual(self._pg_ssl_request("127.0.0.1", listen_port), b"S")
 
         self._terminate_pid_file(pid_path)
+
+    def test_restart_single_host_local_stack_uses_local_pgvector_without_relay(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        self._write(
+            seed,
+            ".env",
+            "OPENAI_API_KEY=test-key\n"
+            "TICKET_DB_DSN='"
+            "postgresql://ticket:test@127.0.0.1:15433/tickets?sslmode=require&hostaddr=192.168.127.254'\n"
+            "PGVECTOR_DSN='"
+            "postgresql://rag:test@127.0.0.1:15433/rag?sslmode=require&hostaddr=192.168.127.254'\n",
+        )
+        self._write(
+            seed,
+            ".env.local",
+            "LOCAL_POSTGRES_USER=localuser\n"
+            "LOCAL_POSTGRES_PASSWORD=localpass\n"
+            "LOCAL_POSTGRES_DB=localdb\n"
+            "LOCAL_POSTGRES_HOST_PORT=15555\n"
+            "LOCAL_TICKET_DB_SCHEMA=local_ticket\n"
+            "LOCAL_PGVECTOR_SCHEMA=local_rag\n"
+            "LOCAL_PGVECTOR_TABLE=local_chunks\n"
+            "LOCAL_PGVECTOR_DIM=768\n",
+        )
+        self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
+        self._write(seed, "deployment/docker-compose.single-host.local-lightweight.yml", "services: {}\n")
+        self._write(seed, "deployment/docker-compose.single-host.local-db.yml", "services: {}\n")
+        self._commit_all(seed, "Add local runtime files")
+        _git(["push", "origin", "main"], cwd=seed)
+        _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
+        fake_bin, state_dir = self._install_fake_single_host_commands()
+
+        result = self._run_workflow(
+            "restart_single_host_local_stack.sh",
+            repo,
+            extra_env={
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "RESTART_TEST_STATE_DIR": str(state_dir),
+            },
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
+        self.assertEqual([call["argv"][-1] for call in calls], ["down", "down", "--build", "ps"])
+        for call in calls[1:]:
+            self.assertEqual(
+                call["argv"][:6],
+                [
+                    "-f",
+                    "deployment/docker-compose.single-host.yml",
+                    "-f",
+                    "deployment/docker-compose.single-host.local-lightweight.yml",
+                    "-f",
+                    "deployment/docker-compose.single-host.local-db.yml",
+                ],
+            )
+            self.assertEqual(
+                call["ticket_db_dsn"],
+                "postgresql://localuser:localpass@local_postgres:5432/localdb?sslmode=disable",
+            )
+            self.assertEqual(
+                call["pgvector_dsn"],
+                "postgresql://localuser:localpass@local_postgres:5432/localdb?sslmode=disable",
+            )
+            self.assertEqual(call["ticket_db_schema"], "local_ticket")
+            self.assertEqual(call["pgvector_schema"], "local_rag")
+            self.assertEqual(call["pgvector_table"], "local_chunks")
+            self.assertEqual(call["pgvector_dim"], "768")
+        curl_calls = self._read_json_lines(state_dir / "curl_calls.jsonl")
+        self.assertEqual(curl_calls[0]["url"], "http://127.0.0.1:8080/health")
+
+    def test_run_with_local_db_env_exports_host_side_local_dsns(self) -> None:
+        repo = self._init_repo()
+        self._write(repo, ".env", "OPENAI_API_KEY=test-key\n")
+        self._write(
+            repo,
+            ".env.local",
+            "LOCAL_POSTGRES_USER=hostuser\n"
+            "LOCAL_POSTGRES_PASSWORD=hostpass\n"
+            "LOCAL_POSTGRES_DB=hostdb\n"
+            "LOCAL_POSTGRES_HOST_PORT=16666\n"
+            "LOCAL_TICKET_DB_SCHEMA=host_ticket\n"
+            "LOCAL_PGVECTOR_SCHEMA=host_rag\n"
+            "LOCAL_PGVECTOR_TABLE=host_chunks\n"
+            "LOCAL_PGVECTOR_DIM=384\n",
+        )
+
+        result = self._run_workflow(
+            "run_with_local_db_env.sh",
+            repo,
+            "--",
+            "python3",
+            "-c",
+            (
+                "import os; print('|'.join(["
+                "os.environ['TICKET_DB_DSN'], os.environ['PGVECTOR_DSN'], "
+                "os.environ['TICKET_DB_SCHEMA'], os.environ['PGVECTOR_SCHEMA'], "
+                "os.environ['PGVECTOR_TABLE'], os.environ['PGVECTOR_DIM']]))"
+            ),
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(
+            result.stdout.strip(),
+            "postgresql://hostuser:hostpass@127.0.0.1:16666/hostdb?sslmode=disable|"
+            "postgresql://hostuser:hostpass@127.0.0.1:16666/hostdb?sslmode=disable|"
+            "host_ticket|host_rag|host_chunks|384",
+        )
+
+    def test_local_db_compose_contract_uses_pgvector_and_app_local_dsns(self) -> None:
+        compose_source = Path("deployment/docker-compose.single-host.local-db.yml").read_text(encoding="utf-8")
+
+        self.assertIn("local_postgres:", compose_source)
+        self.assertIn("image: pgvector/pgvector:pg16", compose_source)
+        self.assertIn("supportportal_local_pgdata:/var/lib/postgresql/data", compose_source)
+        self.assertIn("healthcheck:", compose_source)
+        self.assertIn("pg_isready", compose_source)
+        self.assertIn('"${LOCAL_POSTGRES_HOST_PORT:-15432}:5432"', compose_source)
+        self.assertIn("@local_postgres:5432/", compose_source)
+        self.assertIn("TICKET_DB_DSN:", compose_source)
+        self.assertIn("PGVECTOR_DSN:", compose_source)
+        self.assertIn("condition: service_healthy", compose_source)
+        self.assertIn("supportportal_local_pgdata:", compose_source)
+
+    def test_local_env_template_is_ignored_and_does_not_replace_online_env(self) -> None:
+        gitignore_source = Path(".gitignore").read_text(encoding="utf-8")
+        local_env_source = Path(".env.local.example").read_text(encoding="utf-8")
+
+        self.assertIn(".env.local", gitignore_source)
+        self.assertIn("LOCAL_POSTGRES_USER=supportportal", local_env_source)
+        self.assertIn("LOCAL_POSTGRES_HOST_PORT=15432", local_env_source)
+        self.assertIn("LOCAL_PGVECTOR_TABLE=docagent_chunks_bge_m3_1024", local_env_source)
+        self.assertNotIn("YOUR_AWS_POSTGRES_HOST", local_env_source)
 
     def test_cleanup_single_host_aux_stack_only_targets_auxiliary_project(self) -> None:
         _, seed, repo = self._init_remote_repo_on_main()
