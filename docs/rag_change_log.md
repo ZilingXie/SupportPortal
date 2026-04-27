@@ -10,6 +10,35 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-04-27 - Add fully local pgvector runtime for SupportPortal development
+
+- Summary:
+  - Added a fully local single-host runtime path that starts a local `pgvector/pgvector:pg16` service and points both ticket/event storage and RAG pgvector storage at that local database.
+  - Added `.env.local.example` plus workflow helpers for container-side local DSNs and host-side ingestion/debug commands.
+  - Documented the split between the new local DB/RAG path and the legacy online/RDS DB relay path.
+- Reason:
+  - Local development previously depended on online database DSNs and, in some setups, a host relay to RDS. The new path lets local runs use an empty local database that auto-creates schemas and tables without copying or mutating online data.
+- Affected files/config:
+  - `deployment/docker-compose.single-host.local-db.yml`
+  - `scripts/workflow/_local_db_env.sh`
+  - `scripts/workflow/restart_single_host_local_stack.sh`
+  - `scripts/workflow/run_with_local_db_env.sh`
+  - `.env.local.example`
+  - `backend/tests/test_workflow_scripts.py`
+  - `README.md`
+  - `docs/deploy_single_host_ec2.md`
+  - `docs/local_db_relay_recovery.md`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No production schema, ingestion, embedding, or vector-table migration is performed.
+  - Local development now has a separate persistent Postgres volume for both ticket/event tables and RAG vector/BM25 tables.
+  - Local RAG starts empty until an operator explicitly runs ingestion against the local stack.
+- Verification:
+  - `python3 -m unittest backend.tests.test_workflow_scripts`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_repository_configuration`
+  - `bash -n scripts/workflow/_local_db_env.sh scripts/workflow/restart_single_host_local_stack.sh scripts/workflow/run_with_local_db_env.sh`
+  - `podman-compose -f deployment/docker-compose.single-host.yml -f deployment/docker-compose.single-host.local-lightweight.yml -f deployment/docker-compose.single-host.local-db.yml config`
+
 ## 2026-04-09 - Trace snapshot endpoint and Ticket DB pool hardening
 
 ## 2026-04-15 - Restore grounded black-screen guidance for short symptom troubleshooting

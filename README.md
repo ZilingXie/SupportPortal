@@ -24,15 +24,16 @@ SupportPortal 是一个技术支持工单系统，包含三端：
 ```bash
 cd /Users/xieziling/Desktop/personal_proj/SupportPortal
 cp .env.example .env 2>/dev/null || true
+cp .env.local.example .env.local 2>/dev/null || true
 
 # 本地 rootless Podman 默认使用 8080
-# 确保 .env 中有：NGINX_HOST_PORT=8080
+# 确保 .env.local 中有：NGINX_HOST_PORT=8080
 
 podman machine start
 export PODMAN_COMPOSE_PROVIDER=podman-compose
 
-# 官方本地单机重启路径
-bash scripts/workflow/restart_single_host_lightweight_stack.sh
+# 官方完全本地单机重启路径：本地 Postgres + pgvector，空库自动建表
+bash scripts/workflow/restart_single_host_local_stack.sh
 
 # 检查官方 deployment 栈和 build provenance 是否一致
 bash scripts/workflow/inspect_single_host_stack_mode.sh
@@ -41,6 +42,8 @@ bash scripts/workflow/inspect_single_host_stack_mode.sh
 说明：
 1. 官方本地单机栈只有 `deployment`；如果看到 `deploymentlw`，先执行 `bash scripts/workflow/cleanup_single_host_aux_stack.sh`。
 2. 重启脚本会把运行镜像固定到当前根 `main` 的 `app_build.ref`，避免旧 checkout 继续处理新 ticket。
+3. `restart_single_host_local_stack.sh` 会启动本地 `pgvector/pgvector:pg16`，工单库和 RAG 向量库都写入本地持久化 volume，不会使用 `.env` 里的线上 DB DSN。
+4. 如果你明确要复用线上/RDS 数据库调试，才使用旧的 `bash scripts/workflow/restart_single_host_lightweight_stack.sh` 和 DB relay 路径。
 
 ### 访问地址
 1. 客户端: [http://localhost:8080/client/](http://localhost:8080/client/)
@@ -56,10 +59,18 @@ bash scripts/workflow/inspect_single_host_stack_mode.sh
 bash scripts/workflow/inspect_single_host_stack_mode.sh
 
 # 日志
-podman-compose -f deployment/docker-compose.single-host.yml logs -f api ws_gateway worker nginx
+podman-compose \
+  -f deployment/docker-compose.single-host.yml \
+  -f deployment/docker-compose.single-host.local-lightweight.yml \
+  -f deployment/docker-compose.single-host.local-db.yml \
+  logs -f api rag_api rag_worker ws_gateway worker_query worker_aux nginx local_postgres
 
 # 停止
-podman-compose -f deployment/docker-compose.single-host.yml down
+podman-compose \
+  -f deployment/docker-compose.single-host.yml \
+  -f deployment/docker-compose.single-host.local-lightweight.yml \
+  -f deployment/docker-compose.single-host.local-db.yml \
+  down
 ```
 
 ## 更新代码后如何生效
@@ -67,7 +78,7 @@ podman-compose -f deployment/docker-compose.single-host.yml down
 1. 修改了 `backend/`、`ui/client-ui/`、`ui/engineer-ui/`、`ui/dashboard-ui/`：
 
 ```bash
-bash scripts/workflow/restart_single_host_lightweight_stack.sh
+bash scripts/workflow/restart_single_host_local_stack.sh
 bash scripts/workflow/inspect_single_host_stack_mode.sh
 ```
 
@@ -77,7 +88,13 @@ bash scripts/workflow/inspect_single_host_stack_mode.sh
 podman-compose -f deployment/docker-compose.single-host.yml restart nginx
 ```
 
-3. 修改了 `.env`：
+3. 修改了 `.env.local` 或本地 DB/RAG 配置：
+
+```bash
+bash scripts/workflow/restart_single_host_local_stack.sh
+```
+
+4. 修改了 `.env` 且仍在使用线上/RDS lightweight 路径：
 
 ```bash
 podman-compose -f deployment/docker-compose.single-host.yml up -d --force-recreate api ws_gateway worker nginx
@@ -103,6 +120,10 @@ podman-compose -f deployment/docker-compose.single-host.yml up -d --force-recrea
 5. 源码已经更新，但线上行为像旧逻辑：
    - 先跑 `bash scripts/workflow/inspect_single_host_stack_mode.sh`。
    - 如果脚本报 auxiliary stack 或 build provenance mismatch，先清理 stray `deploymentlw` 并从根 `main` 重新执行官方重启脚本。
+
+6. 想让 host-side ingestion 或排查脚本写入本地 pgvector：
+   - 使用 `bash scripts/workflow/run_with_local_db_env.sh -- <command>` 包裹命令。
+   - 该 helper 会给 host 进程导出 `127.0.0.1:${LOCAL_POSTGRES_HOST_PORT}` DSN；容器内仍使用 `local_postgres:5432`。
 
 ## EC2 部署（Docker）
 

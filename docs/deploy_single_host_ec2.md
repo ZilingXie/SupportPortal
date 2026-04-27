@@ -63,18 +63,39 @@ NGINX_HOST_PORT=8080
 
 ```bash
 cd /Users/xieziling/Desktop/personal_proj/SupportPortal
+cp .env.local.example .env.local 2>/dev/null || true
 export PODMAN_COMPOSE_PROVIDER=podman-compose
 
-bash scripts/workflow/restart_single_host_lightweight_stack.sh
+bash scripts/workflow/restart_single_host_local_stack.sh
 ```
 
 说明：
-1. 本地开发默认使用 lightweight 重建；生产 / EC2 / 需要本地 ML 依赖的验证才使用 `bash scripts/workflow/restart_single_host_stack.sh`。
+1. 本地开发默认使用完全本地 lightweight 重建；生产 / EC2 / 需要本地 ML 依赖的验证才使用 `bash scripts/workflow/restart_single_host_stack.sh`。
 2. 所有单机重建脚本都只能从根工作区的干净 `main` 运行；如果本地 `main` 没有同步到 `origin/main`，脚本会直接失败。
 3. 官方本地单机栈只有 `deployment`；重建前脚本会先清理 stray/unsupported 的 `deploymentlw`，避免并存运行。
 4. 重建脚本会导出当前根 `main` 对应的 `APP_RUNTIME_IMAGE=localhost/supportportal-app:<app_build.ref>`；不要再从任意 task worktree 直接执行 `podman-compose ... up -d --build`，否则运行中的 API/worker 可能和根 `main` 不一致。
 
-### 2.3.1 本地 lightweight 重建（无 PyTorch）
+### 2.3.1 完全本地 lightweight 重建（本地 Postgres + pgvector）
+
+```bash
+cd /Users/xieziling/Desktop/personal_proj/SupportPortal
+cp .env.local.example .env.local 2>/dev/null || true
+export PODMAN_COMPOSE_PROVIDER=podman-compose
+
+bash scripts/workflow/restart_single_host_local_stack.sh
+```
+
+说明：
+1. 该模式只用于本地开发，不改变 EC2 / `support.stellarix.space` 的 full build 默认行为。
+2. lightweight override 会把本地 `api` 的镜像构建切到 `INSTALL_ML_DEPS=0`，同时将本地 sentiment provider 固定为 `legacy`。
+3. 这会跳过 `torch` / `sentence-transformers` / `accelerate` 的镜像安装，缩短本地 `down -> up -d --build`。
+4. 默认 `EMBEDDING_PROVIDER=siliconflow` 仍可正常工作；如果你把 `EMBEDDING_PROVIDER` 改成 `local_bge_m3`，`/health.config_warnings` 会报告该 lightweight 镜像不兼容。
+5. 轻量模式的 `/health.runtime_profile` 固定为 `local_lightweight`；full 模式固定为 `full`。
+6. `restart_single_host_local_stack.sh` 会额外启动 `pgvector/pgvector:pg16`，并把容器内 `TICKET_DB_DSN` / `PGVECTOR_DSN` 指向 `local_postgres:5432`。
+7. 本地库首次启动为空库，现有 repository 初始化会自动创建 ticket/event/RAG 表；不会复制线上数据，也不会写 demo seed。
+8. 如需让 host-side ingestion 脚本写入本地 RAG 库，使用 `bash scripts/workflow/run_with_local_db_env.sh -- <command>`。
+
+### 2.3.2 兼容线上/RDS DB 的 lightweight 重建
 
 ```bash
 cd /Users/xieziling/Desktop/personal_proj/SupportPortal
@@ -84,11 +105,9 @@ bash scripts/workflow/restart_single_host_lightweight_stack.sh
 ```
 
 说明：
-1. 该模式只用于本地开发，不改变 EC2 / `support.stellarix.space` 的 full build 默认行为。
-2. lightweight override 会把本地 `api` 的镜像构建切到 `INSTALL_ML_DEPS=0`，同时将本地 sentiment provider 固定为 `legacy`。
-3. 这会跳过 `torch` / `sentence-transformers` / `accelerate` 的镜像安装，缩短本地 `down -> up -d --build`。
-4. 默认 `EMBEDDING_PROVIDER=siliconflow` 仍可正常工作；如果你把 `EMBEDDING_PROVIDER` 改成 `local_bge_m3`，`/health.config_warnings` 会报告该 lightweight 镜像不兼容。
-5. 轻量模式的 `/health.runtime_profile` 固定为 `local_lightweight`；full 模式固定为 `full`。
+1. 该路径保留给需要复用 `.env` 里线上/RDS DB DSN 的调试场景。
+2. 如果 `.env` 使用 `hostaddr=192.168.127.254` 和 `:15433`，脚本会继续调用 `ensure_local_db_relay.sh`。
+3. 普通本地开发不要用该路径，避免误读或误写线上数据库。
 
 ### 2.4 访问
 1. 客户端: [http://localhost:8080/client/](http://localhost:8080/client/)
@@ -105,6 +124,12 @@ bash scripts/workflow/restart_single_host_lightweight_stack.sh
 ### 2.5 运维命令
 
 ```bash
+# 完全本地 DB/RAG stack 重启
+bash scripts/workflow/restart_single_host_local_stack.sh
+
+# 让 host-side 命令使用本地 DB/RAG DSN
+bash scripts/workflow/run_with_local_db_env.sh -- python scripts/ingest_local_knowledge_sources.py --source-system n8n --knowledge-type technical
+
 # 检查并补起本机 DB relay（在当前 .env 明确依赖 relay 时）
 bash scripts/workflow/ensure_local_db_relay.sh
 
@@ -115,20 +140,32 @@ bash scripts/workflow/inspect_single_host_stack_mode.sh
 bash scripts/workflow/cleanup_single_host_aux_stack.sh
 
 # 查看服务状态
-podman-compose -f deployment/docker-compose.single-host.yml ps
+podman-compose \
+  -f deployment/docker-compose.single-host.yml \
+  -f deployment/docker-compose.single-host.local-lightweight.yml \
+  -f deployment/docker-compose.single-host.local-db.yml \
+  ps
 
 # 查看日志
-podman-compose -f deployment/docker-compose.single-host.yml logs -f api ws_gateway worker nginx
+podman-compose \
+  -f deployment/docker-compose.single-host.yml \
+  -f deployment/docker-compose.single-host.local-lightweight.yml \
+  -f deployment/docker-compose.single-host.local-db.yml \
+  logs -f api rag_api rag_worker ws_gateway worker_query worker_aux nginx local_postgres
 
 # 停止服务
-podman-compose -f deployment/docker-compose.single-host.yml down
+podman-compose \
+  -f deployment/docker-compose.single-host.yml \
+  -f deployment/docker-compose.single-host.local-lightweight.yml \
+  -f deployment/docker-compose.single-host.local-db.yml \
+  down
 ```
 
 ### 2.6 常见问题
 
 1. 报错 `rootlessport cannot expose privileged port 80`：
    - 原因：rootless Podman 不能绑 80。
-   - 处理：`.env` 中设置 `NGINX_HOST_PORT=8080`。
+   - 处理：完全本地路径在 `.env.local` 中设置 `NGINX_HOST_PORT=8080`；线上/RDS 兼容路径在 `.env` 中设置。
 
 2. 报错 `Dockerfile not found in .../deployment/backend/Dockerfile`：
    - 原因：compose 相对路径基准错误。
@@ -142,9 +179,9 @@ podman-compose -f deployment/docker-compose.single-host.yml down
    - 使用带端口 URL，比如 `http://localhost:8080/client/`。
 
 5. `/health` 变成 `ticket_storage=memory`，engineer 端看不到 ticket：
-   - 优先检查本机 DB relay 和 Shadowrocket 规则。
-   - 先运行 `bash scripts/workflow/ensure_local_db_relay.sh`。
-   - 完整排障步骤见 [local_db_relay_recovery.md](./local_db_relay_recovery.md)。
+   - 如果使用完全本地路径，先运行 `bash scripts/workflow/restart_single_host_local_stack.sh`，确认 `local_postgres` 健康。
+   - 如果明确使用线上/RDS lightweight 路径，才检查本机 DB relay 和 Shadowrocket 规则。
+   - relay 路径的完整排障步骤见 [local_db_relay_recovery.md](./local_db_relay_recovery.md)。
 
 ---
 
