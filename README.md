@@ -32,8 +32,8 @@ cp .env.local.example .env.local 2>/dev/null || true
 podman machine start
 export PODMAN_COMPOSE_PROVIDER=podman-compose
 
-# 官方本地单机重启路径：默认 local_lightweight + 本地 Postgres/pgvector，空库自动建表
-bash scripts/workflow/restart_single_host_lightweight_stack.sh
+# 官方单机重启入口：显式启用 .env.local 后走 local_lightweight + 本地 Postgres/pgvector
+bash scripts/workflow/restart_single_host_stack.sh --use-local-env
 
 # 检查官方 deployment 栈和 build provenance 是否一致
 bash scripts/workflow/inspect_single_host_stack_mode.sh
@@ -42,9 +42,10 @@ bash scripts/workflow/inspect_single_host_stack_mode.sh
 说明：
 1. 官方本地单机栈只有 `deployment`；如果看到 `deploymentlw`，先执行 `bash scripts/workflow/cleanup_single_host_aux_stack.sh`。
 2. 重启脚本会把运行镜像固定到当前根 `main` 的 `app_build.ref`，避免旧 checkout 继续处理新 ticket。
-3. `restart_single_host_lightweight_stack.sh` 默认等价于 `--db local`：会启动本地 `pgvector/pgvector:pg16`，工单库和 RAG 向量库都写入本地持久化 volume，不会使用 `.env` 里的线上 DB DSN。
-4. 如果你明确要复用线上/RDS 数据库调试，使用 `bash scripts/workflow/restart_single_host_lightweight_stack.sh --db remote`。
-5. `restart_single_host_local_stack.sh` 仍可用，但只是兼容别名，内部会转调 `restart_single_host_lightweight_stack.sh --db local`。
+3. `restart_single_host_stack.sh` 是唯一官方推荐入口；不传 `--use-local-env` 时只读取 `.env`，默认是 `full + remote DB`。
+4. 本地开发默认使用 `bash scripts/workflow/restart_single_host_stack.sh --use-local-env`：这会叠加 `.env.local`，按 `local_lightweight + local DB` 启动本地 `pgvector/pgvector:pg16`。
+5. 如果你明确要复用线上/RDS 数据库调试，使用 `bash scripts/workflow/restart_single_host_stack.sh --use-local-env --db remote`。
+6. `restart_single_host_lightweight_stack.sh` 和 `restart_single_host_local_stack.sh` 仍可用，但只是兼容 wrapper，不再是主推荐入口。
 
 ### 访问地址
 1. 客户端: [http://localhost:8080/client/](http://localhost:8080/client/)
@@ -79,7 +80,7 @@ podman-compose \
 1. 修改了 `backend/`、`ui/client-ui/`、`ui/engineer-ui/`、`ui/dashboard-ui/`：
 
 ```bash
-bash scripts/workflow/restart_single_host_lightweight_stack.sh
+bash scripts/workflow/restart_single_host_stack.sh --use-local-env
 bash scripts/workflow/inspect_single_host_stack_mode.sh
 ```
 
@@ -92,13 +93,13 @@ podman-compose -f deployment/docker-compose.single-host.yml restart nginx
 3. 修改了 `.env.local` 或本地 DB/RAG 配置：
 
 ```bash
-bash scripts/workflow/restart_single_host_lightweight_stack.sh
+bash scripts/workflow/restart_single_host_stack.sh --use-local-env
 ```
 
 4. 修改了 `.env` 且仍在使用线上/RDS lightweight 路径：
 
 ```bash
-bash scripts/workflow/restart_single_host_lightweight_stack.sh --db remote
+bash scripts/workflow/restart_single_host_stack.sh --use-local-env --db remote
 ```
 
 ## 常见问题

@@ -63,14 +63,15 @@ NGINX_HOST_PORT=8080
 
 ```bash
 cd /Users/xieziling/Desktop/personal_proj/SupportPortal
+cp .env.example .env 2>/dev/null || true
 cp .env.local.example .env.local 2>/dev/null || true
 export PODMAN_COMPOSE_PROVIDER=podman-compose
 
-bash scripts/workflow/restart_single_host_lightweight_stack.sh
+bash scripts/workflow/restart_single_host_stack.sh --use-local-env
 ```
 
 说明：
-1. 本地开发默认使用 `bash scripts/workflow/restart_single_host_lightweight_stack.sh`，即 `local_lightweight + 本地 Postgres/pgvector`；生产 / EC2 / 需要本地 ML 依赖的验证才使用 `bash scripts/workflow/restart_single_host_stack.sh`。
+1. 官方推荐入口统一为 `bash scripts/workflow/restart_single_host_stack.sh`。本地开发默认使用 `bash scripts/workflow/restart_single_host_stack.sh --use-local-env`；生产 / EC2 / 需要本地 ML 依赖的验证继续使用 `bash scripts/workflow/restart_single_host_stack.sh`。
 2. 所有单机重建脚本都只能从根工作区的干净 `main` 运行；如果本地 `main` 没有同步到 `origin/main`，脚本会直接失败。
 3. 官方本地单机栈只有 `deployment`；重建前脚本会先清理 stray/unsupported 的 `deploymentlw`，避免并存运行。
 4. 重建脚本会导出当前根 `main` 对应的 `APP_RUNTIME_IMAGE=localhost/supportportal-app:<app_build.ref>`；不要再从任意 task worktree 直接执行 `podman-compose ... up -d --build`，否则运行中的 API/worker 可能和根 `main` 不一致。
@@ -79,10 +80,11 @@ bash scripts/workflow/restart_single_host_lightweight_stack.sh
 
 ```bash
 cd /Users/xieziling/Desktop/personal_proj/SupportPortal
+cp .env.example .env 2>/dev/null || true
 cp .env.local.example .env.local 2>/dev/null || true
 export PODMAN_COMPOSE_PROVIDER=podman-compose
 
-bash scripts/workflow/restart_single_host_lightweight_stack.sh
+bash scripts/workflow/restart_single_host_stack.sh --use-local-env
 ```
 
 说明：
@@ -91,10 +93,10 @@ bash scripts/workflow/restart_single_host_lightweight_stack.sh
 3. 这会跳过 `torch` / `sentence-transformers` / `accelerate` 的镜像安装，缩短本地 `down -> up -d --build`。
 4. 默认 `EMBEDDING_PROVIDER=siliconflow` 仍可正常工作；如果你把 `EMBEDDING_PROVIDER` 改成 `local_bge_m3`，`/health.config_warnings` 会报告该 lightweight 镜像不兼容。
 5. 轻量模式的 `/health.runtime_profile` 固定为 `local_lightweight`；full 模式固定为 `full`。
-6. `restart_single_host_lightweight_stack.sh` 默认等价于 `--db local`，会额外启动 `pgvector/pgvector:pg16`，并把容器内 `TICKET_DB_DSN` / `PGVECTOR_DSN` 指向 `local_postgres:5432`。
+6. `restart_single_host_stack.sh --use-local-env` 会显式叠加 `.env.local` 的 `STACK_RUNTIME_MODE=local_lightweight` 和 `STACK_DB_MODE=local`，额外启动 `pgvector/pgvector:pg16`，并把容器内 `TICKET_DB_DSN` / `PGVECTOR_DSN` 指向 `local_postgres:5432`。
 7. 本地库首次启动为空库，现有 repository 初始化会自动创建 ticket/event/RAG 表；不会复制线上数据，也不会写 demo seed。
 8. 如需让 host-side ingestion 脚本写入本地 RAG 库，使用 `bash scripts/workflow/run_with_local_db_env.sh -- <command>`。
-9. `restart_single_host_local_stack.sh` 仍保留可用，但只是兼容 wrapper，内部会转调 `restart_single_host_lightweight_stack.sh --db local`。
+9. `restart_single_host_lightweight_stack.sh` 和 `restart_single_host_local_stack.sh` 仍保留可用，但只是兼容 wrapper，不再作为主推荐入口。
 
 ### 2.3.2 兼容线上/RDS DB 的 lightweight 重建
 
@@ -102,11 +104,11 @@ bash scripts/workflow/restart_single_host_lightweight_stack.sh
 cd /Users/xieziling/Desktop/personal_proj/SupportPortal
 export PODMAN_COMPOSE_PROVIDER=podman-compose
 
-bash scripts/workflow/restart_single_host_lightweight_stack.sh --db remote
+bash scripts/workflow/restart_single_host_stack.sh --use-local-env --db remote
 ```
 
 说明：
-1. 该路径保留给需要复用 `.env` 里线上/RDS DB DSN 的调试场景。
+1. 该路径保留给需要复用 `.env` 里线上/RDS DB DSN 的调试场景；它会启用 `.env.local` 的本地开发默认值，但由 CLI 将 DB 显式覆盖回 `remote`。
 2. 如果 `.env` 使用 `hostaddr=192.168.127.254` 和 `:15433`，脚本会继续调用 `ensure_local_db_relay.sh`。
 3. 普通本地开发不要用该路径，避免误读或误写线上数据库。
 
@@ -125,11 +127,11 @@ bash scripts/workflow/restart_single_host_lightweight_stack.sh --db remote
 ### 2.5 运维命令
 
 ```bash
-# 完全本地 DB/RAG stack 重启（默认 local DB）
-bash scripts/workflow/restart_single_host_lightweight_stack.sh
+# 完全本地 DB/RAG stack 重启（官方本地默认）
+bash scripts/workflow/restart_single_host_stack.sh --use-local-env
 
 # lightweight + 线上/RDS DB
-bash scripts/workflow/restart_single_host_lightweight_stack.sh --db remote
+bash scripts/workflow/restart_single_host_stack.sh --use-local-env --db remote
 
 # 让 host-side 命令使用本地 DB/RAG DSN
 bash scripts/workflow/run_with_local_db_env.sh -- python scripts/ingest_local_knowledge_sources.py --source-system n8n --knowledge-type technical
@@ -183,8 +185,8 @@ podman-compose \
    - 使用带端口 URL，比如 `http://localhost:8080/client/`。
 
 5. `/health` 变成 `ticket_storage=memory`，engineer 端看不到 ticket：
-   - 如果使用完全本地路径，先运行 `bash scripts/workflow/restart_single_host_lightweight_stack.sh`，确认 `local_postgres` 健康。
-   - 如果明确使用线上/RDS lightweight 路径，才运行 `bash scripts/workflow/restart_single_host_lightweight_stack.sh --db remote` 并检查本机 DB relay 和 Shadowrocket 规则。
+   - 如果使用完全本地路径，先运行 `bash scripts/workflow/restart_single_host_stack.sh --use-local-env`，确认 `local_postgres` 健康。
+   - 如果明确使用线上/RDS lightweight 路径，才运行 `bash scripts/workflow/restart_single_host_stack.sh --use-local-env --db remote` 并检查本机 DB relay 和 Shadowrocket 规则。
    - relay 路径的完整排障步骤见 [local_db_relay_recovery.md](./local_db_relay_recovery.md)。
 
 ---
@@ -267,7 +269,7 @@ curl -I http://support.stellarix.space
 
 ```bash
 cd /Users/xieziling/Desktop/personal_proj/SupportPortal
-bash scripts/workflow/restart_single_host_lightweight_stack.sh
+bash scripts/workflow/restart_single_host_stack.sh --use-local-env
 ```
 
 本地如果明确需要 full 模式，可改用：

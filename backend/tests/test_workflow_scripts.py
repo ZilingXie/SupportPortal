@@ -935,12 +935,17 @@ class WorkflowScriptTests(unittest.TestCase):
         curl_calls = self._read_json_lines(state_dir / "curl_calls.jsonl")
         self.assertEqual(curl_calls[0]["url"], "http://127.0.0.1:8080/health")
 
-    def test_restart_single_host_lightweight_stack_defaults_to_local_pgvector_without_relay(self) -> None:
+    def test_restart_single_host_stack_ignores_env_local_without_use_local_env(self) -> None:
         _, seed, repo = self._init_remote_repo_on_main()
+        listen_port = self._reserve_tcp_port()
+        upstream_port = self._reserve_tcp_port()
+        pid_path = self.root / "stack-default-remote.pid"
+        log_path = self.root / "stack-default-remote.log"
         self._write(
             seed,
             ".env",
-            "OPENAI_API_KEY=test-key\n"
+            "STACK_RUNTIME_MODE=full\n"
+            "STACK_DB_MODE=remote\n"
             "TICKET_DB_DSN='"
             "postgresql://ticket:test@127.0.0.1:15433/tickets?sslmode=require&hostaddr=192.168.127.254'\n"
             "PGVECTOR_DSN='"
@@ -949,6 +954,8 @@ class WorkflowScriptTests(unittest.TestCase):
         self._write(
             seed,
             ".env.local",
+            "STACK_RUNTIME_MODE=local_lightweight\n"
+            "STACK_DB_MODE=local\n"
             "LOCAL_POSTGRES_USER=localuser\n"
             "LOCAL_POSTGRES_PASSWORD=localpass\n"
             "LOCAL_POSTGRES_DB=localdb\n"
@@ -966,9 +973,88 @@ class WorkflowScriptTests(unittest.TestCase):
         _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
         fake_bin, state_dir = self._install_fake_single_host_commands()
 
+        with _FakePostgresSslServer(upstream_port, response=b"S"):
+            result = self._run_workflow(
+                "restart_single_host_stack.sh",
+                repo,
+                extra_env={
+                    "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                    "RESTART_TEST_STATE_DIR": str(state_dir),
+                    **self._relay_env(
+                        listen_port=listen_port,
+                        upstream_port=upstream_port,
+                        pid_path=pid_path,
+                        log_path=log_path,
+                    ),
+                },
+            )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
+        self.assertEqual([call["argv"][-1] for call in calls], ["down", "down", "--build", "ps"])
+        self.assertEqual(calls[0]["argv"][:4], ["-p", "deploymentlw", "-f", "deployment/docker-compose.single-host.yml"])
+        expected_ref = _git(["rev-parse", "--short=12", "HEAD"], cwd=repo).stdout.strip()
+        for call in calls[1:]:
+            self.assertEqual(
+                call["argv"][:2],
+                [
+                    "-f",
+                    "deployment/docker-compose.single-host.yml",
+                ],
+            )
+            self.assertEqual(call["app_build_ref"], expected_ref)
+            self.assertEqual(call["app_runtime_image"], f"localhost/supportportal-app:{expected_ref}")
+            self.assertEqual(
+                call["ticket_db_dsn"],
+                "postgresql://ticket:test@127.0.0.1:15433/tickets?sslmode=require&hostaddr=192.168.127.254",
+            )
+            self.assertEqual(
+                call["pgvector_dsn"],
+                "postgresql://rag:test@127.0.0.1:15433/rag?sslmode=require&hostaddr=192.168.127.254",
+            )
+            self.assertNotIn("deployment/docker-compose.single-host.local-lightweight.yml", call["argv"])
+            self.assertNotIn("deployment/docker-compose.single-host.local-db.yml", call["argv"])
+        curl_calls = self._read_json_lines(state_dir / "curl_calls.jsonl")
+        self.assertEqual(curl_calls[0]["url"], "http://127.0.0.1:8080/health")
+        self._terminate_pid_file(pid_path)
+
+    def test_restart_single_host_stack_use_local_env_applies_local_lightweight_and_local_db_defaults(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        self._write(
+            seed,
+            ".env",
+            "STACK_RUNTIME_MODE=full\n"
+            "STACK_DB_MODE=remote\n"
+            "OPENAI_API_KEY=test-key\n"
+            "TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets\n"
+            "PGVECTOR_DSN=postgresql://rag:test@db.local/rag\n",
+        )
+        self._write(
+            seed,
+            ".env.local",
+            "STACK_RUNTIME_MODE=local_lightweight\n"
+            "STACK_DB_MODE=local\n"
+            "LOCAL_POSTGRES_USER=localuser\n"
+            "LOCAL_POSTGRES_PASSWORD=localpass\n"
+            "LOCAL_POSTGRES_DB=localdb\n"
+            "LOCAL_POSTGRES_HOST_PORT=15555\n"
+            "LOCAL_TICKET_DB_SCHEMA=local_ticket\n"
+            "LOCAL_PGVECTOR_SCHEMA=local_rag\n"
+            "LOCAL_PGVECTOR_TABLE=local_chunks\n"
+            "LOCAL_PGVECTOR_DIM=768\n",
+        )
+        self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
+        self._write(seed, "deployment/docker-compose.single-host.local-lightweight.yml", "services: {}\n")
+        self._write(seed, "deployment/docker-compose.single-host.local-db.yml", "services: {}\n")
+        self._commit_all(seed, "Add stack local-env runtime files")
+        _git(["push", "origin", "main"], cwd=seed)
+        _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
+        fake_bin, state_dir = self._install_fake_single_host_commands()
+
         result = self._run_workflow(
-            "restart_single_host_lightweight_stack.sh",
+            "restart_single_host_stack.sh",
             repo,
+            "--use-local-env",
             extra_env={
                 "PATH": f"{fake_bin}:{os.environ['PATH']}",
                 "RESTART_TEST_STATE_DIR": str(state_dir),
@@ -977,9 +1063,6 @@ class WorkflowScriptTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
-        self.assertEqual([call["argv"][-1] for call in calls], ["down", "down", "--build", "ps"])
-        self.assertEqual(calls[0]["argv"][:4], ["-p", "deploymentlw", "-f", "deployment/docker-compose.single-host.yml"])
-        expected_ref = _git(["rev-parse", "--short=12", "HEAD"], cwd=repo).stdout.strip()
         for call in calls[1:]:
             self.assertEqual(
                 call["argv"][:6],
@@ -992,8 +1075,6 @@ class WorkflowScriptTests(unittest.TestCase):
                     "deployment/docker-compose.single-host.local-db.yml",
                 ],
             )
-            self.assertEqual(call["app_build_ref"], expected_ref)
-            self.assertEqual(call["app_runtime_image"], f"localhost/supportportal-app:{expected_ref}")
             self.assertEqual(
                 call["ticket_db_dsn"],
                 "postgresql://localuser:localpass@local_postgres:5432/localdb?sslmode=disable",
@@ -1006,18 +1087,18 @@ class WorkflowScriptTests(unittest.TestCase):
             self.assertEqual(call["pgvector_schema"], "local_rag")
             self.assertEqual(call["pgvector_table"], "local_chunks")
             self.assertEqual(call["pgvector_dim"], "768")
-        curl_calls = self._read_json_lines(state_dir / "curl_calls.jsonl")
-        self.assertEqual(curl_calls[0]["url"], "http://127.0.0.1:8080/health")
 
-    def test_restart_single_host_lightweight_stack_remote_db_mode_preserves_remote_dsns_and_relay(self) -> None:
+    def test_restart_single_host_stack_use_local_env_and_db_remote_overrides_local_db_default(self) -> None:
         _, seed, repo = self._init_remote_repo_on_main()
         listen_port = self._reserve_tcp_port()
         upstream_port = self._reserve_tcp_port()
-        pid_path = self.root / "relay-remote-mode.pid"
-        log_path = self.root / "relay-remote-mode.log"
+        pid_path = self.root / "relay-stack-local-env-remote.pid"
+        log_path = self.root / "relay-stack-local-env-remote.log"
         self._write(
             seed,
             ".env",
+            "STACK_RUNTIME_MODE=full\n"
+            "STACK_DB_MODE=remote\n"
             "TICKET_DB_DSN='"
             "postgresql://ticket:test@127.0.0.1:15433/tickets?sslmode=require&hostaddr=192.168.127.254'\n"
             "PGVECTOR_DSN='"
@@ -1026,20 +1107,25 @@ class WorkflowScriptTests(unittest.TestCase):
         self._write(
             seed,
             ".env.local",
-            "LOCAL_POSTGRES_USER=localuser\nLOCAL_POSTGRES_PASSWORD=localpass\nLOCAL_POSTGRES_DB=localdb\n",
+            "STACK_RUNTIME_MODE=local_lightweight\n"
+            "STACK_DB_MODE=local\n"
+            "LOCAL_POSTGRES_USER=localuser\n"
+            "LOCAL_POSTGRES_PASSWORD=localpass\n"
+            "LOCAL_POSTGRES_DB=localdb\n",
         )
         self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
         self._write(seed, "deployment/docker-compose.single-host.local-lightweight.yml", "services: {}\n")
         self._write(seed, "deployment/docker-compose.single-host.local-db.yml", "services: {}\n")
-        self._commit_all(seed, "Add remote-db lightweight runtime files")
+        self._commit_all(seed, "Add stack local-env remote override files")
         _git(["push", "origin", "main"], cwd=seed)
         _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
         fake_bin, state_dir = self._install_fake_single_host_commands()
 
         with _FakePostgresSslServer(upstream_port, response=b"S"):
             result = self._run_workflow(
-                "restart_single_host_lightweight_stack.sh",
+                "restart_single_host_stack.sh",
                 repo,
+                "--use-local-env",
                 "--db",
                 "remote",
                 extra_env={
@@ -1078,7 +1164,89 @@ class WorkflowScriptTests(unittest.TestCase):
         self.assertTrue(pid_path.exists())
         self._terminate_pid_file(pid_path)
 
-    def test_restart_single_host_lightweight_stack_rejects_unknown_db_mode(self) -> None:
+    def test_restart_single_host_stack_mode_full_overrides_local_env_lightweight_default(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        self._write(
+            seed,
+            ".env",
+            "STACK_RUNTIME_MODE=full\n"
+            "STACK_DB_MODE=remote\n"
+            "OPENAI_API_KEY=test-key\n"
+            "TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets\n"
+            "PGVECTOR_DSN=postgresql://rag:test@db.local/rag\n",
+        )
+        self._write(
+            seed,
+            ".env.local",
+            "STACK_RUNTIME_MODE=local_lightweight\n"
+            "STACK_DB_MODE=local\n"
+            "LOCAL_POSTGRES_USER=localuser\n"
+            "LOCAL_POSTGRES_PASSWORD=localpass\n"
+            "LOCAL_POSTGRES_DB=localdb\n"
+            "LOCAL_TICKET_DB_SCHEMA=local_ticket\n"
+            "LOCAL_PGVECTOR_SCHEMA=local_rag\n"
+            "LOCAL_PGVECTOR_TABLE=local_chunks\n"
+            "LOCAL_PGVECTOR_DIM=768\n",
+        )
+        self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
+        self._write(seed, "deployment/docker-compose.single-host.local-lightweight.yml", "services: {}\n")
+        self._write(seed, "deployment/docker-compose.single-host.local-db.yml", "services: {}\n")
+        self._commit_all(seed, "Add mode-override test files")
+        _git(["push", "origin", "main"], cwd=seed)
+        _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
+        fake_bin, state_dir = self._install_fake_single_host_commands()
+
+        result = self._run_workflow(
+            "restart_single_host_stack.sh",
+            repo,
+            "--use-local-env",
+            "--mode",
+            "full",
+            extra_env={
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "RESTART_TEST_STATE_DIR": str(state_dir),
+            },
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
+        for call in calls[1:]:
+            self.assertEqual(
+                call["argv"][:4],
+                [
+                    "-f",
+                    "deployment/docker-compose.single-host.yml",
+                    "-f",
+                    "deployment/docker-compose.single-host.local-db.yml",
+                ],
+            )
+            self.assertNotIn("deployment/docker-compose.single-host.local-lightweight.yml", call["argv"])
+            self.assertEqual(
+                call["ticket_db_dsn"],
+                "postgresql://localuser:localpass@local_postgres:5432/localdb?sslmode=disable",
+            )
+            self.assertEqual(
+                call["pgvector_dsn"],
+                "postgresql://localuser:localpass@local_postgres:5432/localdb?sslmode=disable",
+            )
+
+    def test_restart_single_host_stack_rejects_unknown_mode(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        self._write(seed, ".env", "OPENAI_API_KEY=test-key\n")
+        self._write(seed, ".env.local", "LOCAL_POSTGRES_USER=supportportal\n")
+        self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
+        self._write(seed, "deployment/docker-compose.single-host.local-lightweight.yml", "services: {}\n")
+        self._write(seed, "deployment/docker-compose.single-host.local-db.yml", "services: {}\n")
+        self._commit_all(seed, "Add invalid-mode test files")
+        _git(["push", "origin", "main"], cwd=seed)
+        _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
+
+        result = self._run_workflow("restart_single_host_stack.sh", repo, "--mode", "bogus")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Unsupported --mode", result.stderr)
+
+    def test_restart_single_host_stack_rejects_unknown_db_mode(self) -> None:
         _, seed, repo = self._init_remote_repo_on_main()
         self._write(seed, ".env", "OPENAI_API_KEY=test-key\n")
         self._write(seed, ".env.local", "LOCAL_POSTGRES_USER=supportportal\n")
@@ -1089,7 +1257,7 @@ class WorkflowScriptTests(unittest.TestCase):
         _git(["push", "origin", "main"], cwd=seed)
         _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
 
-        result = self._run_workflow("restart_single_host_lightweight_stack.sh", repo, "--db", "bogus")
+        result = self._run_workflow("restart_single_host_stack.sh", repo, "--db", "bogus")
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Unsupported --db mode", result.stderr)
@@ -1308,6 +1476,61 @@ class WorkflowScriptTests(unittest.TestCase):
             self.assertEqual(call["pgvector_dim"], "768")
         curl_calls = self._read_json_lines(state_dir / "curl_calls.jsonl")
         self.assertEqual(curl_calls[0]["url"], "http://127.0.0.1:8080/health")
+
+    def test_restart_single_host_lightweight_stack_wrapper_preserves_remote_db_defaults_without_local_env(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        self._write(
+            seed,
+            ".env",
+            "STACK_RUNTIME_MODE=full\n"
+            "STACK_DB_MODE=remote\n"
+            "OPENAI_API_KEY=test-key\n"
+            "TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets\n"
+            "PGVECTOR_DSN=postgresql://rag:test@db.local/rag\n",
+        )
+        self._write(
+            seed,
+            ".env.local",
+            "STACK_RUNTIME_MODE=local_lightweight\n"
+            "STACK_DB_MODE=local\n"
+            "LOCAL_POSTGRES_USER=localuser\n"
+            "LOCAL_POSTGRES_PASSWORD=localpass\n"
+            "LOCAL_POSTGRES_DB=localdb\n"
+            "LOCAL_TICKET_DB_SCHEMA=local_ticket\n"
+            "LOCAL_PGVECTOR_SCHEMA=local_rag\n"
+            "LOCAL_PGVECTOR_TABLE=local_chunks\n"
+            "LOCAL_PGVECTOR_DIM=768\n",
+        )
+        self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
+        self._write(seed, "deployment/docker-compose.single-host.local-lightweight.yml", "services: {}\n")
+        self._write(seed, "deployment/docker-compose.single-host.local-db.yml", "services: {}\n")
+        self._commit_all(seed, "Add lightweight-wrapper remote-default files")
+        _git(["push", "origin", "main"], cwd=seed)
+        _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
+        fake_bin, state_dir = self._install_fake_single_host_commands()
+
+        result = self._run_workflow(
+            "restart_single_host_lightweight_stack.sh",
+            repo,
+            extra_env={
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "RESTART_TEST_STATE_DIR": str(state_dir),
+            },
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("Compatibility wrapper", result.stdout)
+        calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
+        for call in calls[1:]:
+            self.assertEqual(call["argv"][:4], [
+                "-f",
+                "deployment/docker-compose.single-host.yml",
+                "-f",
+                "deployment/docker-compose.single-host.local-lightweight.yml",
+            ])
+            self.assertNotIn("deployment/docker-compose.single-host.local-db.yml", call["argv"])
+            self.assertEqual(call["ticket_db_dsn"], "postgresql://ticket:test@db.local/tickets")
+            self.assertEqual(call["pgvector_dsn"], "postgresql://rag:test@db.local/rag")
 
     def test_run_with_local_db_env_exports_host_side_local_dsns(self) -> None:
         repo = self._init_repo()

@@ -1,10 +1,10 @@
 # 本地 DB Relay 恢复手册
 
-> 这是兼容线上/RDS 数据库调试路径的恢复手册。普通本地开发默认使用 `bash scripts/workflow/restart_single_host_lightweight_stack.sh`（默认 `--db local`），该路径会启动本地 `pgvector/pgvector:pg16`，不会依赖 DB relay 或 Shadowrocket 访问线上 DB。
+> 这是兼容线上/RDS 数据库调试路径的恢复手册。普通本地开发默认使用 `bash scripts/workflow/restart_single_host_stack.sh --use-local-env`，该路径会按 `.env.local` 的 `local_lightweight + local DB` 默认值启动本地 `pgvector/pgvector:pg16`，不会依赖 DB relay 或 Shadowrocket 访问线上 DB。
 
 适用范围：
 1. 当前这台 macOS + Podman + Shadowrocket 的本地 SupportPortal 单机环境。
-2. 你明确使用 `restart_single_host_lightweight_stack.sh --db remote` 复用 `.env` 中的线上/RDS `TICKET_DB_DSN` / `PGVECTOR_DSN`。
+2. 你明确使用 `restart_single_host_stack.sh --use-local-env --db remote` 复用 `.env` 中的线上/RDS `TICKET_DB_DSN` / `PGVECTOR_DSN`。
 3. `.env` 中的 `TICKET_DB_DSN` / `PGVECTOR_DSN` 通过 `hostaddr=192.168.127.254` 和 `:15433` 依赖宿主机本地 relay。
 
 ## 1. 典型症状
@@ -54,12 +54,12 @@
 cd /Users/xieziling/Desktop/personal_proj/SupportPortal
 
 bash scripts/workflow/ensure_local_db_relay.sh
-bash scripts/workflow/restart_single_host_lightweight_stack.sh --db remote
+bash scripts/workflow/restart_single_host_stack.sh --use-local-env --db remote
 ```
 
 说明：
 1. `ensure_local_db_relay.sh` 会在当前 `.env` 明确需要 relay 时，自动检查并补起宿主机 `15433` relay。
-2. `restart_single_host_lightweight_stack.sh --db remote` 会先自动执行同样的 relay 检查，所以机器重启后通常只需要直接跑这条 remote DB 重启命令。
+2. `restart_single_host_stack.sh --use-local-env --db remote` 会先自动执行同样的 relay 检查，所以机器重启后通常只需要直接跑这条 remote DB 重启命令。
 
 ### 4.2 部分退化分支（`/health` 仍是 `postgres`，但 engineer 端 25 秒超时）
 
@@ -87,7 +87,7 @@ curl 'http://127.0.0.1:8080/api/engineer/tickets?status=all'
 2. 如果容器内 fresh connect 仍偶发 `connection timeout expired`，再执行：
 
 ```bash
-bash scripts/workflow/restart_single_host_lightweight_stack.sh --db remote
+bash scripts/workflow/restart_single_host_stack.sh --use-local-env --db remote
 ```
 
 3. 只有在 fresh connect smoke 稳定通过后，才说明 engineer 页面 25 秒超时的根因链路已经基本恢复。

@@ -10,6 +10,7 @@ COMPOSE_PATH = REPO_ROOT / "deployment" / "docker-compose.single-host.yml"
 LIGHTWEIGHT_COMPOSE_PATH = REPO_ROOT / "deployment" / "docker-compose.single-host.local-lightweight.yml"
 DOCKERFILE_PATH = REPO_ROOT / "backend" / "Dockerfile"
 ENV_EXAMPLE_PATH = REPO_ROOT / ".env.example"
+ENV_LOCAL_EXAMPLE_PATH = REPO_ROOT / ".env.local.example"
 REQUIREMENTS_PATH = REPO_ROOT / "requirements.txt"
 REQUIREMENTS_BASE_PATH = REPO_ROOT / "requirements.base.txt"
 REQUIREMENTS_ML_PATH = REPO_ROOT / "requirements.ml.txt"
@@ -220,6 +221,15 @@ class SingleHostComposeTests(unittest.TestCase):
         self.assertIn("DEEPSEEK_BASE_URL=https://api.deepseek.com", content)
         self.assertIn("DEEPSEEK_FALLBACK_MODEL=deepseek-v4-pro", content)
         self.assertIn("DEEPSEEK_FALLBACK_ENABLED=true", content)
+
+    def test_env_examples_document_stack_mode_defaults(self) -> None:
+        env_content = ENV_EXAMPLE_PATH.read_text(encoding="utf-8")
+        env_local_content = ENV_LOCAL_EXAMPLE_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("STACK_RUNTIME_MODE=full", env_content)
+        self.assertIn("STACK_DB_MODE=remote", env_content)
+        self.assertIn("STACK_RUNTIME_MODE=local_lightweight", env_local_content)
+        self.assertIn("STACK_DB_MODE=local", env_local_content)
 
     def test_api_build_injects_app_build_metadata(self) -> None:
         api_block = self._service_block("api")
