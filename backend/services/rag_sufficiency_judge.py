@@ -6,7 +6,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
-from backend.services.llm_profiles import RAG_SUFFICIENCY_SCENARIO, resolve_model_profile
+from backend.services.llm_profiles import (
+    RAG_SUFFICIENCY_SCENARIO,
+    profile_has_invocation_credentials,
+    resolve_model_profile,
+)
 from backend.services.rag_sufficiency_prompt import (
     build_rag_sufficiency_system_prompt,
     build_rag_sufficiency_user_payload,
@@ -39,7 +43,7 @@ def judge_rag_answer_sufficiency(
     evidence_summary: dict[str, Any] | None,
 ) -> RagSufficiencyJudgeResult:
     profile = resolve_model_profile(RAG_SUFFICIENCY_SCENARIO)
-    if not profile.api_key:
+    if not profile_has_invocation_credentials(profile):
         raise RagSufficiencyJudgeError("sufficiency_judge_missing_api_key")
     try:
         response = invoke_responses_text(

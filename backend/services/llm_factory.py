@@ -9,6 +9,7 @@ from typing import Any
 
 from backend.services import openai_agent_tracing
 from backend.services.llm_profiles import (
+    DEEPSEEK_CHAT_API,
     OPENAI_CHAT_API,
     OPENAI_RESPONSES_API,
     SILICONFLOW_CHAT_API,
@@ -17,7 +18,9 @@ from backend.services.llm_profiles import (
 
 
 class LlmInvocationError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, fallback_eligible: bool = False) -> None:
+        super().__init__(message)
+        self.fallback_eligible = bool(fallback_eligible)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -31,6 +34,15 @@ class LlmTextResult:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     raw_payload: dict[str, Any] | None = None
+    provider_name: str = "openai"
+
+    @property
+    def provider_model_name(self) -> str:
+        provider = _normalize_text(self.provider_name).lower()
+        model = _normalize_text(self.model_name)
+        if provider and model:
+            return f"{provider}:{model}"
+        return model
 
 
 def _normalize_text(value: Any) -> str:
@@ -119,6 +131,64 @@ def _should_retry_http_error(code: int) -> bool:
     return code in _RETRYABLE_HTTP_STATUS_CODES or code >= 500
 
 
+def _trace_model_name(profile: ModelProfile, model_name: str) -> str:
+    if profile.provider == "openai":
+        return model_name
+    return f"{profile.provider}:{model_name}"
+
+
+def _reasoning_effort_for_deepseek(reasoning_effort: str | None) -> dict[str, Any]:
+    normalized = _normalize_text(reasoning_effort).lower()
+    if normalized in {"none", "off", "disabled"}:
+        return {"thinking": {"type": "disabled"}}
+    if not normalized:
+        return {}
+    effort = "max" if normalized in {"max", "xhigh"} else "high"
+    return {"thinking": {"type": "enabled"}, "reasoning_effort": effort}
+
+
+def _responses_extra_payload_to_chat_payload(extra_payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not extra_payload:
+        return {}
+    allowed_keys = {"max_output_tokens", "text"}
+    if any(key not in allowed_keys for key in extra_payload):
+        return None
+    payload: dict[str, Any] = {}
+    if extra_payload.get("max_output_tokens") is not None:
+        payload["max_tokens"] = extra_payload.get("max_output_tokens")
+    text_options = extra_payload.get("text")
+    if text_options is None:
+        return payload
+    if not isinstance(text_options, dict):
+        return None
+    format_options = text_options.get("format")
+    if format_options is None:
+        return payload
+    if not isinstance(format_options, dict):
+        return None
+    format_type = _normalize_text(format_options.get("type")).lower()
+    if format_type in {"json_schema", "json_object"}:
+        payload["response_format"] = {"type": "json_object"}
+        return payload
+    if format_type in {"", "text"}:
+        return payload
+    return None
+
+
+def _fallback_profiles(profile: ModelProfile) -> list[ModelProfile]:
+    return [fallback for fallback in profile.fallback_profiles if _normalize_text(fallback.api_key)]
+
+
+def _raise_with_fallback_failures(primary_error: LlmInvocationError, fallback_errors: list[str]) -> None:
+    if not fallback_errors:
+        raise primary_error
+    fallback_summary = "; ".join(_normalize_text(item) for item in fallback_errors if _normalize_text(item))
+    raise LlmInvocationError(
+        f"{primary_error}; provider_fallback_failed: {fallback_summary}",
+        fallback_eligible=primary_error.fallback_eligible,
+    ) from primary_error
+
+
 def _log_retry(
     *,
     profile: ModelProfile,
@@ -176,17 +246,15 @@ def _responses_request(
     )
 
 
-def invoke_responses_text(
+def _invoke_responses_text_once(
     *,
     profile: ModelProfile,
     system_prompt: str,
     user_prompt: str,
     extra_payload: dict[str, Any] | None = None,
 ) -> LlmTextResult:
-    if profile.api_mode != OPENAI_RESPONSES_API:
-        raise ValueError(f"profile {profile.scenario} does not use responses API")
     if not profile.api_key:
-        raise LlmInvocationError(f"{profile.scenario}_missing_api_key")
+        raise LlmInvocationError(f"{profile.scenario}_missing_api_key", fallback_eligible=True)
 
     candidate_models = profile.candidate_models()
     last_error: LlmInvocationError | None = None
@@ -214,6 +282,10 @@ def invoke_responses_text(
                     temperature = None
                     continue
                 if _is_model_unavailable(lowered):
+                    last_error = LlmInvocationError(
+                        f"{profile.scenario}_model_unavailable: {model_name}",
+                        fallback_eligible=True,
+                    )
                     break
                 if _should_retry_http_error(exc.code) and retry_attempts < _retry_budget(profile):
                     retry_attempts += 1
@@ -224,7 +296,10 @@ def invoke_responses_text(
                         error=exc,
                     )
                     continue
-                current_error = LlmInvocationError(f"{profile.scenario}_request_failed: {exc}")
+                current_error = LlmInvocationError(
+                    f"{profile.scenario}_request_failed: {exc}",
+                    fallback_eligible=_should_retry_http_error(exc.code),
+                )
                 if has_next_model and _should_retry_http_error(exc.code):
                     last_error = current_error
                     break
@@ -239,7 +314,10 @@ def invoke_responses_text(
                         error=exc,
                     )
                     continue
-                current_error = LlmInvocationError(f"{profile.scenario}_request_failed: {exc}")
+                current_error = LlmInvocationError(
+                    f"{profile.scenario}_request_failed: {exc}",
+                    fallback_eligible=True,
+                )
                 if has_next_model:
                     last_error = current_error
                     break
@@ -253,7 +331,7 @@ def invoke_responses_text(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
                     response_text=text,
-                    model_name=model_name,
+                    model_name=_trace_model_name(profile, model_name),
                     reasoning_effort=profile.reasoning_effort,
                     temperature=temperature,
                     prompt_tokens=prompt_tokens,
@@ -265,11 +343,48 @@ def invoke_responses_text(
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 raw_payload=payload,
+                provider_name=profile.provider,
             )
 
     if last_error is not None:
         raise last_error
-    raise LlmInvocationError(f"{profile.scenario}_no_available_model")
+    raise LlmInvocationError(f"{profile.scenario}_no_available_model", fallback_eligible=True)
+
+
+def invoke_responses_text(
+    *,
+    profile: ModelProfile,
+    system_prompt: str,
+    user_prompt: str,
+    extra_payload: dict[str, Any] | None = None,
+) -> LlmTextResult:
+    if profile.api_mode != OPENAI_RESPONSES_API:
+        raise ValueError(f"profile {profile.scenario} does not use responses API")
+
+    primary_error: LlmInvocationError | None = None
+    if profile.api_key:
+        try:
+            return _invoke_responses_text_once(
+                profile=profile,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                extra_payload=extra_payload,
+            )
+        except LlmInvocationError as exc:
+            if not exc.fallback_eligible:
+                raise
+            primary_error = exc
+    else:
+        primary_error = LlmInvocationError(f"{profile.scenario}_missing_api_key", fallback_eligible=True)
+
+    chat_payload = _responses_extra_payload_to_chat_payload(extra_payload)
+    return _invoke_provider_fallbacks(
+        profile=profile,
+        primary_error=primary_error,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        chat_extra_payload=chat_payload,
+    )
 
 
 def _chat_request(
@@ -279,6 +394,7 @@ def _chat_request(
     system_prompt: str,
     user_prompt: str,
     temperature: float | None,
+    extra_payload: dict[str, Any] | None = None,
 ) -> urllib.request.Request:
     base_url = (profile.base_url or "https://api.openai.com/v1").rstrip("/")
     payload: dict[str, Any] = {
@@ -290,6 +406,10 @@ def _chat_request(
     }
     if temperature is not None:
         payload["temperature"] = temperature
+    if profile.api_mode == DEEPSEEK_CHAT_API:
+        payload.update(_reasoning_effort_for_deepseek(profile.reasoning_effort))
+    if extra_payload:
+        payload.update(extra_payload)
     return urllib.request.Request(
         f"{base_url}/chat/completions",
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -301,17 +421,17 @@ def _chat_request(
     )
 
 
-def invoke_chat_text(
+def _invoke_chat_text_once(
     *,
     profile: ModelProfile,
     system_prompt: str,
     user_prompt: str,
+    extra_payload: dict[str, Any] | None = None,
 ) -> LlmTextResult:
-    if profile.api_mode not in {OPENAI_CHAT_API, SILICONFLOW_CHAT_API}:
-        raise ValueError(f"profile {profile.scenario} does not use chat completions API")
     if not profile.api_key:
-        raise LlmInvocationError(f"{profile.scenario}_missing_api_key")
+        raise LlmInvocationError(f"{profile.scenario}_missing_api_key", fallback_eligible=True)
 
+    last_error: LlmInvocationError | None = None
     for model_name in profile.candidate_models():
         temperature = profile.temperature
         retry_attempts = 0
@@ -322,6 +442,7 @@ def invoke_chat_text(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 temperature=temperature,
+                extra_payload=extra_payload,
             )
             try:
                 with urllib.request.urlopen(request, timeout=profile.timeout_seconds) as response:
@@ -333,6 +454,10 @@ def invoke_chat_text(
                     temperature = None
                     continue
                 if _is_model_unavailable(lowered):
+                    last_error = LlmInvocationError(
+                        f"{profile.scenario}_model_unavailable: {model_name}",
+                        fallback_eligible=True,
+                    )
                     break
                 if _should_retry_http_error(exc.code) and retry_attempts < _retry_budget(profile):
                     retry_attempts += 1
@@ -343,7 +468,10 @@ def invoke_chat_text(
                         error=exc,
                     )
                     continue
-                raise LlmInvocationError(f"{profile.scenario}_request_failed: {exc}") from exc
+                raise LlmInvocationError(
+                    f"{profile.scenario}_request_failed: {exc}",
+                    fallback_eligible=_should_retry_http_error(exc.code),
+                ) from exc
             except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
                 if retry_attempts < _retry_budget(profile):
                     retry_attempts += 1
@@ -354,7 +482,10 @@ def invoke_chat_text(
                         error=exc,
                     )
                     continue
-                raise LlmInvocationError(f"{profile.scenario}_request_failed: {exc}") from exc
+                raise LlmInvocationError(
+                    f"{profile.scenario}_request_failed: {exc}",
+                    fallback_eligible=True,
+                ) from exc
 
             payload = raw_payload if isinstance(raw_payload, dict) else {}
             text = _chat_text(payload)
@@ -365,6 +496,79 @@ def invoke_chat_text(
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 raw_payload=payload,
+                provider_name=profile.provider,
             )
 
-    raise LlmInvocationError(f"{profile.scenario}_no_available_model")
+    if last_error is not None:
+        raise last_error
+    raise LlmInvocationError(f"{profile.scenario}_no_available_model", fallback_eligible=True)
+
+
+def _invoke_provider_fallbacks(
+    *,
+    profile: ModelProfile,
+    primary_error: LlmInvocationError,
+    system_prompt: str,
+    user_prompt: str,
+    chat_extra_payload: dict[str, Any] | None,
+) -> LlmTextResult:
+    if chat_extra_payload is None:
+        raise primary_error
+
+    fallback_errors: list[str] = []
+    for fallback in _fallback_profiles(profile):
+        if fallback.api_mode not in {OPENAI_CHAT_API, SILICONFLOW_CHAT_API, DEEPSEEK_CHAT_API}:
+            continue
+        LOGGER.warning(
+            "LLM request for scenario=%s provider=%s model=%s failed; trying provider fallback %s:%s.",
+            profile.scenario,
+            profile.provider,
+            profile.model,
+            fallback.provider,
+            fallback.model,
+        )
+        try:
+            return _invoke_chat_text_once(
+                profile=fallback,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                extra_payload=chat_extra_payload,
+            )
+        except LlmInvocationError as exc:
+            fallback_errors.append(str(exc))
+            continue
+
+    _raise_with_fallback_failures(primary_error, fallback_errors)
+
+
+def invoke_chat_text(
+    *,
+    profile: ModelProfile,
+    system_prompt: str,
+    user_prompt: str,
+) -> LlmTextResult:
+    if profile.api_mode not in {OPENAI_CHAT_API, SILICONFLOW_CHAT_API, DEEPSEEK_CHAT_API}:
+        raise ValueError(f"profile {profile.scenario} does not use chat completions API")
+
+    primary_error: LlmInvocationError | None = None
+    if profile.api_key:
+        try:
+            return _invoke_chat_text_once(
+                profile=profile,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            )
+        except LlmInvocationError as exc:
+            if not exc.fallback_eligible:
+                raise
+            primary_error = exc
+    else:
+        primary_error = LlmInvocationError(f"{profile.scenario}_missing_api_key", fallback_eligible=True)
+
+    return _invoke_provider_fallbacks(
+        profile=profile,
+        primary_error=primary_error,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        chat_extra_payload={},
+    )

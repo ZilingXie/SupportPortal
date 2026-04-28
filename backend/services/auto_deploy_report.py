@@ -12,7 +12,11 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
-from backend.services.llm_profiles import AUTO_DEPLOY_REPORT_SCENARIO, resolve_model_profile
+from backend.services.llm_profiles import (
+    AUTO_DEPLOY_REPORT_SCENARIO,
+    profile_has_invocation_credentials,
+    resolve_model_profile,
+)
 
 DEFAULT_REPORT_SERVICES = (
     "api",
@@ -264,14 +268,12 @@ def build_ai_analysis(
 
     if not _env_flag("DEPLOY_REPORT_ENABLE_AI", True):
         return "AI analysis unavailable: DEPLOY_REPORT_ENABLE_AI=false."
-    if not (os.getenv("OPENAI_API_KEY") or "").strip():
-        return "AI analysis unavailable: OPENAI_API_KEY missing."
     if not report_diagnostics.service_logs_text.strip():
         return "AI analysis unavailable: no docker logs collected."
 
     profile = resolve_model_profile(AUTO_DEPLOY_REPORT_SCENARIO)
-    if not profile.api_key:
-        return "AI analysis unavailable: OPENAI_API_KEY missing."
+    if not profile_has_invocation_credentials(profile):
+        return "AI analysis unavailable: OPENAI_API_KEY or DEEPSEEK_API_KEY missing."
 
     system_prompt = (
         "你是 SupportPortal 的运维日报分析助手。"

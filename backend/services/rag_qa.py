@@ -37,6 +37,7 @@ from backend.services.llm_profiles import (
     RAG_AGENT_PLANNER_SCENARIO,
     RAG_ANSWER_SCENARIO,
     RAG_CONTEXT_COMPRESSION_SCENARIO,
+    profile_has_invocation_credentials,
     resolve_model_profile,
 )
 from backend.services.customer_reply_composer import (
@@ -2024,7 +2025,7 @@ def _invoke_agentic_planner(
     product: str | None,
 ) -> dict[str, Any] | None:
     profile = resolve_model_profile(RAG_AGENT_PLANNER_SCENARIO)
-    if not profile.api_key:
+    if not profile_has_invocation_credentials(profile):
         return None
     summary = {
         "query_profile": query_understanding.query_profile if query_understanding is not None else None,
@@ -5168,6 +5169,12 @@ def _doc_family_mix_for_chunks(chunks: list[RetrievedChunk]) -> dict[str, int]:
     return mix
 
 
+def _rag_config_llm_available(config: dict[str, Any]) -> bool:
+    if "llm_available" in config:
+        return bool(config.get("llm_available"))
+    return bool(str(config.get("api_key") or "").strip())
+
+
 def _get_rag_config(top_k: int | None = None, *, query_policy: str | None = None) -> dict[str, Any]:
     dsn = (os.getenv("PGVECTOR_DSN") or "").strip()
     answer_profile = resolve_model_profile(RAG_ANSWER_SCENARIO)
@@ -5225,6 +5232,7 @@ def _get_rag_config(top_k: int | None = None, *, query_policy: str | None = None
         "bm25_max_query_terms": _safe_int_env("RAG_BM25_MAX_QUERY_TERMS", 6),
         "bm25_max_term_doc_freq_ratio": _safe_float_env("RAG_BM25_MAX_TERM_DOC_FREQ_RATIO", 0.08),
         "api_key": answer_profile.api_key,
+        "llm_available": profile_has_invocation_credentials(answer_profile),
         "chat_model": answer_profile.model,
         "reasoning_effort": answer_profile.reasoning_effort,
         "fallback_models": list(answer_profile.fallback_models),
@@ -6477,6 +6485,7 @@ def _build_answer_profile(
         timeout_seconds=float(config.get("request_timeout_seconds") or defaults.timeout_seconds),
         max_retries=int(config.get("max_retries") or defaults.max_retries),
         fallback_models=fallback_models,
+        fallback_profiles=tuple(defaults.fallback_profiles),
     )
 
 
@@ -6539,7 +6548,8 @@ def _invoke_llm_payload_with_trace(
         return None, 0, 0, None
     payload = _extract_json_payload(response.text)
     if payload is not None:
-        return payload, response.prompt_tokens, response.completion_tokens, response.model_name
+        model_label = response.provider_model_name if response.provider_name != "openai" else response.model_name
+        return payload, response.prompt_tokens, response.completion_tokens, model_label
     return None, 0, 0, None
 
 
@@ -6919,7 +6929,7 @@ def _run_rag_query_legacy(
     resolved_table = _resolve_active_vector_table(config)
     if resolved_table:
         config["table"] = resolved_table
-    if not config["dsn"] or not config["api_key"]:
+    if not config["dsn"] or not _rag_config_llm_available(config):
         return None
 
     provider = get_embedding_provider()
@@ -7409,6 +7419,7 @@ def _run_rag_query_legacy(
             timeout_seconds=compression_defaults.timeout_seconds,
             max_retries=compression_defaults.max_retries,
             fallback_models=tuple(compression_defaults.fallback_models),
+            fallback_profiles=tuple(compression_defaults.fallback_profiles),
         )
         packing_limit = min(len(chunks), max(int(config.get("top_k") or 1), int(config.get("rerank_top_n") or len(chunks))))
         packing_candidates = list(chunks[:packing_limit]) or list(chunks)
@@ -7758,7 +7769,7 @@ def _run_rag_query_agentic_single(
     _ = ticket_id
     request_started_at = time.perf_counter()
     config = _get_rag_config(top_k=top_k, query_policy=query_policy)
-    if not config["dsn"] or not config["api_key"]:
+    if not config["dsn"] or not _rag_config_llm_available(config):
         return None
 
     effective_question, follow_up_inheritance = _resolve_effective_question(message, ticket_context)
@@ -8439,6 +8450,7 @@ def _run_rag_query_agentic_single(
             timeout_seconds=compression_defaults.timeout_seconds,
             max_retries=compression_defaults.max_retries,
             fallback_models=tuple(compression_defaults.fallback_models),
+            fallback_profiles=tuple(compression_defaults.fallback_profiles),
         )
         packed_evidence = build_packed_evidence(
             question=effective_question,

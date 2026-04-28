@@ -9,6 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_PATH = REPO_ROOT / "deployment" / "docker-compose.single-host.yml"
 LIGHTWEIGHT_COMPOSE_PATH = REPO_ROOT / "deployment" / "docker-compose.single-host.local-lightweight.yml"
 DOCKERFILE_PATH = REPO_ROOT / "backend" / "Dockerfile"
+ENV_EXAMPLE_PATH = REPO_ROOT / ".env.example"
 REQUIREMENTS_PATH = REPO_ROOT / "requirements.txt"
 REQUIREMENTS_BASE_PATH = REPO_ROOT / "requirements.base.txt"
 REQUIREMENTS_ML_PATH = REPO_ROOT / "requirements.ml.txt"
@@ -198,6 +199,27 @@ class SingleHostComposeTests(unittest.TestCase):
             "ENGINEER_INVESTIGATION_REPLY_MAX_RETRIES: ${ENGINEER_INVESTIGATION_REPLY_MAX_RETRIES:-1}",
             api_block,
         )
+
+    def test_deepseek_fallback_env_is_exposed_to_llm_runtime_services(self) -> None:
+        llm_service_names = ("api", "rag_api", "rag_worker", "worker_query", "worker_aux")
+
+        for service_name in llm_service_names:
+            service_block = self._service_block(service_name)
+            self.assertIn("DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}", service_block)
+            self.assertIn("DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}", service_block)
+            self.assertIn(
+                "DEEPSEEK_FALLBACK_MODEL: ${DEEPSEEK_FALLBACK_MODEL:-deepseek-v4-pro}",
+                service_block,
+            )
+            self.assertIn("DEEPSEEK_FALLBACK_ENABLED: ${DEEPSEEK_FALLBACK_ENABLED:-true}", service_block)
+
+    def test_env_example_documents_deepseek_fallback_defaults(self) -> None:
+        content = ENV_EXAMPLE_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("DEEPSEEK_API_KEY=", content)
+        self.assertIn("DEEPSEEK_BASE_URL=https://api.deepseek.com", content)
+        self.assertIn("DEEPSEEK_FALLBACK_MODEL=deepseek-v4-pro", content)
+        self.assertIn("DEEPSEEK_FALLBACK_ENABLED=true", content)
 
     def test_api_build_injects_app_build_metadata(self) -> None:
         api_block = self._service_block("api")

@@ -42,6 +42,20 @@ class TokenUsageTests(unittest.TestCase):
         self.assertEqual(entry["input_tokens"], 1000)
         self.assertEqual(entry["output_tokens"], 500)
 
+    def test_deepseek_fallback_usage_entry_preserves_provider_model_breakout(self) -> None:
+        entry = build_usage_ledger_entry(
+            provider="deepseek",
+            model="deepseek-v4-pro",
+            stage="rag_answer",
+            prompt_tokens=700,
+            completion_tokens=140,
+        )
+
+        self.assertEqual(entry["provider"], "deepseek")
+        self.assertEqual(entry["model"], "deepseek-v4-pro")
+        self.assertEqual(entry["input_tokens"], 700)
+        self.assertEqual(entry["output_tokens"], 140)
+
     def test_unknown_usage_fields_are_preserved(self) -> None:
         entry = build_usage_ledger_entry(
             provider="siliconflow",

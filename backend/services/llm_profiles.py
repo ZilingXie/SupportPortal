@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 OPENAI_RESPONSES_API = "openai_responses"
 OPENAI_CHAT_API = "openai_chat"
 SILICONFLOW_CHAT_API = "siliconflow_openai_compatible_chat"
+DEEPSEEK_CHAT_API = "deepseek_openai_compatible_chat"
 
 INTENT_ROUTER_SCENARIO = "intent_router"
 PRODUCT_SELECTION_SCENARIO = "product_selection"
@@ -27,12 +28,19 @@ BENCHMARK_JUDGE_SCENARIO = "benchmark_judge"
 AUTO_DEPLOY_REPORT_SCENARIO = "auto_deploy_report"
 INPUT_GUARDRAIL_SCENARIO = "input_guardrail"
 
-ProviderName = Literal["openai", "siliconflow"]
+ProviderName = Literal["openai", "siliconflow", "deepseek"]
 ApiModeName = Literal[
     "openai_responses",
     "openai_chat",
     "siliconflow_openai_compatible_chat",
+    "deepseek_openai_compatible_chat",
 ]
+
+_PROVIDER_FALLBACK_EXCLUDED_SCENARIOS = {
+    WEB_SEARCH_SCENARIO,
+    INPUT_GUARDRAIL_SCENARIO,
+    BENCHMARK_JUDGE_SCENARIO,
+}
 
 LOGGER = logging.getLogger(__name__)
 _CONFIG_WARNINGS: set[str] = set()
@@ -51,6 +59,7 @@ class ModelProfile:
     timeout_seconds: float = 20.0
     max_retries: int = 1
     fallback_models: tuple[str, ...] = ()
+    fallback_profiles: tuple["ModelProfile", ...] = ()
 
     def candidate_models(self) -> list[str]:
         ordered: list[str] = []
@@ -59,6 +68,17 @@ class ModelProfile:
             if clean and clean not in ordered:
                 ordered.append(clean)
         return ordered
+
+    def has_invocation_credentials(self) -> bool:
+        return profile_has_invocation_credentials(self)
+
+
+def profile_has_invocation_credentials(profile: object) -> bool:
+    """Return whether a profile-shaped object can invoke primary or provider fallback."""
+    if _clean_text(getattr(profile, "api_key", "")):
+        return True
+    fallback_profiles = getattr(profile, "fallback_profiles", ()) or ()
+    return any(_clean_text(getattr(fallback, "api_key", "")) for fallback in fallback_profiles)
 
 
 def _clean_text(value: object) -> str:
@@ -153,6 +173,52 @@ def _siliconflow_base_url() -> str:
     return _clean_text(os.getenv("SILICONFLOW_BASE_URL")) or "https://api.siliconflow.cn/v1"
 
 
+def _deepseek_api_key() -> str:
+    return _clean_text(os.getenv("DEEPSEEK_API_KEY"))
+
+
+def _deepseek_base_url() -> str:
+    return _clean_text(os.getenv("DEEPSEEK_BASE_URL")) or "https://api.deepseek.com"
+
+
+def _deepseek_fallback_model() -> str:
+    return _clean_text(os.getenv("DEEPSEEK_FALLBACK_MODEL")) or "deepseek-v4-pro"
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = _clean_text(os.getenv(name)).lower()
+    if not raw:
+        return default
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _with_provider_fallback(profile: ModelProfile) -> ModelProfile:
+    if profile.scenario in _PROVIDER_FALLBACK_EXCLUDED_SCENARIOS:
+        return profile
+    if profile.provider != "openai" or profile.api_mode not in {OPENAI_RESPONSES_API, OPENAI_CHAT_API}:
+        return profile
+    if not _env_flag("DEEPSEEK_FALLBACK_ENABLED", True):
+        return profile
+    deepseek_key = _deepseek_api_key()
+    if not deepseek_key:
+        return profile
+    fallback = ModelProfile(
+        scenario=profile.scenario,
+        provider="deepseek",
+        model=_deepseek_fallback_model(),
+        api_mode=DEEPSEEK_CHAT_API,
+        api_key=deepseek_key,
+        base_url=_deepseek_base_url(),
+        reasoning_effort=profile.reasoning_effort,
+        temperature=profile.temperature,
+        timeout_seconds=profile.timeout_seconds,
+        max_retries=profile.max_retries,
+        fallback_models=(),
+        fallback_profiles=(),
+    )
+    return replace(profile, fallback_profiles=(*profile.fallback_profiles, fallback))
+
+
 def _safe_float_env_any(names: tuple[str, ...], default: float) -> float:
     for name in names:
         raw = _clean_text(os.getenv(name))
@@ -201,7 +267,7 @@ def parse_provider_model_reference(value: str, *, default_provider: ProviderName
     provider, model = raw.split(":", 1)
     normalized_provider = _clean_text(provider).lower()
     normalized_model = _clean_text(model)
-    if normalized_provider not in {"openai", "siliconflow"} or not normalized_model:
+    if normalized_provider not in {"openai", "siliconflow", "deepseek"} or not normalized_model:
         raise ValueError(f"invalid provider/model reference: {value}")
     return normalized_provider, normalized_model
 
@@ -217,7 +283,7 @@ def resolve_model_profile(
         _warn_if_deprecated_alias_used("ROUTE_AGENT_ROUTER_REASONING_EFFORT", "INTENT_ROUTER_REASONING_EFFORT")
         _warn_if_deprecated_alias_used("ROUTE_AGENT_ROUTER_TEMPERATURE", "INTENT_ROUTER_TEMPERATURE")
         _warn_if_deprecated_alias_used("ROUTE_AGENT_ROUTER_TIMEOUT_SECONDS", "INTENT_ROUTER_TIMEOUT_SECONDS")
-        return ModelProfile(
+        return _with_provider_fallback(ModelProfile(
             scenario=scenario,
             provider="openai",
             model=_first_env_text("ROUTE_AGENT_ROUTER_MODEL", "INTENT_ROUTER_MODEL") or "gpt-5.4-mini",
@@ -227,9 +293,9 @@ def resolve_model_profile(
             temperature=_safe_float_env_any(("ROUTE_AGENT_ROUTER_TEMPERATURE", "INTENT_ROUTER_TEMPERATURE"), 0.3),
             timeout_seconds=_safe_positive_float_env_any(("ROUTE_AGENT_ROUTER_TIMEOUT_SECONDS", "INTENT_ROUTER_TIMEOUT_SECONDS"), 8.0),
             max_retries=1,
-        )
+        ))
     if scenario == PRODUCT_SELECTION_SCENARIO:
-        return ModelProfile(
+        return _with_provider_fallback(ModelProfile(
             scenario=scenario,
             provider="openai",
             model=_first_env_text("PRODUCT_AGENT_MODEL") or "gpt-5.4-mini",
@@ -239,7 +305,7 @@ def resolve_model_profile(
             temperature=_safe_float_env("PRODUCT_AGENT_TEMPERATURE", 0.2),
             timeout_seconds=_safe_positive_float_env("PRODUCT_AGENT_TIMEOUT_SECONDS", 8.0),
             max_retries=1,
-        )
+        ))
     if scenario == WEB_SEARCH_SCENARIO:
         _warn_if_deprecated_alias_used("ROUTE_AGENT_WEB_SEARCH_MODEL", "OPENAI_WEB_SEARCH_MODEL")
         _warn_if_deprecated_alias_used("ROUTE_AGENT_WEB_SEARCH_TIMEOUT_SECONDS", "OPENAI_WEB_SEARCH_TIMEOUT_SECONDS")
@@ -255,7 +321,7 @@ def resolve_model_profile(
             fallback_models=("gpt-5.4-mini",),
         )
     if scenario == CLIENT_ACK_SCENARIO:
-        return ModelProfile(
+        return _with_provider_fallback(ModelProfile(
             scenario=scenario,
             provider="openai",
             model=_clean_text(os.getenv("CLIENT_ACK_MODEL")) or "gpt-5.4-nano",
@@ -266,7 +332,7 @@ def resolve_model_profile(
             timeout_seconds=_safe_positive_float_env("CLIENT_ACK_TIMEOUT_SECONDS", 5.0),
             max_retries=1,
             fallback_models=(),
-        )
+        ))
     if scenario == INPUT_GUARDRAIL_SCENARIO:
         return ModelProfile(
             scenario=scenario,
@@ -281,7 +347,7 @@ def resolve_model_profile(
             fallback_models=(),
         )
     if scenario == TICKET_TITLE_SCENARIO:
-        return ModelProfile(
+        return _with_provider_fallback(ModelProfile(
             scenario=scenario,
             provider="openai",
             model=_clean_text(os.getenv("TICKET_TITLE_MODEL")) or "gpt-5.4-nano",
@@ -292,13 +358,13 @@ def resolve_model_profile(
             timeout_seconds=_safe_positive_float_env("TICKET_TITLE_TIMEOUT_SECONDS", 2.0),
             max_retries=1,
             fallback_models=(),
-        )
+        ))
     if scenario == RAG_ANSWER_SCENARIO:
         _warn_if_deprecated_alias_used("RAG_AGENT_ANSWER_MODEL", "RAG_ANSWER_MODEL")
         _warn_if_deprecated_alias_used("RAG_AGENT_ANSWER_REASONING_EFFORT", "RAG_ANSWER_REASONING_EFFORT")
         _warn_if_deprecated_alias_used("RAG_AGENT_ANSWER_TIMEOUT_SECONDS", "RAG_REQUEST_TIMEOUT_SECONDS")
         _warn_if_deprecated_alias_used("RAG_AGENT_ANSWER_MAX_RETRIES", "RAG_OPENAI_MAX_RETRIES")
-        return ModelProfile(
+        return _with_provider_fallback(ModelProfile(
             scenario=scenario,
             provider="openai",
             model=_first_env_text("RAG_AGENT_ANSWER_MODEL", "RAG_ANSWER_MODEL") or "gpt-5.4",
@@ -309,7 +375,7 @@ def resolve_model_profile(
             timeout_seconds=_safe_positive_float_env_any(("RAG_AGENT_ANSWER_TIMEOUT_SECONDS", "RAG_REQUEST_TIMEOUT_SECONDS"), 20.0),
             max_retries=_safe_int_env_any(("RAG_AGENT_ANSWER_MAX_RETRIES", "RAG_OPENAI_MAX_RETRIES"), 1),
             fallback_models=("gpt-5.4-mini",),
-        )
+        ))
     if scenario == RAG_SUFFICIENCY_SCENARIO:
         _warn_if_deprecated_alias_used("REVIEW_AGENT_POSTCHECK_MODEL", "RAG_SUFFICIENCY_JUDGE_MODEL")
         _warn_if_deprecated_alias_used(
@@ -321,7 +387,7 @@ def resolve_model_profile(
             "REVIEW_AGENT_POSTCHECK_TIMEOUT_SECONDS",
             "RAG_SUFFICIENCY_JUDGE_TIMEOUT_SECONDS",
         )
-        return ModelProfile(
+        return _with_provider_fallback(ModelProfile(
             scenario=scenario,
             provider="openai",
             model=_first_env_text("REVIEW_AGENT_POSTCHECK_MODEL", "RAG_SUFFICIENCY_JUDGE_MODEL") or "gpt-5.4",
@@ -332,7 +398,7 @@ def resolve_model_profile(
             timeout_seconds=_safe_positive_float_env_any(("REVIEW_AGENT_POSTCHECK_TIMEOUT_SECONDS", "RAG_SUFFICIENCY_JUDGE_TIMEOUT_SECONDS"), 8.0),
             max_retries=1,
             fallback_models=("gpt-5.4-mini",),
-        )
+        ))
     if scenario == QUERY_EXPANSION_SCENARIO:
         _warn_if_deprecated_alias_used("RAG_AGENT_QUERY_EXPANSION_MODEL", "RAG_QUERY_EXPANSION_MODEL")
         _warn_if_deprecated_alias_used(
@@ -347,7 +413,7 @@ def resolve_model_profile(
             "RAG_AGENT_QUERY_EXPANSION_TIMEOUT_SECONDS",
             "RAG_QUERY_EXPANSION_TIMEOUT_SECONDS",
         )
-        return ModelProfile(
+        return _with_provider_fallback(ModelProfile(
             scenario=scenario,
             provider="openai",
             model=_first_env_text("RAG_AGENT_QUERY_EXPANSION_MODEL", "RAG_QUERY_EXPANSION_MODEL") or "gpt-5.4-mini",
@@ -358,9 +424,9 @@ def resolve_model_profile(
             timeout_seconds=_safe_positive_float_env_any(("RAG_AGENT_QUERY_EXPANSION_TIMEOUT_SECONDS", "RAG_QUERY_EXPANSION_TIMEOUT_SECONDS"), 8.0),
             max_retries=1,
             fallback_models=(),
-        )
+        ))
     if scenario == RAG_AGENT_PLANNER_SCENARIO:
-        return ModelProfile(
+        return _with_provider_fallback(ModelProfile(
             scenario=scenario,
             provider="openai",
             model=_first_env_text("RAG_AGENT_PLANNER_MODEL", "RAG_AGENT_PLANNER_MODEL") or "gpt-5.4-mini",
@@ -371,9 +437,9 @@ def resolve_model_profile(
             timeout_seconds=_safe_positive_float_env_any(("RAG_AGENT_PLANNER_TIMEOUT_SECONDS", "RAG_AGENT_PLANNER_TIMEOUT_SECONDS"), 6.0),
             max_retries=1,
             fallback_models=(),
-        )
+        ))
     if scenario == RAG_CONTEXT_COMPRESSION_SCENARIO:
-        return ModelProfile(
+        return _with_provider_fallback(ModelProfile(
             scenario=scenario,
             provider="openai",
             model=_first_env_text("RAG_AGENT_CONTEXT_COMPRESSION_MODEL", "RAG_CONTEXT_COMPRESSION_MODEL") or "gpt-5.4-mini",
@@ -384,7 +450,7 @@ def resolve_model_profile(
             timeout_seconds=_safe_positive_float_env_any(("RAG_AGENT_CONTEXT_COMPRESSION_TIMEOUT_SECONDS", "RAG_CONTEXT_COMPRESSION_TIMEOUT_SECONDS"), 8.0),
             max_retries=1,
             fallback_models=(),
-        )
+        ))
     if scenario == TROUBLESHOOTING_INTAKE_SCENARIO:
         _warn_if_deprecated_alias_used("REVIEW_AGENT_INTAKE_MODEL", "TROUBLESHOOTING_INTAKE_MODEL")
         _warn_if_deprecated_alias_used(
@@ -399,7 +465,7 @@ def resolve_model_profile(
             "REVIEW_AGENT_INTAKE_TIMEOUT_SECONDS",
             "TROUBLESHOOTING_INTAKE_TIMEOUT_SECONDS",
         )
-        return ModelProfile(
+        return _with_provider_fallback(ModelProfile(
             scenario=scenario,
             provider="openai",
             model=_first_env_text("REVIEW_AGENT_INTAKE_MODEL", "TROUBLESHOOTING_INTAKE_MODEL") or "gpt-5.4-mini",
@@ -410,9 +476,9 @@ def resolve_model_profile(
             timeout_seconds=_safe_positive_float_env_any(("REVIEW_AGENT_INTAKE_TIMEOUT_SECONDS", "TROUBLESHOOTING_INTAKE_TIMEOUT_SECONDS"), 8.0),
             max_retries=1,
             fallback_models=(),
-        )
+        ))
     if scenario == ENGINEER_HELPER_SCENARIO:
-        return ModelProfile(
+        return _with_provider_fallback(ModelProfile(
             scenario=scenario,
             provider="openai",
             model=_clean_text(os.getenv("ENGINEER_HELPER_MODEL")) or "gpt-5.4",
@@ -423,9 +489,9 @@ def resolve_model_profile(
             timeout_seconds=_safe_positive_float_env("OPENAI_REQUEST_TIMEOUT_SECONDS", 20.0),
             max_retries=_safe_int_env("OPENAI_MAX_RETRIES", 1),
             fallback_models=("gpt-5.4-mini",),
-        )
+        ))
     if scenario == ENGINEER_INVESTIGATION_REPLY_SCENARIO:
-        return ModelProfile(
+        return _with_provider_fallback(ModelProfile(
             scenario=scenario,
             provider="openai",
             model=_clean_text(os.getenv("ENGINEER_INVESTIGATION_REPLY_MODEL")) or "gpt-5.4",
@@ -436,9 +502,9 @@ def resolve_model_profile(
             timeout_seconds=_safe_positive_float_env("ENGINEER_INVESTIGATION_REPLY_TIMEOUT_SECONDS", 20.0),
             max_retries=_safe_int_env("ENGINEER_INVESTIGATION_REPLY_MAX_RETRIES", 1),
             fallback_models=("gpt-5.4-mini",),
-        )
+        ))
     if scenario == KNOWLEDGE_INGESTION_SCENARIO:
-        return ModelProfile(
+        return _with_provider_fallback(ModelProfile(
             scenario=scenario,
             provider="openai",
             model=_clean_text(os.getenv("KNOWLEDGE_INGESTION_MODEL")) or "gpt-5.4-mini",
@@ -448,7 +514,7 @@ def resolve_model_profile(
             timeout_seconds=_safe_positive_float_env("OPENAI_REQUEST_TIMEOUT_SECONDS", 20.0),
             max_retries=_safe_int_env("OPENAI_MAX_RETRIES", 1),
             fallback_models=(),
-        )
+        ))
     if scenario == BENCHMARK_JUDGE_SCENARIO:
         resolved_provider = provider or "openai"
         resolved_model = _clean_text(model) or "gpt-5.4"
@@ -464,6 +530,18 @@ def resolve_model_profile(
                 timeout_seconds=_safe_positive_float_env("RAG_BENCHMARK_JUDGE_TIMEOUT_SECONDS", 30.0),
                 max_retries=1,
             )
+        if resolved_provider == "deepseek":
+            return ModelProfile(
+                scenario=scenario,
+                provider="deepseek",
+                model=resolved_model,
+                api_mode=DEEPSEEK_CHAT_API,
+                api_key=_deepseek_api_key(),
+                base_url=_deepseek_base_url(),
+                temperature=0.0,
+                timeout_seconds=_safe_positive_float_env("RAG_BENCHMARK_JUDGE_TIMEOUT_SECONDS", 30.0),
+                max_retries=1,
+            )
         return ModelProfile(
             scenario=scenario,
             provider="openai",
@@ -475,7 +553,7 @@ def resolve_model_profile(
             max_retries=1,
         )
     if scenario == AUTO_DEPLOY_REPORT_SCENARIO:
-        return ModelProfile(
+        return _with_provider_fallback(ModelProfile(
             scenario=scenario,
             provider="openai",
             model=_clean_text(os.getenv("DEPLOY_REPORT_MODEL")) or "gpt-5.4-mini",
@@ -486,5 +564,5 @@ def resolve_model_profile(
             timeout_seconds=_safe_positive_float_env("DEPLOY_REPORT_TIMEOUT_SECONDS", 15.0),
             max_retries=_safe_int_env("DEPLOY_REPORT_MAX_RETRIES", 1),
             fallback_models=(),
-        )
+        ))
     raise ValueError(f"unsupported model scenario: {scenario}")

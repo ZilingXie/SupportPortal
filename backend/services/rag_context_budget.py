@@ -10,6 +10,7 @@ from backend.services.llm_factory import LlmInvocationError, invoke_responses_te
 from backend.services.llm_profiles import (
     ModelProfile,
     RAG_CONTEXT_COMPRESSION_SCENARIO,
+    profile_has_invocation_credentials,
     resolve_model_profile,
 )
 from backend.services.prompts.rag_context_compression import (
@@ -359,7 +360,7 @@ def _compress_entries_with_llm(
     available_context_tokens: int,
     compression_profile: ModelProfile,
 ) -> tuple[list[dict[str, Any]] | None, str | None, dict[str, Any] | None]:
-    if not entries or not compression_profile.api_key:
+    if not entries or not profile_has_invocation_credentials(compression_profile):
         return None, None, None
     try:
         response = invoke_responses_text(
