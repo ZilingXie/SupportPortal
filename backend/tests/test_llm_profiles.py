@@ -122,6 +122,58 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(auto_deploy_report.api_mode, "openai_responses")
         self.assertEqual(auto_deploy_report.model, "gpt-5.4-mini")
         self.assertEqual(auto_deploy_report.reasoning_effort, "low")
+        self.assertEqual(auto_deploy_report.fallback_profiles, ())
+
+    def test_profiles_attach_deepseek_fallback_when_deepseek_key_is_configured(self) -> None:
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "deepseek-key"}, clear=True):
+            rag_answer = resolve_model_profile(RAG_ANSWER_SCENARIO)
+            query_expansion = resolve_model_profile(QUERY_EXPANSION_SCENARIO)
+            ingestion = resolve_model_profile(KNOWLEDGE_INGESTION_SCENARIO)
+            web_search = resolve_model_profile(WEB_SEARCH_SCENARIO)
+            input_guardrail = resolve_model_profile(INPUT_GUARDRAIL_SCENARIO)
+            benchmark = resolve_model_profile(BENCHMARK_JUDGE_SCENARIO, provider="openai", model="gpt-5.4")
+
+        self.assertEqual(len(rag_answer.fallback_profiles), 1)
+        fallback = rag_answer.fallback_profiles[0]
+        self.assertEqual(fallback.provider, "deepseek")
+        self.assertEqual(fallback.api_mode, "deepseek_openai_compatible_chat")
+        self.assertEqual(fallback.model, "deepseek-v4-pro")
+        self.assertEqual(fallback.api_key, "deepseek-key")
+        self.assertEqual(fallback.base_url, "https://api.deepseek.com")
+        self.assertEqual(fallback.reasoning_effort, rag_answer.reasoning_effort)
+
+        self.assertEqual(query_expansion.fallback_profiles[0].provider, "deepseek")
+        self.assertEqual(ingestion.fallback_profiles[0].api_mode, "deepseek_openai_compatible_chat")
+        self.assertEqual(web_search.fallback_profiles, ())
+        self.assertEqual(input_guardrail.fallback_profiles, ())
+        self.assertEqual(benchmark.fallback_profiles, ())
+
+    def test_deepseek_fallback_honors_env_overrides_and_can_be_disabled(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "DEEPSEEK_API_KEY": "deepseek-key",
+                "DEEPSEEK_BASE_URL": "https://deepseek.example/v1",
+                "DEEPSEEK_FALLBACK_MODEL": "deepseek-custom",
+            },
+            clear=True,
+        ):
+            profile = resolve_model_profile(RAG_ANSWER_SCENARIO)
+
+        self.assertEqual(profile.fallback_profiles[0].base_url, "https://deepseek.example/v1")
+        self.assertEqual(profile.fallback_profiles[0].model, "deepseek-custom")
+
+        with patch.dict(
+            os.environ,
+            {
+                "DEEPSEEK_API_KEY": "deepseek-key",
+                "DEEPSEEK_FALLBACK_ENABLED": "false",
+            },
+            clear=True,
+        ):
+            disabled = resolve_model_profile(RAG_ANSWER_SCENARIO)
+
+        self.assertEqual(disabled.fallback_profiles, ())
 
     def test_resolve_model_profile_honors_scene_specific_env_overrides(self) -> None:
         with patch.dict(
@@ -271,6 +323,25 @@ class LlmProfileTests(unittest.TestCase):
             parse_provider_model_reference("siliconflow:Qwen/Qwen3.5-397B-A17B", default_provider="openai"),
             ("siliconflow", "Qwen/Qwen3.5-397B-A17B"),
         )
+        self.assertEqual(
+            parse_provider_model_reference("deepseek:deepseek-v4-pro", default_provider="openai"),
+            ("deepseek", "deepseek-v4-pro"),
+        )
+
+    def test_benchmark_profile_supports_explicit_deepseek_models_without_fallback(self) -> None:
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "deepseek-key"}, clear=True):
+            profile = resolve_model_profile(
+                BENCHMARK_JUDGE_SCENARIO,
+                provider="deepseek",
+                model="deepseek-v4-pro",
+            )
+
+        self.assertEqual(profile.provider, "deepseek")
+        self.assertEqual(profile.api_mode, "deepseek_openai_compatible_chat")
+        self.assertEqual(profile.model, "deepseek-v4-pro")
+        self.assertEqual(profile.api_key, "deepseek-key")
+        self.assertEqual(profile.base_url, "https://api.deepseek.com")
+        self.assertEqual(profile.fallback_profiles, ())
 
     def test_benchmark_profile_supports_siliconflow_models(self) -> None:
         with patch.dict(os.environ, {"SILICONFLOW_API_KEY": "sf-key"}, clear=True):

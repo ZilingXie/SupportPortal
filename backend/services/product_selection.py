@@ -13,7 +13,11 @@ from backend.services.customer_reply_composer import (
 )
 from backend.services.investigation_flow import COMMUNICATING_STATUS
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
-from backend.services.llm_profiles import PRODUCT_SELECTION_SCENARIO, resolve_model_profile
+from backend.services.llm_profiles import (
+    PRODUCT_SELECTION_SCENARIO,
+    profile_has_invocation_credentials,
+    resolve_model_profile,
+)
 from backend.services.prompts.product_selection import (
     build_product_selection_system_prompt,
     build_product_selection_user_prompt,
@@ -328,7 +332,7 @@ def decide_support_product(
         return deterministic
 
     profile = resolve_model_profile(PRODUCT_SELECTION_SCENARIO)
-    if not profile.api_key:
+    if not profile_has_invocation_credentials(profile):
         return SupportProductDecision(
             product=None,
             confidence=0.0,
