@@ -9,6 +9,7 @@ from backend.services.customer_reply_composer import ensure_customer_reply_email
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import (
     ENGINEER_INVESTIGATION_REPLY_SCENARIO,
+    profile_has_invocation_credentials,
     resolve_model_profile,
 )
 from backend.services.prompts.engineer_investigation_reply import (
@@ -1090,7 +1091,7 @@ def _generate_investigation_reply_turn(
         engineer_message=engineer_message,
         revision_note=revision_note,
     )
-    if not profile.api_key:
+    if not profile_has_invocation_credentials(profile):
         return _fail_closed_investigation_reply_turn(
             ticket,
             handoff_packet,
@@ -1130,7 +1131,11 @@ def _generate_investigation_reply_turn(
             user_prompt=user_prompt,
             extra_payload=_investigation_reply_extra_payload(),
         )
-        model_name = response.model_name or profile.model
+        model_name = (
+            response.provider_model_name
+            if response.provider_name != "openai"
+            else (response.model_name or profile.model)
+        )
     except LlmInvocationError as exc:
         return _fail_closed_investigation_reply_turn(
             ticket,

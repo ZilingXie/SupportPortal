@@ -697,8 +697,8 @@ def _invoke_query_expansion_llm(
         user_prompt=user_prompt,
     )
     usage_entry = build_usage_ledger_entry(
-        provider=profile.provider,
-        model=profile.model,
+        provider=result.provider_name,
+        model=result.model_name,
         stage=stage,
         prompt_tokens=result.prompt_tokens,
         completion_tokens=result.completion_tokens,
@@ -712,7 +712,10 @@ def _query_expansion_prompt_model_version(*, query_policy: str | None = None) ->
     profile = resolve_model_profile(QUERY_EXPANSION_SCENARIO)
     reasoning = profile.reasoning_effort or "none"
     policy_suffix = str(query_policy or "").strip().lower() or "default"
-    return f"{profile.provider}:{profile.model}:{reasoning}:{SELF_QUERY_VERSION}:{policy_suffix}"
+    fallback_suffix = (
+        ",".join(f"{item.provider}:{item.model}" for item in profile.fallback_profiles) or "none"
+    )
+    return f"{profile.provider}:{profile.model}:{reasoning}:fallback={fallback_suffix}:{SELF_QUERY_VERSION}:{policy_suffix}"
 
 
 def _load_cached_llm_outputs(

@@ -25,7 +25,11 @@ from backend.services.customer_reply_composer import (
     ensure_customer_reply_email_style,
 )
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
-from backend.services.llm_profiles import TROUBLESHOOTING_INTAKE_SCENARIO, resolve_model_profile
+from backend.services.llm_profiles import (
+    TROUBLESHOOTING_INTAKE_SCENARIO,
+    profile_has_invocation_credentials,
+    resolve_model_profile,
+)
 from backend.services.prompts.troubleshooting_intake import (
     build_troubleshooting_intake_system_prompt,
     build_troubleshooting_intake_user_prompt,
@@ -1319,7 +1323,7 @@ def _evaluate_with_llm(
     if deterministic_only:
         return fallback
     profile = resolve_model_profile(TROUBLESHOOTING_INTAKE_SCENARIO)
-    if not profile.api_key:
+    if not profile_has_invocation_credentials(profile):
         return fallback
     required_labels = list_support_product_field_labels(list(_required_fields_for(product)))
     try:

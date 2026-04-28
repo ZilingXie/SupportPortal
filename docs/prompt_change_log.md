@@ -12,6 +12,43 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-04-28 - DeepSeek fallback model routing for core LLM calls
+
+- Area or subsystem: Cross-provider LLM factory and model profile routing
+- Prompt or model version: `deepseek-fallback-v1`
+- Summary: Added an OpenAI-compatible DeepSeek fallback provider for eligible core text and JSON LLM calls, using `deepseek-v4-pro` after OpenAI primary and same-provider fallback candidates are unavailable.
+- Reason: Core SupportPortal generation paths need a provider-level fallback when GPT is unavailable because missing keys, timeouts, rate limits, server errors, or unavailable OpenAI models should not fail every non-tool LLM scene if DeepSeek credentials are configured.
+- Affected files or config:
+  - `backend/services/llm_profiles.py`
+  - `backend/services/llm_factory.py`
+  - `backend/services/support_router.py`
+  - `backend/services/auto_deploy_report.py`
+  - `backend/services/product_selection.py`
+  - `backend/services/rag_sufficiency_judge.py`
+  - `backend/services/engineer_agent.py`
+  - `backend/services/troubleshooting_intake.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/rag_context_budget.py`
+  - `backend/services/knowledge_ingestion.py`
+  - `backend/services/query_understanding.py`
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `backend/tests/test_llm_factory.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_token_usage.py`
+  - `backend/tests/test_single_host_compose.py`
+  - `docs/prompt_change_log.md`
+  - `docs/rag_change_log.md`
+- Expected behavior change:
+  - Eligible OpenAI Responses and Chat Completions scenes keep GPT as primary, then fall back to `deepseek:deepseek-v4-pro` only for provider/key/transport/rate-limit/server/model-unavailable failures.
+  - OpenAI-only tool payloads, web search, input guardrails, benchmark judge runs, non-retryable request errors, and caller-side business validation failures do not silently switch providers.
+  - LLM results now expose the actual provider so telemetry and traces can record `deepseek:deepseek-v4-pro` instead of misclassifying fallback output as OpenAI.
+- Verification:
+  - `python3 -m py_compile backend/services/llm_profiles.py backend/services/llm_factory.py backend/services/support_router.py backend/services/auto_deploy_report.py backend/services/product_selection.py backend/services/rag_sufficiency_judge.py backend/services/engineer_agent.py backend/services/troubleshooting_intake.py backend/services/rag_qa.py backend/services/rag_context_budget.py backend/services/knowledge_ingestion.py backend/services/query_understanding.py backend/tests/test_llm_factory.py backend/tests/test_llm_profiles.py backend/tests/test_single_host_compose.py`
+  - `python3 -m unittest backend.tests.test_llm_factory backend.tests.test_llm_profiles backend.tests.test_token_usage backend.tests.test_single_host_compose`
+  - `python3 -m unittest backend.tests.test_auto_deploy_report backend.tests.test_product_selection backend.tests.test_rag_sufficiency_judge backend.tests.test_knowledge_ingestion backend.tests.test_support_router`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_rag_context_budget backend.tests.test_query_understanding backend.tests.test_rag_qa.RagQaHybridTests.test_run_rag_query_exact_error_lookup_uses_light_path_fast_answer_profile_then_falls_back_to_main_model backend.tests.test_rag_qa.RagQaHybridTests.test_run_rag_query_uses_shared_packed_evidence_for_answer_and_trace`
+
 ## 2026-04-17 - client ticket titles normalize to English
 
 - Area or subsystem: Client ticket title generation and `/client2` draft title presentation

@@ -58,6 +58,39 @@ class LlmFactoryTests(unittest.TestCase):
             fallback_models=fallback_models,
         )
 
+    def _profile_with_deepseek_fallback(
+        self,
+        *,
+        api_mode: str = OPENAI_RESPONSES_API,
+        api_key: str = "test-key",
+        max_retries: int = 0,
+    ) -> ModelProfile:
+        return ModelProfile(
+            scenario="test_scenario",
+            provider="openai",
+            model="gpt-5.4",
+            api_mode=api_mode,
+            api_key=api_key,
+            reasoning_effort="medium",
+            temperature=0.0,
+            timeout_seconds=20.0,
+            max_retries=max_retries,
+            fallback_profiles=(
+                ModelProfile(
+                    scenario="test_scenario",
+                    provider="deepseek",
+                    model="deepseek-v4-pro",
+                    api_mode="deepseek_openai_compatible_chat",
+                    api_key="deepseek-key",
+                    base_url="https://api.deepseek.com",
+                    reasoning_effort="medium",
+                    temperature=0.0,
+                    timeout_seconds=20.0,
+                    max_retries=0,
+                ),
+            ),
+        )
+
     def test_invoke_responses_text_retries_timeout_once_before_success(self) -> None:
         attempts = 0
 
@@ -158,6 +191,144 @@ class LlmFactoryTests(unittest.TestCase):
         self.assertEqual(attempts, 1)
         self.assertIn("HTTP Error 400", str(context.exception))
 
+    def test_invoke_responses_text_falls_back_to_deepseek_chat_after_openai_timeout(self) -> None:
+        attempts: list[tuple[str, dict[str, object]]] = []
+
+        def _fake_urlopen(request, timeout):
+            payload = json.loads(request.data.decode("utf-8"))
+            if request.full_url == "https://api.openai.com/v1/responses":
+                attempts.append(("openai", payload))
+                raise TimeoutError("The read operation timed out")
+            attempts.append(("deepseek", payload))
+            return _FakeResponse(
+                {
+                    "choices": [{"message": {"content": "Recovered by DeepSeek."}}],
+                    "usage": {"prompt_tokens": 11, "completion_tokens": 6},
+                }
+            )
+
+        with patch("backend.services.llm_factory.urllib.request.urlopen", side_effect=_fake_urlopen):
+            result = invoke_responses_text(
+                profile=self._profile_with_deepseek_fallback(),
+                system_prompt="Return JSON only.",
+                user_prompt="user",
+            )
+
+        self.assertEqual([provider for provider, _payload in attempts], ["openai", "deepseek"])
+        self.assertEqual(result.text, "Recovered by DeepSeek.")
+        self.assertEqual(result.provider_name, "deepseek")
+        self.assertEqual(result.model_name, "deepseek-v4-pro")
+        self.assertEqual(result.provider_model_name, "deepseek:deepseek-v4-pro")
+        deepseek_payload = attempts[-1][1]
+        self.assertEqual(deepseek_payload["model"], "deepseek-v4-pro")
+        self.assertEqual(deepseek_payload["thinking"], {"type": "enabled"})
+        self.assertEqual(deepseek_payload["reasoning_effort"], "high")
+        self.assertEqual(result.prompt_tokens, 11)
+        self.assertEqual(result.completion_tokens, 6)
+
+    def test_invoke_responses_text_uses_deepseek_fallback_when_openai_key_is_missing(self) -> None:
+        attempts: list[str] = []
+
+        def _fake_urlopen(request, timeout):
+            attempts.append(request.full_url)
+            return _FakeResponse(
+                {
+                    "choices": [{"message": {"content": "Fallback without OpenAI key."}}],
+                    "usage": {"prompt_tokens": 5, "completion_tokens": 4},
+                }
+            )
+
+        with patch("backend.services.llm_factory.urllib.request.urlopen", side_effect=_fake_urlopen):
+            result = invoke_responses_text(
+                profile=self._profile_with_deepseek_fallback(api_key=""),
+                system_prompt="system",
+                user_prompt="user",
+            )
+
+        self.assertEqual(attempts, ["https://api.deepseek.com/chat/completions"])
+        self.assertEqual(result.provider_name, "deepseek")
+        self.assertEqual(result.text, "Fallback without OpenAI key.")
+
+    def test_invoke_responses_text_does_not_deepseek_fallback_for_non_retryable_openai_error(self) -> None:
+        attempts: list[str] = []
+
+        def _fake_urlopen(request, timeout):
+            attempts.append(request.full_url)
+            raise urllib.error.HTTPError(
+                url=request.full_url,
+                code=400,
+                msg="Bad Request",
+                hdrs=None,
+                fp=io.BytesIO(b'{"error":{"message":"invalid request"}}'),
+            )
+
+        with patch("backend.services.llm_factory.urllib.request.urlopen", side_effect=_fake_urlopen):
+            with self.assertRaises(LlmInvocationError):
+                invoke_responses_text(
+                    profile=self._profile_with_deepseek_fallback(),
+                    system_prompt="system",
+                    user_prompt="user",
+                )
+
+        self.assertEqual(attempts, ["https://api.openai.com/v1/responses"])
+
+    def test_invoke_responses_text_converts_json_schema_payload_for_deepseek_fallback(self) -> None:
+        attempts: list[dict[str, object]] = []
+
+        def _fake_urlopen(request, timeout):
+            payload = json.loads(request.data.decode("utf-8"))
+            attempts.append(payload)
+            if request.full_url == "https://api.openai.com/v1/responses":
+                raise TimeoutError("The read operation timed out")
+            return _FakeResponse(
+                {
+                    "choices": [{"message": {"content": '{"ok": true}'}}],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 3},
+                }
+            )
+
+        with patch("backend.services.llm_factory.urllib.request.urlopen", side_effect=_fake_urlopen):
+            result = invoke_responses_text(
+                profile=self._profile_with_deepseek_fallback(),
+                system_prompt="Return json.",
+                user_prompt="user",
+                extra_payload={
+                    "max_output_tokens": 64,
+                    "text": {
+                        "format": {
+                            "type": "json_schema",
+                            "name": "sample",
+                            "schema": {"type": "object"},
+                        }
+                    },
+                },
+            )
+
+        self.assertEqual(result.text, '{"ok": true}')
+        deepseek_payload = attempts[-1]
+        self.assertEqual(deepseek_payload["max_tokens"], 64)
+        self.assertEqual(deepseek_payload["response_format"], {"type": "json_object"})
+        self.assertNotIn("text", deepseek_payload)
+        self.assertNotIn("max_output_tokens", deepseek_payload)
+
+    def test_invoke_responses_text_does_not_deepseek_fallback_for_openai_tools_payload(self) -> None:
+        attempts: list[str] = []
+
+        def _fake_urlopen(request, timeout):
+            attempts.append(request.full_url)
+            raise TimeoutError("The read operation timed out")
+
+        with patch("backend.services.llm_factory.urllib.request.urlopen", side_effect=_fake_urlopen):
+            with self.assertRaises(LlmInvocationError):
+                invoke_responses_text(
+                    profile=self._profile_with_deepseek_fallback(),
+                    system_prompt="system",
+                    user_prompt="user",
+                    extra_payload={"tools": [{"type": "web_search"}], "include": ["web_search_call.action.sources"]},
+                )
+
+        self.assertEqual(attempts, ["https://api.openai.com/v1/responses"])
+
     def test_invoke_responses_text_skips_generation_span_without_ambient_trace(self) -> None:
         def _fake_urlopen(request, timeout):
             return _FakeResponse(
@@ -242,6 +413,38 @@ class LlmFactoryTests(unittest.TestCase):
         self.assertEqual(result.model_name, "gpt-5.4")
         self.assertEqual(result.prompt_tokens, 9)
         self.assertEqual(result.completion_tokens, 4)
+
+    def test_invoke_chat_text_falls_back_to_deepseek_after_openai_chat_timeout(self) -> None:
+        attempts: list[str] = []
+
+        def _fake_urlopen(request, timeout):
+            attempts.append(request.full_url)
+            if request.full_url == "https://api.openai.com/v1/chat/completions":
+                raise TimeoutError("The read operation timed out")
+            return _FakeResponse(
+                {
+                    "choices": [{"message": {"content": "Recovered chat by DeepSeek."}}],
+                    "usage": {"prompt_tokens": 8, "completion_tokens": 4},
+                }
+            )
+
+        with patch("backend.services.llm_factory.urllib.request.urlopen", side_effect=_fake_urlopen):
+            result = invoke_chat_text(
+                profile=self._profile_with_deepseek_fallback(api_mode=OPENAI_CHAT_API),
+                system_prompt="system",
+                user_prompt="user",
+            )
+
+        self.assertEqual(
+            attempts,
+            [
+                "https://api.openai.com/v1/chat/completions",
+                "https://api.deepseek.com/chat/completions",
+            ],
+        )
+        self.assertEqual(result.provider_name, "deepseek")
+        self.assertEqual(result.model_name, "deepseek-v4-pro")
+        self.assertEqual(result.text, "Recovered chat by DeepSeek.")
 
 
 if __name__ == "__main__":

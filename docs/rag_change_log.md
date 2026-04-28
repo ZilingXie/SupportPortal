@@ -10,6 +10,38 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-04-28 - Add DeepSeek fallback for RAG LLM stages
+
+- Summary:
+  - Added DeepSeek as an OpenAI-compatible fallback provider for eligible RAG answer, planner, context-compression, sufficiency, query-expansion, and ingestion metadata LLM calls.
+  - Updated RAG model traces, usage ledger writes, and query-expansion prompt model versioning to record the actual fallback provider/model when DeepSeek handles a request.
+- Reason:
+  - RAG runtime should continue through provider/key/transport/rate-limit/server/model-unavailable OpenAI failures when `DEEPSEEK_API_KEY` is configured, without changing retrieval, grounding, or schema behavior.
+- Affected files/config:
+  - `backend/services/llm_profiles.py`
+  - `backend/services/llm_factory.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/rag_context_budget.py`
+  - `backend/services/rag_sufficiency_judge.py`
+  - `backend/services/query_understanding.py`
+  - `backend/services/knowledge_ingestion.py`
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `backend/tests/test_llm_factory.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_token_usage.py`
+  - `backend/tests/test_single_host_compose.py`
+  - `docs/rag_change_log.md`
+  - `docs/prompt_change_log.md`
+- Data impact:
+  - No schema migration, ingestion reset, embedding change, vector-table change, BM25 change, or document backfill is performed.
+  - Existing RAG data remains valid; only runtime model routing and provider/model telemetry can change when OpenAI is unavailable and DeepSeek fallback credentials are present.
+- Verification:
+  - `python3 -m py_compile backend/services/llm_profiles.py backend/services/llm_factory.py backend/services/support_router.py backend/services/auto_deploy_report.py backend/services/product_selection.py backend/services/rag_sufficiency_judge.py backend/services/engineer_agent.py backend/services/troubleshooting_intake.py backend/services/rag_qa.py backend/services/rag_context_budget.py backend/services/knowledge_ingestion.py backend/services/query_understanding.py backend/tests/test_llm_factory.py backend/tests/test_llm_profiles.py backend/tests/test_single_host_compose.py`
+  - `python3 -m unittest backend.tests.test_llm_factory backend.tests.test_llm_profiles backend.tests.test_token_usage backend.tests.test_single_host_compose`
+  - `python3 -m unittest backend.tests.test_auto_deploy_report backend.tests.test_product_selection backend.tests.test_rag_sufficiency_judge backend.tests.test_knowledge_ingestion backend.tests.test_support_router`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_rag_context_budget backend.tests.test_query_understanding backend.tests.test_rag_qa.RagQaHybridTests.test_run_rag_query_exact_error_lookup_uses_light_path_fast_answer_profile_then_falls_back_to_main_model backend.tests.test_rag_qa.RagQaHybridTests.test_run_rag_query_uses_shared_packed_evidence_for_answer_and_trace`
+
 ## 2026-04-27 - Add fully local pgvector runtime for SupportPortal development
 
 - Summary:
