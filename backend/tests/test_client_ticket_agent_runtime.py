@@ -549,8 +549,12 @@ The documentation states that time: 0 means the rule is applied permanently. How
         cancelled: list[str] = []
         payload = {
             "output_text": (
-                "Broadcast Streaming is best for large-scale one-way broadcasting, while "
-                "Interactive Live Streaming is better when hosts and audiences need low-latency interaction."
+                "For broadcasting, the best starting point is to separate one-to-many delivery from "
+                "interactive live experiences.\n\n"
+                "Core products:\n"
+                "- **Broadcast Streaming** — Best for large-scale one-way broadcasting.\n"
+                "- **Interactive Live Streaming** — Best when hosts and audiences need low-latency interaction.\n\n"
+                "If you would like to speak with someone, please use Agora's official Talk to Us / Contact Sales path."
             ),
             "output": [
                 {
@@ -570,8 +574,12 @@ The documentation states that time: 0 means the rule is applied permanently. How
                         {
                             "type": "output_text",
                             "text": (
-                                "Broadcast Streaming is best for large-scale one-way broadcasting, while "
-                                "Interactive Live Streaming is better when hosts and audiences need low-latency interaction."
+                                "For broadcasting, the best starting point is to separate one-to-many delivery from "
+                                "interactive live experiences.\n\n"
+                                "Core products:\n"
+                                "- **Broadcast Streaming** — Best for large-scale one-way broadcasting.\n"
+                                "- **Interactive Live Streaming** — Best when hosts and audiences need low-latency interaction.\n\n"
+                                "If you would like to speak with someone, please use Agora's official Talk to Us / Contact Sales path."
                             ),
                             "annotations": [
                                 {
@@ -610,6 +618,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 ticket_context=[{"role": "customer", "content": self._TK_165_MESSAGE}],
                 product="audio_video_calling",
                 message_id="2026-04-22T00:00:00+00:00",
+                requester="Zac",
                 route_agent=lambda **_kwargs: SupportRouteDecision(
                     scope_label="agora_non_technical",
                     route="web_search",
@@ -648,7 +657,12 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.result.answer_route, "web_search")
         self.assertEqual(execution.result.execution_action, "web_search")
         self.assertEqual(execution.result.route_reason, "agora_product_portfolio")
+        self.assertTrue(execution.result.answer.startswith("Hi Zac,"))
+        self.assertIn("Hope all is well. Thank you for reaching out!", execution.result.answer)
+        self.assertIn("\n- **Broadcast Streaming**", execution.result.answer)
+        self.assertIn("\n- **Interactive Live Streaming**", execution.result.answer)
         self.assertIn("Broadcast Streaming", execution.result.answer)
+        self.assertTrue(execution.result.answer.endswith("Best Regards,\nSid"))
         self.assertEqual(execution.runtime_state.route_agent.get("decision"), "web_search")
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
         self.assertTrue(cancelled)

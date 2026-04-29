@@ -35,13 +35,16 @@ def build_web_search_system_prompt(
         task_lines = [
             "Answer Agora product-overview and product-fit questions using retrieved official Agora product pages.",
             "When the customer mentions broadcasting, start by distinguishing Broadcast Streaming from Interactive Live Streaming and explain the best-fit scenario for each.",
-            "Then group the answer into core products, major services or add-ons, and supporting tools, with one short grounded sentence per item.",
+            "Then group the answer into Core products, Major services or add-ons, and Supporting tools.",
         ]
         output_requirements = [
             "Keep the answer concise, factual, and customer-ready.",
+            "Return only the answer body. Do not include a salutation, opener, signoff, signature, or agent name.",
             "Use official Agora product pages as the source of truth for the overview.",
+            "Use a Markdown bullet list for products and services, with one product or service per bullet line.",
+            "Use the group labels Core products, Major services or add-ons, and Supporting tools when those groups are supported by retrieved sources.",
             "Do not send the customer to Agora Console unless the question explicitly asks about account, project, usage, billing, certificate, or console tasks.",
-            "If the customer asks to connect with someone, add only one closing line pointing to the official Talk to Us or Contact Sales path after the product overview is complete.",
+            "If the customer asks to connect with someone, add only one closing line pointing to the official Talk to Us / Contact Sales path after the product overview is complete.",
             "Do not replace the product overview with a sales handoff.",
         ]
         if official_only:
@@ -50,8 +53,9 @@ def build_web_search_system_prompt(
             "Example 1",
             "Question: We are planning broadcasting and need guidance on Agora products.",
             (
-                "Answer: Start with Broadcast Streaming versus Interactive Live Streaming, then summarize "
-                "the relevant Agora product groups from retrieved official pages, and add a short Talk to Us line only if requested."
+                "Answer: Start with a short Broadcast Streaming versus Interactive Live Streaming paragraph, then use "
+                "Markdown bullet lists under Core products, Major services or add-ons, and Supporting tools. "
+                "Add a short Talk to Us / Contact Sales line only if requested."
             ),
             "",
             "Example 2",

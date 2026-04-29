@@ -133,6 +133,13 @@ class PromptModuleTests(unittest.TestCase):
 
         self.assertIn("Broadcast Streaming", system_prompt)
         self.assertIn("Interactive Live Streaming", system_prompt)
+        self.assertIn("Return only the answer body", system_prompt)
+        self.assertIn("Do not include a salutation", system_prompt)
+        self.assertIn("Markdown bullet list", system_prompt)
+        self.assertIn("one product or service per bullet line", system_prompt)
+        self.assertIn("Core products", system_prompt)
+        self.assertIn("Major services or add-ons", system_prompt)
+        self.assertIn("Supporting tools", system_prompt)
         self.assertIn("Do not send the customer to Agora Console", system_prompt)
         self.assertIn("Talk to Us", system_prompt)
         self.assertIn("## Route Context", user_prompt)

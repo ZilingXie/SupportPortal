@@ -12,6 +12,28 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-04-29 - product portfolio customer reply formatting
+
+- Area or subsystem: Client support routing and non-technical product-portfolio web-search answering
+- Prompt or model version: `web-search-v4 + customer-reply-email-composer-v1`
+- Summary: Tightened product-portfolio web-search output requirements to return body-only Markdown bullet lists and wrapped final customer-facing `web_search` answers in the shared email-style greeting and signoff.
+- Reason: A broadcasting product-overview question returned a dense inline paragraph without `Hi there` / requester greeting and without readable bullet points for Agora products.
+- Affected files or config:
+  - `backend/services/prompts/web_search.py`
+  - `backend/services/support_router.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_support_router.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Product-portfolio web-search prompts now ask for answer-body content only, leaving salutation and signoff to the backend composer.
+  - Broadcasting-oriented product answers preserve Markdown bullet lists with one product or service per line, grouped under core products, major services or add-ons, and supporting tools when source coverage supports those groups.
+  - Final customer-facing `web_search` answers now use `Hi {requester|there},`, the standard grounded-answer opener, and `Best Regards,\nSid`.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest -q backend.tests.test_prompt_modules backend.tests.test_support_router backend.tests.test_client_ticket_agent_runtime`
+  - `python3 -m py_compile backend/services/prompts/web_search.py backend/services/support_router.py backend/services/client_ticket_agent_runtime.py`
+
 ## 2026-04-28 - DeepSeek fallback model routing for core LLM calls
 
 - Area or subsystem: Cross-provider LLM factory and model profile routing
