@@ -875,6 +875,31 @@ def _append_review_trace_ref(review_summary: dict[str, Any], trace_ref: dict[str
     return normalized_trace_ref
 
 
+def _ensure_web_search_customer_reply_email(
+    resolution: SupportResolution,
+    *,
+    workflow_action: str,
+    message: str,
+    requester: str | None = None,
+    customer_id: str | None = None,
+) -> SupportResolution:
+    if (
+        workflow_action != WORKFLOW_ACTION_ANSWER_CUSTOMER
+        or _clean_text(resolution.answer_route).lower() != "web_search"
+    ):
+        return resolution
+    return replace(
+        resolution,
+        answer=_ensure_customer_reply_email(
+            resolution.answer,
+            message=message,
+            requester=requester,
+            customer_id=customer_id,
+            reply_kind="grounded_answer",
+        ),
+    )
+
+
 def _build_default_rag_route_decision(message: str) -> SupportRouteDecision:
     return SupportRouteDecision(
         scope_label="agora_technical",
@@ -1826,18 +1851,26 @@ def execute_client_ticket_agent_runtime(
                 has_active_engineer_case=has_active_engineer_case,
                 decision=route_decision,
             )
+            workflow_action = (
+                WORKFLOW_ACTION_RESOLVE_TICKET
+                if str(route_decision.execution_action or "").strip() == WORKFLOW_ACTION_RESOLVE_TICKET
+                else (
+                    WORKFLOW_ACTION_OPEN_ENGINEER_TICKET
+                    if bool(resolution.needs_engineer_guidance)
+                    else WORKFLOW_ACTION_ANSWER_CUSTOMER
+                )
+            )
+            resolution = _ensure_web_search_customer_reply_email(
+                resolution,
+                workflow_action=workflow_action,
+                message=message,
+                requester=requester,
+                customer_id=customer_id,
+            )
             result = _build_ticket_execution_result(
                 resolution=resolution,
                 needs_investigating=bool(resolution.needs_engineer_guidance),
-                workflow_action=(
-                    WORKFLOW_ACTION_RESOLVE_TICKET
-                    if str(route_decision.execution_action or "").strip() == WORKFLOW_ACTION_RESOLVE_TICKET
-                    else (
-                        WORKFLOW_ACTION_OPEN_ENGINEER_TICKET
-                        if bool(resolution.needs_engineer_guidance)
-                        else WORKFLOW_ACTION_ANSWER_CUSTOMER
-                    )
-                ),
+                workflow_action=workflow_action,
                 investigation_reason=resolution.route_reason if resolution.needs_engineer_guidance else None,
                 next_status=(
                     RESOLVED_STATUS

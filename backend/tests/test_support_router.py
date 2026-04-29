@@ -810,6 +810,68 @@ class AgoraPublicInfoSearchTests(unittest.TestCase):
             answer.sources,
         )
 
+    def test_search_agora_public_info_preserves_product_portfolio_bullet_newlines(self) -> None:
+        payload = {
+            "output_text": (
+                "Core products:\n"
+                "- **[Broadcast Streaming](https://www.agora.io/en/products/broadcast-streaming/)** — Best for large-scale one-way broadcasting.\n"
+                "- **Interactive Live Streaming** — Best for low-latency audience interaction. https://www.agora.io/en/products/interactive-live-streaming/\n\n"
+                "Please use Agora's official Talk to Us / Contact Sales path."
+            ),
+            "output": [
+                {
+                    "type": "web_search_call",
+                    "action": {
+                        "sources": [
+                            {
+                                "url": "https://www.agora.io/en/products/broadcast-streaming/",
+                                "title": "Broadcast Streaming",
+                            }
+                        ]
+                    },
+                },
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": (
+                                "Core products:\n"
+                                "- **[Broadcast Streaming](https://www.agora.io/en/products/broadcast-streaming/)** — Best for large-scale one-way broadcasting.\n"
+                                "- **Interactive Live Streaming** — Best for low-latency audience interaction. https://www.agora.io/en/products/interactive-live-streaming/\n\n"
+                                "Please use Agora's official Talk to Us / Contact Sales path."
+                            ),
+                            "annotations": [
+                                {
+                                    "type": "url_citation",
+                                    "url": "https://www.agora.io/en/products/broadcast-streaming/",
+                                    "title": "Broadcast Streaming",
+                                }
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+            "urllib.request.urlopen",
+            return_value=_FakeResponse(payload),
+        ):
+            answer = search_agora_public_info(
+                SupportRouterTests._TK_165_MESSAGE,
+                response_language="en",
+                route_reason="agora_product_portfolio",
+            )
+
+        self.assertIn("Core products:\n- **Broadcast Streaming**", answer.answer)
+        self.assertIn("\n- **Interactive Live Streaming**", answer.answer)
+        self.assertNotIn("https://", answer.answer)
+        self.assertEqual(
+            answer.citations[0]["source_url"],
+            "https://www.agora.io/en/products/broadcast-streaming/",
+        )
+
     def test_search_agora_public_info_product_portfolio_uses_official_product_domains_only(self) -> None:
         calls: list[dict[str, object]] = []
         payload = {

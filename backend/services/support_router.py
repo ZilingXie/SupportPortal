@@ -268,7 +268,7 @@ def _sanitize_matched_signals(values: list[Any] | tuple[Any, ...] | None) -> lis
 
 
 def _sanitize_web_search_answer_text(text: Any) -> str:
-    sanitized = _normalize_text(text)
+    sanitized = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     if not sanitized:
         return ""
 
@@ -286,7 +286,14 @@ def _sanitize_web_search_answer_text(text: Any) -> str:
         sanitized = re.sub(r"\[\s*\]", "", sanitized)
 
     sanitized = re.sub(r"\s+([,.;:!?])", r"\1", sanitized)
-    return _normalize_text(sanitized)
+    lines = []
+    for line in sanitized.split("\n"):
+        normalized_line = re.sub(r"[ \t\f\v]+", " ", line).strip()
+        normalized_line = re.sub(r"\s+([,.;:!?])", r"\1", normalized_line)
+        lines.append(normalized_line)
+    sanitized = "\n".join(lines)
+    sanitized = re.sub(r"\n{3,}", "\n\n", sanitized).strip()
+    return sanitized
 
 
 def _response_language(message: str) -> str:
