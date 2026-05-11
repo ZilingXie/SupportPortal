@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from backend.services.knowledge_ingestion import (
@@ -13,6 +14,7 @@ from backend.services.knowledge_ingestion import (
     parse_official_markdown_content,
     parse_technical_article,
 )
+from backend.services.llm_profiles import KNOWLEDGE_INGESTION_SCENARIO, ModelProfile, OPENAI_CHAT_API
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEPLOY_TOKEN_SERVER_DOC = REPO_ROOT / "ag_docs" / "video-calling_deploy-token-server.md"
@@ -595,6 +597,38 @@ class KnowledgeIngestionParsingTests(unittest.TestCase):
         self.assertEqual(meta_info["metadata_source"], "rule")
         self.assertEqual(metadata["metadata_source"], "rule")
         invoke_chat_text.assert_not_called()
+
+    def test_metadata_enrichment_records_resolved_profile_model_when_llm_succeeds(self) -> None:
+        document = parse_technical_article(
+            title="Livestream archive missing first 64 seconds",
+            content=SAMPLE_TECHNICAL_ARTICLE,
+            source_url="https://internal.example.com/kb/stream-start-delay",
+            ingestion_id="KI-TEST-TECHNICAL-META-SUCCESS",
+        )
+        profile = ModelProfile(
+            scenario=KNOWLEDGE_INGESTION_SCENARIO,
+            provider="openai",
+            model="gpt-test-metadata",
+            api_mode=OPENAI_CHAT_API,
+            api_key="test-key",
+        )
+
+        with patch(
+            "backend.services.knowledge_ingestion.resolve_model_profile",
+            return_value=profile,
+        ), patch(
+            "backend.services.knowledge_ingestion.invoke_chat_text",
+            return_value=SimpleNamespace(
+                text='{"summary":"LLM summary","tags":["latency"],"symptoms":["missing archive"]}',
+            ),
+        ) as invoke_chat_text:
+            metadata, meta_info = _enrich_metadata_with_llm(document)
+
+        self.assertEqual(meta_info["metadata_source"], "merged")
+        self.assertEqual(meta_info["metadata_model"], "gpt-test-metadata")
+        self.assertEqual(metadata["metadata_model"], "gpt-test-metadata")
+        self.assertEqual(metadata["summary"], "LLM summary")
+        invoke_chat_text.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -10,6 +10,24 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-11 - Fix technical article ingestion metadata model telemetry
+
+- Summary:
+  - Fixed the knowledge metadata enrichment success path so it records the resolved `ModelProfile.model` instead of referencing a removed local `config` dictionary.
+  - Added a regression test that exercises successful technical-article metadata enrichment and verifies the stored `metadata_model`.
+- Reason:
+  - Production n8n uploads to `/api/engineer/knowledge/articles` failed during technical article ingestion with `name 'config' is not defined` after the ingestion metadata LLM call succeeded.
+- Affected files/config:
+  - `backend/services/knowledge_ingestion.py`
+  - `backend/tests/test_knowledge_ingestion.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No schema migration, ingestion reset, embedding change, vector-table change, BM25 change, or document backfill is performed.
+  - Existing RAG data remains valid; the fix only restores successful metadata-enrichment telemetry for new ingestions.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest -q backend.tests.test_knowledge_ingestion.KnowledgeIngestionParsingTests.test_metadata_enrichment_records_resolved_profile_model_when_llm_succeeds`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest -q backend.tests.test_knowledge_ingestion backend.tests.test_rag_api`
+
 ## 2026-04-28 - Add DeepSeek fallback for RAG LLM stages
 
 - Summary:
