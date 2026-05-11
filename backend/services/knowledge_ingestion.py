@@ -1646,7 +1646,7 @@ def _enrich_metadata_with_llm(
     merged = _merge_metadata(base_metadata, parsed)
     meta_info = {
         "metadata_source": "merged",
-        "metadata_model": config["chat_model"],
+        "metadata_model": _clean_text(profile.model) or None,
         "metadata_generated_at": _clean_text(document.cleaning_report.get("generated_at")) or None,
         "metadata_version": _PARSER_VERSION,
     }
