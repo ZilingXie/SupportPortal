@@ -12,6 +12,8 @@ Unlike a traditional ticketing system that mainly records and routes issues, Sup
 4. Let engineers review, assist, or take over complex cases.
 5. Give managers and operators visibility into ticket history, runtime events, RAG evidence, and benchmark quality.
 
+<img src="docs/assets/readme/client-workspace-home.png" alt="SupportPortal client workspace home with active ticket queue and Agora service events" width="900">
+
 ## Core Capabilities
 
 ### Client Support Flow
