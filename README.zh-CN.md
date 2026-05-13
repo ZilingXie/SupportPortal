@@ -65,6 +65,32 @@ SupportPortal 是一个面向技术支持场景的 AI 辅助支持平台，用�
 - benchmark 流程提供分层诊断和失败归因。
 - token 用量按 provider/model 统计，并为 future-ready usage ledger 做准备。
 
+## 项目截图
+
+### Client 工单流程
+
+<img src="docs/assets/readme/client-ticket-flow.png" alt="Client 工单流程，包含客户问题、AI 回复、工单信息和知识引用" width="900">
+
+Client 页面展示已解决客户工单、AI 辅助回复、工单信息和知识引用，便于客户在同一个工作区内跟踪问题。
+
+### Engineer 升级协同
+
+<img src="docs/assets/readme/engineer-escalation.png" alt="Engineer 升级协同页面，包含工程师调查线程和客户时间线" width="900">
+
+Engineer 页面将工程师调查线程和客户侧时间线并排展示，便于处理需要人工判断的升级问题。
+
+### Ticket Dashboard
+
+<img src="docs/assets/readme/ticket-dashboard.png" alt="Ticket Dashboard，包含工单量、解决率、队列健康和升级关注信号" width="900">
+
+Ticket Dashboard 面向管理和运营侧，展示队列健康、工作量、解决率和升级关注信号。
+
+### RAG Workbench
+
+<img src="docs/assets/readme/rag-workbench.png" alt="RAG Workbench，包含 benchmark 筛选、scorecard 区域和 token summary" width="900">
+
+RAG Workbench 支持 benchmark 复盘、基于筛选条件的诊断，以及检索和生成质量分析。
+
 ## 用户页面
 
 本地开发默认单机栈提供以下入口：

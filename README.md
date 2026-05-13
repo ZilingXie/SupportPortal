@@ -65,6 +65,32 @@ The project is ready for the next validation phase: real support scenarios, stab
 - The benchmark workflow provides layered diagnostics and failure attribution.
 - Token usage is tracked by provider/model and is prepared for a future usage ledger.
 
+## Screenshots
+
+### Client Ticket Flow
+
+<img src="docs/assets/readme/client-ticket-flow.png" alt="Client ticket flow with customer question, AI response, ticket metadata, and knowledge references" width="900">
+
+The client surface shows a resolved customer ticket, AI-assisted response, ticket metadata, and knowledge references in one workspace.
+
+### Engineer Escalation
+
+<img src="docs/assets/readme/engineer-escalation.png" alt="Engineer escalation workspace with engineer ticket thread and customer timeline" width="900">
+
+The engineer surface shows how escalated cases keep the engineer investigation thread next to the customer-facing timeline.
+
+### Ticket Dashboard
+
+<img src="docs/assets/readme/ticket-dashboard.png" alt="Ticket dashboard with ticket volume, resolution rate, queue health, and escalation watch" width="900">
+
+The ticket dashboard gives operators a management view of queue health, workload, resolution rate, and escalation signals.
+
+### RAG Workbench
+
+<img src="docs/assets/readme/rag-workbench.png" alt="RAG workbench with benchmark filters, scorecard area, and token summary section" width="900">
+
+The RAG workbench supports benchmark review, filter-driven diagnostics, and quality analysis for retrieval and generation behavior.
+
 ## User Surfaces
 
 For local development, the default single-host stack exposes:
