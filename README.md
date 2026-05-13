@@ -1,73 +1,133 @@
 # SupportPortal
 
-SupportPortal 是一个技术支持工单系统，包含三端：
-1. 客户端（`/client/`）
-2. 工程师端（`/engineer/`）
-3. 管理员端（`/dashboard/`）
+[English](README.md) | [中文](README.zh-CN.md)
 
-当前仓库已落地单机可运行架构：
-1. `api`：FastAPI（REST + 静态页面托管）
-2. `ws_gateway`：独立 WebSocket 网关
-3. `worker`：异步任务处理（RAG/AI 查询）
-4. `redis`：任务队列 + 事件总线
-5. `postgres`：工单存储（可扩展 pgvector）
-6. `nginx`：统一入口反向代理
+SupportPortal is an AI-assisted technical support platform for managing customer questions, automated answers, engineer collaboration, and operational visibility in one workflow.
 
-## 本地运行（Podman）
+Unlike a traditional ticketing system that mainly records and routes issues, SupportPortal is designed to help a support team:
 
-### 前置条件
-1. 已安装 Podman + `podman-compose`
-2. 已初始化并启动 podman machine
+1. Turn every customer question into a trackable ticket.
+2. Use routing and RAG to answer supported technical questions when evidence is sufficient.
+3. Escalate uncertain or troubleshooting-heavy cases to engineers with useful context.
+4. Let engineers review, assist, or take over complex cases.
+5. Give managers and operators visibility into ticket history, runtime events, RAG evidence, and benchmark quality.
 
-### 启动步骤
+## Current Status
+
+The current POC has validated the end-to-end support loop:
+
+1. A customer submits a question from the client surface.
+2. The system creates or updates a ticket.
+3. The agent classifies the request, retrieves evidence when appropriate, and drafts a response.
+4. Cases with insufficient evidence or troubleshooting requirements are escalated to engineers.
+5. Engineers can provide guidance or take over the conversation.
+6. Dashboards expose ticket state, timelines, runtime events, RAG evidence, and benchmark diagnostics.
+
+The project is ready for the next validation phase: real support scenarios, stability checks, operational metrics, and production-readiness work.
+
+## Core Capabilities
+
+### Client Support Flow
+
+- Customer questions automatically create tickets.
+- The system routes small talk, non-Agora questions, Agora non-technical questions, and Agora technical questions differently.
+- Technical questions can be answered through the RAG workflow when retrieved evidence is sufficient.
+- Troubleshooting questions can collect missing information before escalation.
+- Client conversations support interruption and resend behavior for the same ticket, while different tickets can wait for AI responses concurrently.
+- Client and Engineer share a rich text composer with markdown-safe rendering.
+
+### Engineer Collaboration
+
+- Escalated tickets enter the engineer task pool.
+- Engineers can work in managed mode, where they provide guidance and AI replies to the customer.
+- Engineers can also take over the conversation directly.
+- Engineer investigations follow a ticket lifecycle and can return reviewed drafts to the customer.
+
+### Ticket Dashboard
+
+- The dashboard shows all tickets, ticket details, timelines, and live event streams.
+- Ticket details include token usage summaries by ticket family.
+- Ticket details expose client agent runtime summaries and recent agent events.
+- RAG replies can expand retrieval plans, execution rounds, and final evidence.
+
+### RAG Dashboard
+
+- The RAG dashboard can sync local benchmark datasets.
+- It can run benchmark sessions and compare run/session diagnostics.
+- It shows query understanding, candidate funnels, judge disagreement, token usage, and provider/model breakdowns.
+- It supports live and benchmark case replay, sample review, and result export.
+
+### RAG and Knowledge
+
+- Engineers can upload knowledge for ingestion.
+- The system uses hybrid retrieval, reranking, metadata pruning, and context-budgeted evidence compression.
+- Query expansion can use dictionaries, LLM expansion, and PRF.
+- The benchmark workflow provides layered diagnostics and failure attribution.
+- Token usage is tracked by provider/model and is prepared for a future usage ledger.
+
+## User Surfaces
+
+For local development, the default single-host stack exposes:
+
+1. Client: [http://localhost:8080/client/](http://localhost:8080/client/)
+2. Engineer: [http://localhost:8080/engineer/](http://localhost:8080/engineer/)
+3. Ticket Dashboard: [http://localhost:8080/dashboard/](http://localhost:8080/dashboard/)
+4. RAG Workbench: [http://localhost:8080/dashboard/rag/](http://localhost:8080/dashboard/rag/)
+5. Health Check: [http://localhost:8080/health](http://localhost:8080/health)
+
+An online deployment is available. Contact the project maintainer for the deployment entry points and account information.
+
+## Local Run Guide
+
+### Prerequisites
+
+1. Podman and `podman-compose` are installed.
+2. The Podman machine has been initialized.
+
+### Start the Single-Host Stack
 
 ```bash
 cd /Users/xieziling/Desktop/personal_proj/SupportPortal
 cp .env.example .env 2>/dev/null || true
 cp .env.local.example .env.local 2>/dev/null || true
 
-# 本地 rootless Podman 默认使用 8080
-# 确保 .env.local 中有：NGINX_HOST_PORT=8080
+# Rootless Podman uses port 8080 locally.
+# Ensure .env.local contains: NGINX_HOST_PORT=8080
 
 podman machine start
 export PODMAN_COMPOSE_PROVIDER=podman-compose
 
-# 官方单机重启入口：显式启用 .env.local 后走 local_lightweight + 本地 Postgres/pgvector
+# Official local single-host entry point:
+# with .env.local enabled, this starts local_lightweight + local Postgres/pgvector.
 bash scripts/workflow/restart_single_host_stack.sh --use-local-env
 
-# 检查官方 deployment 栈和 build provenance 是否一致
+# Confirm the official deployment stack and build provenance.
 bash scripts/workflow/inspect_single_host_stack_mode.sh
 ```
 
-说明：
-1. 官方本地单机栈只有 `deployment`；如果看到 `deploymentlw`，先执行 `bash scripts/workflow/cleanup_single_host_aux_stack.sh`。
-2. 重启脚本会把运行镜像固定到当前根 `main` 的 `app_build.ref`，避免旧 checkout 继续处理新 ticket。
-3. `restart_single_host_stack.sh` 是唯一官方推荐入口；不传 `--use-local-env` 时只读取 `.env`，默认是 `full + remote DB`。
-4. 本地开发默认使用 `bash scripts/workflow/restart_single_host_stack.sh --use-local-env`：这会叠加 `.env.local`，按 `local_lightweight + local DB` 启动本地 `pgvector/pgvector:pg16`。
-5. 如果你明确要复用线上/RDS 数据库调试，使用 `bash scripts/workflow/restart_single_host_stack.sh --use-local-env --db remote`。
-6. `restart_single_host_lightweight_stack.sh` 和 `restart_single_host_local_stack.sh` 仍可用，但只是兼容 wrapper，不再是主推荐入口。
+Notes:
 
-### 访问地址
-1. 客户端: [http://localhost:8080/client/](http://localhost:8080/client/)
-2. 工程师端: [http://localhost:8080/engineer/](http://localhost:8080/engineer/)
-3. 管理端（Ticket Dashboard）: [http://localhost:8080/dashboard/](http://localhost:8080/dashboard/)
-4. RAG Workbench: [http://localhost:8080/dashboard/rag/](http://localhost:8080/dashboard/rag/)
-5. 健康检查: [http://localhost:8080/health](http://localhost:8080/health)
+1. The official local single-host stack is `deployment`. If `deploymentlw` appears, clean it with `bash scripts/workflow/cleanup_single_host_aux_stack.sh`.
+2. The restart script pins the running image to the current root `main` `app_build.ref`, so old checkouts do not continue processing new tickets.
+3. `restart_single_host_stack.sh` is the recommended entry point. Without `--use-local-env`, it reads only `.env` and defaults to `full + remote DB`.
+4. For local development, use `bash scripts/workflow/restart_single_host_stack.sh --use-local-env` to layer `.env.local` and run `local_lightweight + local DB`.
+5. To debug against a remote/RDS database, use `bash scripts/workflow/restart_single_host_stack.sh --use-local-env --db remote`.
+6. `restart_single_host_lightweight_stack.sh` and `restart_single_host_local_stack.sh` remain compatibility wrappers.
 
-### 常用命令
+### Common Commands
 
 ```bash
-# 状态
+# Inspect status
 bash scripts/workflow/inspect_single_host_stack_mode.sh
 
-# 日志
+# Follow service logs
 podman-compose \
   -f deployment/docker-compose.single-host.yml \
   -f deployment/docker-compose.single-host.local-lightweight.yml \
   -f deployment/docker-compose.single-host.local-db.yml \
   logs -f api rag_api rag_worker ws_gateway worker_query worker_aux nginx local_postgres
 
-# 停止
+# Stop the local stack
 podman-compose \
   -f deployment/docker-compose.single-host.yml \
   -f deployment/docker-compose.single-host.local-lightweight.yml \
@@ -75,96 +135,91 @@ podman-compose \
   down
 ```
 
-## 更新代码后如何生效
+## Applying Code Changes Locally
 
-1. 修改了 `backend/`、`ui/client-ui/`、`ui/engineer-ui/`、`ui/dashboard-ui/`：
+1. After changing `backend/`, `ui/client-ui/`, `ui/engineer-ui/`, or `ui/dashboard-ui/`:
 
 ```bash
 bash scripts/workflow/restart_single_host_stack.sh --use-local-env
 bash scripts/workflow/inspect_single_host_stack_mode.sh
 ```
 
-2. 只修改了 Nginx 配置（`deployment/nginx/supportportal.conf`）：
+2. After changing only Nginx config in `deployment/nginx/supportportal.conf`:
 
 ```bash
 podman-compose -f deployment/docker-compose.single-host.yml restart nginx
 ```
 
-3. 修改了 `.env.local` 或本地 DB/RAG 配置：
+3. After changing `.env.local` or local DB/RAG config:
 
 ```bash
 bash scripts/workflow/restart_single_host_stack.sh --use-local-env
 ```
 
-4. 修改了 `.env` 且仍在使用线上/RDS lightweight 路径：
+4. After changing `.env` while still using the remote DB lightweight path:
 
 ```bash
 bash scripts/workflow/restart_single_host_stack.sh --use-local-env --db remote
 ```
 
-## 常见问题
+## Troubleshooting
 
-1. `localhost refused to connect` 但 `health` 正常：
-   - 通常是访问了 `http://localhost/client`（80端口）而不是 `8080`。
-   - 请使用带端口地址，如 `http://localhost:8080/client/`。
+1. `localhost refused to connect` while `/health` succeeds:
+   - You may be visiting `http://localhost/client` on port 80.
+   - Use `http://localhost:8080/client/`.
 
-2. `rootlessport cannot expose privileged port 80`：
-   - rootless Podman 不能绑定 80。
-   - 本地使用 `NGINX_HOST_PORT=8080`。
+2. `rootlessport cannot expose privileged port 80`:
+   - Rootless Podman cannot bind port 80.
+   - Use `NGINX_HOST_PORT=8080` locally.
 
-3. `podman compose` 调到 `docker-compose`：
-   - 执行 `export PODMAN_COMPOSE_PROVIDER=podman-compose`。
+3. `podman compose` falls back to `docker-compose`:
+   - Run `export PODMAN_COMPOSE_PROVIDER=podman-compose`.
 
-4. `pip` 相关 SSL/timeout 抖动：
-   - 重试 `podman-compose ... build api`。
-   - 当前 Dockerfile 已加入安装重试逻辑。
+4. `pip` SSL or timeout flakiness during builds:
+   - Retry the failing build command.
+   - The Dockerfile includes install retry logic.
 
-5. 源码已经更新，但线上行为像旧逻辑：
-   - 先跑 `bash scripts/workflow/inspect_single_host_stack_mode.sh`。
-   - 如果脚本报 auxiliary stack 或 build provenance mismatch，先清理 stray `deploymentlw` 并从根 `main` 重新执行官方重启脚本。
+5. Source code has changed, but runtime behavior looks stale:
+   - Run `bash scripts/workflow/inspect_single_host_stack_mode.sh`.
+   - If it reports an auxiliary stack or build provenance mismatch, clean `deploymentlw` and restart from the root `main` workspace.
 
-6. 想让 host-side ingestion 或排查脚本写入本地 pgvector：
-   - 使用 `bash scripts/workflow/run_with_local_db_env.sh -- <command>` 包裹命令。
-   - 该 helper 会给 host 进程导出 `127.0.0.1:${LOCAL_POSTGRES_HOST_PORT}` DSN；容器内仍使用 `local_postgres:5432`。
+6. Host-side ingestion or diagnostics need to write to local pgvector:
+   - Wrap the command with `bash scripts/workflow/run_with_local_db_env.sh -- <command>`.
+   - The helper exports a host DSN using `127.0.0.1:${LOCAL_POSTGRES_HOST_PORT}` while containers continue using `local_postgres:5432`.
 
-## EC2 部署（Docker）
-
-EC2 上继续使用 Docker（不是 Podman）。
-详细步骤见：
-- [docs/deploy_single_host_ec2.md](/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/deploy_single_host_ec2.md)
-
-## 架构文档
-
-- 业务架构与三端交互：
-  [docs/support_system_architecture.md](/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/support_system_architecture.md)
-
-## 项目目录
+## Project Layout
 
 ```text
-backend/       # FastAPI backend + worker + ws gateway
+backend/        # FastAPI backend, workers, ws gateway, repositories, services
 ui/
-  client-ui/   # 客户端 UI（含 next-prototype/ 历史原型）
-  engineer-ui/ # 工程师端 UI
-  dashboard-ui/# 管理端 UI（`/dashboard/` + `/dashboard/rag/`）
-deployment/    # compose 与 nginx 配置
-docs/          # 文档
+  client-ui/    # Client support UI
+  engineer-ui/  # Engineer task and investigation UI
+  dashboard-ui/ # Ticket Dashboard and RAG Workbench
+deployment/     # Compose, Nginx, systemd, and EC2 deployment assets
+docs/           # Architecture, product, RAG, deployment, and change-log docs
+benchmarks/     # Local benchmark datasets
+scripts/        # Workflow, ingestion, benchmark, and verification scripts
 ```
 
-## Agora 官方文档抓取与端点入库
+## Key Documents
 
-仓库提供了一个手动运行的脚本，用于：
-1. 从 Agora 英文站点发现官方文档 URL。
-2. 下载对应的 Markdown 文件到 `local_knowledge/official/raw/`。
-3. 默认把下载得到的 `.md` 文件上传到 `https://support.stellarix.space` 的官方文档端点。
-4. 由 RAG 端点完成规范化、`primary/shadow` 双轨切片、BGE Large 向量化和落库。
+- Business architecture and three-surface flow: [docs/support_system_architecture.md](docs/support_system_architecture.md)
+- EC2 deployment guide: [docs/deploy_single_host_ec2.md](docs/deploy_single_host_ec2.md)
+- Canonical feature list: [docs/feature_list.md](docs/feature_list.md)
+- RAG retrieval chain: [docs/rag_retrieval_chain.md](docs/rag_retrieval_chain.md)
+- RAG change log: [docs/rag_change_log.md](docs/rag_change_log.md)
+- Prompt/model change log: [docs/prompt_change_log.md](docs/prompt_change_log.md)
+- UI design source of truth: [design.md](design.md)
 
-运行方式：
+## Official Documentation Ingestion
+
+The repository includes a manual script for discovering Agora English documentation, downloading Markdown files, and uploading them to the configured knowledge ingestion endpoint.
 
 ```bash
 python scripts/fetch_and_upload_agora_docs.py
 ```
 
-常用参数：
+For local rebuilds, pass the local API explicitly:
 
 ```bash
 python scripts/fetch_and_upload_agora_docs.py \
@@ -173,15 +228,16 @@ python scripts/fetch_and_upload_agora_docs.py \
   --download-workers 8
 ```
 
-说明：
-1. `local_knowledge/official/raw/` 每次运行都会先全量重建。
-2. 本地重建时显式传 `--api-base-url http://localhost:8080`，避免误把官方文档上传到远端环境。
-3. 运行结束后会在 `local_knowledge/official/raw/_sync_report.json` 写入下载和 ingestion 结果汇总。
-4. `local_knowledge/` 已加入 `.gitignore`，作为本地生成产物保留。
+Notes:
 
-## Local Embedding / Dual-Track Chunking
+1. `local_knowledge/official/raw/` is rebuilt on each run.
+2. Use `--api-base-url http://localhost:8080` during local rebuilds to avoid uploading to a remote environment by accident.
+3. The script writes a download and ingestion report to `local_knowledge/official/raw/_sync_report.json`.
+4. `local_knowledge/` is ignored by git and should remain a local generated artifact.
 
-默认向量化配置已经切到 SiliconFlow BGE M3 Embedding：
+## RAG Configuration Summary
+
+The default embedding path uses SiliconFlow BGE M3 Embedding:
 
 ```env
 EMBEDDING_PROVIDER=siliconflow
@@ -200,22 +256,30 @@ SHADOW_CHUNK_ENABLED=true
 LOCAL_KNOWLEDGE_ROOT=local_knowledge
 ```
 
-说明：
-1. `support_knowledge_documents` 继续保存 canonical 文档结构和 `primary` 统计。
-2. `support_knowledge_chunk_runs` / `support_knowledge_chunk_traces` 会额外记录双轨切片过程数据，供后续优化使用。
-3. 在线检索链路为 `vector + true BM25 + RRF + metadata prune + rerank`，并且只会召回 `index_role='primary'` 的 chunk。详细说明见 [docs/rag_retrieval_chain.md](/Users/xieziling/Desktop/personal_proj/SupportPortal/docs/rag_retrieval_chain.md)。
-4. 技术文档推荐由 `n8n` 直接写入 `support_knowledge_source_documents`，再执行 `python scripts/ingest_local_knowledge_sources.py --source-system n8n --knowledge-type technical` 做本地增量入库。
-5. `KNOWLEDGE_BM25_BACKFILL_ON_INIT` 默认应保持 `true`；仅在像官方文档全量重建这种 deferred-BM25 replay 场景下，才临时设置为 `false`，避免 `repository.initialize()` 在 worker 启动前先触发整库 BM25 backfill。
+The online retrieval chain is:
+
+```text
+vector + true BM25 + RRF + metadata prune + rerank
+```
+
+Only chunks with `index_role='primary'` are recalled online. Canonical document structure is stored in `support_knowledge_documents`; chunk run and trace data is stored in `support_knowledge_chunk_runs` and `support_knowledge_chunk_traces`.
+
+Technical documents can be written by `n8n` into `support_knowledge_source_documents`, then ingested locally:
+
+```bash
+python scripts/ingest_local_knowledge_sources.py --source-system n8n --knowledge-type technical
+```
 
 ## Intent Routing
 
-客户消息在进入 RAG 前会先做问题范围识别：
-1. `small_talk`：闲聊/天气/问候，直接拒答。
-2. `non_agora`：非 Agora 问题，直接拒答。
-3. `agora_non_technical`：Agora 相关但非技术问题，走 OpenAI Responses API 的 web search。
-4. `agora_technical`：Agora 技术问题，继续走现有 RAG 链路。
+Customer messages are routed before entering the RAG workflow:
 
-相关环境变量：
+1. `small_talk`: greeting, weather, or casual chat; rejected as out of support scope.
+2. `non_agora`: non-Agora question; rejected as out of scope.
+3. `agora_non_technical`: Agora-related but not technical; handled through OpenAI Responses API web search.
+4. `agora_technical`: Agora technical question; handled through the RAG workflow.
+
+Relevant environment variables:
 
 ```env
 INTENT_ROUTER_MODEL=gpt-4o-mini
@@ -227,21 +291,30 @@ OPENAI_WEB_SEARCH_TIMEOUT_SECONDS=12.0
 
 ## Local-First Benchmark Workflow
 
-RAG benchmark 现在以本地 `benchmarks/*.json` 文件为唯一事实来源，dataset tables 只作为镜像库存给 `/dashboard/rag/` 的 `Data Supply` 页面和审计流程使用。
-
-常用命令：
+RAG benchmark datasets use local `benchmarks/*.json` files as the source of truth. Dataset tables mirror those files for the `/dashboard/rag/` Data Supply page and audit flow.
 
 ```bash
-# 1. 将本地 benchmark catalog 镜像到 dataset tables
+# Mirror the local benchmark catalog into dataset tables.
 ./.venv/bin/python scripts/sync_local_benchmarks.py
 
-# 2. 从本地 benchmark 文件直接运行 benchmark
+# Run a benchmark directly from a local dataset file.
 ./.venv/bin/python scripts/run_rag_benchmark.py \
   --dataset benchmarks/agora_rag_testset_100_mixed_en.json \
   --experiment-id agora_mixed_en_local
 ```
 
-说明：
-1. `scripts/run_rag_benchmark.py` 只接受 `--dataset`；`--dataset-id` 和 `--suite` 已停用。
-2. `Data Supply -> Benchmark Supply` 的 `Sync Local Benchmarks` 只负责把本地 benchmark 文件镜像到 dataset tables，不会改变 benchmark 运行入口。
-3. benchmark 文件当前使用 NDJSON，每行一个 case，并且已经升级为显式 route-aware contract。
+Notes:
+
+1. `scripts/run_rag_benchmark.py` accepts `--dataset`; `--dataset-id` and `--suite` are deprecated.
+2. `Data Supply -> Benchmark Supply -> Sync Local Benchmarks` mirrors local files to dataset tables but does not change the benchmark execution entry point.
+3. Benchmark files use NDJSON, with one case per line, and follow an explicit route-aware contract.
+
+## POC Gaps and Next Focus
+
+The POC has not yet completed the production-readiness work needed for a broad rollout. The next phase should focus on:
+
+1. File and image upload for complex support conversations.
+2. Streaming answer output.
+3. Answer quality and knowledge hit-rate improvement.
+4. Stability, load, and queue-depth validation.
+5. Operational metrics and alerting for response latency, escalation rate, retrieval quality, and service health.
