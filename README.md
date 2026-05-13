@@ -12,19 +12,6 @@ Unlike a traditional ticketing system that mainly records and routes issues, Sup
 4. Let engineers review, assist, or take over complex cases.
 5. Give managers and operators visibility into ticket history, runtime events, RAG evidence, and benchmark quality.
 
-## Current Status
-
-The current POC has validated the end-to-end support loop:
-
-1. A customer submits a question from the client surface.
-2. The system creates or updates a ticket.
-3. The agent classifies the request, retrieves evidence when appropriate, and drafts a response.
-4. Cases with insufficient evidence or troubleshooting requirements are escalated to engineers.
-5. Engineers can provide guidance or take over the conversation.
-6. Dashboards expose ticket state, timelines, runtime events, RAG evidence, and benchmark diagnostics.
-
-The project is ready for the next validation phase: real support scenarios, stability checks, operational metrics, and production-readiness work.
-
 ## Core Capabilities
 
 ### Client Support Flow
