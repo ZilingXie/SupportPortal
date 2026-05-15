@@ -1,0 +1,4 @@
+interface:
+  display_name: "SupportPortal Run Report"
+  short_description: "Batch trace timing and answer chain across real_case questions."
+  default_prompt: "Use $supportportal-run-report to run a combined SupportPortal timing and answer-chain report across the repo real_case question set."
