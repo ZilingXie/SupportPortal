@@ -2418,6 +2418,79 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.result.investigation_reason, "rag_processing_timeout")
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "skipped")
 
+    def test_rag_completed_with_insufficient_evidence_routes_into_review_agent_clarification(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        review_modes: list[str] = []
+
+        def _review_agent(**kwargs: object) -> TroubleshootingIntakeResult:
+            review_modes.append(str(kwargs.get("mode") or ""))
+            rag_result = kwargs.get("rag_result")
+            self.assertIsInstance(rag_result, dict)
+            self.assertEqual(rag_result["reason"], "rag_completed_with_insufficient_evidence")
+            return TroubleshootingIntakeResult(
+                issue_mode="answer",
+                known_information={"endpoint_hint": "updateLayout"},
+                missing_information=["exact endpoint"],
+                ready_for_engineer_ticket=False,
+                customer_reply="Could you confirm the exact endpoint and whether this payload is for start or updateLayout?",
+            )
+
+        execution = execute_client_ticket_agent_runtime(
+            message='Why does this request body fail? {"clientRequest":{"layoutConfig":[]}}',
+            ticket_id="TK-RAG-COMPLETED-INSUFFICIENT-1",
+            customer_id="C-001",
+            ticket_subject="Cloud Recording request body",
+            ticket_context=[
+                {
+                    "role": "customer",
+                    "content": 'Why does this request body fail? {"clientRequest":{"layoutConfig":[]}}',
+                }
+            ],
+            product="cloud_recording",
+            message_id="2026-04-04T00:00:00+00:00",
+            route_agent=lambda **_kwargs: SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                confidence=0.94,
+                reason="technical_question",
+                matched_signals=["request body"],
+                response_language="en",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+            ),
+            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                answer="RAG completed but could not verify a customer-safe grounded answer from the available schema evidence.",
+                confidence=0.42,
+                sources=[],
+                citations=[],
+                needs_engineer_guidance=True,
+                reason="rag_completed_with_insufficient_evidence",
+                evidence_summary={
+                    "quality_signals": {
+                        "needs_human": True,
+                        "handoff_reason": "insufficient_evidence",
+                    },
+                    "missing_evidence": ["exact layoutConfig schema not found"],
+                },
+                packed_evidence=None,
+            ),
+            review_agent=_review_agent,
+            rag_canceler=None,
+        )
+
+        self.assertEqual(review_modes, ["rag_insufficient_evidence"])
+        self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
+        self.assertEqual(
+            execution.result.client_intake_state["pending_investigation_reason"],
+            "rag_completed_with_insufficient_evidence",
+        )
+        self.assertEqual(execution.runtime_state.review_agent.get("status"), "completed")
+        self.assertNotEqual(execution.result.investigation_reason, "rag_processing_timeout")
+        self.assertIn("confirm the exact endpoint", execution.result.answer.lower())
+
     def test_troubleshooting_rag_processing_timeout_routes_into_intake_clarification(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
 

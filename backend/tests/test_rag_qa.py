@@ -23,6 +23,7 @@ from backend.services.rag_qa import (
     _get_rag_config,
     _raise_if_cancelled,
     _metadata_rerank,
+    _merge_request_body_evidence_into_final_chunks,
     probe_customer_rag_index_readiness,
     _retrieve_bm25_chunks,
     _rerank_chunks,
@@ -31,7 +32,13 @@ from backend.services.rag_qa import (
     _select_diverse_chunks,
     _select_bm25_query_terms,
     _split_table_name,
+    _format_context,
     run_rag_query,
+)
+from backend.services.rag_request_body_evidence import (
+    RequestBodyEvidenceChunk,
+    RequestBodyEvidenceQuery,
+    RequestBodyEvidenceResult,
 )
 from backend.services.query_understanding import QueryUnderstandingResult, RetrievalPlan, downpush_hard_filters
 
@@ -130,6 +137,77 @@ The documentation states that time: 0 means the rule is applied permanently. How
             config = _get_rag_config(top_k=6)
 
         self.assertFalse(config["shadow_retrieval_enabled"])
+
+    def test_request_body_evidence_merge_preserves_schema_over_release_notes(self) -> None:
+        overview = RetrievedChunk(
+            chunk_id="overview-1",
+            text="Cloud Recording product overview and release notes.",
+            source_path="official/cloud-recording/release-notes.md",
+            similarity=0.98,
+        )
+        how_to = RetrievedChunk(
+            chunk_id="howto-1",
+            text="Start cloud recording with the REST API.",
+            source_path="official/cloud-recording/start.md",
+            similarity=0.87,
+        )
+        schema = RetrievedChunk(
+            chunk_id="schema-layout",
+            text="Request body schema: clientRequest.layoutConfig.width is a number.",
+            source_path="official/cloud-recording/api-reference.md",
+            similarity=0.72,
+        )
+        evidence = RequestBodyEvidenceResult(
+            triggered=True,
+            query=RequestBodyEvidenceQuery(
+                is_request_body_or_api_config=True,
+                body_keys=["clientRequest"],
+                nested_paths=["clientRequest.layoutConfig.width"],
+                schema_evidence_goals=["layoutConfig schema"],
+            ),
+            chunks=[
+                RequestBodyEvidenceChunk(
+                    chunk_id="schema-layout",
+                    evidence_type="nested_schema",
+                    matched_fields=["clientRequest.layoutConfig.width"],
+                    source_path=schema.source_path,
+                    text_excerpt=schema.text,
+                    similarity=schema.similarity,
+                    original_chunk=schema,
+                )
+            ],
+            missing_evidence=[],
+        )
+
+        merged = _merge_request_body_evidence_into_final_chunks(
+            [overview, how_to],
+            request_body_evidence=evidence,
+            max_chunks=2,
+        )
+
+        self.assertEqual([chunk.chunk_id for chunk in merged], ["schema-layout", "howto-1"])
+        self.assertEqual(merged[0].metadata["request_body_evidence_type"], "nested_schema")
+
+    def test_request_body_evidence_context_adds_supplement_section(self) -> None:
+        schema = RetrievedChunk(
+            chunk_id="schema-layout",
+            text="Request body schema: clientRequest.layoutConfig.width is a number.",
+            source_path="official/cloud-recording/api-reference.md",
+            similarity=0.72,
+            metadata={
+                "request_body_evidence_type": "nested_schema",
+                "request_body_matched_fields": ["clientRequest.layoutConfig.width"],
+                "request_body_missing_evidence": ["exact layoutConfig schema not found"],
+            },
+        )
+
+        context = _format_context([schema])
+
+        self.assertIn("## Request Body Evidence Supplement", context)
+        self.assertIn("[schema-layout] evidence_type=nested_schema", context)
+        self.assertIn("matched_fields=clientRequest.layoutConfig.width", context)
+        self.assertIn("Missing evidence:", context)
+        self.assertIn("exact layoutConfig schema not found", context)
 
     def test_get_rag_config_applies_client_accuracy_first_profile(self) -> None:
         with patch.dict(os.environ, {"RAG_SHADOW_RETRIEVAL_ENABLED": "false"}, clear=True):

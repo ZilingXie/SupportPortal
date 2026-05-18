@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from backend.services.rag_evidence_summary import build_rag_evidence_summary
+from backend.services.rag_request_body_evidence import REQUEST_BODY_INSUFFICIENT_REASON
 
 LOGGER = logging.getLogger(__name__)
 
@@ -189,8 +190,9 @@ def map_live_detail_payload_to_ticket_answer_detail(payload: dict[str, Any]) -> 
     if not isinstance(primary, dict):
         return None
     answer = str(primary.get("answer") or "").strip()
-    if bool(primary.get("needs_human")) or not answer:
-        return None
+    needs_human = bool(primary.get("needs_human"))
+    raw_handoff_reason = str(primary.get("handoff_reason") or "").strip().lower()
+    raw_generation_mode = str(primary.get("generation_mode") or "").strip().lower()
     try:
         confidence = float(primary.get("confidence_score") or 0.0)
     except (TypeError, ValueError):
@@ -211,6 +213,20 @@ def map_live_detail_payload_to_ticket_answer_detail(payload: dict[str, Any]) -> 
         if isinstance(payload.get("packed_evidence"), dict)
         else None
     )
+    if needs_human or not answer:
+        if raw_handoff_reason == "insufficient_evidence" or raw_generation_mode == "insufficient_evidence":
+            return RagTicketAnswerDetail(
+                answer=answer
+                or "RAG completed but could not verify a customer-safe grounded answer from the available schema evidence.",
+                confidence=confidence,
+                sources=[],
+                citations=[],
+                needs_engineer_guidance=True,
+                reason=REQUEST_BODY_INSUFFICIENT_REASON,
+                evidence_summary=evidence_summary,
+                packed_evidence=packed_evidence,
+            )
+        return None
     return RagTicketAnswerDetail(
         answer=answer,
         confidence=confidence,

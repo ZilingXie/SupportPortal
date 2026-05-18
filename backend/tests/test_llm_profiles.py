@@ -18,6 +18,7 @@ from backend.services.llm_profiles import (
     RAG_CONTEXT_COMPRESSION_SCENARIO,
     RAG_ANSWER_SCENARIO,
     RAG_SUFFICIENCY_SCENARIO,
+    REQUEST_BODY_ANALYZER_SCENARIO,
     TICKET_TITLE_SCENARIO,
     WEB_SEARCH_SCENARIO,
     clear_config_warnings_for_testing,
@@ -42,6 +43,7 @@ class LlmProfileTests(unittest.TestCase):
             query_expansion = resolve_model_profile(QUERY_EXPANSION_SCENARIO)
             planner = resolve_model_profile(RAG_AGENT_PLANNER_SCENARIO)
             compression = resolve_model_profile(RAG_CONTEXT_COMPRESSION_SCENARIO)
+            request_body_analyzer = resolve_model_profile(REQUEST_BODY_ANALYZER_SCENARIO)
             ticket_title = resolve_model_profile(TICKET_TITLE_SCENARIO)
             engineer = resolve_model_profile(ENGINEER_HELPER_SCENARIO)
             engineer_investigation_reply = resolve_model_profile(ENGINEER_INVESTIGATION_REPLY_SCENARIO)
@@ -96,6 +98,12 @@ class LlmProfileTests(unittest.TestCase):
         self.assertEqual(compression.api_mode, "openai_responses")
         self.assertEqual(compression.model, "gpt-5.4-mini")
         self.assertEqual(compression.reasoning_effort, "low")
+
+        self.assertEqual(request_body_analyzer.provider, "openai")
+        self.assertEqual(request_body_analyzer.api_mode, "openai_responses")
+        self.assertEqual(request_body_analyzer.model, "gpt-5.4-mini")
+        self.assertEqual(request_body_analyzer.reasoning_effort, "low")
+        self.assertEqual(request_body_analyzer.timeout_seconds, 6.0)
 
         self.assertEqual(ticket_title.provider, "openai")
         self.assertEqual(ticket_title.api_mode, "openai_responses")

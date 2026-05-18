@@ -50,6 +50,12 @@ from backend.services.rag_context_budget import (
     estimate_text_tokens,
     model_context_window,
 )
+from backend.services.rag_request_body_evidence import (
+    RequestBodyEvidenceResult,
+    detect_request_body_evidence_query,
+    merge_request_body_evidence_chunks,
+    run_request_body_evidence_skill,
+)
 from backend.services.prompts.rag_agent_planner import (
     build_rag_agent_planner_system_prompt,
     build_rag_agent_planner_user_prompt,
@@ -346,6 +352,12 @@ class RagQueryTrace:
     effective_question: str | None = None
     follow_up_inheritance_used: bool = False
     follow_up_inheritance_source: str | None = None
+    request_body_skill_triggered: bool = False
+    request_body_keys: list[str] = field(default_factory=list)
+    request_body_nested_paths: list[str] = field(default_factory=list)
+    request_body_endpoint_hints: list[str] = field(default_factory=list)
+    request_body_missing_evidence: list[str] = field(default_factory=list)
+    request_body_evidence_chunk_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -6176,12 +6188,123 @@ def _has_grounded_keyword_overlap(message: str, chunks: list[RetrievedChunk]) ->
 
 def _format_context(chunks: list[RetrievedChunk]) -> str:
     blocks: list[str] = []
+    supplement_blocks: list[str] = []
+    missing_evidence: list[str] = []
     for chunk in chunks:
+        metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+        evidence_type = str(metadata.get("request_body_evidence_type") or "").strip()
+        if evidence_type:
+            matched_fields = [
+                str(item).strip()
+                for item in (metadata.get("request_body_matched_fields") if isinstance(metadata.get("request_body_matched_fields"), list) else [])
+                if str(item).strip()
+            ]
+            supplement_blocks.append(
+                f"[{chunk.chunk_id}] evidence_type={evidence_type} matched_fields={','.join(matched_fields) or 'none'}\n"
+                f"{chunk.source_path} | {_build_heading(chunk)}\n"
+                f"{chunk.text.strip()}"
+            )
+            for item in (metadata.get("request_body_missing_evidence") if isinstance(metadata.get("request_body_missing_evidence"), list) else []):
+                normalized = str(item or "").strip()
+                if normalized and normalized not in missing_evidence:
+                    missing_evidence.append(normalized)
         blocks.append(
             f"[{chunk.chunk_id}] {chunk.source_path} | {_build_heading(chunk)}\n"
             f"{chunk.text.strip()}"
         )
-    return "\n\n---\n\n".join(blocks)
+    context = "\n\n---\n\n".join(blocks)
+    if supplement_blocks:
+        supplement = "## Request Body Evidence Supplement\n" + "\n\n---\n\n".join(supplement_blocks)
+        if missing_evidence:
+            supplement += "\n\nMissing evidence:\n" + "\n".join(f"- {item}" for item in missing_evidence)
+        context = f"{context}\n\n---\n\n{supplement}" if context else supplement
+    return context
+
+
+def _request_body_evidence_result_for_query(
+    question: str,
+    config: dict[str, Any],
+) -> RequestBodyEvidenceResult | None:
+    request_body_query = detect_request_body_evidence_query(question, use_llm=True)
+    if not request_body_query.is_request_body_or_api_config:
+        return None
+
+    def _retrieve_schema_chunks(search_query: str, evidence_type: str) -> list[RetrievedChunk]:
+        _ = evidence_type
+        retrieved: list[RetrievedChunk] = []
+        for retrieve_fn in (_retrieve_bm25_chunks, _retrieve_fts_chunks, _retrieve_keyword_chunks):
+            try:
+                retrieved.extend(
+                    retrieve_fn(
+                        search_query,
+                        config,
+                        limit=min(8, max(3, int(config.get("top_k") or 5))),
+                        index_role="primary",
+                    )
+                )
+            except Exception as exc:
+                logger.debug("Request body evidence retrieval failed query=%s error=%s", search_query, exc)
+        merged: list[RetrievedChunk] = []
+        seen: set[str] = set()
+        for chunk in sorted(retrieved, key=lambda item: float(item.similarity or 0.0), reverse=True):
+            dedupe_key = chunk.chunk_id or f"{chunk.source_path}:{chunk.text[:120]}"
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            merged.append(chunk)
+            if len(merged) >= 5:
+                break
+        return merged
+
+    return run_request_body_evidence_skill(
+        request_body_query,
+        retrieve_chunks=_retrieve_schema_chunks,
+        max_workers=5,
+        max_chunks=5,
+    )
+
+
+def _merge_request_body_evidence_into_final_chunks(
+    final_chunks: list[RetrievedChunk],
+    *,
+    request_body_evidence: RequestBodyEvidenceResult | None,
+    max_chunks: int,
+) -> list[RetrievedChunk]:
+    if request_body_evidence is None or not request_body_evidence.triggered or not request_body_evidence.chunks:
+        return final_chunks
+    for evidence_chunk in request_body_evidence.chunks:
+        chunk = evidence_chunk.original_chunk
+        if isinstance(chunk, RetrievedChunk):
+            chunk.metadata["request_body_evidence_type"] = evidence_chunk.evidence_type
+            chunk.metadata["request_body_matched_fields"] = list(evidence_chunk.matched_fields)
+            chunk.metadata["request_body_skill_triggered"] = True
+            chunk.metadata["request_body_missing_evidence"] = list(request_body_evidence.missing_evidence)
+    merged = merge_request_body_evidence_chunks(
+        primary_chunks=list(final_chunks),
+        supplement_chunks=list(request_body_evidence.chunks),
+        max_chunks=max_chunks,
+    )
+    return [chunk for chunk in merged if isinstance(chunk, RetrievedChunk)]
+
+
+def _request_body_trace_values(request_body_evidence: RequestBodyEvidenceResult | None) -> dict[str, Any]:
+    if request_body_evidence is None:
+        return {
+            "request_body_skill_triggered": False,
+            "request_body_keys": [],
+            "request_body_nested_paths": [],
+            "request_body_endpoint_hints": [],
+            "request_body_missing_evidence": [],
+            "request_body_evidence_chunk_ids": [],
+        }
+    return {
+        "request_body_skill_triggered": bool(request_body_evidence.triggered),
+        "request_body_keys": list(request_body_evidence.query.body_keys),
+        "request_body_nested_paths": list(request_body_evidence.query.nested_paths),
+        "request_body_endpoint_hints": list(request_body_evidence.query.endpoint_hints),
+        "request_body_missing_evidence": list(request_body_evidence.missing_evidence),
+        "request_body_evidence_chunk_ids": [chunk.chunk_id for chunk in request_body_evidence.chunks if chunk.chunk_id],
+    }
 
 
 def _chunk_map_by_id(chunks: list[RetrievedChunk]) -> dict[str, RetrievedChunk]:
@@ -6971,6 +7094,7 @@ def _run_rag_query_legacy(
     generation_mode = "structured_answer"
     extractive_fallback_used = False
     packed_evidence: PackedEvidence | None = None
+    request_body_evidence_result: RequestBodyEvidenceResult | None = None
     retrieved_chunks: list[RetrievedChunk] = []
     reranked_chunks: list[RetrievedChunk] = []
     rerank_info: dict[str, Any] = {
@@ -7234,6 +7358,16 @@ def _run_rag_query_legacy(
             )
             chunks = _merge_candidate_sets()
     second_pass_candidate_count = len(chunks)
+    request_body_evidence_result = _request_body_evidence_result_for_query(
+        effective_question,
+        _retrieval_config_for(effective_plan),
+    )
+    if request_body_evidence_result is not None and request_body_evidence_result.chunks:
+        chunks = _merge_request_body_evidence_into_final_chunks(
+            chunks,
+            request_body_evidence=request_body_evidence_result,
+            max_chunks=int(config["fusion_candidate_k"]),
+        )
 
     if not chunks:
         keyword_only_config = _retrieval_config_for(effective_plan)
@@ -7364,6 +7498,7 @@ def _run_rag_query_legacy(
                     if follow_up_inheritance is not None
                     else None
                 ),
+                **_request_body_trace_values(request_body_evidence_result),
             )
             return RagQueryResult(answer=answer, trace=trace)
 
@@ -7405,6 +7540,11 @@ def _run_rag_query_legacy(
         limit=int(config["top_k"]),
         query=effective_question,
     ) or chunks[: int(config["top_k"])] or chunks
+    final_chunks = _merge_request_body_evidence_into_final_chunks(
+        final_chunks,
+        request_body_evidence=request_body_evidence_result,
+        max_chunks=int(config["top_k"]),
+    )
     if chunks and bool(config.get("context_budget_enabled")):
         compression_defaults = resolve_model_profile(RAG_CONTEXT_COMPRESSION_SCENARIO)
         compression_profile = ModelProfile(
@@ -7637,6 +7777,7 @@ def _run_rag_query_legacy(
                 if follow_up_inheritance is not None
                 else None
             ),
+            **_request_body_trace_values(request_body_evidence_result),
         )
 
     if payload is not None and _is_valid_response(payload, allowed_chunk_ids):
@@ -7860,6 +8001,7 @@ def _run_rag_query_agentic_single(
     extractive_fallback_used = False
     answer_profile_used: str | None = None
     answer_profile_fallback_used = False
+    request_body_evidence_result: RequestBodyEvidenceResult | None = None
     retrieved_chunk_map: dict[str, RetrievedChunk] = {}
     reranked_chunks: list[RetrievedChunk] = []
     final_chunks: list[RetrievedChunk] = []
@@ -8082,6 +8224,26 @@ def _run_rag_query_agentic_single(
 
     retrieved_chunks = list(retrieved_chunk_map.values())
     packed_evidence: PackedEvidence | None = None
+    request_body_evidence_result = _request_body_evidence_result_for_query(effective_question, config)
+    if request_body_evidence_result is not None and request_body_evidence_result.chunks:
+        evidence_original_chunks = [
+            item.original_chunk
+            for item in request_body_evidence_result.chunks
+            if isinstance(item.original_chunk, RetrievedChunk)
+        ]
+        _merge_retrieved_chunk_map(retrieved_chunk_map, evidence_original_chunks)
+        retrieved_chunks = list(retrieved_chunk_map.values())
+        final_chunks = _merge_request_body_evidence_into_final_chunks(
+            final_chunks,
+            request_body_evidence=request_body_evidence_result,
+            max_chunks=int(config["top_k"]),
+        )
+        if final_judge is None or final_judge.decision == "escalate":
+            final_judge = AgenticJudgeDecision(
+                decision="answer_now",
+                reason="request_body_schema_evidence",
+                confidence=max(0.65, float(request_body_evidence_result.query.confidence or 0.0)),
+            )
 
     def _trace_for(
         answer: RagAnswer,
@@ -8306,6 +8468,7 @@ def _run_rag_query_agentic_single(
                 if follow_up_inheritance is not None
                 else None
             ),
+            **_request_body_trace_values(request_body_evidence_result),
         )
 
     if not final_chunks or final_judge is None or final_judge.decision == "escalate":

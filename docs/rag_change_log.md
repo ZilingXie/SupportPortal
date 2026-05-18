@@ -10,6 +10,42 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-18 - Add request-body schema evidence retrieval and fail-closed reason
+
+- Summary:
+  - Added a request body/API-config evidence analyzer with deterministic payload detection, optional structured LLM extraction, schema-focused retrieval queries, evidence-type tagging, and final-context supplement formatting.
+  - Added schema-slot merge behavior so request body schema chunks are preserved ahead of release notes or broad overview chunks.
+  - Distinguished completed RAG runs with insufficient schema evidence from true processing timeouts using `rag_completed_with_insufficient_evidence`.
+- Reason:
+  - Request body and API config questions need exact schema, parameter, and payload-example evidence to avoid field-name or nesting hallucinations.
+  - A completed RAG run that fails closed for insufficient evidence should route into clarification or intake, not be mislabeled as `rag_processing_timeout`.
+- Affected files/config:
+  - `backend/services/rag_request_body_evidence.py`
+  - `backend/services/prompts/request_body_evidence.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/rag_service_client.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/worker.py`
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `backend/tests/test_rag_request_body_evidence.py`
+  - `backend/tests/test_rag_qa.py`
+  - `backend/tests/test_rag_service_client.py`
+  - `backend/tests/test_worker.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `docs/rag_change_log.md`
+  - `docs/prompt_change_log.md`
+- Data impact:
+  - No ingestion reset, embedding change, vector-table migration, BM25 schema change, or document backfill is performed.
+  - Existing RAG data remains valid; runtime retrieval now adds supplemental schema-oriented lexical/FTS/keyword lookups for detected request body/API config questions.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest -q backend.tests.test_rag_request_body_evidence backend.tests.test_rag_service_client backend.tests.test_worker backend.tests.test_client_ticket_agent_runtime backend.tests.test_rag_qa`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest -q backend.tests.test_llm_profiles backend.tests.test_prompt_modules backend.tests.test_single_host_compose`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_request_body_evidence.py backend/services/prompts/request_body_evidence.py backend/services/llm_profiles.py backend/services/rag_qa.py backend/services/rag_service_client.py backend/worker.py backend/services/client_ticket_agent_runtime.py`
+
 ## 2026-05-11 - Fix technical article ingestion metadata model telemetry
 
 - Summary:
