@@ -4982,6 +4982,9 @@ function syncComposerToolbarStateFromElement(element = getActiveChatComposerElem
 function syncComposerDraftStateFromElement(element = getActiveChatComposerElement(), options = {}) {
   if (isRichTextComposerElement(element)) {
     const normalizedHtml = normalizeRichComposerHtmlString(element.innerHTML);
+    const selectionBookmark =
+      options?.selectionBookmark ||
+      (normalizedHtml !== element.innerHTML ? captureRichComposerSelectionBookmark(element) : null);
     if (normalizedHtml !== element.innerHTML) {
       element.innerHTML = normalizedHtml;
     }
@@ -4989,8 +4992,8 @@ function syncComposerDraftStateFromElement(element = getActiveChatComposerElemen
     state.inputDraft = serializeRichComposerHtmlToMarkdown(normalizedHtml);
     refreshNewTicketInlineComposerAction();
     syncComposerToolbarStateFromElement(element);
-    if (options?.selectionBookmark) {
-      restoreRichComposerSelectionBookmark(element, options.selectionBookmark);
+    if (selectionBookmark) {
+      restoreRichComposerSelectionBookmark(element, selectionBookmark);
     }
     return state.inputDraft;
   }
