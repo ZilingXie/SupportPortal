@@ -179,6 +179,9 @@ class PromptModuleTests(unittest.TestCase):
 
         self.assertIn("## Configuration/API Questions", user_prompt)
         self.assertIn("minimal JSON/configuration example", user_prompt)
+        self.assertIn("If you can answer an API/configuration question", user_prompt)
+        self.assertIn("the answer must include a minimal JSON or configuration example", user_prompt)
+        self.assertIn("If you cannot build that example from verbatim evidence", user_prompt)
         self.assertIn("field names, enum values, method names, and nesting", user_prompt)
         self.assertIn("appear verbatim in Context Chunks", user_prompt)
         self.assertIn("Do not infer or transform naming conventions", user_prompt)
