@@ -165,6 +165,30 @@ class PromptModuleTests(unittest.TestCase):
         self.assertIn(insufficient_reply, user_prompt)
         self.assertIn("## Repair Requirements", user_prompt)
 
+    def test_rag_answer_prompt_guides_api_config_answers_without_case_specific_fields(self) -> None:
+        insufficient_reply = "I couldn't find enough information in the available support knowledge base to answer that question."
+        user_prompt = build_rag_answer_user_prompt(
+            question="Why does my Cloud Recording layout show the screen share as a narrow strip?",
+            context_block=(
+                "chunk-1: Configuration fields: x, y, width, height. "
+                "Use the nesting exactly shown in the API reference."
+            ),
+            insufficient_reply=insufficient_reply,
+            repair_mode=False,
+        )
+
+        self.assertIn("## Configuration/API Questions", user_prompt)
+        self.assertIn("minimal JSON/configuration example", user_prompt)
+        self.assertIn("field names, enum values, method names, and nesting", user_prompt)
+        self.assertIn("appear verbatim in Context Chunks", user_prompt)
+        self.assertIn("Do not infer or transform naming conventions", user_prompt)
+        self.assertIn("explain the supported mechanism or configuration reason in one sentence", user_prompt)
+        self.assertIn("Do not claim a root cause unless", user_prompt)
+        self.assertIn("set insufficient_evidence=true", user_prompt)
+        self.assertNotIn("mixedVideoLayout", user_prompt)
+        self.assertNotIn("render_mode", user_prompt)
+        self.assertNotIn("updateLayout", user_prompt)
+
     def test_rag_answer_system_prompt_includes_selected_product_scope(self) -> None:
         system_prompt = build_rag_answer_system_prompt(
             insufficient_reply="INSUFFICIENT",
