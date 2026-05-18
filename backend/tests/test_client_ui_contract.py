@@ -35,10 +35,10 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn('/shared-ui/composer.css?v=20260423-shared-composer-toolbar-reset-1', html)
-        self.assertIn('/shared-ui/composer.js?v=20260423-shared-composer-toolbar-reset-1', html)
-        self.assertIn("./styles.css?v=20260423-shared-composer-toolbar-reset-1", html)
-        self.assertIn("./app.js?v=20260423-shared-composer-toolbar-reset-1", html)
+        self.assertIn('/shared-ui/composer.css?v=20260518-client-composer-caret-1', html)
+        self.assertIn('/shared-ui/composer.js?v=20260518-client-composer-caret-1', html)
+        self.assertIn("./styles.css?v=20260518-client-composer-caret-1", html)
+        self.assertIn("./app.js?v=20260518-client-composer-caret-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -1750,6 +1750,54 @@ class ClientUiContractTests(unittest.TestCase):
                 syncComposerDraftStateFromElement(element, { selectionBookmark: explicitBookmark });
                 if (restoredBookmarks.length !== 1 || restoredBookmarks[0] !== explicitBookmark) {
                   throw new Error("syncComposerDraftStateFromElement should restore the explicit collapsed selection bookmark after normalization.");
+                }
+              """
+            )
+        )
+
+    def test_client2_rich_composer_input_sync_preserves_live_selection_when_normalizing(self) -> None:
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                const liveBookmark = {
+                  startPath: [0, 0],
+                  startOffset: 5,
+                  endPath: [0, 0],
+                  endOffset: 5,
+                };
+                const restoredBookmarks = [];
+                let currentHtml = "Alpha";
+                const element = {
+                  get innerHTML() {
+                    return currentHtml;
+                  },
+                  set innerHTML(value) {
+                    currentHtml = String(value || "");
+                  },
+                  childNodes: [{ nodeType: 1 }],
+                  scrollTop: 0,
+                };
+
+                isRichTextComposerElement = () => true;
+                isTextComposerElement = () => false;
+                isComposerElementDisabled = () => false;
+                normalizeRichComposerHtmlString = (html) =>
+                  String(html || "") === "Alpha" ? "<div>Alpha</div>" : String(html || "");
+                serializeRichComposerHtmlToMarkdown = (html) => String(html || "");
+                refreshNewTicketInlineComposerAction = () => {};
+                syncComposerToolbarStateFromElement = () => {};
+                captureRichComposerSelectionBookmark = () => liveBookmark;
+                restoreRichComposerSelectionBookmark = (_element, bookmark) => {
+                  restoredBookmarks.push(bookmark);
+                  return true;
+                };
+
+                syncComposerDraftStateFromElement(element);
+                if (currentHtml !== "<div>Alpha</div>") {
+                  throw new Error(`Input sync should still normalize composer HTML, got ${currentHtml}.`);
+                }
+                if (restoredBookmarks.length !== 1 || restoredBookmarks[0] !== liveBookmark) {
+                  throw new Error("Input sync should preserve the live caret bookmark when normalization rewrites innerHTML.");
                 }
               """
             )
