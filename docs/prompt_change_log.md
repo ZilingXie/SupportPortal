@@ -12,6 +12,23 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-05-18 - RAG answer API/config quality guard
+
+- Area or subsystem: Client-facing RAG answer generation
+- Prompt or model version: `rag-answer-api-config-quality-v1`
+- Summary: Added a generic API/configuration answer contract to the RAG answer prompt so configuration and API questions include a supported one-sentence mechanism, use only verbatim field names and nesting from context chunks, and provide minimal JSON/config examples only when the exact fields are present in evidence.
+- Reason: TK-198-style configuration questions need executable, schema-accurate answers. The previous prompt emphasized grounding but did not explicitly require payload examples, field-name fidelity, or a short explanation of why the observed behavior occurs.
+- Affected files or config:
+  - `backend/services/prompts/rag_answer.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - RAG answers for REST API, SDK configuration, JSON payload, or parameter questions should include a minimal supported config example when context chunks provide the exact field names, enum values, value formats, and nesting.
+  - The answer model should not infer field names from naming conventions and should fail closed with `insufficient_evidence=true` when exact field names or nesting are missing.
+  - Unexpected-behavior answers should explain the supported mechanism or configuration reason in one sentence without claiming an unsupported root cause.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest -q backend.tests.test_prompt_modules.PromptModuleTests.test_rag_answer_prompt_guides_api_config_answers_without_case_specific_fields`
+
 ## 2026-04-29 - product portfolio customer reply formatting
 
 - Area or subsystem: Client support routing and non-technical product-portfolio web-search answering
