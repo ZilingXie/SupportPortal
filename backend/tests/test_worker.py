@@ -220,6 +220,44 @@ class WorkerResilienceTests(unittest.TestCase):
         rag_mock.assert_called_once()
         health_mock.assert_called_once()
 
+    def test_fetch_rag_answer_detail_for_worker_preserves_recovered_insufficient_evidence_reason(self) -> None:
+        recovered = worker.RagTicketAnswerDetail(
+            answer="RAG completed but could not verify a customer-safe grounded answer from the available schema evidence.",
+            confidence=0.41,
+            sources=[],
+            citations=[],
+            needs_engineer_guidance=True,
+            reason="rag_completed_with_insufficient_evidence",
+            evidence_summary={"diagnostics": {"rag_recovered_from_live_detail": True}},
+            packed_evidence=None,
+        )
+        with patch.object(
+            worker.rag_service_client,
+            "query_answer_with_recovery_detail",
+            return_value=recovered,
+        ) as rag_mock, patch.object(
+            worker.rag_service_client,
+            "health",
+        ) as health_mock:
+            result = worker._fetch_rag_answer_detail_for_worker(
+                request_id="rag-worker-insufficient-1",
+                customer_message="Can you check this request body {\"clientRequest\":{\"layoutConfig\":[]}}?",
+                ticket_id="T-WORKER-INSUFFICIENT",
+                customer_id="C-123",
+                ticket_context=[{"role": "customer", "content": "request body question"}],
+                product="cloud_recording",
+            )
+
+        self.assertEqual(result.reason, "rag_completed_with_insufficient_evidence")
+        self.assertTrue(result.needs_engineer_guidance)
+        self.assertEqual(
+            result.evidence_summary["diagnostics"]["rag_recovered_from_live_detail"],
+            True,
+        )
+        self.assertNotEqual(result.reason, "rag_processing_timeout")
+        rag_mock.assert_called_once()
+        health_mock.assert_not_called()
+
     def test_fetch_rag_answer_detail_for_worker_transport_failure_with_unhealthy_service_stays_unavailable(self) -> None:
         with patch.object(
             worker.rag_service_client,

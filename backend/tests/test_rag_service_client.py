@@ -216,6 +216,38 @@ class RagServiceClientTests(unittest.TestCase):
         self.assertEqual(detail.reason, "grounded_answer")
         self.assertEqual(detail.citations[0]["chunk_id"], "chunk-dual")
 
+    def test_map_live_detail_payload_completed_insufficient_evidence_returns_detail(self) -> None:
+        detail = map_live_detail_payload_to_ticket_answer_detail(
+            {
+                "primary": {
+                    "request_id": "rag-layout-1",
+                    "answer": "I couldn't find enough schema evidence to answer safely.",
+                    "confidence_score": 0.41,
+                    "needs_human": True,
+                    "handoff_reason": "insufficient_evidence",
+                    "generation_mode": "insufficient_evidence",
+                    "selected_contexts": [
+                        {
+                            "chunk_id": "schema-neighbor-1",
+                            "source_path": "official/cloud-recording/api-reference.md",
+                            "heading": "Request body",
+                            "text_excerpt": "clientRequest layout fields are documented here.",
+                        }
+                    ],
+                }
+            }
+        )
+
+        self.assertIsNotNone(detail)
+        assert detail is not None
+        self.assertTrue(detail.needs_engineer_guidance)
+        self.assertEqual(detail.reason, "rag_completed_with_insufficient_evidence")
+        self.assertIn("schema evidence", detail.answer)
+        self.assertEqual(
+            detail.evidence_summary["quality_signals"]["handoff_reason"],
+            "insufficient_evidence",
+        )
+
     def test_probe_health_returns_disabled_without_base_url(self) -> None:
         client = RagServiceClient(base_url="")
         payload = client.probe_health()

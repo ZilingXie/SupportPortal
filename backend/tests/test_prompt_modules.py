@@ -36,6 +36,10 @@ from backend.services.prompts.rag_sufficiency import (
     build_rag_sufficiency_system_prompt,
     build_rag_sufficiency_user_prompt,
 )
+from backend.services.prompts.request_body_evidence import (
+    build_request_body_evidence_system_prompt,
+    build_request_body_evidence_user_prompt,
+)
 from backend.services.prompts.router import (
     build_router_system_prompt,
     build_router_user_prompt,
@@ -202,6 +206,22 @@ class PromptModuleTests(unittest.TestCase):
         self.assertIn("Cloud Recording issue", system_prompt)
         self.assertIn("## Product Scope", system_prompt)
         self.assertIn("Cloud Recording", system_prompt)
+
+    def test_request_body_evidence_prompt_is_extraction_only_json(self) -> None:
+        system_prompt = build_request_body_evidence_system_prompt()
+        user_prompt = build_request_body_evidence_user_prompt(
+            question='POST /v1/start {"clientRequest":{"layoutConfig":[]}}',
+            rule_hints={"body_keys": ["clientRequest"], "nested_paths": ["clientRequest.layoutConfig"]},
+        )
+
+        self.assertIn("You extract request-body and API-configuration retrieval clues", system_prompt)
+        self.assertIn("Do not answer the customer question", system_prompt)
+        self.assertIn("Do not invent fields", system_prompt)
+        self.assertIn("Return JSON only", system_prompt)
+        self.assertIn("is_request_body_or_api_config", system_prompt)
+        self.assertIn("schema_evidence_goals", system_prompt)
+        self.assertIn("## Customer Message", user_prompt)
+        self.assertIn("clientRequest.layoutConfig", user_prompt)
 
     def test_rag_sufficiency_prompt_v2_is_sectioned_and_conservative(self) -> None:
         system_prompt = build_rag_sufficiency_system_prompt()

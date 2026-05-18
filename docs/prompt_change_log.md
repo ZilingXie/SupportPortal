@@ -12,6 +12,29 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-05-18 - Request body evidence analyzer scene
+
+- Area or subsystem: RAG request body/API configuration evidence extraction
+- Prompt or model version: `request_body_evidence_v1` with model scene `request_body_analyzer`
+- Summary: Added a JSON-only analyzer prompt and LLM profile for extracting endpoint hints, request body keys, nested field paths, field values, question need, and schema evidence goals from request body/API config questions.
+- Reason: Request body questions need a low-cost extraction stage that improves schema retrieval clues without asking the model to answer, judge correctness, or invent fields.
+- Affected files or config:
+  - `backend/services/prompts/request_body_evidence.py`
+  - `backend/services/llm_profiles.py`
+  - `backend/services/rag_request_body_evidence.py`
+  - `.env.example`
+  - `deployment/docker-compose.single-host.yml`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_llm_profiles.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - When credentials are available, request body/API config questions can use `REQUEST_BODY_ANALYZER_MODEL` (default `gpt-5.4-mini`) with low reasoning and a 6 second timeout to extract schema retrieval clues.
+  - If the analyzer is unavailable, times out, or returns invalid JSON, deterministic rule extraction remains the fallback.
+  - Ordinary natural-language how-to questions should not be classified as request-body/API-config questions by this scene.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest -q backend.tests.test_rag_request_body_evidence backend.tests.test_llm_profiles backend.tests.test_prompt_modules backend.tests.test_single_host_compose`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/rag_request_body_evidence.py backend/services/prompts/request_body_evidence.py backend/services/llm_profiles.py`
+
 ## 2026-05-18 - RAG answer API/config JSON example tightening
 
 - Area or subsystem: Client-facing RAG answer generation

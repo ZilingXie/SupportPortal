@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 import re
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, is_dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable
 from uuid import uuid4
@@ -51,6 +51,7 @@ RAG_INSUFFICIENT_EVIDENCE_REASON = "rag_insufficient_evidence"
 RAG_SERVICE_ERROR_REASON = "rag_service_error"
 RAG_UNAVAILABLE_REASON = "rag_unavailable"
 RAG_PROCESSING_TIMEOUT_REASON = "rag_processing_timeout"
+RAG_COMPLETED_WITH_INSUFFICIENT_EVIDENCE_REASON = "rag_completed_with_insufficient_evidence"
 RAG_POST_CHECK_INSUFFICIENT_REASON = "rag_post_check_insufficient"
 RAG_POST_CHECK_ERROR_REASON = "rag_post_check_error"
 DEADLINE_EXHAUSTED_REASON = "deadline_exhausted"
@@ -888,6 +889,8 @@ def _ensure_web_search_customer_reply_email(
         or _clean_text(resolution.answer_route).lower() != "web_search"
     ):
         return resolution
+    if not is_dataclass(resolution):
+        return resolution
     return replace(
         resolution,
         answer=_ensure_customer_reply_email(
@@ -1189,6 +1192,7 @@ def _normalize_investigation_reason(value: Any) -> str:
         RAG_SERVICE_ERROR_REASON,
         RAG_UNAVAILABLE_REASON,
         RAG_PROCESSING_TIMEOUT_REASON,
+        RAG_COMPLETED_WITH_INSUFFICIENT_EVIDENCE_REASON,
         RAG_POST_CHECK_INSUFFICIENT_REASON,
         RAG_POST_CHECK_ERROR_REASON,
         DEADLINE_EXHAUSTED_REASON,
@@ -1390,6 +1394,8 @@ def _merge_rag_resolution_diagnostics(
             merged["rag_reason_detail"] = "knowledge_index_unavailable"
         elif handoff_reason == RAG_PROCESSING_TIMEOUT_REASON:
             merged["rag_reason_detail"] = "processing_timeout"
+        elif handoff_reason == RAG_COMPLETED_WITH_INSUFFICIENT_EVIDENCE_REASON:
+            merged["rag_reason_detail"] = "completed_with_insufficient_evidence"
         elif handoff_reason == DEADLINE_EXHAUSTED_REASON:
             merged["rag_reason_detail"] = "deadline_exhausted"
         elif handoff_reason == RAG_INSUFFICIENT_EVIDENCE_REASON:
