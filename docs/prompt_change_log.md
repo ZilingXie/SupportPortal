@@ -12,6 +12,22 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-05-18 - RAG answer API/config JSON example tightening
+
+- Area or subsystem: Client-facing RAG answer generation
+- Prompt or model version: `rag-answer-api-config-quality-v2`
+- Summary: Tightened the API/configuration answer contract so supported API/config answers must include a minimal JSON or configuration example rather than a prose-only answer.
+- Reason: Live answer-chain verification showed the first API/config guard was loaded and stable, but an API behavior case could still produce a grounded prose answer without a payload example. The intended behavior is fail-closed unless the prompt can build an example from verbatim chunk evidence.
+- Affected files or config:
+  - `backend/services/prompts/rag_answer.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - API/configuration RAG answers that are marked sufficient should include a minimal JSON or configuration example built only from verbatim field names, enum values, value formats, and nesting in the cited chunks.
+  - If that minimal example cannot be built from exact context evidence, the answer model should set `insufficient_evidence=true` instead of returning a prose-only configuration answer.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest -q backend.tests.test_prompt_modules.PromptModuleTests.test_rag_answer_prompt_guides_api_config_answers_without_case_specific_fields`
+
 ## 2026-05-18 - RAG answer API/config quality guard
 
 - Area or subsystem: Client-facing RAG answer generation
