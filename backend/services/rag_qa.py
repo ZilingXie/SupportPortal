@@ -6594,6 +6594,128 @@ def _build_extractive_rag_answer(chunks: list[RetrievedChunk]) -> RagAnswer:
     )
 
 
+_REQUEST_BODY_RESCUE_SECTION_RE = re.compile(
+    r"(?:^|\s)(?:\*\*)?(Issue Description|Root Cause|Step by Step Solution|Solution|Resolution|Best Practice)(?:\*\*)?\s*:?\s*",
+    re.IGNORECASE,
+)
+
+
+def _plain_evidence_text(value: str, *, limit: int = 360) -> str:
+    text = re.sub(r"`{1,3}", "", str(value or ""))
+    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+    text = re.sub(r"\[(.*?)\]\([^)]*\)", r"\1", text)
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    clipped = text[:limit].rsplit(" ", 1)[0].strip()
+    return f"{clipped}..." if clipped else text[:limit]
+
+
+def _extract_labeled_evidence_section(text: str, labels: set[str]) -> str:
+    matches = list(_REQUEST_BODY_RESCUE_SECTION_RE.finditer(text or ""))
+    normalized_labels = {label.lower() for label in labels}
+    for index, match in enumerate(matches):
+        if str(match.group(1) or "").strip().lower() not in normalized_labels:
+            continue
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        section = str(text[start:end] or "").strip(" \n\r\t-:")
+        if section:
+            return _plain_evidence_text(section)
+    return ""
+
+
+def _extract_rescue_steps(text: str) -> list[str]:
+    section = _extract_labeled_evidence_section(
+        text,
+        {"Step by Step Solution", "Solution", "Resolution", "Best Practice"},
+    )
+    if not section:
+        return []
+    steps: list[str] = []
+    for match in re.finditer(r"(?:^|\s)\d+\.\s+(.*?)(?=(?:\s+\d+\.\s+)|$)", section):
+        step = _plain_evidence_text(match.group(1), limit=220).strip(" .")
+        if step and step not in steps:
+            steps.append(step)
+        if len(steps) >= 3:
+            break
+    if steps:
+        return steps
+    for sentence in re.split(r"(?<=[.!?])\s+", section):
+        step = _plain_evidence_text(sentence, limit=220).strip(" .")
+        if step and step not in steps:
+            steps.append(step)
+        if len(steps) >= 3:
+            break
+    return steps
+
+
+def _is_request_body_schema_context(chunk: RetrievedChunk) -> bool:
+    metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
+    evidence_type = str(metadata.get("request_body_evidence_type") or "").strip()
+    if evidence_type:
+        return True
+    if bool(metadata.get("request_body_skill_triggered")):
+        return True
+    text = _chunk_search_text(chunk).lower()
+    return "request body" in text and ("schema" in text or "clientrequest" in text)
+
+
+def _build_request_body_evidence_rescue_answer(
+    *,
+    question: str,
+    chunks: list[RetrievedChunk],
+    request_body_evidence: RequestBodyEvidenceResult | None,
+    requester: str | None,
+    customer_id: str | None,
+) -> RagAnswer | None:
+    if request_body_evidence is None or not request_body_evidence.triggered:
+        return None
+
+    technical_chunk = next((chunk for chunk in chunks if is_high_value_troubleshooting_context(chunk)), None)
+    schema_chunk = next((chunk for chunk in chunks if _is_request_body_schema_context(chunk)), None)
+    if technical_chunk is None or schema_chunk is None:
+        return None
+
+    cause = _extract_labeled_evidence_section(technical_chunk.text, {"Root Cause"})
+    if not cause:
+        cause = _extract_labeled_evidence_section(technical_chunk.text, {"Issue Description"})
+    if not cause:
+        cause = _plain_evidence_text(technical_chunk.text, limit=360)
+    if not cause:
+        return None
+
+    schema_heading = _build_heading(schema_chunk)
+    body = (
+        "The request body you shared matches both a documented request-body schema and a technical "
+        f"troubleshooting article. {cause}\n\n"
+        f"I would use the cited `{schema_heading}` schema as the source of truth for the nested request body."
+    )
+    steps = _extract_rescue_steps(technical_chunk.text)
+    if not steps:
+        steps = [
+            "Compare the submitted payload with the cited request-body schema.",
+            "Move any misplaced configuration fields to the parent object shown in the schema evidence.",
+            "Retest with a new API request or recording session after the request body is corrected.",
+        ]
+
+    ordered_chunks = [technical_chunk, schema_chunk]
+    citations = _citation_records_from_chunks(ordered_chunks, limit=2)
+    sources = [record.get("source_url") or f"rag:{record['chunk_id']}" for record in citations if record.get("chunk_id")]
+    return RagAnswer(
+        answer=_build_answer_text(
+            body,
+            steps,
+            question=question,
+            requester=requester,
+            customer_id=customer_id,
+        ),
+        confidence=max(0.78, _confidence_from_chunks(ordered_chunks)),
+        sources=sources or ["rag"],
+        citations=citations,
+    )
+
+
 def _build_answer_profile(
     config: dict[str, Any],
     *,
@@ -7798,6 +7920,25 @@ def _run_rag_query_legacy(
 
     if payload is not None and _is_valid_response(payload, allowed_chunk_ids):
         if payload["insufficient_evidence"] is True:
+            rescue_answer = _build_request_body_evidence_rescue_answer(
+                question=effective_question,
+                chunks=final_chunks,
+                request_body_evidence=request_body_evidence_result,
+                requester=requester,
+                customer_id=customer_id,
+            )
+            if rescue_answer is not None:
+                generation_mode = "request_body_evidence_rescue"
+                return RagQueryResult(
+                    answer=rescue_answer,
+                    trace=_trace_for(
+                        rescue_answer,
+                        needs_human=False,
+                        handoff_reason=None,
+                        generation_mode=generation_mode,
+                        extractive_fallback_used=False,
+                    ),
+                )
             if grounded_overlap:
                 logger.info(
                     "RAG insufficient evidence persisted after grounded overlap was found. "
@@ -7864,6 +8005,25 @@ def _run_rag_query_legacy(
         )
 
     logger.warning("RAG structured answer invalid, using extractive fallback.")
+    rescue_answer = _build_request_body_evidence_rescue_answer(
+        question=effective_question,
+        chunks=final_chunks,
+        request_body_evidence=request_body_evidence_result,
+        requester=requester,
+        customer_id=customer_id,
+    )
+    if rescue_answer is not None:
+        generation_mode = "request_body_evidence_rescue"
+        return RagQueryResult(
+            answer=rescue_answer,
+            trace=_trace_for(
+                rescue_answer,
+                needs_human=False,
+                handoff_reason=None,
+                generation_mode=generation_mode,
+                extractive_fallback_used=False,
+            ),
+        )
     generation_mode = "extractive_fallback"
     extractive_fallback_used = True
     answer = _build_extractive_rag_answer(final_chunks)
@@ -8775,6 +8935,24 @@ def _run_rag_query_agentic_single(
 
     if payload is not None and _is_valid_response(payload, allowed_chunk_ids):
         if payload["insufficient_evidence"] is True:
+            rescue_answer = _build_request_body_evidence_rescue_answer(
+                question=effective_question,
+                chunks=final_chunks,
+                request_body_evidence=request_body_evidence_result,
+                requester=requester,
+                customer_id=customer_id,
+            )
+            if rescue_answer is not None:
+                return RagQueryResult(
+                    answer=rescue_answer,
+                    trace=_trace_for(
+                        rescue_answer,
+                        needs_human=False,
+                        handoff_reason=None,
+                        generation_mode="request_body_evidence_rescue",
+                        extractive_fallback_used=False,
+                    ),
+                )
             if grounded_overlap:
                 generation_mode = "extractive_fallback"
                 extractive_fallback_used = True
@@ -8836,6 +9014,24 @@ def _run_rag_query_agentic_single(
 
     generation_mode = "extractive_fallback"
     extractive_fallback_used = True
+    rescue_answer = _build_request_body_evidence_rescue_answer(
+        question=effective_question,
+        chunks=final_chunks,
+        request_body_evidence=request_body_evidence_result,
+        requester=requester,
+        customer_id=customer_id,
+    )
+    if rescue_answer is not None:
+        return RagQueryResult(
+            answer=rescue_answer,
+            trace=_trace_for(
+                rescue_answer,
+                needs_human=False,
+                handoff_reason=None,
+                generation_mode="request_body_evidence_rescue",
+                extractive_fallback_used=False,
+            ),
+        )
     answer = _build_extractive_rag_answer(final_chunks)
     return RagQueryResult(
         answer=answer,

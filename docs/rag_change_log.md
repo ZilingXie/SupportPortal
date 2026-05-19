@@ -10,6 +10,25 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-19 - Rescue strong request-body evidence from false insufficient-evidence generation
+
+- Summary:
+  - Added a narrow request-body/API-config rescue path for cases where final context already contains both schema evidence and a high-value technical troubleshooting article, but answer generation still returns `insufficient_evidence`.
+  - The rescue composes an evidence-backed customer reply from the technical article's root-cause/solution sections and cites both the technical case and request-body schema chunk.
+  - Wired the rescue into both legacy and agentic RAG generation fallbacks before returning extractive fallback or human handoff.
+- Reason:
+  - Post-merge live verification for TK-203 showed context selection was fixed, but the main ticket path could still fail closed even though selected contexts included the exact `technical_article_api / technical_case_units_v1` root-cause article and matching request-body schema.
+  - Request body/API config questions with strong schema plus troubleshooting evidence should produce a grounded answer instead of asking for generic clarification.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No ingestion reset, embedding change, vector-table migration, BM25 schema change, or document backfill is performed.
+  - Existing RAG data remains valid; only runtime answer fallback behavior changes for strongly evidenced request body/API config questions.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest -q backend.tests.test_rag_qa.RagQaHybridTests.test_request_body_rescue_answer_uses_technical_case_when_llm_fails_closed backend.tests.test_rag_qa.RagQaHybridTests.test_request_body_rescue_answer_requires_technical_troubleshooting_context backend.tests.test_rag_qa.RagQaHybridTests.test_run_rag_query_rescues_request_body_insufficient_evidence_with_strong_context`
+
 ## 2026-05-19 - Preserve technical troubleshooting evidence for request-body RAG context
 
 - Summary:
