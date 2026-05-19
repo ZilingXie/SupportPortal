@@ -10,6 +10,26 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-19 - Supplement missing request-body JSON in structured RAG answers
+
+- Summary:
+  - Added a structured-answer guard for request-body/API-config RAG runs: when schema evidence is triggered and the model answer omits a JSON/config block, the runtime appends the best schema-matching corrected JSON payload from the selected context chunks.
+  - The supplement is only added when the answer lacks any parseable JSON block and the selected evidence contains a parseable payload that matches request-body schema paths.
+- Reason:
+  - TK-204-like live verification showed the normal `structured_answer` path could answer with prose and steps while omitting the required JSON example, even though selected chunks contained a corrected request body.
+  - Prompt instructions alone were not sufficient enforcement for API/config answers; the runtime now deterministically restores grounded JSON evidence when available.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No ingestion reset, embedding change, vector-table migration, BM25 schema change, or document backfill is performed.
+  - Existing RAG data remains valid; only runtime formatting/completeness changes for request-body/API-config RAG answers.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest -q backend.tests.test_rag_qa.RagQaHybridTests.test_run_rag_query_supplements_request_body_json_when_structured_answer_omits_it`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest -q backend.tests.test_rag_request_body_evidence backend.tests.test_rag_qa`
+  - `python3 -m py_compile backend/services/rag_qa.py`
+
 ## 2026-05-19 - Fence raw JSON blocks in grounded RAG answers
 
 - Summary:
