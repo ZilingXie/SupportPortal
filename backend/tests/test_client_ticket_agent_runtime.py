@@ -1254,18 +1254,12 @@ The documentation states that time: 0 means the rule is applied permanently. How
             rag_canceler=None,
         )
 
-        self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
+        self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
         self.assertEqual(execution.result.client_intake_state["issue_mode"], "answer")
-        self.assertEqual(
-            execution.result.client_intake_state["missing_information"],
-            ["desired_outcome", "blocked_step_or_error"],
-        )
-        self.assertTrue(execution.result.answer.startswith("Hi there,"))
-        self.assertIn("Thanks for the details.", execution.result.answer)
-        self.assertIn("what you're trying to achieve", execution.result.answer.lower())
-        self.assertIn("the exact error or blocker you're seeing", execution.result.answer.lower())
+        self.assertEqual(execution.result.client_intake_state["missing_information"], [])
+        self.assertEqual(execution.result.answer, "")
         self.assertNotIn("grounded answer", execution.result.answer.lower())
-        self.assertEqual(execution.runtime_state.review_agent.get("decision"), "clarify_customer_for_intake")
+        self.assertEqual(execution.runtime_state.review_agent.get("decision"), "open_engineer_ticket")
 
     def test_rag_insufficient_evidence_discards_technical_clarify_reply_without_citations(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
@@ -1319,11 +1313,8 @@ The documentation states that time: 0 means the rule is applied permanently. How
             rag_canceler=None,
         )
 
-        self.assertEqual(execution.result.workflow_action, "clarify_customer_for_intake")
-        self.assertTrue(execution.result.answer.startswith("Hi there,"))
-        self.assertIn("Thanks for the details.", execution.result.answer)
-        self.assertIn("what you're trying to achieve", execution.result.answer.lower())
-        self.assertIn("the exact error or blocker you're seeing", execution.result.answer.lower())
+        self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
+        self.assertEqual(execution.result.answer, "")
         self.assertNotIn("grounded answer", execution.result.answer.lower())
         self.assertNotIn("call joinChannel", execution.result.answer)
         self.assertFalse(execution.result.citations)
@@ -1373,13 +1364,13 @@ The documentation states that time: 0 means the rule is applied permanently. How
             rag_canceler=None,
         )
 
-        self.assertEqual(execution.result.workflow_action, "answer_customer")
+        self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
         self.assertEqual(execution.result.investigation_reason, "rag_post_check_insufficient")
         self.assertEqual(execution.result.route_reason, "grounded_answer")
-        self.assertTrue(execution.result.citations)
-        self.assertIn("please share what you're trying to achieve", execution.result.answer.lower())
+        self.assertEqual(execution.result.answer, "")
+        self.assertFalse(execution.result.citations)
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "completed")
-        self.assertEqual(execution.runtime_state.review_agent.get("decision"), "answer_customer")
+        self.assertEqual(execution.runtime_state.review_agent.get("decision"), "open_engineer_ticket")
 
     def test_troubleshooting_postcheck_rejection_preserves_cited_answer_with_follow_up(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
@@ -1592,17 +1583,13 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
 
         self.assertEqual(review_modes, ["grounded_postcheck"])
-        self.assertEqual(execution.result.workflow_action, "answer_customer")
+        self.assertEqual(execution.result.workflow_action, "open_engineer_ticket")
         self.assertEqual(execution.result.route_reason, "grounded_answer")
-        self.assertEqual(execution.result.citations, [{"chunk_id": "chunk-dual-stream"}])
+        self.assertEqual(execution.result.answer, "")
+        self.assertFalse(execution.result.citations)
         self.assertEqual(execution.result.client_intake_state["issue_mode"], "answer")
-        self.assertEqual(
-            execution.result.client_intake_state["missing_information"],
-            ["desired_outcome", "blocked_step_or_error"],
-        )
-        self.assertIn("Call `client.enableDualStream()`", execution.result.answer)
-        self.assertIn("please share what you're trying to achieve", execution.result.answer.lower())
-        self.assertEqual(execution.runtime_state.review_agent.get("decision"), "answer_customer")
+        self.assertEqual(execution.result.client_intake_state["missing_information"], [])
+        self.assertEqual(execution.runtime_state.review_agent.get("decision"), "open_engineer_ticket")
         review_trace_state = execution.runtime_state.review_agent.get("openai_tracing") or {}
         self.assertEqual(review_trace_state.get("group_id"), execution.result.run_id)
         self.assertEqual(review_trace_state.get("latest_trace_id"), "trace-grounded_postcheck")
@@ -2490,6 +2477,62 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual(execution.runtime_state.review_agent.get("status"), "completed")
         self.assertNotEqual(execution.result.investigation_reason, "rag_processing_timeout")
         self.assertIn("confirm the exact endpoint", execution.result.answer.lower())
+
+    def test_rag_completed_insufficient_review_cannot_send_non_missing_platform_clarification(self) -> None:
+        from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime
+
+        execution = execute_client_ticket_agent_runtime(
+            message="How can I retrieve the recorded file URLs after Cloud Recording finishes?",
+            ticket_id="TK-RAG-COMPLETED-INSUFFICIENT-PLATFORM-1",
+            customer_id="C-001",
+            ticket_subject="Cloud Recording file access",
+            ticket_context=[
+                {
+                    "role": "customer",
+                    "content": "How can I retrieve the recorded file URLs after Cloud Recording finishes?",
+                }
+            ],
+            product="cloud_recording",
+            message_id="2026-04-04T00:00:00+00:00",
+            route_agent=lambda **_kwargs: SupportRouteDecision(
+                scope_label="agora_technical",
+                route="rag",
+                confidence=0.94,
+                reason="technical_question",
+                matched_signals=["cloud recording"],
+                response_language="en",
+                route_family="agora_docs_rag",
+                execution_action="rag",
+                tooling_profile="agora_docs_only",
+            ),
+            route_executor=lambda **_kwargs: self.fail("route executor should not be used when route=rag"),
+            rag_agent=lambda **_kwargs: RagTicketAnswerDetail(
+                answer="RAG completed but could not verify a customer-safe grounded answer from the available evidence.",
+                confidence=0.42,
+                sources=[],
+                citations=[],
+                needs_engineer_guidance=True,
+                reason="rag_completed_with_insufficient_evidence",
+                evidence_summary={
+                    "quality_signals": {
+                        "needs_human": True,
+                        "handoff_reason": "insufficient_evidence",
+                    },
+                },
+                packed_evidence=None,
+            ),
+            review_agent=lambda **_kwargs: TroubleshootingIntakeResult(
+                issue_mode="answer",
+                known_information={"desired_outcome": "retrieve Cloud Recording file URLs"},
+                missing_information=[],
+                ready_for_engineer_ticket=False,
+                customer_reply="Which platform or SDK are you using?",
+            ),
+            rag_canceler=None,
+        )
+
+        self.assertNotIn("platform", execution.result.answer.lower())
+        self.assertNotIn("sdk", execution.result.answer.lower())
 
     def test_troubleshooting_rag_processing_timeout_routes_into_intake_clarification(self) -> None:
         from backend.services.client_ticket_agent_runtime import execute_client_ticket_agent_runtime

@@ -26,7 +26,7 @@ According to the documentation
 2. Cannot create a permanent rule with time: 0
 The documentation states that time: 0 means the rule is applied permanently. However, when we actually send time: 0, the API returns {"status":"success","id":0}, but no rule is created."""
 
-    def test_how_to_question_requests_goal_and_blocker_clarification(self) -> None:
+    def test_how_to_question_with_clear_goal_is_ready_for_engineer_when_rag_lacks_evidence(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
             result = evaluate_troubleshooting_intake(
                 message="How do I join channel?",
@@ -42,14 +42,10 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
 
         self.assertEqual(result.issue_mode, "answer")
-        self.assertEqual(result.missing_information, ["desired_outcome", "blocked_step_or_error"])
-        self.assertFalse(result.ready_for_engineer_ticket)
-        self.assertTrue(result.customer_reply.startswith("Hi there,"))
-        self.assertIn("Thanks for the details.", result.customer_reply)
-        self.assertIn("what you're trying to achieve", result.customer_reply.lower())
-        self.assertIn("the exact error or blocker you're seeing", result.customer_reply.lower())
-        self.assertNotIn("grounded answer", result.customer_reply.lower())
-        self.assertNotIn("support evidence", result.customer_reply.lower())
+        self.assertIn("join channel", result.known_information["desired_outcome"].lower())
+        self.assertEqual(result.missing_information, [])
+        self.assertTrue(result.ready_for_engineer_ticket)
+        self.assertEqual(result.customer_reply, "")
 
         intake_state = build_client_intake_state(
             result,
@@ -60,10 +56,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIsNotNone(intake_state)
         assert intake_state is not None
         self.assertEqual(intake_state["issue_mode"], "answer")
-        self.assertEqual(
-            intake_state["missing_information"],
-            ["desired_outcome", "blocked_step_or_error"],
-        )
+        self.assertEqual(intake_state["missing_information"], [])
 
     def test_new_to_agora_sdk_join_channel_question_stays_in_answer_mode(self) -> None:
         message = (
@@ -87,7 +80,10 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
 
         self.assertEqual(result.issue_mode, "answer")
-        self.assertEqual(result.missing_information, ["desired_outcome", "blocked_step_or_error"])
+        self.assertIn("integrate agora sdk", result.known_information["desired_outcome"].lower())
+        self.assertEqual(result.missing_information, [])
+        self.assertTrue(result.ready_for_engineer_ticket)
+        self.assertEqual(result.customer_reply, "")
         self.assertNotIn("channel name", result.customer_reply.lower())
         self.assertNotIn("problematic uid", result.customer_reply.lower())
         self.assertNotIn("issue timestamp", result.customer_reply.lower())
@@ -676,6 +672,86 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertNotIn("what you're trying to achieve", result.customer_reply.lower())
         self.assertNotIn("error or blocker", result.customer_reply.lower())
 
+    def test_llm_cannot_introduce_example_scope_for_long_non_example_answer_question(self) -> None:
+        message = """Hello Agora Support Team,
+
+I hope you are doing well.
+
+I am currently using the Agora SDK with cloud recording enabled in my application.
+
+I would like to understand how I can view or access the recorded video files after a recording session is completed. Specifically, I have the following questions:
+
+1. How can I retrieve the recorded video file URLs after the recording finishes?
+2. Does Agora provide any built-in playback option, or should I use my own video player?
+3. In case the output is in HLS format (.m3u8 and .ts files), what is the recommended way to play it?
+4. Is there any dashboard or API where I can directly preview the recordings?"""
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "backend.services.troubleshooting_intake.invoke_responses_text",
+            return_value=types.SimpleNamespace(
+                text=(
+                    '{"issue_mode":"answer",'
+                    '"known_information":{"desired_outcome":"understand how to view or access recorded video files after Cloud Recording completes"},'
+                    '"missing_information":["platform_or_sdk"],'
+                    '"ready_for_engineer_ticket":false,'
+                    '"answer_follow_up_kind":"example_request",'
+                    '"customer_reply":"Which platform or SDK are you using for Cloud Recording?"}'
+                )
+            ),
+        ):
+            result = evaluate_troubleshooting_intake(
+                message=message,
+                product="cloud_recording",
+                ticket_subject="Cloud recording output access",
+                ticket_context=[{"role": "customer", "content": message}],
+                current_state=None,
+                rag_result={
+                    "reason": "rag_completed_with_insufficient_evidence",
+                    "answer": "",
+                    "evidence_summary": {},
+                },
+            )
+
+        self.assertEqual(result.issue_mode, "answer")
+        self.assertIsNone(result.answer_follow_up_kind)
+        self.assertIn("recorded video files", result.known_information["desired_outcome"].lower())
+        self.assertEqual(result.missing_information, [])
+        self.assertTrue(result.ready_for_engineer_ticket)
+        self.assertEqual(result.customer_reply, "")
+
+    def test_llm_answer_mode_reply_asking_non_missing_platform_scope_is_rejected(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "backend.services.troubleshooting_intake.invoke_responses_text",
+            return_value=types.SimpleNamespace(
+                text=(
+                    '{"issue_mode":"answer",'
+                    '"known_information":{"desired_outcome":"retrieve Cloud Recording file URLs"},'
+                    '"missing_information":[],'
+                    '"ready_for_engineer_ticket":false,'
+                    '"customer_reply":"Which platform or SDK are you using?"}'
+                )
+            ),
+        ):
+            result = evaluate_troubleshooting_intake(
+                message="How can I retrieve the recorded file URLs after Cloud Recording finishes?",
+                product="cloud_recording",
+                ticket_subject="Cloud recording file URLs",
+                ticket_context=[
+                    {
+                        "role": "customer",
+                        "content": "How can I retrieve the recorded file URLs after Cloud Recording finishes?",
+                    }
+                ],
+                current_state=None,
+                rag_result={
+                    "reason": "rag_completed_with_insufficient_evidence",
+                    "answer": "",
+                    "evidence_summary": {},
+                },
+            )
+
+        self.assertNotIn("platform", result.customer_reply.lower())
+        self.assertNotIn("sdk", result.customer_reply.lower())
+
     def test_llm_cannot_mark_investigation_ready_when_required_fields_are_missing(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
             "backend.services.troubleshooting_intake.invoke_responses_text",
@@ -814,13 +890,12 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     "answer": "I couldn't find enough information in the available support knowledge base to answer that question.",
                     "evidence_summary": {},
                 },
-            )
+        )
 
         self.assertEqual(result.issue_mode, "answer")
-        self.assertTrue(result.customer_reply.startswith("Hi there,"))
-        self.assertIn("Thanks for the details.", result.customer_reply)
-        self.assertIn("what you're trying to achieve", result.customer_reply.lower())
-        self.assertIn("the exact error or blocker you're seeing", result.customer_reply.lower())
+        self.assertEqual(result.missing_information, [])
+        self.assertTrue(result.ready_for_engineer_ticket)
+        self.assertEqual(result.customer_reply, "")
         self.assertNotIn("grounded answer", result.customer_reply.lower())
         self.assertNotIn("support evidence", result.customer_reply.lower())
 
@@ -887,10 +962,12 @@ The documentation states that time: 0 means the rule is applied permanently. How
                     "answer": "I couldn't find enough information in the available support knowledge base to answer that question.",
                     "evidence_summary": {},
                 },
-            )
+        )
 
         self.assertEqual(result.issue_mode, "answer")
-        self.assertEqual(result.missing_information, ["blocked_step_or_error"])
+        self.assertEqual(result.missing_information, [])
+        self.assertTrue(result.ready_for_engineer_ticket)
+        self.assertEqual(result.customer_reply, "")
         record_guardrail_span.assert_called_once()
         self.assertEqual(record_guardrail_span.call_args.kwargs["name"], "troubleshooting_intake.output_contract")
         self.assertFalse(record_guardrail_span.call_args.kwargs["triggered"])
@@ -922,7 +999,8 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
 
         self.assertEqual(result.issue_mode, "answer")
-        self.assertEqual(result.missing_information, ["desired_outcome", "blocked_step_or_error"])
+        self.assertEqual(result.missing_information, [])
+        self.assertTrue(result.ready_for_engineer_ticket)
         record_guardrail_span.assert_called_once()
         self.assertTrue(record_guardrail_span.call_args.kwargs["triggered"])
         self.assertEqual(record_guardrail_span.call_args.kwargs["data"]["status"], "invalid_json")
@@ -955,7 +1033,8 @@ The documentation states that time: 0 means the rule is applied permanently. How
             )
 
         self.assertEqual(result.issue_mode, "answer")
-        self.assertEqual(result.missing_information, ["desired_outcome", "blocked_step_or_error"])
+        self.assertEqual(result.missing_information, [])
+        self.assertTrue(result.ready_for_engineer_ticket)
         record_guardrail_span.assert_called_once()
         self.assertTrue(record_guardrail_span.call_args.kwargs["triggered"])
         self.assertEqual(record_guardrail_span.call_args.kwargs["data"]["status"], "contract_fallback")

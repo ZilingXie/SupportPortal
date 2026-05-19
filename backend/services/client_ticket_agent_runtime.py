@@ -69,9 +69,14 @@ AGENT_NAME_ROUTE = "route_agent"
 AGENT_NAME_RAG = "rag_agent"
 AGENT_NAME_REVIEW = "review_agent"
 
-_ANSWER_MODE_REQUIRED_FIELDS = ("desired_outcome", "blocked_step_or_error")
-_ANSWER_MODE_OPTIONAL_FIELDS = ("platform_or_sdk",)
+_ANSWER_MODE_REQUIRED_FIELDS = ("desired_outcome",)
+_ANSWER_MODE_OPTIONAL_FIELDS = ("blocked_step_or_error", "platform_or_sdk")
 _ANSWER_MODE_EXAMPLE_REQUEST_KIND = "example_request"
+_ANSWER_MODE_EXAMPLE_SCOPE_FIELD = "platform_or_sdk"
+_ANSWER_MODE_PLATFORM_SCOPE_REPLY_RE = re.compile(
+    r"\b(?:which\s+)?(?:platform|sdk|web|ios|android|server(?:-side)?|rest\s+api)\b",
+    re.IGNORECASE,
+)
 _LOW_RISK_HOW_TO_GENERATION_MODES = {
     "structured_answer",
     "generic_join_deterministic",
@@ -176,6 +181,13 @@ def _normalize_answer_follow_up_kind(value: Any) -> str | None:
     if normalized == _ANSWER_MODE_EXAMPLE_REQUEST_KIND:
         return normalized
     return None
+
+
+def _extract_answer_mode_desired_outcome_from_message(message: str) -> str:
+    cleaned = clean_client_query_text(message).strip(" .,:;!?")
+    if cleaned and is_answer_first_how_to_message(cleaned):
+        return cleaned
+    return ""
 
 
 def _answer_mode_missing_information(
@@ -288,6 +300,19 @@ def _is_safe_answer_mode_clarify_reply(text: str) -> bool:
     return "?" in cleaned
 
 
+def _answer_mode_clarify_reply_asks_non_missing_scope(
+    text: str,
+    *,
+    missing_information: list[str],
+) -> bool:
+    cleaned = _clean_text(text)
+    if not cleaned:
+        return False
+    if _ANSWER_MODE_EXAMPLE_SCOPE_FIELD in set(missing_information):
+        return False
+    return bool(_ANSWER_MODE_PLATFORM_SCOPE_REPLY_RE.search(cleaned))
+
+
 def _sanitize_insufficient_review_result(
     review_result: TroubleshootingIntakeResult,
     *,
@@ -298,21 +323,44 @@ def _sanitize_insufficient_review_result(
 ) -> TroubleshootingIntakeResult:
     if review_result.issue_mode != "answer":
         return review_result
+    review_known_information = dict(review_result.known_information or {})
+    review_missing_information = [
+        str(field_name or "").strip().lower()
+        for field_name in list(review_result.missing_information or [])
+        if str(field_name or "").strip()
+    ]
+    api_semantics_platform_clarification = (
+        _ANSWER_MODE_EXAMPLE_SCOPE_FIELD in review_missing_information
+        and bool(_clean_text(review_known_information.get("docs_page_or_api_version")))
+    )
     known_information = _normalize_answer_mode_known_information(review_result.known_information)
     for field_name, field_value in _normalize_answer_mode_known_information((current_state or {}).get("known_information")).items():
         known_information.setdefault(field_name, field_value)
+    if not _clean_text(known_information.get("desired_outcome")):
+        extracted_desired_outcome = _extract_answer_mode_desired_outcome_from_message(message)
+        if extracted_desired_outcome:
+            known_information["desired_outcome"] = extracted_desired_outcome
     answer_follow_up_kind = _normalize_answer_follow_up_kind(
         getattr(review_result, "answer_follow_up_kind", None) or (current_state or {}).get("answer_follow_up_kind")
     )
-    missing_information = _answer_mode_missing_information(
-        known_information,
-        answer_follow_up_kind=answer_follow_up_kind,
-    )
+    if api_semantics_platform_clarification:
+        missing_information = [_ANSWER_MODE_EXAMPLE_SCOPE_FIELD]
+    else:
+        missing_information = _answer_mode_missing_information(
+            known_information,
+            answer_follow_up_kind=answer_follow_up_kind,
+        )
     ready_for_engineer_ticket = not missing_information and bool(known_information)
     customer_reply = str(review_result.customer_reply or "").strip()
     if ready_for_engineer_ticket:
         customer_reply = ""
-    elif not _is_safe_answer_mode_clarify_reply(customer_reply):
+    elif (
+        not _is_safe_answer_mode_clarify_reply(customer_reply)
+        or _answer_mode_clarify_reply_asks_non_missing_scope(
+            customer_reply,
+            missing_information=missing_information,
+        )
+    ):
         customer_reply = _build_answer_mode_customer_reply(
             message=message,
             known_information=known_information,
@@ -491,6 +539,14 @@ def _build_cited_answer_execution_result(
         current_state=current_state,
         clarification_sent=bool(follow_up),
     )
+    if review_result.ready_for_engineer_ticket and not follow_up:
+        return _build_ticket_execution_result(
+            resolution=replace(resolution, answer="", sources=[], citations=[]),
+            needs_investigating=True,
+            workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
+            investigation_reason=pending_investigation_reason,
+            client_intake_state=next_client_intake_state,
+        )
     answer_text = str(resolution.answer or "").strip()
     if follow_up:
         answer_text = append_customer_reply_email_paragraph(
@@ -1295,9 +1351,12 @@ def _handle_insufficient_review(
         pending_investigation_reason=pending_investigation_reason,
         current_state=current_state,
     )
+    safe_resolution = resolution
+    if not resolution.citations:
+        safe_resolution = replace(resolution, answer="", sources=[], citations=[])
     if review_result.ready_for_engineer_ticket:
         return _build_ticket_execution_result(
-            resolution=resolution,
+            resolution=safe_resolution,
             needs_investigating=True,
             workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
             investigation_reason=pending_investigation_reason,
@@ -1360,7 +1419,7 @@ def _handle_insufficient_review(
             ),
         )
     return _build_ticket_execution_result(
-        resolution=resolution,
+        resolution=safe_resolution,
         needs_investigating=True,
         workflow_action=WORKFLOW_ACTION_OPEN_ENGINEER_TICKET,
         investigation_reason=pending_investigation_reason,

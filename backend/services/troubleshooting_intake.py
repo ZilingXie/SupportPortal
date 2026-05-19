@@ -132,7 +132,7 @@ _MONTH_NAME_DATE_RE = re.compile(
     rf"(?P<month>{_MONTH_NAME_PATTERN})\s+(?P<day>[0-9]{{1,2}})(?:st|nd|rd|th)?",
     re.IGNORECASE,
 )
-_ANSWER_MODE_REQUIRED_FIELDS = ("desired_outcome", "blocked_step_or_error")
+_ANSWER_MODE_REQUIRED_FIELDS = ("desired_outcome",)
 _ANSWER_MODE_EXAMPLE_SCOPE_FIELD = "platform_or_sdk"
 _ANSWER_MODE_EXAMPLE_REQUEST_KIND = "example_request"
 _ANSWER_GOAL_HINT_RE = re.compile(
@@ -144,7 +144,11 @@ _ANSWER_BLOCKER_SIGNAL_RE = re.compile(
     r"\b(error|problem|fail|failed|failure|cannot|can't|unable|blocked|stuck|timeout|doesn't work|not work)\b",
     re.IGNORECASE,
 )
-_ANSWER_MODE_FIELD_SET = set(_ANSWER_MODE_REQUIRED_FIELDS)
+_ANSWER_MODE_FIELD_SET = {"desired_outcome", "blocked_step_or_error", _ANSWER_MODE_EXAMPLE_SCOPE_FIELD}
+_ANSWER_MODE_PLATFORM_SCOPE_REPLY_RE = re.compile(
+    r"\b(?:which\s+)?(?:platform|sdk|web|ios|android|server(?:-side)?|rest\s+api)\b",
+    re.IGNORECASE,
+)
 _INVESTIGATION_CLARIFY_REPLY_MARKERS = (
     "to investigate this",
     "to help us investigate this",
@@ -750,6 +754,8 @@ def _extract_answer_mode_information(
     goal_match = _ANSWER_GOAL_HINT_RE.search(text)
     if goal_match:
         extracted["desired_outcome"] = _clean_text(goal_match.group(1)).strip(" .,:;!?")
+    elif is_answer_first_how_to_message(text):
+        extracted["desired_outcome"] = text.strip(" .,:;!?")
 
     lowered = text.lower()
     blocker_text: str | None = None
@@ -808,7 +814,6 @@ def _merge_known_information(
         else:
             known_information.pop("issue_timestamp", None)
     if issue_mode == "answer":
-        current_mode = str((current_state or {}).get("issue_mode") or "").strip().lower()
         answer_follow_up_kind = _normalize_answer_follow_up_kind((current_state or {}).get("answer_follow_up_kind"))
         if answer_follow_up_kind is None:
             inherited_follow_up = resolve_follow_up_example_inheritance(
@@ -820,22 +825,13 @@ def _merge_known_information(
                 known_information.setdefault("desired_outcome", inherited_follow_up.effective_question)
                 if inherited_follow_up.platform_hints:
                     known_information[_ANSWER_MODE_EXAMPLE_SCOPE_FIELD] = ", ".join(inherited_follow_up.platform_hints)
-        if current_mode == "answer":
-            for key, value in _extract_answer_mode_information(
-                _clean_text(latest_message),
-                answer_follow_up_kind=answer_follow_up_kind,
-                ticket_context=ticket_context,
-            ).items():
-                if value:
-                    known_information[key] = value
-        elif answer_follow_up_kind == _ANSWER_MODE_EXAMPLE_REQUEST_KIND:
-            for key, value in _extract_answer_mode_information(
-                _clean_text(latest_message),
-                answer_follow_up_kind=answer_follow_up_kind,
-                ticket_context=ticket_context,
-            ).items():
-                if value:
-                    known_information[key] = value
+        for key, value in _extract_answer_mode_information(
+            _clean_text(latest_message),
+            answer_follow_up_kind=answer_follow_up_kind,
+            ticket_context=ticket_context,
+        ).items():
+            if value:
+                known_information[key] = value
         return known_information, {}
 
     customer_messages: list[tuple[str, str | None]] = []
@@ -936,6 +932,19 @@ def _customer_reply_uses_forbidden_pattern(value: str) -> bool:
     if not lowered:
         return False
     return any(marker in lowered for marker in _FORBIDDEN_CUSTOMER_REPLY_MARKERS)
+
+
+def _answer_mode_customer_reply_asks_non_missing_scope(
+    value: str,
+    *,
+    missing_information: list[str],
+) -> bool:
+    cleaned = _clean_text(value)
+    if not cleaned:
+        return False
+    if _ANSWER_MODE_EXAMPLE_SCOPE_FIELD in set(missing_information):
+        return False
+    return bool(_ANSWER_MODE_PLATFORM_SCOPE_REPLY_RE.search(cleaned))
 
 
 def _join_labels(labels: list[str]) -> str:
@@ -1213,9 +1222,7 @@ def _parse_llm_result(
             known_information.pop("issue_timestamp", None)
 
     if issue_mode == "answer":
-        answer_follow_up_kind = _normalize_answer_follow_up_kind(
-            payload.get("answer_follow_up_kind") or fallback.answer_follow_up_kind
-        )
+        answer_follow_up_kind = _normalize_answer_follow_up_kind(fallback.answer_follow_up_kind)
         missing_information = _answer_mode_missing_information(
             known_information,
             answer_follow_up_kind=answer_follow_up_kind,
@@ -1251,6 +1258,13 @@ def _parse_llm_result(
         not customer_reply
         or payload_issue_mode != issue_mode
         or _customer_reply_uses_forbidden_pattern(customer_reply)
+        or (
+            issue_mode == "answer"
+            and _answer_mode_customer_reply_asks_non_missing_scope(
+                customer_reply,
+                missing_information=missing_information,
+            )
+        )
     ):
         customer_reply = _normalize_customer_reply_text(fallback.customer_reply)
     if customer_reply:
@@ -1269,7 +1283,7 @@ def _parse_llm_result(
         customer_reply=customer_reply,
         issue_timestamp_parts=issue_timestamp_parts,
         answer_follow_up_kind=(
-            _normalize_answer_follow_up_kind(payload.get("answer_follow_up_kind") or fallback.answer_follow_up_kind)
+            _normalize_answer_follow_up_kind(fallback.answer_follow_up_kind)
             if issue_mode == "answer"
             else None
         ),

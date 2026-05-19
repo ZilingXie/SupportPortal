@@ -1676,3 +1676,22 @@ For each new entry, record:
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest backend.tests.test_prompt_modules.PromptModuleTests.test_engineer_investigation_reply_prompt_is_sectioned_and_json_only`
   - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m py_compile backend/services/engineer_agent.py backend/services/prompts/engineer_investigation_reply.py backend/tests/test_investigation_flow.py backend/tests/test_prompt_modules.py`
   - `git diff --check`
+
+- Date: 2026-05-19
+- Area or subsystem: Troubleshooting intake and answer-mode clarification contract
+- Prompt or model version: `troubleshooting-intake-v4-answer-contract`
+- Summary: Tightened answer-mode clarification so the model can no longer introduce `example_request` / platform-SDK scope for ordinary answer questions, while deterministic intake now treats a clear how-to goal as sufficient customer context instead of asking for an unrelated blocker.
+- Reason: `TK-207` showed a broader failure mode where `rag_completed_with_insufficient_evidence` could become a customer-facing platform/SDK question even though the customer had already stated the Cloud Recording goal and the missing piece was evidence quality rather than customer context.
+- Affected files or config:
+  - `backend/services/troubleshooting_intake.py`
+  - `backend/services/client_ticket_agent_runtime.py`
+  - `backend/tests/test_troubleshooting_intake.py`
+  - `backend/tests/test_client_ticket_agent_runtime.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Long how-to / direct-answer questions with an extractable goal no longer ask the customer for a generic error or blocker when RAG evidence is insufficient.
+  - The intake model cannot reclassify a normal answer request as an example request unless deterministic follow-up inheritance already identified it as one.
+  - Customer clarification text that asks for platform/SDK is rejected unless `platform_or_sdk` is actually a missing answer-mode field.
+  - When no safe customer clarification remains and the answer lacks sufficient grounding, the runtime opens engineer intake instead of sending unsupported or mismatched guidance.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest -q backend.tests.test_troubleshooting_intake backend.tests.test_client_ticket_agent_runtime`
