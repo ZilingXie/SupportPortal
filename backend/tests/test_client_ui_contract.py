@@ -35,10 +35,10 @@ class ClientRouteSmokeTests(unittest.TestCase):
         html = Path("ui/client-ui/index.html").read_text(encoding="utf-8")
 
         self.assertIn("<title>Support Portal</title>", html)
-        self.assertIn('/shared-ui/composer.css?v=20260518-client-composer-caret-1', html)
-        self.assertIn('/shared-ui/composer.js?v=20260518-client-composer-caret-1', html)
-        self.assertIn("./styles.css?v=20260518-client-composer-caret-1", html)
-        self.assertIn("./app.js?v=20260518-client-composer-caret-1", html)
+        self.assertIn('/shared-ui/composer.css?v=20260519-json-codeblock-1', html)
+        self.assertIn('/shared-ui/composer.js?v=20260519-json-codeblock-1', html)
+        self.assertIn("./styles.css?v=20260519-json-codeblock-1", html)
+        self.assertIn("./app.js?v=20260519-json-codeblock-1", html)
 
 
 class ClientRouteRedirectContractTests(unittest.TestCase):
@@ -225,6 +225,54 @@ class ClientUiContractTests(unittest.TestCase):
         self.assertNotIn("function renderMarkdownMessage(", app_source)
         self.assertNotIn("function buildDefaultComposerToolbarState(", app_source)
         self.assertNotIn("function serializeRichComposerHtmlToMarkdown(", app_source)
+
+    def test_client2_json_markdown_code_blocks_use_request_body_chrome(self) -> None:
+        css = Path("ui/shared-ui/composer.css").read_text(encoding="utf-8")
+        self.assertIn(".message-markdown-json-block", css)
+        self.assertIn(".message-markdown-codeblock-copy", css)
+        self.assertIn(".message-markdown-json-key", css)
+
+        self.run_client2_app_script(
+            textwrap.dedent(
+                """
+                const jsonMarkdown = [
+                  "```json",
+                  "{",
+                  '  "interface": "ASRConfig",',
+                  '  "required": true',
+                  "}",
+                  "```",
+                ].join("\\n");
+                const renderedJson = renderMarkdownMessage(jsonMarkdown);
+                if (!renderedJson.includes('class="message-markdown-codeblock message-markdown-json-block"')) {
+                  throw new Error(`JSON code blocks should use dedicated request-body chrome, got ${renderedJson}.`);
+                }
+                if (!renderedJson.includes('data-markdown-codeblock="json"')) {
+                  throw new Error(`JSON code blocks should expose their language marker, got ${renderedJson}.`);
+                }
+                if (!renderedJson.includes('data-markdown-copy-code')) {
+                  throw new Error(`JSON code blocks should render a copy block control, got ${renderedJson}.`);
+                }
+                if (!renderedJson.includes("Copy block")) {
+                  throw new Error(`JSON code block copy control should use the expected label, got ${renderedJson}.`);
+                }
+                if (!renderedJson.includes('class="message-markdown-json-key"')) {
+                  throw new Error(`JSON code blocks should syntax-highlight object keys, got ${renderedJson}.`);
+                }
+                if (!renderedJson.includes('class="message-markdown-json-string"')) {
+                  throw new Error(`JSON code blocks should syntax-highlight string values, got ${renderedJson}.`);
+                }
+                if (!renderedJson.includes('class="message-markdown-json-literal"')) {
+                  throw new Error(`JSON code blocks should syntax-highlight boolean/null literals, got ${renderedJson}.`);
+                }
+
+                const renderedJs = renderMarkdownMessage("```js\\nconst answer = 42;\\n```");
+                if (renderedJs.includes("message-markdown-json-block") || renderedJs.includes("data-markdown-copy-code")) {
+                  throw new Error(`Non-JSON code blocks should keep the compact generic rendering, got ${renderedJs}.`);
+                }
+                """
+            )
+        )
 
     def test_client2_context_bar_only_renders_for_chat_ticket(self) -> None:
         self.run_client2_app_script(

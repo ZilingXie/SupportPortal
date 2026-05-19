@@ -29,6 +29,112 @@
   line-height: 1.6;
 }
 
+.message-markdown-codeblock {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: #090d14;
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.18);
+}
+
+.message-markdown-json-block {
+  color: #d7e5f5;
+}
+
+.message-markdown-codeblock-bar {
+  min-height: 34px;
+  padding: 0 12px 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #2a2526;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.message-markdown-codeblock-language {
+  color: rgba(226, 232, 240, 0.72);
+  font-family: "SFMono-Regular", "SF Mono", "Roboto Mono", Menlo, monospace;
+  font-size: 12px;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.message-markdown-codeblock-copy {
+  min-width: 0;
+  min-height: 28px;
+  padding: 0 0 0 8px;
+  border: 0;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: rgba(226, 232, 240, 0.74);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    color 0.16s ease,
+    background 0.16s ease;
+}
+
+.message-markdown-codeblock-copy:hover,
+.message-markdown-codeblock-copy:focus-visible {
+  color: #f8fafc;
+  background: rgba(255, 255, 255, 0.07);
+  outline: none;
+}
+
+.message-markdown-codeblock-copy.is-copied {
+  color: #8ef0b0;
+}
+
+.message-markdown-codeblock-copy .material-symbols-outlined {
+  font-size: 15px;
+  line-height: 1;
+  font-variation-settings: "FILL" 0, "wght" 450, "GRAD" 0, "opsz" 20;
+}
+
+.message-markdown .message-markdown-codeblock pre {
+  margin: 0;
+  padding: 18px 16px 20px;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  overflow-x: auto;
+  line-height: 1.65;
+}
+
+.message-markdown .message-markdown-codeblock code {
+  display: block;
+  min-width: max-content;
+  color: #d7e5f5;
+  font-size: 12px;
+  line-height: inherit;
+  white-space: pre;
+}
+
+.message-markdown-json-key {
+  color: #7cc7ff;
+}
+
+.message-markdown-json-string {
+  color: #c7e3ff;
+}
+
+.message-markdown-json-number {
+  color: #f5c16c;
+}
+
+.message-markdown-json-literal {
+  color: #ff8c9a;
+}
+
 .message-markdown code {
   font-family: "SFMono-Regular", "SF Mono", "Roboto Mono", Menlo, monospace;
   font-size: 12px;

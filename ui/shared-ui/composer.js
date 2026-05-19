@@ -282,6 +282,63 @@
     return /^\s*[-*]\s+/.test(String(line || ""));
   }
 
+  function shouldRenderJsonCodeBlock(language, codeText) {
+    const normalizedLanguage = String(language || "").trim().toLowerCase();
+    if (normalizedLanguage === "json" || normalizedLanguage === "jsonc") {
+      return true;
+    }
+    const trimmedCode = String(codeText || "").trim();
+    if (!trimmedCode || !/^[{[]/.test(trimmedCode)) {
+      return false;
+    }
+    try {
+      JSON.parse(trimmedCode);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function highlightJsonCode(value) {
+    const source = String(value ?? "");
+    const tokenPattern =
+      /("(?:\\.|[^"\\])*"(?=\s*:))|("(?:\\.|[^"\\])*")|\b(true|false|null)\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+    let html = "";
+    let lastIndex = 0;
+    source.replace(tokenPattern, (match, key, stringValue, literal, offset) => {
+      html += escapeHtml(source.slice(lastIndex, offset));
+      const className = key
+        ? "message-markdown-json-key"
+        : stringValue
+        ? "message-markdown-json-string"
+        : literal
+        ? "message-markdown-json-literal"
+        : "message-markdown-json-number";
+      html += `<span class="${className}">${escapeHtml(match)}</span>`;
+      lastIndex = offset + match.length;
+      return match;
+    });
+    html += escapeHtml(source.slice(lastIndex));
+    return html;
+  }
+
+  function renderMarkdownCodeBlock(language, codeText) {
+    const normalizedLanguage = String(language || "").trim().toLowerCase();
+    const code = String(codeText ?? "");
+    if (shouldRenderJsonCodeBlock(normalizedLanguage, code)) {
+      const displayLanguage = normalizedLanguage || "json";
+      return `<div class="message-markdown-codeblock message-markdown-json-block" data-markdown-codeblock="${escapeHtml(
+        displayLanguage
+      )}"><div class="message-markdown-codeblock-bar"><span class="message-markdown-codeblock-language">${escapeHtml(
+        displayLanguage
+      )}</span><button class="message-markdown-codeblock-copy" type="button" data-markdown-copy-code aria-label="Copy JSON block" title="Copy JSON block"><span class="material-symbols-outlined" aria-hidden="true">content_copy</span><span class="message-markdown-codeblock-copy-label">Copy block</span></button></div><pre><code class="language-${escapeHtml(
+        displayLanguage
+      )}">${highlightJsonCode(code)}</code></pre></div>`;
+    }
+    const languageAttr = normalizedLanguage ? ` class="language-${escapeHtml(normalizedLanguage)}"` : "";
+    return `<pre><code${languageAttr}>${escapeHtml(code)}</code></pre>`;
+  }
+
   function renderMarkdownMessage(value) {
     const lines = String(value ?? "").replace(/\r\n?/g, "\n").split("\n");
     const html = [];
@@ -307,8 +364,7 @@
         if (index < lines.length) {
           index += 1;
         }
-        const languageAttr = language ? ` class="language-${escapeHtml(language)}"` : "";
-        html.push(`<pre><code${languageAttr}>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+        html.push(renderMarkdownCodeBlock(language, codeLines.join("\n")));
         continue;
       }
 
@@ -350,6 +406,79 @@
     }
 
     return html.join("");
+  }
+
+  function copyMarkdownCodeBlockText(button) {
+    const codeBlock = button?.closest?.(".message-markdown-codeblock");
+    const codeElement = codeBlock?.querySelector?.("code");
+    const text = String(codeElement?.textContent || "");
+    if (!text) {
+      return Promise.resolve(false);
+    }
+    if (globalThis.navigator?.clipboard?.writeText) {
+      return globalThis.navigator.clipboard.writeText(text).then(() => true);
+    }
+    const doc = globalThis.document;
+    if (!doc?.createElement) {
+      return Promise.resolve(false);
+    }
+    const textarea = doc.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute?.("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.top = "-9999px";
+    textarea.style.opacity = "0";
+    const parent = doc.body || doc.documentElement;
+    parent?.appendChild?.(textarea);
+    textarea.select?.();
+    let copied = false;
+    try {
+      copied = typeof doc.execCommand === "function" ? doc.execCommand("copy") : false;
+    } catch {
+      copied = false;
+    }
+    textarea.remove?.();
+    return Promise.resolve(copied);
+  }
+
+  function setMarkdownCodeBlockCopyState(button, copied) {
+    const label = button?.querySelector?.(".message-markdown-codeblock-copy-label");
+    const initialLabel = button?.getAttribute?.("data-copy-label") || label?.textContent || "Copy block";
+    button?.setAttribute?.("data-copy-label", initialLabel);
+    button?.classList?.toggle?.("is-copied", Boolean(copied));
+    if (label) {
+      label.textContent = copied ? "Copied" : initialLabel;
+    }
+    if (copied && typeof globalThis.setTimeout === "function") {
+      globalThis.setTimeout(() => {
+        button?.classList?.remove?.("is-copied");
+        if (label) {
+          label.textContent = initialLabel;
+        }
+      }, 1600);
+    }
+  }
+
+  function installMarkdownCodeBlockCopyHandler() {
+    const doc = globalThis.document;
+    if (!doc?.addEventListener || doc.__supportPortalMarkdownCodeBlockCopyHandler) {
+      return;
+    }
+    doc.__supportPortalMarkdownCodeBlockCopyHandler = true;
+    doc.addEventListener("click", (event) => {
+      const button = event.target?.closest?.("[data-markdown-copy-code]");
+      if (!button) {
+        return;
+      }
+      event.preventDefault?.();
+      copyMarkdownCodeBlockText(button)
+        .then((copied) => {
+          setMarkdownCodeBlockCopyState(button, copied);
+        })
+        .catch(() => {
+          setMarkdownCodeBlockCopyState(button, false);
+        });
+    });
   }
 
   function buildDefaultComposerToolbarState() {
@@ -2559,6 +2688,8 @@
       },
     };
   }
+
+  installMarkdownCodeBlockCopyHandler();
 
   globalThis.SupportPortalComposer = {
     escapeHtml,
