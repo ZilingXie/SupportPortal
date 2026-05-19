@@ -6795,6 +6795,54 @@ def _extract_corrected_request_body_json(
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
+def _contains_parseable_json_block(text: str) -> bool:
+    fenced_text = _fence_standalone_json_blocks(text)
+    for match in _FENCED_CODE_BLOCK_RE.finditer(fenced_text):
+        raw_block = str(match.group(1) or "").strip()
+        try:
+            parsed = json.loads(raw_block)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, (dict, list)):
+            return True
+    return False
+
+
+def _request_body_json_supplement_from_chunks(
+    chunks: list[RetrievedChunk],
+    request_body_evidence: RequestBodyEvidenceResult | None,
+) -> str:
+    if request_body_evidence is None or not request_body_evidence.triggered:
+        return ""
+    ordered_chunks = sorted(
+        list(chunks),
+        key=lambda chunk: 0 if is_high_value_troubleshooting_context(chunk) else 1,
+    )
+    for chunk in ordered_chunks:
+        corrected_json = _extract_corrected_request_body_json(chunk.text, request_body_evidence)
+        if corrected_json:
+            return corrected_json
+    return ""
+
+
+def _supplement_request_body_json_if_missing(
+    answer: str,
+    chunks: list[RetrievedChunk],
+    request_body_evidence: RequestBodyEvidenceResult | None,
+) -> str:
+    body = str(answer or "").strip()
+    if not body or _contains_parseable_json_block(body):
+        return body
+    corrected_json = _request_body_json_supplement_from_chunks(chunks, request_body_evidence)
+    if not corrected_json:
+        return body
+    return (
+        f"{body}\n\n"
+        "Use this corrected request body structure from the cited evidence:\n"
+        f"```json\n{corrected_json}\n```"
+    )
+
+
 def _is_request_body_schema_context(chunk: RetrievedChunk) -> bool:
     metadata = chunk.metadata if isinstance(chunk.metadata, dict) else {}
     evidence_type = str(metadata.get("request_body_evidence_type") or "").strip()
@@ -8137,7 +8185,11 @@ def _run_rag_query_legacy(
         ]
         answer = RagAnswer(
             answer=_build_answer_text(
-                str(payload["answer"]),
+                _supplement_request_body_json_if_missing(
+                    str(payload["answer"]),
+                    final_chunks,
+                    request_body_evidence_result,
+                ),
                 payload.get("key_steps", []),
                 question=effective_question,
                 requester=requester,
@@ -9146,7 +9198,11 @@ def _run_rag_query_agentic_single(
         ]
         answer = RagAnswer(
             answer=_build_answer_text(
-                str(payload["answer"]),
+                _supplement_request_body_json_if_missing(
+                    str(payload["answer"]),
+                    final_chunks,
+                    request_body_evidence_result,
+                ),
                 payload.get("key_steps", []),
                 question=effective_question,
                 requester=requester,

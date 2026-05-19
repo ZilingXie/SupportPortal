@@ -5124,6 +5124,148 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn("transcodingConfig is placed in the wrong part", result.answer.answer)
         self.assertIn("Move transcodingConfig inside clientRequest.recordingConfig", result.answer.answer)
 
+    def test_run_rag_query_supplements_request_body_json_when_structured_answer_omits_it(self) -> None:
+        schema_chunk = RetrievedChunk(
+            chunk_id="schema-recording-config",
+            text=(
+                "Request body schema: clientRequest.recordingConfig.transcodingConfig contains width, "
+                "height, mixedVideoLayout, and layoutConfig."
+            ),
+            source_path="official/restful-api.md",
+            source_type="official_markdown_upload",
+            chunk_strategy="official_structured_v1",
+            similarity=0.94,
+            h1="Cloud Recording RESTful API",
+            h2="Schemas",
+            h3="recordingConfig",
+            metadata={"request_body_evidence_type": "nested_schema"},
+        )
+        technical_case = RetrievedChunk(
+            chunk_id="technical-root-cause",
+            text=(
+                "**Issue Description** Cloud Recording renders the screen share as a vertical strip. "
+                "**Root Cause** transcodingConfig is placed in the wrong part of the start request JSON. "
+                "**Step by Step Solution** 1. Move transcodingConfig inside clientRequest.recordingConfig. "
+                "Correct structure: ```json "
+                "{"
+                "\"cname\":\"tr_test\","
+                "\"uid\":\"12345\","
+                "\"clientRequest\":{"
+                "\"recordingConfig\":{"
+                "\"channelType\":0,"
+                "\"streamTypes\":2,"
+                "\"transcodingConfig\":{"
+                "\"width\":1280,"
+                "\"height\":720,"
+                "\"mixedVideoLayout\":3"
+                "}"
+                "}"
+                "}"
+                "} ```"
+            ),
+            source_path="technical/mix-mode-cloud-recording-output.md",
+            source_type="technical_article_api",
+            chunk_strategy="technical_case_units_v1",
+            similarity=0.91,
+            metadata={
+                "source_type": "technical_article_api",
+                "chunk_strategy": "technical_case_units_v1",
+                "chunk_type": "troubleshooting_procedure",
+            },
+        )
+        evidence = RequestBodyEvidenceResult(
+            triggered=True,
+            query=RequestBodyEvidenceQuery(
+                is_request_body_or_api_config=True,
+                body_keys=["clientRequest"],
+                nested_paths=["clientRequest.transcodingConfig.width"],
+                schema_evidence_goals=["recordingConfig schema"],
+            ),
+            chunks=[
+                RequestBodyEvidenceChunk(
+                    chunk_id=schema_chunk.chunk_id,
+                    evidence_type="nested_schema",
+                    matched_fields=["clientRequest.recordingConfig.transcodingConfig"],
+                    source_path=schema_chunk.source_path,
+                    text_excerpt=schema_chunk.text,
+                    similarity=schema_chunk.similarity,
+                    original_chunk=schema_chunk,
+                )
+            ],
+            missing_evidence=[],
+        )
+
+        with patch.dict(os.environ, {"RAG_AGENT_ENABLED": "false"}):
+            with patch("backend.services.rag_qa._get_rag_config") as config_mock:
+                config_mock.return_value = {
+                    "dsn": "postgresql://example",
+                    "api_key": "test-key",
+                    "table": "supportportal.docagent_chunks_bge_m3_1024",
+                    "top_k": 2,
+                    "vector_candidate_k": 10,
+                    "bm25_candidate_k": 10,
+                    "keyword_candidate_k": 10,
+                    "fusion_candidate_k": 10,
+                    "rerank_top_n": 5,
+                    "bm25_k1": 1.2,
+                    "bm25_b": 0.75,
+                    "chat_model": "gpt-4.1",
+                    "embedding_provider": "siliconflow",
+                    "embedding_model": "BAAI/bge-m3",
+                    "rerank_provider": "siliconflow",
+                    "rerank_model": "BAAI/bge-reranker-v2-m3",
+                    "rerank_api_key": "test-rerank-key",
+                    "rerank_base_url": "https://api.siliconflow.cn/v1",
+                    "rerank_timeout_seconds": 10.0,
+                    "rerank_max_retries": 1,
+                    "request_timeout_seconds": 20.0,
+                    "max_retries": 1,
+                }
+                with patch("backend.services.rag_qa.get_embedding_provider", return_value=self._FakeProvider()):
+                    with patch("backend.services.rag_qa._request_body_evidence_result_for_query", return_value=evidence):
+                        with patch("backend.services.rag_qa._retrieve_chunks", return_value=[schema_chunk, technical_case]):
+                            with patch("backend.services.rag_qa._retrieve_bm25_chunks", return_value=[]):
+                                with patch(
+                                    "backend.services.rag_qa._metadata_rerank",
+                                    return_value=(
+                                        [schema_chunk, technical_case],
+                                        {"post_rerank_count": 2, "hints": {}, "applied_filter": False, "filter_type": None},
+                                    ),
+                                ):
+                                    with patch("backend.services.rag_qa._rerank_chunks", return_value=[schema_chunk, technical_case]):
+                                        with patch(
+                                            "backend.services.rag_qa._invoke_llm_payload_with_trace",
+                                            return_value=(
+                                                {
+                                                    "answer": (
+                                                        "Move transcodingConfig under clientRequest.recordingConfig "
+                                                        "and keep mixedVideoLayout set to 3."
+                                                    ),
+                                                    "key_steps": ["Retest with a new recording session."],
+                                                    "citations": ["technical-root-cause", "schema-recording-config"],
+                                                    "insufficient_evidence": False,
+                                                },
+                                                10,
+                                                5,
+                                                "gpt-4.1",
+                                            ),
+                                        ):
+                                            result = run_rag_query(
+                                                "How can we record the whole canvas with this Cloud Recording request body?",
+                                                requester="Zac",
+                                                product="audio_video_calling",
+                                            )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.trace.generation_mode, "structured_answer")
+        self.assertIn("```json", result.answer.answer)
+        fenced_json = result.answer.answer.split("```json", 1)[1].split("```", 1)[0].strip()
+        corrected_payload = json.loads(fenced_json)
+        recording_config = corrected_payload["clientRequest"]["recordingConfig"]
+        self.assertIn("transcodingConfig", recording_config)
+        self.assertNotIn("transcodingConfig", corrected_payload["clientRequest"])
+
     def test_execute_agentic_round_short_symptom_troubleshooting_skips_vector_original_when_lexical_support_is_weak(self) -> None:
         weak_chunk = RetrievedChunk(
             chunk_id="black-screen-weak",
