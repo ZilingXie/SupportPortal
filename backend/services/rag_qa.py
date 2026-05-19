@@ -53,6 +53,7 @@ from backend.services.rag_context_budget import (
 from backend.services.rag_request_body_evidence import (
     RequestBodyEvidenceResult,
     detect_request_body_evidence_query,
+    is_high_value_troubleshooting_context,
     merge_request_body_evidence_chunks,
     run_request_body_evidence_skill,
 )
@@ -6269,6 +6270,7 @@ def _merge_request_body_evidence_into_final_chunks(
     *,
     request_body_evidence: RequestBodyEvidenceResult | None,
     max_chunks: int,
+    retrieved_chunks: list[RetrievedChunk] | None = None,
 ) -> list[RetrievedChunk]:
     if request_body_evidence is None or not request_body_evidence.triggered or not request_body_evidence.chunks:
         return final_chunks
@@ -6279,8 +6281,21 @@ def _merge_request_body_evidence_into_final_chunks(
             chunk.metadata["request_body_matched_fields"] = list(evidence_chunk.matched_fields)
             chunk.metadata["request_body_skill_triggered"] = True
             chunk.metadata["request_body_missing_evidence"] = list(request_body_evidence.missing_evidence)
+    primary_chunks = list(final_chunks)
+    selected_ids = {chunk.chunk_id for chunk in primary_chunks if chunk.chunk_id}
+    for chunk in retrieved_chunks or []:
+        if not isinstance(chunk, RetrievedChunk):
+            continue
+        if chunk.chunk_id and chunk.chunk_id in selected_ids:
+            continue
+        if not is_high_value_troubleshooting_context(chunk):
+            continue
+        primary_chunks.append(chunk)
+        if chunk.chunk_id:
+            selected_ids.add(chunk.chunk_id)
+        break
     merged = merge_request_body_evidence_chunks(
-        primary_chunks=list(final_chunks),
+        primary_chunks=primary_chunks,
         supplement_chunks=list(request_body_evidence.chunks),
         max_chunks=max_chunks,
     )
@@ -7544,6 +7559,7 @@ def _run_rag_query_legacy(
         final_chunks,
         request_body_evidence=request_body_evidence_result,
         max_chunks=int(config["top_k"]),
+        retrieved_chunks=retrieved_chunks,
     )
     if chunks and bool(config.get("context_budget_enabled")):
         compression_defaults = resolve_model_profile(RAG_CONTEXT_COMPRESSION_SCENARIO)
@@ -8237,6 +8253,7 @@ def _run_rag_query_agentic_single(
             final_chunks,
             request_body_evidence=request_body_evidence_result,
             max_chunks=int(config["top_k"]),
+            retrieved_chunks=retrieved_chunks,
         )
         if final_judge is None or final_judge.decision == "escalate":
             final_judge = AgenticJudgeDecision(

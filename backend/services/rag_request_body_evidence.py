@@ -379,6 +379,39 @@ def _chunk_source_path(chunk: Any) -> str | None:
     return _clean_text(getattr(chunk, "source_path", "")) or None
 
 
+def _chunk_metadata(chunk: Any) -> dict[str, Any]:
+    if isinstance(chunk, RequestBodyEvidenceChunk):
+        original = chunk.original_chunk
+        return _chunk_metadata(original) if original is not None else {}
+    if isinstance(chunk, dict):
+        metadata = chunk.get("metadata")
+        merged = dict(metadata) if isinstance(metadata, dict) else {}
+        for key in ("source_type", "chunk_strategy", "chunk_type", "doc_subtype", "h1", "h2", "h3", "heading", "title"):
+            if key in chunk and key not in merged:
+                merged[key] = chunk.get(key)
+        return merged
+    metadata = getattr(chunk, "metadata", None)
+    merged = dict(metadata) if isinstance(metadata, dict) else {}
+    for key in ("source_type", "chunk_strategy", "chunk_type", "doc_subtype", "h1", "h2", "h3", "heading", "title"):
+        value = getattr(chunk, key, None)
+        if value is not None and key not in merged:
+            merged[key] = value
+    return merged
+
+
+def _chunk_heading_text(chunk: Any) -> str:
+    metadata = _chunk_metadata(chunk)
+    parts: list[str] = []
+    for key in ("h1", "h2", "h3", "heading", "title"):
+        value = metadata.get(key)
+        if value:
+            parts.append(str(value))
+    section_path = metadata.get("section_path")
+    if isinstance(section_path, list):
+        parts.extend(str(item) for item in section_path if str(item or "").strip())
+    return " ".join(parts)
+
+
 def _chunk_similarity(chunk: Any) -> float:
     if isinstance(chunk, RequestBodyEvidenceChunk):
         return float(chunk.similarity)
@@ -552,6 +585,43 @@ def _is_low_value_overview(item: Any) -> bool:
     return any(token in text for token in ["release note", "release-notes", "product overview", "/overview"])
 
 
+def is_high_value_troubleshooting_context(item: Any) -> bool:
+    chunk = _original_chunk(item)
+    metadata = _chunk_metadata(chunk)
+    source_path = (_chunk_source_path(chunk) or "").lower()
+    source_type = _clean_text(metadata.get("source_type")).lower()
+    chunk_strategy = _clean_text(metadata.get("chunk_strategy")).lower()
+    doc_subtype = _clean_text(metadata.get("doc_subtype")).lower()
+    chunk_type = _clean_text(metadata.get("chunk_type")).lower()
+    combined_text = f"{source_path} {_chunk_heading_text(chunk)} {_chunk_text(chunk)}".lower()
+
+    technical_family = (
+        source_type == "technical_article_api"
+        or chunk_strategy == "technical_case_units_v1"
+        or source_path.startswith("technical/")
+        or "/technical/" in source_path
+    )
+    if not technical_family:
+        return False
+
+    troubleshooting_cues = {
+        "issue description",
+        "root cause",
+        "step by step solution",
+        "step-by-step solution",
+        "troubleshooting procedure",
+        "decision logic",
+        "best practice",
+        "symptom",
+    }
+    metadata_cue = any(
+        token in value
+        for value in (doc_subtype, chunk_type)
+        for token in ("troubleshooting", "issue", "root_cause", "decision", "best_practice", "procedure")
+    )
+    return metadata_cue or any(token in combined_text for token in troubleshooting_cues)
+
+
 def merge_request_body_evidence_chunks(
     *,
     primary_chunks: list[Any],
@@ -562,12 +632,25 @@ def merge_request_body_evidence_chunks(
     limit = max(1, int(max_chunks or 1))
     schema_supplements = [item for item in supplement_chunks if _is_schema_evidence(item)]
     other_supplements = [item for item in supplement_chunks if item not in schema_supplements]
-    normal_primary = [item for item in primary_chunks if not _is_low_value_overview(item)]
+    protected_primary = [
+        item
+        for item in primary_chunks
+        if not _is_low_value_overview(item) and is_high_value_troubleshooting_context(item)
+    ]
+    normal_primary = [
+        item
+        for item in primary_chunks
+        if not _is_low_value_overview(item) and not is_high_value_troubleshooting_context(item)
+    ]
     overview_primary = [item for item in primary_chunks if _is_low_value_overview(item)]
+    schema_prefix_slots = max(0, min(int(reserved_schema_slots or 0), limit))
+    if protected_primary and schema_prefix_slots:
+        schema_prefix_slots = 1
     ordered = [
-        *schema_supplements[: max(0, min(int(reserved_schema_slots or 0), limit))],
+        *schema_supplements[:schema_prefix_slots],
+        *protected_primary,
         *normal_primary,
-        *schema_supplements[max(0, min(int(reserved_schema_slots or 0), limit)) :],
+        *schema_supplements[schema_prefix_slots:],
         *other_supplements,
         *overview_primary,
     ]
