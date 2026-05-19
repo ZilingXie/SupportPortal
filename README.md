@@ -323,13 +323,3 @@ Notes:
 1. `scripts/run_rag_benchmark.py` accepts `--dataset`; `--dataset-id` and `--suite` are deprecated.
 2. `Data Supply -> Benchmark Supply -> Sync Local Benchmarks` mirrors local files to dataset tables but does not change the benchmark execution entry point.
 3. Benchmark files use NDJSON, with one case per line, and follow an explicit route-aware contract.
-
-## POC Gaps and Next Focus
-
-The POC has not yet completed the production-readiness work needed for a broad rollout. The next phase should focus on:
-
-1. File and image upload for complex support conversations.
-2. Streaming answer output.
-3. Answer quality and knowledge hit-rate improvement.
-4. Stability, load, and queue-depth validation.
-5. Operational metrics and alerting for response latency, escalation rate, retrieval quality, and service health.
