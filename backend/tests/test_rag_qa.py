@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import threading
 import urllib.error
@@ -4799,6 +4800,52 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 "part of the start request JSON, causing Cloud Recording to ignore those settings. "
                 "--- **Prevention/Best Practice (optional)** - Always validate the JSON payload before sending it. "
                 "**Step by Step Solution** 1. Check where transcodingConfig is placed in the start request. "
+                "Incorrect structure: ```json "
+                "{"
+                "\"cname\":\"tr_test\","
+                "\"uid\":\"12345\","
+                "\"clientRequest\":{"
+                "\"recordingConfig\":{"
+                "\"channelType\":0,"
+                "\"streamTypes\":2"
+                "},"
+                "\"transcodingConfig\":{"
+                "\"width\":1280,"
+                "\"height\":720,"
+                "\"mixedVideoLayout\":3"
+                "}"
+                "}"
+                "} ``` "
+                "Correct structure: ```json "
+                "{"
+                "\"cname\":\"tr_test\","
+                "\"uid\":\"12345\","
+                "\"clientRequest\":{"
+                "\"recordingConfig\":{"
+                "\"channelType\":0,"
+                "\"streamTypes\":2,"
+                "\"videoStreamType\":0,"
+                "\"maxIdleTime\":300,"
+                "\"transcodingConfig\":{"
+                "\"width\":1280,"
+                "\"height\":720,"
+                "\"fps\":15,"
+                "\"bitrate\":1130,"
+                "\"backgroundColor\":\"#000000\","
+                "\"mixedVideoLayout\":3,"
+                "\"layoutConfig\":[{"
+                "\"uid\":\"2134\","
+                "\"x_axis\":0,"
+                "\"y_axis\":0,"
+                "\"width\":1.0,"
+                "\"height\":1.0,"
+                "\"alpha\":1.0,"
+                "\"render_mode\":1"
+                "}]"
+                "}"
+                "}"
+                "}"
+                "} ``` "
                 "2. Move transcodingConfig inside clientRequest.recordingConfig. "
                 "3. Retest with a new recording session."
             ),
@@ -4852,6 +4899,14 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertNotIn("Always validate", answer.answer)
         self.assertIn("1. Check where transcodingConfig is placed in the start request.", answer.answer)
         self.assertIn("Move transcodingConfig inside clientRequest.recordingConfig", answer.answer)
+        fence_start = answer.answer.find("```json")
+        self.assertNotEqual(-1, fence_start)
+        fenced_json = answer.answer[fence_start + len("```json") :].split("```", 1)[0].strip()
+        corrected_payload = json.loads(fenced_json)
+        recording_config = corrected_payload["clientRequest"]["recordingConfig"]
+        self.assertIn("transcodingConfig", recording_config)
+        self.assertNotIn("transcodingConfig", corrected_payload["clientRequest"])
+        self.assertEqual(recording_config["transcodingConfig"]["mixedVideoLayout"], 3)
         self.assertEqual(
             [citation["chunk_id"] for citation in answer.citations],
             ["technical-root-cause", "schema-recording-config"],

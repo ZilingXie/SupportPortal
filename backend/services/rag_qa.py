@@ -6601,6 +6601,7 @@ _REQUEST_BODY_RESCUE_SECTION_RE = re.compile(
     r"(?:\*\*)?\s*:?\s*",
     re.IGNORECASE,
 )
+_FENCED_CODE_BLOCK_RE = re.compile(r"```(?:[A-Za-z0-9_-]+)?\s*(.*?)```", re.DOTALL)
 
 
 def _normalize_evidence_label(value: str) -> str:
@@ -6610,6 +6611,7 @@ def _normalize_evidence_label(value: str) -> str:
 
 def _plain_evidence_text(value: str, *, limit: int = 360) -> str:
     text = re.split(r"\s-{3,}\s", str(value or ""), maxsplit=1)[0]
+    text = _FENCED_CODE_BLOCK_RE.sub("", text)
     text = re.sub(r"`{1,3}", "", text)
     text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
     text = re.sub(r"\[(.*?)\]\([^)]*\)", r"\1", text)
@@ -6620,7 +6622,7 @@ def _plain_evidence_text(value: str, *, limit: int = 360) -> str:
     return f"{clipped}..." if clipped else text[:limit]
 
 
-def _extract_labeled_evidence_section(text: str, labels: set[str]) -> str:
+def _raw_labeled_evidence_section(text: str, labels: set[str]) -> str:
     matches = list(_REQUEST_BODY_RESCUE_SECTION_RE.finditer(text or ""))
     normalized_labels = {_normalize_evidence_label(label) for label in labels}
     for index, match in enumerate(matches):
@@ -6630,15 +6632,23 @@ def _extract_labeled_evidence_section(text: str, labels: set[str]) -> str:
         end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
         section = str(text[start:end] or "").strip(" \n\r\t-:")
         if section:
-            return _plain_evidence_text(section)
+            return section
+    return ""
+
+
+def _extract_labeled_evidence_section(text: str, labels: set[str]) -> str:
+    section = _raw_labeled_evidence_section(text, labels)
+    if section:
+        return _plain_evidence_text(section)
     return ""
 
 
 def _extract_rescue_steps(text: str) -> list[str]:
-    section = _extract_labeled_evidence_section(
+    raw_section = _raw_labeled_evidence_section(
         text,
         {"Step by Step Solution", "Solution", "Resolution", "Best Practice"},
     )
+    section = _plain_evidence_text(raw_section, limit=4000)
     if not section:
         return []
     steps: list[str] = []
@@ -6657,6 +6667,89 @@ def _extract_rescue_steps(text: str) -> list[str]:
         if len(steps) >= 3:
             break
     return steps
+
+
+def _json_path_exists(payload: Any, path: str) -> bool:
+    current = payload
+    parts = [part for part in str(path or "").split(".") if part]
+    if not parts:
+        return False
+    for part in parts:
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+            continue
+        return False
+    return True
+
+
+def _parent_json_path_exists(payload: Any, path: str) -> bool:
+    parts = [part for part in str(path or "").split(".") if part]
+    if len(parts) < 2:
+        return False
+    return _json_path_exists(payload, ".".join(parts[:-1]))
+
+
+def _request_body_schema_paths(request_body_evidence: RequestBodyEvidenceResult | None) -> list[str]:
+    if request_body_evidence is None:
+        return []
+    paths: list[str] = []
+    for evidence_chunk in request_body_evidence.chunks:
+        for field_path in evidence_chunk.matched_fields:
+            normalized = str(field_path or "").strip()
+            if normalized and normalized not in paths:
+                paths.append(normalized)
+    if paths:
+        return paths
+    for field_path in request_body_evidence.query.nested_paths:
+        normalized = str(field_path or "").strip()
+        if normalized and normalized not in paths:
+            paths.append(normalized)
+    return paths
+
+
+def _score_request_body_json_payload(payload: Any, schema_paths: list[str]) -> int:
+    if not isinstance(payload, dict):
+        return -100
+    score = 0
+    for path in schema_paths:
+        if _json_path_exists(payload, path):
+            score += 4
+        elif _parent_json_path_exists(payload, path):
+            score += 1
+    if _json_path_exists(payload, "clientRequest.recordingConfig.transcodingConfig"):
+        score += 4
+    if _json_path_exists(payload, "clientRequest.transcodingConfig"):
+        score -= 5
+    if _json_path_exists(payload, "clientRequest.recordingConfig.transcodingConfig.layoutConfig"):
+        score += 1
+    if _json_path_exists(payload, "clientRequest.recordingConfig.transcodingConfig.mixedVideoLayout"):
+        score += 1
+    return score
+
+
+def _extract_corrected_request_body_json(
+    text: str,
+    request_body_evidence: RequestBodyEvidenceResult | None,
+) -> str:
+    schema_paths = _request_body_schema_paths(request_body_evidence)
+    candidates: list[tuple[int, int, dict[str, Any]]] = []
+    for index, match in enumerate(_FENCED_CODE_BLOCK_RE.finditer(text or "")):
+        raw_block = str(match.group(1) or "").strip()
+        if not raw_block.startswith("{"):
+            continue
+        try:
+            payload = json.loads(raw_block)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        score = _score_request_body_json_payload(payload, schema_paths)
+        if score > 0:
+            candidates.append((score, -index, payload))
+    if not candidates:
+        return ""
+    _, _, payload = max(candidates, key=lambda item: (item[0], item[1]))
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 def _is_request_body_schema_context(chunk: RetrievedChunk) -> bool:
@@ -6695,11 +6788,21 @@ def _build_request_body_evidence_rescue_answer(
         return None
 
     schema_heading = _build_heading(schema_chunk)
+    corrected_json = _extract_corrected_request_body_json(
+        technical_chunk.text,
+        request_body_evidence,
+    )
     body = (
         "The request body you shared matches both a documented request-body schema and a technical "
         f"troubleshooting article. {cause}\n\n"
         f"I would use the cited `{schema_heading}` schema as the source of truth for the nested request body."
     )
+    if corrected_json:
+        body = (
+            f"{body}\n\n"
+            "A minimal corrected request body from the cited evidence is:\n"
+            f"```json\n{corrected_json}\n```"
+        )
     steps = _extract_rescue_steps(technical_chunk.text)
     if not steps:
         steps = [

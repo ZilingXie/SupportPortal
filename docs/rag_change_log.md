@@ -10,6 +10,26 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-19 - Include grounded JSON payloads in request-body rescue answers
+
+- Summary:
+  - Updated the request-body evidence rescue answer path to extract valid fenced JSON payloads from cited technical troubleshooting articles and include the best schema-matching corrected request body in the customer reply.
+  - Added scoring so corrected payloads that match schema evidence paths are preferred over nearby incorrect examples.
+  - Stripped fenced code blocks before solution-step extraction so JSON examples do not collapse into noisy numbered steps.
+- Reason:
+  - TK-204 routed correctly to RAG and cited both the Cloud Recording request-body schema and the technical root-cause article, but the deterministic `request_body_evidence_rescue` copy bypassed the answer prompt's API/config JSON-example requirement and returned only prose.
+  - Request-body/API-config rescue answers need to show a directly usable, valid JSON/config example when the cited evidence already contains one.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No ingestion reset, embedding change, vector-table migration, BM25 schema change, or document backfill is performed.
+  - Existing RAG data remains valid; only runtime formatting and evidence extraction change for request-body rescue answers.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest -q backend.tests.test_rag_request_body_evidence backend.tests.test_rag_qa`
+  - `python3 -m py_compile backend/services/rag_qa.py`
+
 ## 2026-05-19 - Clean request-body rescue section extraction
 
 - Summary:
