@@ -6750,6 +6750,82 @@ def _request_body_schema_paths(request_body_evidence: RequestBodyEvidenceResult 
     return paths
 
 
+def _request_body_authoritative_schema_paths(request_body_evidence: RequestBodyEvidenceResult | None) -> list[str]:
+    if request_body_evidence is None:
+        return []
+    paths: list[str] = []
+    for evidence_chunk in request_body_evidence.chunks:
+        for field_path in evidence_chunk.matched_fields:
+            normalized = str(field_path or "").strip()
+            if normalized and normalized not in paths:
+                paths.append(normalized)
+    return paths
+
+
+def _json_paths_by_leaf(payload: Any, leaf: str, *, prefix: str = "") -> list[str]:
+    target = str(leaf or "").strip()
+    if not target:
+        return []
+    paths: list[str] = []
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            key_text = str(key or "").strip()
+            if not key_text:
+                continue
+            path = f"{prefix}.{key_text}" if prefix else key_text
+            if key_text == target:
+                paths.append(path)
+            paths.extend(_json_paths_by_leaf(value, target, prefix=path))
+    elif isinstance(payload, list):
+        for value in payload:
+            paths.extend(_json_paths_by_leaf(value, target, prefix=prefix))
+    return paths
+
+
+def _request_body_payload_conflicts_with_schema(payload: Any, schema_paths: list[str]) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    for schema_path in schema_paths:
+        normalized = str(schema_path or "").strip()
+        if not normalized or _json_path_exists(payload, normalized):
+            continue
+        leaf = normalized.split(".")[-1]
+        for payload_path in _json_paths_by_leaf(payload, leaf):
+            if payload_path != normalized:
+                return True
+    return False
+
+
+_REQUEST_BODY_CORRECT_JSON_CONTEXT_RE = re.compile(
+    r"\b(correct(?:ed)?|fixed|valid|recommended)\b",
+    re.IGNORECASE,
+)
+_REQUEST_BODY_INCORRECT_JSON_CONTEXT_RE = re.compile(
+    r"\b(incorrect|wrong|invalid|misplaced|outside|sibling)\b",
+    re.IGNORECASE,
+)
+
+
+def _last_context_match_position(pattern: re.Pattern[str], text: str) -> int:
+    position = -1
+    for match in pattern.finditer(text):
+        position = match.start()
+    return position
+
+
+def _score_request_body_json_block_context(text: str, block_start: int) -> int:
+    context = str(text or "")[max(0, int(block_start) - 320) : int(block_start)]
+    if not context:
+        return 0
+    correct_position = _last_context_match_position(_REQUEST_BODY_CORRECT_JSON_CONTEXT_RE, context)
+    incorrect_position = _last_context_match_position(_REQUEST_BODY_INCORRECT_JSON_CONTEXT_RE, context)
+    if correct_position > incorrect_position:
+        return 20
+    if incorrect_position > correct_position:
+        return -20
+    return 0
+
+
 def _score_request_body_json_payload(payload: Any, schema_paths: list[str]) -> int:
     if not isinstance(payload, dict):
         return -100
@@ -6787,6 +6863,7 @@ def _extract_corrected_request_body_json(
         if not isinstance(payload, dict):
             continue
         score = _score_request_body_json_payload(payload, schema_paths)
+        score += _score_request_body_json_block_context(text, match.start())
         if score > 0:
             candidates.append((score, -index, payload))
     if not candidates:
@@ -6804,6 +6881,29 @@ def _contains_parseable_json_block(text: str) -> bool:
         except json.JSONDecodeError:
             continue
         if isinstance(parsed, (dict, list)):
+            return True
+    return False
+
+
+def _contains_schema_aligned_parseable_json_block(
+    text: str,
+    request_body_evidence: RequestBodyEvidenceResult | None,
+) -> bool:
+    schema_paths = _request_body_authoritative_schema_paths(request_body_evidence)
+    if not schema_paths:
+        return _contains_parseable_json_block(text)
+    fenced_text = _fence_standalone_json_blocks(text)
+    for match in _FENCED_CODE_BLOCK_RE.finditer(fenced_text):
+        raw_block = str(match.group(1) or "").strip()
+        try:
+            parsed = json.loads(raw_block)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        if _request_body_payload_conflicts_with_schema(parsed, schema_paths):
+            continue
+        if _score_request_body_json_payload(parsed, schema_paths) > 0:
             return True
     return False
 
@@ -6831,7 +6931,7 @@ def _supplement_request_body_json_if_missing(
     request_body_evidence: RequestBodyEvidenceResult | None,
 ) -> str:
     body = str(answer or "").strip()
-    if not body or _contains_parseable_json_block(body):
+    if not body or _contains_schema_aligned_parseable_json_block(body, request_body_evidence):
         return body
     corrected_json = _request_body_json_supplement_from_chunks(chunks, request_body_evidence)
     if not corrected_json:

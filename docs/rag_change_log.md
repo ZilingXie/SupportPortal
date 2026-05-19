@@ -10,6 +10,26 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-19 - Prefer corrected request-body JSON blocks over incorrect examples
+
+- Summary:
+  - Updated request-body JSON extraction to score fenced code blocks with nearby `correct`/`incorrect` context labels, so technical articles that show both bad and fixed payloads select the corrected payload.
+  - Changed request-body JSON supplementation to treat parseable but schema-conflicting answer JSON as insufficient and append a schema-aligned corrected payload from the cited chunks.
+- Reason:
+  - TK-204-like live verification showed a fenced JSON block was present, but the selected payload was the article's `Incorrect structure` example with `transcodingConfig` as a sibling of `recordingConfig`.
+  - The old scorer only considered field-path overlap, so paths extracted from the customer's broken payload could outweigh the article label that explicitly marked the block as incorrect.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No ingestion reset, embedding change, vector-table migration, BM25 schema change, or document backfill is performed.
+  - Existing RAG data remains valid; only runtime selection and supplementation of request-body/API-config JSON examples changes.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest -q backend.tests.test_rag_qa.RagQaHybridTests.test_request_body_json_extraction_prefers_correct_labeled_payload_over_incorrect_example backend.tests.test_rag_qa.RagQaHybridTests.test_request_body_json_supplement_appends_correction_when_answer_has_conflicting_json`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest -q backend.tests.test_rag_request_body_evidence backend.tests.test_rag_qa`
+  - `python3 -m py_compile backend/services/rag_qa.py`
+
 ## 2026-05-19 - Supplement missing request-body JSON in structured RAG answers
 
 - Summary:
