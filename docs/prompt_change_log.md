@@ -12,6 +12,27 @@ For each new entry, record:
 - Expected behavior change
 - Verification
 
+## 2026-05-19 - How-to RAG code example contract
+
+- Area or subsystem: Client-facing RAG answer generation and customer reply formatting
+- Prompt or model version: `rag-answer-howto-code-example-v1`
+- Summary: Added a How-to code-example contract to the RAG answer prompt and paired it with answer-stage supplementation from selected evidence chunks when a grounded code block is available but the model omits it.
+- Reason: How-to / onboarding / usage answers are more actionable when supported code examples are shown as fenced code blocks, but the system must not invent SDK/API snippets when the selected chunks only support prose guidance.
+- Affected files or config:
+  - `backend/services/prompts/rag_answer.py`
+  - `backend/services/rag_qa.py`
+  - `backend/services/customer_reply_composer.py`
+  - `backend/tests/test_prompt_modules.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/prompt_change_log.md`
+- Expected behavior change:
+  - Supported How-to answers should include a fenced Markdown code block when selected RAG chunks contain a relevant authoritative code sample.
+  - Prose-only evidence still produces prose-only grounded steps instead of synthesized code.
+  - Customer reply numbered steps no longer duplicate existing numeric prefixes.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest -q backend.tests.test_prompt_modules backend.tests.test_rag_qa backend.tests.test_client_ticket_agent_runtime`
+  - `python3 -m py_compile backend/services/prompts/rag_answer.py backend/services/rag_qa.py backend/services/customer_reply_composer.py`
+
 ## 2026-05-18 - Request body evidence analyzer scene
 
 - Area or subsystem: RAG request body/API configuration evidence extraction

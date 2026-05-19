@@ -112,7 +112,7 @@ def _default_opener(reply_kind: str | None, language: str) -> str:
 def _render_steps(steps: Iterable[str] | None) -> str:
     rendered_steps: list[str] = []
     for index, step in enumerate(list(steps or []), start=1):
-        normalized = _clean_text(step)
+        normalized = re.sub(r"^\s*\d+\.\s+", "", _clean_text(step)).strip()
         if normalized:
             rendered_steps.append(f"{index}. {normalized}")
     return "\n".join(rendered_steps)

@@ -142,6 +142,64 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertNotIn('Use this structure instead:\n\n{', answer_text)
         self.assertIn("Then start a new recording session.", answer_text)
 
+    def test_build_answer_text_does_not_duplicate_existing_step_numbers(self) -> None:
+        answer_text = rag_qa._build_answer_text(
+            "To join a channel, call the SDK join method.",
+            [
+                "1. Create or fetch a token.",
+                "2. Call the join method.",
+            ],
+            question="How do I join a channel?",
+        )
+
+        self.assertIn("1. Create or fetch a token.", answer_text)
+        self.assertIn("2. Call the join method.", answer_text)
+        self.assertNotIn("1. 1. Create or fetch a token.", answer_text)
+        self.assertNotIn("2. 2. Call the join method.", answer_text)
+
+    def test_how_to_answer_appends_grounded_code_example_from_selected_chunk(self) -> None:
+        code_chunk = RetrievedChunk(
+            chunk_id="join-code",
+            text=(
+                "Use joinChannel to join a channel.\n\n"
+                "```javascript\n"
+                "client.join(appId, channelName, token, uid);\n"
+                "```"
+            ),
+            source_path="official/join-channel.md",
+            similarity=0.95,
+        )
+
+        answer, citation_ids = rag_qa._supplement_how_to_code_example_if_missing(
+            "To join a channel, call the SDK join method with your token and UID.",
+            question="How do I join a channel?",
+            chunks=[code_chunk],
+            citation_ids=[],
+        )
+
+        self.assertIn("Reference Example:", answer)
+        self.assertIn("```javascript", answer)
+        self.assertIn("client.join(appId, channelName, token, uid);", answer)
+        self.assertEqual(citation_ids, ["join-code"])
+
+    def test_how_to_answer_does_not_invent_code_without_chunk_code(self) -> None:
+        text_chunk = RetrievedChunk(
+            chunk_id="join-text",
+            text="Use the join method with a channel name, token, and uid.",
+            source_path="official/join-channel.md",
+            similarity=0.95,
+        )
+
+        answer, citation_ids = rag_qa._supplement_how_to_code_example_if_missing(
+            "To join a channel, call the SDK join method with your token and UID.",
+            question="How do I join a channel?",
+            chunks=[text_chunk],
+            citation_ids=["join-text"],
+        )
+
+        self.assertNotIn("```", answer)
+        self.assertEqual(citation_ids, ["join-text"])
+
     def test_split_table_name_supports_schema_prefix(self) -> None:
         self.assertEqual(_split_table_name("public.docagent"), ("public", "docagent"))
         self.assertEqual(
