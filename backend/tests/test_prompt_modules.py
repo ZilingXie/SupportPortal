@@ -196,6 +196,26 @@ class PromptModuleTests(unittest.TestCase):
         self.assertNotIn("render_mode", user_prompt)
         self.assertNotIn("updateLayout", user_prompt)
 
+    def test_rag_answer_prompt_guides_how_to_answers_to_include_grounded_code_blocks(self) -> None:
+        insufficient_reply = "I couldn't find enough information in the available support knowledge base to answer that question."
+        user_prompt = build_rag_answer_user_prompt(
+            question="How do I join a channel?",
+            context_block=(
+                "chunk-1: Join with joinChannel. "
+                "```javascript\nclient.join(appId, channel, token, uid);\n```"
+            ),
+            insufficient_reply=insufficient_reply,
+            repair_mode=False,
+        )
+
+        self.assertIn("## How-to Code Examples", user_prompt)
+        self.assertIn("How-to", user_prompt)
+        self.assertIn("code block", user_prompt)
+        self.assertIn("fenced", user_prompt)
+        self.assertIn("only when the Context Chunks provide", user_prompt)
+        self.assertIn("Do not invent API names", user_prompt)
+        self.assertIn("Do not put code examples in key_steps", user_prompt)
+
     def test_rag_answer_system_prompt_includes_selected_product_scope(self) -> None:
         system_prompt = build_rag_answer_system_prompt(
             insufficient_reply="INSUFFICIENT",

@@ -1623,6 +1623,60 @@ def _extract_authoritative_code_block(chunk: RetrievedChunk | None) -> str | Non
     return f"{fence}\n{body}\n```"
 
 
+def _answer_has_fenced_code_block(value: str) -> bool:
+    return bool(re.search(r"```[A-Za-z0-9_+-]*\s*\n.*?```", str(value or ""), flags=re.DOTALL))
+
+
+def _deduped_chunk_order_for_code_example(
+    chunks: list[RetrievedChunk],
+    citation_ids: list[str],
+) -> list[RetrievedChunk]:
+    chunk_by_id = {str(chunk.chunk_id): chunk for chunk in chunks if str(chunk.chunk_id or "").strip()}
+    ordered: list[RetrievedChunk] = []
+    seen: set[str] = set()
+    for chunk_id in citation_ids:
+        chunk = chunk_by_id.get(str(chunk_id))
+        if chunk is None:
+            continue
+        dedupe_key = _chunk_dedupe_key(chunk)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        ordered.append(chunk)
+    for chunk in chunks:
+        dedupe_key = _chunk_dedupe_key(chunk)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        ordered.append(chunk)
+    return ordered
+
+
+def _supplement_how_to_code_example_if_missing(
+    answer: str,
+    *,
+    question: str,
+    chunks: list[RetrievedChunk],
+    citation_ids: list[str],
+) -> tuple[str, list[str]]:
+    body = str(answer or "").strip()
+    normalized_citation_ids = [str(chunk_id) for chunk_id in citation_ids if str(chunk_id or "").strip()]
+    if not body or not (is_answer_first_how_to_message(question) or _is_how_to_faq_query(question)):
+        return body, normalized_citation_ids
+    if _answer_has_fenced_code_block(body):
+        return body, normalized_citation_ids
+    for chunk in _deduped_chunk_order_for_code_example(chunks, normalized_citation_ids):
+        code_block = _extract_authoritative_code_block(chunk)
+        if not code_block:
+            continue
+        chunk_id = str(chunk.chunk_id or "").strip()
+        updated_citation_ids = list(normalized_citation_ids)
+        if chunk_id and chunk_id not in updated_citation_ids:
+            updated_citation_ids.append(chunk_id)
+        return f"{body}\n\nReference Example:\n{code_block}", updated_citation_ids
+    return body, normalized_citation_ids
+
+
 def _is_dual_stream_enable_query(message: str) -> bool:
     lower = _normalized_query_text(message)
     if not lower:
@@ -8278,6 +8332,17 @@ def _run_rag_query_legacy(
                 ),
             )
         citations = [str(chunk_id) for chunk_id in payload["citations"]]
+        answer_body = _supplement_request_body_json_if_missing(
+            str(payload["answer"]),
+            final_chunks,
+            request_body_evidence_result,
+        )
+        answer_body, citations = _supplement_how_to_code_example_if_missing(
+            answer_body,
+            question=effective_question,
+            chunks=final_chunks,
+            citation_ids=citations,
+        )
         citation_records = _citation_records_from_ids(citations, final_chunks)
         sources = [
             record.get("source_url") or f"rag:{record['chunk_id']}"
@@ -8285,11 +8350,7 @@ def _run_rag_query_legacy(
         ]
         answer = RagAnswer(
             answer=_build_answer_text(
-                _supplement_request_body_json_if_missing(
-                    str(payload["answer"]),
-                    final_chunks,
-                    request_body_evidence_result,
-                ),
+                answer_body,
                 payload.get("key_steps", []),
                 question=effective_question,
                 requester=requester,
@@ -9291,6 +9352,17 @@ def _run_rag_query_agentic_single(
                 ),
             )
         citations = [str(chunk_id) for chunk_id in payload["citations"]]
+        answer_body = _supplement_request_body_json_if_missing(
+            str(payload["answer"]),
+            final_chunks,
+            request_body_evidence_result,
+        )
+        answer_body, citations = _supplement_how_to_code_example_if_missing(
+            answer_body,
+            question=effective_question,
+            chunks=final_chunks,
+            citation_ids=citations,
+        )
         citation_records = _citation_records_from_ids(citations, final_chunks)
         sources = [
             record.get("source_url") or f"rag:{record['chunk_id']}"
@@ -9298,11 +9370,7 @@ def _run_rag_query_agentic_single(
         ]
         answer = RagAnswer(
             answer=_build_answer_text(
-                _supplement_request_body_json_if_missing(
-                    str(payload["answer"]),
-                    final_chunks,
-                    request_body_evidence_result,
-                ),
+                answer_body,
                 payload.get("key_steps", []),
                 question=effective_question,
                 requester=requester,
