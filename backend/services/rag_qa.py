@@ -6401,6 +6401,49 @@ def _is_valid_response(payload: dict[str, Any], allowed_chunk_ids: set[str]) -> 
     return True
 
 
+def _parse_standalone_json_block(lines: list[str], start_index: int) -> tuple[Any | None, int]:
+    block_lines: list[str] = []
+    max_end = min(len(lines), start_index + 160)
+    for index in range(start_index, max_end):
+        block_lines.append(lines[index])
+        candidate = "\n".join(block_lines).strip()
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, (dict, list)):
+            return parsed, index
+    return None, start_index
+
+
+def _fence_standalone_json_blocks(value: str) -> str:
+    lines = str(value or "").splitlines()
+    if not lines:
+        return str(value or "")
+    rendered: list[str] = []
+    index = 0
+    inside_fence = False
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            inside_fence = not inside_fence
+            rendered.append(line)
+            index += 1
+            continue
+        if not inside_fence and stripped.startswith(("{", "[")):
+            parsed, end_index = _parse_standalone_json_block(lines, index)
+            if parsed is not None:
+                rendered.append("```json")
+                rendered.extend(json.dumps(parsed, ensure_ascii=False, indent=2).splitlines())
+                rendered.append("```")
+                index = end_index + 1
+                continue
+        rendered.append(line)
+        index += 1
+    return "\n".join(rendered)
+
+
 def _compose_grounded_answer_email(
     *,
     question: str,
@@ -6412,7 +6455,7 @@ def _compose_grounded_answer_email(
     cleaned_steps = [step.strip() for step in list(steps or []) if isinstance(step, str) and step.strip()]
     return compose_customer_reply_email(
         reply_kind="grounded_answer",
-        body=body.strip(),
+        body=_fence_standalone_json_blocks(body.strip()),
         requester=requester,
         customer_id=customer_id,
         language=detect_customer_reply_language(question, body, *cleaned_steps),

@@ -107,6 +107,41 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn("2. Pass a valid authentication token.", answer_text)
         self.assertTrue(answer_text.endswith("Best Regards,\nSid"))
 
+    def test_build_answer_text_wraps_raw_json_payload_as_fenced_json(self) -> None:
+        answer_text = rag_qa._build_answer_text(
+            "\n".join(
+                [
+                    "Use this structure instead:",
+                    "",
+                    "{",
+                    ' "cname": "ch",',
+                    ' "uid": "12345",',
+                    ' "clientRequest": {',
+                    '   "recordingConfig": {',
+                    '     "channelType": 1,',
+                    '     "transcodingConfig": {',
+                    '       "width": 1280,',
+                    '       "height": 720',
+                    "     }",
+                    "   }",
+                    " }",
+                    "}",
+                    "",
+                    "Then start a new recording session.",
+                ]
+            ),
+            [],
+            question="How can we record the whole canvas?",
+        )
+
+        fence_start = answer_text.find("```json")
+        self.assertNotEqual(-1, fence_start)
+        fenced_json = answer_text[fence_start + len("```json") :].split("```", 1)[0].strip()
+        payload = json.loads(fenced_json)
+        self.assertEqual(payload["clientRequest"]["recordingConfig"]["transcodingConfig"]["width"], 1280)
+        self.assertNotIn('Use this structure instead:\n\n{', answer_text)
+        self.assertIn("Then start a new recording session.", answer_text)
+
     def test_split_table_name_supports_schema_prefix(self) -> None:
         self.assertEqual(_split_table_name("public.docagent"), ("public", "docagent"))
         self.assertEqual(
