@@ -4797,6 +4797,7 @@ The documentation states that time: 0 means the rule is applied permanently. How
                 "the recorded output may always be generated as 360 x 640 portrait. "
                 "**Root Cause** This usually happens when transcodingConfig is placed in the wrong "
                 "part of the start request JSON, causing Cloud Recording to ignore those settings. "
+                "--- **Prevention/Best Practice (optional)** - Always validate the JSON payload before sending it. "
                 "**Step by Step Solution** 1. Check where transcodingConfig is placed in the start request. "
                 "2. Move transcodingConfig inside clientRequest.recordingConfig. "
                 "3. Retest with a new recording session."
@@ -4847,6 +4848,9 @@ The documentation states that time: 0 means the rule is applied permanently. How
         assert answer is not None
         self.assertIn("Hi Zac,", answer.answer)
         self.assertIn("transcodingConfig is placed in the wrong part", answer.answer)
+        self.assertNotIn("Prevention/Best Practice", answer.answer)
+        self.assertNotIn("Always validate", answer.answer)
+        self.assertIn("1. Check where transcodingConfig is placed in the start request.", answer.answer)
         self.assertIn("Move transcodingConfig inside clientRequest.recordingConfig", answer.answer)
         self.assertEqual(
             [citation["chunk_id"] for citation in answer.citations],

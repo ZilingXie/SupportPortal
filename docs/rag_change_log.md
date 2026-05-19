@@ -10,6 +10,23 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-19 - Clean request-body rescue section extraction
+
+- Summary:
+  - Hardened the request-body evidence rescue parser so root-cause snippets stop at technical article section boundaries such as `Prevention/Best Practice`, `Platform/SDK`, and optional error-message headings.
+  - Preserved punctuation in extracted solution steps so the generated customer reply reads cleanly.
+- Reason:
+  - Live TK-203 verification showed the rescue answer was correctly routed to `answer_customer`, but the fallback copy could include unrelated prevention text inside the root-cause paragraph and duplicate root-cause text as a numbered step.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No ingestion reset, embedding change, vector-table migration, BM25 schema change, or document backfill is performed.
+  - Existing RAG data remains valid; only runtime wording cleanup changes for the request-body rescue answer path.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest -q backend.tests.test_rag_qa.RagQaHybridTests.test_request_body_rescue_answer_uses_technical_case_when_llm_fails_closed backend.tests.test_rag_qa.RagQaHybridTests.test_request_body_rescue_answer_requires_technical_troubleshooting_context backend.tests.test_rag_qa.RagQaHybridTests.test_run_rag_query_rescues_request_body_insufficient_evidence_with_strong_context`
+
 ## 2026-05-19 - Rescue strong request-body evidence from false insufficient-evidence generation
 
 - Summary:
