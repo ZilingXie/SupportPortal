@@ -5266,6 +5266,168 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertIn("transcodingConfig", recording_config)
         self.assertNotIn("transcodingConfig", corrected_payload["clientRequest"])
 
+    def test_request_body_json_extraction_prefers_correct_labeled_payload_over_incorrect_example(self) -> None:
+        evidence = RequestBodyEvidenceResult(
+            triggered=True,
+            query=RequestBodyEvidenceQuery(
+                is_request_body_or_api_config=True,
+                body_keys=["clientRequest"],
+                nested_paths=[
+                    "clientRequest.transcodingConfig.width",
+                    "clientRequest.transcodingConfig.height",
+                    "clientRequest.transcodingConfig.fps",
+                    "clientRequest.transcodingConfig.bitrate",
+                    "clientRequest.transcodingConfig.mixedVideoLayout",
+                ],
+            ),
+            chunks=[],
+        )
+        article_text = """
+        Step by Step Solution
+
+        Incorrect structure:
+        ```json
+        {
+          "cname": "tr_test",
+          "uid": "12345",
+          "clientRequest": {
+            "recordingConfig": {
+              "channelType": 0,
+              "streamTypes": 2,
+              "videoStreamType": 0,
+              "maxIdleTime": 300
+            },
+            "transcodingConfig": {
+              "width": 1280,
+              "height": 720,
+              "fps": 15,
+              "bitrate": 1130,
+              "mixedVideoLayout": 3
+            }
+          }
+        }
+        ```
+
+        Correct structure:
+        ```json
+        {
+          "cname": "tr_test",
+          "uid": "12345",
+          "clientRequest": {
+            "recordingConfig": {
+              "channelType": 0,
+              "streamTypes": 2,
+              "videoStreamType": 0,
+              "maxIdleTime": 300,
+              "transcodingConfig": {
+                "width": 1280,
+                "height": 720,
+                "fps": 15,
+                "bitrate": 1130,
+                "mixedVideoLayout": 3
+              }
+            }
+          }
+        }
+        ```
+        """
+
+        corrected_json = rag_qa._extract_corrected_request_body_json(article_text, evidence)
+
+        corrected_payload = json.loads(corrected_json)
+        recording_config = corrected_payload["clientRequest"]["recordingConfig"]
+        self.assertIn("transcodingConfig", recording_config)
+        self.assertNotIn("transcodingConfig", corrected_payload["clientRequest"])
+
+    def test_request_body_json_supplement_appends_correction_when_answer_has_conflicting_json(self) -> None:
+        schema_chunk = RetrievedChunk(
+            chunk_id="schema-recording-config",
+            text="Request body schema: clientRequest.recordingConfig.transcodingConfig.",
+            source_path="official/restful-api.md",
+            source_type="official_markdown_upload",
+            chunk_strategy="official_structured_v1",
+            similarity=0.94,
+            metadata={"request_body_evidence_type": "nested_schema"},
+        )
+        technical_case = RetrievedChunk(
+            chunk_id="technical-root-cause",
+            text=(
+                "Correct structure: ```json "
+                "{"
+                "\"cname\":\"tr_test\","
+                "\"uid\":\"12345\","
+                "\"clientRequest\":{"
+                "\"recordingConfig\":{"
+                "\"channelType\":0,"
+                "\"streamTypes\":2,"
+                "\"transcodingConfig\":{"
+                "\"width\":1280,"
+                "\"height\":720,"
+                "\"mixedVideoLayout\":3"
+                "}"
+                "}"
+                "}"
+                "} ```"
+            ),
+            source_path="technical/mix-mode-cloud-recording-output.md",
+            source_type="technical_article_api",
+            chunk_strategy="technical_case_units_v1",
+            similarity=0.91,
+            metadata={
+                "source_type": "technical_article_api",
+                "chunk_strategy": "technical_case_units_v1",
+                "chunk_type": "troubleshooting_procedure",
+            },
+        )
+        evidence = RequestBodyEvidenceResult(
+            triggered=True,
+            query=RequestBodyEvidenceQuery(
+                is_request_body_or_api_config=True,
+                body_keys=["clientRequest"],
+                nested_paths=["clientRequest.transcodingConfig.width"],
+            ),
+            chunks=[
+                RequestBodyEvidenceChunk(
+                    chunk_id=schema_chunk.chunk_id,
+                    evidence_type="nested_schema",
+                    matched_fields=["clientRequest.recordingConfig.transcodingConfig"],
+                    source_path=schema_chunk.source_path,
+                    text_excerpt=schema_chunk.text,
+                    similarity=schema_chunk.similarity,
+                    original_chunk=schema_chunk,
+                )
+            ],
+        )
+        answer_with_wrong_json = """
+        Move transcodingConfig under clientRequest.recordingConfig.
+
+        ```json
+        {
+          "clientRequest": {
+            "recordingConfig": {
+              "channelType": 0
+            },
+            "transcodingConfig": {
+              "width": 1280
+            }
+          }
+        }
+        ```
+        """
+
+        supplemented = rag_qa._supplement_request_body_json_if_missing(
+            answer_with_wrong_json,
+            [schema_chunk, technical_case],
+            evidence,
+        )
+
+        fenced_blocks = supplemented.split("```json")
+        self.assertGreaterEqual(len(fenced_blocks), 3)
+        corrected_payload = json.loads(fenced_blocks[-1].split("```", 1)[0].strip())
+        recording_config = corrected_payload["clientRequest"]["recordingConfig"]
+        self.assertIn("transcodingConfig", recording_config)
+        self.assertNotIn("transcodingConfig", corrected_payload["clientRequest"])
+
     def test_execute_agentic_round_short_symptom_troubleshooting_skips_vector_original_when_lexical_support_is_weak(self) -> None:
         weak_chunk = RetrievedChunk(
             chunk_id="black-screen-weak",
