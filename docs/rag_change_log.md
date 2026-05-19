@@ -10,6 +10,25 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-19 - Fence raw JSON blocks in grounded RAG answers
+
+- Summary:
+  - Added a grounded-answer postprocessor that detects standalone raw JSON blocks in RAG answer bodies, validates them with `json.loads`, and rewrites them as fenced `json` code blocks.
+  - The formatter skips existing fenced blocks and only rewrites parseable standalone JSON objects or arrays.
+- Reason:
+  - Post-merge TK-204-like live verification showed the normal `structured_answer` path could produce a correct request body as raw text, but without a fenced `json` block the frontend JSON code-block styling could not render it as intended.
+- Affected files/config:
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No ingestion reset, embedding change, vector-table migration, BM25 schema change, or document backfill is performed.
+  - Existing RAG data remains valid; only runtime formatting of grounded RAG customer replies changes.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest -q backend.tests.test_rag_qa.RagQaHybridTests.test_build_answer_text_wraps_raw_json_payload_as_fenced_json`
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest -q backend.tests.test_rag_request_body_evidence backend.tests.test_rag_qa`
+  - `python3 -m py_compile backend/services/rag_qa.py`
+
 ## 2026-05-19 - Include grounded JSON payloads in request-body rescue answers
 
 - Summary:
