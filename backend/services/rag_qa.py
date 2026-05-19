@@ -6595,13 +6595,22 @@ def _build_extractive_rag_answer(chunks: list[RetrievedChunk]) -> RagAnswer:
 
 
 _REQUEST_BODY_RESCUE_SECTION_RE = re.compile(
-    r"(?:^|\s)(?:\*\*)?(Issue Description|Root Cause|Step by Step Solution|Solution|Resolution|Best Practice)(?:\*\*)?\s*:?\s*",
+    r"(?:^|[\s\-#>])(?:\*\*)?"
+    r"(Issue Description|Root Cause|Step by Step Solution|Prevention/Best Practice(?:\s*\(optional\))?|"
+    r"Platform/SDK|Error Message(?:\s*\(optional\))?|Solution|Resolution|Best Practice|Notes?)"
+    r"(?:\*\*)?\s*:?\s*",
     re.IGNORECASE,
 )
 
 
+def _normalize_evidence_label(value: str) -> str:
+    label = re.sub(r"\s*\(optional\)\s*", "", str(value or ""), flags=re.IGNORECASE)
+    return " ".join(label.lower().split())
+
+
 def _plain_evidence_text(value: str, *, limit: int = 360) -> str:
-    text = re.sub(r"`{1,3}", "", str(value or ""))
+    text = re.split(r"\s-{3,}\s", str(value or ""), maxsplit=1)[0]
+    text = re.sub(r"`{1,3}", "", text)
     text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
     text = re.sub(r"\[(.*?)\]\([^)]*\)", r"\1", text)
     text = " ".join(text.split())
@@ -6613,9 +6622,9 @@ def _plain_evidence_text(value: str, *, limit: int = 360) -> str:
 
 def _extract_labeled_evidence_section(text: str, labels: set[str]) -> str:
     matches = list(_REQUEST_BODY_RESCUE_SECTION_RE.finditer(text or ""))
-    normalized_labels = {label.lower() for label in labels}
+    normalized_labels = {_normalize_evidence_label(label) for label in labels}
     for index, match in enumerate(matches):
-        if str(match.group(1) or "").strip().lower() not in normalized_labels:
+        if _normalize_evidence_label(str(match.group(1) or "")) not in normalized_labels:
             continue
         start = match.end()
         end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
@@ -6634,7 +6643,7 @@ def _extract_rescue_steps(text: str) -> list[str]:
         return []
     steps: list[str] = []
     for match in re.finditer(r"(?:^|\s)\d+\.\s+(.*?)(?=(?:\s+\d+\.\s+)|$)", section):
-        step = _plain_evidence_text(match.group(1), limit=220).strip(" .")
+        step = _plain_evidence_text(match.group(1), limit=220).strip()
         if step and step not in steps:
             steps.append(step)
         if len(steps) >= 3:
@@ -6642,7 +6651,7 @@ def _extract_rescue_steps(text: str) -> list[str]:
     if steps:
         return steps
     for sentence in re.split(r"(?<=[.!?])\s+", section):
-        step = _plain_evidence_text(sentence, limit=220).strip(" .")
+        step = _plain_evidence_text(sentence, limit=220).strip()
         if step and step not in steps:
             steps.append(step)
         if len(steps) >= 3:
