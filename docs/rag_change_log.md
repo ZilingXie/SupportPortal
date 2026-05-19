@@ -10,6 +10,28 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-05-19 - Preserve technical troubleshooting evidence for request-body RAG context
+
+- Summary:
+  - Added request-body context selection protection for high-value technical troubleshooting chunks, including technical support articles with root-cause or step-by-step solution cues.
+  - Updated request-body schema evidence merging so schema chunks remain supplemental and no longer crowd out protected technical root-cause evidence when the final context window is tight.
+  - Taught RAG final-context merging to restore one high-value technical troubleshooting candidate from retrieved chunks when external reranking drops it before final answer generation.
+- Reason:
+  - TK-203 failed closed with `rag_completed_with_insufficient_evidence` even though retrieval found the relevant technical article, because final context selection kept official schema chunks but omitted the technical root-cause article needed for a grounded customer answer.
+  - Request body/API config questions need exact schema evidence, but troubleshooting accuracy also depends on preserving root-cause and remediation evidence.
+- Affected files/config:
+  - `backend/services/rag_request_body_evidence.py`
+  - `backend/services/rag_qa.py`
+  - `backend/tests/test_rag_request_body_evidence.py`
+  - `backend/tests/test_rag_qa.py`
+  - `docs/rag_change_log.md`
+- Data impact:
+  - No ingestion reset, embedding change, vector-table migration, BM25 schema change, or document backfill is performed.
+  - Existing RAG data remains valid; only runtime final-context selection changes for request body/API config questions.
+- Verification:
+  - `/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m unittest -q backend.tests.test_rag_request_body_evidence backend.tests.test_rag_qa`
+  - `python3 -m py_compile backend/services/rag_request_body_evidence.py backend/services/rag_qa.py`
+
 ## 2026-05-18 - Add request-body schema evidence retrieval and fail-closed reason
 
 - Summary:

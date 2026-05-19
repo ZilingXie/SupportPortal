@@ -143,6 +143,50 @@ class RequestBodyEvidenceTests(unittest.TestCase):
 
         self.assertEqual([chunk["chunk_id"] for chunk in merged], ["schema-1", "howto-1"])
 
+    def test_merge_preserves_high_value_technical_case_when_schema_slots_are_tight(self) -> None:
+        technical_case = {
+            "chunk_id": "technical-root-cause",
+            "text": (
+                "Issue Description: Cloud Recording records the screen share as a vertical strip. "
+                "Root Cause: transcodingConfig is outside recordingConfig. "
+                "Step by Step Solution: move transcodingConfig under recordingConfig."
+            ),
+            "source_path": "technical/mix-mode-cloud-recording-output.md",
+            "similarity": 0.95,
+            "metadata": {
+                "source_type": "technical_article_api",
+                "chunk_strategy": "technical_case_units_v1",
+                "chunk_type": "troubleshooting_procedure",
+            },
+        }
+        overview = {
+            "chunk_id": "overview-1",
+            "text": "Cloud Recording product overview and release notes.",
+            "source_path": "cloud-recording/release-notes.md",
+            "similarity": 0.99,
+        }
+        schemas = [
+            {
+                "chunk_id": f"schema-{index}",
+                "text": f"Request body schema {index}: clientRequest.recordingConfig.transcodingConfig.",
+                "source_path": "cloud-recording/api-reference.md",
+                "similarity": 0.8 - (index * 0.01),
+                "metadata": {"request_body_evidence_type": "nested_schema"},
+            }
+            for index in range(1, 4)
+        ]
+
+        merged = merge_request_body_evidence_chunks(
+            primary_chunks=[overview, technical_case],
+            supplement_chunks=schemas,
+            max_chunks=3,
+        )
+
+        merged_ids = [chunk["chunk_id"] for chunk in merged]
+        self.assertIn("technical-root-cause", merged_ids)
+        self.assertTrue(any(chunk_id.startswith("schema-") for chunk_id in merged_ids))
+        self.assertNotIn("overview-1", merged_ids)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -188,6 +188,150 @@ The documentation states that time: 0 means the rule is applied permanently. How
         self.assertEqual([chunk.chunk_id for chunk in merged], ["schema-layout", "howto-1"])
         self.assertEqual(merged[0].metadata["request_body_evidence_type"], "nested_schema")
 
+    def test_request_body_evidence_merge_preserves_technical_root_cause_with_tight_schema_slots(self) -> None:
+        technical_case = RetrievedChunk(
+            chunk_id="technical-root-cause",
+            text=(
+                "Issue Description: Cloud Recording records the screen share as a vertical strip. "
+                "Root Cause: transcodingConfig is outside recordingConfig. "
+                "Step by Step Solution: move transcodingConfig under recordingConfig."
+            ),
+            source_path="technical/mix-mode-cloud-recording-output.md",
+            similarity=0.95,
+            source_type="technical_article_api",
+            chunk_strategy="technical_case_units_v1",
+            metadata={
+                "source_type": "technical_article_api",
+                "chunk_strategy": "technical_case_units_v1",
+                "chunk_type": "troubleshooting_procedure",
+            },
+        )
+        overview = RetrievedChunk(
+            chunk_id="overview-1",
+            text="Cloud Recording product overview and release notes.",
+            source_path="official/cloud-recording/release-notes.md",
+            similarity=0.99,
+        )
+        schema_chunks = [
+            RetrievedChunk(
+                chunk_id=f"schema-{index}",
+                text=f"Request body schema {index}: clientRequest.recordingConfig.transcodingConfig.",
+                source_path="official/cloud-recording/restful-api.md",
+                similarity=0.8 - (index * 0.01),
+            )
+            for index in range(1, 4)
+        ]
+        evidence = RequestBodyEvidenceResult(
+            triggered=True,
+            query=RequestBodyEvidenceQuery(
+                is_request_body_or_api_config=True,
+                body_keys=["clientRequest"],
+                nested_paths=["clientRequest.recordingConfig.transcodingConfig"],
+                schema_evidence_goals=["transcodingConfig schema"],
+            ),
+            chunks=[
+                RequestBodyEvidenceChunk(
+                    chunk_id=chunk.chunk_id,
+                    evidence_type="nested_schema",
+                    matched_fields=["clientRequest.recordingConfig.transcodingConfig"],
+                    source_path=chunk.source_path,
+                    text_excerpt=chunk.text,
+                    similarity=chunk.similarity,
+                    original_chunk=chunk,
+                )
+                for chunk in schema_chunks
+            ],
+            missing_evidence=[],
+        )
+
+        merged = _merge_request_body_evidence_into_final_chunks(
+            [overview, technical_case],
+            request_body_evidence=evidence,
+            max_chunks=3,
+        )
+
+        merged_ids = [chunk.chunk_id for chunk in merged]
+        self.assertIn("technical-root-cause", merged_ids)
+        self.assertTrue(any(chunk_id.startswith("schema-") for chunk_id in merged_ids))
+        self.assertNotIn("overview-1", merged_ids)
+        selected_schema = next(chunk for chunk in merged if chunk.chunk_id.startswith("schema-"))
+        self.assertEqual(selected_schema.metadata["request_body_evidence_type"], "nested_schema")
+
+    def test_request_body_evidence_merge_can_restore_retrieved_technical_candidate_after_rerank_drop(self) -> None:
+        selected_schema_context = RetrievedChunk(
+            chunk_id="schema-selected",
+            text="Request body schema: clientRequest.recordingConfig.transcodingConfig.",
+            source_path="official/cloud-recording/restful-api.md",
+            similarity=0.88,
+        )
+        selected_start_context = RetrievedChunk(
+            chunk_id="start-endpoint",
+            text="Start cloud recording after acquire.",
+            source_path="official/cloud-recording/restful-api.md",
+            similarity=0.82,
+        )
+        technical_candidate = RetrievedChunk(
+            chunk_id="technical-root-cause",
+            text=(
+                "Issue Description: Cloud Recording records the screen share as a vertical strip. "
+                "Root Cause: transcodingConfig is outside recordingConfig. "
+                "Step by Step Solution: move transcodingConfig under recordingConfig."
+            ),
+            source_path="technical/mix-mode-cloud-recording-output.md",
+            similarity=0.75,
+            source_type="technical_article_api",
+            chunk_strategy="technical_case_units_v1",
+            metadata={
+                "source_type": "technical_article_api",
+                "chunk_strategy": "technical_case_units_v1",
+                "chunk_type": "troubleshooting_procedure",
+            },
+            candidate_trace={
+                "retrieval_sources": ["bm25"],
+                "bm25_score": 26.6,
+                "rerank_rank": 45,
+            },
+        )
+        schema_supplement = RetrievedChunk(
+            chunk_id="schema-supplement",
+            text="Schema: transcodingConfig contains mixedVideoLayout and layoutConfig.",
+            source_path="official/cloud-recording/restful-api.md",
+            similarity=0.8,
+        )
+        evidence = RequestBodyEvidenceResult(
+            triggered=True,
+            query=RequestBodyEvidenceQuery(
+                is_request_body_or_api_config=True,
+                body_keys=["clientRequest"],
+                nested_paths=["clientRequest.recordingConfig.transcodingConfig"],
+                schema_evidence_goals=["transcodingConfig schema"],
+            ),
+            chunks=[
+                RequestBodyEvidenceChunk(
+                    chunk_id="schema-supplement",
+                    evidence_type="nested_schema",
+                    matched_fields=["clientRequest.recordingConfig.transcodingConfig"],
+                    source_path=schema_supplement.source_path,
+                    text_excerpt=schema_supplement.text,
+                    similarity=schema_supplement.similarity,
+                    original_chunk=schema_supplement,
+                )
+            ],
+            missing_evidence=[],
+        )
+
+        merged = _merge_request_body_evidence_into_final_chunks(
+            [selected_schema_context, selected_start_context],
+            request_body_evidence=evidence,
+            max_chunks=3,
+            retrieved_chunks=[technical_candidate, selected_schema_context, selected_start_context],
+        )
+
+        merged_ids = [chunk.chunk_id for chunk in merged]
+        self.assertIn("technical-root-cause", merged_ids)
+        self.assertIn("schema-supplement", merged_ids)
+        self.assertLess(merged_ids.index("technical-root-cause"), len(merged_ids))
+
     def test_request_body_evidence_context_adds_supplement_section(self) -> None:
         schema = RetrievedChunk(
             chunk_id="schema-layout",
